@@ -3,10 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { isWindows } from '../../../../../base/common/platform.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
-import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltStdioService, runGitThrough } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { asRecord, pickBoolean, pickNumber, pickString } from '../../common/tools/args.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
 import { objectSchema } from './schema.js';
@@ -114,20 +113,15 @@ async function runGit(stdio: IVoltStdioService, cwd: URI | undefined, argv: read
 	const onAbort = () => void stdio.cancelExec(id);
 	ctx.signal.addEventListener('abort', onAbort);
 	try {
-		const result = await stdio.exec({
-			id,
-			command: ['git', '--no-pager', ...argv].map(quote).join(' '),
-			cwd: cwd.fsPath,
-			timeoutMs: 30_000,
-			inlineChars: 30_000,
-		});
+		// HostGit: the repository's fsmonitor and hooks never run for a read-only tool.
+		const result = await runGitThrough(stdio, { id, cwd: cwd.fsPath, args: ['--no-pager', ...argv], timeoutMs: 30_000, maxBytes: 8 * 1024 * 1024 });
 		const failed = result.exitCode !== 0;
-		const output = (failed ? result.combined : result.stdout).trim();
+		const output = (failed ? `${result.stdout}\n${result.stderr}` : result.stdout).trim();
 		return {
 			callId: '',
 			name,
 			kind: 'search',
-			text: output || (failed ? `git ${argv[0]} failed with exit ${result.exitCode}.` : `(no output from git ${argv[0]})`),
+			text: shapeOutput(output) || (failed ? `git ${argv[0]} failed with exit ${result.exitCode}.` : `(no output from git ${argv[0]})`),
 			isError: failed,
 		};
 	} catch (err) {
@@ -137,9 +131,11 @@ async function runGit(stdio: IVoltStdioService, cwd: URI | undefined, argv: read
 	}
 }
 
-function quote(arg: string): string {
-	if (/^[\w@%+=:,./~^-]+$/.test(arg)) {
-		return arg;
+/** Long output keeps its head and tail, as shell output does. */
+function shapeOutput(text: string, limit = 30_000): string {
+	if (text.length <= limit) {
+		return text;
 	}
-	return isWindows ? `"${arg.replace(/"/g, '""')}"` : `'${arg.replace(/'/g, `'\\''`)}'`;
+	const half = Math.floor(limit / 2);
+	return `${text.slice(0, half)}\n... ${text.length - limit} characters omitted ...\n${text.slice(-half)}`;
 }

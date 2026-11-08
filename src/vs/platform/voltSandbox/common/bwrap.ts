@@ -32,7 +32,8 @@ import { ISandboxLimits, limitDimension, SandboxDimension } from './sandboxSchem
  *
  * What bubblewrap cannot do (reported by the backend, see `BUBBLEWRAP_LIMITATIONS`): it can only
  * mount over paths that exist at launch, so a `deny`/`protect` entry that does not exist yet, a
- * pattern match created during the run, and a new `.git` (`newRepositoryGuard`) are not covered.
+ * pattern match created during the run, a new `.git` (`newRepositoryGuard`) and a name the `.git`
+ * allow list leaves read-only but that is created during the run (a new `commondir`) are not covered.
  */
 
 /** File descriptors the backend passes, in `extraStdio` order (fd 3 up). The readiness script relies on fd 3. */

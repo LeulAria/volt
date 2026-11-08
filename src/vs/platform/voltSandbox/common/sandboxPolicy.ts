@@ -83,7 +83,8 @@ export interface ISandboxPlan {
 
 /** Files that run as code later, outside any sandbox: the same set the OS profiles protect. */
 const DANGEROUS_ROOT_NAMES = PROTECTED_ROOT_NAMES;
-const DANGEROUS_GIT_NAMES = ['.git/config', '.git/config.worktree', '.git/hooks', '.git/modules'];
+const GIT_DIR_DANGEROUS = ['config', 'config.worktree', 'hooks', 'modules', 'commondir', 'gitdir', 'info', 'objects/info/alternates', 'objects/info/http-alternates'];
+const DANGEROUS_GIT_NAMES = GIT_DIR_DANGEROUS.map(name => `.git/${name}`);
 
 /** Credentials no agent needs, for the renderer-side checks (the OS profile uses `credentialDenyEntries`). */
 const SECRET_HOME_DIRS = CREDENTIAL_HOME_PATHS.filter(path => path !== 'Library/Keychains');
@@ -284,9 +285,10 @@ export function resolveSandboxPlan(request: IVoltSandboxRequest, host: ISandboxH
 	}
 	for (const root of [...workspace, ...extra]) {
 		if (root.endsWith('/.git')) {
-			// A worktree's git common dir: its hooks and config run later, outside the sandbox.
-			denySubpaths.push(`${root}/hooks`, `${root}/modules`);
-			denyFiles.push(`${root}/config`, `${root}/config.worktree`);
+			// A worktree's git common dir: its hooks and config run later, outside the sandbox, and
+			// `commondir`/`gitdir`/alternates would point git elsewhere.
+			denySubpaths.push(`${root}/hooks`, `${root}/modules`, `${root}/info`);
+			denyFiles.push(...GIT_DIR_DANGEROUS.filter(name => !['hooks', 'modules', 'info'].includes(name)).map(name => `${root}/${name}`));
 			continue;
 		}
 		// Treated as folders: a folder rule also covers a file of that name.
@@ -373,7 +375,8 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 	const protect: string[] = [];
 	for (const root of [...workspace, ...extra]) {
 		if (root.endsWith('/.git')) {
-			protect.push(`${root}/hooks`, `${root}/modules`, `${root}/config`, `${root}/config.worktree`);
+			// The rest of this folder is an allow list too (the resolver's `gitDirs`).
+			protect.push(...GIT_DIR_DANGEROUS.map(name => `${root}/${name}`));
 			continue;
 		}
 		protect.push(...PROTECTED_ROOT_NAMES.map(name => `${root}/${name}`));

@@ -49,7 +49,7 @@ import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelA
 import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { Schemas } from '../../../../base/common/network.js';
-import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltStdioService, runGitThrough } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, lspAllowedFor, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
 import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
@@ -4724,8 +4724,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (cached && Date.now() - cached.at < 5_000) {
 			return cached.value;
 		}
-		const value = this.stdio.exec({ id: `volt-status-${generateUuid().slice(0, 8)}`, command: 'git status --porcelain=v1 -z --untracked-files=normal', cwd: root.fsPath, timeoutMs: 2_000, inlineChars: 400_000 })
-			.then(result => result.exitCode === 0 ? parsePorcelainZ(result.combined) : new Set<string>(), () => new Set<string>());
+		// Through HostGit: a repository's fsmonitor or hooks never run on Volt's own status check (B-03).
+		const value = runGitThrough(this.stdio, { cwd: root.fsPath, args: ['status', '--porcelain=v1', '-z', '--untracked-files=normal'], timeoutMs: 2_000, maxBytes: 4 * 1024 * 1024 })
+			.then(result => result.exitCode === 0 ? parsePorcelainZ(result.stdout) : new Set<string>(), () => new Set<string>());
 		this.workingTreeChangesByRoot.set(key, { at: Date.now(), value });
 		return value;
 	}

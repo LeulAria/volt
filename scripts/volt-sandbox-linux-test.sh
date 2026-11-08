@@ -9,7 +9,7 @@
 #   scripts/volt-sandbox-linux-test.sh probe                               print the backend's capability report
 #   scripts/volt-sandbox-linux-test.sh shell                               a shell in the rig (out/ mounted at /volt/out)
 #   scripts/volt-sandbox-linux-test.sh verify-syscalls                     check seccomp.ts's syscall numbers on arm64 and amd64
-#   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suite (sandboxSecurity.test.ts), required to run
+#   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suites (sandboxSecurity.test.ts, hostGit.test.ts), required to run
 #
 # Set VOLT_SANDBOX_NO_TRANSPILE=1 to skip `npm run transpile-client-oxc` (out/ is already fresh).
 #
@@ -50,7 +50,7 @@ transpile() {
 
 snapshot() {
 	local dir
-	for dir in vs/base/common vs/base/test/common vs/platform/voltSandbox; do
+	for dir in vs/base/common vs/base/test/common vs/platform/voltSandbox vs/platform/voltGit; do
 		if [[ ! -d "$ROOT/out/$dir" ]]; then
 			echo "out/$dir is missing (another build cleaning out/?); run again" >&2
 			exit 1
@@ -143,7 +143,7 @@ case "$cmd" in
 		build_image
 		# mocha and its dependencies are plain JavaScript, so the host's node_modules work here.
 		docker run --rm "${DOCKER_FLAGS[@]}" -v "$ROOT/node_modules:/volt/node_modules:ro" -e VOLT_SANDBOX_REQUIRED=1 "$IMAGE" \
-			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit /volt/out/vs/platform/voltSandbox/test/node/sandboxSecurity.test.js "$@"
+			node /volt/node_modules/mocha/bin/mocha.js --ui tdd --timeout 120000 --exit /volt/out/vs/platform/voltSandbox/test/node/sandboxSecurity.test.js /volt/out/vs/platform/voltGit/test/node/hostGit.test.js "$@"
 		;;
 	*)
 		sed -n '2,20p' "$0"

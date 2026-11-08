@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { GIT_WRITABLE_REGEX } from './sandboxProfiles.js';
 import { IResolvedPattern, IResolvedSandboxPolicy } from './sandboxResolved.js';
 
 /**
@@ -159,6 +160,21 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		...policy.writeFiles.flatMap(file => [`(literal ${sbplString(file)})`, `(regex ${sbplRegex(file, '\\.(lock|tmp|backup|bak|swp)[^/]*')})`]),
 	];
 	out.push(`(allow file-read* file-write*\n\t${write.join('\n\t')})`);
+
+	// `.git` as an allow list (B-03): read-only except what commits, merges, rebases and fetches
+	// write. Name patterns, so a `commondir`, hook or config created later is covered as well, and
+	// the `.git` entry itself cannot be replaced, moved or removed.
+	if (policy.gitDirs.length) {
+		const prefixes = policy.gitDirs.map(dir => dir.anyDepth
+			? `${dir.root === '/' ? '' : regexBody(dir.root, ci)}/(.*/)?${regexBody('.git', ci)}`
+			: regexBody(dir.root, ci));
+		const worktree = '(worktrees/[^/]+/)?';
+		out.push(
+			`(deny file-write* ${message}\n\t${prefixes.map(p => `(regex #"^${p}(/.*)?$")`).join('\n\t')})`,
+			`(allow file-write*\n\t${prefixes.flatMap(p => [`(regex #"^${p}/${worktree}${GIT_WRITABLE_REGEX.dirs}(/.*)?$")`, `(regex #"^${p}/${worktree}${GIT_WRITABLE_REGEX.files}$")`]).join('\n\t')})`,
+			`(deny file-write* ${message}\n\t${prefixes.map(p => `(regex #"^${p}/${worktree}${GIT_WRITABLE_REGEX.readonlyObjects}$")`).join('\n\t')})`,
+		);
+	}
 
 	// Protected: readable, never writable, even inside a writable folder.
 	const protect = [

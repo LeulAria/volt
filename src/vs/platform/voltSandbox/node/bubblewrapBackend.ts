@@ -11,6 +11,7 @@ import { promisify } from 'util';
 import { dirname, join } from '../../../base/common/path.js';
 import { bridgeHolderArgs, BUBBLEWRAP_FDS, bubblewrapArgs, bubblewrapEnvArgs, bubblewrapRefusals, encodeBubblewrapArgs, hasRlimits, IBubblewrapPathMatch, IBubblewrapPatternMatches, isInsidePath, nsenterArgs, PrlimitResource } from '../common/bwrap.js';
 import { allEnforcement, ISandboxBackendCapabilities, redactSandboxText, SandboxEnforcement, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { gitDirWritable } from '../common/sandboxProfiles.js';
 import { IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { SandboxDimension } from '../common/sandboxSchema.js';
 import { buildSeccompFilter, SeccompArch, seccompArch, seccompInstructions } from '../common/seccomp.js';
@@ -250,7 +251,7 @@ export class BubblewrapBackend implements ISandboxBackend {
 			const read = ['/usr', ...state.rootDirs];
 			const policy: IResolvedSandboxPolicy = {
 				name: 'probe', platform: 'linux', readAll: false, read, write: [tmp], writeFiles: [], deny: [], protect: [],
-				denyPatterns: [], protectPatterns: [], newRepositoryGuard: [],
+				denyPatterns: [], protectPatterns: [], newRepositoryGuard: [], gitDirs: [],
 				network: { mode: 'none', allow: [], loopbackPorts: options.bridgePort ? [options.bridgePort] : [], listen: false },
 				unixSockets: [], systemServices: false,
 				limits: options.limits ? { processes: 64, openFiles: 256, cpuSeconds: 10, fileSizeMB: 1, memoryMB: 1024 } : {},
@@ -301,13 +302,14 @@ export class BubblewrapBackend implements ISandboxBackend {
 		}
 		await fs.mkdir(controlDir, { recursive: true, mode: 0o700 });
 
-		const [kinds, masks, reexpose, matches, hard] = await Promise.all([
+		const [kinds, masks, reexpose, walked, hard] = await Promise.all([
 			pathKinds([...policy.deny, ...policy.protect, ...policy.writeFiles, ...policy.unixSockets]),
 			maskFolders(controlDir),
 			reexposedFiles(),
 			walkPatterns(policy, { collectSockets: policy.unixSockets.length > 0 }),
 			state.prlimit && hasRlimits(policy.limits) ? hardLimits() : Promise.resolve({}),
 		]);
+		const matches: IPatternWalkResult = { ...walked, protect: [...walked.protect, ...await gitAllowListProtections(policy, walked.protect)] };
 		const bwrapArgs = bubblewrapArgs(policy, command, commandArgs, {
 			terminal: options.terminal,
 			disableUserns: state.disableUserns,
@@ -578,6 +580,65 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 		}
 	}
 	return { deny: [...deny.values()], protect: [...protect.values()], sockets: [...sockets], complete, visited: visitedDirs.size };
+}
+
+/**
+ * The Linux side of the `.git` allow list (B-03). Bind mounts can only cover paths that exist, so
+ * every existing name in each git folder, and in each linked worktree's folder below it, that the
+ * allow list does not make writable is protected (read-only bind). A name created during the run
+ * (a `commondir` that was not there at launch) is not covered: that is `filesystem.protectNew`,
+ * reported partial, until Landlock lands. HostGit refuses a redirected repository on the host
+ * either way (INV-16). Git folders: each `anyDepth` root's own `.git`, the ones the pattern walk
+ * found (`**\/.git/config` and friends), and each `.git` that is itself a writable root.
+ */
+export async function gitAllowListProtections(policy: IResolvedSandboxPolicy, found: readonly IBubblewrapPathMatch[]): Promise<IBubblewrapPathMatch[]> {
+	const gitDirs = new Set<string>();
+	for (const dir of policy.gitDirs) {
+		gitDirs.add(dir.anyDepth ? join(dir.root, '.git') : dir.root);
+	}
+	if (policy.gitDirs.some(dir => dir.anyDepth)) {
+		for (const match of found) {
+			const at = match.path.lastIndexOf('/.git/');
+			if (at >= 0) {
+				gitDirs.add(match.path.slice(0, at + 5));
+			}
+		}
+	}
+	const out: IBubblewrapPathMatch[] = [];
+	const list = (dir: string) => fs.readdir(dir, { withFileTypes: true }).catch(() => [] as Dirent[]);
+	const add = async (gitDir: string, relative: string, entry: Dirent) => {
+		if (!entry.isSymbolicLink() && !gitDirWritable(relative)) {
+			out.push({ path: join(gitDir, relative), kind: entry.isDirectory() ? 'dir' : 'file' });
+		}
+	};
+	for (const gitDir of gitDirs) {
+		const st = await fs.lstat(gitDir).catch(() => undefined);
+		if (!st?.isDirectory()) {
+			continue;
+		}
+		for (const entry of await list(gitDir)) {
+			if (entry.name === 'worktrees' && entry.isDirectory()) {
+				for (const worktree of await list(join(gitDir, 'worktrees'))) {
+					if (!worktree.isDirectory()) {
+						await add(gitDir, `worktrees/${worktree.name}`, worktree);
+						continue;
+					}
+					for (const inner of await list(join(gitDir, 'worktrees', worktree.name))) {
+						await add(gitDir, `worktrees/${worktree.name}/${inner.name}`, inner);
+					}
+				}
+				continue;
+			}
+			await add(gitDir, entry.name, entry);
+		}
+		for (const name of ['alternates', 'http-alternates']) {
+			const path = join(gitDir, 'objects', 'info', name);
+			if ((await fs.lstat(path).catch(() => undefined))?.isFile()) {
+				out.push({ path, kind: 'file' });
+			}
+		}
+	}
+	return out;
 }
 
 interface IConfirmContext {

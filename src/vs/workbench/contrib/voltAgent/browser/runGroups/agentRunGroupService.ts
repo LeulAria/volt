@@ -13,6 +13,7 @@ import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -68,6 +69,7 @@ import {
 } from '../../../../services/voltRuntime/common/runGroups/worktreeSetup.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { stashTurnDisplay } from '../orchestration/agentTurnDisplays.js';
+import { reviewBuildEntries } from '../review/buildEntryReview.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { confineChatSandbox } from '../../../../services/voltRuntime/common/access/chatSandbox.js';
@@ -105,6 +107,8 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 	/** The run's last snapshot, so an unchanged worktree reuses it instead of writing a new commit. */
 	private readonly lastSnapshot = new Map<string, { readonly commit: string; readonly tree: string }>();
 	private readonly lastStatus = new Map<string, RunStatus>();
+	/** The build-entry review per repository, shared by the runs that start together. */
+	private readonly setupReviews = new Map<string, Promise<boolean>>();
 	private persistTimer: ReturnType<typeof setTimeout> | undefined;
 	private persisting: Promise<void> = Promise.resolve();
 	private readonly storeFile: URI;
@@ -129,6 +133,7 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		@ICommandService private readonly commandService: ICommandService,
 		@IInstantiationService protected readonly instantiationService: IInstantiationService,
 		@ILogService private readonly logService: ILogService,
+		@IDialogService private readonly dialogService: IDialogService,
 	) {
 		super();
 		const home = joinPath(environmentService.userRoamingDataHome, 'voltRunGroups');
@@ -315,6 +320,8 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 					return index < fromStep && previous?.state === 'done' ? previous : { command, state: 'pending' };
 				});
 				this.updateRun(groupId, runId, current => ({ ...current, setup: { ...current.setup, state: 'running', source: config.source, steps } }));
+				await this.reviewSetupFiles(group.repoRoot, path);
+				this.throwIfCancelled(token);
 				await this.runSetup(groupId, runId, config, path, fromStep, token);
 			}
 			this.throwIfCancelled(token);
@@ -377,6 +384,21 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 			}
 		}
 		return undefined;
+	}
+
+	/**
+	 * I.6: files that run code (setup files, package scripts, hooks) a sandboxed agent changed in the
+	 * repository wait for the user's review before setup runs them. The runs of a group share one review.
+	 */
+	private async reviewSetupFiles(repoRoot: string, worktreePath: string): Promise<void> {
+		let review = this.setupReviews.get(repoRoot);
+		if (!review) {
+			review = reviewBuildEntries(this.dialogService, this.stdio, [repoRoot, worktreePath], 'setup').finally(() => this.setupReviews.delete(repoRoot));
+			this.setupReviews.set(repoRoot, review);
+		}
+		if (!await review) {
+			throw new Error('Setup did not run: files that run code changed while an agent worked in this repository, and they were not trusted.');
+		}
 	}
 
 	/** One shell for every step (Cursor's semantics), progress read from its step markers. */

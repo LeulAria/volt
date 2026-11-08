@@ -518,6 +518,11 @@ export type VoltPrErrorCode =
 	| 'rateLimited'
 	/** A commit hook (pre-commit, commit-msg) stopped the commit; committing with `skipHooks` gets past it. */
 	| 'hookFailed'
+	/**
+	 * Git hooks or config changed while a sandboxed agent worked in the repository: the user's own
+	 * commit or push runs them only after a review (the build-entry guard, I.6).
+	 */
+	| 'reviewRequired'
 	| 'failed';
 
 /**
@@ -633,7 +638,8 @@ export interface IVoltPullRequestService {
 	 */
 	fetch(request: IVoltPrRequest & { readonly folder: string }): Promise<IVoltPrFetchResult>;
 	/** Pushes the checked out branch at `folder`, setting its upstream on first push. */
-	push(request: { readonly folder: string; readonly remote?: string }): Promise<IVoltPrPushResult>;
+	/** `runHooks`: the user's own Push (pre-push hooks run, after the build-entry review); otherwise none run. */
+	push(request: { readonly folder: string; readonly remote?: string; readonly runHooks?: boolean }): Promise<IVoltPrPushResult>;
 	/** Branches on the remote, for the base picker. */
 	remoteBranches(request: IVoltPrAuth & { readonly repo: IVoltPrRepoRef }): Promise<string[]>;
 	/** What a commit would hold: the staged changes, else everything; or exactly `paths` against HEAD. */

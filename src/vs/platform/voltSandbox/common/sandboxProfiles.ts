@@ -22,7 +22,7 @@ export const CREDENTIAL_HOME_PATHS: readonly string[] = [
 	'.netrc', '.npmrc', '.yarnrc.yml', '.pypirc', '.gem/credentials', '.cargo/credentials', '.cargo/credentials.toml',
 	'.git-credentials', '.config/git/credentials', '.config/gh', '.config/hub', '.config/op', '.config/configstore',
 	'.terraform.d/credentials.tfrc.json', '.vault-token', '.password-store', '.local/share/keyrings',
-	'.volt/accounts', 'Library/Keychains', 'Library/Cookies',
+	'.volt/accounts', '.volt/trust', 'Library/Keychains', 'Library/Cookies',
 	// Browser profiles: cookies and saved passwords.
 	'Library/Application Support/Google/Chrome', 'Library/Application Support/Chromium', 'Library/Application Support/BraveSoftware',
 	'Library/Application Support/Microsoft Edge', 'Library/Application Support/Arc', 'Library/Application Support/Firefox', 'Library/Safari',
@@ -51,11 +51,60 @@ export const PROTECTED_ROOT_NAMES: readonly string[] = [
 ];
 
 /**
- * Git internals at any depth: config and hooks run code in every later git command, including the
- * ones Volt's Source Control view runs on its own. Writes elsewhere in `.git` (objects, refs, the
- * index) stay allowed, so commits work.
+ * Git internals at any depth that run code or redirect git later: config and hooks run in every
+ * later git command, `commondir`/`gitdir` point git at another folder's config and hooks, and
+ * `alternates` borrows objects from another repository. These are named for the backends that can
+ * only protect existing paths; the real rule is the allow list below (`gitDirWritable`), which
+ * covers every other name too, including ones created later.
  */
-export const PROTECTED_GIT_PATTERNS: readonly string[] = ['**/.git/config', '**/.git/config.worktree', '**/.git/hooks', '**/.git/modules'];
+export const PROTECTED_GIT_PATTERNS: readonly string[] = [
+	'**/.git/config', '**/.git/config.worktree', '**/.git/hooks', '**/.git/modules',
+	'**/.git/commondir', '**/.git/gitdir', '**/.git/info', '**/.git/objects/info/alternates', '**/.git/objects/info/http-alternates',
+];
+
+/**
+ * `.git` is an allow list for sandboxed writers (B-03): only what commits, merges, rebases,
+ * fetches and stashes write. Everything else in a git folder (config, hooks, `commondir`, `gitdir`,
+ * `info/`, `modules/`, alternates, names git may add later) stays read-only. The same set applies
+ * inside each linked worktree's folder (`worktrees/<name>/`); creating a worktree folder itself
+ * is a host operation. Rebase and sequencer state is writable because the agent finishes its own
+ * rebases (`git rebase --continue` inside the sandbox); Volt never continues one on the host.
+ */
+const GIT_WRITABLE_DIRS = ['objects', 'refs', 'logs', 'rebase-merge', 'rebase-apply', 'sequencer', 'rr-cache', 'lfs'];
+const GIT_WRITABLE_FILES = ['index', 'HEAD', 'ORIG_HEAD', 'FETCH_HEAD', 'COMMIT_EDITMSG', 'packed-refs', 'AUTO_MERGE', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'REBASE_HEAD', 'shallow', 'gc.pid', 'gc.log'];
+/** `MERGE_HEAD`, `MERGE_MSG`, `BISECT_LOG`, temp indexes (`index.stash.<pid>`), and every lock file. */
+const GIT_WRITABLE_FILE_PATTERN = /^(?:(?:MERGE|BISECT|NOTES_MERGE)_[A-Za-z_]+|index\.[^/]+|sharedindex\.[^/]+|[^/]+\.lock)$/;
+/** Read-only even inside a writable folder: they make git read another repository's objects. */
+const GIT_READONLY_OBJECT_FILES = ['info/alternates', 'info/http-alternates'];
+
+/** Whether a sandboxed writer may write `relative`, a path inside a git folder (`a/b`, no leading slash). */
+export function gitDirWritable(relative: string): boolean {
+	let parts = relative.split('/').filter(part => part !== '');
+	if (parts[0] === 'worktrees') {
+		if (parts.length < 3) {
+			return false;
+		}
+		parts = parts.slice(2);
+	}
+	if (!parts.length || parts.some(part => part === '..' || part === '.')) {
+		return false;
+	}
+	if (GIT_WRITABLE_DIRS.includes(parts[0])) {
+		return !(parts[0] === 'objects' && GIT_READONLY_OBJECT_FILES.includes(parts.slice(1).join('/')));
+	}
+	return parts.length === 1 && (GIT_WRITABLE_FILES.includes(parts[0]) || GIT_WRITABLE_FILE_PATTERN.test(parts[0]));
+}
+
+/** The allow list as two regex alternations, for profile generators (Seatbelt). Exact case, no anchors. */
+export const GIT_WRITABLE_REGEX = {
+	dirs: `(${GIT_WRITABLE_DIRS.map(escapeRegex).join('|')})`,
+	files: `(${GIT_WRITABLE_FILES.map(escapeRegex).join('|')}|(MERGE|BISECT|NOTES_MERGE)_[A-Za-z_]+|index\\.[^/]+|sharedindex\\.[^/]+|[^/]+\\.lock)`,
+	readonlyObjects: `objects/info/(http-)?alternates`,
+} as const;
+
+function escapeRegex(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /** Every protection, as `protect` entries relative to one writable root token. */
 export function protectedEntries(root: '${workspace}'): string[] {

@@ -202,12 +202,12 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 	 * Runs `script` sandboxed and proves it actually ran (status `completed` plus a marker it
 	 * prints first), so a denial assertion can never pass just because nothing ran.
 	 */
-	async function sh(policy: IVoltSandboxPolicy, script: string, options: { timeoutMs?: number; signal?: AbortSignal; env?: Record<string, string>; expectRefusal?: boolean } = {}): Promise<ISandboxRunResult> {
+	async function sh(policy: IVoltSandboxPolicy, script: string, options: { timeoutMs?: number; signal?: AbortSignal; env?: Record<string, string>; expectRefusal?: boolean; workspaceRoots?: string[] } = {}): Promise<ISandboxRunResult> {
 		const result = await f.manager.run({
 			command: '/bin/sh',
 			args: ['-c', `echo volt-sandbox-ran; ${script}`],
 			policy,
-			context: { workspaceRoots: [f.ws], hostEnv: hostEnv(), env: options.env },
+			context: { workspaceRoots: options.workspaceRoots ?? [f.ws], hostEnv: hostEnv(), env: options.env },
 		}, { timeoutMs: options.timeoutMs ?? 30_000, signal: options.signal });
 		if (!options.expectRefusal) {
 			assert.strictEqual(result.status, 'completed', `the run did not happen: ${result.error ?? ''} ${result.stderr}`);
@@ -217,8 +217,8 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 	}
 
 	const workspace = () => builtinProfile('workspace');
-	const agent = (network = false) => agentSandboxPolicy(
-		{ level: 'workspace-write', network, providerId: 'claude-code', workspaceRoots: [f.ws] },
+	const agent = (network = false, workspaceRoots = [f.ws]) => agentSandboxPolicy(
+		{ level: 'workspace-write', network, providerId: 'claude-code', workspaceRoots },
 		{ platform: process.platform, home: f.home, tempDirs: [f.agentTmp], userDataDir: f.userData, sshPrivateKeys: [join(f.home, '.ssh', 'id_ed25519')], cacheDir: join(f.home, '.volt', 'sandbox-cache') },
 	);
 
@@ -292,6 +292,104 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		assert.ok(!await exists(join(f.home, '.npm', '_npx', 'evil')), 'shared npx cache');
 		assert.ok(!await exists(join(f.home, '.local', 'share', 'claude', 'evil')), 'the CLI binaries');
 		assert.ok(await exists(join(f.home, '.claude', 'state.json')), `the agent's own state stays writable: ${agentTry.stderr}`);
+	});
+
+	// --- Git internals: `.git` is an allow list (B-03, INV-15) ------------------------------------
+
+	/** A real repository with one commit and a linked worktree (so `.git/worktrees/<name>/` exists), made on the host. */
+	async function gitRepo(name: string): Promise<{ repo: string; worktreeDir: string }> {
+		const repo = join(f.root, name);
+		await fs.mkdir(repo, { recursive: true });
+		const git = (...args: string[]) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: repo, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: f.home, GIT_CONFIG_NOSYSTEM: '1' }, stdio: 'pipe' });
+		git('init', '-q');
+		await fs.writeFile(join(repo, 'a.txt'), 'a\n');
+		git('add', 'a.txt');
+		git('commit', '-qm', 'init');
+		git('worktree', 'add', '-q', '-b', `${name}-wt`, join(f.root, `${name}-wt`));
+		return { repo, worktreeDir: join(repo, '.git', 'worktrees', `${name}-wt`) };
+	}
+
+	const gitPolicies = (repo: string) => [workspace(), agent(false, [repo])];
+
+	test('PERS-1: a sandbox cannot plant .git/commondir (Linux: a residual until Landlock, and the run says so)', async () => {
+		const { repo } = await gitRepo('pers1');
+		const commondir = join(repo, '.git', 'commondir');
+		for (const policy of gitPolicies(repo)) {
+			const result = await sh(policy, [
+				`echo ${f.outside} > ${commondir}`,
+				`echo ${f.outside} > ${repo}/.git/objects/c && mv ${repo}/.git/objects/c ${commondir}`,
+				`echo ${f.outside} > ${repo}/.GIT/CommonDir`,
+			].join('; '), { workspaceRoots: [repo] });
+			if (isLinux) {
+				// bubblewrap binds only paths that exist at launch; HostGit refuses the redirect on the host (GIT-1).
+				assert.ok(result.unenforced.includes('filesystem.protectNew'), `${policy.name}: the run reports the gap`);
+				await fs.rm(commondir, { force: true });
+			} else {
+				assert.ok(!await exists(commondir), `${policy.name}: ${result.stderr}`);
+			}
+		}
+		await assertHostUnchanged();
+	});
+
+	test('PERS-2: a sandbox cannot rewrite a linked worktree\'s commondir or gitdir', async () => {
+		const { repo, worktreeDir } = await gitRepo('pers2');
+		const before = await Promise.all(['commondir', 'gitdir'].map(name => sha(join(worktreeDir, name))));
+		for (const policy of gitPolicies(repo)) {
+			await sh(policy, [
+				`echo ${f.outside} > ${worktreeDir}/commondir`,
+				`echo ${f.outside} > ${worktreeDir}/gitdir`,
+				`echo ${f.outside} > ${worktreeDir}/x.lock && mv ${worktreeDir}/x.lock ${worktreeDir}/commondir`,
+				`rm -f ${worktreeDir}/commondir`,
+			].join('; '), { workspaceRoots: [repo] });
+			assert.deepStrictEqual(await Promise.all(['commondir', 'gitdir'].map(name => sha(join(worktreeDir, name)))), before, policy.name);
+		}
+		await assertHostUnchanged();
+	});
+
+	test('PERS-3: a sandbox cannot change .git/config, hooks, info or alternates, while commits keep working', async () => {
+		const { repo, worktreeDir } = await gitRepo('pers3');
+		const config = join(repo, '.git', 'config');
+		const before = await sha(config);
+		// The real binary, not the macOS /usr/bin/git shim (which checks the Xcode license in a file the sandbox cannot read).
+		const gitBin = join(execFileSync('git', ['--exec-path'], { encoding: 'utf8' }).trim(), 'git');
+		for (const [i, policy] of gitPolicies(repo).entries()) {
+			const git = `${gitBin} -c user.name=t -c user.email=t@t -c core.hooksPath=/dev/null`;
+			const result = await sh(policy, [
+				`printf '[core]\\n\\tfsmonitor = touch ${f.outside}/pwned\\n' >> ${config}`,
+				`${gitBin} config core.fsmonitor 'touch ${f.outside}/pwned'`,
+				`cp ${config} ${repo}/.git/config.lock && mv ${repo}/.git/config.lock ${config}`,
+				`echo evil > ${repo}/.git/hooks/post-checkout`,
+				`mkdir -p ${repo}/.git/info && echo '* filter=x' > ${repo}/.git/info/attributes`,
+				`echo ${f.outside} > ${repo}/.git/objects/info/alternates`,
+				`echo evil > ${worktreeDir}/config.worktree`,
+				`${git} commit -q --allow-empty -m sandboxed && echo COMMITTED`,
+				`${git} checkout -q -b from-sandbox-${i} && echo BRANCHED`,
+				`echo b > b.txt && ${git} stash -q -u && echo STASHED`,
+			].join('; '), { workspaceRoots: [repo] });
+			assert.strictEqual(await sha(config), before, `${policy.name}: config`);
+			assert.ok(!await exists(join(repo, '.git', 'hooks', 'post-checkout')), policy.name);
+			assert.ok(!await exists(join(repo, '.git', 'info', 'attributes')), policy.name);
+			if (isLinux) {
+				// bubblewrap binds only names that exist at launch: a new config.worktree or alternates is the
+				// protectNew residual, and the run says so. On the host, HostGit refuses alternates planted
+				// while a sandboxed writer worked (GIT-4); config.worktree is read only with
+				// extensions.worktreeConfig, which lives in the protected config.
+				assert.ok(result.unenforced.includes('filesystem.protectNew'), `${policy.name}: the run reports the gap`);
+			} else {
+				assert.ok(!await exists(join(worktreeDir, 'config.worktree')), policy.name);
+				assert.ok(!await exists(join(repo, '.git', 'objects', 'info', 'alternates')), `${policy.name}: alternates`);
+			}
+			// Lock files are writable by design (git takes them for every update); a stale one only blocks.
+			await fs.rm(join(worktreeDir, 'config.worktree'), { force: true });
+			await fs.rm(join(repo, '.git', 'objects', 'info', 'alternates'), { force: true });
+			await fs.rm(join(repo, '.git', 'config.lock'), { force: true });
+			for (const done of ['COMMITTED', 'BRANCHED', 'STASHED']) {
+				assert.ok(result.stdout.includes(done), `${policy.name}: ${done} (the allow list keeps git usable): ${result.stderr}`);
+			}
+			execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'checkout', '-q', '-'], { cwd: repo, stdio: 'pipe' });
+		}
+		assert.ok(!await exists(join(f.outside, 'pwned')));
+		await assertHostUnchanged();
 	});
 
 	// bubblewrap cannot guard paths that do not exist yet: filesystem.protectNew (documented).

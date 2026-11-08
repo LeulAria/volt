@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { gitDirWritable } from './sandboxProfiles.js';
 import { ISandboxLimits, SandboxNetworkMode } from './sandboxSchema.js';
 
 /**
@@ -30,6 +31,8 @@ export interface IResolvedSandboxPolicy {
 	readonly protectPatterns: readonly IResolvedPattern[];
 	/** Workspace roots where creating a new `.git` entry is refused (a new repository brings its own config and hooks). */
 	readonly newRepositoryGuard: readonly string[];
+	/** Git folders whose contents are writable only by the allow list (`gitDirWritable`, B-03). */
+	readonly gitDirs: readonly IResolvedGitDir[];
 	readonly network: IResolvedNetwork;
 	/** Unix sockets the workload may connect to (real paths). */
 	readonly unixSockets: readonly string[];
@@ -49,6 +52,16 @@ export interface IResolvedPattern {
 	readonly root: string;
 	/** Literal path components, at least one. */
 	readonly names: readonly string[];
+}
+
+/**
+ * `anyDepth`: every `.git` folder below `root` (at any depth, including `root/.git`), whenever it
+ * appears. Otherwise `root` itself is a git folder (a linked worktree's common `.git`, written
+ * directly).
+ */
+export interface IResolvedGitDir {
+	readonly root: string;
+	readonly anyDepth: boolean;
 }
 
 export interface IResolvedNetwork {
@@ -98,6 +111,19 @@ export function resolvedPolicyAllows(policy: IResolvedSandboxPolicy, path: strin
 	const name = fold(p.slice(p.lastIndexOf('/') + 1));
 	if (name === '.git' && policy.newRepositoryGuard.some(root => insideFolded(root))) {
 		return false;
+	}
+	for (const dir of policy.gitDirs) {
+		if (!insideFolded(dir.root)) {
+			continue;
+		}
+		const parts = fold(p) === fold(dir.root) ? [] : (dir.root === '/' ? p.slice(1) : p.slice(dir.root.length + 1)).split('/');
+		const at = dir.anyDepth ? parts.findIndex(part => fold(part) === '.git') : -1;
+		if (dir.anyDepth && at < 0) {
+			continue;
+		}
+		if (!gitDirWritable(parts.slice(at + 1).join('/'))) {
+			return false;
+		}
 	}
 	return policy.write.some(root => inside(root))
 		|| policy.writeFiles.some(file => p === file || (p.startsWith(`${file}.`) && /^\.(lock|tmp|backup|bak|swp)/.test(p.slice(file.length))));

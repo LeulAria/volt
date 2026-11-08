@@ -12,7 +12,8 @@ import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
+import { IVoltStdioService, runGitThrough } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import {
 	buildWorktreeSetupPlan, currentSetupStep, IAgentWorktreeSetupService, IProjectFile, IWorktreeSetupRequest, IWorktreeSetupStatus, IWorktreeSetupStepStatus, IWorktreesJson,
 	parseProjectFile, parseWorktreesJson, PROJECT_FILES, setupOutputTail, WORKTREE_SETUP_FILES, WORKTREE_SETUP_TIMEOUT_MS, worktreeSetupEnv, worktreeSetupUnits,
@@ -215,6 +216,14 @@ export class AgentWorktreeSetupService extends Disposable implements IAgentWorkt
 		const background = units.filter(unit => unit.async);
 		const started = Date.now();
 		try {
+			// I.6: what a sandboxed agent changed in the files setup runs (package scripts, hooks,
+			// setup files) waits for the user's review before any of it runs outside the sandbox.
+			const review = await this.unreviewedChanges(run.request.repoRoot, run.status.worktreePath);
+			if (review.changes.length) {
+				this.update(chatId, run, status => ({ ...status, review: review.changes, reviewRoots: review.roots }));
+				throw new Error(`files that run code changed since an agent worked here (${review.changes.map(change => change.path.split(/[\\/]/).slice(-2).join('/')).slice(0, 4).join(', ')}${review.changes.length > 4 ? ', ...' : ''}). Review them, then the setup runs.`);
+			}
+			this.update(chatId, run, status => status.review ? { ...status, review: undefined, reviewRoots: undefined } : status);
 			for (const unit of blocking) {
 				await this.runUnit(chatId, run, unit.steps, unit.script, WORKTREE_SETUP_TIMEOUT_MS - (Date.now() - started));
 			}
@@ -246,10 +255,50 @@ export class AgentWorktreeSetupService extends Disposable implements IAgentWorkt
 		})();
 	}
 
+	private async unreviewedChanges(...roots: string[]): Promise<{ changes: IBuildEntryChange[]; roots: string[] }> {
+		const changes: IBuildEntryChange[] = [];
+		const changed: string[] = [];
+		for (const root of [...new Set(roots)]) {
+			const found = await this.stdio.buildEntryChanges?.(root).catch(() => []) ?? [];
+			if (found.length) {
+				changes.push(...found);
+				changed.push(root);
+			}
+		}
+		return { changes, roots: changed };
+	}
+
+	/** Submodules through HostGit: the repository's hooks and fsmonitor never run during setup. */
+	private async runSubmodules(chatId: string, run: ISetupRun, index: number, budgetMs: number): Promise<void> {
+		const step = run.status.steps[index];
+		const execId = `volt-setup-${chatId.slice(-8)}-${generateUuid().slice(0, 6)}`;
+		run.execId = execId;
+		this.setStep(chatId, run, index, { state: 'running', startedAt: Date.now() });
+		const result = await runGitThrough(this.stdio, {
+			id: execId,
+			cwd: run.status.worktreePath,
+			args: ['submodule', 'update', '--init', ...(/--recursive/.test(step.command) ? ['--recursive'] : [])],
+			env: worktreeSetupEnv({ repoRoot: run.request.repoRoot, worktreePath: run.status.worktreePath, branch: run.status.branch }),
+			timeoutMs: Math.max(30_000, budgetMs),
+		});
+		run.execId = undefined;
+		if (run.cancelled) {
+			throw new Error('Stopped.');
+		}
+		const tail = setupOutputTail(`${result.stdout}\n${result.stderr}`);
+		this.setStep(chatId, run, index, { state: result.exitCode === 0 ? 'done' : 'failed', endedAt: Date.now(), exitCode: result.exitCode, tail });
+		if (result.exitCode !== 0) {
+			throw new Error(result.timedOut ? `it did not finish within ${Math.round(WORKTREE_SETUP_TIMEOUT_MS / 60_000)} minutes` : `\`${step.command}\` failed${result.error ? `: ${result.error}` : ` with code ${result.exitCode ?? 'unknown'}`}`);
+		}
+	}
+
 	/** One shell for the unit's steps; progress read from its step markers. */
 	private async runUnit(chatId: string, run: ISetupRun, steps: readonly number[], script: string, budgetMs: number): Promise<void> {
 		if (run.cancelled || run.request.isCancelled?.()) {
 			throw new Error('Stopped.');
+		}
+		if (steps.length === 1 && run.status.steps[steps[0]].kind === 'submodules') {
+			return this.runSubmodules(chatId, run, steps[0], budgetMs);
 		}
 		const platform = isWindows ? 'windows' : 'unix';
 		const execId = `volt-setup-${chatId.slice(-8)}-${generateUuid().slice(0, 6)}`;

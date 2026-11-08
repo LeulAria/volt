@@ -50,7 +50,7 @@ function policy(overrides: Partial<IResolvedSandboxPolicy> = {}): IResolvedSandb
 	return {
 		name: 'test', platform: 'linux', readAll: false,
 		read: ['/usr', '/etc'], write: [REPO, TMP], writeFiles: [], deny: [], protect: [],
-		denyPatterns: [], protectPatterns: [], newRepositoryGuard: [],
+		denyPatterns: [], protectPatterns: [], newRepositoryGuard: [], gitDirs: [],
 		network: { mode: 'none', allow: [], loopbackPorts: [], listen: false },
 		unixSockets: [], systemServices: false, limits: {}, env: { PATH: '/usr/bin' },
 		cwd: REPO, tmp: TMP, home: '/home/me',

@@ -15,6 +15,10 @@ import { IConfigurationService } from '../../configuration/common/configuration.
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
+import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGit/common/hostGit.js';
+import { buildEntryGuard } from '../../voltGit/node/buildEntryGuard.js';
+import { runHostGit } from '../../voltGit/node/hostGit.js';
+import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { ChildLedger } from './childLedger.js';
@@ -62,6 +66,8 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 
 	/** Foreground commands and background jobs, by caller-chosen id. */
 	private readonly runs = new Map<string, ExecRun>();
+	/** HostGit calls that were given an id, for `cancelExec`. */
+	private readonly gitRuns = new Map<string, ChildProcess>();
 	private shellEnv: Promise<NodeJS.ProcessEnv> | undefined;
 	/**
 	 * The window (IPC context, `window:<id>`) that spawned each agent process. Its chats are the
@@ -110,6 +116,9 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		let args = options.args ?? [];
 		let cwd = options.cwd;
 		let env: NodeJS.ProcessEnv;
+		if (options.sandbox) {
+			await this.snapshotBuildEntries(options.sandbox);
+		}
 		// Throws SandboxUnavailableError when the sandbox cannot be established: the agent does not start.
 		const launch = options.sandbox ? await this.sandbox.prepare(command, args, options.sandbox, { cwd: options.cwd, hostEnv: await this.env(), env: options.env }) : undefined;
 		if (launch) {
@@ -211,6 +220,35 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	/** The window that started process or command `id`, if a window did. */
 	ownerOf(id: string): string | undefined {
 		return this.owners.get(id) ?? this.exitOwners.get(id) ?? this.runs.get(id)?.owner;
+	}
+
+	async git(request: IHostGitRequest): Promise<IHostGitResult> {
+		const id = request.id;
+		return runHostGit(request, { baseEnv: await this.env() }, child => {
+			if (id) {
+				this.gitRuns.set(id, child);
+				child.once('close', () => this.gitRuns.delete(id));
+			}
+		});
+	}
+
+	async buildEntryChanges(root: string): Promise<readonly IBuildEntryChange[]> {
+		return buildEntryGuard().changes(root);
+	}
+
+	async acceptBuildEntries(root: string, paths?: readonly string[]): Promise<void> {
+		await buildEntryGuard().accept(root, paths);
+		this.logService.info(`[volt-build-entry] the user accepted ${paths ? paths.length : 'all'} change(s) in ${root}`);
+	}
+
+	/**
+	 * I.6: before a sandboxed writer starts, the execution-bearing files of the folders it may write
+	 * are recorded, so what it changes there is shown before Volt runs any of it for the user.
+	 */
+	private async snapshotBuildEntries(request: IVoltSandboxRequest): Promise<void> {
+		const roots = [...(request.level === 'workspace-write' ? request.workspaceRoots : []), ...(request.extraWritableRoots ?? [])]
+			.filter(root => !/[\\/]\.git$/.test(root));
+		await Promise.all(roots.map(root => buildEntryGuard().snapshot(root).catch(err => this.logService.warn(`[volt-build-entry] could not record ${root}`, err))));
 	}
 
 	async sandboxSupport(): Promise<IVoltSandboxSupportInfo> {
@@ -346,6 +384,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		const started = Date.now();
 		let launch: ISandboxLaunch | undefined;
 		if (request.sandbox) {
+			await this.snapshotBuildEntries(request.sandbox);
 			try {
 				launch = await this.sandbox.prepare(shell.file, shell.args(request.command), request.sandbox, { cwd: request.cwd, hostEnv: await this.env(), env: request.env });
 			} catch (err) {
@@ -409,6 +448,11 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	async cancelExec(id: string): Promise<void> {
+		const git = this.gitRuns.get(id);
+		if (git) {
+			git.kill('SIGKILL');
+			this.gitRuns.delete(id);
+		}
 		const run = this.runs.get(id);
 		if (!run) {
 			return;

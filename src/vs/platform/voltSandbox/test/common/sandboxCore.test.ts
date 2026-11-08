@@ -9,7 +9,7 @@ import { allEnforcement, checkEnforcement, dimensionsUsed, ISandboxBackendCapabi
 import { describeCapabilities, evaluateCapabilities } from '../../common/sandboxCapabilities.js';
 import { allowCovers, composeSandboxPolicy, entryInside } from '../../common/sandboxComposition.js';
 import { agentSandboxPolicy, IAgentSandboxHost } from '../../common/sandboxPolicy.js';
-import { builtinProfile, isReservedEnvName, isSecretEnvName } from '../../common/sandboxProfiles.js';
+import { builtinProfile, gitDirWritable, isReservedEnvName, isSecretEnvName } from '../../common/sandboxProfiles.js';
 import { IResolvedSandboxPolicy, resolvedPolicyAllows } from '../../common/sandboxResolved.js';
 import { completeSandboxPolicy, networkEntryError, parseSandboxPolicy, parseSandboxPolicyLayer, parseSandboxPolicyText, pathEntryError, SANDBOX_POLICY_SCHEMA_VERSION } from '../../common/sandboxSchema.js';
 import { buildSeatbeltProfile } from '../../common/seatbelt.js';
@@ -221,6 +221,7 @@ const RESOLVED: IResolvedSandboxPolicy = {
 	denyPatterns: [{ root: '/Users/me/repo', names: ['.env'] }],
 	protectPatterns: [{ root: '/Users/me/repo', names: ['.git', 'hooks'] }],
 	newRepositoryGuard: ['/Users/me/repo'],
+	gitDirs: [],
 	network: { mode: 'proxy', allow: ['api.example.com'], loopbackPorts: [4321], listen: false },
 	unixSockets: [], systemServices: false, limits: { cpuSeconds: 10, fileSizeMB: 1 },
 	env: {}, cwd: '/Users/me/repo', tmp: '/private/tmp/run', home: '/Users/me',
@@ -313,6 +314,39 @@ suite('Volt sandbox resolved rules', () => {
 		assert.ok(!allows('/Users/me/repo/../.ssh/id', 'read'), 'no traversal');
 		assert.ok(!allows('relative', 'read'));
 		assert.ok(allows('/usr/bin/git', 'read') && !allows('/etc/passwd', 'read'));
+	});
+
+	test('.git is an allow list: commits, merges, rebases and fetches write; nothing that runs or redirects git does (B-03)', () => {
+		const writable = ['index', 'index.lock', 'HEAD', 'HEAD.lock', 'ORIG_HEAD', 'FETCH_HEAD', 'MERGE_HEAD', 'MERGE_MSG', 'COMMIT_EDITMSG', 'packed-refs', 'config.lock',
+			'objects/ab/cdef', 'objects/pack/p.pack', 'objects/info/commit-graph', 'refs/heads/main', 'logs/HEAD', 'rebase-merge/done', 'index.stash.123',
+			'worktrees/w/HEAD', 'worktrees/w/index', 'worktrees/w/logs/HEAD', 'worktrees/w/ORIG_HEAD'];
+		const readonly = ['', 'config', 'config.worktree', 'commondir', 'gitdir', 'hooks', 'hooks/pre-commit', 'info/exclude', 'info/attributes', 'modules/x/config',
+			'objects/info/alternates', 'objects/info/http-alternates', 'description', 'something-new', 'worktrees', 'worktrees/w', 'worktrees/w/commondir',
+			'worktrees/w/gitdir', 'worktrees/w/config.worktree', 'worktrees/w/hooks/x', 'worktrees/w/../../config', 'head', 'objects/../config'];
+		for (const name of writable) {
+			assert.ok(gitDirWritable(name), name);
+		}
+		for (const name of readonly) {
+			assert.ok(!gitDirWritable(name), name);
+		}
+		const policy: IResolvedSandboxPolicy = { ...RESOLVED, gitDirs: [{ root: '/Users/me/repo', anyDepth: true }, { root: '/Users/me/main/.git', anyDepth: false }], write: [...RESOLVED.write, '/Users/me/main/.git'] };
+		const allows = (path: string) => resolvedPolicyAllows(policy, path, 'write');
+		assert.ok(allows('/Users/me/repo/.git/objects/ab/cd') && allows('/Users/me/repo/sub/.git/index') && allows('/Users/me/repo/src/x.git'));
+		assert.ok(!allows('/Users/me/repo/.git/commondir') && !allows('/Users/me/repo/.GIT/CommonDir') && !allows('/Users/me/repo/vendor/lib/.git/hooks/x'));
+		assert.ok(!allows('/Users/me/repo/.git'), 'the .git entry itself');
+		assert.ok(allows('/Users/me/main/.git/worktrees/w/index') && !allows('/Users/me/main/.git/worktrees/w/commondir') && !allows('/Users/me/main/.git/objects/info/alternates'));
+		assert.ok(allows('/private/tmp/run/repo/.git/config'), 'temp roots are not guarded (scratch repositories)');
+	});
+
+	test('Seatbelt expresses the .git allow list with name patterns, so later names are covered', () => {
+		const profile = buildSeatbeltProfile({ ...RESOLVED, gitDirs: [{ root: '/Users/me/repo', anyDepth: true }] }, { tag: 't' });
+		const deny = profile.indexOf('(deny file-write* (with message "VOLTSBX-t")\n\t(regex #"^/[uU][sS][eE][rR][sS]/[mM][eE]/[rR][eE][pP][oO]/(.*/)?\\.[gG][iI][tT](/.*)?$")');
+		const allow = profile.indexOf('(allow file-write*\n\t(regex #"^/[uU][sS][eE][rR][sS]/[mM][eE]/[rR][eE][pP][oO]/(.*/)?\\.[gG][iI][tT]/(worktrees/[^/]+/)?(objects|refs|logs|');
+		const redeny = profile.indexOf('/(worktrees/[^/]+/)?objects/info/(http-)?alternates$")');
+		const writes = profile.indexOf('(allow file-read* file-write*\n\t(regex');
+		const protect = profile.indexOf('(deny file-write* (with message "VOLTSBX-t")\n\t(regex #"^/[uU]');
+		assert.ok(writes >= 0 && deny > writes && allow > deny && redeny > allow, profile);
+		assert.ok(protect >= 0 && profile.lastIndexOf('(deny file-read* file-write*') > redeny, 'protect and deny sections still come after');
 	});
 });
 
