@@ -64,6 +64,53 @@ describe('signatures', () => {
 	});
 });
 
+describe('REM-5: relay pairing brute force limit', () => {
+	test('a code is locked after 10 wrong tries, whatever address they come from', async () => {
+		const relay = await start();
+		try {
+			const pairing = await relay.server.relay.createPairing('client');
+			// Ten wrong guesses from ten addresses (the per-address limit never trips).
+			for (let i = 0; i < 10; i++) {
+				await assert.rejects(relay.server.relay.pair({ code: `WRNG-${String(i).padStart(4, '0')}` }, `10.0.0.${i}`), err => err.status === 403);
+			}
+			// The right code no longer works: it was locked, not just rate limited.
+			await assert.rejects(relay.server.relay.pair({ code: pairing.code }, '10.0.1.1'), err => err.status === 403 && /locked/.test(err.message));
+			// A new code pairs.
+			const fresh = await relay.server.relay.createPairing('client');
+			assert.equal((await relay.call('POST', '/api/pair', { code: fresh.code })).status, 200);
+		} finally {
+			relay.server.close();
+		}
+	});
+
+	test('nine wrong tries leave a code working', async () => {
+		const relay = await start();
+		try {
+			const pairing = await relay.server.relay.createPairing('client');
+			for (let i = 0; i < 9; i++) {
+				await assert.rejects(relay.server.relay.pair({ code: `WRNG-${String(i).padStart(4, '0')}` }, `10.0.0.${i}`), err => err.status === 403);
+			}
+			assert.ok((await relay.server.relay.pair({ code: pairing.code }, '10.0.1.1')).token);
+		} finally {
+			relay.server.close();
+		}
+	});
+
+	test('one address is refused after 20 wrong tries a minute; others are not', async () => {
+		const relay = await start();
+		try {
+			for (let i = 0; i < 20; i++) {
+				await assert.rejects(relay.server.relay.pair({ enrollKey: 'wrong' }, '10.9.9.9'), err => err.status === 403);
+			}
+			await assert.rejects(relay.server.relay.pair({ enrollKey: 'wrong' }, '10.9.9.9'), err => err.status === 429);
+			const pairing = await relay.server.relay.createPairing('client');
+			assert.ok((await relay.server.relay.pair({ code: pairing.code }, '10.9.9.10')).token);
+		} finally {
+			relay.server.close();
+		}
+	});
+});
+
 describe('relay', () => {
 	let relay;
 	let token;
