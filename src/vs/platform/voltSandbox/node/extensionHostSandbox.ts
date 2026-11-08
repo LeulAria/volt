@@ -151,8 +151,12 @@ export async function handOffWhenReady(started: { readonly host: ISandboxedHost;
 	return !!next && started.host.send(next.message, next.socket);
 }
 
-/** `out/` and the `node_modules` beside it (followed through a link, as a dev checkout has). */
+/**
+ * Volt's code a host loads: `out/`, the `node_modules` beside it (followed through a link, as a
+ * dev checkout has) and the product files `out/` reads. Not the rest of the app folder.
+ */
 function defaultAppRoots(bootstrapFork: string): string[] {
 	const out = dirname(bootstrapFork);
-	return [out, join(dirname(out), 'node_modules')];
+	const app = dirname(out);
+	return [out, join(app, 'node_modules'), join(app, 'product.json'), join(app, 'package.json')];
 }
