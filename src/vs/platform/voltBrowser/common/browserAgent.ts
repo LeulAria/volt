@@ -84,7 +84,15 @@ export interface IVoltPlayground {
 	readonly id: string;
 	readonly sessionId: string;
 	readonly title: string;
+	/**
+	 * What to open: the playground's address with its secret (`?volt_pg=...`). The page keeps the
+	 * secret in a cookie, so its own links and fetches need nothing more.
+	 */
 	readonly url: string;
+	/** `http://127.0.0.1:<port>/`, without the secret: paths join onto this. */
+	readonly origin?: string;
+	/** The playground's secret, for tools that send it as `Authorization: Bearer`. */
+	readonly secret?: string;
 	/** Folder holding its files (outside every workspace). */
 	readonly dir: string;
 	readonly files: readonly string[];
@@ -257,6 +265,14 @@ export function parseEmulation(input: Record<string, unknown>): { emulation: IVo
 		out.locale = input.locale.trim();
 	}
 	return { emulation: out, errors };
+}
+
+/** A page of a playground to open: `<origin><path>?volt_pg=<secret>` (the page keeps the secret as a cookie). */
+export function playgroundPageUrl(playground: Pick<IVoltPlayground, 'url' | 'origin' | 'secret'>, path = ''): string {
+	if (!playground.origin || !playground.secret) {
+		return `${playground.url}${path}`;
+	}
+	return `${playground.origin}${path.replace(/^\/+/, '')}?volt_pg=${playground.secret}`;
 }
 
 /** `a/b.css` stays; `../x`, absolute paths, and `.git` parts are refused. */

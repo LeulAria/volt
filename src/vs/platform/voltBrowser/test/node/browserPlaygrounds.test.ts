@@ -5,10 +5,25 @@
 
 import assert from 'assert';
 import { existsSync } from 'fs';
+import { request as httpRequest, type IncomingHttpHeaders } from 'http';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { matchMockRoute, matchPlaygroundMock, parseEmulation, parseMockRoutes, parsePlaygroundFiles, parsePlaygroundMocks, portFromLog, safePlaygroundPath, urlPatternMatches } from '../../common/browserAgent.js';
+import { matchMockRoute, matchPlaygroundMock, parseEmulation, parseMockRoutes, parsePlaygroundFiles, parsePlaygroundMocks, playgroundPageUrl, portFromLog, safePlaygroundPath, urlPatternMatches } from '../../common/browserAgent.js';
 import { BrowserPlaygrounds, parseLsofListen, PLAYGROUND_ROOT } from '../../node/browserPlaygrounds.js';
 import { DevServers } from '../../node/devServers.js';
+
+/** Node's HTTP client: unlike a page's fetch, it sends exactly the Host, Origin and Cookie given (or none). */
+function call(url: string, init: { method?: string; headers?: Record<string, string> } = {}): Promise<{ status: number; headers: IncomingHttpHeaders; text: string }> {
+	return new Promise((resolve, reject) => {
+		const req = httpRequest(url, { method: init.method ?? 'GET', headers: init.headers }, res => {
+			let text = '';
+			res.setEncoding('utf8');
+			res.on('data', chunk => text += chunk);
+			res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, text }));
+		});
+		req.on('error', reject);
+		req.end();
+	});
+}
 
 suite('Volt browser agent: mocks, emulation, playgrounds', () => {
 
@@ -87,19 +102,24 @@ suite('Volt browser agent: mocks, emulation, playgrounds', () => {
 			files: { 'index.html': '<script type="module" src="/app.js"></script>', 'app.js': 'export const x = 1;', 'nested/page.html': 'nested' },
 			mocks: parsePlaygroundMocks([{ path: '/api/plans', json: [{ id: 'pro' }], delay_ms: 20 }]).mocks,
 		});
+		// The playground's own origin; every request carries its secret (here as a bearer, as tools do).
+		const origin = created.origin!;
+		const auth = { headers: { Authorization: `Bearer ${created.secret}` } };
 		try {
-			assert.match(created.url, /^http:\/\/127\.0\.0\.1:\d+\/$/);
+			assert.match(origin, /^http:\/\/127\.0\.0\.1:\d+\/$/);
+			assert.strictEqual(created.url, `${origin}?volt_pg=${created.secret}`);
+			assert.strictEqual(playgroundPageUrl(created, 'nested/page.html'), `${origin}nested/page.html?volt_pg=${created.secret}`);
 			assert.ok(created.dir.startsWith(PLAYGROUND_ROOT));
-			const page = await fetch(created.url);
-			assert.strictEqual(page.headers.get('content-type'), 'text/html; charset=utf-8');
-			assert.match(await page.text(), /app\.js/);
-			assert.strictEqual((await fetch(`${created.url}app.js`)).headers.get('content-type'), 'text/javascript; charset=utf-8');
-			assert.deepStrictEqual(await (await fetch(`${created.url}api/plans`)).json(), [{ id: 'pro' }]);
-			assert.strictEqual((await fetch(`${created.url}missing.css`)).status, 404);
-			assert.strictEqual((await fetch(`${created.url}..%2F..%2Fetc%2Fpasswd`)).status, 404);
+			const page = await call(created.url);
+			assert.strictEqual(page.headers['content-type'], 'text/html; charset=utf-8');
+			assert.match(page.text, /app\.js/);
+			assert.strictEqual((await call(`${origin}app.js`, auth)).headers['content-type'], 'text/javascript; charset=utf-8');
+			assert.deepStrictEqual(JSON.parse((await call(`${origin}api/plans`, auth)).text), [{ id: 'pro' }]);
+			assert.strictEqual((await call(`${origin}missing.css`, auth)).status, 404);
+			assert.strictEqual((await call(`${origin}..%2F..%2Fetc%2Fpasswd`, auth)).status, 404);
 			const updated = await playgrounds.update({ id: created.id, files: { 'app.js': 'export const x = 2;' }, remove: ['nested/page.html'] });
 			assert.deepStrictEqual(updated.files, ['app.js', 'index.html']);
-			assert.strictEqual(await (await fetch(`${created.url}app.js`)).text(), 'export const x = 2;');
+			assert.strictEqual((await call(`${origin}app.js`, auth)).text, 'export const x = 2;');
 			assert.strictEqual(playgrounds.list('chat-1').length, 1);
 			assert.strictEqual(playgrounds.list('chat-2').length, 0);
 		} finally {
@@ -107,8 +127,36 @@ suite('Volt browser agent: mocks, emulation, playgrounds', () => {
 			assert.strictEqual(removed.length, 1);
 		}
 		assert.ok(!existsSync(created.dir));
-		await assert.rejects(fetch(created.url));
+		await assert.rejects(call(created.url));
 		await playgrounds.dispose();
+	});
+
+	test('LST-8: a playground answers only with its secret, on a loopback Host, and writes by URL secret need its Origin', async () => {
+		const playgrounds = new BrowserPlaygrounds(() => { });
+		const created = await playgrounds.create({
+			sessionId: 'chat-lst',
+			title: 'Auth',
+			files: { 'index.html': 'hello' },
+			mocks: parsePlaygroundMocks([{ path: '/api/save', method: 'POST', json: { ok: true } }]).mocks,
+		});
+		const origin = created.origin!;
+		const port = new URL(origin).port;
+		try {
+			assert.strictEqual((await call(origin)).status, 401, 'no secret');
+			assert.strictEqual((await call(origin, { headers: { Authorization: 'Bearer forged' } })).status, 401, 'forged secret');
+			assert.strictEqual((await call(`${origin}?volt_pg=forged`)).status, 401, 'forged URL secret');
+			assert.strictEqual((await call(origin, { headers: { Authorization: `Bearer ${created.secret}`, Host: `rebound.example:${port}` } })).status, 403, 'forged Host');
+			const opened = await call(created.url);
+			assert.strictEqual(opened.status, 200);
+			const cookie = String(opened.headers['set-cookie'] ?? '').split(';')[0];
+			assert.match(cookie, /^volt_pg_[0-9a-f]{8}=/);
+			assert.strictEqual((await call(origin, { headers: { Cookie: cookie } })).status, 200, 'the page keeps the secret in a cookie');
+			assert.strictEqual((await call(`${origin}api/save`, { method: 'POST', headers: { Cookie: cookie } })).status, 403, 'a cookie write without an Origin');
+			assert.strictEqual((await call(`${origin}api/save`, { method: 'POST', headers: { Cookie: cookie, Origin: 'http://evil.example' } })).status, 403, 'another site');
+			assert.strictEqual((await call(`${origin}api/save`, { method: 'POST', headers: { Cookie: cookie, Origin: origin.replace(/\/$/, '') } })).status, 200, 'the page itself');
+		} finally {
+			await playgrounds.dispose();
+		}
 	});
 
 	test('the port a dev server announces', () => {
