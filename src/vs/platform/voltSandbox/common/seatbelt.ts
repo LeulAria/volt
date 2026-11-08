@@ -8,7 +8,7 @@ import { IResolvedPattern, IResolvedSandboxPolicy } from './sandboxResolved.js';
 
 /**
  * Seatbelt (SBPL) profiles from a resolved policy. Every path reaches the profile through
- * `sbplString` or `sbplRegex`, never raw, and the profile text is the only input to
+ * `sbplString` or `regexBody` (`sbplRegex`), never raw, and the profile text is the only input to
  * `sandbox-exec -p`. Rules are evaluated last-match-wins, so each section narrows the one before.
  *
  * Verified on macOS 26.6 (see docs/security/sandbox/03-security-findings.md):
@@ -93,11 +93,168 @@ export function sbplRegex(value: string, suffix = '', caseInsensitive = false): 
 	return `#"^${regexBody(value, caseInsensitive)}${suffix}$"`;
 }
 
-/** `<root>/(…/)?a/b` and everything below it. */
-function patternRegex(pattern: IResolvedPattern, caseInsensitive: boolean): string {
-	const root = pattern.root === '/' ? '' : regexBody(pattern.root, caseInsensitive);
-	const names = pattern.names.map(name => regexBody(name, caseInsensitive)).join('/');
-	return `#"^${root}/(.*/)?${names}(/.*)?$"`;
+/**
+ * `sandbox-exec` rejects a string or regex literal longer than 1023 bytes (measured on macOS 26.6);
+ * merged regexes stay under this.
+ */
+const MAX_LITERAL = 1000;
+
+/**
+ * A path regex `^<prefix><suffix>$`: `prefix` a literal path (matched in either case with
+ * `caseInsensitive`), `suffix` regex source. Regexes of one rule with the same suffix are merged
+ * into one alternation (`mergeFilters`): `sandbox-exec` spends about a millisecond compiling each
+ * regex filter whatever its length, so an agent profile of a few hundred `.env`-style denies took
+ * most of a second to start (04-performance.md).
+ */
+interface IPathRegex {
+	readonly prefix: string;
+	readonly suffix: string;
+	readonly caseInsensitive: boolean;
+}
+
+/** A rule's filter: profile text as is, or a path regex to merge. */
+type SeatbeltFilter = string | IPathRegex;
+
+/**
+ * Whether `<prefix><suffix>` already matches everything `<prefix>/<more><suffix>` does, so a
+ * prefix below another one in the same group adds nothing: true when the suffix starts with
+ * `(/.*)?` (the path and everything below it) or `/(.*` + `/)?` (a name at any depth below it).
+ */
+function coversBelow(suffix: string): boolean {
+	return suffix.startsWith('(/.*)?') || suffix.startsWith('/(.*/)?');
+}
+
+/** ASCII letters fold to lower case when the regex matches either case (as `regexBody` does). */
+function foldKey(ch: string, caseInsensitive: boolean): string {
+	return caseInsensitive && /[a-z]/i.test(ch) ? ch.toLowerCase() : ch;
+}
+
+interface ITrieNode {
+	end: boolean;
+	readonly children: Map<string, ITrieNode>;
+}
+
+/**
+ * Regex source matching exactly the given literal strings, as a prefix tree: `/a/bc` and `/a/bd`
+ * become `/a/b(c|d)`. The same language as `(v1|v2|…)`, shorter, so more fit in one literal.
+ */
+function literalAlternation(values: readonly string[], caseInsensitive: boolean): string {
+	const root: ITrieNode = { end: false, children: new Map() };
+	for (const value of values) {
+		let node = root;
+		for (const ch of value) {
+			const key = foldKey(ch, caseInsensitive);
+			let next = node.children.get(key);
+			if (!next) {
+				next = { end: false, children: new Map() };
+				node.children.set(key, next);
+			}
+			node = next;
+		}
+		node.end = true;
+	}
+	const emit = (node: ITrieNode): string => {
+		const branches = [...node.children.keys()].sort().map(key => regexBody(key, caseInsensitive) + emit(node.children.get(key)!));
+		if (!branches.length) {
+			return '';
+		}
+		if (node.end) {
+			return `(${branches.join('|')})?`;
+		}
+		return branches.length === 1 ? branches[0] : `(${branches.join('|')})`;
+	};
+	return emit(root);
+}
+
+/**
+ * A rule's filters with duplicates dropped and path regexes merged: each group of regexes with
+ * the same suffix becomes as few `(regex …)` filters as fit under the literal limit, at the place
+ * of the group's first member. A rule's filters are alternatives, so the merged regex matches
+ * exactly the paths one of its members did (SB-EQ-1 checks this under `sandbox-exec`).
+ */
+function mergeFilters(filters: readonly SeatbeltFilter[]): string[] {
+	const out: (string | IPathRegex[])[] = [];
+	const seen = new Set<string>();
+	const groups = new Map<string, IPathRegex[]>();
+	for (const filter of filters) {
+		if (typeof filter === 'string') {
+			if (!seen.has(filter)) {
+				seen.add(filter);
+				out.push(filter);
+			}
+			continue;
+		}
+		const key = `${filter.caseInsensitive ? 'i' : 's'}${filter.suffix}`;
+		let group = groups.get(key);
+		if (!group) {
+			group = [];
+			groups.set(key, group);
+			out.push(group);
+		}
+		group.push(filter);
+	}
+	return out.flatMap(item => typeof item === 'string' ? [item] : groupRegexes(item));
+}
+
+function groupRegexes(group: readonly IPathRegex[]): string[] {
+	const { suffix, caseInsensitive } = group[0];
+	const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+	// Shortest first, so a prefix is only dropped for one already kept.
+	const sorted = [...new Set(group.map(filter => filter.prefix))]
+		.map(prefix => ({ prefix, folded: [...prefix].map(ch => foldKey(ch, caseInsensitive)).join('') }))
+		.sort((a, b) => a.prefix.length - b.prefix.length || compare(a.prefix, b.prefix));
+	const kept: { readonly prefix: string; readonly folded: string }[] = [];
+	for (const entry of sorted) {
+		if (kept.some(other => entry.folded === other.folded || (coversBelow(suffix) && entry.folded.startsWith(`${other.folded}/`)))) {
+			continue;
+		}
+		kept.push(entry);
+	}
+	// Neighbours in path order share the longest prefixes.
+	const prefixes = kept.sort((a, b) => compare(a.folded, b.folded)).map(entry => entry.prefix);
+	const literal = (from: number, to: number) => `^${to - from === 1 ? regexBody(prefixes[from], caseInsensitive) : literalAlternation(prefixes.slice(from, to), caseInsensitive)}${suffix}$`;
+	// Each chunk takes as many prefixes as fit; a prefix tree only grows as strings are added, so
+	// the largest fitting chunk is found by bisection. A single prefix that does not fit stays alone.
+	const out: string[] = [];
+	for (let from = 0; from < prefixes.length;) {
+		let lo = from + 1;
+		let hi = prefixes.length;
+		while (lo < hi) {
+			const mid = (lo + hi + 1) >> 1;
+			if (literal(from, mid).length <= MAX_LITERAL) {
+				lo = mid;
+			} else {
+				hi = mid - 1;
+			}
+		}
+		out.push(`(regex #"${literal(from, lo)}")`);
+		from = lo;
+	}
+	return out;
+}
+
+/** `(rule\n\tfilter\n\tfilter)`, filters merged. */
+function rule(head: string, filters: readonly SeatbeltFilter[]): string {
+	return `(${head}\n\t${mergeFilters(filters).join('\n\t')})`;
+}
+
+/**
+ * `<root>/(…/)?a/b` and everything below it. Patterns with the same root share one filter
+ * (`<root>/(…/)?(a/b|c)(/.*)?`), whose roots then merge like any path regex.
+ */
+function patternFilters(patterns: readonly IResolvedPattern[], caseInsensitive: boolean): IPathRegex[] {
+	const byRoot = new Map<string, Set<string>>();
+	for (const pattern of patterns) {
+		const names = byRoot.get(pattern.root) ?? new Set<string>();
+		names.add(pattern.names.join('/'));
+		byRoot.set(pattern.root, names);
+	}
+	return [...byRoot].map(([root, names]) => ({
+		prefix: root === '/' ? '' : root,
+		// Never empty, never optional as a whole: a plain concatenation or one group.
+		suffix: `/(.*/)?${literalAlternation([...names], caseInsensitive)}(/.*)?`,
+		caseInsensitive,
+	}));
 }
 
 /**
@@ -105,11 +262,17 @@ function patternRegex(pattern: IResolvedPattern, caseInsensitive: boolean): stri
  * spelling reaches the same file, so denies match either case; allows stay exact, which can only
  * refuse more.
  */
-function subpathFilter(path: string, caseInsensitive: boolean): string {
+function subpathFilter(path: string, caseInsensitive: boolean): SeatbeltFilter {
 	if (!caseInsensitive || !/[a-z]/i.test(path)) {
 		return `(subpath ${sbplString(path)})`;
 	}
-	return `(regex ${sbplRegex(path, '(/.*)?', true)})`;
+	return { prefix: path, suffix: '(/.*)?', caseInsensitive: true };
+}
+
+/** One `subpathFilter` as profile text (for a filter nested in another). */
+function subpathText(path: string, caseInsensitive: boolean): string {
+	const filter = subpathFilter(path, caseInsensitive);
+	return typeof filter === 'string' ? filter : mergeFilters([filter])[0];
 }
 
 export interface ISeatbeltProfileOptions {
@@ -160,7 +323,7 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		}
 		const read = [...policy.read, ...policy.unixSockets].map(path => `(subpath ${sbplString(path)})`);
 		if (read.length) {
-			out.push(`(allow file-read*\n\t${read.join('\n\t')})`);
+			out.push(rule('allow file-read*', read));
 		}
 	}
 
@@ -168,51 +331,50 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 	if (policy.systemServices) {
 		out.push(`(deny file-write* ${message})`);
 	}
-	const write = [
+	const write: SeatbeltFilter[] = [
 		`(regex ${DEVICE_FILES})`,
 		...policy.write.map(path => `(subpath ${sbplString(path)})`),
-		...policy.writeFiles.flatMap(file => [`(literal ${sbplString(file)})`, `(regex ${sbplRegex(file, '\\.(lock|tmp|backup|bak|swp)[^/]*')})`]),
+		...policy.writeFiles.flatMap((file): SeatbeltFilter[] => [`(literal ${sbplString(file)})`, { prefix: file, suffix: '\\.(lock|tmp|backup|bak|swp)[^/]*', caseInsensitive: false }]),
 	];
-	out.push(`(allow file-read* file-write*\n\t${write.join('\n\t')})`);
+	out.push(rule('allow file-read* file-write*', write));
 
 	// `.git` as an allow list (B-03): read-only except what commits, merges, rebases and fetches
 	// write. Name patterns, so a `commondir`, hook or config created later is covered as well, and
 	// the `.git` entry itself cannot be replaced, moved or removed.
 	if (policy.gitDirs.length) {
-		const prefixes = policy.gitDirs.map(dir => dir.anyDepth
-			? `${dir.root === '/' ? '' : regexBody(dir.root, ci)}/(.*/)?${regexBody('.git', ci)}`
-			: regexBody(dir.root, ci));
+		const git = (suffix: string): IPathRegex[] => policy.gitDirs.map(dir => dir.anyDepth
+			? { prefix: dir.root === '/' ? '' : dir.root, suffix: `/(.*/)?${regexBody('.git', ci)}${suffix}`, caseInsensitive: ci }
+			: { prefix: dir.root, suffix, caseInsensitive: ci });
 		const worktree = '(worktrees/[^/]+/)?';
 		out.push(
-			`(deny file-write* ${message}\n\t${prefixes.map(p => `(regex #"^${p}(/.*)?$")`).join('\n\t')})`,
-			`(allow file-write*\n\t${prefixes.flatMap(p => [`(regex #"^${p}/${worktree}${GIT_WRITABLE_REGEX.dirs}(/.*)?$")`, `(regex #"^${p}/${worktree}${GIT_WRITABLE_REGEX.files}$")`]).join('\n\t')})`,
-			`(deny file-write* ${message}\n\t${prefixes.map(p => `(regex #"^${p}/${worktree}${GIT_WRITABLE_REGEX.readonlyObjects}$")`).join('\n\t')})`,
+			rule(`deny file-write* ${message}`, git('(/.*)?')),
+			rule('allow file-write*', [...git(`/${worktree}${GIT_WRITABLE_REGEX.dirs}(/.*)?`), ...git(`/${worktree}${GIT_WRITABLE_REGEX.files}`)]),
+			rule(`deny file-write* ${message}`, git(`/${worktree}${GIT_WRITABLE_REGEX.readonlyObjects}`)),
 		);
 	}
 
 	// Protected: readable, never writable, even inside a writable folder.
 	const protect = [
 		...policy.protect.map(path => subpathFilter(path, ci)),
-		...policy.protectPatterns.map(pattern => `(regex ${patternRegex(pattern, ci)})`),
+		...patternFilters(policy.protectPatterns, ci),
 	];
 	if (protect.length) {
-		out.push(`(deny file-write* ${message}\n\t${protect.join('\n\t')})`);
+		out.push(rule(`deny file-write* ${message}`, protect));
 	}
 	// A new repository brings its own config and hooks: no `.git` entry may be created below a workspace.
 	if (policy.newRepositoryGuard.length) {
-		const guards = policy.newRepositoryGuard.map(root => `(regex #"^${regexBody(root, ci)}/(.*/)?${regexBody('.git', ci)}$")`);
-		out.push(`(deny file-write-create ${message}\n\t${guards.join('\n\t')})`);
+		out.push(rule(`deny file-write-create ${message}`, policy.newRepositoryGuard.map(root => ({ prefix: root, suffix: `/(.*/)?${regexBody('.git', ci)}`, caseInsensitive: ci }))));
 	}
 
 	// Denied: neither readable nor writable, last so nothing above re-allows it.
 	const deny = [
 		...policy.deny.map(path => subpathFilter(path, ci)),
-		...policy.denyPatterns.map(pattern => `(regex ${patternRegex(pattern, ci)})`),
+		...patternFilters(policy.denyPatterns, ci),
 		// Other runs' folders and other principals' caches: everything below the root but our own.
-		...(policy.isolated ?? []).map(({ root, keep }) => `(require-all ${subpathFilter(root, ci)} (require-not (subpath ${sbplString(keep)})))`),
+		...(policy.isolated ?? []).map(({ root, keep }) => `(require-all ${subpathText(root, ci)} (require-not (subpath ${sbplString(keep)})))`),
 	];
 	if (deny.length) {
-		out.push(`(deny file-read* file-write* ${message}\n\t${deny.join('\n\t')})`);
+		out.push(rule(`deny file-read* file-write* ${message}`, deny));
 	}
 	// Other terminals, whatever the base: their input and output belong to the user (B-26).
 	out.push(`(deny file-read* file-write* file-ioctl ${message} (regex ${TERMINAL_DEVICES}))`);
