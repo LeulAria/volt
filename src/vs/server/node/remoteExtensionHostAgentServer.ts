@@ -33,7 +33,8 @@ import { IProductService } from '../../platform/product/common/productService.js
 import { ConnectionType, ConnectionTypeRequest, ErrorMessage, HandshakeMessage, IRemoteExtensionHostStartParams, ITunnelConnectionStartParams, SignRequest } from '../../platform/remote/common/remoteAgentConnection.js';
 import { RemoteAgentConnectionContext } from '../../platform/remote/common/remoteAgentEnvironment.js';
 import { ITelemetryService } from '../../platform/telemetry/common/telemetry.js';
-import { ExtensionHostConnection } from './extensionHostConnection.js';
+import { ExtensionHostConnection, ISandboxedExtensionHostStart, IVoltExtensionHostSandbox, startSandboxedExtensionHost } from './extensionHostConnection.js';
+import { sandboxRefusalMessage } from '../../platform/voltSandbox/common/extensionHostSandbox.js';
 import { ManagementConnection } from './remoteExtensionManagement.js';
 import { determineServerConnectionToken, requestHasValidConnectionToken as httpRequestHasValidConnectionToken, ServerConnectionToken, ServerConnectionTokenParseError, ServerConnectionTokenType } from './serverConnectionToken.js';
 import { IServerEnvironmentService, ServerParsedArgs } from './serverEnvironmentService.js';
@@ -77,6 +78,7 @@ class RemoteExtensionHostAgentServer extends Disposable implements IServerAPI {
 		hasWebClient: boolean,
 		serverBasePath: string | undefined,
 		webConfiguration: WebConfigurationProvider | undefined,
+		private readonly _extensionHostSandbox: IVoltExtensionHostSandbox | undefined,
 		@IServerEnvironmentService private readonly _environmentService: IServerEnvironmentService,
 		@IProductService private readonly _productService: IProductService,
 		@ILogService private readonly _logService: ILogService,
@@ -467,6 +469,19 @@ class RemoteExtensionHostAgentServer extends Disposable implements IServerAPI {
 					return this._rejectWebSocketConnection(logPrefix, protocol, `Duplicate reconnection token`);
 				}
 
+				// Volt (P2): a host for one sandboxed extension starts (and is attested) before the
+				// connection is accepted, so a refusal goes back on it with its reason. Never a plain fork instead.
+				let sandboxed: ISandboxedExtensionHostStart | undefined;
+				if (startParams.voltSandbox) {
+					const result = await this._instantiationService.invokeFunction(accessor => startSandboxedExtensionHost(this._extensionHostSandbox, startParams, {
+						environmentService: accessor.get(IServerEnvironmentService), logService: accessor.get(ILogService), configurationService: accessor.get(IConfigurationService),
+					}));
+					if (!result.ok) {
+						return this._rejectWebSocketConnection(logPrefix, protocol, sandboxRefusalMessage(result.code, result.reason));
+					}
+					sandboxed = result.started;
+				}
+
 				protocol.sendPause();
 				protocol.sendControl(VSBuffer.fromString(JSON.stringify(startParams.port ? { debugPort: startParams.port } : {})));
 				const dataChunk = protocol.readEntireBuffer();
@@ -479,7 +494,7 @@ class RemoteExtensionHostAgentServer extends Disposable implements IServerAPI {
 					delete this._extHostConnections[reconnectionToken];
 					this._onDidCloseExtHostConnection();
 				});
-				con.start(startParams);
+				con.start(startParams, sandboxed);
 			}
 
 		} else if (msg.desiredConnectionType === ConnectionType.Tunnel) {
@@ -642,6 +657,8 @@ export interface IServerAPI {
 export interface IServerEmbedder {
 	registerChannels?(socketServer: SocketServer<RemoteAgentConnectionContext>, instantiationService: IInstantiationService): void;
 	readonly webConfiguration?: WebConfigurationProvider;
+	/** Volt (P2): runs opted-in extensions alone in sandboxed hosts. Without it such a request is refused. */
+	readonly extensionHostSandbox?: IVoltExtensionHostSandbox;
 }
 
 export async function createServer(address: string | net.AddressInfo | null, args: ServerParsedArgs, REMOTE_DATA_FOLDER: string, embedder?: IServerEmbedder): Promise<IServerAPI> {
@@ -769,7 +786,7 @@ export async function createServer(address: string | net.AddressInfo | null, arg
 		console.log(`Web UI available at http://localhost${address.port === 80 ? '' : `:${address.port}`}${serverBasePath ?? ''}${queryPart}`);
 	}
 
-	const remoteExtensionHostAgentServer = instantiationService.createInstance(RemoteExtensionHostAgentServer, socketServer, connectionToken, vsdaMod, hasWebClient, serverBasePath, embedder?.webConfiguration);
+	const remoteExtensionHostAgentServer = instantiationService.createInstance(RemoteExtensionHostAgentServer, socketServer, connectionToken, vsdaMod, hasWebClient, serverBasePath, embedder?.webConfiguration, embedder?.extensionHostSandbox);
 
 	perf.mark('code/server/ready');
 	const currentTime = performance.now();

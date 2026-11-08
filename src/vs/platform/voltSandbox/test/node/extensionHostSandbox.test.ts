@@ -157,7 +157,9 @@ suite('Volt T3 extension hosts (P2, real sandbox)', function () {
 			home,
 		});
 		assert.ok(result.ok, result.ok ? '' : `${result.code}: ${result.reason}`);
-		const handed = handOffWhenReady(result.host, () => ({ message: { type: 'VSCODE_EXTHOST_IPC_SOCKET', initialDataChunk: '', skipWebSocketFrames: true, permessageDeflate: false, inflateBytes: '' }, socket: accepted }));
+		// Attached late on purpose: the host said READY at once, and the supervisor kept it for the first listener.
+		await new Promise(resolve => setTimeout(resolve, 200));
+		const handed = handOffWhenReady(result, () => ({ message: { type: 'VSCODE_EXTHOST_IPC_SOCKET', initialDataChunk: '', skipWebSocketFrames: true, permessageDeflate: false, inflateBytes: '' }, socket: accepted }));
 		return { host: result.host, readyHandOff: handed.then(ok => { assert.ok(ok, 'handed off'); return ended; }) };
 	}
 

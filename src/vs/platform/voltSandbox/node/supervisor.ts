@@ -485,7 +485,17 @@ class SandboxHost implements ISandboxedHost {
 	readonly onExit = this._onExit.event;
 	private readonly _onResource = new Emitter<ISandboxResourceSample>();
 	readonly onResource = this._onResource.event;
-	private readonly _onMessage = new Emitter<unknown>();
+	/** Messages that came before anyone listened (a host may speak first): delivered to the first listener. */
+	private unheard: unknown[] = [];
+	private readonly _onMessage = new Emitter<unknown>({
+		onDidAddFirstListener: () => queueMicrotask(() => {
+			const pending = this.unheard;
+			this.unheard = [];
+			for (const message of pending) {
+				this._onMessage.fire(message);
+			}
+		}),
+	});
 	readonly onMessage = this._onMessage.event;
 
 	constructor(
@@ -641,7 +651,11 @@ class SandboxHost implements ISandboxedHost {
 			child.on('message', message => {
 				if (this._state === 'running' || this._state === 'idle') {
 					this.activity();
-					this._onMessage.fire(message);
+					if (this._onMessage.hasListeners()) {
+						this._onMessage.fire(message);
+					} else if (this.unheard.length < 64) {
+						this.unheard.push(message);
+					}
 				}
 			});
 			child.on('error', () => undefined);
@@ -655,9 +669,10 @@ class SandboxHost implements ISandboxedHost {
 				}
 			}
 		}
-		await this.writeLedger(prepared, child);
 		this.lastActivity = Date.now();
+		// Running before the ledger write, so a host's first message (it may send one at once) is not dropped.
 		this.setState('running');
+		await this.writeLedger(prepared, child);
 		this.scheduleIdle();
 		this.logger.info(`[volt-sandbox] host ${this.label} ${prepared.tag} running (${this._backend}, pid ${child.pid}, policy ${prepared.launchPolicyHash.slice(0, 12)}${this._restarts ? `, restart ${this._restarts}` : ''})`);
 		return undefined;

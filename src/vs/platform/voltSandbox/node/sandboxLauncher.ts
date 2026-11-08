@@ -26,6 +26,7 @@ import { readAdminPolicy, systemAdminPolicySource } from './adminPolicy.js';
 import { PrincipalRegistry } from './principalRegistry.js';
 import { IPreparedSandbox, SandboxManager } from './sandboxManager.js';
 import { SandboxSupervisor } from './supervisor.js';
+import { SandboxedExtensionHosts } from './extensionHostSandbox.js';
 import { sandboxHostFacts } from './sandboxResolver.js';
 import { SandboxConfirmation } from './sandboxBackends.js';
 
@@ -180,6 +181,14 @@ export class VoltSandboxLauncher extends Disposable {
 		this.registry = this._register(new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now));
 		this.cache.invalidate(this.epoch);
 	}
+
+	/** T3 extension hosts (P2) under this launcher's supervisor: listed on the Security page with every other host. */
+	extensionHosts(): SandboxedExtensionHosts {
+		this._extensionHosts ??= new SandboxedExtensionHosts(this.supervisor, this.registry);
+		return this._extensionHosts;
+	}
+
+	private _extensionHosts: SandboxedExtensionHosts | undefined;
 
 	/** Volt quits: every sandboxed process tree goes. */
 	async shutdown(): Promise<void> {

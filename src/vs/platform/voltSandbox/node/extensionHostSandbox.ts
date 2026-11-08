@@ -48,7 +48,11 @@ export interface ISandboxedExtensionHostRequest {
 }
 
 export type SandboxedExtensionHostResult =
-	| { readonly ok: true; readonly host: ISandboxedHost; readonly principal: IPrincipal }
+	| {
+		readonly ok: true; readonly host: ISandboxedHost; readonly principal: IPrincipal;
+		/** Resolves true when the host said it is ready for its connection, false when it stopped first. */
+		readonly ready: Promise<boolean>;
+	}
 	| { readonly ok: false; readonly reason: string; readonly code: string };
 
 /** The extension host's channel messages (`extensionHostProtocol.ts`), named here so this layer has no workbench import. */
@@ -112,33 +116,39 @@ export class SandboxedExtensionHosts {
 			}
 			return { ok: false, code: 'launch', reason: result.reason };
 		}
-		return { ok: true, host: result.host, principal: result.host.principal };
+		return { ok: true, host: result.host, principal: result.host.principal, ready: whenReady(result.host) };
 	}
 }
 
-/**
- * Hands `socket` to the host once it says it is ready (and again after a reconnection): the host
- * then speaks VS Code's extension host protocol on it. Resolves false when the host stops first.
- */
-export function handOffWhenReady(host: ISandboxedHost, socketMessage: () => { readonly message: unknown; readonly socket: Socket } | undefined): Promise<boolean> {
+/** Resolves true on the host's READY, false when it stops first. Listens from the moment the host runs. */
+function whenReady(host: ISandboxedHost): Promise<boolean> {
 	return new Promise(resolve => {
 		const listeners = [
 			host.onMessage(message => {
 				if (message && typeof message === 'object' && (message as { type?: unknown }).type === READY) {
-					const next = socketMessage();
 					dispose();
-					resolve(!!next && host.send(next.message, next.socket));
+					resolve(true);
 				}
 			}),
-			host.onExit(exit => {
-				if (!exit.restarting) {
-					dispose();
-					resolve(false);
-				}
+			host.onExit(() => {
+				dispose();
+				resolve(false);
 			}),
 		];
 		const dispose = () => listeners.forEach(listener => listener.dispose());
 	});
+}
+
+/**
+ * Hands `socket` to the host once it is ready: the host then speaks VS Code's extension host
+ * protocol on it. Resolves false when the host stops first.
+ */
+export async function handOffWhenReady(started: { readonly host: ISandboxedHost; readonly ready: Promise<boolean> }, socketMessage: () => { readonly message: unknown; readonly socket: Socket } | undefined): Promise<boolean> {
+	if (!await started.ready) {
+		return false;
+	}
+	const next = socketMessage();
+	return !!next && started.host.send(next.message, next.socket);
 }
 
 /** `out/` and the `node_modules` beside it (followed through a link, as a dev checkout has). */

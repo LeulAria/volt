@@ -26,6 +26,51 @@ export const VOLT_SANDBOXED_EXTENSIONS_SETTING = 'volt.extensions.sandboxed';
  */
 export const VOLT_UNSANDBOXED_EXTENSIONS_SETTING = 'volt.extensions.runWithoutSandbox';
 
+/**
+ * What a window asks of the server for a sandboxed host (`IRemoteExtensionHostStartParams.voltSandbox`).
+ * The server finds the extension and its folder itself; the window is the profile's owner, so its
+ * word on the workspace and its trust counts, never a path for the extension.
+ */
+export interface IVoltSandboxedHostStartParams {
+	readonly extensionId: string;
+	/** A browser workbench (`/code/`): the host maps URIs as VS Code's remote host does. The desktop (P6): it uses the desktop's own `file:` URIs (same machine). */
+	readonly transformURIs: boolean;
+	readonly workspaceTrusted: boolean;
+	/** Real paths. */
+	readonly workspaceRoots: readonly string[];
+}
+
+/** Typed refusal text the server sends back on the connection: `volt-sandbox:<code>: <reason>`. */
+export const SANDBOX_REFUSAL_PREFIX = 'volt-sandbox:';
+
+export function sandboxRefusalMessage(code: string, reason: string): string {
+	return `${SANDBOX_REFUSAL_PREFIX}${code}: ${reason}`;
+}
+
+/** The code and reason in a connection error's text, if it is a sandbox refusal. */
+export function parseSandboxRefusal(text: string): { readonly code: string; readonly reason: string } | undefined {
+	const at = text.indexOf(SANDBOX_REFUSAL_PREFIX);
+	if (at < 0) {
+		return undefined;
+	}
+	const rest = text.slice(at + SANDBOX_REFUSAL_PREFIX.length);
+	const colon = rest.indexOf(':');
+	return colon > 0 ? { code: rest.slice(0, colon), reason: rest.slice(colon + 1).trim() } : undefined;
+}
+
+/**
+ * Where a sandboxed host keeps its workspace storage and logs (a folder of its own each, so one
+ * extension's host cannot write another's): both the window, which names them in the host's init
+ * data, and the server, which makes them writable, derive them from here. POSIX paths.
+ */
+export function t3WorkspaceStorageHome(workspaceStorageHome: string, extensionId: string): string {
+	return `${workspaceStorageHome.replace(/\/+$/, '')}-sandboxed/${extensionId.toLowerCase()}`;
+}
+
+export function t3LogsHome(logsPath: string, extensionId: string): string {
+	return `${logsPath.replace(/\/+$/, '')}/sandboxed-extensions/${extensionId.toLowerCase()}`;
+}
+
 /** H.8 for T3: 1 GB, 64 processes, 500 MB of storage, 200 MB a day through the broker, idle by activation. */
 export const T3_HOST_QUOTAS = { memoryMB: 1024, processes: 64, storageMB: 500, networkMBPerDay: 200 } as const;
 

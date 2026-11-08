@@ -20,6 +20,7 @@ import { RemoteAgentConnectionContext } from './remoteAgentEnvironment.js';
 import { RemoteAuthorityResolverError, RemoteConnection } from './remoteAuthorityResolver.js';
 import { IRemoteSocketFactoryService } from './remoteSocketFactoryService.js';
 import { ISignService } from '../../sign/common/sign.js';
+import type { IVoltSandboxedHostStartParams } from '../../voltSandbox/common/extensionHostSandbox.js';
 
 const RECONNECT_TIMEOUT = 30 * 1000 /* 30s */;
 
@@ -351,6 +352,8 @@ export interface IRemoteExtensionHostStartParams {
 	break?: boolean;
 	port?: number | null;
 	env?: { [key: string]: string | null };
+	/** Volt (P2, P6): run this host alone in the OS sandbox, for one extension. */
+	voltSandbox?: IVoltSandboxedHostStartParams;
 }
 
 interface IExtensionHostConnectionResult {

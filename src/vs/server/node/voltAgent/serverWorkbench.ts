@@ -33,6 +33,7 @@ import { VoltStdioService } from '../../../platform/voltStdio/node/voltStdioServ
 import { VOLT_USAGE_CHANNEL_NAME } from '../../../platform/voltUsage/common/voltUsage.js';
 import { VoltUsageService } from '../../../platform/voltUsage/node/voltUsageService.js';
 import type { IServerAPI, IServerEmbedder } from '../remoteExtensionHostAgentServer.js';
+import { ServerExtensionSandbox } from './serverExtensionSandbox.js';
 import { ServerParsedArgs, serverOptions } from '../serverEnvironmentService.js';
 import type { SocketServer } from '../serverServices.js';
 
@@ -350,11 +351,21 @@ export class ServerWorkbench extends Disposable {
 		const embedder: IServerEmbedder = {
 			registerChannels: socketServer => this.registerChannels(socketServer),
 			webConfiguration: req => this.webConfiguration(req),
+			// P2/P6: opted-in extensions run alone in sandboxed hosts, under the same supervisor as this server's other hosts.
+			extensionHostSandbox: new ServerExtensionSandbox(() => this.stdio().sandboxedExtensionHosts(), { bootstrapFork: FileAccess.asFileUri('bootstrap-fork').fsPath, home: homedir() }, this.logService),
 		};
 		const server = await createServer(null, args, dataDir, embedder);
 		this._register(toDisposable(() => server.dispose()));
 		return server;
 	}
+
+	/** Processes the workbench windows start, sandboxed or not (sandboxed extension hosts too). */
+	private stdio(): WorkbenchStdioService {
+		this._stdio ??= this._register(new WorkbenchStdioService(this.logService, this.configurationService, this.options.userDataDir));
+		return this._stdio;
+	}
+
+	private _stdio: WorkbenchStdioService | undefined;
 
 	/** Volt's machine-side services, for the workbench windows (the desktop gets them from its main process). */
 	private registerChannels(socketServer: SocketServer<RemoteAgentConnectionContext>): void {
@@ -362,7 +373,7 @@ export class ServerWorkbench extends Disposable {
 		const { resolveEnv, git, codeIndex, userDataDir } = this.options;
 
 		// Each window's processes stop when its connection goes, as a desktop window's do when it closes.
-		const stdio = store.add(new WorkbenchStdioService(this.logService, this.configurationService, userDataDir));
+		const stdio = this.stdio();
 		const owners = new WeakMap<RemoteAgentConnectionContext, string>();
 		let nextOwner = 0;
 		const ownerOf = (ctx: RemoteAgentConnectionContext) => {

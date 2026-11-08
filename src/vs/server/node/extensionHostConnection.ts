@@ -22,6 +22,8 @@ import { getNLSConfiguration } from './remoteLanguagePacks.js';
 import { IServerEnvironmentService } from './serverEnvironmentService.js';
 import { IPCExtHostConnection, SocketExtHostConnection, writeExtHostConnection } from '../../workbench/services/extensions/common/extensionHostEnv.js';
 import { IExtHostReadyMessage, IExtHostReduceGraceTimeMessage, IExtHostSocketMessage } from '../../workbench/services/extensions/common/extensionHostProtocol.js';
+import type { IVoltSandboxedHostStartParams } from '../../platform/voltSandbox/common/extensionHostSandbox.js';
+import type { ISandboxedHost } from '../../platform/voltSandbox/node/supervisor.js';
 
 export async function buildUserEnvironment(startParamsEnv: { [key: string]: string | null } = {}, withUserShellEnvironment: boolean, language: string, environmentService: IServerEnvironmentService, logService: ILogService, configurationService: IConfigurationService): Promise<IProcessEnvironment> {
 	const nlsConfig = await getNLSConfiguration(language, environmentService.userDataPath);
@@ -65,6 +67,62 @@ export async function buildUserEnvironment(startParamsEnv: { [key: string]: stri
 
 	removeNulls(env);
 	return env;
+}
+
+/** A sandboxed extension host, started and attested; `ready` resolves when it asks for its connection. */
+export interface ISandboxedExtensionHostStart {
+	readonly host: ISandboxedHost;
+	readonly ready: Promise<boolean>;
+}
+
+export interface IVoltExtensionHostSandboxStartOptions {
+	/** The user's environment (shell env included) the host's fixed list copies from. */
+	readonly hostEnv: Readonly<Record<string, string | undefined>>;
+	readonly nlsConfig?: string;
+	/** `bootstrap-fork` flags. */
+	readonly args: readonly string[];
+	/** This server's folders (file paths): where it finds the extension and where the host may write. */
+	readonly dirs: {
+		readonly extensions: string;
+		readonly builtinExtensions: string;
+		readonly globalStorage: string;
+		readonly workspaceStorage: string;
+		readonly logs: string;
+	};
+}
+
+/**
+ * Volt (P2): starts one extension alone in a sandboxed extension host (the agent server provides
+ * it, `serverExtensionSandbox.ts`). A refusal is typed, and the window shows it; nothing falls back
+ * to the unsandboxed fork.
+ */
+export interface IVoltExtensionHostSandbox {
+	start(params: IVoltSandboxedHostStartParams, options: IVoltExtensionHostSandboxStartOptions): Promise<{ readonly ok: true; readonly started: ISandboxedExtensionHostStart } | { readonly ok: false; readonly code: string; readonly reason: string }>;
+}
+
+/** The sandboxed start for `startParams.voltSandbox`, before the connection is accepted, so a refusal goes back on it. */
+export async function startSandboxedExtensionHost(sandbox: IVoltExtensionHostSandbox | undefined, startParams: IRemoteExtensionHostStartParams, accessor: { environmentService: IServerEnvironmentService; logService: ILogService; configurationService: IConfigurationService }): Promise<{ readonly ok: true; readonly started: ISandboxedExtensionHostStart } | { readonly ok: false; readonly code: string; readonly reason: string }> {
+	const params = startParams.voltSandbox;
+	if (!params || typeof params.extensionId !== 'string' || !/^[a-z0-9-]+\.[a-z0-9-]+$/i.test(params.extensionId)) {
+		return { ok: false, code: 'request', reason: 'The request names no extension.' };
+	}
+	if (!sandbox) {
+		return { ok: false, code: 'platform', reason: 'This server does not run sandboxed extension hosts.' };
+	}
+	// The user's environment as a forked host would get it; the sandbox copies only the fixed list from it.
+	const hostEnv = await buildUserEnvironment(startParams.env, true, startParams.language, accessor.environmentService, accessor.logService, accessor.configurationService);
+	const args = ['--type=extensionHost', ...(params.transformURIs ? ['--transformURIs'] : []), '--useHostProxy=false'];
+	const environment = accessor.environmentService;
+	return sandbox.start(params, {
+		hostEnv, nlsConfig: hostEnv['VSCODE_NLS_CONFIG'], args,
+		dirs: {
+			extensions: environment.extensionsPath,
+			builtinExtensions: environment.builtinExtensionsPath,
+			globalStorage: join(environment.userRoamingDataHome.fsPath, 'globalStorage'),
+			workspaceStorage: environment.workspaceStorageHome.fsPath,
+			logs: environment.logsHome.fsPath,
+		},
+	});
 }
 
 class ConnectionData {
@@ -112,6 +170,8 @@ export class ExtensionHostConnection extends Disposable {
 	private _disposed: boolean;
 	private _remoteAddress: string;
 	private _extensionHostProcess: cp.ChildProcess | null;
+	private _sandboxedHost: ISandboxedHost | null = null;
+	private _sandboxedReady = false;
 	private _connectionData: ConnectionData | null;
 
 	constructor(
@@ -180,7 +240,7 @@ export class ExtensionHostConnection extends Disposable {
 		}
 	}
 
-	private async _sendSocketToExtensionHost(extensionHostProcess: cp.ChildProcess, connectionData: ConnectionData): Promise<void> {
+	private async _sendSocketToExtensionHost(extensionHostProcess: cp.ChildProcess | ISandboxedHost, connectionData: ConnectionData): Promise<void> {
 		// Make sure all outstanding writes have been drained before sending the socket
 		await connectionData.socketDrain();
 		const msg = connectionData.toIExtHostSocketMessage();
@@ -194,13 +254,14 @@ export class ExtensionHostConnection extends Disposable {
 	}
 
 	public shortenReconnectionGraceTimeIfNecessary(): void {
-		if (!this._extensionHostProcess) {
+		const host = this._extensionHostProcess ?? this._sandboxedHost;
+		if (!host) {
 			return;
 		}
 		const msg: IExtHostReduceGraceTimeMessage = {
 			type: 'VSCODE_EXTHOST_IPC_REDUCE_GRACE_TIME'
 		};
-		this._extensionHostProcess.send(msg);
+		host.send(msg);
 	}
 
 	public acceptReconnection(remoteAddress: string, _socket: NodeSocket | WebSocketNodeSocket, initialDataChunk: VSBuffer): void {
@@ -208,13 +269,14 @@ export class ExtensionHostConnection extends Disposable {
 		this._log(`The client has reconnected.`);
 		const connectionData = new ConnectionData(_socket, initialDataChunk);
 
-		if (!this._extensionHostProcess) {
+		const host = this._extensionHostProcess ?? (this._sandboxedReady ? this._sandboxedHost : null);
+		if (!host) {
 			// The extension host didn't even start up yet
 			this._connectionData = connectionData;
 			return;
 		}
 
-		this._sendSocketToExtensionHost(this._extensionHostProcess, connectionData);
+		this._sendSocketToExtensionHost(host, connectionData);
 	}
 
 	private _cleanResources(): void {
@@ -231,10 +293,48 @@ export class ExtensionHostConnection extends Disposable {
 			this._extensionHostProcess.kill();
 			this._extensionHostProcess = null;
 		}
+		if (this._sandboxedHost) {
+			// The whole tree, through the supervisor.
+			void this._sandboxedHost.terminate('stopped');
+			this._sandboxedHost = null;
+		}
 		this._onClose.fire(undefined);
 	}
 
-	public async start(startParams: IRemoteExtensionHostStartParams): Promise<void> {
+	/**
+	 * Volt (P2): the extension host was started alone in the sandbox, by the supervisor, before the
+	 * connection was accepted (`startSandboxedExtensionHost`). It gets its connection on its channel
+	 * once it is ready, as a forked host does.
+	 */
+	private _startSandboxed(started: ISandboxedExtensionHostStart): void {
+		const host = started.host;
+		this._sandboxedHost = host;
+		const pid = host.pid;
+		this._log(`<${pid}> Extension Host Process running in the sandbox (${host.label}).`);
+		this._register(host.onExit(exit => {
+			const tail = host.stderrTail().trim().split('\n').slice(-5).join('\n');
+			if (tail) {
+				this._log(`<${pid}><stderr> ${tail}`);
+			}
+			this._extensionHostStatusService.setExitInfo(this._reconnectionToken, { code: exit.code ?? 0, signal: exit.signal ?? '' });
+			this._log(`<${pid}> Sandboxed Extension Host Process exited (${exit.reason}, code: ${exit.code}, signal: ${exit.signal}).`);
+			this._sandboxedHost = null;
+			this._cleanResources();
+		}));
+		void started.ready.then(ready => {
+			if (ready && this._sandboxedHost === host && this._connectionData) {
+				this._sandboxedReady = true;
+				this._sendSocketToExtensionHost(host, this._connectionData);
+				this._connectionData = null;
+			}
+		});
+	}
+
+	public async start(startParams: IRemoteExtensionHostStartParams, sandboxed?: ISandboxedExtensionHostStart): Promise<void> {
+		if (sandboxed) {
+			this._startSandboxed(sandboxed);
+			return;
+		}
 		try {
 			let execArgv: string[] = process.execArgv ? process.execArgv.filter(a => !/^--inspect(-brk)?=/.test(a)) : [];
 			if (startParams.port && !(<any>process).pkg) {
