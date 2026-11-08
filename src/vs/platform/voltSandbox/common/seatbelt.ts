@@ -129,32 +129,45 @@ function foldKey(ch: string, caseInsensitive: boolean): string {
 	return caseInsensitive && /[a-z]/i.test(ch) ? ch.toLowerCase() : ch;
 }
 
+/** One character of a literal: its key in a prefix tree (`foldKey`) and its regex source (`regexBody`). */
+interface ILiteralChar {
+	readonly key: string;
+	readonly text: string;
+}
+
+/** `value` as literal characters, escaped once (a merge builds several prefix trees over them). */
+function literalChars(value: string, caseInsensitive: boolean): ILiteralChar[] {
+	return [...value].map(ch => ({ key: foldKey(ch, caseInsensitive), text: regexBody(ch, caseInsensitive) }));
+}
+
 interface ITrieNode {
 	end: boolean;
-	readonly children: Map<string, ITrieNode>;
+	readonly children: Map<string, { readonly text: string; readonly node: ITrieNode }>;
 }
 
 /**
  * Regex source matching exactly the given literal strings, as a prefix tree: `/a/bc` and `/a/bd`
  * become `/a/b(c|d)`. The same language as `(v1|v2|…)`, shorter, so more fit in one literal.
  */
-function literalAlternation(values: readonly string[], caseInsensitive: boolean): string {
+function literalAlternation(values: readonly (readonly ILiteralChar[])[]): string {
 	const root: ITrieNode = { end: false, children: new Map() };
 	for (const value of values) {
 		let node = root;
-		for (const ch of value) {
-			const key = foldKey(ch, caseInsensitive);
+		for (const { key, text } of value) {
 			let next = node.children.get(key);
 			if (!next) {
-				next = { end: false, children: new Map() };
+				next = { text, node: { end: false, children: new Map() } };
 				node.children.set(key, next);
 			}
-			node = next;
+			node = next.node;
 		}
 		node.end = true;
 	}
 	const emit = (node: ITrieNode): string => {
-		const branches = [...node.children.keys()].sort().map(key => regexBody(key, caseInsensitive) + emit(node.children.get(key)!));
+		const branches = [...node.children.keys()].sort().map(key => {
+			const child = node.children.get(key)!;
+			return child.text + emit(child.node);
+		});
 		if (!branches.length) {
 			return '';
 		}
@@ -199,29 +212,51 @@ function mergeFilters(filters: readonly SeatbeltFilter[]): string[] {
 function groupRegexes(group: readonly IPathRegex[]): string[] {
 	const { suffix, caseInsensitive } = group[0];
 	const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+	const below = coversBelow(suffix);
 	// Shortest first, so a prefix is only dropped for one already kept.
 	const sorted = [...new Set(group.map(filter => filter.prefix))]
-		.map(prefix => ({ prefix, folded: [...prefix].map(ch => foldKey(ch, caseInsensitive)).join('') }))
-		.sort((a, b) => a.prefix.length - b.prefix.length || compare(a.prefix, b.prefix));
-	const kept: { readonly prefix: string; readonly folded: string }[] = [];
+		.map(prefix => {
+			const chars = literalChars(prefix, caseInsensitive);
+			return { chars, folded: chars.map(ch => ch.key).join('') };
+		})
+		.sort((a, b) => a.folded.length - b.folded.length || compare(a.folded, b.folded));
+	const kept: { readonly chars: readonly ILiteralChar[]; readonly folded: string }[] = [];
+	const keptFolded = new Set<string>();
+	const hasKeptParent = (folded: string) => {
+		// Every `<parent>/` that starts `folded`, the root (an empty prefix) included.
+		for (let i = folded.indexOf('/'); i !== -1; i = folded.indexOf('/', i + 1)) {
+			if (keptFolded.has(folded.slice(0, i))) {
+				return true;
+			}
+		}
+		return false;
+	};
 	for (const entry of sorted) {
-		if (kept.some(other => entry.folded === other.folded || (coversBelow(suffix) && entry.folded.startsWith(`${other.folded}/`)))) {
+		if (keptFolded.has(entry.folded) || (below && hasKeptParent(entry.folded))) {
 			continue;
 		}
+		keptFolded.add(entry.folded);
 		kept.push(entry);
 	}
 	// Neighbours in path order share the longest prefixes.
-	const prefixes = kept.sort((a, b) => compare(a.folded, b.folded)).map(entry => entry.prefix);
-	const literal = (from: number, to: number) => `^${to - from === 1 ? regexBody(prefixes[from], caseInsensitive) : literalAlternation(prefixes.slice(from, to), caseInsensitive)}${suffix}$`;
+	const prefixes = kept.sort((a, b) => compare(a.folded, b.folded)).map(entry => entry.chars);
+	const literal = (from: number, to: number) => `^${to - from === 1 ? prefixes[from].map(ch => ch.text).join('') : literalAlternation(prefixes.slice(from, to))}${suffix}$`;
 	// Each chunk takes as many prefixes as fit; a prefix tree only grows as strings are added, so
-	// the largest fitting chunk is found by bisection. A single prefix that does not fit stays alone.
+	// the largest fitting chunk is found by doubling then bisection, each probe about the chunk's
+	// size. A single prefix that does not fit stays alone.
+	const fits = (from: number, to: number) => literal(from, to).length <= MAX_LITERAL;
 	const out: string[] = [];
 	for (let from = 0; from < prefixes.length;) {
 		let lo = from + 1;
-		let hi = prefixes.length;
+		let step = 1;
+		while (lo + step <= prefixes.length && fits(from, lo + step)) {
+			lo += step;
+			step *= 2;
+		}
+		let hi = Math.min(prefixes.length, lo + step - 1);
 		while (lo < hi) {
 			const mid = (lo + hi + 1) >> 1;
-			if (literal(from, mid).length <= MAX_LITERAL) {
+			if (fits(from, mid)) {
 				lo = mid;
 			} else {
 				hi = mid - 1;
@@ -252,7 +287,7 @@ function patternFilters(patterns: readonly IResolvedPattern[], caseInsensitive: 
 	return [...byRoot].map(([root, names]) => ({
 		prefix: root === '/' ? '' : root,
 		// Never empty, never optional as a whole: a plain concatenation or one group.
-		suffix: `/(.*/)?${literalAlternation([...names], caseInsensitive)}(/.*)?`,
+		suffix: `/(.*/)?${literalAlternation([...names].map(name => literalChars(name, caseInsensitive)))}(/.*)?`,
 		caseInsensitive,
 	}));
 }
