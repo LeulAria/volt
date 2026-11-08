@@ -111,6 +111,10 @@ jobs:
       - name: Listener lint
         run: node build/volt/ci/listenerLint.mjs
 
+      # Every process-starting call site is listed with an owner and a reason (sandbox spec K.4).
+      - name: Spawn audit
+        run: node build/volt/ci/spawnAudit.mjs
+
   typecheck:
     name: Typecheck
     needs: changes

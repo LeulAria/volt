@@ -19,7 +19,9 @@ import { IAgentDetectResult, IModelMessage, IVoltCatalogItem, IVoltProviderStatu
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from '../../voltRuntime/common/questions.js';
 import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
 import type { IVoltMcpApprovalRecord } from '../../voltRuntime/common/harness/mcpApprovals.js';
-import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import type { VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { chatExec, IChatExec } from '../../voltRuntime/common/execContext.js';
 import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../../voltRuntime/common/session.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
@@ -430,6 +432,11 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 
 	getSandboxSettings(sessionId: string): IVoltSandboxSettings {
 		return this.summary(sessionId)?.sandbox ?? this.getDefaultSandboxSettings();
+	}
+
+	/** The server holds the chat; this window knows its checkout, not the main repository a worktree links to. */
+	chatExec(sessionId: string, reason: VoltExecReason, providerId?: string): IChatExec {
+		return chatExec(sessionId, this.getSandboxSettings(sessionId), sandboxWorkspaceRoots(this.workingFolder(sessionId), undefined, false), reason, providerId);
 	}
 
 	setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void> {

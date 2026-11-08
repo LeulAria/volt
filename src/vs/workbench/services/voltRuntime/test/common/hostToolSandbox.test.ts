@@ -46,9 +46,17 @@ suite('Volt host tool sandbox classes', () => {
 
 	test('the escape routes are classified as such', () => {
 		const kind = (name: string, args: Record<string, unknown> = {}) => hostToolSandboxUse(name, args)?.kind;
-		for (const name of ['terminal_start', 'terminal_send', 'terminal_stop', 'task_watch', 'app_open', 'docker_ensure', 'device_install_app', 'device_launch_app', 'desktop_apps', 'desktop_snapshot', 'desktop_act', 'worktree_handoff', 'thread_merge_back', 'stack_branch', 'restack_stack', 'rename_branch', 'window_capture', 'window_record_start']) {
+		for (const name of ['task_watch', 'app_open', 'device_install_app', 'device_launch_app', 'desktop_apps', 'desktop_snapshot', 'desktop_act', 'worktree_handoff', 'thread_merge_back', 'stack_branch', 'restack_stack', 'rename_branch', 'window_capture', 'window_record_start']) {
 			assert.strictEqual(kind(name), 'escapes', name);
 		}
+		// The chat's terminals run in its own sandbox (F.6): the tools carry it, or refuse.
+		for (const name of ['terminal_start', 'terminal_send', 'terminal_stop', 'docker_ensure']) {
+			assert.strictEqual(kind(name), 'sandboxed', name);
+		}
+		// Reading other chats needs agents.read:other (INV-26).
+		assert.deepStrictEqual(hostToolSandboxUse('thread_read', { thread_id: 'volt://session/abc' }), { kind: 'reads-other', target: 'abc' });
+		assert.deepStrictEqual(hostToolSandboxUse('thread_read', {}), { kind: 'reads-other', target: undefined });
+		assert.deepStrictEqual(hostToolSandboxUse('thread_search', { query: 'x' }), { kind: 'reads-other', readsAnyChat: true });
 		for (const name of ['memory_write', 'skill_write', 'memory_delete']) {
 			assert.strictEqual(kind(name), 'persists', name);
 		}

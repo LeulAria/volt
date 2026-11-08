@@ -14,6 +14,7 @@ import { FileService } from '../../../../../platform/files/common/fileService.js
 import { InMemoryFileSystemProvider } from '../../../../../platform/files/common/inMemoryFilesystemProvider.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
+import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { AgentOrchestratorService } from '../../../../services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
@@ -38,7 +39,12 @@ class FakeRuntime {
 	readonly sends: { threadId: string; request: IVoltSendRequest; runId: string }[] = [];
 	readonly cancelled: string[] = [];
 	readonly worktrees = new Map<string, string>();
+	/** Every chat's sandbox settings; unsandboxed unless a test sets them. */
+	sandbox: IVoltSandboxSettings = { level: 'off', network: true };
 
+	getSandboxSettings(_threadId: string): IVoltSandboxSettings {
+		return this.sandbox;
+	}
 	listCatalog() {
 		return [CLAUDE, CODEX, CURSOR].map(model => ({ ref: model.ref, kind: 'agent', providerId: model.family, profileId: 'p', id: model.ref, label: model.label, enabled: true }));
 	}
@@ -140,9 +146,14 @@ class FakeStdio {
 		this.accepted.push(root);
 		this.changes.delete(root);
 	}
+	/** Every command is refused, as the stdio service refuses one whose sandbox cannot be set up. */
+	refuse = false;
 
 	async exec(request: IVoltExecRequest): Promise<IVoltExecResult> {
 		this.execs.push(request);
+		if (this.refuse) {
+			return { id: request.id, exitCode: null, stdout: '', stderr: '', combined: '', truncated: false, durationMs: 0, timedOut: false, cancelled: false, running: false, refused: { kind: 'sandbox', reason: 'No OS sandbox available' } };
+		}
 		const running = this.hold;
 		if (running) {
 			this.running.add(request.id);
@@ -362,6 +373,37 @@ suite('Run group service', () => {
 		assert.match(stdio.execs[2].command, /npm run build/);
 		assert.doesNotMatch(stdio.execs[2].command, /npm ci/, 'the retry resumes at the failed step');
 		assert.strictEqual(service.runStatus(group.id, run.id), 'working');
+	});
+
+	test('LIFE-PATH-4: a sandboxed run\'s worktree setup runs in its chat\'s sandbox, with its rules', async () => {
+		const { service, runtime, stdio, settle } = await setup({ setupFile: JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		runtime.sandbox = { level: 'workspace-write', network: true, allowedDomains: ['registry.npmjs.org'] };
+		const group = await service.start({ prompt: { text: 'Add search' }, models: [CLAUDE, CODEX], repoRoot: '/repo' });
+		await settle();
+		assert.strictEqual(stdio.execs.length, 2);
+		for (const run of group.runs) {
+			const exec = stdio.execs.find(candidate => candidate.context.principal === `chat:${run.id}`);
+			assert.ok(exec, `the setup of ${run.id} ran for its chat`);
+			assert.deepStrictEqual(exec.context, { principal: `chat:${run.id}`, reason: 'worktree-setup', sandboxed: true });
+			assert.strictEqual(exec.sandbox?.level, 'workspace-write');
+			assert.strictEqual(exec.sandbox?.network, true, 'the chat\'s own rules, not forced network-off');
+			assert.deepStrictEqual(exec.sandbox?.allowedDomains, ['registry.npmjs.org']);
+			assert.ok(exec.cwd && exec.sandbox?.workspaceRoots.includes(exec.cwd), 'the worktree is its workspace');
+		}
+	});
+
+	test('LIFE-PATH-4: a run whose setup sandbox cannot be set up does not run its setup and does not start', async () => {
+		const { service, runtime, stdio, settle } = await setup({ setupFile: JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		runtime.sandbox = { level: 'workspace-write', network: false };
+		stdio.refuse = true;
+		const group = await service.start({ prompt: { text: 'Add search' }, models: [CLAUDE, CODEX], repoRoot: '/repo' });
+		await settle();
+		for (const run of service.get(group.id)!.runs) {
+			assert.strictEqual(run.setup.state, 'failed');
+			assert.match(run.setup.error ?? '', /No OS sandbox/);
+		}
+		assert.strictEqual(stdio.execs.length, 2, 'one attempt each, no unsandboxed retry');
+		assert.strictEqual(runtime.sends.length, 0, 'no run starts without its setup');
 	});
 
 	test('stopping the group stops every run: live turns are cancelled, setups aborted', async () => {

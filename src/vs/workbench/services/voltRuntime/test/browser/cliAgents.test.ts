@@ -27,7 +27,10 @@ class FastStdio implements IVoltStdioService {
 		this.onExit = this.exit.event;
 	}
 
-	async spawn(_options: IVoltStdioSpawnOptions): Promise<string> {
+	readonly spawns: IVoltStdioSpawnOptions[] = [];
+
+	async spawn(options: IVoltStdioSpawnOptions): Promise<string> {
+		this.spawns.push(options);
 		const id = `p${this.next++}`;
 		this.data.fire({ id: 'other', data: 'noise' });
 		this.data.fire({ id, data: this.output });
@@ -70,6 +73,15 @@ suite('runCli', () => {
 	test('early output still counts when the exit arrives later or times out', async () => {
 		const disposables = store.add(new DisposableStore());
 		assert.strictEqual(await runCli(new FastStdio(disposables, 'partial', false), 'slow', [], 10), 'partial');
+	});
+
+	test('LIFE-PATH-6: a probe is Volt\'s own question for no chat, with a fixed command line, and says so', async () => {
+		const disposables = store.add(new DisposableStore());
+		const stdio = new FastStdio(disposables, '1.0.0');
+		await runCli(stdio, 'claude', ['--version']);
+		assert.deepStrictEqual(stdio.spawns.map(spawn => ({ command: spawn.command, args: spawn.args, context: spawn.context, sandbox: spawn.sandbox })), [
+			{ command: 'claude', args: ['--version'], context: { principal: 'volt', reason: 'probe', sandboxed: false }, sandbox: undefined },
+		]);
 	});
 
 	test('Claude launches the ACP adapter, never `claude acp`', () => {

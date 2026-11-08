@@ -13,6 +13,7 @@ import { InMemoryFileSystemProvider } from '../../../../../platform/files/common
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { InMemoryStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IHostGitRequest } from '../../../../../platform/voltGit/common/hostGit.js';
 import { IVoltExecRequest, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { Workspace } from '../../../../../platform/workspace/common/workspace.js';
 import { TestContextService } from '../../../../test/common/workbenchTestServices.js';
@@ -33,10 +34,16 @@ suite('Agent scratch folders', () => {
 		const fileService = disposables.add(new FileService(new NullLogService()));
 		disposables.add(fileService.registerProvider('file', disposables.add(new InMemoryFileSystemProvider())));
 		const execs: IVoltExecRequest[] = [];
+		const answer = (id: string) => ({ id, exitCode: insideCheckout ? 0 : 128, stdout: insideCheckout ? 'true' : '', stderr: insideCheckout ? '' : 'fatal: not a git repository', timedOut: false });
 		const stdio = {
 			exec: async (request: IVoltExecRequest) => {
 				execs.push(request);
-				return { id: request.id, exitCode: insideCheckout ? 0 : 128, stdout: insideCheckout ? 'true' : '', stderr: insideCheckout ? '' : 'fatal: not a git repository', timedOut: false };
+				return answer(request.id);
+			},
+			// Volt's own git (the checkout check) goes through HostGit; recorded like a command.
+			git: async (request: IHostGitRequest) => {
+				execs.push({ id: request.id ?? 'git', command: ['git', ...request.args].join(' '), timeoutMs: request.timeoutMs ?? 0, context: { principal: 'volt', reason: 'volt', sandboxed: false } });
+				return answer(request.id ?? 'git');
 			},
 		} as unknown as IVoltStdioService;
 		const errors: string[] = [];

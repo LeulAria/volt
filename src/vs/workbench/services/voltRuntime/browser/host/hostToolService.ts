@@ -134,9 +134,11 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 
 	private async run(name: string, args: Record<string, unknown>, requested: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		// Calls over MCP carry no folder: a chat's tools work in its worktree or project.
-		const placed = requested?.sessionId && !requested.cwd ? { ...requested, cwd: this.sessions?.cwd(requested.sessionId) } : requested;
+		const located = requested?.sessionId && !requested.cwd ? { ...requested, cwd: this.sessions?.cwd(requested.sessionId) } : requested;
+		// The native loop's calls carry no sandbox (MCP calls carry the one their session token names): Volt's record of the chat's counts.
+		const sandboxed = located?.source === 'native' && located.sessionId && !located.sandbox && this.sandboxes ? { ...located, sandbox: this.sandboxes.settings(located.sessionId) } : located;
 		// A sandboxed chat's providers get the gate's read rule, for files they find rather than files named (search results).
-		const call = placed && isSandboxed(placed.sandbox) ? { ...placed, readRefusal: this.readRule(placed, placed.sandbox) } : placed;
+		const call = sandboxed && isSandboxed(sandboxed.sandbox) ? { ...sandboxed, readRefusal: this.readRule(sandboxed, sandboxed.sandbox) } : sandboxed;
 		if (this.disabledTools.has(name)) {
 			return { error: `${name} belongs to a Volt feature the user turned off (Capabilities or Extensions). Do not call it again in this chat.` };
 		}
@@ -258,6 +260,12 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 				break;
 			case 'delegates':
 				if (use.target && use.target !== call.sessionId && !this.coversChat(use.target, sandbox, call)) {
+					return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
+				}
+				break;
+			case 'reads-other':
+				// agents.read:other (INV-26): never granted to a sandboxed chat; its own chat it may read.
+				if (use.readsAnyChat || (use.target !== undefined && use.target !== call.sessionId)) {
 					return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
 				}
 				break;

@@ -18,6 +18,8 @@ import { IAgentHistoryService } from '../../../../services/voltRuntime/common/hi
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { parseBranchStatus } from '../../../../services/voltRuntime/common/orchestration/agentThreadTools.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { isSandboxed } from '../../../../services/voltRuntime/common/hostToolSandbox.js';
+import { IAgentTerminalsService } from '../terminals/agentTerminals.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ITerminalInstance } from '../../../terminal/browser/terminal.js';
 import { TerminalEditorInput } from '../../../terminal/browser/terminalEditorInput.js';
@@ -62,10 +64,11 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IScratchBoardService private readonly scratchBoards: IScratchBoardService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
+		@IAgentTerminalsService private readonly agentTerminals: IAgentTerminalsService,
 	) {
 		super();
 		this._register(CommandsRegistry.registerCommand(WORKSPACE_SNAPSHOT_COMMAND_ID, (_accessor, sessionId: string) =>
-			raceTimeout(this.snapshot(sessionId, false), SNAPSHOT_BUDGET_MS), 'internal'));
+			raceTimeout(this.snapshot(sessionId, false, isSandboxed(this.runtime.getSandboxSettings(this.runtime.chatFor(sessionId)))), SNAPSHOT_BUDGET_MS), 'internal'));
 		this._register(hostTools.registerToolProvider({
 			tools: [{
 				name: WORKSPACE_STATUS_TOOL_NAME,
@@ -82,17 +85,18 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		if (!call?.sessionId) {
 			return { error: 'workspace_status needs a Volt chat.' };
 		}
-		const snapshot = await this.snapshot(this.runtime.chatFor(call.sessionId), true);
+		// A sandboxed chat sees its own terminals only: other terminals (the user's, other chats') need agents.read:other (INV-26).
+		const snapshot = await this.snapshot(this.runtime.chatFor(call.sessionId), true, isSandboxed(call.sandbox));
 		return { text: formatWorkspaceStatus(snapshot) };
 	}
 
-	/** `detail`: terminal output and changed file names too (workspace_status). */
-	async snapshot(sessionId: string, detail: boolean): Promise<IWorkspaceSnapshot> {
+	/** `detail`: terminal output and changed file names too (workspace_status). `ownTerminalsOnly`: what other terminals ran and printed is left out. */
+	async snapshot(sessionId: string, detail: boolean, ownTerminalsOnly = false): Promise<IWorkspaceSnapshot> {
 		const id = this.runtime.chatFor(sessionId);
 		const root = this.folder(id);
 		const panel = agentSessionToolTabs(id);
 		const [tabs, git] = await Promise.all([
-			Promise.all((panel?.tabs ?? []).map(tab => this.describe(tab.input, tab.focused, root, detail))),
+			Promise.all((panel?.tabs ?? []).map(tab => this.describe(tab.input, tab.focused, root, detail, ownTerminalsOnly ? id : undefined))),
 			root ? this.git(root.fsPath, detail) : Promise.resolve(undefined),
 		]);
 		return {
@@ -108,7 +112,7 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		return folder?.scheme === Schemas.file ? folder : undefined;
 	}
 
-	private async describe(input: EditorInput, focused: boolean, root: URI | undefined, detail: boolean): Promise<IWorkspaceTab | undefined> {
+	private async describe(input: EditorInput, focused: boolean, root: URI | undefined, detail: boolean, onlyTerminalsOf?: string): Promise<IWorkspaceTab | undefined> {
 		const title = input.getName();
 		if (input instanceof VoltBrowserEditorInput) {
 			return { kind: 'browser', title, focused, ...(input.url ? { target: input.url } : {}) };
@@ -135,6 +139,9 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		}
 		if (input instanceof TerminalEditorInput) {
 			const instance = input.terminalInstance;
+			if (instance && onlyTerminalsOf !== undefined && this.agentTerminals.forInstance(instance)?.chatId !== onlyTerminalsOf) {
+				return { kind: 'terminal', title, focused };
+			}
 			return { kind: 'terminal', title, focused, ...(instance && !instance.isDisposed ? { terminal: await this.terminal(instance, detail) } : {}) };
 		}
 		if (input instanceof AgentChangesEditorInput) {

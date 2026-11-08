@@ -87,6 +87,8 @@ export class SeatbeltBackend implements ISandboxBackend {
 			env: { ...policy.env, VOLT_SANDBOX_TAG: options.tag },
 			cwd: policy.cwd,
 			extraStdio: ['pipe'],
+			// fd 3: the prologue's ready line.
+			extraStdioDirections: ['out'],
 			confirm: child => {
 				pgid = child.pid;
 				if (pgid) {

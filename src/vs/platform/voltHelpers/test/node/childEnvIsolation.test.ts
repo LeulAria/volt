@@ -71,7 +71,7 @@ function envNames(output: string): Set<string> {
 	test('ENV-IPC-1 / MAC-ENV-2: commands, files and agent processes start without them', async () => {
 		const stdio = store.add(new VoltStdioService(new NullLogService(), new TestConfigurationService(), userData));
 
-		const exec = await stdio.exec({ id: generateUuid(), command: 'env', timeoutMs: 15_000 });
+		const exec = await stdio.exec({ id: generateUuid(), command: 'env', timeoutMs: 15_000, context: { principal: 'volt', reason: 'volt', sandboxed: false } });
 		assert.strictEqual(exec.exitCode, 0, exec.stderr);
 		assertClean(envNames(exec.stdout), 'exec');
 
@@ -84,7 +84,7 @@ function envNames(output: string): Set<string> {
 			store.add(stdio.onExit(() => resolve()));
 		});
 		store.add(stdio.onData(e => output += e.data));
-		await stdio.spawn({ command: '/usr/bin/env', args: [] });
+		await stdio.spawn({ command: '/usr/bin/env', args: [], context: { principal: 'volt', reason: 'volt', sandboxed: false } });
 		await exited;
 		// Output is flushed per tick: give the last chunk a moment.
 		await new Promise(resolve => setTimeout(resolve, 50));
@@ -93,7 +93,7 @@ function envNames(output: string): Set<string> {
 
 	test('a caller that needs a variable sets it on purpose', async () => {
 		const stdio = store.add(new VoltStdioService(new NullLogService(), new TestConfigurationService(), userData));
-		const exec = await stdio.exec({ id: generateUuid(), command: 'env', timeoutMs: 15_000, env: { ELECTRON_RUN_AS_NODE: '1' } });
+		const exec = await stdio.exec({ id: generateUuid(), command: 'env', timeoutMs: 15_000, env: { ELECTRON_RUN_AS_NODE: '1' }, context: { principal: 'volt', reason: 'volt', sandboxed: false } });
 		assert.ok(envNames(exec.stdout).has('ELECTRON_RUN_AS_NODE'));
 	});
 });

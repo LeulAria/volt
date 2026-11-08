@@ -165,8 +165,12 @@ suite('Volt host tool service', () => {
 		const sandboxed = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
 		const error = async (name: string, args: Record<string, unknown> = {}, call = sandboxed) => (await service.invokeTool(name, args, call)).error ?? '';
 
-		assert.strictEqual(await error('terminal_start', { command: 'npm test' }), 'terminal_start was not run: this chat runs in Volt\'s sandbox, and terminal_start would run outside it. Run the command with your own shell tool instead: it runs inside the sandbox.');
-		for (const name of ['task_watch', 'app_open', 'docker_ensure', 'device_install_app', 'device_launch_app', 'desktop_act', 'window_capture', 'worktree_handoff', 'thread_merge_back', 'rename_branch']) {
+		// Terminals and docker_ensure run in the chat's own sandbox now (sandboxPty.ts, F.6): the gate lets them through, the tools carry the sandbox.
+		assert.strictEqual(await error('terminal_start', { command: 'npm test' }), '');
+		assert.strictEqual(await error('docker_ensure'), '');
+		assert.strictEqual(await error('terminal_start', {}, { sessionId: 's1', sandbox: READ_ONLY }), '');
+		assert.deepStrictEqual(ran.splice(0), ['terminal_start', 'docker_ensure', 'terminal_start']);
+		for (const name of ['task_watch', 'app_open', 'device_install_app', 'device_launch_app', 'desktop_act', 'window_capture', 'worktree_handoff', 'thread_merge_back', 'rename_branch']) {
 			assert.match(await error(name), /would run outside it\./, name);
 		}
 		assert.match(await error('memory_write', { name: 'x', content: 'y' }), /would save something later chats read outside the sandbox/);
@@ -182,7 +186,7 @@ suite('Volt host tool service', () => {
 		assert.match(await error('automation', { action: 'send_slack' }), /network off, and automation would reach the internet/);
 		assert.match(await error('device_act', { script: 'launch com.example.app\ntap "Sign in"' }), /Steps that open a deep link or an app/);
 		assert.match(await error('device_act', { run: 'login' }), /saved flows/);
-		assert.match(await error('terminal_start', {}, { sessionId: 's1', sandbox: READ_ONLY }), /Volt's read-only sandbox/);
+		assert.match(await error('app_open', {}, { sessionId: 's1', sandbox: READ_ONLY }), /Volt's read-only sandbox/);
 		assert.deepStrictEqual(ran, ['thread_launch', 'delegate_task'], 'only the chat starts ran: they inherit the sandbox');
 		ran.length = 0;
 
@@ -202,6 +206,40 @@ suite('Volt host tool service', () => {
 			assert.strictEqual((await service.invokeTool(name, { action: 'create' }, { sessionId: 's1', sandbox: { level: 'off', network: false } })).text, `ran ${name}`, name);
 		}
 		assert.strictEqual(ran.length, names.length * 2);
+	});
+
+	test('GATE-XCHAT-1: a sandboxed chat cannot read another chat (thread_read); its own chat it may', async () => {
+		const { service } = setup();
+		const ran = serve(service, ['thread_read']);
+		const call = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		for (const id of ['other', 'volt://session/other']) {
+			const refused = await service.invokeTool('thread_read', { thread_id: id }, call);
+			assert.match(refused.error ?? '', /^thread_read was not run: .*would read other chats, which needs the agents\.read:other permission/, id);
+		}
+		assert.strictEqual((await service.invokeTool('thread_read', {}, call)).text, 'ran thread_read', 'its own transcript');
+		assert.strictEqual((await service.invokeTool('thread_read', { thread_id: 's1' }, call)).text, 'ran thread_read');
+		assert.deepStrictEqual(ran.splice(0), ['thread_read', 'thread_read']);
+		// Unsandboxed: as before.
+		assert.strictEqual((await service.invokeTool('thread_read', { thread_id: 'other' }, { sessionId: 's1' })).text, 'ran thread_read');
+	});
+
+	test('GATE-XCHAT-2: a sandboxed chat cannot search other chats (thread_search)', async () => {
+		const { service } = setup();
+		const ran = serve(service, ['thread_search']);
+		assert.match((await service.invokeTool('thread_search', { query: 'token' }, { sessionId: 's1', sandbox: READ_ONLY })).error ?? '', /agents\.read:other/);
+		assert.match((await service.invokeTool('thread_search', { query: 'token', project: 'this' }, { sessionId: 's1', sandbox: WORKSPACE_WRITE })).error ?? '', /agents\.read:other/);
+		assert.deepStrictEqual(ran, []);
+		assert.strictEqual((await service.invokeTool('thread_search', { query: 'token' }, { sessionId: 's1', sandbox: { level: 'off', network: true } })).text, 'ran thread_search');
+	});
+
+	test('the native loop\'s calls are judged by the chat\'s own sandbox, which they do not carry', async () => {
+		const { service, sandboxes } = setup();
+		const ran = serve(service, ['thread_read', 'app_open']);
+		sandboxes.set('s2', WORKSPACE_WRITE);
+		assert.match((await service.invokeTool('thread_read', { thread_id: 'other' }, { sessionId: 's2', source: 'native' })).error ?? '', /agents\.read:other/);
+		assert.match((await service.invokeTool('app_open', { target: 'Calculator' }, { sessionId: 's2', source: 'native' })).error ?? '', /would run outside it/);
+		assert.deepStrictEqual(ran, []);
+		assert.strictEqual((await service.invokeTool('thread_read', { thread_id: 'other' }, { sessionId: 's3', source: 'native' })).text, 'ran thread_read', 'a chat without a sandbox');
 	});
 
 	test('sandbox gate: browser_run edits write only where the OS sandbox lets the agent write, never through a link', async () => {

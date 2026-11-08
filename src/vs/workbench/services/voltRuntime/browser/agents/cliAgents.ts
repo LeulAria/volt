@@ -6,6 +6,7 @@
 import { decodeBase64 } from '../../../../../base/common/buffer.js';
 import { isWindows } from '../../../../../base/common/platform.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { voltExec } from '../../common/execContext.js';
 import { antigravityModelsToInfo, parseAntigravityModelLines } from '../../common/models/antigravityModels.js';
 import { fxModelsToInfo, fxSignedIn, IFxStatus, parseFxModelIds, parseFxStatus } from '../../common/models/fxModels.js';
 import { grokModelsToInfo, IGrokCachedModel, parseGrokModelLines } from '../../common/models/grokModels.js';
@@ -79,7 +80,8 @@ export async function runCli(stdio: IVoltStdioService, command: string, args: re
 	});
 	try {
 		try {
-			id = await stdio.spawn({ command, args: [...args] });
+			// Detection, versions, model lists and sign-in: Volt's own questions, for no chat.
+			id = await stdio.spawn({ command, args: [...args], ...voltExec('probe') });
 		} catch {
 			return undefined;
 		}

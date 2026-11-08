@@ -9,6 +9,7 @@ import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { isAbsolute, join } from '../../../../../base/common/path.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
+import { voltExec } from '../../common/execContext.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IRequestService } from '../../../../../platform/request/common/request.js';
@@ -336,7 +337,8 @@ export class McpHost extends Disposable {
 	}
 
 	private async connectStdio(config: Extract<McpServerConfig, { kind: 'stdio' }>, root: URI | undefined): Promise<IMcpConnection> {
-		const processId = await this.stdio.spawn({ command: config.command, args: [...config.args], cwd: config.cwd ?? root?.fsPath, env: config.env });
+		// Trust and approval of a repository's MCP servers are the MCP host's (B-02), not decided here.
+		const processId = await this.stdio.spawn({ command: config.command, args: [...config.args], cwd: config.cwd ?? root?.fsPath, env: config.env, ...voltExec('mcp') });
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		client.handleRequests(request => {
 			if (request.method === 'roots/list') {

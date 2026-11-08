@@ -24,7 +24,8 @@ import { SafeOpenError } from '../../voltFiles/node/safeOpen.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { ChildLedger } from './childLedger.js';
-import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
+import { SandboxedPtySession } from '../../voltSandbox/node/sandboxPty.js';
+import { describeExecContext, execRefusal, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -66,6 +67,8 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	private readonly sandboxes = new Map<string, ISandboxLaunch>();
 	private readonly sandboxTags = new Map<string, string>();
 
+	/** Sandboxed terminals (PTY workloads), by caller-chosen id, and the window that asked. */
+	private readonly terminals = new Map<string, { readonly session: SandboxedPtySession; readonly owner: string | undefined }>();
 	/** Foreground commands and background jobs, by caller-chosen id. */
 	private readonly runs = new Map<string, ExecRun>();
 	/** HostGit calls that were given an id, for `cancelExec`. */
@@ -113,7 +116,14 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 
 	/** {@link spawn} on behalf of one window; see {@link owners}. */
 	async spawnFor(owner: string | undefined, options: IVoltStdioSpawnOptions): Promise<string> {
+		const refusal = execRefusal(options.context, options.sandbox);
+		if (refusal) {
+			// Refused, never run unsandboxed (INV-03, INV-14).
+			this.logService.warn(`[volt-exec] refused spawn of ${basename(options.command)}: ${refusal.reason}`);
+			throw new VoltExecRefusedError(refusal);
+		}
 		const id = generateUuid();
+		this.logService.trace(`[volt-exec] spawn ${id} ${basename(options.command)} (${describeExecContext(options.context)})`);
 		let command = options.command;
 		let args = options.args ?? [];
 		let cwd = options.cwd;
@@ -305,6 +315,56 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		return reason;
 	}
 
+	// --- sandboxed terminals ----------------------------------------------------------------------
+
+	async prepareSandboxedTerminal(request: IVoltSandboxedTerminalRequest): Promise<IVoltSandboxedTerminalLaunch> {
+		return this.prepareSandboxedTerminalFor(undefined, request);
+	}
+
+	/** {@link prepareSandboxedTerminal} on behalf of one window; its terminals' sandboxes end with it. */
+	async prepareSandboxedTerminalFor(owner: string | undefined, request: IVoltSandboxedTerminalRequest): Promise<IVoltSandboxedTerminalLaunch> {
+		// A terminal of a sandboxed chat runs only in its sandbox: no request without one.
+		const refusal = execRefusal(request.context, request.sandbox) ?? (request.sandbox ? undefined : { kind: 'no-sandbox' as const, reason: 'A sandboxed terminal needs its sandbox.' });
+		if (refusal) {
+			throw new VoltExecRefusedError(refusal);
+		}
+		if (this.terminals.has(request.id)) {
+			throw new Error(`terminal ${request.id} is already prepared`);
+		}
+		let session: SandboxedPtySession;
+		try {
+			session = await SandboxedPtySession.prepare(this.sandbox, request.file, request.args, request.sandbox, { cwd: request.cwd, hostEnv: await this.env(), env: request.env, label: request.context.reason });
+		} catch (err) {
+			throw new VoltExecRefusedError({ kind: 'sandbox', reason: (err as Error).message });
+		}
+		this.terminals.set(request.id, { session, owner });
+		this.logService.info(`[volt-sandbox-spawn] terminal ${request.id} (${describeExecContext(request.context)}) ${session.mechanism} cwd=${session.launch.cwd}`);
+		return session.launch;
+	}
+
+	async confirmSandboxedTerminal(id: string, pid: number): Promise<string> {
+		const entry = this.terminals.get(id);
+		if (!entry) {
+			throw new Error(`No sandboxed terminal ${id}`);
+		}
+		try {
+			return await entry.session.confirm(pid);
+		} catch (err) {
+			this.terminals.delete(id);
+			this.logService.warn(`[volt-sandbox-spawn] terminal ${id} not confirmed: ${(err as Error).message}`);
+			throw err;
+		}
+	}
+
+	async endSandboxedTerminal(id: string): Promise<void> {
+		const entry = this.terminals.get(id);
+		this.terminals.delete(id);
+		if (entry) {
+			entry.session.exited(null, 'SIGKILL');
+			await entry.session.end();
+		}
+	}
+
 	private disposeSandbox(id: string): void {
 		const launch = this.sandboxes.get(id);
 		if (launch) {
@@ -364,11 +424,19 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		for (const run of runs) {
 			void this.cancelExec(run.id);
 		}
+		for (const [id, entry] of [...this.terminals]) {
+			if (entry.owner === owner) {
+				void this.endSandboxedTerminal(id);
+			}
+		}
 	}
 
 	killAll(): void {
 		for (const id of [...this.processes.keys()]) {
 			void this.kill(id);
+		}
+		for (const id of [...this.terminals.keys()]) {
+			void this.endSandboxedTerminal(id);
 		}
 		for (const run of this.runs.values()) {
 			run.stop();
@@ -415,18 +483,28 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 
 	/** {@link exec} on behalf of one window; its commands stop when it reloads or closes. */
 	async execFor(owner: string | undefined, request: IVoltExecRequest): Promise<IVoltExecResult> {
+		const started = Date.now();
+		const refused = (refusal: IVoltExecRefusal): IVoltExecResult => {
+			const message = `Not run: ${refusal.reason}`;
+			return { id: request.id, exitCode: null, stdout: '', stderr: message, combined: message, truncated: false, durationMs: Date.now() - started, timedOut: false, cancelled: false, running: false, refused: refusal };
+		};
+		const refusal = execRefusal(request.context, request.sandbox);
+		if (refusal) {
+			// Refused, never run unsandboxed (INV-03, INV-14).
+			this.logService.warn(`[volt-exec] refused command ${request.id}: ${refusal.reason}`);
+			return refused(refusal);
+		}
+		this.logService.trace(`[volt-exec] command ${request.id} (${describeExecContext(request.context)})`);
 		const env = { ...await this.env(), ...request.env };
 		const shell = shellFor(env);
-		const started = Date.now();
 		let launch: ISandboxLaunch | undefined;
 		if (request.sandbox) {
 			await this.snapshotBuildEntries(request.sandbox);
 			try {
-				launch = await this.sandbox.prepare(shell.file, shell.args(request.command), request.sandbox, { cwd: request.cwd, hostEnv: await this.env(), env: request.env });
+				launch = await this.sandbox.prepare(shell.file, shell.args(request.command), request.sandbox, { cwd: request.cwd, hostEnv: await this.env(), env: request.env, label: request.context.reason });
 			} catch (err) {
 				// Refused, never run unsandboxed.
-				const message = `Not run: ${(err as Error).message}`;
-				return { id: request.id, exitCode: null, stdout: '', stderr: message, combined: message, truncated: false, durationMs: Date.now() - started, timedOut: false, cancelled: false, running: false };
+				return refused({ kind: 'sandbox', reason: (err as Error).message });
 			}
 		}
 		const child = spawn(launch?.command ?? shell.file, launch?.args ?? shell.args(request.command), {
@@ -616,6 +694,9 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			launch.dispose();
 		}
 		this.sandboxes.clear();
+		for (const id of [...this.terminals.keys()]) {
+			void this.endSandboxedTerminal(id);
+		}
 		for (const run of this.runs.values()) {
 			run.stop();
 		}

@@ -20,6 +20,7 @@ import { INotificationService, IPromptChoice } from '../../../../../platform/not
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { asText, IRequestService } from '../../../../../platform/request/common/request.js';
 import { IVoltExecFileResult, IVoltStdioService, runGitThrough } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { chatExec, IChatExec } from '../../../../services/voltRuntime/common/execContext.js';
 import { IVoltPrRepo, IVoltPullRequestService, voltPrErrorCode, voltPrErrorMessage } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { isTurnOfRun } from '../../../../services/voltRuntime/common/automations/automations.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -633,9 +634,12 @@ export class WorkflowExecutors extends Disposable {
 		const cancel = ctx.token.onCancellationRequested(() => void this.stdio.cancelExec(id).catch(() => undefined));
 		let result;
 		try {
-			result = await this.stdio.exec({ id, command, cwd: cwd.fsPath, ...(Object.keys(env).length ? { env } : {}), timeoutMs, inlineChars: OUTPUT_CHARS });
+			result = await this.stdio.exec({ id, command, cwd: cwd.fsPath, ...(Object.keys(env).length ? { env } : {}), timeoutMs, inlineChars: OUTPUT_CHARS, ...this.commandExec() });
 		} finally {
 			cancel.dispose();
+		}
+		if (result.refused) {
+			return this.fail(ctx, result.refused.reason, { command, refused: result.refused.kind });
 		}
 		if (ctx.token.isCancellationRequested || result.cancelled) {
 			throw new CancellationError();
@@ -782,18 +786,35 @@ export class WorkflowExecutors extends Disposable {
 
 	//#region Git
 
-	/** A program run without a shell; where the stdio service has no `execFile`, a quoted command line. */
+	/**
+	 * Who this run's commands run for (B-06, B-AP-11): the chat the run last used, else the defaults
+	 * its new chats get. Its agent steps run in those chats, so when they are sandboxed its commands
+	 * (scripts, git, gh) run inside the same sandbox with the same rules, never outside it. Git and
+	 * gh that need credentials then fail there, and say so.
+	 */
+	private commandExec(): IChatExec {
+		const chat = this.lastThread;
+		const settings = chat ? this.runtime.getSandboxSettings(chat) : this.runtime.getDefaultSandboxSettings();
+		const folder = this.folder();
+		return chatExec(chat, settings, folder ? [folder.fsPath] : [], 'workflow');
+	}
+
+	/** A program run without a shell; in a sandbox, or where the stdio service has no `execFile`, a quoted command line. */
 	private async execFile(ctx: IWorkflowNodeContext, file: string, args: readonly string[], cwd: string, timeoutMs: number): Promise<IVoltExecFileResult> {
 		const env = { GIT_TERMINAL_PROMPT: '0', GH_PROMPT_DISABLED: '1' };
-		if (this.stdio.execFile) {
+		const exec = this.commandExec();
+		if (this.stdio.execFile && !exec.sandbox) {
 			return raceCancellationError(this.stdio.execFile({ file, args, cwd, env, timeoutMs }), ctx.token);
 		}
 		const id = `wf-${generateUuid()}`;
 		const cancel = ctx.token.onCancellationRequested(() => void this.stdio.cancelExec(id).catch(() => undefined));
 		try {
-			const result = await this.stdio.exec({ id, command: [file, ...args].map(quoteArg).join(' '), cwd, env, timeoutMs });
+			const result = await this.stdio.exec({ id, command: [file, ...args].map(quoteArg).join(' '), cwd, env, timeoutMs, ...exec });
 			if (result.cancelled) {
 				throw new CancellationError();
+			}
+			if (result.refused) {
+				return { exitCode: null, stdout: '', stderr: '', error: result.refused.reason };
 			}
 			return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, ...(result.timedOut ? { error: 'timed out' } : {}) };
 		} finally {
@@ -1063,7 +1084,7 @@ export class WorkflowExecutors extends Disposable {
 			let watched;
 			try {
 				// Only integers and a validated slug go into the command line.
-				watched = await this.stdio.exec({ id, command: ['gh', 'pr', 'checks', String(number), '--watch', '--interval', String(interval), ...this.repoFlag(repo)].join(' '), cwd: folder, env: { GH_PROMPT_DISABLED: '1' }, timeoutMs, inlineChars: OUTPUT_CHARS });
+				watched = await this.stdio.exec({ id, command: ['gh', 'pr', 'checks', String(number), '--watch', '--interval', String(interval), ...this.repoFlag(repo)].join(' '), cwd: folder, env: { GH_PROMPT_DISABLED: '1' }, timeoutMs, inlineChars: OUTPUT_CHARS, ...this.commandExec() });
 			} finally {
 				cancel.dispose();
 				waiting.dispose();

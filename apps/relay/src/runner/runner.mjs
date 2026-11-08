@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { AGENTS, detectAgents, parseAgentLine } from './agents.mjs';
+import { AGENTS, detectAgents, parseAgentLine, runnerAgentEnv } from './agents.mjs';
 import { LoadSampler } from './load.mjs';
 
 const VERSION = '0.1.0';
@@ -302,7 +302,8 @@ export class Runner {
 		return new Promise((resolve, reject) => {
 			const child = spawn(agent.binary(), args, {
 				cwd,
-				env: { ...process.env, ...env, VOLT_CLOUD_TASK: task.id, CI: '1' },
+				// An allow list: the runner's own secrets (enrol key, relay token) never reach the agent.
+				env: { ...runnerAgentEnv(task.agent), ...env, VOLT_CLOUD_TASK: task.id, CI: '1' },
 				stdio: ['pipe', 'pipe', 'pipe'],
 				detached: true,
 			});

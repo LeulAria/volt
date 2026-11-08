@@ -42,6 +42,8 @@ export interface ISandboxLaunch {
 	readonly cwd: string;
 	/** stdio entries from fd 3 up. */
 	readonly extraStdio: readonly (number | 'pipe')[];
+	/** Which way each of them carries data (see `ISandboxLaunchSpec.extraStdioDirections`). */
+	readonly extraStdioDirections: readonly ('in' | 'out')[];
 	readonly tag: string;
 	readonly policy: IResolvedSandboxPolicy;
 	readonly mechanism: SandboxMechanism;
@@ -108,7 +110,7 @@ export class VoltSandboxLauncher extends Disposable {
 	 * The command, arguments and environment that run `command args` sandboxed by `request`.
 	 * `hostEnv` is the user's environment the profile filters; `env` is what Volt sets on purpose.
 	 */
-	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest, options: { cwd?: string; hostEnv: Readonly<Record<string, string | undefined>>; env?: Readonly<Record<string, string>> }): Promise<ISandboxLaunch> {
+	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest, options: { cwd?: string; hostEnv: Readonly<Record<string, string | undefined>>; env?: Readonly<Record<string, string>>; terminal?: boolean; label?: string }): Promise<ISandboxLaunch> {
 		const host = await this.hostFacts();
 		const sshAuthSock = options.hostEnv.SSH_AUTH_SOCK && await fs.stat(options.hostEnv.SSH_AUTH_SOCK).then(s => s.isSocket(), () => false) ? options.hostEnv.SSH_AUTH_SOCK : undefined;
 		const policy = agentSandboxPolicy(request, { ...host, ...(sshAuthSock ? { sshAuthSock } : {}) });
@@ -117,7 +119,8 @@ export class VoltSandboxLauncher extends Disposable {
 			args: [...nativeSandboxOffArgs(request.providerId), ...args],
 			policy,
 			context: { workspaceRoots: request.workspaceRoots.filter(root => !root.endsWith('/.git')), cwd: options.cwd, hostEnv: options.hostEnv, env: options.env },
-			label: `${request.providerId} agent`,
+			terminal: !!options.terminal,
+			label: options.label ?? `${request.providerId} agent`,
 		});
 		const listener = prepared.onDenial(denial => {
 			if (denial.kind === 'process' || denial.kind === 'limit') {
@@ -133,6 +136,7 @@ export class VoltSandboxLauncher extends Disposable {
 			env: { ...prepared.env },
 			cwd: prepared.cwd,
 			extraStdio: prepared.extraStdio,
+			extraStdioDirections: prepared.extraStdioDirections,
 			tag: prepared.tag,
 			policy: prepared.policy,
 			mechanism: mechanismOf(prepared.backend),

@@ -102,6 +102,8 @@ export function toolClassCapability(toolClass: HostToolSandboxClass): string {
 		case 'reads': return 'files.read:workspace';
 		case 'network': return 'net.connect';
 		case 'writes': return 'files.write';
+		case 'sandboxed': return 'terminals.run';
+		case 'reads-other': return 'agents.read:other';
 		case 'persists': return 'agents.context';
 		case 'delegates': return 'agents.send';
 		case 'spawns': return 'agents.create';

@@ -9,7 +9,9 @@ import { Disposable, DisposableStore, toDisposable } from '../../../../../base/c
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
-import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltStdioService, VoltExecReason } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { chatExec, IChatExec, userExec } from '../execContext.js';
+import { isSandboxed } from '../hostToolSandbox.js';
 import { IVoltHostToolCall, IVoltHostToolResult } from '../hostTools.js';
 import { projectRunEnv } from '../projectRunEnv.js';
 import { IAgentRuntimeService, IVoltAgentBackgroundTask } from '../runtime.js';
@@ -48,6 +50,12 @@ export interface IAgentTerminalStart {
 	readonly label?: string;
 	readonly cwd?: string;
 	readonly readyPattern?: string;
+	/**
+	 * Who the terminal runs for. A chat's agent's terminal carries the chat and, for a sandboxed
+	 * chat, its sandbox: the backend then starts it inside that sandbox or not at all. Absent: the
+	 * user started it (a restart from the chip, the Terminals tab), outside any sandbox.
+	 */
+	readonly exec?: IChatExec;
 }
 
 /** A terminal that was running when its host went away (the agent server restarted or crashed). */
@@ -95,10 +103,16 @@ export interface IManagedTerminalLaunch {
 	readonly command: string;
 	readonly cwd: string | undefined;
 	readonly env: Readonly<Record<string, string>>;
+	/** Who it runs for, and the chat's sandbox to run it in when `exec.sandbox` is set. */
+	readonly exec: IChatExec;
 }
 
 export interface IManagedTerminalBackend {
-	/** Starts `launch.command` in a POSIX shell (cmd.exe on Windows). Throws when it cannot. */
+	/**
+	 * Starts `launch.command` in a POSIX shell (cmd.exe on Windows). Throws when it cannot. With
+	 * `launch.exec.sandbox` the shell runs in that sandbox (sandboxPty.ts), and `ready` resolves
+	 * only once the sandbox is confirmed; a backend that cannot sandbox a PTY throws.
+	 */
 	spawn(launch: IManagedTerminalLaunch): Promise<IManagedTerminalProcess>;
 }
 
@@ -222,7 +236,14 @@ export class ManagedTerminal {
 		readonly readyPattern: RegExp | undefined,
 		readonly readySource: string | undefined,
 		readonly startedAt = Date.now(),
+		/** Who it runs for; its sandbox when it runs in one. Undefined: the user's. */
+		readonly exec?: IChatExec,
 	) { }
+
+	/** It runs inside its chat's OS sandbox. */
+	get sandboxed(): boolean {
+		return !!this.exec?.sandbox;
+	}
 
 	info(): IAgentTerminalInfo {
 		return {
@@ -349,6 +370,8 @@ export class ManagedTerminals extends Disposable {
 			options.cwd ?? this.defaultCwd(),
 			agentPattern(options.readyPattern),
 			options.readyPattern,
+			undefined,
+			options.exec,
 		);
 		this.terminals.set(terminal.id, terminal);
 		this.pruneFinished(chatId);
@@ -400,7 +423,9 @@ export class ManagedTerminals extends Disposable {
 		}
 		await this.stop(id);
 		this.forget(terminal, true);
-		return this.start(terminal.chatId, { command: terminal.command, label: terminal.label, cwd: terminal.cwd, readyPattern: terminal.readySource });
+		// Run again for whoever it ran for, in the chat's sandbox as it is now.
+		const exec = terminal.exec?.context.principal.startsWith('chat:') ? this.runtime.chatExec(terminal.chatId, 'terminal') : terminal.exec;
+		return this.start(terminal.chatId, { command: terminal.command, label: terminal.label, cwd: terminal.cwd, readyPattern: terminal.readySource, ...(exec ? { exec } : {}) });
 	}
 
 	/** Forgets a finished terminal (its chip goes away). */
@@ -472,7 +497,7 @@ export class ManagedTerminals extends Disposable {
 		};
 		let process: IManagedTerminalProcess;
 		try {
-			process = await this.backend.spawn({ id: terminal.id, label: terminal.label, command: terminal.command, cwd: terminal.cwd, env });
+			process = await this.backend.spawn({ id: terminal.id, label: terminal.label, command: terminal.command, cwd: terminal.cwd, env, exec: terminal.exec ?? userExec() });
 		} catch (err) {
 			terminal.error = err instanceof Error ? err.message : String(err);
 			this.finish(terminal, 1);
@@ -743,6 +768,22 @@ export class ManagedTerminals extends Disposable {
 	chatOf(call: IVoltHostToolCall | undefined): string | undefined {
 		return call?.sessionId ? this.runtime.chatFor(call.sessionId) : undefined;
 	}
+
+	/**
+	 * Who a process a tool call starts runs for, and the sandbox it runs in. The call's sandbox is
+	 * the one Volt resolved for the calling session (never the agent's say); the runtime's record of
+	 * the chat is asked too, and the stricter of the two wins: sandboxed when either is.
+	 */
+	execFor(call: IVoltHostToolCall | undefined, reason: VoltExecReason): IChatExec {
+		const sessionId = call?.sessionId;
+		const chat = sessionId ? this.runtime.chatFor(sessionId) : undefined;
+		const recorded = chat ? this.runtime.chatExec(chat, reason) : undefined;
+		if (!isSandboxed(call?.sandbox)) {
+			return recorded ?? chatExec(undefined, undefined, [], reason);
+		}
+		const roots = recorded?.sandbox?.workspaceRoots ?? (call?.cwd ? [call.cwd] : []);
+		return chatExec(chat, call!.sandbox, roots, reason);
+	}
 }
 
 // --- Host tools ------------------------------------------------------------------------------------
@@ -868,6 +909,10 @@ export class ManagedTerminalTools {
 				if (!process || !isTerminalLive(terminal.status)) {
 					return { error: `${id} is not running (${describeAgentTerminalStatus(terminal.info())}).` };
 				}
+				if (isSandboxed(call?.sandbox) && !terminal.sandboxed) {
+					// Typing into a shell outside the sandbox would run anything there.
+					return { error: `${id} runs outside this chat's sandbox (it started before the sandbox was turned on), so it cannot be typed into from this chat. Stop it with terminal_stop and start it again with terminal_start: it then runs inside the sandbox.` };
+				}
 				const text = (typeof args.text === 'string' ? args.text : '').replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
 				await process.sendText(text, args.enter !== false);
 				return { text: `Sent to ${id}. Read the reply with terminal_wait.` };
@@ -886,7 +931,9 @@ export class ManagedTerminalTools {
 			return { error: 'command is required.' };
 		}
 		const cwd = this.resolveCwd(str(args.cwd), call);
-		const info = await this.terminals.start(chatId, { command, label: str(args.title)?.trim(), cwd, readyPattern: str(args.ready_pattern) });
+		// A sandboxed chat's terminal runs in its sandbox, with its rules (F.6, I.7).
+		const exec = this.terminals.execFor(call, 'terminal');
+		const info = await this.terminals.start(chatId, { command, label: str(args.title)?.trim(), cwd, readyPattern: str(args.ready_pattern), exec });
 		const waitMs = clamp(int(args.wait_ms), DEFAULT_START_WAIT_MS, 0, MAX_START_WAIT_MS);
 		if (waitMs > 0) {
 			await this.terminals.waitFor(info.id, managed => managed.status !== 'starting', waitMs, token);
@@ -921,14 +968,16 @@ export class ManagedTerminalTools {
 
 	// --- Docker and apps -------------------------------------------------------------------------
 
-	private async exec(command: string, cwd: string | undefined, timeoutMs: number): Promise<{ ok: boolean; out: string }> {
-		const result = await this.stdio.exec({ id: `docker-${Math.random().toString(36).slice(2, 10)}`, command, cwd, timeoutMs, inlineChars: 4_000 });
-		return { ok: result.exitCode === 0 && !result.timedOut, out: result.combined.trim() };
+	private async exec(command: string, cwd: string | undefined, timeoutMs: number, exec: IChatExec): Promise<{ ok: boolean; out: string; refused?: string }> {
+		const result = await this.stdio.exec({ id: `docker-${Math.random().toString(36).slice(2, 10)}`, command, cwd, timeoutMs, inlineChars: 4_000, ...exec });
+		return { ok: result.exitCode === 0 && !result.timedOut, out: result.combined.trim(), ...(result.refused ? { refused: result.refused.reason } : {}) };
 	}
 
 	private async dockerEnsure(args: Record<string, unknown>, call: IVoltHostToolCall | undefined, token: CancellationToken): Promise<IVoltHostToolResult> {
 		const started = Date.now();
 		const cwd = call?.cwd;
+		// Asked in the chat's sandbox when it has one, with its rules.
+		const exec = this.terminals.execFor(call, 'terminal');
 		const docker = await this.stdio.which('docker');
 		if (!docker) {
 			const app = isMacintosh && await this.fileService.exists(URI.file('/Applications/Docker.app')).catch(() => false);
@@ -938,10 +987,17 @@ export class ManagedTerminalTools {
 					: 'Docker is not installed (no `docker` on PATH). Ask the user to install Docker Desktop or OrbStack (`brew install --cask orbstack`).',
 			};
 		}
-		const probe = () => this.exec('docker info --format "{{.ServerVersion}}"', cwd, 8_000);
+		const probe = () => this.exec('docker info --format "{{.ServerVersion}}"', cwd, 8_000, exec);
 		let status = await probe();
+		if (status.refused) {
+			return { error: `docker_ensure did not run: ${status.refused}` };
+		}
 		if (status.ok) {
 			return { text: `Docker is running (server ${status.out.split('\n').pop()}, CLI ${docker}). Checked in ${((Date.now() - started) / 1000).toFixed(1)}s.` };
+		}
+		if (exec.sandbox) {
+			// Starting Docker runs the user's Docker outside any sandbox: not for a sandboxed chat.
+			return { error: `Docker did not answer from inside this chat's sandbox: ${status.out.split('\n')[0] || 'no answer'}. The sandbox may not reach Docker at all, and Volt does not start Docker for a sandboxed chat. Ask the user to start Docker, or to turn the sandbox off for this chat.` };
 		}
 		if (/permission denied/i.test(status.out)) {
 			return { error: `The Docker daemon is running but this user may not use it: ${status.out.split('\n')[0]}. On Linux, add the user to the docker group (then log in again).` };
@@ -949,7 +1005,7 @@ export class ManagedTerminalTools {
 		if (args.start === false) {
 			return { error: `The Docker daemon is not running: ${status.out.split('\n')[0] || 'no answer'}` };
 		}
-		const how = await this.startDocker(cwd);
+		const how = await this.startDocker(cwd, exec);
 		if (!how) {
 			return { error: `The Docker daemon is not running and Volt does not know how to start it on this machine: ${status.out.split('\n')[0] || 'no answer'}. Ask the user to start Docker.` };
 		}
@@ -965,22 +1021,22 @@ export class ManagedTerminalTools {
 	}
 
 	/** Starts whichever Docker this machine has; returns its name, or undefined when there is none to start. */
-	private async startDocker(cwd: string | undefined): Promise<string | undefined> {
+	private async startDocker(cwd: string | undefined, exec: IChatExec): Promise<string | undefined> {
 		if (await this.stdio.which('orb')) {
-			void this.exec('orb start', cwd, 60_000);
+			void this.exec('orb start', cwd, 60_000, exec);
 			return 'OrbStack';
 		}
 		if (isMacintosh && await this.fileService.exists(URI.file('/Applications/Docker.app')).catch(() => false)) {
 			// -g: in the background, so Volt keeps focus.
-			const opened = await this.exec('open -g -a Docker', cwd, 10_000);
+			const opened = await this.exec('open -g -a Docker', cwd, 10_000, exec);
 			return opened.ok ? 'Docker Desktop' : undefined;
 		}
 		if (await this.stdio.which('colima')) {
-			void this.exec('colima start', cwd, 300_000);
+			void this.exec('colima start', cwd, 300_000, exec);
 			return 'Colima';
 		}
 		if (!isMacintosh && !isWindows && await this.stdio.which('systemctl')) {
-			const user = await this.exec('systemctl --user start docker-desktop', cwd, 15_000);
+			const user = await this.exec('systemctl --user start docker-desktop', cwd, 15_000, exec);
 			return user.ok ? 'Docker Desktop' : undefined;
 		}
 		return undefined;
@@ -1004,7 +1060,12 @@ export class ManagedTerminalTools {
 		} else {
 			command = `xdg-open ${shellQuote(target)} >/dev/null 2>&1 &`;
 		}
-		const result = await this.exec(command, call?.cwd, 15_000);
+		const exec = this.terminals.execFor(call, 'terminal');
+		if (exec.sandbox) {
+			// The app it opens runs outside any sandbox (the gate refuses this too; never reached through it).
+			return { error: `app_open was not run: this chat runs in Volt's sandbox, and the app would run outside it. Ask the user to open ${target}.` };
+		}
+		const result = await this.exec(command, call?.cwd, 15_000, exec);
 		return result.ok ? { text: `Opened ${target}${focus ? '' : ' in the background'}.` } : { error: `Could not open ${target}: ${result.out || 'the system refused'}` };
 	}
 }

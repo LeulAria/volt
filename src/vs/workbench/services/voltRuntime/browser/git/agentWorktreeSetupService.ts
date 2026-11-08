@@ -14,6 +14,7 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
 import { IVoltStdioService, runGitThrough } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { worktreeSetupExec } from '../../common/execContext.js';
 import {
 	buildWorktreeSetupPlan, currentSetupStep, IAgentWorktreeSetupService, IProjectFile, IWorktreeSetupRequest, IWorktreeSetupStatus, IWorktreeSetupStepStatus, IWorktreesJson,
 	parseProjectFile, parseWorktreesJson, PROJECT_FILES, setupOutputTail, WORKTREE_SETUP_FILES, WORKTREE_SETUP_TIMEOUT_MS, worktreeSetupEnv, worktreeSetupUnits,
@@ -340,7 +341,13 @@ export class AgentWorktreeSetupService extends Disposable implements IAgentWorkt
 			background: true,
 			backgroundWaitMs: POLL_MS,
 			inlineChars: 20_000,
+			...worktreeSetupExec(chatId, run.request.sandbox, run.request.repoRoot, run.status.worktreePath),
 		});
+		if (result.refused) {
+			// Not run at all: a sandboxed chat's setup never runs outside its sandbox.
+			run.execId = undefined;
+			throw new Error(result.refused.reason);
+		}
 		output = result.combined;
 		let running = result.running;
 		let exitCode = result.exitCode;
@@ -394,5 +401,4 @@ export class AgentWorktreeSetupService extends Disposable implements IAgentWorkt
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
-
 registerSingleton(IAgentWorktreeSetupService, AgentWorktreeSetupService, InstantiationType.Delayed);

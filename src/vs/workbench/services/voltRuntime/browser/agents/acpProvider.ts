@@ -28,7 +28,8 @@ import { IProviderProfile } from '../../common/profiles.js';
 import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo } from '../../common/providers.js';
 import { sandboxPlatformUnavailable, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
-import { IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecContext, IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { voltExec } from '../../common/execContext.js';
 import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey, sandboxStrategy, SandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer } from '../../common/hostTools.js';
@@ -796,7 +797,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		this.spawning++;
 		try {
 			// Rejects with a SandboxUnavailableError when the sandbox cannot be enforced; the runtime shows it.
-			processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}) });
+			// `sandboxed` follows the wrap: an agent whose strategy is its own sandbox gets no Volt wrap here (sandboxStrategy).
+			const context: IVoltExecContext = { principal: req.sessionId ? `chat:${req.sessionId}` : 'volt', reason: 'agent', sandboxed: !!sandbox };
+			processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}), context });
 		} finally {
 			this.spawning--;
 		}
@@ -1229,7 +1232,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		const launch = await this.launchFor(profile, profile.args?.length ? [...profile.args] : [...this.defaultArgs]);
 		const cwd = profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
-		const processId = await this.stdio.spawn({ command: launch.command, args: launch.args, cwd });
+		// For no chat: Volt asks what the agent offers. What the CLI loads from its own state is the agent state overlay's (B-05).
+		const processId = await this.stdio.spawn({ command: launch.command, args: launch.args, cwd, ...voltExec('probe') });
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		try {
 			await withTimeout(client.request('initialize', {

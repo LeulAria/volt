@@ -162,7 +162,7 @@ suite('Volt MCP host: project servers need trust and an approval (B-02)', () => 
 		const tools = await focusAndSend();
 		assert.deepStrictEqual(tools.map(tool => tool.name), ['mcp__tool__hello']);
 		assert.strictEqual(processes.spawns.length, 1);
-		assert.deepStrictEqual(processes.spawns[0], { command: 'fake-mcp', args: ['--port', '1'], cwd: ROOT.fsPath, env: {} });
+		assert.deepStrictEqual(processes.spawns[0], { command: 'fake-mcp', args: ['--port', '1'], cwd: ROOT.fsPath, env: {}, context: { principal: 'volt', reason: 'mcp', sandboxed: false } });
 		assert.deepStrictEqual(await host.approvalRequests(ROOT, HOME), []);
 
 		await writeProject({ mcpServers: { tool: { command: 'fake-mcp', args: ['--port', '2'] } } });

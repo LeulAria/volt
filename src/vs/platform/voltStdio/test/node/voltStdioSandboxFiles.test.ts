@@ -44,7 +44,7 @@ suite('Volt stdio sandbox file access (B-17)', () => {
 		const service = store.add(new VoltStdioService(new NullLogService(), new TestConfigurationService(), userData));
 		assert.strictEqual(await service.sandboxAllows('no-such-process', join(userData, 'a.txt'), 'write'), false);
 		assert.strictEqual(await service.sandboxAllows('no-such-process', join(userData, 'a.txt'), 'read'), false);
-		const id = await service.spawn({ command: '/bin/sleep', args: ['30'] });
+		const id = await service.spawn({ command: '/bin/sleep', args: ['30'], context: { principal: 'volt', reason: 'volt', sandboxed: false } });
 		assert.strictEqual(await service.sandboxAllows(id, join(userData, 'a.txt'), 'write'), true, 'started without a sandbox');
 		const exited = new Promise<void>(resolve => {
 			const listener = service.onExit(e => {
@@ -82,7 +82,7 @@ suite('Volt stdio sandbox file access (B-17)', () => {
 		await fs.mkdir(home);
 		await fs.writeFile(join(home, '.zshrc'), 'user');
 		await fs.symlink(home, join(ws, 'h'));
-		const id = await service.spawn({ command: '/bin/sleep', args: ['30'], cwd: ws, sandbox: { level: 'workspace-write', network: false, providerId: '', workspaceRoots: [ws] } });
+		const id = await service.spawn({ command: '/bin/sleep', args: ['30'], cwd: ws, sandbox: { level: 'workspace-write', network: false, providerId: '', workspaceRoots: [ws] }, context: { principal: 'chat:test', reason: 'agent', sandboxed: true } });
 		try {
 			const ok = await service.sandboxWriteFile(id, join(ws, 'src', 'a.ts'), 'hello');
 			assert.ok(ok.ok, JSON.stringify(ok));

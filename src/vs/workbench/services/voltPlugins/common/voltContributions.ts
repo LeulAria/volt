@@ -30,8 +30,8 @@ export const VOLT_MODULE_EXTENSION_POINT = 'voltModule';
 export const VOLT_MODULE_CATEGORIES = ['agents', 'workspace', 'tools', 'productivity', 'resources', 'providers', 'customize'] as const;
 export type VoltModuleCategory = typeof VOLT_MODULE_CATEGORIES[number];
 
-const TOOL_CLASSES: readonly HostToolSandboxClass[] = ['safe', 'browser', 'reads', 'network', 'writes', 'persists', 'delegates', 'spawns', 'escapes'];
-const TOOL_CLASS_RANK: Readonly<Record<HostToolSandboxClass, number>> = { safe: 0, browser: 1, reads: 1, network: 2, writes: 2, persists: 3, delegates: 3, spawns: 4, escapes: 5 };
+const TOOL_CLASSES: readonly HostToolSandboxClass[] = ['safe', 'browser', 'reads', 'network', 'writes', 'sandboxed', 'reads-other', 'persists', 'delegates', 'spawns', 'escapes'];
+const TOOL_CLASS_RANK: Readonly<Record<HostToolSandboxClass, number>> = { safe: 0, browser: 1, reads: 1, network: 2, writes: 2, sandboxed: 2, 'reads-other': 3, persists: 3, delegates: 3, spawns: 4, escapes: 5 };
 
 /** An agent tool the plugin serves on Volt's host MCP server. */
 export interface IVoltToolContribution {
