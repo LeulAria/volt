@@ -1337,6 +1337,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'remoteDevices',
+				entry: 'voltRemoteDevices',
 				label: 'Remote devices',
 				description: 'Pair phones and browsers with this machine\'s agent server (Settings > Devices).',
 				category: 'workspace',

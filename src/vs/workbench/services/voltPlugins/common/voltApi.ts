@@ -205,6 +205,12 @@ export interface IVoltSkillsApi {
 	show(options?: { readonly marketplace?: boolean }): Promise<void>;
 }
 
+/** Phones and browsers paired with this computer's agent server. Pairing itself stays with the user. */
+export interface IVoltRemoteDevicesApi {
+	/** `ui.contribute`: shows Settings > Devices, or Add Device on it. Nothing comes back. */
+	show(options?: { readonly addDevice?: boolean }): Promise<void>;
+}
+
 export interface IVoltUsageModelTotal {
 	readonly provider: string;
 	readonly model: string;
@@ -310,6 +316,7 @@ export interface IVoltApi {
 	readonly visuals: IVoltVisualsApi;
 	readonly automations: IVoltAutomationsApi;
 	readonly skills: IVoltSkillsApi;
+	readonly remoteDevices: IVoltRemoteDevicesApi;
 	readonly usage: IVoltUsageApi;
 	readonly pullRequests: IVoltPullRequestsApi;
 }
@@ -373,6 +380,7 @@ export interface IVoltApiBackend {
 	deleteAutomation?(automationId: string, caller: IVoltApiCaller): Promise<void>;
 	listSkills?(): Promise<readonly IVoltSkillSummary[]>;
 	showSkills?(marketplace: boolean): Promise<void>;
+	showRemoteDevices?(addDevice: boolean): Promise<void>;
 	readUsage?(): Promise<IVoltUsageSummary>;
 	listPullRequests?(chatId: string): Promise<readonly IVoltPullRequestLink[]>;
 }
@@ -688,6 +696,13 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		},
 	};
 
+	const remoteDevices: IVoltRemoteDevicesApi = {
+		async show(options) {
+			check({ api: 'remoteDevices.show', capability: 'ui.contribute' });
+			return bound(backend.showRemoteDevices, 'remoteDevices.show').call(backend, options?.addDevice === true);
+		},
+	};
+
 	const usage: IVoltUsageApi = {
 		get() {
 			check({ api: 'usage.get', capability: 'usage.report' });
@@ -707,7 +722,7 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		},
 	};
 
-	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, skills, usage, pullRequests });
+	return Object.freeze({ version: VOLT_API_VERSION, tools, storage, agents, ui, settings, commands, net, secrets, memory, browser, visuals, automations, skills, remoteDevices, usage, pullRequests });
 }
 
 /** One extension's validated Volt contributions, as the window loaded them. */

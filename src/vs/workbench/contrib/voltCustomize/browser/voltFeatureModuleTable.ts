@@ -10,6 +10,7 @@ import {
 	AUTOMATIONS_EDITOR_INPUT_TYPE_ID, AUTOMATIONS_FEATURE_ID, NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATION_RUNS_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID,
 	OPEN_AUTOMATIONS_ROUTE_COMMAND_ID,
 } from '../../voltAutomations/common/voltAutomations.js';
+import { REMOTE_DEVICES_FEATURE_ID } from '../../voltRemoteDevices/common/voltRemoteDevices.js';
 import { OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID, SKILLS_EDITOR_INPUT_TYPE_ID, SKILLS_FEATURE_ID } from '../../voltSkills/common/voltSkills.js';
 import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
 
@@ -36,6 +37,11 @@ export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
 			{ id: OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, visibility: 'public' },
 		],
 		editors: [AUTOMATIONS_EDITOR_INPUT_TYPE_ID],
+	},
+	{
+		// No commands or editors: Volt Settings asks for its page. Pair a Phone or Browser is core.
+		feature: REMOTE_DEVICES_FEATURE_ID,
+		load: async () => (await import('../../voltRemoteDevices/browser/voltRemoteDevices.module.js')).voltRemoteDevicesModule,
 	},
 	{
 		feature: SKILLS_FEATURE_ID,

@@ -7,7 +7,7 @@ declare module 'vscode' {
 
 	/**
 	 * Volt's own API: its chats and agents, agent tools, memory, browser, visuals, automations,
-	 * skills, usage and pull requests, for any extension running in Volt.
+	 * skills, remote devices, usage and pull requests, for any extension running in Volt.
 	 *
 	 * Use it by adding `"volt"` to `enabledApiProposals` in `package.json`. Unlike the editor's other
 	 * proposals it works for every extension, including ones installed from Open VSX, with no flag.
@@ -271,6 +271,12 @@ declare module 'vscode' {
 			export function list(kind?: string): Thenable<readonly Skill[]>;
 			/** Shows Skills & Plugins, or its marketplace. Capability: `ui.contribute`. */
 			export function show(options?: { readonly marketplace?: boolean }): Thenable<void>;
+		}
+
+		/** Phones and browsers paired with this computer. Pairing itself stays with the user. */
+		export namespace remoteDevices {
+			/** Shows Settings > Devices, or Add Device on it. Capability: `ui.contribute`. */
+			export function show(options?: { readonly addDevice?: boolean }): Thenable<void>;
 		}
 
 		export interface UsageSummary {

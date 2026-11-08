@@ -65,6 +65,11 @@
 			"src/vs/workbench/services/voltRuntime/common/hooks/voltHooks.ts",
 			"src/vs/workbench/services/voltRuntime/common/memory/voltMemory.ts",
 			"src/vs/workbench/services/voltRuntime/common/runtime.ts"
+		],
+		"remoteDevices": [
+			"src/vs/workbench/contrib/voltAgent/browser/remote/voltRemoteIntro.ts",
+			"src/vs/workbench/contrib/voltSettings/browser/vendor/qrcode.ts",
+			"src/vs/workbench/services/voltAgentServer/common/agentServerClient.ts"
 		]
 	}
 }

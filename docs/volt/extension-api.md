@@ -1,6 +1,6 @@
 # Building a Volt extension (`vscode.volt`)
 
-A Volt extension is a normal VS Code extension. It installs from Open VSX, a `.vsix` or a folder, and it can use every VS Code API. Running in Volt, it also gets `vscode.volt`: Volt's chats and agents, agent tools, memory, the in-app browser, charts and the Scratch board, automations, skills, usage and pull requests.
+A Volt extension is a normal VS Code extension. It installs from Open VSX, a `.vsix` or a folder, and it can use every VS Code API. Running in Volt, it also gets `vscode.volt`: Volt's chats and agents, agent tools, memory, the in-app browser, charts and the Scratch board, automations, skills, remote devices, usage and pull requests.
 
 Volt's own features are built the same way. The 30 `extensions/volt-*` folders are built-in extensions: they ship with the app (no download, no `.vsix`), can't be uninstalled, are enabled by default and can be disabled in Extensions. They get their access from a ceiling compiled into Volt (below). Third-party extensions get theirs from what they declare and what the user allows.
 
@@ -196,14 +196,22 @@ await volt.skills.show({ marketplace: true });                        // [ui.con
 
 Names and descriptions only: no file paths, file contents or MCP server configs (their env can hold tokens). Memories are `volt.memory`'s.
 
-### 3.10 `volt.usage`
+### 3.10 `volt.remoteDevices`
+
+```ts
+await volt.remoteDevices.show({ addDevice: true });                   // [ui.contribute] Settings > Devices, or Add Device on it
+```
+
+Pairing a phone or browser stays the user's: the extension can only open the page.
+
+### 3.11 `volt.usage`
 
 ```ts
 const usage = await volt.usage.get();                                 // [usage.report]
 // { generatedAt, since, sessionCount, costUsd, models: [{ provider, model, inputTokens, outputTokens, costUsd }] }
 ```
 
-### 3.11 `volt.pullRequests`
+### 3.12 `volt.pullRequests`
 
 ```ts
 const links = await volt.pullRequests.list(chatId);                   // [hosting.read]

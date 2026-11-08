@@ -40,6 +40,7 @@ import { VoltCapabilityError } from '../../../services/voltPlugins/common/capabi
 import { IVoltExtensionApiService } from '../../../services/voltPlugins/common/voltExtensionApi.js';
 import { IAutomation, IAutomationCreateInput, IAutomationRun, IAutomationService } from '../../../services/voltRuntime/common/automations/automations.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../../../contrib/voltAutomations/common/voltAutomations.js';
+import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
 import { IAgentCustomization } from '../../../contrib/voltAgent/browser/customize/agentCustomize.js';
 import { IAgentCustomizeService } from '../../../contrib/voltAgent/browser/customize/agentCustomizeService.js';
 import { OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID } from '../../../contrib/voltSkills/common/voltSkills.js';
@@ -435,6 +436,14 @@ suite('Volt extension API (vscode.volt)', () => {
 		// Undeclared: refused without a prompt.
 		const bare = host([description('acme.bare', { contributes: {} })], ['acme.bare']);
 		assert.strictEqual((await refusal(bare.voltFor('acme.bare').skills.list())).deniedBy, 'manifest');
+	});
+
+	test('EXT-RT-remoteDevices: show Devices, or Add Device on it (no capability: it only opens a page)', async () => {
+		const h = host([description('acme.bare', { contributes: {} })], ['acme.bare']);
+		const volt = h.voltFor('acme.bare');
+		await volt.remoteDevices.show();
+		await volt.remoteDevices.show({ addDevice: true });
+		assert.deepStrictEqual(h.commands.filter(command => command.id === OPEN_VOLT_SETTINGS_COMMAND_ID).map(command => command.args), [['devices'], ['devices:add']]);
 	});
 
 	// --- Identity ---------------------------------------------------------------------------------

@@ -185,6 +185,7 @@ A feature whose manifest names `voltModule.entry` lives in its own folder, `cont
 | Feature | Folder | In the module | Stays core |
 |---|---|---|---|
 | Skills & Plugins | `voltSkills` | the Skills & Plugins tab (Customize: skills, subagents, MCP servers, hooks, plugins, memories, marketplace), its commands, the page in Volt Settings | what agents load (`IAgentCustomizeService`, the server uses it), the installer (`IAgentMarketplaceService`), the marketplace view and `agentCustomize.css` Agent Resources and Pull Requests share |
+| Remote devices | `voltRemoteDevices` | Settings > Devices and Add Device (QR codes, the ways in); loaded when Settings first shows the page, no commands | pairing, device tokens and tunnels (the agent server), Pair a Phone or Browser, the vendored QR encoder `apps/volt-run` also uses |
 | Automations | `voltAutomations` | the Automations tab and pages (list, calendar, one automation, runs, composer), its commands, the page in Volt Settings | the scheduler (`IAutomationService`, it runs on volt-server too), webhook relay, the UI helpers the workflow builder shares |
 
 ### 6.2 Volt UI SDK

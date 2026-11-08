@@ -65,8 +65,7 @@ import { CustomizeVoltPage } from './customizeVoltPage.js';
 import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
-import { DevicesPage } from './devicesPage.js';
-import type { VoltConnectionKind } from './addDeviceModal.js';
+import { IDevicesPage, IDevicesPageHost, IVoltRemoteDevicesModule, REMOTE_DEVICES_FEATURE_ID, VoltConnectionKind } from '../../voltRemoteDevices/common/voltRemoteDevices.js';
 import { createSettingsIcon } from './settingsIcons.js';
 import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
@@ -218,7 +217,11 @@ export class VoltSettingsEditor extends EditorPane {
 	private providers!: ProvidersPage;
 	private appearance!: AppearancePage;
 	private connectedAgents!: ConnectedAgentsPage;
-	private devices!: DevicesPage;
+	/** Devices is the Remote devices module's page: made when the module loads, dropped when it unloads. */
+	private devices: IDevicesPage | undefined;
+	private devicesHost!: IDevicesPageHost;
+	/** Add Device asked for before the module loaded. */
+	private devicesPendingAdd: { readonly kind?: VoltConnectionKind } | undefined;
 	/** Made on first visit and kept, so its data and range survive leaving the page. */
 	private usage: AgentUsagePage | undefined;
 	/**
@@ -448,7 +451,7 @@ export class VoltSettingsEditor extends EditorPane {
 			inputBoxStyles: () => this.inputBoxStyles(),
 			rerender: () => this.renderContent(),
 		});
-		this.devices = new DevicesPage(this.instantiationService, {
+		this.devicesHost = {
 			store: this.renderStore,
 			target: () => this.target,
 			sectionLabel: label => this.sectionLabel(label),
@@ -456,7 +459,7 @@ export class VoltSettingsEditor extends EditorPane {
 			settingRow: (parent, title, desc, render) => this.settingRow(parent, title, desc, render),
 			empty: text => this.empty(text),
 			rerender: () => this.renderContent(),
-		});
+		};
 		this._register(this.connectedAgents.onDidChange(() => {
 			if (this.section === 'connected') {
 				this.renderContent();
@@ -624,7 +627,12 @@ export class VoltSettingsEditor extends EditorPane {
 			section = 'devices';
 			// With Devices off, setSection opens General instead.
 			if (this.features.isOn('section', 'devices')) {
-				this.devices.requestAddDevice(add[1] as VoltConnectionKind | undefined);
+				const kind = add[1] as VoltConnectionKind | undefined;
+				if (this.devices) {
+					this.devices.requestAddDevice(kind);
+				} else {
+					this.devicesPendingAdd = { kind };
+				}
 				if (this.section === 'devices') {
 					this.renderContent();
 					return;
@@ -800,7 +808,7 @@ export class VoltSettingsEditor extends EditorPane {
 					localize('voltSettings.devicesLead', "Phones and browsers that reach this computer's chats, files and terminals: pair a new one, rename or remove the others."),
 				);
 				const generation = this.renderGeneration;
-				pending = this.devices.render(() => generation === this.renderGeneration && this.section === 'devices').finally(() => this.scheduleScrollSync());
+				pending = this.renderDevices(() => generation === this.renderGeneration && this.section === 'devices').finally(() => this.scheduleScrollSync());
 				break;
 			}
 			case 'projects':
@@ -868,6 +876,33 @@ export class VoltSettingsEditor extends EditorPane {
 		this.usage ??= this._register(this.instantiationService.createInstance(AgentUsagePage, () => this.container));
 		this.target.appendChild(this.usage.element);
 		this.usage.setVisible(this.isVisible());
+	}
+
+	/** Devices: loads the Remote devices module on first visit, then draws its page. */
+	private async renderDevices(isCurrent: () => boolean): Promise<void> {
+		if (!this.devices) {
+			const modules = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltFeatureModuleService));
+			const module = await modules.activate<IVoltFeatureModule & IVoltRemoteDevicesModule>(REMOTE_DEVICES_FEATURE_ID);
+			if (!module || !isCurrent()) {
+				return;
+			}
+			if (!this.devices) {
+				const page = this.devices = module.createDevicesPage(this.instantiationService, this.devicesHost);
+				const unloaded = this._register(modules.onDidChange(feature => {
+					if (feature === REMOTE_DEVICES_FEATURE_ID && !modules.isActive(feature)) {
+						unloaded.dispose();
+						if (this.devices === page) {
+							this.devices = undefined;
+						}
+					}
+				}));
+				if (this.devicesPendingAdd) {
+					page.requestAddDevice(this.devicesPendingAdd.kind);
+					this.devicesPendingAdd = undefined;
+				}
+			}
+		}
+		await this.devices.render(isCurrent);
 	}
 
 	/** Shows the hosted Skills & Plugins page, making it on first visit. */

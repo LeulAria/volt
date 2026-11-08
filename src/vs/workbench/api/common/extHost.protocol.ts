@@ -2779,6 +2779,7 @@ export type VoltApiMethod =
 	| 'visuals.renderChart' | 'visuals.drawOnScratch'
 	| 'automations.list' | 'automations.schedule' | 'automations.show' | 'automations.run' | 'automations.remove'
 	| 'skills.list' | 'skills.show'
+	| 'remoteDevices.show'
 	| 'usage.get'
 	| 'pullRequests.list' | 'pullRequests.link';
 

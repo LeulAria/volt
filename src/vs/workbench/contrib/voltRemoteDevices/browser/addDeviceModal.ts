@@ -28,10 +28,9 @@ import { IAgentServerClientService } from '../../../services/voltAgentServer/com
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { IRemoteModal, openRemoteModal, renderVoltMark } from '../../voltAgent/browser/remote/voltRemoteIntro.js';
 import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
-import { qrcode } from './vendor/qrcode.js';
+import { qrcode } from '../../voltSettings/browser/vendor/qrcode.js';
+import type { VoltConnectionKind } from '../common/voltRemoteDevices.js';
 
-/** How a device reaches this computer. */
-export type VoltConnectionKind = 'lan' | 'tailscale' | 'cloudflare' | 'ssh';
 type SshMode = 'reverse' | 'forward';
 
 const POLL_MS = 1500;

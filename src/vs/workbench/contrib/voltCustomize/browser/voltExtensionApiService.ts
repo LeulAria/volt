@@ -32,6 +32,7 @@ import { POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../../..
 import { BROWSER_PAGE_URL_COMMAND_ID, IVoltHostToolCall, IVoltHostToolService, THREAD_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
 import { IVoltMemoryService } from '../../../services/voltRuntime/common/memory/voltMemory.js';
 import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
 import { shownAgentChat } from '../../voltAgent/browser/editor/agentShownChat.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../../voltAgent/browser/preview/browserEditorInput.js';
@@ -257,6 +258,7 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 				...(item.plugin && item.kind !== 'plugin' ? { plugin: item.plugin.name } : {}),
 			})),
 			showSkills: async marketplace => { await commandService.executeCommand(marketplace ? OPEN_SKILLS_MARKETPLACE_COMMAND_ID : OPEN_SKILLS_COMMAND_ID); },
+			showRemoteDevices: async addDevice => { await commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, addDevice ? 'devices:add' : 'devices'); },
 			readUsage: async () => {
 				const snapshot = await this.get(IVoltUsageService).getUsage();
 				const models = new Map<string, { -readonly [K in keyof IVoltUsageModelTotal]: IVoltUsageModelTotal[K] }>();
