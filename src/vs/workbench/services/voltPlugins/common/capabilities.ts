@@ -113,8 +113,12 @@ export function toolClassCapability(toolClass: HostToolSandboxClass): string {
 export interface IVoltPluginPrincipal {
 	/** `volt.usage`. */
 	readonly extensionId: string;
+	/** Its display name, for what the user sees. */
+	readonly label?: string;
 	readonly firstParty: boolean;
 	readonly capabilities: IVoltCapabilitiesContribution;
+	/** Setting keys (or prefixes ending in `.`) the extension contributes itself: `config.own`, like `voltModule.settings`. */
+	readonly ownSettings?: readonly string[];
 }
 
 export interface ICapabilityRequest {
@@ -125,8 +129,12 @@ export interface ICapabilityRequest {
 	readonly api: string;
 }
 
-/** Which layer would refuse it (H.3 `deniedBy`). */
-export type CapabilityDeniedBy = 'manifest' | 'catalog';
+/**
+ * Which layer would refuse it (H.3 `deniedBy`). `ceiling`: a built-in asked beyond its first-party
+ * ceiling (G.10). `consent`: a third party's medium or high capability the user hasn't allowed
+ * (or refused). `critical`: never granted through the API (G.8).
+ */
+export type CapabilityDeniedBy = 'manifest' | 'catalog' | 'ceiling' | 'consent' | 'critical';
 
 export interface IWouldBeDenial {
 	readonly extensionId: string;
@@ -136,6 +144,8 @@ export interface IWouldBeDenial {
 	readonly class?: VoltCapabilityClass;
 	readonly deniedBy: CapabilityDeniedBy;
 	readonly reason: string;
+	/** The user may be asked for it (G.3): a declared medium or high capability never answered. */
+	readonly promptable?: boolean;
 }
 
 export interface ICapabilityVerdict {
@@ -156,14 +166,23 @@ export interface ICapabilityReporter {
 
 /** A typed refusal (H.3). Report mode never throws it. */
 export class VoltCapabilityError extends Error {
+	static readonly NAME = 'VoltCapabilityError';
+
 	constructor(
 		public readonly capability: string,
 		public readonly target: string | undefined,
 		public readonly deniedBy: CapabilityDeniedBy,
 		message: string,
+		/** The user may be asked for it (see `IWouldBeDenial.promptable`). */
+		public readonly promptable = false,
 	) {
 		super(message);
-		this.name = 'VoltCapabilityError';
+		this.name = VoltCapabilityError.NAME;
+	}
+
+	/** Kept by RPC error serialization (`code`), so the extension host can rebuild the fields. */
+	get code(): string {
+		return JSON.stringify({ capability: this.capability, target: this.target, deniedBy: this.deniedBy });
 	}
 }
 
