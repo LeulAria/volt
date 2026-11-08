@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { sign, SignOptions } from '@electron/osx-sign';
@@ -31,6 +32,30 @@ function getEntitlementsForFile(filePath: string): string {
 		return path.join(baseDir, 'azure-pipelines', 'darwin', 'helper-plugin-entitlements.plist');
 	}
 	return path.join(baseDir, 'azure-pipelines', 'darwin', 'app-entitlements.plist');
+}
+
+/**
+ * Volt: the sandbox helper runs only when its SHA-256 matches the pin in volt-helpers.json beside
+ * it (src/vs/platform/voltHelpers/node/helperIntegrity.ts), and any signature changes the file.
+ * So it is signed here (hardened runtime, timestamp), re-pinned, and kept away from osx-sign; the
+ * app's seal, made afterwards, covers both the signed helper and the new pin.
+ */
+async function signVoltHelpers(app: string, identity: string | undefined, keychain: string): Promise<string[]> {
+	const dir = path.join(app, 'Contents', 'Resources', 'app', 'volt-helpers');
+	const manifestPath = path.join(dir, 'volt-helpers.json');
+	if (!fs.existsSync(manifestPath)) {
+		return [];
+	}
+	const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, { file: string; sha256: string }>;
+	const signed: string[] = [];
+	for (const [id, entry] of Object.entries(manifest)) {
+		const file = path.join(dir, entry.file);
+		await spawn('codesign', ['--force', '--sign', identity ?? '-', '--keychain', keychain, '--options', 'runtime', '--timestamp', file]);
+		manifest[id] = { file: entry.file, sha256: crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') };
+		signed.push(file);
+	}
+	fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, '\t') + '\n');
+	return signed;
 }
 
 async function main(buildDir?: string): Promise<void> {
@@ -97,7 +122,8 @@ async function main(buildDir?: string): Promise<void> {
 		]);
 	}
 
-	await sign(appOpts);
+	const voltHelpers = await signVoltHelpers(appOpts.app, identity, appOpts.keychain as string);
+	await sign({ ...appOpts, ignore: (filePath: string) => voltHelpers.includes(filePath) });
 }
 
 if (require.main === module) {

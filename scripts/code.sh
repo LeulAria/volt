@@ -51,6 +51,11 @@ function code() {
 	# Not from Desktop, Documents or Downloads: there a disclaimed Volt has no folder access of its
 	# own and dies with "EPERM: operation not permitted, uv_cwd". VOLT_DISCLAIM=1 forces it anyway
 	# (give VOLT.app Full Disk Access first).
+	# The macOS sandbox backend's native helper (.build/volt-helpers); without it sandboxed chats are refused.
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		node build/volt/sandbox-helper/build.mjs >/dev/null || true
+	fi
+
 	PROTECTED_FOLDER=""
 	case "$ROOT/" in
 		"$HOME/Desktop/"*|"$HOME/Documents/"*|"$HOME/Downloads/"*|"$HOME/Library/Mobile Documents/"*) PROTECTED_FOLDER=1 ;;

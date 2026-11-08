@@ -7,6 +7,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
+const crypto_1 = __importDefault(require("crypto"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const osx_sign_1 = require("@electron/osx-sign");
@@ -34,6 +35,29 @@ function getEntitlementsForFile(filePath) {
         return path_1.default.join(baseDir, 'azure-pipelines', 'darwin', 'helper-plugin-entitlements.plist');
     }
     return path_1.default.join(baseDir, 'azure-pipelines', 'darwin', 'app-entitlements.plist');
+}
+/**
+ * Volt: the sandbox helper runs only when its SHA-256 matches the pin in volt-helpers.json beside
+ * it (src/vs/platform/voltHelpers/node/helperIntegrity.ts), and any signature changes the file.
+ * So it is signed here (hardened runtime, timestamp), re-pinned, and kept away from osx-sign; the
+ * app's seal, made afterwards, covers both the signed helper and the new pin.
+ */
+async function signVoltHelpers(app, identity, keychain) {
+    const dir = path_1.default.join(app, 'Contents', 'Resources', 'app', 'volt-helpers');
+    const manifestPath = path_1.default.join(dir, 'volt-helpers.json');
+    if (!fs_1.default.existsSync(manifestPath)) {
+        return [];
+    }
+    const manifest = JSON.parse(fs_1.default.readFileSync(manifestPath, 'utf8'));
+    const signed = [];
+    for (const [id, entry] of Object.entries(manifest)) {
+        const file = path_1.default.join(dir, entry.file);
+        await (0, cross_spawn_promise_1.spawn)('codesign', ['--force', '--sign', identity ?? '-', '--keychain', keychain, '--options', 'runtime', '--timestamp', file]);
+        manifest[id] = { file: entry.file, sha256: crypto_1.default.createHash('sha256').update(fs_1.default.readFileSync(file)).digest('hex') };
+        signed.push(file);
+    }
+    fs_1.default.writeFileSync(manifestPath, JSON.stringify(manifest, null, '\t') + '\n');
+    return signed;
 }
 async function main(buildDir) {
     const tempDir = process.env['AGENT_TEMPDIRECTORY'];
@@ -93,7 +117,8 @@ async function main(buildDir) {
             `${infoPlistPath}`
         ]);
     }
-    await (0, osx_sign_1.sign)(appOpts);
+    const voltHelpers = await signVoltHelpers(appOpts.app, identity, appOpts.keychain);
+    await (0, osx_sign_1.sign)({ ...appOpts, ignore: (filePath) => voltHelpers.includes(filePath) });
 }
 if (require.main === module) {
     main(process.argv[2]).catch(async err => {

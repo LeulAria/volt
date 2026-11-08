@@ -388,7 +388,10 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 				.pipe(rename('bin/code'));
 			const policyDest = gulp.src('.build/policies/darwin/**', { base: '.build/policies/darwin' })
 				.pipe(rename(f => f.dirname = `policies/${f.dirname}`));
-			all = es.merge(all, shortcut, policyDest);
+			// Volt: the sandbox helper (TCC disclaim + external attestation) and its pinned digest, at <app>/volt-helpers.
+			cp.execFileSync(process.execPath, [path.join(root, 'build/volt/sandbox-helper/build.mjs'), '--force'], { stdio: 'inherit' });
+			const voltHelpers = gulp.src('.build/volt-helpers/{volt-sandbox-helper,volt-helpers.json}', { base: '.build' });
+			all = es.merge(all, shortcut, policyDest, voltHelpers);
 		}
 
 		let result = all

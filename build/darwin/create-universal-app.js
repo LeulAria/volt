@@ -30,6 +30,8 @@ async function main(buildDir) {
         '**/policies/{*.mobileconfig,**/*.plist}',
         // TODO: Should we consider expanding this to other files in this area?
         '**/node_modules/@parcel/node-addon-api/nothing.target.mk',
+        // Volt: the sandbox helper is built universal in each job, so the x64 copy and its pin are kept.
+        '**/volt-helpers/volt-helpers.json',
     ];
     await (0, vscode_universal_bundler_1.makeUniversalApp)({
         x64AppPath,
@@ -38,7 +40,7 @@ async function main(buildDir) {
         outAppPath,
         force: true,
         mergeASARs: true,
-        x64ArchFiles: '{*/kerberos.node,**/extensions/microsoft-authentication/dist/libmsalruntime.dylib,**/extensions/microsoft-authentication/dist/msal-node-runtime.node}',
+        x64ArchFiles: '{*/kerberos.node,**/extensions/microsoft-authentication/dist/libmsalruntime.dylib,**/extensions/microsoft-authentication/dist/msal-node-runtime.node,**/volt-helpers/volt-sandbox-helper}',
         filesToSkipComparison: (file) => {
             for (const expected of filesToSkip) {
                 if ((0, minimatch_1.default)(file, expected)) {
