@@ -450,19 +450,20 @@ suite('Volt sandbox pattern walk scope (B-27)', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('B-27: with narrow reads the home is not walked, only its read roots: a big unreadable home does not refuse the run', async () => {
+	test('B-27: with narrow reads the unreadable home is not walked, and its toolchains are best effort: neither refuses the run', async () => {
 		const root = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'volt-walk-')));
 		try {
 			const home = join(root, 'home');
 			const tools = join(home, 'tools');
 			const ws = join(root, 'ws');
-			await fs.mkdir(join(tools, 'sdk'), { recursive: true });
-			await fs.mkdir(ws, { recursive: true });
-			await fs.writeFile(join(tools, 'sdk', '.env'), 'SECRET=1\n');
-			await fs.writeFile(join(ws, '.env'), 'SECRET=2\n');
-			// More than the walk may visit, outside every root the sandbox can read.
+			await fs.mkdir(tools, { recursive: true });
+			await fs.mkdir(join(ws, 'src'), { recursive: true });
+			await fs.writeFile(join(tools, '.env'), 'SECRET=1\n');
+			await fs.writeFile(join(ws, 'src', '.env'), 'SECRET=2\n');
+			// More than the walk may visit: outside every readable root, and inside a toolchain.
 			for (let d = 0; d < 40; d++) {
 				await fs.mkdir(join(home, 'checkout', `d${d}`), { recursive: true });
+				await fs.mkdir(join(tools, 'sdk', `d${d}`), { recursive: true });
 			}
 			const limits = { maxEntries: 30, maxDepth: 12, budgetMs: 5_000 } as const;
 			const base: IResolvedSandboxPolicy = {
@@ -474,12 +475,18 @@ suite('Volt sandbox pattern walk scope (B-27)', () => {
 				cwd: ws, tmp: join(root, 'tmp'), home,
 			};
 			const narrow = await walkPatterns(base, { collectSockets: false }, limits);
-			assert.strictEqual(narrow.complete, true, 'the unreadable rest of the home is not walked');
-			assert.deepStrictEqual(narrow.deny.map(match => match.path).sort(), [join(tools, 'sdk', '.env'), join(ws, '.env')].sort());
+			assert.strictEqual(narrow.complete, true, 'the workspace was walked whole; the rest of the home is not walked, the toolchain only best effort');
+			assert.deepStrictEqual(narrow.deny.map(match => match.path).sort(), [join(tools, '.env'), join(ws, 'src', '.env')].sort());
 
-			// A home the sandbox can read is walked whole: then a walk that cannot finish still refuses.
-			const wide = await walkPatterns({ ...base, read: [...base.read, home] }, { collectSockets: false }, limits);
-			assert.strictEqual(wide.complete, false);
+			// A workspace the walk cannot finish still refuses.
+			for (let d = 0; d < 40; d++) {
+				await fs.mkdir(join(ws, 'bulk', `d${d}`), { recursive: true });
+			}
+			assert.strictEqual((await walkPatterns(base, { collectSockets: false }, limits)).complete, false);
+
+			// So does a home the sandbox can read: it is walked whole.
+			await fs.rm(join(ws, 'bulk'), { recursive: true });
+			assert.strictEqual((await walkPatterns({ ...base, read: [...base.read, home] }, { collectSockets: false }, limits)).complete, false);
 		} finally {
 			await fs.rm(root, { recursive: true, force: true });
 		}

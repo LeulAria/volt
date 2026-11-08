@@ -691,6 +691,11 @@ export interface IPatternWalkResult extends IBubblewrapPatternMatches {
  * `.env` is always found). A root of `/` (readAll denies) is walked as the working directory, the
  * writable roots and the home folder: walking the whole disk would only spend the budget on
  * system folders. Symlinks are not followed. Also collects socket files when asked.
+ *
+ * `complete` covers the required roots: the workspace, the writes, the patterns' own roots and a
+ * home the sandbox can read. With narrow reads the home is not readable, only the toolchains in
+ * it (`~/.cargo`, `~/.dotnet`, `~/go`); they are walked after the required roots, with what is
+ * left of the budget, best effort: an install of that size would otherwise refuse every run.
  */
 export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { collectSockets: boolean }, limits: { readonly [K in keyof typeof PATTERN_WALK_LIMITS]: number } = PATTERN_WALK_LIMITS): Promise<IPatternWalkResult> {
 	type Kind = 'deny' | 'protect';
@@ -704,6 +709,8 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 	const expandRoot = (pattern: IResolvedPattern): IResolvedPattern[] => pattern.root === '/'
 		? [...new Set([policy.cwd, ...policy.write, ...homeRoots])].map(root => ({ root, names: pattern.names }))
 		: [pattern];
+	// Read-only toolchains in an unreadable home: best effort (see above).
+	const required = (root: string) => homeVisible || !homeRoots.includes(root) || root === policy.cwd || policy.write.includes(root);
 	for (const pattern of policy.denyPatterns) {
 		patterns.push(...expandRoot(pattern).map(p => ({ kind: 'deny' as const, pattern: p })));
 	}
@@ -718,10 +725,16 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 	const started = Date.now();
 	let entries = 0;
 	let complete = true;
-	const queue: { dir: string; depth: number; root: boolean }[] = roots.map(dir => ({ dir, depth: 0, root: true }));
-	while (queue.length) {
+	// The required roots' folders first, then the best-effort ones.
+	const queues: { dir: string; depth: number; root: boolean }[][] = [
+		roots.filter(required).map(dir => ({ dir, depth: 0, root: true })),
+		roots.filter(dir => !required(dir)).map(dir => ({ dir, depth: 0, root: true })),
+	];
+	while (queues[0].length || queues[1].length) {
+		const bestEffort = !queues[0].length;
+		const queue = bestEffort ? queues[1] : queues[0];
 		if (entries >= limits.maxEntries || Date.now() - started > limits.budgetMs) {
-			complete = false;
+			complete &&= bestEffort;
 			break;
 		}
 		const { dir, depth, root } = queue.shift()!;
@@ -768,7 +781,7 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 			}
 			if (depth + 1 > limits.maxDepth) {
 				// A folder the walk will not look into: a match there would stay readable.
-				complete = false;
+				complete &&= bestEffort;
 				continue;
 			}
 			// A repository's `.git` is matched from its parent (`.git/config`, `.git/hooks`), so the
