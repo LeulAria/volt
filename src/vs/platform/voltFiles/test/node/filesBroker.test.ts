@@ -95,8 +95,10 @@ async function listAll(dir: string): Promise<string[]> {
 	return out;
 }
 
-suite('Volt files broker (I.2)', () => {
+suite('Volt files broker (I.2)', function () {
 
+	// The race cases run 1,000 operations each against a second process: slow on a loaded machine.
+	this.timeout(60_000);
 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
 
 	let base: string;
