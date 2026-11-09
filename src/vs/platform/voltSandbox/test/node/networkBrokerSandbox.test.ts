@@ -280,6 +280,57 @@ suite('Volt network broker through real sandboxes (NET-E2E)', function () {
 		assert.strictEqual(routeA.openConnections, 0);
 	});
 
+	test('NET-E2E-7: a chat with network off that reads another chat\'s proxy credential from its environment can\'t use it (macOS)', async function () {
+		if (process.platform !== 'darwin') {
+			// bubblewrap gives every sandbox its own pid namespace: another chat's process isn't there to read.
+			this.skip();
+		}
+		// Seatbelt can't hide a process's environment from another sandbox of the same user
+		// (`sysctl KERN_PROCARGS2` passes even `(deny sysctl-read (sysctl-name "kern.procargs2"))`),
+		// and an agent CLI is node, not a platform binary whose environment macOS hides. So the
+		// credential isn't a secret between chats: what keeps it to its chat is that only its own
+		// sandbox can reach its route's port, and that the route takes only its own token (B-31).
+		const sleeper = join(ws, 'agent');
+		await fs.copyFile('/bin/sleep', sleeper);
+		await new Promise<void>((resolve, reject) => spawn('/usr/bin/codesign', ['-s', '-', '-f', sleeper], { stdio: 'ignore' }).once('close', code => code === 0 ? resolve() : reject(new Error(`codesign ${code}`))));
+		await fs.writeFile(join(ws, 'env.pl'), [
+			'my $mib = pack("iii", 1, 49, $ARGV[0]); my $buf = "\\0" x 262144; my $len = pack("Q", 262144);',
+			'syscall(202, $mib, 3, $buf, $len, 0, 0) == 0 or exit 1;',
+			'print map { "$_\\n" } grep { /^http_proxy=/ } split(/\\0/, substr($buf, 0, unpack("Q", $len)));',
+		].join('\n'));
+		// B: a chat allowed secret.test, its agent a non-platform binary holding the proxy URL in its environment.
+		const b = await start('e2e-7b', `echo $$ > b-pid; exec ${sleeper} 60`, { allowedDomains: ['secret.test:80'] });
+		const routeB = b.prepared.networkRoute()!;
+		const audit: { readonly reason?: string; readonly subject: string; readonly tokenOf?: string }[] = [];
+		const broker = manager.currentBroker!;
+		const original = broker.audit.bind(broker);
+		broker.audit = event => { audit.push(event); original(event); };
+		try {
+			// A: network off, no grant; it finds B's pid and reads B's environment.
+			const a = await start('e2e-7a', [
+				wait('b-pid'),
+				'P=$(cat b-pid); i=0; while [ $i -lt 100 ]; do L=$(/usr/bin/perl env.pl "$P"); [ -n "$L" ] && break; sleep 0.05; i=$((i+1)); done',
+				'echo "read ${L:+yes}"',
+				'BURL=${L#http_proxy=}; BTOKEN=$(printf %s "$BURL" | sed "s#^http://volt:##; s#@.*##"); OWN=$(printf %s "$http_proxy" | sed "s#.*@##")',
+				get('b-url', 'http://secret.test/from-a-b-url', '"$BURL"'),
+				get('b-token', 'http://secret.test/from-a-b-token', '"http://volt:$BTOKEN@$OWN"'),
+				get('own', 'http://secret.test/from-a-own'),
+				'echo done',
+			].join('; '));
+			await a.exited;
+			const out = a.out();
+			assert.match(out, /read yes/, `A read B's proxy URL from B's environment: ${out}`);
+			assert.match(out, /b-url (000|.*exit=)/, `A can't reach B's route: ${out}`);
+			assert.match(out, /b-token 407/, `B's token on A's route is refused: ${out}`);
+			assert.match(out, /own 403/, `A's own route still refuses the host only B was allowed: ${out}`);
+			assert.ok(!net$.paths.some(path => path.startsWith('/from-a-')), 'nothing A sent left');
+			assert.strictEqual(routeB.openConnections, 0);
+			assert.ok(audit.some(event => event.reason === 'auth' && event.subject === 'chat:e2e-7a' && event.tokenOf === 'chat:e2e-7b'), `the refusal names whose token it was: ${JSON.stringify(audit)}`);
+		} finally {
+			broker.audit = original;
+		}
+	});
+
 	test('NET-E2E-5: a managed policy\'s denied host beats the chat\'s own grant', async () => {
 		admin = { denyHosts: ['admin-blocked.test'] };
 		manager.currentBroker?.adminChanged();
