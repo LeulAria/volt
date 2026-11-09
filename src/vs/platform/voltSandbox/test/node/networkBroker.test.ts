@@ -27,6 +27,7 @@ import { IPrincipal, PrincipalKind, SubjectKey } from '../../common/principals.j
 import { GrantCommitResult, IGrantStoreChange, IGrantStoreChangeEvent } from '../../node/grantStore.js';
 import { INetworkAuditEvent, INetworkBrokerOptions, INetworkDenial, INetworkGrantSource, INetworkRouteOptions, IResolvedAddress, MemoryGrantSource, NetworkAuditLog, NetworkBroker, NetworkRoute } from '../../node/networkBroker.js';
 import { denialTarget } from '../../node/sandboxManager.js';
+import { agentQuietDomains } from '../../common/sandboxPolicy.js';
 
 const PUBLIC: IResolvedAddress = { address: '93.184.216.34', family: 4 };
 
@@ -741,6 +742,23 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		assert.ok((await broker.approveForChat(chatId, denial.denialId, denial.epoch)).ok);
 		assert.match((await open(r.port, connect(r, 'now.test:443'))).line, /200/, 'no restart');
 		assert.ok(!(await r.approve(denial.denialId, broker.epoch)).ok, 'and the route\'s own record is spent too');
+	});
+
+	test('NET-27: an agent CLI\'s own telemetry is refused and audited, never a denial card', async () => {
+		const r = await route([], { quiet: agentQuietDomains('claude-code') });
+		for (const host of ['http-intake.logs.us5.datadoghq.com', 'statsigapi.net', 'api.segment.io']) {
+			assert.match((await open(r.port, connect(r, `${host}:443`))).line, /403/, `${host} stays blocked`);
+		}
+		assert.strictEqual(denials.length, 0, 'no card for what the user never asked for');
+		const quiet = audit.filter(event => event.decision === 'deny' && event.quiet);
+		assert.deepStrictEqual(quiet.map(event => event.destination), ['http-intake.logs.us5.datadoghq.com', 'statsigapi.net', 'api.segment.io'], 'logged');
+		assert.ok(quiet.every(event => !event.denialId), 'nothing to approve');
+		assert.match((await open(r.port, connect(r, 'api.github.com:443'))).line, /403/);
+		assert.strictEqual(denials.length, 1, 'any other host is still a card');
+		assert.ok(denials[0].promptable);
+		const allowed = await route(['*.datadoghq.com'], { quiet: agentQuietDomains('claude-code') });
+		assert.ok((await allowed.destination('http-intake.logs.us5.datadoghq.com', 443)).ok, 'a host the user allowed is allowed, quiet or not');
+		assert.ok(agentQuietDomains('codex').includes('*.datadoghq.com'), 'the shared list applies to every agent');
 	});
 });
 

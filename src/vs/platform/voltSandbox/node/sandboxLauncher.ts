@@ -18,7 +18,7 @@ import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
 import { IAttestation, ISandboxBackendCapabilities, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
 import { agentStatePlan } from '../common/agentState.js';
-import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { AGENT_STATE_ROOT, agentQuietDomains, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
@@ -317,6 +317,8 @@ export class VoltSandboxLauncher extends Disposable {
 				// The network broker's route, token, grants and budgets are this principal's; its chat's
 				// grants attach to the chat, not to this one run (I.4 routes).
 				principal,
+				// The CLI's own telemetry stays blocked without a card inviting the user to allow it.
+				quietHosts: agentQuietDomains(request.providerId),
 			});
 			sealed = this.registry.sealLaunchPolicy(principal, prepared.launchPolicyHash);
 			launched = true;

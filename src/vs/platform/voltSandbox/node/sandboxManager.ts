@@ -71,6 +71,8 @@ export interface ISandboxRequest {
 	 * its connections by. Absent: the broker's registered view providers, else none (refused).
 	 */
 	readonly networkView?: INetworkPrincipalView;
+	/** Host rules of the workload's own background calls (an agent CLI's telemetry): refused and audited, never reported as denials. */
+	readonly quietHosts?: readonly string[];
 }
 
 export interface IPreparedSandbox {
@@ -420,6 +422,7 @@ export class SandboxManager {
 					principal,
 					allow: resolved.network.allow,
 					...(request.networkView ? { view: request.networkView } : {}),
+					...(request.quietHosts?.length ? { quiet: request.quietHosts } : {}),
 					onDenial: denial => denial.reason === 'auth'
 						// Not this run's request (no token or another's): never a denial row with an "Allow" button.
 						? this.logger.warn(`[volt-sandbox] ${tag} network broker refused a request without this run's token`)

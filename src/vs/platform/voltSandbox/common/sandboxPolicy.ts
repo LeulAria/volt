@@ -123,6 +123,12 @@ export interface IAgentFootprint {
 	readonly tmpDirs?: (uid: number | undefined) => readonly string[];
 	/** API hosts the agent must reach to work at all. */
 	readonly domains: readonly string[];
+	/**
+	 * Host rules of the CLI's own telemetry and background calls (error reporting, analytics, feature
+	 * flags) beyond {@link AGENT_TELEMETRY_DOMAINS}: refused as any host is, but never shown as a
+	 * denial card the user is invited to allow (the user didn't ask for them); audit log only.
+	 */
+	readonly quietDomains?: readonly string[];
 	/** Environment variables the CLI reads its keys and endpoints from, copied even though they look secret. */
 	readonly envKeys?: readonly string[];
 	/** Fixed environment for a sandboxed run (turn off self-updates that would write executables). */
@@ -167,6 +173,8 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		credentials: ['.claude/.credentials.json'],
 		tmpDirs: uid => [`/private/tmp/claude-${uid ?? 0}`, `/tmp/claude-${uid ?? 0}`, '/private/tmp/cc-socks', '/tmp/cc-socks'],
 		domains: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
+		// Its Datadog log intake (`http-intake.logs.<site>.datadoghq.com`) and Statsig feature gates.
+		quietDomains: ['*.datadoghq.com', 'statsigapi.net', '*.statsigapi.net'],
 		envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
 		env: { DISABLE_AUTOUPDATER: '1' },
 	},
@@ -306,6 +314,22 @@ export function footprintLintErrors(footprints: Readonly<Record<string, IAgentFo
 /** The agent's API hosts: what stays reachable when the chat's network is off. */
 export function agentApiDomains(providerId: string): readonly string[] {
 	return [...(AGENT_FOOTPRINTS[providerId]?.domains ?? []), ...NPM_DOMAINS];
+}
+
+/**
+ * Telemetry and analytics intakes agent CLIs call on their own (Datadog, Statsig, Segment, Sentry,
+ * PostHog, Amplitude, Mixpanel, Honeycomb, LaunchDarkly's event stream): for every agent, quiet
+ * denials (see {@link IAgentFootprint.quietDomains}). A host the agent's API needs is in `domains`
+ * and allowed whatever this says.
+ */
+export const AGENT_TELEMETRY_DOMAINS: readonly string[] = [
+	'*.datadoghq.com', '*.datadoghq.eu', 'statsigapi.net', '*.statsigapi.net', 'featuregates.org', '*.featuregates.org', 'api.segment.io', '*.segment.io', 'cdn.segment.com',
+	'*.ingest.sentry.io', '*.ingest.us.sentry.io', '*.posthog.com', 'api.amplitude.com', 'api2.amplitude.com', 'api-js.mixpanel.com', 'api.mixpanel.com', 'api.honeycomb.io', 'events.launchdarkly.com',
+];
+
+/** Host rules whose denials for `providerId`'s agent are logged only, never a card (its own telemetry). */
+export function agentQuietDomains(providerId: string): readonly string[] {
+	return [...AGENT_TELEMETRY_DOMAINS, ...(AGENT_FOOTPRINTS[providerId]?.quietDomains ?? [])];
 }
 
 /** `/a/b/` and `/a//b` as `/a/b`. Relative paths are returned unchanged (and later rejected). */
