@@ -198,6 +198,7 @@ import './contrib/voltAgent/electron-browser/agentOpenInNewWindow.contribution.j
 // Volt agent server client (after the agent services it can replace)
 import './contrib/voltAgent/electron-browser/agentServerClient.contribution.js';
 import './contrib/voltAgent/electron-browser/agentComputerName.contribution.js';
+import './contrib/voltAgent/electron-browser/agentMachineCapacity.contribution.js';
 
 // Volt dev hot reload (VSCODE_DEV only)
 import './contrib/voltAgent/electron-browser/voltDevReload.contribution.js';
