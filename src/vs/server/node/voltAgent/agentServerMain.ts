@@ -816,7 +816,15 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, to
 		} else if (!workbench.available) {
 			sendJson(res, 404, { error: 'no_workbench' });
 		} else {
-			sendJson(res, 200, await workbench.issueExtensionHostTicket());
+			// The desktop's own extension folder, as its main process names it (the same user, this computer).
+			const body = await readBody(req, 8 * 1024).catch(() => '');
+			let extensionsDir: unknown;
+			try {
+				extensionsDir = body ? (JSON.parse(body) as { extensionsDir?: unknown }).extensionsDir : undefined;
+			} catch {
+				extensionsDir = undefined;
+			}
+			sendJson(res, 200, await workbench.issueExtensionHostTicket(typeof extensionsDir === 'string' ? extensionsDir : undefined));
 		}
 		return;
 	}
