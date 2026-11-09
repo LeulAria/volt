@@ -31,7 +31,7 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 ## Limits of the policy
 
 8. **The agent profile is deliberately weaker than the workload profiles.**
-   - **Reads:** it reads the whole filesystem except credentials.
+   - **Reads:** narrow (D-14), but wide: the system folders, the programs on PATH, the user's toolchains, the workspace, temp and the CLI's own state, with credentials denied on top. Not the rest of the home folder.
    - **macOS services:** it reaches system services, with the escape hatches denied.
    - **Keychain:** items readable by the `security` tool (Claude Code stores its login that way) are readable, because the agent needs its own and the Keychain's per-item access lists, not the sandbox, guard the rest.
    - **Network on:** when the chat's network is on, it has unfiltered network, including loopback services, which is the user's choice.
@@ -44,19 +44,19 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 12. **Paths containing `"` or control characters are refused** rather than expressed (SBPL regex literals cannot carry a `"` safely).
 13. **File access Volt performs for the agent (ACP `fs/*`, host tools) is checked, then performed** by Volt's own process. A workload that swaps a symlink between the check and the write can redirect it. Closing it needs no-follow opens in Volt's file service.
 14. **Protected files can enter through git history.** An agent can commit `.vscode/tasks.json` or a hook manager's config into a branch (git objects are writable so commits work). Checking that branch out *outside* the sandbox materialises them. Volt reads worktree setup only from the main checkout, but other host tools that check out agent branches should treat them as untrusted.
-15. **Worktree setup still runs unsandboxed.** The setup *file* is trusted (read from the main checkout), but `npm ci` in a new worktree runs that branch's `package.json` scripts. Host tools refuse new-worktree starts from sandboxed chats for this reason.
+15. **Worktree setup of an unsandboxed chat runs unsandboxed.** The setup *file* is trusted (read from the main checkout), but `npm ci` in a new worktree runs that branch's `package.json` scripts. A sandboxed chat's setup runs in its sandbox, with the worktree and its repository's `.git` as the workspace (LIFE-PATH worktree-setup).
 
 ## Pathways not covered yet
 
-16. **Native in-process models ignore the sandbox setting.** Only ACP agent chats are sandboxed; Volt's own model loop runs its shell tool through `exec` without a sandbox request. **Next:** pass the chat's sandbox to `IVoltExecRequest.sandbox`, which is implemented and tested.
+16. **Native in-process models: only their shell runs in the sandbox.** A native model's `shell` commands run in the chat's sandbox with its rules (LIFE-PATH-2, NATIVE-1), what the sandbox stopped shows as the chat's Volt Guard card (NATIVE-DENY-1/2), and a refused command is an error the model reads (FAIL-NATIVE-1). Its file tools run in Volt's process and are judged by the host-tool gate, not the OS (see item 13).
 17. **The extension host is not sandboxed** (stock VS Code; ADR-1). This is the marketplace phase's first item: a sandboxed extension host kind launched through `SandboxManager`.
 18. **Volt's own stdio MCP servers** (`.mcp.json`, `.volt/mcp.json`) still run unsandboxed and without a trust check. Agents cannot plant those files (they are protected), but a cloned repository's file runs when native models start. **Next:** a trust prompt, then the `network` profile with the server's declared capabilities.
-19. **Model probes, title generation and commit-message generation** run agent CLIs unsandboxed, with tools turned off.
+19. **Model probes and commit-message generation run agent CLIs unsandboxed**, as Volt's own work. A sandboxed chat's title runs in the chat's sandbox (LIFE-PATH-7). Text for no chat (commit messages, the git slot) runs in `/tmp`, away from any project, with tools, hooks, slash commands and MCP off (Claude), Codex's own read-only sandbox, or Cursor's ask mode: no project file is read or run, and the prompt is Volt's. Sandboxing them would cost a launch (about 45 ms) and an agent-state overlay per call for no gain in what they can reach, so they stay as they are.
 20. **The relay runner** starts Claude with `bypassPermissions` and Codex with `--dangerously-bypass-approvals-and-sandbox`, with the full environment including the relay enrol key. Its container is the only boundary. **Next:** run it through `SandboxManager` (Linux) and strip its environment.
 21. **The in-app browser's own network** (page scripts, `browser_evaluate`) is not filtered per chat. The host-tool gate judges the URLs an agent names and withholds what a page shows when it leaves the allowed set.
 22. **Reading other chats.** `thread_read`, `thread_search`, `workspace_status` and `terminal_output` let a sandboxed chat read other chats' transcripts and terminals.
 23. **User and repository policy files are defined, not loaded.** The schema, parser and narrow-only composition exist and are tested, but the agent path builds its policy from the chat settings only. **Next:** load `~/.volt/sandbox.json` (trusted) and `<workspace>/.volt/sandbox.json` (untrusted) into the agent profile, and surface `ignored` in the UI.
-24. **PTY workloads** (sandboxed terminals) need file-based confirmation, because node-pty cannot pass extra file descriptors. Not built; host terminal tools are refused for sandboxed chats instead.
+24. **Sandboxed terminals are the chat's agent terminals only.** A sandboxed chat's `terminal_start` (and a native model's long-running `shell`) starts on a PTY inside the chat's sandbox: a launcher opens FIFOs for the backend's confirmation, and the shell waits for a go line Volt types once the sandbox is confirmed (F.6, LIFE-PATH-1). Echo is off until the gate has read it, so the line never reaches the output (PTY-ECHO-1). A terminal the user opens from Volt's terminal panel is the user's own and runs unsandboxed, like any terminal app; a terminal that started outside a chat's sandbox cannot be typed into by that chat once it is sandboxed.
 
 ## Found in the 2026-11-09 review, not fixed yet
 
@@ -66,9 +66,16 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 28. **Decision-log replay doesn't prove the logged request**, only the snapshot and the call context. Adding a request digest changes the log's record format, which its reader checks strictly.
 29. **A grant store written by a newer Volt is read-only**, so a revoke there fails while its first-party and chat grants keep applying.
 
+## Found in the 2026-11-10 chat-sandbox round (R1), not fixed
+
+30. **/usr/bin shims that fall back to `xcodebuild -find` fail on macOS** (`/usr/bin/pip3` when xcrun's cache has no entry for it): xcodebuild asks LaunchServices (`coreservicesd`), which stays denied because it opens apps outside the sandbox. `git`, `python3`, `clang` and anything installed by Homebrew, pyenv, nvm or uv work (TOOLCHAIN-MAC-1).
+31. **Which denials get a card is judged by the process that made them.** Shell startup files read by a shell, `~/.npmrc` read by npm or node, `~/.netrc` read by git or curl, and the home folder or a folder above the workspace probed by anything but `ls`, `find`, `cat` and the like stay denied and are logged only (DENY-QUIET-1..4). The agent running `node -e "fs.readFileSync('~/.npmrc')"` therefore gets no card either: Seatbelt names the process, not who asked. Linux reports no kernel denials (item 5), so there only the shell files are quiet.
+32. **A changed sandbox level applies from the chat's next turn.** The running turn keeps the agent process and sandbox it started with; its MCP servers stop at once (F.9), and the next turn starts a new agent under the new level.
+33. **A config lock orphaned less than 10 s ago fails that merge-back.** The overlay's merge into `~/.claude.json` waits 5 s for the lock and takes over one not refreshed for 10 s; in between, that merge fails (logged) and the next one carries the same change (FAIL-LOCK-1).
+
 ## Future work, in order
 
-1. Load user and repository policy layers (item 23), and use the sandbox for native models (item 16).
+1. Load user and repository policy layers (item 23).
 2. A sandboxed extension host plus capability manifests in packages: the start of the marketplace.
 3. Windows: an x64 runner for the WIN-* suite, packaging `wxc-exec.exe` and `volt-mxc-helper.exe` with the app, and Git Bash on the AppContainer-compatible MSYS2 runtime once its distribution is decided (WIN-MSYS-2 passes in CI).
 4. Supply-chain pipeline extension points, which the sandbox does not block:
