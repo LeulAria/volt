@@ -13,7 +13,7 @@ import { declaredFileRoots, IFilesScope } from '../../voltFiles/common/filesBrok
 import { FilesBroker } from '../../voltFiles/node/filesBroker.js';
 import { ISafeOpenOptions, SafeOpenError, safeReadFile, safeWriteFile } from '../../voltFiles/node/safeOpen.js';
 import { defaultFsdPath } from '../../voltFiles/node/sandboxFileBroker.js';
-import { IAccessRequest, IDeclaredCapability, IManifestView, PolicyAuthority } from '../../voltSandbox/common/authority.js';
+import { IAccessRequest, IAdminPolicy, IDeclaredCapability, IManifestView, PolicyAuthority } from '../../voltSandbox/common/authority.js';
 import { BrokerError, IBrokerAudit, MemoryBrokerAudit } from '../../voltSandbox/common/broker.js';
 import { IGrant } from '../../voltSandbox/common/grants.js';
 import { extensionSubject, ICallContext, IPrincipal, SubjectKey } from '../../voltSandbox/common/principals.js';
@@ -102,6 +102,10 @@ export interface IVoltPluginHostServiceOptions {
 	readonly audit?: IBrokerAudit;
 	/** Grants core holds for plugins (the grant store); a built-in needs none (its ceiling, G.10). */
 	readonly grants?: () => readonly IGrant[];
+	/** The managed (admin) policy as it is now; see {@link VoltPluginHostService.adminChanged}. */
+	readonly admin?: () => IAdminPolicy | undefined;
+	/** Resolves once the managed policy was read: no host starts before. */
+	readonly adminReady?: () => Promise<unknown>;
 	readonly safeOpen?: ISafeOpenOptions;
 	readonly now?: () => number;
 }
@@ -354,13 +358,25 @@ export class VoltPluginHostService extends Disposable {
 	}
 
 	private snapshotInput() {
+		const admin = this.options.admin?.();
+		this.judgedAdmin = admin;
 		return {
 			epoch: this.epoch,
 			asOf: this.now(),
 			manifests: [...this.plugins.values()].map(plugin => plugin.manifest()),
 			grants: [...this.options.grants?.() ?? []],
 			home: this.options.home,
+			...(admin ? { admin } : {}),
 		};
+	}
+
+	private judgedAdmin: IAdminPolicy | undefined;
+
+	/** The managed policy changed: every plugin is judged by the new one, and what it no longer allows stops. */
+	adminChanged(): void {
+		if (this.options.admin?.() !== this.judgedAdmin) {
+			this.refreshAuthority([...this.plugins.values()].map(plugin => plugin.subject));
+		}
 	}
 
 	private refreshAuthority(subjects: readonly SubjectKey[]): void {
@@ -473,6 +489,9 @@ class T2Plugin {
 		const started = this.service.now();
 		this.setState('starting');
 		try {
+			// Nothing a plugin asks for is judged before the managed policy is known.
+			await options.adminReady?.();
+			this.service.adminChanged();
 			if (this.descriptor.enginesVolt && !apiVersionSatisfies(VOLT_PLUGIN_API_VERSION, this.descriptor.enginesVolt)) {
 				throw new VoltPluginError('InvalidArgument', `${this.descriptor.id} needs volt ${this.descriptor.enginesVolt}; this Volt serves ${VOLT_PLUGIN_API_VERSION}`);
 			}

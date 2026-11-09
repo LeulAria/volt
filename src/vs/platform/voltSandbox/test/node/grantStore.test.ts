@@ -194,4 +194,16 @@ suite('Volt grant store (C2)', function () {
 		assert.strictEqual(await store.update({ add: [draft('a', PLUGIN, 'agents.send@1')] }), 1);
 		assert.strictEqual(await fs.stat(lock).catch(() => undefined), undefined, 'released');
 	});
+
+	test('GS-LOCK-2: an old lock whose owner still runs (a slow commit) is never taken over', async () => {
+		const store = await open({ staleLockMs: 1_000, lockWaitMs: 150 });
+		const lock = `${path}.lock`;
+		const owner = `${process.ppid} someone-else`;
+		await fs.writeFile(lock, owner);
+		const past = new Date(Date.now() - 60_000);
+		await fs.utimes(lock, past, past);
+		await assert.rejects(store.update({ add: [draft('a', PLUGIN, 'agents.send@1')] }), /locked by another Volt process/);
+		assert.strictEqual(await fs.readFile(lock, 'utf8'), owner, 'the live owner keeps its lock');
+		assert.strictEqual(await fs.stat(`${lock}.takeover`).catch(() => undefined), undefined, 'no takeover lock is left');
+	});
 });

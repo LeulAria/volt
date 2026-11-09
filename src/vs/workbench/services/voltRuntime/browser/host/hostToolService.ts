@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IAdminPolicy } from '../../../../../platform/voltSandbox/common/authority.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
@@ -90,6 +91,10 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		@IVoltBrowserAccessService private readonly browserAccess: IVoltBrowserAccessService,
 	) {
 		super();
+	}
+
+	setManagedPolicy(policy: IAdminPolicy | undefined): void {
+		this.authority.setManagedPolicy(policy);
 	}
 
 	listTools(): readonly IVoltHostToolInfo[] {

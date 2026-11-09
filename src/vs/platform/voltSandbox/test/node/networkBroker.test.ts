@@ -646,6 +646,63 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		await r.revokeHosts(['example.test']);
 		assert.match((await open(r.port, connect(r, 'example.test:443'))).line, /403/, 'revoked');
 	});
+
+	test('NET-21: a host revoked while its lookup is in flight is refused before anything connects', async () => {
+		let release!: () => void;
+		const held = new Promise<void>(resolve => release = resolve);
+		broker.dispose();
+		broker = makeBroker({ lookup: async host => { lookups.push(host); await held; return [PUBLIC]; } });
+		const r = await route([]);
+		await r.allowHosts(['slow.test']);
+		const pending = open(r.port, connect(r, 'slow.test:443'));
+		assert.ok(await until(() => lookups.includes('slow.test')), 'the lookup started');
+		await r.revokeHosts(['slow.test']);
+		release();
+		assert.match((await pending).line, /403/);
+		assert.deepStrictEqual(connected, [], 'no upstream connection was opened');
+	});
+
+	test('NET-22: pipelined plain-HTTP requests hold their connection slots before the lookup', async () => {
+		const held = new Set<net.Socket>();
+		const sink = net.createServer(socket => { held.add(socket); socket.on('error', () => undefined); });
+		await new Promise<void>(resolve => sink.listen(0, '127.0.0.1', resolve));
+		const sinkPort = (sink.address() as net.AddressInfo).port;
+		broker.dispose();
+		broker = makeBroker({ connect: address => { connected.push(address.address); return net.connect({ host: '127.0.0.1', port: sinkPort }); } });
+		try {
+			const r = await route(['http://pipe.test'], { limits: { maxConnections: 4 } });
+			const request = `GET http://pipe.test/ HTTP/1.1\r\nHost: pipe.test\r\nProxy-Authorization: ${basic(r.token)}\r\n\r\n`;
+			const client = await raw(r.port, request.repeat(40));
+			raws.push(client);
+			await until(() => connected.length >= 4);
+			await new Promise(resolve => setTimeout(resolve, 300));
+			assert.ok(connected.length <= 4, `at most 4 upstream connections at once, saw ${connected.length}`);
+		} finally {
+			held.forEach(socket => socket.destroy());
+			await new Promise<void>(resolve => sink.close(() => resolve()));
+		}
+	});
+
+	test('NET-23: a plain-HTTP upload counts against the principal\'s byte budget', async () => {
+		const r = await route(['http://up.test', 'allowed.test'], { limits: { maxConnections: 8, bytesPerDay: 1000 } });
+		const body = 'x'.repeat(5000);
+		const upload = await raw(r.port, `POST http://up.test/ HTTP/1.1\r\nHost: up.test\r\nContent-Length: ${body.length}\r\nProxy-Authorization: ${basic(r.token)}\r\n\r\n${body}`);
+		raws.push(upload);
+		assert.ok(await until(() => audit.some(event => event.decision === 'close' && event.reason === 'budget')), 'the upload passed the budget and was cut');
+		assert.match((await open(r.port, connect(r, 'allowed.test:443'))).line, /429/, 'nothing more today');
+	});
+
+	test('NET-24: manifest wildcards that name no host open nothing, and SIIT addresses are judged as IPv4', async () => {
+		const subject: SubjectKey = 'plugin:acme.wild@local';
+		const manifest = { subject, network: 'broker' as const, declared: [{ id: 'net.connect', targets: ['**', '*.*', '*.com', '*example.com'] }] };
+		const r = await broker.openRoute({ principal: principal(subject, 't3'), allow: [], view: { manifest }, onDenial: denial => denials.push(denial) });
+		assert.match((await open(r.port, connect(r, 'attacker-evil-example.com:443'))).line, /403/);
+		const chat = await route(['*']);
+		for (const literal of ['[::ffff:0:a9fe:a9fe]:80', '[::ffff:0:7f00:1]:443']) {
+			assert.match((await open(chat.port, connect(chat, literal))).line, /403/, literal);
+		}
+		assert.deepStrictEqual(connected, []);
+	});
 });
 
 /** A grant source another writer can change (like the GrantStore under ~/.volt/trust), with change events. */

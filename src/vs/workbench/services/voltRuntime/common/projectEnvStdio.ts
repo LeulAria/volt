@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IAdminPolicy } from '../../../../platform/voltSandbox/common/authority.js';
 import { IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolRequest, IVoltPluginToolResult } from '../../../../platform/voltPlugins/common/pluginHosts.js';
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../../../platform/voltGit/common/hostGit.js';
@@ -53,6 +54,7 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	jobWait(id: string, timeoutMs: number, until?: string, since?: number): Promise<IVoltJobOutput | undefined> { return this.inner.jobWait(id, timeoutMs, until, since); }
 	listJobs(): Promise<readonly IVoltJobOutput[]> { return this.inner.listJobs(); }
 	sandboxSupport(): Promise<IVoltSandboxSupportInfo> { return this.inner.sandboxSupport!(); }
+	managedPolicy(): Promise<IAdminPolicy> { return this.inner.managedPolicy ? this.inner.managedPolicy() : Promise.resolve({}); }
 	allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> { return this.inner.allowSandboxDomains!(id, domains); }
 	sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> { return this.inner.sandboxAllows!(id, path, access); }
 	/** Git runs with the user's environment only: HostGit drops anything that would redirect it. */

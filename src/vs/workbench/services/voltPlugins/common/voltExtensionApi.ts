@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IAdminPolicy } from '../../../../platform/voltSandbox/common/authority.js';
 import type { SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
 import { Event } from '../../../../base/common/event.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
@@ -29,6 +30,8 @@ export interface IVoltExtensionApiService {
 	readonly _serviceBrand: undefined;
 	/** The enforcing check (`VoltExtensionCapabilityPolicy` until the Policy Authority replaces it). */
 	readonly policy: ICapabilityReporter;
+	/** The execution host's managed (admin) policy: every call is judged by it too. */
+	setManagedPolicy?(policy: IAdminPolicy | undefined): void;
 	/** A consent was given, refused or revoked. */
 	readonly onDidChangeConsent: Event<{ readonly extensionId: string; readonly capability: string }>;
 	/**

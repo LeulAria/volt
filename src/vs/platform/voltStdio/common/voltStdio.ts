@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IAdminPolicy } from '../../voltSandbox/common/authority.js';
 import { Event } from '../../../base/common/event.js';
 import { IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolRequest, IVoltPluginToolResult } from '../../voltPlugins/common/pluginHosts.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
@@ -299,6 +300,8 @@ export interface IVoltStdioService {
 	readonly onSandboxEvent?: Event<IVoltSandboxEvent>;
 	/** What OS sandboxing this machine offers. */
 	sandboxSupport?(): Promise<IVoltSandboxSupportInfo>;
+	/** The managed (admin) policy this execution host enforces; the window's gates judge by it too. */
+	managedPolicy?(): Promise<IAdminPolicy>;
 	/** Lets a sandboxed process (network off) reach more hosts, without a restart. */
 	allowSandboxDomains?(id: string, domains: readonly string[]): Promise<void>;
 	/**

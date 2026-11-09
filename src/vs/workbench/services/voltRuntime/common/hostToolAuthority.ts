@@ -10,7 +10,7 @@ import { localize } from '../../../../nls.js';
 import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { FilesAccess, filesPlan, ISandboxPathContext } from '../../../../platform/voltFiles/common/filesBroker.js';
-import { decisionRecord, IAccessRequest, IChatView, IDecision, IDecisionLogRecord, IManifestView, PolicyAuthorityMode, POLICY_AUTHORITY_MODE_SETTING, PolicySnapshot, evaluate } from '../../../../platform/voltSandbox/common/authority.js';
+import { decisionRecord, IAccessRequest, IAdminPolicy, IChatView, IDecision, IDecisionLogRecord, IManifestView, PolicyAuthorityMode, POLICY_AUTHORITY_MODE_SETTING, PolicySnapshot, evaluate } from '../../../../platform/voltSandbox/common/authority.js';
 import { FLOW_CAPABILITY, IGrant } from '../../../../platform/voltSandbox/common/grants.js';
 import { chatSubject, corePrincipal, extensionSubject, ICallContext, SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
 import { IVoltSandboxSettings, SandboxStrategy } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
@@ -267,7 +267,15 @@ export class HostToolAuthority extends Disposable {
 	}
 
 	private snapshot(chats: readonly IChatView[], manifests: readonly IManifestView[]): PolicySnapshot {
-		return PolicySnapshot.build({ epoch: this.epoch, asOf: this.now(), grants: this.flowGrants, chats, manifests });
+		return PolicySnapshot.build({ epoch: this.epoch, asOf: this.now(), grants: this.flowGrants, chats, manifests, ...(this.managed ? { admin: this.managed } : {}) });
+	}
+
+	private managed: IAdminPolicy | undefined;
+
+	/** The managed (admin) policy of the execution host: the gate's decisions apply it too. */
+	setManagedPolicy(policy: IAdminPolicy | undefined): void {
+		this.managed = policy && Object.keys(policy).length ? policy : undefined;
+		this.epoch++;
 	}
 
 	private context(subject: SubjectKey, chain: readonly SubjectKey[]): ICallContext {

@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { IManifestView } from './authority.js';
+import { parseNetworkRule } from './networkRules.js';
 import { extensionSubject, SubjectKey } from './principals.js';
 import { AGENT_ENV_INHERIT, credentialDenyEntries, HOME_TOOLCHAIN_PATHS } from './sandboxProfiles.js';
 import { IVoltSandboxPolicy, SANDBOX_POLICY_SCHEMA_VERSION, SandboxDimension } from './sandboxSchema.js';
@@ -202,7 +203,11 @@ export function t3Subject(extensionId: string): SubjectKey {
  * the extension names in `contributes.voltCapabilities` (low) and the user's "Allow host" grants.
  */
 export function t3ManifestView(extensionId: string, declaredHosts: readonly string[] = []): IManifestView {
-	const hosts = declaredHosts.filter(host => typeof host === 'string' && host.trim() && host.trim() !== '*');
+	// Host rules only (I.4): `**`, `*.*`, `*.com` or `*example.com` name no host, and `*` is never an extension's (H.7).
+	const hosts = declaredHosts.filter(host => {
+		const rule = typeof host === 'string' ? parseNetworkRule(host) : undefined;
+		return !!rule && rule.kind !== 'any';
+	});
 	return { subject: t3Subject(extensionId), network: 'broker', declared: hosts.length ? [{ id: 'net.connect', targets: hosts }] : [] };
 }
 

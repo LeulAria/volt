@@ -8,7 +8,7 @@ import { lookup as dnsLookup } from 'dns';
 import { promises as fs } from 'fs';
 import * as http from 'http';
 import * as net from 'net';
-import { homedir } from 'os';
+import { homedir, networkInterfaces } from 'os';
 import { IDisposable } from '../../../base/common/lifecycle.js';
 import { dirname, join } from '../../../base/common/path.js';
 import { evaluate, IAccessRequest, IAdminPolicy, IChatView, IDecision, IManifestView, PolicySnapshot } from '../common/authority.js';
@@ -181,6 +181,8 @@ export interface INetworkBrokerOptions {
 	/** Volt's own listener ports: never reachable through the broker, whatever is granted. */
 	readonly reservedPorts?: () => readonly number[];
 	readonly admin?: IAdminPolicy;
+	/** The managed policy as it is now (it can change while Volt runs); wins over `admin`. See {@link NetworkBroker.adminChanged}. */
+	readonly adminPolicy?: () => IAdminPolicy | undefined;
 	readonly now?: () => number;
 }
 
@@ -345,6 +347,13 @@ export class NetworkBroker {
 		this.changed(subjects, narrowed);
 	}
 
+	/** The managed policy changed: every route re-judges, and closes what it no longer allows. */
+	adminChanged(): void {
+		for (const route of [...this.routes]) {
+			route.invalidate(true);
+		}
+	}
+
 	/** The grants of `subject` at the current epoch. */
 	grantsOf(subject: SubjectKey): readonly IGrant[] {
 		return this.grants.data.grants.filter(grant => grant.subject === subject);
@@ -423,10 +432,18 @@ export class NetworkBroker {
 	}
 }
 
+/** Whether `address` (canonical text) is one of this machine's own interface addresses. */
+function ownAddress(address: string): boolean {
+	const bare = address.replace(/^\[|\]$/g, '').toLowerCase();
+	return Object.values(networkInterfaces()).some(list => list?.some(entry => entry.address.toLowerCase() === bare || entry.address.toLowerCase() === bare.replace(/^::ffff:/, '')));
+}
+
 /** One principal's way out: its listener, token, rules, live grants, budgets and open connections. */
 export class NetworkRoute {
 
 	private readonly connections = new Set<IOpenConnection>();
+	/** Requests judged but not yet tracked (a lookup in flight): they hold a connection slot too. */
+	private inFlight = 0;
 	private readonly clients = new Set<net.Socket>();
 	private readonly denials = new Map<string, IDenialRecord>();
 	private readonly expectedAuth: Buffer;
@@ -448,8 +465,13 @@ export class NetworkRoute {
 		const route = new NetworkRoute(broker, server, options, randomBytes(24).toString('base64url'));
 		await new Promise<void>((resolve, reject) => {
 			server.once('error', reject);
-			server.listen(0, '127.0.0.1', () => resolve());
+			server.listen(0, '127.0.0.1', () => {
+				server.off('error', reject);
+				resolve();
+			});
 		});
+		// Accept errors (EMFILE under load) drop that connection, never the process.
+		server.on('error', () => undefined);
 		return route;
 	}
 
@@ -659,7 +681,8 @@ export class NetworkRoute {
 			this.snapshot = undefined;
 		}
 		if (!this.snapshot) {
-			const admin = this.broker.options.admin ? { admin: this.broker.options.admin } : {};
+			const policy = this.broker.options.adminPolicy?.() ?? this.broker.options.admin;
+			const admin = policy ? { admin: policy } : {};
 			if (isChatSubject(this.subject)) {
 				this.snapshot = PolicySnapshot.build({
 					epoch: this.broker.epoch,
@@ -699,7 +722,11 @@ export class NetworkRoute {
 	 */
 	private routeManifest(manifest: IManifestView, grants: readonly IGrant[], now: number): IManifestView {
 		const context = { asOf: now, epoch: this.broker.epoch, sessionIds: [this.principal.id] };
-		const named = (targets: readonly string[] | undefined) => (targets ?? []).filter(target => target.trim() !== '*');
+		// Host rules only (I.4): `**`, `*.*`, `*.com` or `*example.com` name no host, and `*` is never a plugin's (H.7).
+		const named = (targets: readonly string[] | undefined) => (targets ?? []).filter(target => {
+			const rule = parseNetworkRule(target);
+			return !!rule && rule.kind !== 'any';
+		});
 		const granted = grants.filter(grant => !grant.revoked && grant.capability.split('@')[0] === 'net.connect' && grantValid(grant, context)).flatMap(grant => named(grant.scope.targets));
 		const declared = manifest.declared.flatMap(entry => {
 			if (entry.id.split('@')[0] !== 'net.connect') {
@@ -731,9 +758,19 @@ export class NetworkRoute {
 		if (this.limits.bytesPerDay !== undefined && this.bytesToday >= this.limits.bytesPerDay) {
 			return refuse('rate-limit', `Blocked by Volt sandbox: this principal used its network budget for today (${Math.round(this.limits.bytesPerDay / 1024 / 1024)} MB).`);
 		}
-		if (this.connections.size >= this.limits.maxConnections) {
+		if (this.connections.size + this.inFlight >= this.limits.maxConnections) {
 			return refuse('rate-limit', `Blocked by Volt sandbox: more than ${this.limits.maxConnections} connections at once.`);
 		}
+		// Pipelined requests arrive together: each holds its slot from here until it is tracked or refused.
+		this.inFlight++;
+		try {
+			return await this.judgeDestination(rawHost, port, epoch, refuse);
+		} finally {
+			this.inFlight--;
+		}
+	}
+
+	private async judgeDestination(rawHost: string, port: number, epoch: number, refuse: (reason: NetworkRefusal, message: string, extra?: { decision?: IDecision; target?: INormalizedHost }) => Verdict): Promise<Verdict> {
 		const target = normalizeNetworkHost(rawHost);
 		if (typeof target === 'string') {
 			return refuse('transport', `Blocked by Volt sandbox: ${target}.`);
@@ -776,7 +813,15 @@ export class NetworkRoute {
 				return refuse(metadata ? 'metadata' : 'private-address', `Blocked by Volt sandbox: ${target.host} resolves to ${metadata ? 'a cloud metadata address' : 'a local, private or reserved address'}.`, { target });
 			}
 		}
-		return { ok: true, address: answers[0], requests, epoch };
+		// A revocation (or narrower rules) during the lookup is not missed: judged again before connecting.
+		if (this.disposed) {
+			return refuse('transport', 'Volt sandbox proxy: this route is closed.');
+		}
+		const again = this.decide(named);
+		if (!again.allow) {
+			return refuse(again.code === 'port' ? 'port' : 'not-allowed', `Blocked by Volt sandbox: ${again.reason}.`, { decision: again, target });
+		}
+		return { ok: true, address: answers[0], requests, epoch: this.broker.epoch };
 	}
 
 	/** Undefined when the address may be reached; the requests that allowed it are appended. */
@@ -803,6 +848,10 @@ export class NetworkRoute {
 				return undefined;
 			}
 			case 'local': {
+				// A Volt listener on all interfaces is reachable at this machine's LAN address as well.
+				if (this.broker.reservedPorts().has(port) && ownAddress(classification.judged)) {
+					return { reason: 'private-address', message: `Blocked by Volt sandbox: port ${port} on this machine is Volt's own.` };
+				}
 				const request: IAccessRequest = { capability: 'net.local.connect', target: classification.judged, port, surface: 'broker' };
 				const decision = this.decide(request);
 				if (!decision.allow) {
@@ -812,6 +861,9 @@ export class NetworkRoute {
 				return undefined;
 			}
 			case 'public': {
+				if (this.broker.reservedPorts().has(port) && ownAddress(classification.judged)) {
+					return { reason: 'private-address', message: `Blocked by Volt sandbox: port ${port} on this machine is Volt's own.` };
+				}
 				const request: IAccessRequest = { capability: 'net.connect', target: classification.judged, port, surface: 'broker' };
 				const decision = this.decide(request);
 				if (!decision.allow) {
@@ -1019,6 +1071,13 @@ export class NetworkRoute {
 			if (connection) {
 				this.close(connection, 'done');
 			}
+		});
+		// The request body is what leaves: it counts against the day's budget as a download does.
+		req.on('data', (data: Buffer) => {
+			if (connection) {
+				connection.bytes += data.length;
+			}
+			this.count(data.length);
 		});
 		req.pipe(upstream);
 	}

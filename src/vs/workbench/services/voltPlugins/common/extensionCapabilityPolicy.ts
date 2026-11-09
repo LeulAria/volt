@@ -5,7 +5,7 @@
 
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { ceilingCovers } from '../../../../platform/voltPlugins/common/firstPartyCeilings.js';
-import { evaluate, IDecision, IDeclaredCapability, PolicySnapshot } from '../../../../platform/voltSandbox/common/authority.js';
+import { evaluate, IAdminPolicy, IDecision, IDeclaredCapability, PolicySnapshot } from '../../../../platform/voltSandbox/common/authority.js';
 import { consentsToGrants, IGrant, IRefusal } from '../../../../platform/voltSandbox/common/grants.js';
 import { corePrincipal, extensionSubject, SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
 import { PolicyAuthorityMode } from '../../voltRuntime/common/hostToolAuthority.js';
@@ -57,6 +57,8 @@ export interface IExtensionCapabilityPolicyOptions {
 	readonly mode?: () => PolicyAuthorityMode;
 	readonly onDiff?: (diff: IExtensionPolicyShadowDiff) => void;
 	readonly now?: () => number;
+	/** The execution host's managed (admin) policy, as last read. */
+	readonly admin?: () => IAdminPolicy | undefined;
 }
 
 /**
@@ -113,6 +115,7 @@ export class VoltExtensionCapabilityPolicy implements ICapabilityReporter {
 			...(principal.capabilities.optional ?? []).map(entry => ({ id: entry.id, optional: true, ...(entry.targets?.length ? { targets: entry.targets } : {}) })),
 		];
 		const at = this.options.now?.() ?? Date.now();
+		const admin = this.options.admin?.();
 		const state = stored || principal.firstParty || !capabilityClass(request.capability) ? undefined : this.consents.state(principal.extensionId, consentKey(request.capability));
 		const { grants, refusals } = stored ?? consentsToGrants(subject, state ? [{ capability: consentKey(request.capability), granted: state === 'granted' }] : [], at, this.epoch);
 		const snapshot = PolicySnapshot.build({
@@ -122,6 +125,7 @@ export class VoltExtensionCapabilityPolicy implements ICapabilityReporter {
 			refusals,
 			// Extension hosts run unsandboxed unless the user opts an extension in (N.1).
 			manifests: [{ subject, declared, network: 'host' }],
+			...(admin ? { admin } : {}),
 		});
 		return evaluate(snapshot, { capability: request.capability, ...(request.target !== undefined ? { target: request.target } : {}), surface: 'extension-api' }, {
 			principal: corePrincipal(`extension:${principal.extensionId}`, subject, 't3'),

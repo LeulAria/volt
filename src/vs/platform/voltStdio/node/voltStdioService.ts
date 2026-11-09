@@ -19,7 +19,7 @@ import { buildEntryPurposeOf, IBuildEntryChange, IHostGitRequest, IHostGitResult
 import { BuildEntryGuard, buildEntryGuard } from '../../voltGit/node/buildEntryGuard.js';
 import { runHostGit } from '../../voltGit/node/hostGit.js';
 import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
-import { POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../../voltSandbox/common/authority.js';
+import { IAdminPolicy, POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../../voltSandbox/common/authority.js';
 import { brokerReadFile, brokerWriteFile, defaultFsdPath } from '../../voltFiles/node/sandboxFileBroker.js';
 import { SafeOpenError } from '../../voltFiles/node/safeOpen.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
@@ -129,12 +129,17 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		}));
 		this.onDidChangeSandboxWorkloads = Event.any(this.sandbox.supervisor.onDidChange, this.sandbox.supervisor.manager.onDidChangeWorkloads);
 		// Volt's T2 plugins (spec H.1, roadmap P1): registered on first use, each host started on its first call.
+		// The managed policy, read now (a few stats): plugin hosts and the network broker judge by it too.
+		const managedPolicy = this.sandbox.managedPolicy();
 		this.plugins = this._register(new VoltPluginHostService({
 			supervisor: this.sandbox.supervisor,
 			registry: this.sandbox.registry,
 			home: homedir(),
 			logger: { info: message => logService.info(message), warn: message => logService.warn(message) },
+			admin: () => this.sandbox.managedPolicyNow,
+			adminReady: () => managedPolicy,
 		}));
+		this._register(this.sandbox.onDidChangeManagedPolicy(() => this.plugins.adminChanged()));
 		this.pluginStorageRoot = join(userDataPath, 'User');
 		this._register(this.sandbox.registerNetworkViewProvider(principal => this.plugins.networkView(principal)));
 		this.onDidChangePlugins = Event.signal(this.plugins.onDidChange);
@@ -533,6 +538,10 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			return { kind: 'build-entry', reason: `Volt could not check what changed in ${cwd} since a sandboxed agent worked there, so its ${context.reason} did not run.` };
 		}
 		return changes.length ? { kind: 'build-entry', reason: `${changes.length} file(s) that run code changed in ${cwd} since a sandboxed agent worked there (${changes.slice(0, 3).map(change => basename(change.path)).join(', ')}). Review them before Volt runs its ${context.reason} outside the sandbox.` } : undefined;
+	}
+
+	managedPolicy(): Promise<IAdminPolicy> {
+		return this.sandbox.managedPolicy();
 	}
 
 	async sandboxSupport(): Promise<IVoltSandboxSupportInfo> {

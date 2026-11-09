@@ -58,6 +58,14 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 23. **User and repository policy files are defined, not loaded.** The schema, parser and narrow-only composition exist and are tested, but the agent path builds its policy from the chat settings only. **Next:** load `~/.volt/sandbox.json` (trusted) and `<workspace>/.volt/sandbox.json` (untrusted) into the agent profile, and surface `ignored` in the UI.
 24. **PTY workloads** (sandboxed terminals) need file-based confirmation, because node-pty cannot pass extra file descriptors. Not built; host terminal tools are refused for sandboxed chats instead.
 
+## Found in the 2026-11-09 review, not fixed yet
+
+25. **The window's gates read the managed policy once.** The extension API and the host-tool gate get it at window start; the launcher, plugin hosts and the network broker follow `invalidate` too. A policy changed while Volt runs reaches the window's gates at its next start.
+26. **A sandboxed extension's tool flows are judged by its declarations only.** The host-tool gate doesn't see the "Allow host" grants the broker adds for that extension. Not reachable today (no tool owner is marked sandboxed), but it must carry the granted hosts before one is.
+27. **Unknown folders count as writing nothing** when one chat's settings are compared with another's without scopes (automations, run groups, the orchestrator). By design until those callers pass their roots; the host-tool gate passes them.
+28. **Decision-log replay doesn't prove the logged request**, only the snapshot and the call context. Adding a request digest changes the log's record format, which its reader checks strictly.
+29. **A grant store written by a newer Volt is read-only**, so a revoke there fails while its first-party and chat grants keep applying.
+
 ## Future work, in order
 
 1. Load user and repository policy layers (item 23), and use the sandbox for native models (item 16).

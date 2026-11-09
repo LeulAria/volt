@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IAdminPolicy } from '../../../../platform/voltSandbox/common/authority.js';
 import { WORKSPACE_SNAPSHOT_COMMAND_ID, WORKSPACE_STATUS_TOOL_NAME } from './harness/workspaceContext.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
@@ -1078,6 +1079,8 @@ export interface IVoltFeatureEnablementMirror {
 
 export interface IVoltHostToolService {
 	readonly _serviceBrand: undefined;
+	/** The execution host's managed (admin) policy: the host-tool gate applies it too. */
+	setManagedPolicy?(policy: IAdminPolicy | undefined): void;
 	readonly onDidChangeMcp: Event<void>;
 	readonly onDidInvokeTool: Event<IVoltHostToolInvocation>;
 	/** The tool list changed (a provider was added or removed); the MCP server re-reads it. */

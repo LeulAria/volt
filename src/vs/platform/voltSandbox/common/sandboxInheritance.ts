@@ -11,6 +11,7 @@
  */
 
 import { chatCovers, IChatView } from './authority.js';
+import { networkEntryWithin } from './networkRules.js';
 import { chatSubject } from './principals.js';
 import { isPathInside, IVoltSandboxSettings, normalizeSandboxPath, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from './sandboxPolicy.js';
 
@@ -34,19 +35,13 @@ const LEVEL_RANK: Readonly<Record<VoltSandboxLevel, number>> = { 'off': 0, 'work
 const ALL = 'all';
 type DomainSet = readonly string[] | typeof ALL;
 
-/** True when every host `pattern` matches is matched by `by` (`*.example.com` covers `api.example.com` and `example.com`). */
+/**
+ * True when every connection `pattern` lets through, `by` lets through, by the broker's rules
+ * (`networkEntryWithin`): `*` is the web ports without paste sites or IP literals, `*.example.com`
+ * its descendants on 443, never `example.com` itself.
+ */
 function domainPatternCovered(pattern: string, by: string): boolean {
-	const p = pattern.trim().toLowerCase();
-	const b = by.trim().toLowerCase();
-	if (b === '*' || p === b) {
-		return true;
-	}
-	if (p === '*' || !b.startsWith('*.')) {
-		return false;
-	}
-	const base = b.slice(2);
-	const name = p.startsWith('*.') ? p.slice(2) : p;
-	return name === base || name.endsWith(`.${base}`);
+	return pattern.trim().toLowerCase() === by.trim().toLowerCase() || networkEntryWithin(pattern, [by]);
 }
 
 function intersectDomains(a: DomainSet, b: DomainSet): DomainSet {
@@ -229,44 +224,59 @@ export interface IFolderGrantContext {
  * agent picks it.
  */
 export function folderGrantError(folder: string, context: IFolderGrantContext): string | undefined {
-	const path = normalizeSandboxPath(folder);
-	if (!path.startsWith('/')) {
+	const given = normalizeSandboxPath(folder);
+	if (!given.startsWith('/')) {
 		return `${folder} is not an absolute folder.`;
 	}
+	// `..` would name another folder than the one these checks see (the OS resolves it, they don't).
+	if (given.split('/').includes('..')) {
+		return `${folder} is not a plain folder path.`;
+	}
+	// Compared in one case: macOS and Windows folders are case-insensitive (`~/LIBRARY` is `~/Library`).
+	const path = given.split('/').filter(segment => segment !== '.').join('/') || '/';
+	return folderRefusal(path, path.toLowerCase(), {
+		home: normalizeSandboxPath(context.home).toLowerCase(),
+		workspaceRoots: context.workspaceRoots.map(root => normalizeSandboxPath(root).toLowerCase()),
+		...(context.userDataDir ? { userDataDir: normalizeSandboxPath(context.userDataDir).toLowerCase() } : {}),
+	});
+}
+
+/** {@link folderGrantError} on `path` and a context folded to lower case; `shown` is the folder as given. */
+function folderRefusal(shown: string, path: string, context: IFolderGrantContext): string | undefined {
 	if (path === '/') {
 		return 'The whole disk cannot be made writable.';
 	}
-	const home = normalizeSandboxPath(context.home);
+	const home = context.home;
 	if (home.startsWith('/') && home !== '/' && isPathInside(home, path)) {
-		return path === home ? 'Your home folder cannot be made writable as a whole; allow a project folder inside it.' : `${path} contains your home folder; allow a project folder instead.`;
+		return path === home ? 'Your home folder cannot be made writable as a whole; allow a project folder inside it.' : `${shown} contains your home folder; allow a project folder instead.`;
 	}
 	const temp = TEMP_FOLDERS.some(root => path !== root && isPathInside(path, root)) || path === '/tmp' || path === '/private/tmp';
-	if (!temp && SYSTEM_FOLDERS.some(root => isPathInside(path, root))) {
-		return `${path} is a system folder; the sandbox keeps it read-only.`;
+	if (!temp && SYSTEM_FOLDERS.some(root => isPathInside(path, root.toLowerCase()))) {
+		return `${shown} is a system folder; the sandbox keeps it read-only.`;
 	}
-	if (/^\/Volumes(\/[^/]+)?$/.test(path)) {
-		return `${path} ${path === '/Volumes' ? 'holds every drive' : 'is a whole drive'}; allow a folder on it instead.`;
+	if (/^\/volumes(\/[^/]+)?$/.test(path)) {
+		return `${shown} ${path === '/volumes' ? 'holds every drive' : 'is a whole drive'}; allow a folder on it instead.`;
 	}
 	const name = path.split('/').find(segment => PROTECTED_NAMES.includes(segment));
 	if (name) {
-		return `${path} is inside a ${name} folder, whose files run later outside the sandbox.`;
+		return `${shown} is inside a ${name} folder, whose files run later outside the sandbox.`;
 	}
 	if (home.startsWith('/') && home !== '/') {
 		for (const relative of PROTECTED_HOME) {
-			const protectedPath = `${home}/${relative}`;
+			const protectedPath = `${home}/${relative.toLowerCase()}`;
 			if (isPathInside(path, protectedPath) || isPathInside(protectedPath, path)) {
-				return isPathInside(path, protectedPath) ? `${path} holds credentials or startup files (~/${relative}).` : `${path} contains ~/${relative} (credentials or startup files); allow a narrower folder.`;
+				return isPathInside(path, protectedPath) ? `${shown} holds credentials or startup files (~/${relative}).` : `${shown} contains ~/${relative} (credentials or startup files); allow a narrower folder.`;
 			}
 		}
 	}
-	const userData = context.userDataDir ? normalizeSandboxPath(context.userDataDir) : undefined;
+	const userData = context.userDataDir;
 	if (userData && userData.startsWith('/') && (isPathInside(path, userData) || isPathInside(userData, path))) {
-		return `${path} ${isPathInside(path, userData) ? 'is inside' : 'contains'} Volt's own data folder.`;
+		return `${shown} ${isPathInside(path, userData) ? 'is inside' : 'contains'} Volt's own data folder.`;
 	}
-	for (const root of context.workspaceRoots.map(normalizeSandboxPath).filter(root => root.startsWith('/'))) {
+	for (const root of context.workspaceRoots.filter(root => root.startsWith('/'))) {
 		if (root !== path && isPathInside(root, path)) {
 			// Granting a parent of the checkout opens its neighbours (and, for a worktree, the main checkout) too.
-			return `${path} contains this chat's checkout and the folders beside it; allow a narrower folder.`;
+			return `${shown} contains this chat's checkout and the folders beside it; allow a narrower folder.`;
 		}
 	}
 	return undefined;

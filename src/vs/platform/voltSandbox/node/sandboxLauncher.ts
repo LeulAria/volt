@@ -173,6 +173,10 @@ export class VoltSandboxLauncher extends Disposable {
 	private readonly _onViolation = this._register(new Emitter<ISandboxViolationEvent>());
 	readonly onViolation: Event<ISandboxViolationEvent> = this._onViolation.event;
 
+	private readonly _onDidChangeManagedPolicy = this._register(new Emitter<void>());
+	/** The managed (admin) policy was read or changed: every gate that judges by it re-judges. */
+	readonly onDidChangeManagedPolicy: Event<void> = this._onDidChangeManagedPolicy.event;
+
 	private readonly _onDidShadowDiff = this._register(new Emitter<ILaunchShadowDiff>());
 	readonly onDidShadowDiff: Event<ILaunchShadowDiff> = this._onDidShadowDiff.event;
 
@@ -188,6 +192,8 @@ export class VoltSandboxLauncher extends Disposable {
 	private readonly now: () => number;
 	private readonly readAdmin: () => Promise<IAdminPolicy & { readonly source?: string; readonly problem?: string }>;
 	private admin: Promise<IAdminPolicy> | undefined;
+	/** The managed policy once read: what the network broker judges by. */
+	private adminNow: IAdminPolicy | undefined;
 	private workspace: IWorkspaceRestriction | undefined;
 	private layers: readonly ISandboxLayer[] = [];
 	private epoch = 0;
@@ -202,7 +208,8 @@ export class VoltSandboxLauncher extends Disposable {
 	) {
 		super();
 		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
-		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}), ...(options.grants ? { grants: options.grants } : {}) });
+		// The broker judges connections by the managed policy as last read here (launches, `invalidate`).
+		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}), ...(options.grants ? { grants: options.grants } : {}), adminPolicy: () => this.adminNow });
 		this.now = options.now ?? Date.now;
 		this.registry = new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now);
 		// Disposed at once (its disposal starts killing the hosts); the shutdown below waits for those kills.
@@ -528,6 +535,9 @@ export class VoltSandboxLauncher extends Disposable {
 	invalidate(changes: { readonly admin?: IAdminPolicy; readonly workspace?: IWorkspaceRestriction; readonly layers?: readonly ISandboxLayer[] } = {}): number {
 		if (changes.admin) {
 			this.admin = Promise.resolve(changes.admin);
+			this.adminNow = changes.admin;
+			this.manager.currentBroker?.adminChanged();
+			this._onDidChangeManagedPolicy.fire();
 		}
 		if ('workspace' in changes) {
 			this.workspace = changes.workspace;
@@ -540,13 +550,34 @@ export class VoltSandboxLauncher extends Disposable {
 		return this.epoch;
 	}
 
+	/** The managed policy, read on first use (launches, plugin hosts, the network broker judge by it). */
+	managedPolicy(): Promise<IAdminPolicy> {
+		return this.adminPolicy();
+	}
+
+	/** The managed policy once read; undefined before. */
+	get managedPolicyNow(): IAdminPolicy | undefined {
+		return this.adminNow;
+	}
+
 	private adminPolicy(): Promise<IAdminPolicy> {
-		this.admin ??= this.readAdmin().then(({ source: _source, problem, ...policy }) => {
-			if (problem) {
-				this.logger.warn(`[volt-sandbox] managed policy: ${problem}`);
-			}
-			return policy;
-		}, () => ({ unreadable: true }));
+		if (!this.admin) {
+			const admin = this.readAdmin().then(({ source: _source, problem, ...policy }): IAdminPolicy => {
+				if (problem) {
+					this.logger.warn(`[volt-sandbox] managed policy: ${problem}`);
+				}
+				return policy;
+			}, (): IAdminPolicy => ({ unreadable: true }));
+			this.admin = admin;
+			// Registered first, so the policy is the broker's before any launch that awaited it goes on.
+			void admin.then(policy => {
+				if (this.admin === admin) {
+					this.adminNow = policy;
+					this.manager.currentBroker?.adminChanged();
+					this._onDidChangeManagedPolicy.fire();
+				}
+			});
+		}
 		return this.admin;
 	}
 

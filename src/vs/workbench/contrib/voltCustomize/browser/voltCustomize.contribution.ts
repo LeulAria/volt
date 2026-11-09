@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
+import type { IAdminPolicy } from '../../../../platform/voltSandbox/common/authority.js';
 import '../common/voltCustomizeConfiguration.js';
 import { $, addDisposableListener } from '../../../../base/browser/dom.js';
 import { IAction, Separator, toAction } from '../../../../base/common/actions.js';
@@ -339,6 +341,29 @@ class VoltExtensionApiContribution implements IWorkbenchContribution {
 	}
 }
 registerWorkbenchContribution2(VoltExtensionApiContribution.ID, VoltExtensionApiContribution, WorkbenchPhase.Eventually);
+
+/**
+ * The execution host's managed (admin) policy for the window's own gates: the extension API and
+ * the host-tool gate judge by it as the launcher, plugin hosts and the network broker do. Read once
+ * at start; unreadable means third parties get nothing (fail closed).
+ */
+class VoltManagedPolicyContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltManagedPolicy';
+	constructor(
+		@IVoltStdioService stdio: IVoltStdioService,
+		@IVoltExtensionApiService extensionApi: IVoltExtensionApiService,
+		@IVoltHostToolService hostTools: IVoltHostToolService,
+	) {
+		if (!stdio.managedPolicy) {
+			return;
+		}
+		void stdio.managedPolicy().catch((): IAdminPolicy => ({ unreadable: true })).then(policy => {
+			extensionApi.setManagedPolicy?.(policy);
+			hostTools.setManagedPolicy?.(policy);
+		});
+	}
+}
+registerWorkbenchContribution2(VoltManagedPolicyContribution.ID, VoltManagedPolicyContribution, WorkbenchPhase.BlockRestore);
 registerWorkbenchContribution2(VoltPlaygroundDevtoolsContribution.ID, VoltPlaygroundDevtoolsContribution, WorkbenchPhase.AfterRestored);
 
 // --- Commands ----------------------------------------------------------------------------------

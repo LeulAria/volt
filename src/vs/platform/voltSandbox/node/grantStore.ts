@@ -280,23 +280,27 @@ export class GrantStore extends Disposable {
 		return run;
 	}
 
-	/** Holds `<store>.lock` (O_EXCL) while `task` runs, so another Volt process can't commit in between. */
+	/**
+	 * Holds `<store>.lock` (O_EXCL) while `task` runs, so another Volt process can't commit in between.
+	 * The lock names its owner (`<pid> <token>`): it is stale only when it is old and that process is
+	 * gone, so a slow commit keeps it; a stale lock is removed under `<store>.lock.takeover`, so two
+	 * waiters can't both take it over; and the owner removes it only while it is still its own.
+	 */
 	private async locked<T>(task: () => Promise<T>): Promise<T> {
 		const lock = `${this.path}.lock`;
+		const mine = `${process.pid} ${randomBytes(12).toString('hex')}`;
 		const deadline = Date.now() + (this.options.lockWaitMs ?? LOCK_WAIT_MS);
 		for (let wait = 5; ; wait = Math.min(wait * 2, 100)) {
 			try {
 				const handle = await fs.open(lock, 'wx', 0o600);
-				await handle.writeFile(String(process.pid));
+				await handle.writeFile(mine);
 				await handle.close();
 				break;
 			} catch (err) {
 				if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
 					throw err;
 				}
-				const stat = await fs.stat(lock).catch(() => undefined);
-				if (stat && Date.now() - stat.mtimeMs > (this.options.staleLockMs ?? LOCK_STALE_MS)) {
-					await fs.unlink(lock).catch(() => undefined);
+				if (await this.takeOverStale(lock)) {
 					continue;
 				}
 				if (Date.now() > deadline) {
@@ -308,8 +312,53 @@ export class GrantStore extends Disposable {
 		try {
 			return await task();
 		} finally {
-			await fs.unlink(lock).catch(() => undefined);
+			if ((await readText(lock)) === mine) {
+				await fs.unlink(lock).catch(() => undefined);
+			}
 		}
+	}
+
+	/** Removes `lock` when it is stale, holding the takeover lock while it checks; true when it did. */
+	private async takeOverStale(lock: string): Promise<boolean> {
+		const staleMs = this.options.staleLockMs ?? LOCK_STALE_MS;
+		const takeover = `${lock}.takeover`;
+		let handle: fs.FileHandle | undefined;
+		try {
+			handle = await fs.open(takeover, 'wx', 0o600);
+		} catch {
+			// Another waiter is checking; a takeover lock its crashed owner left is cleared after a while.
+			const stat = await fs.stat(takeover).catch(() => undefined);
+			if (stat && Date.now() - stat.mtimeMs > staleMs * 3) {
+				await fs.unlink(takeover).catch(() => undefined);
+			}
+			return false;
+		}
+		try {
+			await handle.close();
+			// Under the takeover lock nobody else removes `lock`, and nobody can create one while it exists.
+			const [stat, text] = await Promise.all([fs.stat(lock).catch(() => undefined), readText(lock)]);
+			if (!stat || Date.now() - stat.mtimeMs <= staleMs) {
+				return false;
+			}
+			const owner = Number((text ?? '').split(' ')[0]);
+			if (Number.isInteger(owner) && owner > 0 && owner !== process.pid && ownerAlive(owner)) {
+				return false;
+			}
+			await fs.unlink(lock).catch(() => undefined);
+			return true;
+		} finally {
+			await fs.unlink(takeover).catch(() => undefined);
+		}
+	}
+}
+
+/** Whether process `pid` exists (EPERM: it does, as another user's). */
+function ownerAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === 'EPERM';
 	}
 }
 

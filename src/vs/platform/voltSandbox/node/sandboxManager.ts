@@ -18,6 +18,7 @@ import { BubblewrapBackend } from './bubblewrapBackend.js';
 import { MxcBackend } from './mxcBackend.js';
 import { ISandboxBackend, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
 import { osBuild } from './sandboxProbeCache.js';
+import type { IAdminPolicy } from '../common/authority.js';
 import { IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
 import { INetworkDenial, INetworkGrantSource, INetworkPrincipalView, NetworkAuditLog, NetworkBroker, NetworkRoute, NetworkViewProvider } from './networkBroker.js';
@@ -139,6 +140,8 @@ export interface ISandboxManagerOptions {
 	 * host, opened on first use. Default (and when it can't be opened): grants for as long as Volt runs.
 	 */
 	readonly grants?: () => Promise<INetworkGrantSource | undefined>;
+	/** The managed (admin) policy as it is now: the network broker judges every connection by it too. */
+	readonly adminPolicy?: () => IAdminPolicy | undefined;
 }
 
 const RUN_PREFIX = 'volt-sbx-';
@@ -172,6 +175,7 @@ export class SandboxManager {
 		this.ownsBroker = !options.broker;
 		this.reservedPorts = options.reservedPorts;
 		this.grantSource = options.grants;
+		this.adminPolicy = options.adminPolicy;
 		if (options.host) {
 			this.host = Promise.resolve(options.host);
 		}
@@ -185,6 +189,7 @@ export class SandboxManager {
 	private readonly reservedPorts: (() => readonly number[]) | undefined;
 	private readonly grantSource: (() => Promise<INetworkGrantSource | undefined>) | undefined;
 	private brokerGrants: Promise<INetworkGrantSource | undefined> | undefined;
+	private readonly adminPolicy: (() => IAdminPolicy | undefined) | undefined;
 
 	/** The broker, made on first use; its audit log is `~/.volt/trust/audit/network.log` (denied to every sandbox). */
 	private async networkBroker(host: ISandboxHostFacts): Promise<NetworkBroker> {
@@ -203,6 +208,7 @@ export class SandboxManager {
 			...(this.proxyOptions.connect ? { connect: this.proxyOptions.connect } : {}),
 			...(this.proxyOptions.tunnelIdleMs ? { tunnelIdleMs: this.proxyOptions.tunnelIdleMs } : {}),
 			...(this.reservedPorts ? { reservedPorts: this.reservedPorts } : {}),
+			...(this.adminPolicy ? { adminPolicy: this.adminPolicy } : {}),
 			audit: new NetworkAuditLog(join(host.home, '.volt', 'trust', 'audit', 'network.log')).append,
 		});
 		this.registerPendingViews(this.broker);

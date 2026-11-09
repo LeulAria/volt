@@ -341,7 +341,7 @@ export function isPublicAddress(address: string): boolean {
  * `2002::/16`; null if malformed or if the forms disagree; undefined if none.
  */
 function embeddedIPv4(v6: string): string | null | undefined {
-	const dotted = /^(?:::ffff:|::|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/.exec(v6);
+	const dotted = /^(?:::ffff:|::ffff:0:|::|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/.exec(v6);
 	if (dotted) {
 		return net.isIP(dotted[1]) === 4 ? dotted[1] : null;
 	}
@@ -351,6 +351,10 @@ function embeddedIPv4(v6: string): string | null | undefined {
 	}
 	const fromHex = (hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
 	if (groups.slice(0, 5).every(g => g === 0) && groups[5] === 0xffff) {
+		return fromHex(groups[6], groups[7]);
+	}
+	// SIIT (RFC 2765): `::ffff:0:a.b.c.d`.
+	if (groups.slice(0, 4).every(g => g === 0) && groups[4] === 0xffff && groups[5] === 0) {
 		return fromHex(groups[6], groups[7]);
 	}
 	if (groups.slice(0, 6).every(g => g === 0) && (groups[6] !== 0 || groups[7] > 1)) {

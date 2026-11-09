@@ -11,7 +11,7 @@ import { FIRST_PARTY_CEILINGS, IVoltCeilingEntry } from '../../voltPlugins/commo
 import { canonicalJson, FLOW_CAPABILITY, GrantKind, grantCovers, grantValid, hasRefusal, IGrant, IGrantContext, IRefusal, nextGrantExpiry } from './grants.js';
 import { gestureValid, ICallContext, IPrincipal, isChatSubject, isFirstPartySubject, isPluginSubject, MAX_CALL_CHAIN, SubjectKey, subjectChatId, subjectExtensionId } from './principals.js';
 import { classifyAddress } from './networkAddress.js';
-import { isExfilHost, networkRulesCover, normalizeNetworkHost } from './networkRules.js';
+import { isExfilHost, networkEntryWithin, networkRuleCovers, networkRulesCover, normalizeNetworkHost, parseNetworkRule, splitAuthority } from './networkRules.js';
 import { agentApiDomains, domainAllowed, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, normalizeSandboxPath, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from './sandboxPolicy.js';
 import { CREDENTIAL_HOME_PATHS } from './sandboxProfiles.js';
 import { SandboxDimension, splitAllowEntry } from './sandboxSchema.js';
@@ -359,7 +359,7 @@ function evaluateSubject(snapshot: PolicySnapshot, request: IAccessRequest, prin
 		if (workspace.trusted === false && !isChatSubject(subject) && !isFirstPartySubject(subject) && TRUST_GATED.some(id => capabilityIdCovers(id, capability))) {
 			return deny(epoch, 'workspace', 'untrusted-workspace', `${capability} needs a trusted workspace`);
 		}
-		if (workspace.denyCapabilities?.some(id => capabilityIdCovers(id, capability) || bareCapability(id) === bareCapability(capability))) {
+		if (workspace.denyCapabilities?.some(id => deniedById(id, capability))) {
 			return deny(epoch, 'workspace', 'workspace-policy', `this project's policy denies ${capability}`);
 		}
 	}
@@ -370,14 +370,17 @@ function evaluateSubject(snapshot: PolicySnapshot, request: IAccessRequest, prin
 		if (admin.unreadable && thirdParty && cls !== 'none') {
 			return deny(epoch, 'admin', 'admin-unreadable', 'a managed policy is installed but could not be read, so third parties get no permissions');
 		}
-		if (admin.denyCapabilities?.some(id => capabilityIdCovers(id, capability) || bareCapability(id) === bareCapability(capability))) {
+		if (admin.denyCapabilities?.some(id => deniedById(id, capability))) {
 			return deny(epoch, 'admin', 'admin-capability', `your organization's policy denies ${capability}`);
 		}
 		const host = request.target && bareCapability(capability).startsWith('net.') ? hostOf(request.target) : undefined;
-		if (host && admin.denyHosts?.some(pattern => hostCovered(host, pattern))) {
+		// A request that could reach a denied host is refused: `*` or `*.example.com` reach `api.example.com`.
+		if (host && admin.denyHosts?.some(pattern => hostCovered(host, pattern) || hostCovered(pattern, host))) {
 			return deny(epoch, 'admin', 'admin-host', `your organization's policy denies ${host}`);
 		}
-		if (admin.maxThirdPartyClass && thirdParty && voltCapabilityClassRank(cls) > voltCapabilityClassRank(admin.maxThirdPartyClass)) {
+		// An exfil-capable host is high for a third party, whatever the catalog says of `net.connect` (G.8).
+		const effective = host && bareCapability(capability) === 'net.connect' && isExfilHost(host) && voltCapabilityClassRank(cls) < voltCapabilityClassRank('high') ? 'high' : cls;
+		if (admin.maxThirdPartyClass && thirdParty && voltCapabilityClassRank(effective) > voltCapabilityClassRank(admin.maxThirdPartyClass)) {
 			return deny(epoch, 'admin', 'admin-class', `your organization's policy allows third parties nothing above ${admin.maxThirdPartyClass}`);
 		}
 	}
@@ -516,9 +519,55 @@ function networkAddressFloor(epoch: number, capability: string, target: string |
 }
 
 /** The manifest entry that declares `capability` on `target`, if any. */
-function declaration(manifest: IManifestView, capability: string, target: string | undefined): IDeclaredCapability | undefined {
+function declaration(manifest: IManifestView, capability: string, target: string | undefined, port?: number, hostRules = false): IDeclaredCapability | undefined {
 	return manifest.declared.find(entry => capabilityIdCovers(entry.id, capability)
-		&& (!entry.targets?.length || (target !== undefined && entry.targets.some(pattern => capabilityTargetMatches(pattern, target)))));
+		&& (!entry.targets?.length || (target !== undefined && entry.targets.some(pattern => hostRules ? targetMatches(capability, pattern, target, port) : capabilityTargetMatches(pattern, target)))));
+}
+
+/**
+ * A third party's declared or granted target pattern against a request's target. `net.connect` is
+ * matched as the broker matches host rules (I.4): no other `*` than a leading `*.` over a base that
+ * is not a public suffix, descendants only, the port (none: 443), exfil hosts by exact name, and
+ * never `*` (no plugin gets the whole web, H.7). Everything else by `capabilityTargetMatches`. Volt's
+ * own built-ins keep their globs: their compiled ceilings bound them (G.10).
+ */
+function targetMatches(capability: string, pattern: string, target: string, port: number | undefined): boolean {
+	if (bareCapability(capability) !== 'net.connect') {
+		return capabilityTargetMatches(pattern, target);
+	}
+	const rule = parseNetworkRule(pattern);
+	if (!rule || rule.kind === 'any') {
+		return false;
+	}
+	const { host, port: given } = netTarget(target);
+	const normalized = normalizeNetworkHost(host);
+	return typeof normalized !== 'string' && networkRuleCovers(rule, normalized, port ?? given ?? 443);
+}
+
+/** The host and port a `net.*` target names: `host`, `host:port`, `[v6]:port`, a bare IPv6 address or a URL (its scheme's port). */
+function netTarget(target: string): { readonly host: string; readonly port: number | undefined } {
+	const raw = target.trim();
+	const url = /^([a-z][a-z0-9+.-]*):\/\//i.exec(raw);
+	if (url) {
+		try {
+			const parsed = new URL(raw);
+			return { host: parsed.hostname, port: parsed.port ? Number(parsed.port) : parsed.protocol === 'http:' ? 80 : 443 };
+		} catch {
+			return { host: raw, port: undefined };
+		}
+	}
+	if (!raw.startsWith('[') && raw.split(':').length > 2) {
+		return { host: raw, port: undefined };
+	}
+	const { host, port } = splitAuthority(raw, -1);
+	return { host, port: port === -1 || Number.isNaN(port) ? undefined : port };
+}
+
+/** A deny list's id against a request: the id itself, its versions, and its family (`net.listen` denies `net.listen:3000`). */
+function deniedById(id: string, capability: string): boolean {
+	const denied = bareCapability(id);
+	const wanted = bareCapability(capability);
+	return capabilityIdCovers(id, capability) || denied === wanted || wanted.startsWith(`${denied}:`);
 }
 
 /**
@@ -567,7 +616,7 @@ function pluginGrants(snapshot: PolicySnapshot, request: IAccessRequest, princip
 			cls = 'high';
 		}
 	}
-	const declared = declaration(manifest, capability, target);
+	const declared = declaration(manifest, capability, target, request.port, !isFirstPartySubject(subject));
 	if (!declared) {
 		const scoped = manifest.declared.some(entry => bareCapability(entry.id) === bareCapability(capability));
 		return deny(epoch, 'manifest', scoped ? 'undeclared-target' : 'undeclared', scoped
@@ -588,7 +637,10 @@ function pluginGrants(snapshot: PolicySnapshot, request: IAccessRequest, princip
 		return allow(epoch);
 	}
 	const context3 = grantContext(snapshot, principal, context);
-	if (snapshot.grants(subject).some(grant => grant.capability !== FLOW_CAPABILITY && grantValid(grant, context3) && grantCovers(grant, capability, target)
+	const grantMatches = (grant: IGrant) => bareCapability(capability) === 'net.connect'
+		? capabilityIdCovers(grant.capability, capability) && (!grant.scope.targets?.length || (target !== undefined && grant.scope.targets.some(pattern => targetMatches(capability, pattern, target!, request.port))))
+		: grantCovers(grant, capability, target);
+	if (snapshot.grants(subject).some(grant => grant.capability !== FLOW_CAPABILITY && grantValid(grant, context3) && grantMatches(grant)
 		&& (!exfilHost || !!grant.scope.targets?.some(pattern => pattern.toLowerCase() === exfilHost || pattern.toLowerCase() === target)))) {
 		return allow(epoch);
 	}
@@ -713,7 +765,9 @@ export function egressWithin(a: Egress, b: Egress): boolean {
 	if (a === ALL) {
 		return false;
 	}
-	return a.every(host => b.some(pattern => hostCovered(host, pattern)));
+	// A subject key matches only itself; a host by the broker's rules (a parent's `*` never covers
+	// `evil.com:22` or a paste site); a loopback name is this machine, never egress.
+	return a.every(entry => b.includes(entry) || domainAllowed(entry, []) || networkEntryWithin(entry, b));
 }
 
 export function unionEgress(a: Egress, b: Egress): Egress {
@@ -796,16 +850,18 @@ export function chatCovers(target: IChatView | undefined, caller: IChatView): bo
 		return false;
 	}
 	const callerRoots = [...(c.extraWritableRoots ?? []), ...(c.level === 'workspace-write' ? chatFolders(caller) ?? [] : [])];
-	if ((t.extraWritableRoots ?? []).some(root => !callerRoots.some(allowed => isPathInside(root, allowed)))) {
+	// `/ws/../Users/me` is not inside `/ws`: a folder with `..` is never covered.
+	const within = (folder: string) => !normalizeSandboxPath(folder).split('/').includes('..') && callerRoots.some(allowed => isPathInside(folder, allowed));
+	if ((t.extraWritableRoots ?? []).some(root => !within(root))) {
 		return false;
 	}
-	if (!c.network && (t.allowedDomains ?? []).some(host => !domainAllowed(host, c.allowedDomains ?? []))) {
+	if (!c.network && (t.allowedDomains ?? []).some(host => !domainAllowed(host, []) && !networkEntryWithin(host, c.allowedDomains ?? []))) {
 		return false;
 	}
 	if (t.level === 'workspace-write') {
 		// A target whose folder is unknown may write anywhere: not covered (B-11).
 		const folders = chatFolders(target);
-		if (!folders || folders.some(folder => !callerRoots.some(allowed => isPathInside(folder, allowed)))) {
+		if (!folders || folders.some(folder => !within(folder))) {
 			return false;
 		}
 	}
@@ -986,11 +1042,14 @@ function credentialTarget(capability: string, target: string | undefined, home: 
 	if (!home || !path.startsWith('/')) {
 		return false;
 	}
-	const normalized = normalizeSandboxPath(path.replace(/\/\.\//g, '/'));
-	if (normalized.split('/').includes('..')) {
+	const segments = path.split('/').filter(segment => segment !== '' && segment !== '.');
+	if (segments.includes('..')) {
 		return true; // not a path the floor can place: refused
 	}
-	return CREDENTIAL_HOME_PATHS.some(dir => isPathInside(normalized, `${normalizeSandboxPath(home)}/${dir}`));
+	// Any case: macOS and Windows folders are case-insensitive (`~/.SSH` is `~/.ssh`); deny-only, so never wider.
+	const normalized = `/${segments.join('/')}`.toLowerCase();
+	const base = normalizeSandboxPath(home).toLowerCase();
+	return CREDENTIAL_HOME_PATHS.some(dir => isPathInside(normalized, `${base}/${dir.toLowerCase()}`));
 }
 
 /** The launch dimension a capability needs from the OS sandbox (G.2 step 8). */
@@ -1026,11 +1085,14 @@ function isConfined(snapshot: PolicySnapshot, subject: SubjectKey): boolean {
 
 function hostOf(target: string): string {
 	const value = target.trim().toLowerCase();
+	let host: string;
 	try {
-		return /^[a-z][a-z0-9+.-]*:\/\//.test(value) ? new URL(value).hostname : value.replace(/:\d+$/, '');
+		host = /^[a-z][a-z0-9+.-]*:\/\//.test(value) ? new URL(value).hostname : value.replace(/:\d+$/, '');
 	} catch {
-		return value;
+		host = value;
 	}
+	// `evil.com.` is `evil.com` to every resolver (and to the broker, which strips the dot).
+	return host.replace(/\.+$/, '');
 }
 
 export function describeSubject(subject: SubjectKey): string {
@@ -1057,6 +1119,10 @@ export function parseAdminPolicy(raw: unknown): IAdminPolicy {
 	const denyHosts = list(value.denyHosts);
 	const max = value.maxThirdPartyClass;
 	if (denyCapabilities === null || denyHosts === null || (max !== undefined && !(VOLT_CAPABILITY_CLASSES as readonly unknown[]).includes(max))) {
+		return { unreadable: true };
+	}
+	// A deny that names no capability (a typo) would deny nothing: the policy is not what its author meant.
+	if (denyCapabilities?.some(id => !capabilityClass(id) && !capabilityClass(`${bareCapability(id)}:x`))) {
 		return { unreadable: true };
 	}
 	return {
