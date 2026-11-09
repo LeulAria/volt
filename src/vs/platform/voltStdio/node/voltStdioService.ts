@@ -982,8 +982,8 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		if (truncated && !run.running) {
 			logPath = await this.spill(request.spillDir ?? join(tmpdir(), 'volt-exec'), request.id, run.combined.full()).catch(() => undefined);
 		}
-		if (run.sandboxed && !run.running && !run.denials.length && DENIAL_LIKE_OUTPUT.test(combined.text)) {
-			// The kernel log reports a denial a moment after the command saw it.
+		if (process.platform === 'darwin' && run.sandboxed && !run.running && !run.denials.length && DENIAL_LIKE_OUTPUT.test(combined.text)) {
+			// The kernel log reports a denial a moment after the command saw it (macOS only: Linux reports none, so no wait there).
 			await run.waitForDenial(EXEC_DENIAL_WAIT_MS);
 		}
 		return {
