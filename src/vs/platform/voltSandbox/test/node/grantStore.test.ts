@@ -184,6 +184,46 @@ suite('Volt grant store (C2)', function () {
 		assert.strictEqual(await fs.readFile(path, 'utf8'), text);
 	});
 
+	test('GS-NEWER-3: a revoke in a newer Volt\'s store still works, through the revocation log every version reads (05-limitations 29)', async () => {
+		await fs.mkdir(join(root, 'trust'), { recursive: true });
+		const grants: IGrant[] = [{ ...draft('mem', MEMORY, 'agents.context@1'), epoch: 1 }, { ...draft('mem2', MEMORY, 'agents.send@1'), epoch: 1 }, { ...draft('plug', PLUGIN, 'agents.send@1'), epoch: 1 }];
+		const text = JSON.stringify({ schemaVersion: GRANT_STORE_SCHEMA + 1, epoch: 5, grants, refusals: [], futureField: true });
+		await fs.writeFile(path, text);
+		const store = await open();
+		const other = await open();
+		const changes: IGrantStoreChangeEvent[] = [];
+		disposables.add(other.onDidChange(e => changes.push(e)));
+		assert.deepStrictEqual(store.data.grants.map(g => g.id), ['mem', 'mem2']);
+		const result = await store.commit(store.epoch, { revoke: ['mem'] });
+		assert.deepStrictEqual(result, { committed: true, epoch: 6, changed: true });
+		assert.deepStrictEqual(store.data.grants.map(g => g.id), ['mem2'], 'gone here at once');
+		assert.strictEqual(await fs.readFile(path, 'utf8'), text, 'the newer store itself is never written');
+		await other.reload();
+		assert.deepStrictEqual(other.data.grants.map(g => g.id), ['mem2'], 'another process (and the newer Volt) reads the log');
+		assert.deepStrictEqual(changes.map(c => c.narrowed), [true]);
+		// Uninstalling a plugin drops its grants even where this build can't see them.
+		await store.update({ dropSubjects: [PLUGIN] });
+		const log = (await fs.readFile(join(root, 'trust', 'grants.revoked'), 'utf8')).split('\n').filter(line => line).map(line => JSON.parse(line));
+		assert.deepStrictEqual(log.map(entry => entry.id ?? entry.subject), ['mem', PLUGIN]);
+		assert.deepStrictEqual(await store.commit(store.epoch, { revoke: ['mem'] }), { committed: true, epoch: store.epoch, changed: false }, 'revoking again changes nothing');
+		await assert.rejects(store.update({ add: [draft('b', PLUGIN, 'git.read@1')] }), /newer Volt/, 'widening stays refused');
+		// A torn last line (a crash mid-append) is skipped; the store reads on.
+		await fs.appendFile(join(root, 'trust', 'grants.revoked'), '{"id":"mem2"');
+		await store.reload();
+		assert.deepStrictEqual(store.data.grants.map(g => g.id), ['mem2']);
+		// Back on a store this build writes: the log is applied, then spent.
+		await fs.writeFile(path, JSON.stringify({ schemaVersion: GRANT_STORE_SCHEMA, epoch: 7, grants, refusals: [] }));
+		await store.reload();
+		assert.deepStrictEqual(store.data.grants.map(g => g.id), ['mem2'], 'a plugin grant from before the drop stays gone');
+		await store.update({ add: [draft('new', PLUGIN, 'git.read@1')] });
+		assert.deepStrictEqual(store.data.grants.map(g => g.id).sort(), ['mem2', 'new'], 'a grant after the drop is not caught by it');
+		await assert.rejects(fs.stat(join(root, 'trust', 'grants.revoked')));
+		// A log that is there but can't be read (here a folder): every grant is gone, as with a torn store.
+		await fs.mkdir(join(root, 'trust', 'grants.revoked'));
+		await store.reload();
+		assert.deepStrictEqual(store.data.grants, []);
+	});
+
 	test('GS-LOCK-1: a lock left by a crashed process is broken after it goes stale; a live one makes the commit wait, then fail', async () => {
 		const store = await open({ staleLockMs: 1_000, lockWaitMs: 150 });
 		const lock = `${path}.lock`;

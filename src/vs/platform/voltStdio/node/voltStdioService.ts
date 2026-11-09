@@ -33,6 +33,7 @@ import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox
 import { ChildLedger } from './childLedger.js';
 import type { NetworkRoute } from '../../voltSandbox/node/networkBroker.js';
 import { TrustHost } from '../../voltSandbox/node/trustHost.js';
+import { DecisionLog, decisionLogDirFor } from '../../voltSandbox/node/decisionLog.js';
 import type { SubjectKey } from '../../voltSandbox/common/principals.js';
 import type { ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState } from '../../voltSandbox/common/trust.js';
 import { BUILTIN_T2_PLUGINS, IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolRequest, IVoltPluginToolResult, MEMORY_PLUGIN_ID } from '../../voltPlugins/common/pluginHosts.js';
@@ -63,6 +64,8 @@ const EXEC_DENIAL_WAIT_MS = 400;
 /** Output that reads like the sandbox refused something. */
 const DENIAL_LIKE_OUTPUT = /Operation not permitted|Permission denied|Read-only file system|\bE(?:PERM|ACCES|ROFS)\b|Blocked by Volt sandbox/;
 const MAX_EXEC_DENIALS = 32;
+/** How often the managed (admin) policy is read again while Volt runs (a few stats). */
+const MANAGED_POLICY_REFRESH_MS = 60_000;
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007|\r(?!\n)/g;
 
 /**
@@ -153,8 +156,13 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			logger: { info: message => logService.info(message), warn: message => logService.warn(message) },
 			admin: () => this.sandbox.managedPolicyNow,
 			adminReady: () => managedPolicy,
+			decisionLog: new DecisionLog(decisionLogDirFor(this.trust.storePath)),
 		}));
 		this._register(this.sandbox.onDidChangeManagedPolicy(() => this.plugins.adminChanged()));
+		// The windows' gates (extension API, host tools) follow the managed policy too (05-limitations 25):
+		// re-read every minute, and every change goes out to them with the policy itself.
+		this.onDidChangeManagedPolicy = Event.map(this.sandbox.onDidChangeManagedPolicy, () => this.sandbox.managedPolicyNow ?? {}, this._store);
+		this.sandbox.watchManagedPolicy(MANAGED_POLICY_REFRESH_MS);
 		this.pluginStorageRoot = join(userDataPath, 'User');
 		this._register(this.sandbox.registerNetworkViewProvider(principal => this.plugins.networkView(principal)));
 		this.onDidChangePlugins = Event.signal(this.plugins.onDidChange);
@@ -165,6 +173,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	readonly onDidChangeSandboxWorkloads: Event<void>;
+	readonly onDidChangeManagedPolicy: Event<IAdminPolicy>;
 
 	private readonly trust: TrustHost;
 	readonly onDidChangeTrust: Event<{ readonly epoch: number; readonly narrowed: boolean }>;
@@ -172,10 +181,20 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	async approveSandboxDenial(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval> {
 		const route = this.routeOfDenial(id, denialId);
 		if (!route) {
-			return { ok: false, epoch: this.sandbox.supervisor.manager.currentBroker?.epoch ?? expectedEpoch, reason: 'this denial is not one of that agent\'s, or its run has ended' };
+			return { ok: false, epoch: this.sandbox.supervisor.manager.currentBroker?.epoch ?? expectedEpoch, reason: 'the run that was blocked has ended. Allow for This Chat lets the chat\'s next runs reach it' };
 		}
 		const result = await route.approve(denialId, expectedEpoch, scope === 'chat' ? 'chat' : 'run');
 		this.logService.info(`[volt-sandbox] ${id} denial ${denialId} ${result.ok ? `approved for this ${scope} at epoch ${result.epoch}` : `not approved: ${result.reason}`}`);
+		return result;
+	}
+
+	async approveChatDenial(chatId: string, denialId: string, deniedEpoch: number): Promise<IVoltSandboxApproval> {
+		const broker = this.sandbox.supervisor.manager.currentBroker;
+		if (!broker) {
+			return { ok: false, epoch: deniedEpoch, reason: 'this host has no network broker' };
+		}
+		const result = await broker.approveForChat(chatId, denialId, deniedEpoch);
+		this.logService.info(`[volt-sandbox] chat ${chatId} denial ${denialId} ${result.ok ? `approved for the chat at epoch ${result.epoch}` : `not approved: ${result.reason}`}`);
 		return result;
 	}
 

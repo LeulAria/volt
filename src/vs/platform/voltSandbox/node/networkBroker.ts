@@ -12,10 +12,10 @@ import { homedir, networkInterfaces } from 'os';
 import { IDisposable } from '../../../base/common/lifecycle.js';
 import { dirname, join } from '../../../base/common/path.js';
 import { evaluate, IAccessRequest, IAdminPolicy, IChatView, IDecision, IManifestView, PolicySnapshot } from '../common/authority.js';
-import { GrantKind, grantValid, IGrant } from '../common/grants.js';
+import { grantValid, IGrant } from '../common/grants.js';
 import { classifyAddress } from '../common/networkAddress.js';
-import { INormalizedHost, normalizeNetworkHost, parseNetworkRule, splitAuthority } from '../common/networkRules.js';
-import { ICallContext, IPrincipal, isChatSubject, PrincipalKind, SubjectKey, subjectChatId } from '../common/principals.js';
+import { INormalizedHost, networkRulesCover, normalizeNetworkHost, parseNetworkRule, splitAuthority } from '../common/networkRules.js';
+import { chatSubject, ICallContext, IPrincipal, isChatSubject, PrincipalKind, SubjectKey, subjectChatId } from '../common/principals.js';
 import { GrantCommitResult, IGrantStoreChange, IGrantStoreChangeEvent } from './grantStore.js';
 
 /**
@@ -57,6 +57,8 @@ export const BROKER_MAX_CONNECTIONS = 64;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const COALESCE_MS = 2_000;
 const MAX_DENIAL_RECORDS = 256;
+/** How long a closed route's denial can still be allowed for its chat. */
+const ENDED_DENIAL_MS = DAY_MS;
 
 /** Why the broker refused (I.4 "Denials"). */
 export type NetworkRefusal = 'not-allowed' | 'private-address' | 'metadata' | 'port' | 'transport' | 'rate-limit' | 'unresolvable' | 'auth';
@@ -108,6 +110,8 @@ export interface INetworkAuditEvent {
 	readonly bytes?: number;
 	/** `auth` with another route's token: whose (B-31 cross-principal reuse). */
 	readonly tokenOf?: SubjectKey;
+	/** A refusal of the principal's own background call (its telemetry): logged here only, never shown as a denial. */
+	readonly quiet?: true;
 }
 
 /**
@@ -219,6 +223,12 @@ export interface INetworkRouteOptions {
 	 */
 	readonly view?: INetworkPrincipalView;
 	readonly limits?: Partial<INetworkRouteLimits>;
+	/**
+	 * Host rules of what the principal calls on its own (an agent CLI's telemetry): a refusal there is
+	 * refused and audited as any other, but never reported through `onDenial` (no card invites the
+	 * user to allow what they never asked for) and never approvable.
+	 */
+	readonly quiet?: readonly string[];
 	readonly onDenial?: (denial: INetworkDenial) => void;
 }
 
@@ -250,6 +260,12 @@ export class NetworkBroker {
 	private readonly routes = new Set<NetworkRoute>();
 	private readonly listener: IDisposable | undefined;
 	private readonly viewProviders: NetworkViewProvider[] = [];
+	/**
+	 * Approvable denials of routes that closed, by id: a chat's denial card is usually answered after
+	 * the agent process that was refused has ended (a turn ends, the next one gets a fresh process).
+	 * Kept for chats only, newest {@link MAX_DENIAL_RECORDS}, for {@link ENDED_DENIAL_MS}.
+	 */
+	private readonly endedDenials = new Map<string, IDenialRecord & { readonly subject: SubjectKey }>();
 	private disposed = false;
 
 	constructor(readonly options: INetworkBrokerOptions = {}) {
@@ -275,9 +291,52 @@ export class NetworkBroker {
 		return route;
 	}
 
-	/** @internal */
-	routeClosed(route: NetworkRoute): void {
+	/** @internal `denials`: the closed route's approvable records, kept for "Allow for This Chat". */
+	routeClosed(route: NetworkRoute, denials: Iterable<[string, IDenialRecord]> = []): void {
 		this.routes.delete(route);
+		if (!isChatSubject(route.subject)) {
+			return;
+		}
+		for (const [id, record] of denials) {
+			this.endedDenials.set(id, { ...record, subject: route.subject });
+		}
+		const oldest = this.now() - ENDED_DENIAL_MS;
+		for (const [id, record] of this.endedDenials) {
+			if (this.endedDenials.size > MAX_DENIAL_RECORDS || record.at < oldest) {
+				this.endedDenials.delete(id);
+			}
+		}
+	}
+
+	/**
+	 * "Allow for This Chat" by denial id, whether or not the refused run is still open (P4 denial
+	 * card). The denial must be one the broker recorded for `chatId` (B-34) at `deniedEpoch` (the
+	 * epoch the card was shown with), and approvable; the rule is re-derived from the broker's own
+	 * record, never the client's text. The grant is the chat's (a session grant bound to the chat,
+	 * kept in the grant store until revoked), applied on the latest epoch: unrelated approvals since
+	 * the denial don't make the card ask again. Every open route of the chat re-judges at once, and
+	 * its later runs get it from their first connection. A denial is approved once.
+	 */
+	async approveForChat(chatId: string, denialId: string, deniedEpoch: number): Promise<NetworkApprovalResult> {
+		const subject = chatSubject(chatId);
+		const route = this.routeOfDenial(denialId);
+		const ended = route ? undefined : this.endedDenials.get(denialId);
+		const record = route?.subject === subject ? route.denialRecord(denialId) : ended?.subject === subject ? ended : undefined;
+		if (!record) {
+			return { ok: false, epoch: this.epoch, reason: 'Volt has no record of this denial for this chat (it may be too old); allow the host when it is blocked again' };
+		}
+		if (record.denial.epoch !== deniedEpoch) {
+			return { ok: false, epoch: this.epoch, reason: 'this is not the denial Volt recorded' };
+		}
+		if (record.denial.reason !== 'not-allowed' && record.denial.reason !== 'port') {
+			return { ok: false, epoch: this.epoch, reason: `a ${record.denial.reason} refusal can't be approved` };
+		}
+		const now = this.now();
+		const draft = networkGrantDraft(subject, chatId, `chat:${chatId}`, approvalEntry(record), now);
+		route?.forgetDenial(denialId);
+		this.endedDenials.delete(denialId);
+		const epoch = await this.update({ add: [draft] });
+		return { ok: true, epoch };
 	}
 
 	/** The route that recorded `denialId`, if it is still open. */
@@ -325,7 +384,7 @@ export class NetworkBroker {
 	}
 
 	refuse(denialId: string): boolean {
-		return this.routeOfDenial(denialId)?.refuse(denialId) ?? false;
+		return this.routeOfDenial(denialId)?.refuse(denialId) ?? this.endedDenials.delete(denialId);
 	}
 
 	/** The Access page was opened (G.12): prompts may be offered again, for one subject's routes or all. */
@@ -429,7 +488,25 @@ export class NetworkBroker {
 		for (const route of [...this.routes]) {
 			route.dispose();
 		}
+		this.endedDenials.clear();
 	}
+}
+
+/** The rule an approval of `record` adds: the host as the broker normalised it, its port unless 443. */
+function approvalEntry(record: IDenialRecord): string {
+	return record.target.ip
+		? `${record.target.ip === 6 ? `[${record.target.host}]` : record.target.host}:${record.denial.port}`
+		: record.denial.port === 443 ? record.target.host : `${record.target.host}:${record.denial.port}`;
+}
+
+/** A user's `net.connect` session grant of `subject` for `target`, bound to session `sessionId` (a principal or a chat). */
+function networkGrantDraft(subject: SubjectKey, sessionId: string, idOf: string, target: string, at: number): IGrant {
+	const capability = 'net.connect@1';
+	return {
+		id: `net:${idOf}:${createHash('sha256').update(`${capability}|${target}|session|${at}|${randomBytes(4).toString('hex')}`).digest('hex').slice(0, 16)}`,
+		subject, capability, scope: { targets: [target] }, kind: 'session', sessionId,
+		source: 'user', grantedAt: at, lastUsedAt: at, epoch: 0,
+	};
 }
 
 /** Whether `address` (canonical text) is one of this machine's own interface addresses. */
@@ -599,9 +676,7 @@ export class NetworkRoute {
 		if (scope === 'chat' && !chatId) {
 			return { ok: false, epoch: this.broker.epoch, reason: 'this principal is not a chat' };
 		}
-		const entry = record.target.ip
-			? `${record.target.ip === 6 ? `[${record.target.host}]` : record.target.host}:${record.denial.port}`
-			: record.denial.port === 443 ? record.target.host : `${record.target.host}:${record.denial.port}`;
+		const entry = approvalEntry(record);
 		// "Allow": this run (the route's own session, revoked when it closes). "Allow for This Chat": a
 		// session grant of the chat, kept in the grant store for every later run of it until revoked.
 		const draft = scope === 'chat' ? { ...this.grantDraft('net.connect@1', entry, 'session'), sessionId: chatId! } : this.grantDraft('net.connect@1', entry, 'session');
@@ -627,6 +702,16 @@ export class NetworkRoute {
 		return this.denials.has(denialId);
 	}
 
+	/** @internal The broker's record of approvable denial `denialId`. */
+	denialRecord(denialId: string): IDenialRecord | undefined {
+		return this.denials.get(denialId);
+	}
+
+	/** @internal Approved elsewhere (for the chat): approved once. */
+	forgetDenial(denialId: string): void {
+		this.denials.delete(denialId);
+	}
+
 	/** G.12 as the Access page shows it. */
 	promptBudget(): { readonly refusals: number; readonly autoDenied: boolean; readonly promptsToday: number } {
 		const now = this.broker.now();
@@ -650,14 +735,8 @@ export class NetworkRoute {
 		this.invalidate(narrowed);
 	}
 
-	private grantDraft(capability: string, target: string, kind: GrantKind): IGrant {
-		const at = this.broker.now();
-		return {
-			id: `net:${this.principal.id}:${createHash('sha256').update(`${capability}|${target}|${kind}|${at}|${randomBytes(4).toString('hex')}`).digest('hex').slice(0, 16)}`,
-			subject: this.subject, capability, scope: { targets: [target] }, kind,
-			...(kind === 'session' ? { sessionId: this.principal.id } : {}),
-			source: 'user', grantedAt: at, lastUsedAt: at, epoch: 0,
-		};
+	private grantDraft(_capability: 'net.connect@1', target: string, _kind: 'session'): IGrant {
+		return networkGrantDraft(this.subject, this.principal.id, this.principal.id, target, this.broker.now());
 	}
 
 	/** @internal The grants or rules changed: rebuild the snapshot, and on a narrowing close what is no longer allowed. */
@@ -893,6 +972,11 @@ export class NetworkRoute {
 				this.broker.audit({ ts: now, principal: this.principal.id, subject: this.subject, chain: this.chain(), method, destination, port, decision: 'deny', reason: verdict.reason, epoch: verdict.epoch, denialId: record.denial.denialId });
 				return record.denial;
 			}
+		}
+		if (verdict.reason === 'not-allowed' && verdict.target && this.options.quiet?.length && networkRulesCover(this.options.quiet, verdict.target, port)) {
+			// The principal's own background call (telemetry): refused, audited, never a card.
+			this.broker.audit({ ts: now, principal: this.principal.id, subject: this.subject, chain: this.chain(), method, destination, port, decision: 'deny', reason: verdict.reason, epoch: verdict.epoch, quiet: true });
+			return { denialId: '', principal: this.principal.id, subject: this.subject, epoch: verdict.epoch, destination, port, reason: verdict.reason, message: verdict.message, promptable: false };
 		}
 		const approvable = (verdict.reason === 'not-allowed' || verdict.reason === 'port') && !!verdict.target;
 		const denial: INetworkDenial = {
@@ -1149,7 +1233,8 @@ export class NetworkRoute {
 		}
 		this.clients.clear();
 		this.server.close();
-		this.broker.routeClosed(this);
+		this.broker.routeClosed(this, this.denials);
+		this.denials.clear();
 		// Its session grants end with it: no other principal can use them, and they must not pile up.
 		const own = this.ownGrants().map(grant => grant.id);
 		if (own.length) {

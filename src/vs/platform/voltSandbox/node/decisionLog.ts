@@ -6,13 +6,13 @@
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from '../../../base/common/path.js';
-import { decisionRecord, IAccessRequest, IDecision, IDecisionLogRecord, IPolicySnapshotInput, PolicySnapshot, replayDecision } from '../common/authority.js';
+import { decisionRecord, IAccessRequest, IDecision, IDecisionLogRecord, IPolicySnapshotInput, PolicySnapshot, replayDecision, replayProvesRequest } from '../common/authority.js';
 import { canonicalJson } from '../common/grants.js';
 import { ICallContext } from '../common/principals.js';
 
 /**
- * The decision log (spec G.11, INV-32, POL-DET-1): every decision as `(epoch, snapshotDigest,
- * request, ctxDigest, decision)`, one JSON object per line, with each snapshot written once per
+ * The decision log (spec G.11, INV-32, POL-DET-1): every decision as `(v, epoch, snapshotDigest,
+ * request, reqDigest, ctxDigest, decision)`, one JSON object per line, with each snapshot written once per
  * file (by digest) before the first decision that used it, so a day's decisions replay against the
  * snapshots they were made on. Files are 0600 under `~/.volt/trust/decisions/` and rotate by size.
  */
@@ -51,7 +51,11 @@ export class DecisionLog {
 
 	/** Appends one decision (and its snapshot, once per file). */
 	append(snapshot: PolicySnapshot, request: IAccessRequest, context: ICallContext, decision: IDecision): Promise<void> {
-		const record = decisionRecord(snapshot, request, context, decision);
+		return this.appendRecord(snapshot, decisionRecord(snapshot, request, context, decision));
+	}
+
+	/** Appends a decision record made on `snapshot` (the Authority's `log` hands these over). */
+	appendRecord(snapshot: PolicySnapshot, record: IDecisionLogRecord): Promise<void> {
 		return this.serial(async () => {
 			await this.ensureFile();
 			let text = '';
@@ -109,12 +113,17 @@ export interface IReplayMismatch {
 	readonly replayed: IDecision | string;
 }
 
-/** POL-DET-1: re-runs every decision in `file` against its logged snapshot; empty when all reproduce exactly. */
-export async function replayDecisionLog(file: string): Promise<{ readonly decisions: number; readonly mismatches: readonly IReplayMismatch[] }> {
+/**
+ * POL-DET-1: re-runs every decision in `file` against its logged snapshot; `mismatches` is empty
+ * when all reproduce exactly. `unproven` counts version 1 records (an older Volt's), replayed
+ * without proof that their request is the one decided.
+ */
+export async function replayDecisionLog(file: string): Promise<{ readonly decisions: number; readonly mismatches: readonly IReplayMismatch[]; readonly unproven: number }> {
 	const text = await fs.readFile(file, 'utf8');
 	const snapshots = new Map<string, PolicySnapshot>();
 	const mismatches: IReplayMismatch[] = [];
 	let decisions = 0;
+	let unproven = 0;
 	text.split('\n').forEach((raw, index) => {
 		if (!raw.trim()) {
 			return;
@@ -125,6 +134,9 @@ export async function replayDecisionLog(file: string): Promise<{ readonly decisi
 			return;
 		}
 		decisions++;
+		if (!replayProvesRequest(line)) {
+			unproven++;
+		}
 		const snapshot = snapshots.get(line.snapshotDigest);
 		let replayed: IDecision | string;
 		try {
@@ -136,7 +148,7 @@ export async function replayDecisionLog(file: string): Promise<{ readonly decisi
 			mismatches.push({ line: index + 1, logged: line.decision, replayed });
 		}
 	});
-	return { decisions, mismatches };
+	return { decisions, mismatches, unproven };
 }
 
 /** Where the decision log of a store at `grantStorePath` lives. */

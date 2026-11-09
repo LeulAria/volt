@@ -28,6 +28,8 @@ import { FileAccess } from '../../../../base/common/network.js';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { MemoryBrokerAudit } from '../../../voltSandbox/common/broker.js';
+import { corePrincipal } from '../../../voltSandbox/common/principals.js';
+import { DecisionLog, replayDecisionLog } from '../../../voltSandbox/node/decisionLog.js';
 import { PrincipalRegistry } from '../../../voltSandbox/node/principalRegistry.js';
 import { VoltSandboxLauncher } from '../../../voltSandbox/node/sandboxLauncher.js';
 import { SandboxManager } from '../../../voltSandbox/node/sandboxManager.js';
@@ -199,6 +201,33 @@ suite('Volt T2 plugin host (P1, real sandboxes)', function () {
 		assert.strictEqual(await svc.invokeTool('volt.notes-test', 'globals', {}).then(r => r.text), 'undefined,undefined,undefined,undefined,undefined,1', 'no process, require, Buffer or fetch in the Compartment');
 		assert.strictEqual(await svc.provideContext('volt.notes-test'), undefined, 'agents.context is not declared: no context');
 		assert.match((await svc.invokeTool('volt.notes-test', 'nope', {})).error ?? '', /no tool nope/);
+	});
+
+	test('DL-WIRE-1: the plugin host logs every Authority decision for replay; a log that can\'t be written is warned about once and the decisions stand', async () => {
+		// The Authority's own calls, without starting a host: one allowed, one refused.
+		const decide = (svc: VoltPluginHostService, id: string) => {
+			const context = { principal: corePrincipal('p', `plugin:${id}@local`, 't2'), onBehalfOf: [], requestId: 'r' };
+			svc.evaluate({ capability: 'tools.register', target: 'echo', edge: 'tool' }, context);
+			assert.throws(() => svc.evaluate({ capability: 'agents.create' }, context), /agents\.create|not declared|capability/i);
+		};
+		const dir = join(root, 'decisions-wire');
+		const decisionLog = new DecisionLog(dir);
+		const { service: svc } = service({ decisionLog });
+		store.add(svc.register(notes()));
+		decide(svc, 'volt.notes-test');
+		await decisionLog.flush();
+		assert.deepStrictEqual(await replayDecisionLog(join(dir, 'decisions.log')), { decisions: 2, mismatches: [], unproven: 0 });
+
+		const blocked = join(root, 'decisions-blocked');
+		await fs.writeFile(blocked, 'a file where the folder should be');
+		const warnings: string[] = [];
+		const blockedLog = new DecisionLog(join(blocked, 'decisions'));
+		const { service: other } = service({ decisionLog: blockedLog, logger: { info: () => undefined, warn: message => warnings.push(message) } });
+		store.add(other.register(notes('volt.notes-blocked')));
+		decide(other, 'volt.notes-blocked');
+		decide(other, 'volt.notes-blocked');
+		await blockedLog.flush();
+		assert.strictEqual(warnings.filter(line => line.includes('decision log can\'t be written')).length, 1, warnings.join('\n'));
 	});
 
 	test('T2-HOST-2 / H.6: two plugins never share a process; each has its own principal and its own storage', async () => {

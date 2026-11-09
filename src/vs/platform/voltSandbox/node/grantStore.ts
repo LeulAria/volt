@@ -26,7 +26,11 @@ import { bareCapability } from '../../voltPlugins/common/capabilityCatalog.js';
  * - A torn or unparsable store loads empty (third party: no grants; first party: its compiled
  *   ceiling), is kept aside for inspection, and reports `torn` so the Security page can say
  *   "Permissions were reset". Never "allow all".
- * - A store from a newer Volt is read-only, its third-party grants absent.
+ * - A store from a newer Volt is read-only, its third-party grants absent. Narrowing still works
+ *   there: a revoke (or a subject dropped) is appended to `grants.revoked`, a log every version
+ *   reads and applies over the store (one JSON object a line: `{"id"}`, or `{"subject","epoch"}`
+ *   for every grant of that subject up to that epoch), so the newer Volt honours it too. Widening
+ *   (a grant, a refusal forgotten) stays refused. A log that can't be read revokes everything.
  */
 
 export const DEFAULT_GRANT_STORE_PATH = join(homedir(), '.volt', 'trust', 'grants.json');
@@ -105,6 +109,11 @@ export class GrantStore extends Disposable {
 		return this.path.replace(/\.json$/, '') + '.epoch';
 	}
 
+	/** Revocations every version applies over the store (see the class comment). */
+	private get revokedPath(): string {
+		return this.path.replace(/\.json$/, '') + '.revoked';
+	}
+
 	/** Re-reads the store (another process may have committed). */
 	reload(): Promise<void> {
 		return this.serial(() => this.read(false));
@@ -118,10 +127,10 @@ export class GrantStore extends Disposable {
 	watch(debounceMs = 50): IDisposable {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let watcher: FSWatcher | undefined;
-		const name = basename(this.path);
+		const names = new Set([basename(this.path), basename(this.revokedPath)]);
 		try {
 			watcher = fsWatch(dirname(this.path), (_event, file) => {
-				if (file && file !== name) {
+				if (file && !names.has(file)) {
 					return;
 				}
 				if (timer) {
@@ -152,13 +161,13 @@ export class GrantStore extends Disposable {
 	commit(expectedEpoch: number, change: IGrantStoreChange): Promise<GrantCommitResult> {
 		return this.serial(() => this.locked(async () => {
 			await this.read(false);
-			if (this._readOnly) {
+			if (this._readOnly && (change.add?.length || change.refuse?.length || change.unrefuse?.length)) {
 				throw new Error('the grant store was written by a newer Volt and is read-only');
 			}
 			if (this._data.epoch !== expectedEpoch) {
 				return { committed: false, epoch: this._data.epoch };
 			}
-			return this.apply(change);
+			return this._readOnly ? this.applyNarrowing(change) : this.apply(change);
 		}));
 	}
 
@@ -226,10 +235,77 @@ export class GrantStore extends Disposable {
 		refusals = refusals.sort((a, b) => a.at - b.at);
 		const next: IGrantStoreData = { schemaVersion: current.schemaVersion, epoch, grants, refusals };
 		await this.write(next);
+		// The store now holds no revoked grant: the log's lines are spent.
+		await fs.unlink(this.revokedPath).catch(() => undefined);
 		this._data = next;
 		this._status = 'ok';
 		this._onDidChange.fire({ epoch, subjects: [...subjects], narrowed });
 		return { committed: true, epoch, changed: true };
+	}
+
+	/**
+	 * A newer Volt's store (read-only): revokes and dropped subjects go to the revocation log instead
+	 * of the store, so they hold here at once and in the newer Volt that reads the log; touches and
+	 * expiry (applied when grants are judged) are left to the store's own Volt.
+	 */
+	private async applyNarrowing(change: IGrantStoreChange): Promise<GrantCommitResult> {
+		const current = this._data;
+		const revoke = new Set(change.revoke ?? []);
+		const dropped = new Set<SubjectKey>(change.dropSubjects ?? []);
+		const logged = await this.readRevoked();
+		const epoch = current.epoch + 1;
+		// Every id and subject, also those this build can't see (a newer store's third-party grants).
+		const lines = [
+			...[...revoke].filter(id => !logged.ids.has(id)).map(id => ({ id })),
+			...[...dropped].map(subject => ({ subject, epoch })),
+		];
+		if (!lines.length) {
+			return { committed: true, epoch: current.epoch, changed: false };
+		}
+		const gone = current.grants.filter(grant => revoke.has(grant.id) || dropped.has(grant.subject));
+		await atomicWrite(this.epochPath, String(epoch));
+		const handle = await fs.open(this.revokedPath, 'a', 0o600);
+		try {
+			// Starts on a new line: a line a crash cut short never swallows this one.
+			await handle.writeFile(`\n${lines.map(line => JSON.stringify(line)).join('\n')}\n`, 'utf8');
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+		const grants = current.grants.filter(grant => !gone.includes(grant));
+		this._data = { ...current, epoch, grants };
+		this._onDidChange.fire({ epoch, subjects: [...new Set([...gone.map(grant => grant.subject), ...dropped])], narrowed: true });
+		return { committed: true, epoch, changed: true };
+	}
+
+	/**
+	 * The revocation log: grant ids, and subjects with the epoch they were dropped at. A torn line is
+	 * skipped; a log that is there but can't be read revokes every grant (`all`), as a torn store.
+	 */
+	private async readRevoked(): Promise<{ readonly ids: ReadonlySet<string>; readonly subjects: ReadonlyMap<SubjectKey, number>; readonly all?: boolean }> {
+		const ids = new Set<string>();
+		const subjects = new Map<SubjectKey, number>();
+		let text = '';
+		try {
+			text = await fs.readFile(this.revokedPath, 'utf8');
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+				return { ids, subjects, all: true };
+			}
+		}
+		for (const line of text.split('\n')) {
+			try {
+				const entry = line.trim() ? JSON.parse(line) : undefined;
+				if (typeof entry?.id === 'string') {
+					ids.add(entry.id);
+				} else if (typeof entry?.subject === 'string' && typeof entry.epoch === 'number') {
+					subjects.set(entry.subject, Math.max(entry.epoch, subjects.get(entry.subject) ?? 0));
+				}
+			} catch {
+				// A line cut short by a crash: its revoke never returned.
+			}
+		}
+		return { ids, subjects };
 	}
 
 	private async read(initial: boolean): Promise<void> {
@@ -237,6 +313,13 @@ export class GrantStore extends Disposable {
 		const floor = await this.readEpochFloor();
 		const loaded = loadGrantStore(text, this.options);
 		let data = loaded.data;
+		const revoked = await this.readRevoked();
+		if (revoked.all) {
+			// As a torn store: no grant (first party keeps its compiled ceiling, which is no grant).
+			data = { ...data, grants: [] };
+		} else if (revoked.ids.size || revoked.subjects.size) {
+			data = { ...data, grants: data.grants.filter(grant => !revoked.ids.has(grant.id) && !(grant.epoch <= (revoked.subjects.get(grant.subject) ?? -Infinity))) };
+		}
 		if (loaded.status === 'torn' && text !== undefined) {
 			// Kept for inspection; the next commit writes a fresh store.
 			await fs.rename(this.path, `${this.path}.torn-${Date.now()}`).catch(() => undefined);

@@ -20,7 +20,7 @@ import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
 import { IAttestation, ISandboxBackendCapabilities, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial, isQuietDenial } from '../common/sandboxDenials.js';
 import { agentStatePlan } from '../common/agentState.js';
-import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { AGENT_STATE_ROOT, agentQuietDomains, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
@@ -335,6 +335,8 @@ export class VoltSandboxLauncher extends Disposable {
 				// The network broker's route, token, grants and budgets are this principal's; its chat's
 				// grants attach to the chat, not to this one run (I.4 routes).
 				principal,
+				// The CLI's own telemetry stays blocked without a card inviting the user to allow it.
+				quietHosts: agentQuietDomains(request.providerId),
 			});
 			sealed = this.registry.sealLaunchPolicy(principal, prepared.launchPolicyHash);
 			launched = true;
@@ -616,6 +618,29 @@ export class VoltSandboxLauncher extends Disposable {
 		return this.adminPolicy();
 	}
 
+	/**
+	 * Reads the managed policy again; when it changed (an MDM push, `/etc/volt/policy.json` edited),
+	 * every consumer gets it through {@link invalidate}: launches, the broker (open tunnels re-judged),
+	 * plugin hosts, and over {@link onDidChangeManagedPolicy} the windows' gates. True when it changed.
+	 */
+	async refreshManagedPolicy(): Promise<boolean> {
+		const before = await this.adminPolicy();
+		const read = await this.readAdmin().then(({ source: _source, problem: _problem, ...policy }): IAdminPolicy => policy, (): IAdminPolicy => ({ unreadable: true }));
+		if (JSON.stringify(sortedAdmin(read)) === JSON.stringify(sortedAdmin(this.adminNow ?? before))) {
+			return false;
+		}
+		this.logger.info(`[volt-sandbox] the managed policy changed${read.unreadable ? ' and can\'t be read: third parties get nothing' : ''}`);
+		this.invalidate({ admin: read });
+		return true;
+	}
+
+	/** Re-reads the managed policy every `intervalMs` (a few stats) while Volt runs; see {@link refreshManagedPolicy}. */
+	watchManagedPolicy(intervalMs: number): IDisposable {
+		const timer = setInterval(() => void this.refreshManagedPolicy().catch(() => undefined), intervalMs);
+		(timer as { unref?(): void }).unref?.();
+		return this._register(toDisposable(() => clearInterval(timer)));
+	}
+
 	/** The managed policy once read; undefined before. */
 	get managedPolicyNow(): IAdminPolicy | undefined {
 		return this.adminNow;
@@ -776,6 +801,16 @@ function policyFileName(source: ISandboxCompositionNote['source']): string | und
  */
 export function sandboxCacheKey(request: Pick<IVoltSandboxRequest, 'providerId' | 'workspaceRoots'>): string {
 	return createHash('sha256').update([request.providerId, ...request.workspaceRoots].join('\0')).digest('hex').slice(0, 16);
+}
+
+/** A managed policy with its lists sorted, so two reads of the same policy compare equal. */
+function sortedAdmin(policy: IAdminPolicy): IAdminPolicy {
+	return {
+		...(policy.unreadable ? { unreadable: true } : {}),
+		...(policy.denyCapabilities ? { denyCapabilities: [...policy.denyCapabilities].sort() } : {}),
+		...(policy.denyHosts ? { denyHosts: [...policy.denyHosts].sort() } : {}),
+		...(policy.maxThirdPartyClass ? { maxThirdPartyClass: policy.maxThirdPartyClass } : {}),
+	};
 }
 
 function mechanismOf(backend: SandboxBackendId): SandboxMechanism {

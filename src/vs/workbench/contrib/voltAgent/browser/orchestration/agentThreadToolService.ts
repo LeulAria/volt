@@ -296,6 +296,15 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		return { strategy: this.strategyFor(this.providerOf(this.modelOf(chatId)?.ref), this.runtime.getSandboxSettings(chatId)), roots: await this.realRoots(roots) };
 	}
 
+	/** Both chats' scopes for an instruction from `fromId` to `toId`; none needed (nor resolved) from an unsandboxed chat. */
+	private async instructionScopes(fromId: string, toId: string): Promise<{ readonly from: ISandboxScope; readonly to: ISandboxScope } | undefined> {
+		if (this.runtime.getSandboxSettings(fromId).level === 'off' || fromId === toId) {
+			return undefined;
+		}
+		const [from, to] = await Promise.all([this.sandboxScope(fromId), this.sandboxScope(toId)]);
+		return { from, to };
+	}
+
 	private modelOf(threadId: string): { readonly ref: string; readonly label: string } | undefined {
 		const thread = this.orchestrator.getThread(threadId);
 		const ref = thread?.modelRef ?? this.runtime.getOrCreateSession(threadId).providerRef;
@@ -562,7 +571,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		if (task) {
 			return { error: `That chat runs delegated task ${task.id}. Use message_task with task_id ${task.id} for a follow-up, or delegate_task with previous_task_id for a new round.` };
 		}
-		const refusal = caller.external ? undefined : sandboxedInstructionRefusal(this.runtime, caller.id, id, this.titleOf(id));
+		const refusal = caller.external ? undefined : sandboxedInstructionRefusal(this.runtime, caller.id, id, this.titleOf(id), await this.instructionScopes(caller.id, id));
 		if (refusal) {
 			return { error: refusal };
 		}
@@ -873,9 +882,13 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			const model = queued ? { ref: queued.ref, label: queued.label } : this.modelOf(sourceId);
 			const mode = modeLabel(item.prompt.mode ?? sourceMeta?.mode);
 			const threadId = `${CHILD_ID_PREFIX}${generateUuid()}`;
-			// It continues the source's work: never less confined than the source.
-			await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(sourceId));
+			// It continues the source's work: never less confined than the source, and it writes the
+			// project's checkout only when the source could (INV-11).
 			const project = this.projectOf(sourceId);
+			await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(sourceId), {
+				caller: await this.sandboxScope(sourceId),
+				child: { roots: await this.realRoots(sandboxWorkspaceRoots(project?.root.fsPath, undefined, false)) },
+			});
 			if (project) {
 				attachSessionToProject(this.sessionContext, this.workspace, this.history, threadId, project);
 			}
@@ -1089,7 +1102,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			repoRoot: project.root.fsPath,
 			projectId: project.id,
 			...(workspace.type === 'worktree' && workspace.baseRef ? { baseRef: workspace.baseRef } : {}),
-			...(caller.external ? {} : { sandbox: this.runtime.getSandboxSettings(caller.id) }),
+			...(caller.external ? {} : { sandbox: this.runtime.getSandboxSettings(caller.id), sandboxRoots: (await this.sandboxScope(caller.id)).roots }),
 		});
 		return {
 			text: [
@@ -1307,7 +1320,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			return { error: 'Pass the new `text` (to drop the message, use queue_cancel).' };
 		}
 		// Rewriting another chat's queued prompt instructs that chat, like thread_send.
-		const refusal = caller.external ? undefined : sandboxedInstructionRefusal(this.runtime, caller.id, id, this.titleOf(id));
+		const refusal = caller.external ? undefined : sandboxedInstructionRefusal(this.runtime, caller.id, id, this.titleOf(id), await this.instructionScopes(caller.id, id));
 		if (refusal) {
 			return { error: refusal };
 		}

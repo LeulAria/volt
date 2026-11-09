@@ -24,7 +24,9 @@ export interface ISandboxScope {
 	readonly strategy?: SandboxStrategy;
 	/**
 	 * Real paths of its workspace roots (its checkout, and a linked worktree's git dir): what it
-	 * writes at `workspace-write`. Unknown: only its allowed folders are compared.
+	 * writes at `workspace-write`; `[]` when it has no workspace. Unknown (absent): a side that
+	 * writes its workspace could write anywhere, so it is never covered, and a caller whose roots
+	 * are unknown covers only its allowed folders (fails closed).
 	 */
 	readonly roots?: readonly string[];
 }
@@ -117,15 +119,18 @@ function writableRoots(settings: IVoltSandboxSettings, scope: ISandboxScope | un
  * one whose writable folders hold that workspace.
  *
  * Decided by the Policy Authority's `chatCovers` (INV-11, spec M.3 C2 step 4), the rule the host-tool
- * gate and the launcher use, so the three can't disagree. Unknown strategy: `wrap`; unknown roots:
- * only the allowed folders are compared, as before.
+ * gate and the launcher use, so the three can't disagree. Unknown strategy: `wrap`. With `scopes`,
+ * unknown roots fail closed (see {@link ISandboxScope.roots}). Without `scopes` only the settings are
+ * compared (what the user sees side by side): never a decision about a real chat on its own.
  */
 export function isAtLeastAsStrict(a: IVoltSandboxSettings, b: IVoltSandboxSettings, scopes?: { readonly a?: ISandboxScope; readonly b?: ISandboxScope }): boolean {
-	return chatCovers(scopeView('target', a, scopes?.a), scopeView('caller', b, scopes?.b));
+	return chatCovers(scopeView('target', a, scopes ? scopes.a ?? {} : undefined), scopeView('caller', b, scopes ? scopes.b ?? {} : undefined));
 }
 
+/** `scope` undefined: settings only (no folders on either side). A scope without roots: folders unknown. */
 function scopeView(name: string, settings: IVoltSandboxSettings, scope: ISandboxScope | undefined): IChatView {
-	return { subject: chatSubject(name), settings, strategy: scope?.strategy ?? 'wrap', folders: scope?.roots ?? [] };
+	const folders = scope ? scope.roots : [];
+	return { subject: chatSubject(name), settings, strategy: scope?.strategy ?? 'wrap', ...(folders ? { folders } : {}) };
 }
 
 /**
@@ -169,10 +174,11 @@ export function spawnSandboxSettings(caller: IVoltSandboxSettings, child: IVoltS
 	}
 	let settings = inheritedSandboxSettings(caller, child) ?? child;
 	let forcedReadOnly = false;
-	const childRoots = (scopes.child?.roots ?? []).map(normalizeSandboxPath);
-	if (settings.level === 'workspace-write' && childRoots.length) {
+	// Unknown roots fail closed: a child whose workspace isn't known could write anywhere, so it runs read-only.
+	const childRoots = scopes.child?.roots?.map(normalizeSandboxPath);
+	if (settings.level === 'workspace-write') {
 		const callerWrites = writableRoots(caller, scopes.caller);
-		if (!childRoots.every(root => callerWrites.some(allowed => isPathInside(root, allowed)))) {
+		if (!childRoots || !childRoots.every(root => callerWrites.some(allowed => isPathInside(root, allowed)))) {
 			settings = { ...settings, level: 'read-only' };
 			forcedReadOnly = true;
 		}

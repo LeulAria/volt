@@ -178,4 +178,35 @@ suite('Volt sandbox launcher on the Policy Authority (C2 step 4)', () => {
 		(await prepare(l, r)).dispose();
 		assert.strictEqual(backend.launched.length, 3);
 	});
+
+	test('ADMIN-LIVE-1: a managed policy changed while Volt runs reaches every consumer once; unreadable fails closed (05-limitations 25)', async () => {
+		const l = launcher();
+		const changes: string[] = [];
+		disposables.add(l.onDidChangeManagedPolicy(() => changes.push(JSON.stringify(l.managedPolicyNow))));
+		await l.managedPolicy();
+		changes.length = 0;
+		admin = { denyHosts: ['b.example', 'a.example'] };
+		assert.strictEqual(await l.refreshManagedPolicy(), true);
+		assert.deepStrictEqual(l.managedPolicyNow, { denyHosts: ['b.example', 'a.example'] });
+		admin = { denyHosts: ['a.example', 'b.example'] };
+		assert.strictEqual(await l.refreshManagedPolicy(), false, 'the same lists in another order are no change');
+		assert.strictEqual(changes.length, 1, 'one change event for one change');
+		const r = request();
+		const epoch = l.cacheStats.epoch;
+		admin = { denyCapabilities: ['net.connect'] };
+		assert.strictEqual(await l.refreshManagedPolicy(), true);
+		assert.ok(l.cacheStats.epoch > epoch, 'a new epoch: cached compiles go');
+		await assert.rejects(prepare(l, r), SandboxUnavailableError);
+		let fail = false;
+		const failing = disposables.add(new VoltSandboxLauncher(join(root, 'user-data-2'), { info: () => undefined, warn: () => undefined }, {
+			manager: new SandboxManager(undefined, { backend, runRoot: join(root, 'runs-2') }),
+			mode: () => mode,
+			admin: async () => { if (fail) { throw new Error('EACCES'); } return {}; },
+			executionHost: 'test',
+		}));
+		await failing.managedPolicy();
+		fail = true;
+		assert.strictEqual(await failing.refreshManagedPolicy(), true);
+		assert.deepStrictEqual(failing.managedPolicyNow, { unreadable: true }, 'a policy that can\'t be read again is unreadable, not the last good one');
+	});
 });

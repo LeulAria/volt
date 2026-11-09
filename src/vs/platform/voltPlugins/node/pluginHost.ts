@@ -21,6 +21,7 @@ import { builtinProfile } from '../../voltSandbox/common/sandboxProfiles.js';
 import { IVoltSandboxPolicy, SandboxDimension } from '../../voltSandbox/common/sandboxSchema.js';
 import { ISandboxResourceSample } from '../../voltSandbox/common/sandboxWorkloads.js';
 import { INetworkPrincipalView } from '../../voltSandbox/node/networkBroker.js';
+import { DecisionLog } from '../../voltSandbox/node/decisionLog.js';
 import { PrincipalRegistry } from '../../voltSandbox/node/principalRegistry.js';
 import { ISandboxLogger } from '../../voltSandbox/node/sandboxManager.js';
 import { ISandboxedHost, SandboxSupervisor } from '../../voltSandbox/node/supervisor.js';
@@ -110,6 +111,11 @@ export interface IVoltPluginHostServiceOptions {
 	readonly adminReady?: () => Promise<unknown>;
 	readonly safeOpen?: ISafeOpenOptions;
 	readonly now?: () => number;
+	/**
+	 * Where every Authority decision is logged for replay (G.11, POL-DET-1). A log that can't be
+	 * written is warned about and the decision stands: the log is a record, not a gate.
+	 */
+	readonly decisionLog?: DecisionLog;
 }
 
 export const T2_LIMITS = Object.freeze({
@@ -236,7 +242,16 @@ export class VoltPluginHostService extends Disposable {
 
 	constructor(readonly options: IVoltPluginHostServiceOptions) {
 		super();
-		this.authority = this._register(new PolicyAuthority(this.snapshotInput()));
+		const decisionLog = options.decisionLog;
+		let logFailing = false;
+		this.authority = this._register(new PolicyAuthority(this.snapshotInput(), decisionLog ? record => {
+			decisionLog.appendRecord(this.authority.snapshot, record()).then(() => { logFailing = false; }, err => {
+				if (!logFailing) {
+					logFailing = true;
+					this.logger.warn(`[volt-plugin] the decision log can't be written (${err instanceof Error ? err.message : String(err)}); decisions go on unlogged`);
+				}
+			});
+		} : undefined));
 		this.files = this._register(new FilesBroker({
 			authority: this.authority,
 			callers: options.registry,

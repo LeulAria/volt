@@ -275,7 +275,7 @@ suite('Volt policy compiler and launch authority (C2 step 4)', () => {
 		report(`shadow diff (launch): ${CASES} cases, ${allowed} allowed and byte-identical, refusals by cause: ${[...explained].map(([why, n]) => `${n} ${why}`).join('; ')}`);
 	});
 
-	test('shadow diff (inheritance): child-chat coverage on the Authority matches the earlier rule, except loopback and spelling', () => {
+	test('shadow diff (inheritance): child-chat coverage on the Authority matches the earlier rule, except loopback, spelling and unknown roots', () => {
 		const LEVELS: readonly VoltSandboxLevel[] = ['off', 'workspace-write', 'read-only'];
 		const STRATEGIES: readonly (SandboxStrategy | undefined)[] = ['wrap', 'native', 'none', undefined];
 		const ROOTS = ['/ws', '/ws/a', '/ws/a/', '/ws/b', '/wsx', '/other', '/ws//a', '/'];
@@ -302,10 +302,14 @@ suite('Volt policy compiler and launch authority (C2 step 4)', () => {
 				return;
 			}
 			diffs++;
-			// Only one explanation: the target lists a loopback name or a trailing-dot spelling the caller doesn't, and the Authority reads it as reachable already.
-			assert.ok(now && !legacy && !b.network && (a.allowedDomains ?? []).some(loopbackOrSpelling), `unexplained: ${JSON.stringify({ a, b, scopes, legacy, now })}`);
+			// Two explanations: the target lists a loopback name or a trailing-dot spelling the caller doesn't,
+			// and the Authority reads it as reachable already; or (SCOPE-27) the target writes a workspace whose
+			// roots were not passed, which the earlier rule counted as writing nothing and now fails closed.
+			const spelling = now && !legacy && !b.network && (a.allowedDomains ?? []).some(loopbackOrSpelling);
+			const unknownRoots = !now && legacy && !!scopes && a.level === 'workspace-write' && b.level !== 'off' && !scopes.a?.roots;
+			assert.ok(spelling || unknownRoots, `unexplained: ${JSON.stringify({ a, b, scopes, legacy, now })}`);
 		}, CASES);
-		report(`shadow diff (inheritance): ${CASES} cases, ${diffs} explained differences (a loopback or trailing-dot host the caller lacks; no other)`);
+		report(`shadow diff (inheritance): ${CASES} cases, ${diffs} explained differences (a loopback or trailing-dot host the caller lacks, or a target workspace with unknown roots; no other)`);
 	});
 
 	test('compile budget: p95 <= 1 ms (L.1)', () => {

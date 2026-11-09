@@ -60,11 +60,11 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 
 ## Found in the 2026-11-09 review, not fixed yet
 
-25. **The window's gates read the managed policy once.** The extension API and the host-tool gate get it at window start; the launcher, plugin hosts and the network broker follow `invalidate` too. A policy changed while Volt runs reaches the window's gates at its next start.
+25. **A managed policy change takes up to a minute.** The execution host reads it again every minute and sends each change to the launcher, plugin hosts, the network broker and the windows' gates (ADMIN-LIVE-1); there is no file watch on `/etc/volt/policy.json` or the MDM domain.
 26. **Fixed:** a sandboxed extension's tool flows are judged by its declared hosts plus the "Allow host" grants in the grant store (the broker's, unrevoked and unexpired, from any run), and a tool served from a sandboxed extension host is now owned as sandboxed (PERM-FLOW-2). A tool of an unsandboxed extension still counts as reaching every host.
-27. **Unknown folders count as writing nothing** when one chat's settings are compared with another's without scopes (automations, run groups, the orchestrator). By design until those callers pass their roots; the host-tool gate passes them.
-28. **Decision-log replay doesn't prove the logged request**, only the snapshot and the call context. Adding a request digest changes the log's record format, which its reader checks strictly.
-29. **A grant store written by a newer Volt is read-only**, so a revoke there fails while its first-party and chat grants keep applying.
+27. **Settings-only comparison** (no scopes) still counts unknown folders as writing nothing; it is kept for settings math only. Every caller that compares two chats (subagents, automations, run groups, the orchestrator, `thread_send`) passes both chats' roots, so an unknown folder fails closed there (SCOPE-27a..c).
+28. **Decision-log records an older Volt wrote replay without request proof.** Records now carry `v: 2` and a request digest, so an edited request is reported (POL-DET-2); version 1 records still replay and are counted as `unproven`. The digests are plain hashes, not keyed: they catch a careless edit, not someone who recomputes them. The plugin host is the only Authority that logs (`~/.volt/trust/decisions/`, DL-WIRE-1); a log that can't be written is warned about once and decisions go on unlogged, since the log is a record, not a gate.
+29. **A grant store written by a newer Volt takes no new grants.** Revoking works there (GS-NEWER-3): revokes and dropped subjects go to `grants.revoked`, a log every version applies over the store; adding a grant stays refused.
 
 ## Found in the 2026-11-10 review (plugins and extensions), not fixed
 
@@ -76,6 +76,10 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 32. **Which denials get a card is judged by the process that made them.** Shell startup files read by a shell, `~/.npmrc` read by npm or node, `~/.netrc` read by git or curl, and the home folder or a folder above the workspace probed by anything but `ls`, `find`, `cat` and the like stay denied and are logged only (DENY-QUIET-1..4). The agent running `node -e "fs.readFileSync('~/.npmrc')"` therefore gets no card either: Seatbelt names the process, not who asked. Linux reports no kernel denials (item 5), so there only the shell files are quiet.
 33. **A changed sandbox level applies from the chat's next turn.** The running turn keeps the agent process and sandbox it started with; its MCP servers stop at once (F.9), and the next turn starts a new agent under the new level.
 34. **A config lock orphaned less than 10 s ago fails that merge-back.** The overlay's merge into `~/.claude.json` waits 5 s for the lock and takes over one not refreshed for 10 s; in between, that merge fails (logged) and the next one carries the same change (FAIL-LOCK-1).
+
+## Found in the 2026-11-10 network round (R2), not fixed
+
+35. **A chat's proxy credential is readable by any process of the same user on macOS.** Seatbelt can't hide another process's environment (`sysctl KERN_PROCARGS2` passes even an explicit `sysctl-read` deny), and agent CLIs are not platform binaries, whose environment macOS hides. Another chat with network off still can't use it: only the chat's own sandbox reaches its route's port, and the route refuses every other route's token with an audit event naming whose it was (NET-E2E-7, NET-E2E-4, NET-12). A process with an open network (a chat with network on, anything unsandboxed) can reach the port and use the token; it gains no network it lacks, but its requests count against that chat's budgets and show in its denial cards. **Next:** verify the connecting peer (its pid's sandbox) per connection, within the 2 ms budget.
 
 ## Future work, in order
 

@@ -9,7 +9,7 @@
 #   scripts/volt-sandbox-linux-test.sh probe                               print the backend's capability report
 #   scripts/volt-sandbox-linux-test.sh shell                               a shell in the rig (out/ mounted at /volt/out)
 #   scripts/volt-sandbox-linux-test.sh verify-syscalls                     check seccomp.ts's syscall numbers on arm64 and amd64
-#   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suites (sandboxSecurity, hostGit, gitBroker, sandboxAttestation, sandboxProxy, networkBroker, networkAddress, sandboxPty, sandboxSupervisor, sandboxSecondLayers, sandboxMcpHost), required to run
+#   scripts/volt-sandbox-linux-test.sh suite                               the adversarial mocha suites (sandboxSecurity, hostGit, gitBroker, sandboxAttestation, sandboxProxy, networkBroker, networkBrokerSandbox, networkAddress, sandboxPty, sandboxSupervisor, sandboxSecondLayers, sandboxMcpHost), required to run
 #   scripts/volt-sandbox-linux-test.sh files                               race-free host file opens and the files broker (safeOpen.test.ts, filesBroker.test.ts, RACE-1..3) with volt-fsd built here
 #   scripts/volt-sandbox-linux-test.sh cve                                 LNX-BWRAP-CVE: bubblewrap 0.9.0 must be refused, 0.13.1 must pass
 #   scripts/volt-sandbox-linux-test.sh vm-setup <lima vm>                  prepare an Ubuntu 24.04 Lima VM (Landlock, systemd user cgroups) like the rig
@@ -204,6 +204,7 @@ case "$cmd" in
 			/volt/out/vs/platform/voltSandbox/test/node/sandboxAttestation.test.js \
 			/volt/out/vs/platform/voltSandbox/test/node/sandboxProxy.test.js \
 			/volt/out/vs/platform/voltSandbox/test/node/networkBroker.test.js \
+			/volt/out/vs/platform/voltSandbox/test/node/networkBrokerSandbox.test.js \
 			/volt/out/vs/platform/voltSandbox/test/common/networkAddress.test.js \
 			/volt/out/vs/platform/voltSandbox/test/node/sandboxPty.test.js \
 			/volt/out/vs/platform/voltSandbox/test/node/sandboxSupervisor.test.js \

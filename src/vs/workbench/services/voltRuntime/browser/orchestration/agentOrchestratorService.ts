@@ -8,6 +8,7 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
@@ -41,7 +42,7 @@ import { DurableClaims } from '../jobs/durableClaims.js';
 import { BEACON_TTL_MS, WorkbenchBeacons } from '../jobs/workbenchBeacons.js';
 import { OrchestratorStore } from './orchestratorStore.js';
 import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../common/orchestration/orchestratorQueries.js';
-import { confineChatSandbox, handoffSandboxRefusal } from '../../common/access/chatSandbox.js';
+import { chatSandboxScope, confineChatSandbox, handoffSandboxRefusal } from '../../common/access/chatSandbox.js';
 
 /** Models one delegate_task call may run the same brief on. */
 const MAX_FAN_OUT = 4;
@@ -163,7 +164,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	constructor(
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-		@IFileService fileService: IFileService,
+		@IFileService private readonly fileService: IFileService,
 		@IEnvironmentService environmentService: IEnvironmentService,
 		@ILogService private readonly logService: ILogService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
@@ -1018,8 +1019,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 			const thread = this.state.threads[threadId];
 			if (thread?.parentId) {
-				// A subagent is never confined less than the chat that delegated to it (every turn: the parent's may have tightened).
-				await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(thread.parentId));
+				// A subagent is never confined less than the chat that delegated to it (every turn: the parent's may have
+				// tightened), and writes its folder only when the parent may write it too (INV-11).
+				const realpath = (path: string) => this.fileService.realpath(URI.file(path)).then(real => real?.fsPath);
+				await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(thread.parentId), {
+					caller: await chatSandboxScope(this.runtime, thread.parentId, realpath),
+					child: await chatSandboxScope(this.runtime, threadId, realpath),
+				});
 			}
 			if (thread?.taskId && thread.parentId && turn.kind === 'brief') {
 				await host.prepareChild?.(threadId, thread.parentId);

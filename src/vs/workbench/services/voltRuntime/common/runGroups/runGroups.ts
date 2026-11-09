@@ -602,6 +602,8 @@ export interface IRunGroupStartRequest {
 	readonly baseRef?: string;
 	/** The sandbox of the chat that started the group (thread_launch with several models): each run is confined at least as tightly. */
 	readonly sandbox?: IVoltSandboxSettings;
+	/** Real paths of the folders that chat writes (INV-11): a run writes its worktree only when the repository is among them. Absent: runs are read-only. */
+	readonly sandboxRoots?: readonly string[];
 }
 
 export interface IRunWinnerResult {

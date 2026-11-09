@@ -58,6 +58,7 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	sandboxSupport(): Promise<IVoltSandboxSupportInfo> { return this.inner.sandboxSupport!(); }
 	managedPolicy(): Promise<IAdminPolicy> { return this.inner.managedPolicy ? this.inner.managedPolicy() : Promise.resolve({}); }
 	async sandboxPolicyFiles(request: IVoltSandboxRequest): Promise<ISandboxPolicyFilesInfo> { return this.inner.sandboxPolicyFiles ? this.inner.sandboxPolicyFiles(request) : { files: [], ignored: [] }; }
+	get onDidChangeManagedPolicy() { return this.inner.onDidChangeManagedPolicy; }
 	allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> { return this.inner.allowSandboxDomains!(id, domains); }
 	sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> { return this.inner.sandboxAllows!(id, path, access); }
 	/** Git runs with the user's environment only: HostGit drops anything that would redirect it. */
@@ -88,6 +89,9 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	async stopSandboxedHosts(chatId: string): Promise<number> { return this.inner.stopSandboxedHosts ? this.inner.stopSandboxedHosts(chatId) : 0; }
 	async approveSandboxDenial(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval> {
 		return this.inner.approveSandboxDenial ? this.inner.approveSandboxDenial(id, denialId, expectedEpoch, scope) : { ok: false, epoch: expectedEpoch, reason: 'this host has no network broker' };
+	}
+	async approveChatDenial(chatId: string, denialId: string, deniedEpoch: number): Promise<IVoltSandboxApproval> {
+		return this.inner.approveChatDenial ? this.inner.approveChatDenial(chatId, denialId, deniedEpoch) : { ok: false, epoch: deniedEpoch, reason: 'this host has no network broker' };
 	}
 	async refuseSandboxDenial(id: string, denialId: string): Promise<boolean> { return this.inner.refuseSandboxDenial ? this.inner.refuseSandboxDenial(id, denialId) : false; }
 	async trustState(): Promise<ITrustState> { return this.inner.trustState ? this.inner.trustState() : EMPTY_TRUST_STATE; }
