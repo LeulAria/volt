@@ -14,8 +14,9 @@ import { IVoltTool } from '../../common/tools/tool.js';
 import { createBrowserTools } from './browserTool.js';
 import { createCodeIndexNav } from './codeIndexNav.js';
 import { createCodeTools, ICodeIntelHost } from './codeTools.js';
-import { createFileTools, IToolDocuments } from './fileTools.js';
+import { createFileTools, IFileToolHost, IToolDocuments, writeComputedEdit } from './fileTools.js';
 import { createGitTools } from './gitTools.js';
+import { createIdeTools } from './ideTools.js';
 import { createMetaTools, IMetaToolHost } from './metaTools.js';
 import { VoltSearch } from '../search/voltSearch.js';
 import { createSearchTools, ISearchIndex } from './searchTools.js';
@@ -52,19 +53,27 @@ export interface IBuiltinToolServices {
  * neither the order nor a description may change between requests of one conversation.
  */
 export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] {
+	const files: IFileToolHost = {
+		fileService: services.fileService,
+		root: services.root,
+		readRoots: services.readRoots,
+		ledger: services.ledger,
+		documents: services.documents,
+		rulesFor: services.rulesFor,
+	};
 	return [
-		...createFileTools({
-			fileService: services.fileService,
-			root: services.root,
-			readRoots: services.readRoots,
-			ledger: services.ledger,
-			documents: services.documents,
-			rulesFor: services.rulesFor,
-		}),
+		...createFileTools(files),
 		...createSearchTools(services.search, services.root),
-		...(services.codeIntel ? createCodeTools(services.codeIntel, services.root, services.codeIndex ? createCodeIndexNav(services.codeIndex) : undefined) : []),
+		...(services.codeIntel ? createCodeTools(
+			services.codeIntel,
+			services.root,
+			services.codeIndex ? createCodeIndexNav(services.codeIndex) : undefined,
+			// Language server edits are written like edit_file's: open buffers, ledger, change set.
+			(change, ctx) => writeComputedEdit(files, change.uri, change.before, change.after, ctx),
+		) : []),
 		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools, rtk: services.rtk, rtkExclusions: services.rtkExclusions }),
 		...createTerminalTools(services.hostTools),
+		...createIdeTools(services.hostTools),
 		...createGitTools(services.stdio, services.root),
 		...createWebTools(services.requestService),
 		...createBrowserTools(services.hostTools),

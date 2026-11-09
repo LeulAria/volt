@@ -124,7 +124,30 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 	}
 	tools.push('- Prefer the dedicated tools over shell for reading, searching, and editing files.');
 	if (has('code_nav')) {
-		tools.push('- code_nav answers "where is this defined" and "who uses this" precisely; grep is for text.');
+		// One line per question, so the model picks the cheapest mechanism that answers it.
+		tools.push([
+			'- Finding code, cheapest first: exact text or regex -> grep; a name you know -> find_symbol; a file name -> glob.',
+			'  Meaning -> code_nav: op inspect gives a symbol\'s type, definition with body, references by file and implementations in one call;',
+			'  callers/callees, implementations, supertypes/subtypes for structure. Locate with grep/find_symbol, resolve with code_nav, then read only the lines you need.',
+		].join('\n'));
+	}
+	if (policy.allowWrites && has('code_action')) {
+		tools.push('- code_action renames symbols, organizes imports and applies quick fixes across files through the language server; prefer it to hand-editing every use.');
+	}
+	if (has('diagnostics')) {
+		tools.push('- After editing, diagnostics on the changed files catches type and lint errors in about a second.');
+	}
+	if (has('tests')) {
+		tools.push('- tests runs tests through the editor (the user watches them in the Test Explorer): target one test with file:line, a file or a name; failures come back with expected/actual and stack. failed: true reruns only the failures.');
+	}
+	if (has('debug')) {
+		tools.push('- When a failure depends on runtime values, debug it instead of guessing: debug op start with breakpoints (or command "npm test"), then state / variables / evaluate / step. Each step returns the new location and locals.');
+	}
+	if (has('tasks')) {
+		tools.push('- tasks runs the project\'s own build and watch tasks (tasks.json, npm scripts) with their problem matchers.');
+	}
+	if (has('ide')) {
+		tools.push('- ide reaches the rest of the IDE by capability (editor, git, notebook, docker, k8s, ci, http, profile, analyze, coverage, remote, extensions); call op help on a capability once to learn its arguments.');
 	}
 	sections.push(tools.join('\n'));
 

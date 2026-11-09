@@ -4383,7 +4383,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!tool) {
 			return 'rejected';
 		}
-		if (tool.group === 'meta' || (tool.group === 'shell' && tool.parallelSafe)) {
+		if (tool.group === 'meta' || (tool.group === 'shell' && tool.parallelSafe) || tool.readOnly?.(call.args)) {
 			return 'allowed-once';
 		}
 		const knobs = deepseekKnobs(this.getAccessMode(session.sessionId));
@@ -4417,7 +4417,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!tool) {
 			return 'rejected';
 		}
-		if (tool.group === 'meta' || (tool.group === 'shell' && tool.parallelSafe)) {
+		if (tool.group === 'meta' || (tool.group === 'shell' && tool.parallelSafe) || tool.readOnly?.(call.args)) {
 			return 'allowed-once';
 		}
 		const knobs = deepseekKnobs(this.getAccessMode(session.sessionId));
@@ -4598,6 +4598,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			...(mode === 'multitask' ? { taskModels: [...new Set(this.listCatalog().filter(item => item.enabled).map(item => item.label))] } : {}),
 			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
 			...(withMemory && await indexed ? { codeIndexed: true } : {}),
+			...(this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'code_nav') ? { ideTools: true } : {}),
 			browserTools: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run'),
 			...(intent.wantsGit && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'propose_commits') ? { commitReview: true } : {}),
 		};
