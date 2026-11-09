@@ -21,6 +21,43 @@ export interface IExtHostContext extends IRPCProtocol {
 	 * in another host. Extensions that share a host are not told apart by this.
 	 */
 	hostsExtension(extensionId: ExtensionIdentifier | string): boolean;
+	/**
+	 * Volt (P2, P6): this host runs one opted-in extension in the OS sandbox. Fixed when the host
+	 * starts, from its running location, never from settings the extension could change. Customers
+	 * whose calls would run or write something outside that sandbox refuse such a host.
+	 */
+	readonly voltSandboxed?: boolean;
+}
+
+/** Refuses a call that would run or write something outside the sandbox, from a sandboxed extension's host. */
+export function assertNotVoltSandboxed(context: IExtHostContext, what: string): void {
+	if (context.voltSandboxed) {
+		throw new VoltSandboxedHostError(what);
+	}
+}
+
+/**
+ * Volt (P2): public commands that run or install something outside the sandbox (a terminal's
+ * shell, a task, a debug session, an extension). A sandboxed extension's host may not run them.
+ * A list, not a rule: commands of other extensions run in their own hosts as before.
+ */
+const SANDBOX_REFUSED_COMMAND_PREFIXES: readonly string[] = [
+	'workbench.action.terminal.', 'workbench.action.tasks.', 'workbench.extensions.', 'workbench.action.debug.',
+	'debug.', '_workbench.', 'workbench.action.installCommandLine', 'workbench.action.openSettingsJson',
+	'workbench.action.openWorkspaceSettingsFile', 'workbench.action.openFolderSettingsFile', 'workbench.action.configureRuntimeArguments',
+];
+
+export function voltSandboxRefusesCommand(id: string): boolean {
+	return SANDBOX_REFUSED_COMMAND_PREFIXES.some(prefix => id.startsWith(prefix));
+}
+
+/** Thrown to a sandboxed extension's host for an API that would act outside its sandbox. */
+export class VoltSandboxedHostError extends Error {
+	static readonly NAME = 'VoltSandboxRefusal';
+	constructor(what: string) {
+		super(`${what} is not available to an extension that runs in Volt's sandbox: it would run or write outside it.`);
+		this.name = VoltSandboxedHostError.NAME;
+	}
 }
 
 /**

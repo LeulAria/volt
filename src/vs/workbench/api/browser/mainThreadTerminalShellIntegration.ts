@@ -9,7 +9,7 @@ import { TerminalCapability, type ITerminalCommand } from '../../../platform/ter
 import { ExtHostContext, MainContext, type ExtHostTerminalShellIntegrationShape, type MainThreadTerminalShellIntegrationShape } from '../common/extHost.protocol.js';
 import { ITerminalService, type ITerminalInstance } from '../../contrib/terminal/browser/terminal.js';
 import { IWorkbenchEnvironmentService } from '../../services/environment/common/environmentService.js';
-import { extHostNamedCustomer, type IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
+import { assertNotVoltSandboxed, extHostNamedCustomer, type IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { TerminalShellExecutionCommandLineConfidence } from '../common/extHostTypes.js';
 import { IExtensionService } from '../../services/extensions/common/extensions.js';
 
@@ -18,7 +18,7 @@ export class MainThreadTerminalShellIntegration extends Disposable implements Ma
 	private readonly _proxy: ExtHostTerminalShellIntegrationShape;
 
 	constructor(
-		extHostContext: IExtHostContext,
+		private readonly extHostContext: IExtHostContext,
 		@ITerminalService private readonly _terminalService: ITerminalService,
 		@IWorkbenchEnvironmentService workbenchEnvironmentService: IWorkbenchEnvironmentService,
 		@IExtensionService private readonly _extensionService: IExtensionService
@@ -109,6 +109,8 @@ export class MainThreadTerminalShellIntegration extends Disposable implements Ma
 	}
 
 	$executeCommand(terminalId: number, commandLine: string): void {
+		// Volt: a command run in a window terminal runs outside the sandbox.
+		assertNotVoltSandboxed(this.extHostContext, 'Running a command in a terminal');
 		this._terminalService.getInstanceFromId(terminalId)?.runCommand(commandLine, true);
 	}
 
