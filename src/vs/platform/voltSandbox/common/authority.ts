@@ -1134,10 +1134,19 @@ export function parseAdminPolicy(raw: unknown): IAdminPolicy {
 
 // --- decision log and replay (G.11, POL-DET-1) ------------------------------------------------
 
+/** The decision record version this build writes: 2 adds the request's digest. */
+export const DECISION_RECORD_VERSION = 2;
+
+/**
+ * One logged decision. Version 2 (`v: 2`) carries `reqDigest`, so a replay proves the request too;
+ * a version 1 record (no `v`) still replays, without that proof ({@link replayProvesRequest}).
+ */
 export interface IDecisionLogRecord {
+	readonly v?: number;
 	readonly epoch: number;
 	readonly snapshotDigest: string;
 	readonly request: IAccessRequest;
+	readonly reqDigest?: string;
 	readonly context: ICallContext;
 	readonly ctxDigest: string;
 	readonly decision: IDecision;
@@ -1150,7 +1159,12 @@ function sha1(text: string): string {
 }
 
 export function decisionRecord(snapshot: PolicySnapshot, request: IAccessRequest, context: ICallContext, decision: IDecision): IDecisionLogRecord {
-	return { epoch: snapshot.epoch, snapshotDigest: snapshot.digest, request, context, ctxDigest: sha1(canonicalJson(context)), decision };
+	return { v: DECISION_RECORD_VERSION, epoch: snapshot.epoch, snapshotDigest: snapshot.digest, request, reqDigest: sha1(canonicalJson(request)), context, ctxDigest: sha1(canonicalJson(context)), decision };
+}
+
+/** Whether replaying `record` proves its request (version 2 and later); version 1 records don't carry the digest. */
+export function replayProvesRequest(record: IDecisionLogRecord): boolean {
+	return (record.v ?? 1) >= 2;
 }
 
 /** Re-runs a logged decision against its snapshot: equal to `record.decision` when `evaluate` is deterministic. */
@@ -1160,6 +1174,13 @@ export function replayDecision(snapshot: PolicySnapshot, record: IDecisionLogRec
 	}
 	if (sha1(canonicalJson(record.context)) !== record.ctxDigest) {
 		throw new Error('the logged call context does not match its digest');
+	}
+	const version = record.v ?? 1;
+	if (!Number.isInteger(version) || version < 1 || version > DECISION_RECORD_VERSION) {
+		throw new Error(`decision record version ${String(record.v)} is not one this Volt reads`);
+	}
+	if (version >= 2 && (typeof record.reqDigest !== 'string' || sha1(canonicalJson(record.request)) !== record.reqDigest)) {
+		throw new Error('the logged request does not match its digest');
 	}
 	return evaluate(snapshot, record.request, record.context);
 }
