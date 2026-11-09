@@ -60,9 +60,9 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 
 ## Found in the 2026-11-09 review, not fixed yet
 
-25. **The window's gates read the managed policy once.** The extension API and the host-tool gate get it at window start; the launcher, plugin hosts and the network broker follow `invalidate` too. A policy changed while Volt runs reaches the window's gates at its next start.
+25. **A managed policy change takes up to a minute.** The execution host reads it again every minute and sends each change to the launcher, plugin hosts, the network broker and the windows' gates (ADMIN-LIVE-1); there is no file watch on `/etc/volt/policy.json` or the MDM domain.
 26. **A sandboxed extension's tool flows are judged by its declarations only.** The host-tool gate doesn't see the "Allow host" grants the broker adds for that extension. Not reachable today (no tool owner is marked sandboxed), but it must carry the granted hosts before one is.
-27. **Unknown folders count as writing nothing** when one chat's settings are compared with another's without scopes (automations, run groups, the orchestrator). By design until those callers pass their roots; the host-tool gate passes them.
+27. **Settings-only comparison** (no scopes) still counts unknown folders as writing nothing; it is kept for settings math only. Every caller that compares two chats (subagents, automations, run groups, the orchestrator, `thread_send`) passes both chats' roots, so an unknown folder fails closed there (SCOPE-27a..c).
 28. **Decision-log replay doesn't prove the logged request**, only the snapshot and the call context. Adding a request digest changes the log's record format, which its reader checks strictly.
 29. **A grant store written by a newer Volt is read-only**, so a revoke there fails while its first-party and chat grants keep applying.
 

@@ -302,6 +302,8 @@ export interface IVoltStdioService {
 	sandboxSupport?(): Promise<IVoltSandboxSupportInfo>;
 	/** The managed (admin) policy this execution host enforces; the window's gates judge by it too. */
 	managedPolicy?(): Promise<IAdminPolicy>;
+	/** The managed policy changed while Volt runs (it is re-read every minute): the new policy. */
+	readonly onDidChangeManagedPolicy?: Event<IAdminPolicy>;
 	/** Lets a sandboxed process (network off) reach more hosts, without a restart. */
 	allowSandboxDomains?(id: string, domains: readonly string[]): Promise<void>;
 	/**

@@ -53,6 +53,8 @@ const KILL_GRACE_MS = 2_000;
  */
 const EXIT_DRAIN_MS = 250;
 const MAX_WAIT_MS = 10 * 60_000;
+/** How often the managed (admin) policy is read again while Volt runs (a few stats). */
+const MANAGED_POLICY_REFRESH_MS = 60_000;
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007|\r(?!\n)/g;
 
 /**
@@ -140,6 +142,10 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			adminReady: () => managedPolicy,
 		}));
 		this._register(this.sandbox.onDidChangeManagedPolicy(() => this.plugins.adminChanged()));
+		// The windows' gates (extension API, host tools) follow the managed policy too (05-limitations 25):
+		// re-read every minute, and every change goes out to them with the policy itself.
+		this.onDidChangeManagedPolicy = Event.map(this.sandbox.onDidChangeManagedPolicy, () => this.sandbox.managedPolicyNow ?? {}, this._store);
+		this.sandbox.watchManagedPolicy(MANAGED_POLICY_REFRESH_MS);
 		this.pluginStorageRoot = join(userDataPath, 'User');
 		this._register(this.sandbox.registerNetworkViewProvider(principal => this.plugins.networkView(principal)));
 		this.onDidChangePlugins = Event.signal(this.plugins.onDidChange);
@@ -150,6 +156,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	readonly onDidChangeSandboxWorkloads: Event<void>;
+	readonly onDidChangeManagedPolicy: Event<IAdminPolicy>;
 
 	private readonly trust: TrustHost;
 	readonly onDidChangeTrust: Event<{ readonly epoch: number; readonly narrowed: boolean }>;

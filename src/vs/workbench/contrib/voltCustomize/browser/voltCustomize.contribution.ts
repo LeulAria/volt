@@ -344,22 +344,37 @@ registerWorkbenchContribution2(VoltExtensionApiContribution.ID, VoltExtensionApi
 
 /**
  * The execution host's managed (admin) policy for the window's own gates: the extension API and
- * the host-tool gate judge by it as the launcher, plugin hosts and the network broker do. Read once
- * at start; unreadable means third parties get nothing (fail closed).
+ * the host-tool gate judge by it as the launcher, plugin hosts and the network broker do. Read at
+ * start and followed while Volt runs (the host re-reads it every minute and sends each change);
+ * unreadable means third parties get nothing (fail closed).
  */
-class VoltManagedPolicyContribution implements IWorkbenchContribution {
+class VoltManagedPolicyContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.voltManagedPolicy';
 	constructor(
 		@IVoltStdioService stdio: IVoltStdioService,
 		@IVoltExtensionApiService extensionApi: IVoltExtensionApiService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 	) {
+		super();
 		if (!stdio.managedPolicy) {
 			return;
 		}
-		void stdio.managedPolicy().catch((): IAdminPolicy => ({ unreadable: true })).then(policy => {
+		const apply = (policy: IAdminPolicy) => {
 			extensionApi.setManagedPolicy?.(policy);
 			hostTools.setManagedPolicy?.(policy);
+		};
+		// A change that arrives before the first read answers is newer than that answer.
+		let changed = false;
+		if (stdio.onDidChangeManagedPolicy) {
+			this._register(stdio.onDidChangeManagedPolicy(policy => {
+				changed = true;
+				apply(policy);
+			}));
+		}
+		void stdio.managedPolicy().catch((): IAdminPolicy => ({ unreadable: true })).then(policy => {
+			if (!changed) {
+				apply(policy);
+			}
 		});
 	}
 }
