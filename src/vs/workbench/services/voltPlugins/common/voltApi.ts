@@ -575,6 +575,7 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 				extensionId: principal.extensionId,
 				label: principal.label ?? principal.extensionId,
 				firstParty: principal.firstParty,
+				...(principal.sandboxed ? { sandboxed: true } : {}),
 				toolClass,
 				declared: [...principal.capabilities.required ?? [], ...principal.capabilities.optional ?? []].map(entry => ({ id: entry.id, ...(entry.targets?.length ? { targets: entry.targets } : {}) })),
 			};

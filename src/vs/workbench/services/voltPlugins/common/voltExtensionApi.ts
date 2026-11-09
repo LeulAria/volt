@@ -36,9 +36,10 @@ export interface IVoltExtensionApiService {
 	readonly onDidChangeConsent: Event<{ readonly extensionId: string; readonly capability: string }>;
 	/**
 	 * The API for `extension`, whose description core read itself (its id was checked against the
-	 * calling extension host first). What it registers goes into `subscriptions`.
+	 * calling extension host first). What it registers goes into `subscriptions`. `sandboxed`: its
+	 * host runs in the OS sandbox with its network through the broker (from the host, never the extension).
 	 */
-	createContext(extension: IExtensionDescription, subscriptions: DisposableStore): IVoltPluginContext;
+	createContext(extension: IExtensionDescription, subscriptions: DisposableStore, options?: { readonly sandboxed?: boolean }): IVoltPluginContext;
 	/**
 	 * Asks the user, in Volt's words, to allow a promptable denial (a declared medium or high
 	 * capability of a third party). Concurrent asks for the same capability share one dialog. The
