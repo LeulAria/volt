@@ -19,6 +19,7 @@ import { buildEntryPurposeOf, IBuildEntryChange, IHostGitRequest, IHostGitResult
 import { BuildEntryGuard, buildEntryGuard } from '../../voltGit/node/buildEntryGuard.js';
 import { runHostGit } from '../../voltGit/node/hostGit.js';
 import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
+import type { ISandboxPolicyFilesInfo } from '../../voltSandbox/common/sandboxPolicyFiles.js';
 import { IAdminPolicy, POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../../voltSandbox/common/authority.js';
 import { brokerReadFile, brokerWriteFile, defaultFsdPath } from '../../voltFiles/node/sandboxFileBroker.js';
 import { SafeOpenError } from '../../voltFiles/node/safeOpen.js';
@@ -542,6 +543,10 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 
 	managedPolicy(): Promise<IAdminPolicy> {
 		return this.sandbox.managedPolicy();
+	}
+
+	sandboxPolicyFiles(request: IVoltSandboxRequest): Promise<ISandboxPolicyFilesInfo> {
+		return this.sandbox.policyFilesInfo(request);
 	}
 
 	async sandboxSupport(): Promise<IVoltSandboxSupportInfo> {

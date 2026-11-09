@@ -31,6 +31,8 @@ import { AGENT_CONFIG_NAMES, builtinProfile } from '../../common/sandboxProfiles
 import { AgentStateOverlay } from '../../node/agentStateOverlay.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer } from '../../common/sandboxSchema.js';
 import { SandboxManager } from '../../node/sandboxManager.js';
+import { SandboxPolicyFiles } from '../../node/sandboxPolicyFiles.js';
+import { composeLaunchLayers } from '../../common/compile.js';
 import { ISandboxHostFacts, sandboxHostFacts } from '../../node/sandboxResolver.js';
 import { realSandboxAvailable } from './sandboxSuiteGate.js';
 
@@ -660,6 +662,91 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		} finally {
 			await socket.close();
 		}
+	});
+
+	/** Answers of Volt's proxy to `CONNECT <host>:443`, one line per host: `<host> <status line> | <body of a 403>` (an open tunnel has no body to wait for). */
+	const proxyAnswers = (hosts: readonly string[]) => hosts.map(host => `${PERL} -MIO::Socket::INET -MMIME::Base64 -e 'alarm 15; ($a,$h)=$ENV{HTTPS_PROXY}=~m{//([^@]+)@([^/]+)}; $s=IO::Socket::INET->new(PeerAddr=>$h, Timeout=>3) or exit 1; print $s "CONNECT $ARGV[0]:443 HTTP/1.1\\r\\nHost: $ARGV[0]:443\\r\\nProxy-Authorization: Basic ".encode_base64($a,"")."\\r\\n\\r\\n"; $l=<$s>; $l=~s/\\r?\\n//; while(defined($x=<$s>)){ last if $x=~/^\\r?\\n$/ } $b=$l=~/ 403 / ? <$s> : ""; $b//=""; $b=~s/\\r?\\n//; print "$ARGV[0] $l | $b\\n"' ${host}`).join('; ');
+
+	test('POLFILE-REAL-1: a repository .volt/sandbox.json deny blocks a real read, write and host; the user\'s file widens', async () => {
+		const dir = join(f.ws, 'polfile');
+		await fs.mkdir(join(dir, 'private'), { recursive: true });
+		await fs.writeFile(join(dir, 'private', 'secret.txt'), 'CANARY-POLFILE\n');
+		await fs.writeFile(join(dir, 'locked.txt'), 'original\n');
+		await fs.mkdir(join(f.ws, '.volt'), { recursive: true });
+		const userFile = join(f.root, 'user-sandbox.json');
+		await fs.writeFile(userFile, JSON.stringify({ schemaVersion: 1, network: { allow: ['example.com', 'example.org'] } }));
+		await fs.writeFile(join(f.ws, '.volt', 'sandbox.json'), JSON.stringify({ schemaVersion: 1, filesystem: { deny: ['${workspace}/polfile/private'], protect: ['${workspace}/polfile/locked.txt'] }, network: { allow: ['example.org'] } }));
+		try {
+			const files = await new SandboxPolicyFiles(userFile).read(f.home, [f.ws], {});
+			assert.deepStrictEqual(files.files.map(file => [file.source, file.state]), [['user', 'loaded'], ['workspace', 'loaded']]);
+			const script = [`cat ${dir}/private/secret.txt`, `echo changed >> ${dir}/locked.txt`, `cat ${dir}/locked.txt`, proxyAnswers(['example.com', 'example.org'])].join('; ');
+			// The user's file alone: the folder is readable, the file writable, and example.com is allowed.
+			const userOnly = composeLaunchLayers(agent(false), files.layers.filter(layer => layer.source === 'user'));
+			const before = await sh(userOnly.policy, script);
+			assert.ok(before.stdout.includes('CANARY-POLFILE'), `readable without the repository's file: ${before.stdout} ${before.stderr}`);
+			assert.ok(before.stdout.includes('changed'), 'writable without it');
+			assert.ok(/^example\.com /m.test(before.stdout) && !/network access to example\.com is off/.test(before.stdout), `the user's file allows example.com: ${before.stdout}`);
+			await fs.writeFile(join(dir, 'locked.txt'), 'original\n');
+			// With the repository's file: the deny, the protection and the narrowed hosts hold in the real sandbox.
+			const both = composeLaunchLayers(agent(false), files.layers, files.realpaths);
+			assert.deepStrictEqual(both.ignored, []);
+			const after = await sh(both.policy, script);
+			assert.ok(!after.stdout.includes('CANARY-POLFILE'), `the repository's deny holds: ${after.stdout}`);
+			assert.strictEqual(await fs.readFile(join(dir, 'locked.txt'), 'utf8'), 'original\n', 'the repository\'s protection holds');
+			assert.ok(/^example\.com HTTP\/1\.1 403 .*network access to example\.com is off/m.test(after.stdout), `example.com is refused by the proxy: ${after.stdout} ${after.stderr}`);
+			assert.ok(/^example\.org /m.test(after.stdout) && !/network access to example\.org is off/.test(after.stdout), `example.org is still allowed: ${after.stdout}`);
+			assert.ok(after.denials.some(denial => denial.source === 'proxy' && denial.target.includes('example.com')), 'the refusal is reported');
+		} finally {
+			await fs.rm(dir, { recursive: true, force: true });
+			await fs.rm(join(f.ws, '.volt'), { recursive: true, force: true });
+		}
+		await assertHostUnchanged();
+	});
+
+	test('POLFILE-PROT-2: no sandboxed writer can change a .volt/sandbox.json, the user\'s even with ~/.volt writable (Linux: a missing one is best effort)', async () => {
+		const repoFile = join(f.ws, '.volt', 'sandbox.json');
+		const userDir = join(f.home, '.volt');
+		const userFile = join(userDir, 'sandbox.json');
+		await fs.mkdir(join(f.ws, '.volt'), { recursive: true });
+		await fs.mkdir(userDir, { recursive: true });
+		const policies = () => [workspace(), agent(false), agent(false, 'claude-code', { extraWritableRoots: [userDir] })];
+		const attempts = (file: string) => [
+			`echo '{"schemaVersion":1,"network":{"mode":"host"}}' > ${file}`,
+			`echo x >> ${file}`,
+			`mv ${file} ${file}.moved`,
+			`rm -f ${file}`,
+			`echo '{"schemaVersion":1}' > ${file}.new && mv ${file}.new ${file}`,
+		].join('; ');
+		try {
+			// Existing files: never modified, replaced, moved or removed, on every OS.
+			await fs.writeFile(repoFile, '{"schemaVersion":1}\n');
+			await fs.writeFile(userFile, '{"schemaVersion":1}\n');
+			for (const policy of policies()) {
+				await sh(policy, `${attempts(repoFile)}; ${attempts(userFile)}`, { workspaceRoots: [f.ws] });
+				assert.strictEqual(await fs.readFile(repoFile, 'utf8'), '{"schemaVersion":1}\n', `${policy.name}: the repository's file`);
+				assert.ok(!await exists(`${repoFile}.moved`), policy.name);
+			}
+			// The third profile is the one with ~/.volt writable.
+			assert.strictEqual(await fs.readFile(userFile, 'utf8'), '{"schemaVersion":1}\n', 'the user\'s file');
+			// Missing files: macOS refuses creating them; bubblewrap can only guard paths that exist.
+			await fs.rm(repoFile);
+			await fs.rm(userFile);
+			for (const policy of policies()) {
+				const result = await sh(policy, `${attempts(repoFile)}; ${attempts(userFile)}`, { workspaceRoots: [f.ws] });
+				if (isLinux) {
+					assert.ok(result.unenforced.includes('filesystem.protectNew'), `${policy.name}: the run reports the gap`);
+					await fs.rm(repoFile, { force: true });
+					await fs.rm(userFile, { force: true });
+				} else {
+					assert.ok(!await exists(repoFile), `${policy.name}: created the repository's file`);
+					assert.ok(!await exists(userFile), `${policy.name}: created the user's file`);
+				}
+			}
+		} finally {
+			await fs.rm(join(f.ws, '.volt'), { recursive: true, force: true });
+			await fs.rm(userDir, { recursive: true, force: true });
+		}
+		await assertHostUnchanged();
 	});
 
 	test('hostile workspace names cannot inject into the profile or arguments', async () => {

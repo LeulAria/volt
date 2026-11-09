@@ -9,6 +9,7 @@ import { homedir, tmpdir } from 'os';
 import { promisify } from 'util';
 import { basename, dirname, isAbsolute, join, resolve } from '../../../base/common/path.js';
 import { isWindowsPathInside } from '../common/mxc.js';
+import type { ISandboxContainedPath } from '../common/compile.js';
 import { SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { isReservedEnvName, isSecretEnvName, systemReadPaths } from '../common/sandboxProfiles.js';
 import { IResolvedGitDir, IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
@@ -51,6 +52,8 @@ export interface ISandboxRunContext {
 	readonly hostEnv: Readonly<Record<string, string | undefined>>;
 	/** Variables Volt itself sets for this run (provider settings). Reserved names are ignored. */
 	readonly env?: Readonly<Record<string, string>>;
+	/** Entries a narrowing layer (a repository's `.volt/sandbox.json`) narrowed to: refused unless still inside what they narrowed once canonical (B-32). */
+	readonly contained?: readonly ISandboxContainedPath[];
 }
 
 export interface ISandboxResolution {
@@ -255,6 +258,18 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 				writeFiles.push(c.path);
 			} else {
 				notes.push(`write path does not exist, skipped: ${c.path}`);
+			}
+		}
+	}
+
+	// A narrowed entry stays inside what it narrowed, judged on the same canonical answers its grant
+	// used: a symlink swapped in after the composition's check cannot carry it out (B-32).
+	for (const entry of context.contained ?? []) {
+		const parents = (await Promise.all(entry.within.flatMap(expand).map(canonical))).map(c => c.path);
+		for (const path of expand(entry.path)) {
+			const c = await canonical(path);
+			if (!parents.some(parent => isInside(c.path, parent))) {
+				refuse(`Refusing ${path} in ${entry.field}: a narrowing policy layer named it, and it resolves to ${c.path}, outside what that layer could narrow`);
 			}
 		}
 	}

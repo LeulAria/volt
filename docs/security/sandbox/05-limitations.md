@@ -55,7 +55,7 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 20. **The relay runner** starts Claude with `bypassPermissions` and Codex with `--dangerously-bypass-approvals-and-sandbox`, with the full environment including the relay enrol key. Its container is the only boundary. **Next:** run it through `SandboxManager` (Linux) and strip its environment.
 21. **The in-app browser's own network** (page scripts, `browser_evaluate`) is not filtered per chat. The host-tool gate judges the URLs an agent names and withholds what a page shows when it leaves the allowed set.
 22. **Reading other chats.** `thread_read`, `thread_search`, `workspace_status` and `terminal_output` let a sandboxed chat read other chats' transcripts and terminals.
-23. **User and repository policy files are defined, not loaded.** The schema, parser and narrow-only composition exist and are tested, but the agent path builds its policy from the chat settings only. **Next:** load `~/.volt/sandbox.json` (trusted) and `<workspace>/.volt/sandbox.json` (untrusted) into the agent profile, and surface `ignored` in the UI.
+23. **Policy files apply at the next launch, and a missing one is guarded best effort on Linux.** `~/.volt/sandbox.json` and `.volt/sandbox.json` are loaded at every launch (02-design.md, "Policy files"); an edit does not reach a chat whose agent is already running. On Linux, bubblewrap can only protect paths that exist, so a sandboxed agent may create a missing `.volt/sandbox.json` (`filesystem.protectNew` is reported partial); macOS refuses it. Native in-process models (item 16) don't use the files, as they don't use the sandbox.
 24. **PTY workloads** (sandboxed terminals) need file-based confirmation, because node-pty cannot pass extra file descriptors. Not built; host terminal tools are refused for sandboxed chats instead.
 
 ## Found in the 2026-11-09 review, not fixed yet
@@ -68,7 +68,7 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 
 ## Future work, in order
 
-1. Load user and repository policy layers (item 23), and use the sandbox for native models (item 16).
+1. Use the sandbox, and with it the policy files, for native models (item 16).
 2. A sandboxed extension host plus capability manifests in packages: the start of the marketplace.
 3. Windows: an x64 runner for the WIN-* suite, packaging `wxc-exec.exe` and `volt-mxc-helper.exe` with the app, and Git Bash on the AppContainer-compatible MSYS2 runtime once its distribution is decided (WIN-MSYS-2 passes in CI).
 4. Supply-chain pipeline extension points, which the sandbox does not block:

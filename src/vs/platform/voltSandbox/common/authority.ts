@@ -365,26 +365,41 @@ function evaluateSubject(snapshot: PolicySnapshot, request: IAccessRequest, prin
 	}
 	// 5. Admin.
 	const admin = snapshot.input.admin;
-	if (admin) {
-		const thirdParty = isPluginSubject(subject) || subject.startsWith('mcp');
-		if (admin.unreadable && thirdParty && cls !== 'none') {
-			return deny(epoch, 'admin', 'admin-unreadable', 'a managed policy is installed but could not be read, so third parties get no permissions');
-		}
-		if (admin.denyCapabilities?.some(id => deniedById(id, capability))) {
-			return deny(epoch, 'admin', 'admin-capability', `your organization's policy denies ${capability}`);
-		}
-		const host = request.target && bareCapability(capability).startsWith('net.') ? hostOf(request.target) : undefined;
-		// A request that could reach a denied host is refused: `*` or `*.example.com` reach `api.example.com`.
-		if (host && admin.denyHosts?.some(pattern => hostCovered(host, pattern) || hostCovered(pattern, host))) {
-			return deny(epoch, 'admin', 'admin-host', `your organization's policy denies ${host}`);
-		}
-		// An exfil-capable host is high for a third party, whatever the catalog says of `net.connect` (G.8).
-		const effective = host && bareCapability(capability) === 'net.connect' && isExfilHost(host) && voltCapabilityClassRank(cls) < voltCapabilityClassRank('high') ? 'high' : cls;
-		if (admin.maxThirdPartyClass && thirdParty && voltCapabilityClassRank(effective) > voltCapabilityClassRank(admin.maxThirdPartyClass)) {
-			return deny(epoch, 'admin', 'admin-class', `your organization's policy allows third parties nothing above ${admin.maxThirdPartyClass}`);
-		}
+	return (admin && adminDecision(epoch, admin, isPluginSubject(subject) || subject.startsWith('mcp'), capability, cls, request.target)) || allow(epoch);
+}
+
+/** Step 5: the managed policy's refusal of `capability` (on `target`), or undefined. */
+function adminDecision(epoch: number, admin: IAdminPolicy, thirdParty: boolean, capability: string, cls: VoltCapabilityClass, target: string | undefined): IDecision | undefined {
+	if (admin.unreadable && thirdParty && cls !== 'none') {
+		return deny(epoch, 'admin', 'admin-unreadable', 'a managed policy is installed but could not be read, so third parties get no permissions');
 	}
-	return allow(epoch);
+	if (admin.denyCapabilities?.some(id => deniedById(id, capability))) {
+		return deny(epoch, 'admin', 'admin-capability', `your organization's policy denies ${capability}`);
+	}
+	const host = target && bareCapability(capability).startsWith('net.') ? hostOf(target) : undefined;
+	// A request that could reach a denied host is refused: `*` or `*.example.com` reach `api.example.com`.
+	if (host && admin.denyHosts?.some(pattern => hostCovered(host, pattern) || hostCovered(pattern, host))) {
+		return deny(epoch, 'admin', 'admin-host', `your organization's policy denies ${host}`);
+	}
+	// An exfil-capable host is high for a third party, whatever the catalog says of `net.connect` (G.8).
+	const effective = host && bareCapability(capability) === 'net.connect' && isExfilHost(host) && voltCapabilityClassRank(cls) < voltCapabilityClassRank('high') ? 'high' : cls;
+	if (admin.maxThirdPartyClass && thirdParty && voltCapabilityClassRank(effective) > voltCapabilityClassRank(admin.maxThirdPartyClass)) {
+		return deny(epoch, 'admin', 'admin-class', `your organization's policy allows third parties nothing above ${admin.maxThirdPartyClass}`);
+	}
+	return undefined;
+}
+
+/**
+ * Why the managed policy refuses what the user's own sandbox settings ask for (a widening in
+ * `~/.volt/sandbox.json`), or undefined. The user's settings are no third party's, so the managed
+ * policy's capability and host denies are what apply; they always win over the user's file.
+ */
+export function managedPolicyRefusal(admin: IAdminPolicy, capability: string, target?: string): string | undefined {
+	const cls = capabilityClass(capability);
+	if (!cls) {
+		return `${capability} is not in Volt's capability catalog`;
+	}
+	return adminDecision(0, admin, false, capability, cls, target)?.reason;
 }
 
 /** Capabilities that need a trusted workspace (G.8). */
