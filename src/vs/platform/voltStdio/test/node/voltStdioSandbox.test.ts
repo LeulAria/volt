@@ -170,6 +170,38 @@ suite('Volt exec context against real sandboxes (LIFE-PATH, B-04, F.6)', functio
 		});
 	}
 
+	test('NATIVE-DENY-2: a sandboxed command\'s result carries what its sandbox stopped (the native model\'s card)', async function () {
+		if (process.platform !== 'darwin') {
+			// Linux reports no kernel denials (05-limitations item 5); only macOS has them to carry.
+			this.skip();
+		}
+		const marker = homeMarker('native-deny');
+		const inside = join(ws, `native-deny-${counter++}`);
+		const result = await stdio.exec(request(`touch ${quote(inside)}; touch ${quote(marker)}`, chat(true, 'agent-shell'), chatSandbox()));
+		assert.ok(await exists(inside), `it ran: ${result.combined}`);
+		assert.strictEqual(await exists(marker), false);
+		assert.ok(result.sandboxDenials?.some(denial => denial.kind === 'write' && denial.target === marker), `the write outside is in the result: ${JSON.stringify(result.sandboxDenials)}`);
+	});
+
+	test('FAIL-TYPED-2: a spawn whose sandbox is not confirmed is a typed refusal before its id is handed out, and nothing ran', async () => {
+		const marker = join(ws, `typed-2-${counter++}`);
+		const launcher = (stdio as unknown as { sandbox: VoltSandboxLauncher }).sandbox;
+		const prepare = launcher.prepare;
+		launcher.prepare = async (...args: Parameters<VoltSandboxLauncher['prepare']>) => {
+			const launch = await prepare.apply(launcher, args);
+			// The backend's confirmation fails (a wrong answer on the confirm channel, an early exit).
+			return { ...launch, confirm: async () => ({ ok: false as const, error: 'scripted: the confirmation was wrong' }) };
+		};
+		try {
+			await assert.rejects(stdio.spawn({ command: '/usr/bin/touch', args: [marker], cwd: ws, context: chat(true, 'agent'), sandbox: chatSandbox() }), (err: Error) => err.name === 'SandboxUnavailableError' && /could not be established.*scripted/.test(err.message));
+		} finally {
+			launcher.prepare = prepare;
+		}
+		// The refused spawn's sandbox goes after the kernel log's grace (3 s), like any ended spawn's.
+		await new Promise(resolve => setTimeout(resolve, 3_300));
+		assert.strictEqual(await exists(marker), false, 'the agent never got its go byte');
+	});
+
 	/** Starts a sandboxed terminal the way the agent server does, on a real PTY. */
 	async function startTerminal(id: string, command: string): Promise<{ pty: IPty; output: () => string; exited: Promise<number> }> {
 		const launch = await stdio.prepareSandboxedTerminal({ id, file: '/bin/sh', args: ['-c', command], cwd: ws, env: { TERM: 'xterm-256color' }, sandbox: chatSandbox(), context: chat(true, 'terminal') });
