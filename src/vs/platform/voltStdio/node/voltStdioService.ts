@@ -88,6 +88,8 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	private readonly sandboxTags = new Map<string, string>();
 	/** Sandboxed commands by sandbox tag: their denials go into their result (native models' Volt Guard cards). */
 	private readonly execTags = new Map<string, ExecRun>();
+	/** Sandboxes of ended processes, kept a moment for the kernel log's last denials: disposed at once when the service goes. */
+	private readonly retiring = new Map<ISandboxLaunch, ReturnType<typeof setTimeout>>();
 
 	/** Sandboxed MCP servers (supervisor hosts) by spawn id: written, read and killed like spawns. */
 	private readonly hosts = new Map<string, { readonly host: ISandboxedHost; readonly listeners: DisposableStore }>();
@@ -683,12 +685,26 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 				void launch.terminate(child);
 			}
 			// A moment for the kernel log to deliver the last denials of a process that just ended.
-			setTimeout(() => {
-				launch.dispose();
-				this.sandboxTags.delete(launch.tag);
-			}, 3_000);
+			this.retire(launch, 3_000);
 			this.sandboxes.delete(id);
 		}
+	}
+
+	/** Disposes `launch` after `ms` (or when the service is disposed, if sooner). */
+	private retire(launch: ISandboxLaunch, ms: number): void {
+		if (this._store.isDisposed) {
+			this.retired(launch);
+			return;
+		}
+		this.retiring.set(launch, setTimeout(() => this.retired(launch), ms));
+	}
+
+	private retired(launch: ISandboxLaunch): void {
+		clearTimeout(this.retiring.get(launch));
+		this.retiring.delete(launch);
+		launch.dispose();
+		this.sandboxTags.delete(launch.tag);
+		this.execTags.delete(launch.tag);
 	}
 
 	async write(id: string, data: string): Promise<void> {
@@ -855,10 +871,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			});
 			// Nothing a sandboxed command started outlives it; then its sandbox is torn down, a moment
 			// later, so the kernel log's last denials of the command still reach its result.
-			run.onDone(() => void sandboxed.terminate(child).finally(() => setTimeout(() => {
-				sandboxed.dispose();
-				this.execTags.delete(sandboxed.tag);
-			}, EXEC_DENIAL_GRACE_MS)));
+			run.onDone(() => void sandboxed.terminate(child).finally(() => this.retire(sandboxed, EXEC_DENIAL_GRACE_MS)));
 		}
 		run.onDone(() => {
 			// A command that handed control back stays readable as a job.
@@ -1034,6 +1047,9 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			launch.dispose();
 		}
 		this.sandboxes.clear();
+		for (const launch of [...this.retiring.keys()]) {
+			this.retired(launch);
+		}
 		for (const id of [...this.terminals.keys()]) {
 			void this.endSandboxedTerminal(id);
 		}
