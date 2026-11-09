@@ -11,6 +11,7 @@ import type { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from './desktopTools.js';
+import { isIdeToolName } from './ide/ideTools.js';
 import { isJobWatchToolName } from './jobs/jobWatch.js';
 import { isMemoryToolName } from './memory/voltMemory.js';
 import { PLAYGROUND_TOOL_NAMES } from './playgroundTools.js';
@@ -147,10 +148,11 @@ export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
  * `core`: questions. `browser`: the in-app browser. `image`: reading image files. `threads`: other
  * chats, their queues and checkouts (an agent as orchestrator). `pullRequests`:
  * linking and watching the chat's pull requests. `visuals`: charts and pages shown in the reply. `devices`: iOS simulators
- * and Android emulators. `capture`: screenshots and recordings of windows. An agent can be
+ * and Android emulators. `capture`: screenshots and recordings of windows. `ide`: the editor's
+ * tests, debugger and tasks (`ide/ideTools.ts`). An agent can be
  * handed a subset (`getMcpServers(sessionId, { groups })`) to keep its tool list short.
  */
-export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'memory' | 'desktop' | 'terminal';
+export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'memory' | 'desktop' | 'terminal' | 'ide';
 
 export interface IVoltHostToolInfo {
 	readonly name: string;
@@ -861,7 +863,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id) || id === WORKSPACE_STATUS_TOOL_NAME || isJobWatchToolName(id)) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id) || id === WORKSPACE_STATUS_TOOL_NAME || isJobWatchToolName(id) || isIdeToolName(id)) {
 				return canonicalHostToolName(id);
 			}
 		}
