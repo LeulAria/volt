@@ -173,8 +173,7 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		credentials: ['.claude/.credentials.json'],
 		tmpDirs: uid => [`/private/tmp/claude-${uid ?? 0}`, `/tmp/claude-${uid ?? 0}`, '/private/tmp/cc-socks', '/tmp/cc-socks'],
 		domains: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
-		// Its Datadog log intake (`http-intake.logs.<site>.datadoghq.com`) and Statsig feature gates.
-		quietDomains: ['*.datadoghq.com', 'statsigapi.net', '*.statsigapi.net'],
+		// Its Datadog log intake and Statsig feature gates are quiet through AGENT_TELEMETRY_DOMAINS.
 		envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
 		env: { DISABLE_AUTOUPDATER: '1' },
 	},
