@@ -265,6 +265,11 @@ export interface IVoltExecResult {
 	readonly running: boolean;
 	/** Nothing ran: who it was for did not allow it, or its sandbox could not be set up. */
 	readonly refused?: IVoltExecRefusal;
+	/**
+	 * A sandboxed command: what its sandbox stopped while it ran (noise and quiet denials left out),
+	 * so the chat can show its Volt Guard card for a command its own model ran (native models).
+	 */
+	readonly sandboxDenials?: readonly ISandboxDenial[];
 }
 
 export interface IVoltJobOutput {

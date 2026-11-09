@@ -142,11 +142,20 @@ export interface ISandboxManagerOptions {
 	readonly grants?: () => Promise<INetworkGrantSource | undefined>;
 	/** The managed (admin) policy as it is now: the network broker judges every connection by it too. */
 	readonly adminPolicy?: () => IAdminPolicy | undefined;
+	/**
+	 * Kills what is left of a run whose Volt process died (by its tag: `setsid` daemons the
+	 * watchdog's group kill missed), before its folder is removed. Default: the folder only.
+	 */
+	readonly reap?: (tag: string) => Promise<unknown>;
 }
 
 const RUN_PREFIX = 'volt-sbx-';
 /** A long-lived host's record in its run folder (supervisor.ts): a folder whose owner still runs is never swept. */
 export const RUN_LEDGER_NAME = 'ledger.json';
+/** Every run's owner (the Volt process that prepared it) and tag: a run whose owner died is swept at the next start. */
+const RUN_OWNER_NAME = 'owner.json';
+/** Run folders without an owner record (an older Volt's), or with an unreadable one, go once they are this old. */
+const UNOWNED_RUN_MAX_AGE_MS = 24 * 3600 * 1000;
 /** The canary file in each run folder: denied by the run's own policy, read by the prologue, checked from outside. */
 const SENTINEL_NAME = 'canary';
 /** After the workload exits, how long its output may keep arriving before the run counts as done. */
@@ -176,6 +185,7 @@ export class SandboxManager {
 		this.reservedPorts = options.reservedPorts;
 		this.grantSource = options.grants;
 		this.adminPolicy = options.adminPolicy;
+		this.reap = options.reap;
 		if (options.host) {
 			this.host = Promise.resolve(options.host);
 		}
@@ -190,6 +200,7 @@ export class SandboxManager {
 	private readonly grantSource: (() => Promise<INetworkGrantSource | undefined>) | undefined;
 	private brokerGrants: Promise<INetworkGrantSource | undefined> | undefined;
 	private readonly adminPolicy: (() => IAdminPolicy | undefined) | undefined;
+	private readonly reap: ((tag: string) => Promise<unknown>) | undefined;
 
 	/** The broker, made on first use; its audit log is `~/.volt/trust/audit/network.log` (denied to every sandbox). */
 	private async networkBroker(host: ISandboxHostFacts): Promise<NetworkBroker> {
@@ -268,24 +279,31 @@ export class SandboxManager {
 	 * Where run folders go: `~/.volt/sandbox/runs`, which no profile makes writable. Not the system
 	 * temp folder: agent profiles write there, and a run folder holds the backend's control files
 	 * (bubblewrap's bridge sockets) beside the run's own temp. Runs a crash left behind are removed
-	 * the first time.
+	 * the first time, in the background (see {@link sweepRunRoot}). A root that cannot be made is a
+	 * typed refusal, and the next launch tries again (FAIL-RUNROOT-1).
 	 */
 	private runRootDir(host: ISandboxHostFacts): Promise<string> {
-		this.runRootReady ??= (async () => {
+		const ready = this.runRootReady ??= (async () => {
 			const root = this.runRoot ?? join(host.home, '.volt', 'sandbox', 'runs');
-			await fs.mkdir(root, { recursive: true, mode: 0o700 });
-			await fs.chmod(root, 0o700).catch(() => undefined);
-			const dayAgo = Date.now() - 24 * 3600 * 1000;
-			for (const name of await fs.readdir(root).catch(() => [] as string[])) {
-				const stat = name.startsWith(RUN_PREFIX) ? await fs.stat(join(root, name)).catch(() => undefined) : undefined;
-				// A host that has run for a day (its owner, another Volt process, is alive) keeps its folder.
-				if (stat && stat.mtimeMs < dayAgo && !await ownerAlive(join(root, name))) {
-					await removeRunDir(join(root, name));
-				}
+			try {
+				await fs.mkdir(root, { recursive: true, mode: 0o700 });
+				await fs.chmod(root, 0o700).catch(() => undefined);
+			} catch (err) {
+				throw new SandboxUnavailableError(`Volt could not create its sandbox run folder ${redactSandboxText(root, host.home)}: ${(err as NodeJS.ErrnoException).code ?? (err as Error).message}`, 'unavailable');
 			}
+			void sweepRunRoot(root, this.reap).then(swept => {
+				if (swept) {
+					this.logger.info(`[volt-sandbox] removed ${swept} run folder(s) a stopped Volt left behind`);
+				}
+			}, err => this.logger.warn(`[volt-sandbox] could not clean up earlier runs: ${err}`));
 			return root;
 		})();
-		return this.runRootReady;
+		ready.catch(() => {
+			if (this.runRootReady === ready) {
+				this.runRootReady = undefined;
+			}
+		});
+		return ready;
 	}
 
 	private runRootReady: Promise<string> | undefined;
@@ -353,11 +371,25 @@ export class SandboxManager {
 			throw new SandboxUnavailableError(`This machine's sandbox (${capabilities.backend}) cannot enforce: ${why}`, 'unavailable', check.blocking, capabilities.diagnostics);
 		}
 		const host = await this.hostFacts();
-		const runDir = await fs.realpath(await fs.mkdtemp(join(await this.runRootDir(host), RUN_PREFIX)));
-		await fs.chmod(runDir, 0o700);
-		const runTmp = join(runDir, 'tmp');
-		await fs.mkdir(runTmp, { mode: 0o700 });
+		const runRoot = await this.runRootDir(host);
+		let runDir: string;
+		try {
+			runDir = await fs.realpath(await fs.mkdtemp(join(runRoot, RUN_PREFIX)));
+		} catch (err) {
+			// A full disk or a run root that went away: refused, typed, like any other step (FAIL-RUNROOT-1).
+			throw new SandboxUnavailableError(`Volt could not create this run's sandbox folder: ${(err as NodeJS.ErrnoException).code ?? (err as Error).message}`, 'unavailable');
+		}
 		const tag = generateUuid().replace(/-/g, '').slice(0, 16);
+		const runTmp = join(runDir, 'tmp');
+		try {
+			await fs.chmod(runDir, 0o700);
+			await fs.mkdir(runTmp, { mode: 0o700 });
+			// Who made it: the next start of Volt sweeps it (and reaps its tag) once this process is gone.
+			await fs.writeFile(join(runDir, RUN_OWNER_NAME), JSON.stringify({ ownerPid: process.pid, tag }), { mode: 0o600 });
+		} catch (err) {
+			await removeRunDir(runDir);
+			throw new SandboxUnavailableError(`Volt could not set up this run's sandbox folder: ${(err as NodeJS.ErrnoException).code ?? (err as Error).message}`, 'unavailable');
+		}
 		const denials = new Emitter<ISandboxRunDenial>();
 		const violations = new Emitter<ISandboxResourceViolation>();
 		let proxy: SandboxNetworkProxy | undefined;
@@ -432,7 +464,8 @@ export class SandboxManager {
 				tag,
 				proxyPort: routePort,
 				terminal: !!request.terminal,
-				onDenial: denial => denials.fire(denial),
+				// The prologue's own canary read is the attestation working, not something the run tried (DENY-QUIET-2).
+				onDenial: denial => denial.target === sentinel ? undefined : denials.fire(denial),
 				onResourceViolation: violation => {
 					this.logger.warn(`[volt-sandbox] ${tag} killed: ${violation.dimension} ${violation.observed} over ${violation.limit} (${violation.by})`);
 					violations.fire(violation);
@@ -669,18 +702,52 @@ interface ILiveRun {
 	readonly principal?: IPrincipal;
 }
 
-/** Whether the run folder holds a host ledger whose owning process is still running. */
-async function ownerAlive(runDir: string): Promise<boolean> {
-	const text = await fs.readFile(join(runDir, RUN_LEDGER_NAME), 'utf8').catch(() => undefined);
+/** A run folder's owner record (`owner.json`, or a host's ledger), when it has a readable one. */
+async function readRunOwner(path: string): Promise<{ readonly ownerPid: number; readonly tag?: string } | undefined> {
+	const text = await fs.readFile(path, 'utf8').catch(() => undefined);
 	if (!text) {
-		return false;
+		return undefined;
 	}
 	try {
-		const owner = (JSON.parse(text) as { ownerPid?: unknown }).ownerPid;
-		return typeof owner === 'number' && owner > 0 && processAlive(owner);
+		const { ownerPid, tag } = JSON.parse(text) as { ownerPid?: unknown; tag?: unknown };
+		return typeof ownerPid === 'number' && Number.isInteger(ownerPid) && ownerPid > 0 ? { ownerPid, ...(typeof tag === 'string' && /^[a-f0-9]{16}$/.test(tag) ? { tag } : {}) } : undefined;
 	} catch {
-		return false;
+		return undefined;
 	}
+}
+
+/**
+ * Removes the run folders of Volt processes that are gone (a crash, a kill, a quit that could not
+ * clean up), whatever their age, after `reap` killed what is left of each run by its tag. A
+ * folder of a live process is kept, however old. A host's folder (a ledger) is the supervisor's
+ * to recover (`SandboxSupervisor.recover`), and only goes here after a day; so does a folder with
+ * no owner record (an older Volt's). Returns how many it removed.
+ */
+export async function sweepRunRoot(root: string, reap?: (tag: string) => Promise<unknown>, now = Date.now()): Promise<number> {
+	let swept = 0;
+	for (const name of await fs.readdir(root).catch(() => [] as string[])) {
+		if (!name.startsWith(RUN_PREFIX)) {
+			continue;
+		}
+		const dir = join(root, name);
+		const ledger = await readRunOwner(join(dir, RUN_LEDGER_NAME));
+		const owner = ledger ?? await readRunOwner(join(dir, RUN_OWNER_NAME));
+		if (owner && (owner.ownerPid === process.pid || processAlive(owner.ownerPid))) {
+			continue;
+		}
+		if (ledger || !owner) {
+			const stat = await fs.stat(dir).catch(() => undefined);
+			if (!stat || now - stat.mtimeMs < UNOWNED_RUN_MAX_AGE_MS) {
+				continue;
+			}
+		}
+		if (owner?.tag && reap) {
+			await reap(owner.tag).catch(() => undefined);
+		}
+		await removeRunDir(dir);
+		swept++;
+	}
+	return swept;
 }
 
 /** Whether process `pid` exists (EPERM: it does, as another user's). */

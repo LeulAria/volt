@@ -6438,6 +6438,10 @@ function asToolEvent(event: { type: string;[key: string]: unknown }): IVoltEvent
 	if (event.type === 'plan' || event.type === 'file.change' || event.type === 'error') {
 		return event as IVoltEvent;
 	}
+	// A native model's command its chat's sandbox stopped: the same Volt Guard card an agent CLI's gets.
+	if (event.type === 'sandbox.denial' && event.denial && typeof event.denial === 'object') {
+		return event as IVoltEvent;
+	}
 	return undefined;
 }
 

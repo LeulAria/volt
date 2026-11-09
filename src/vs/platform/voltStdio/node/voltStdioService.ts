@@ -24,6 +24,8 @@ import { IAdminPolicy, POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } 
 import { brokerReadFile, brokerWriteFile, defaultFsdPath } from '../../voltFiles/node/sandboxFileBroker.js';
 import { SafeOpenError } from '../../voltFiles/node/safeOpen.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
+import { SandboxUnavailableError } from '../../voltSandbox/common/sandboxBackend.js';
+import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import type { SandboxedExtensionHosts } from '../../voltSandbox/node/extensionHostSandbox.js';
 import { ISandboxWorkloadInfo, SANDBOX_SUPERVISOR_SETTING } from '../../voltSandbox/common/sandboxWorkloads.js';
@@ -54,6 +56,13 @@ const KILL_GRACE_MS = 2_000;
  */
 const EXIT_DRAIN_MS = 250;
 const MAX_WAIT_MS = 10 * 60_000;
+/** After a sandboxed command ends, how long its sandbox (and its denial listener) stays for the kernel log's last reports. */
+const EXEC_DENIAL_GRACE_MS = 750;
+/** A finished sandboxed command whose output reads like a denial, and none arrived yet: how long its result waits for one. */
+const EXEC_DENIAL_WAIT_MS = 400;
+/** Output that reads like the sandbox refused something. */
+const DENIAL_LIKE_OUTPUT = /Operation not permitted|Permission denied|Read-only file system|\bE(?:PERM|ACCES|ROFS)\b|Blocked by Volt sandbox/;
+const MAX_EXEC_DENIALS = 32;
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007|\r(?!\n)/g;
 
 /**
@@ -78,6 +87,10 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	/** The sandbox of each sandboxed spawn, and the spawn of each sandbox tag. */
 	private readonly sandboxes = new Map<string, ISandboxLaunch>();
 	private readonly sandboxTags = new Map<string, string>();
+	/** Sandboxed commands by sandbox tag: their denials go into their result (native models' Volt Guard cards). */
+	private readonly execTags = new Map<string, ExecRun>();
+	/** Sandboxes of ended processes, kept a moment for the kernel log's last denials: disposed at once when the service goes. */
+	private readonly retiring = new Map<ISandboxLaunch, ReturnType<typeof setTimeout>>();
 
 	/** Sandboxed MCP servers (supervisor hosts) by spawn id: written, read and killed like spawns. */
 	private readonly hosts = new Map<string, { readonly host: ISandboxedHost; readonly listeners: DisposableStore }>();
@@ -127,6 +140,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			if (id) {
 				this._onSandboxEvent.fire({ id, denial: e.denial });
 			}
+			this.execTags.get(e.tag)?.noteDenial(e.denial);
 		}));
 		this.onDidChangeSandboxWorkloads = Event.any(this.sandbox.supervisor.onDidChange, this.sandbox.supervisor.manager.onDidChangeWorkloads);
 		// Volt's T2 plugins (spec H.1, roadmap P1): registered on first use, each host started on its first call.
@@ -398,28 +412,40 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		} else {
 			env = { ...await this.env(), ...options.env };
 		}
-		const child = spawn(command, args, {
-			cwd,
-			env,
-			stdio: ['pipe', 'pipe', 'pipe', ...(launch?.extraStdio ?? [])],
-			// Its own process group, so stopping it also stops the workers it starts.
-			detached: process.platform !== 'win32',
-		}) as ChildProcessWithoutNullStreams;
+		let child: ChildProcessWithoutNullStreams;
+		try {
+			child = spawn(command, args, {
+				cwd,
+				env,
+				stdio: ['pipe', 'pipe', 'pipe', ...(launch?.extraStdio ?? [])],
+				// Its own process group, so stopping it also stops the workers it starts.
+				detached: process.platform !== 'win32',
+			}) as ChildProcessWithoutNullStreams;
+		} catch (err) {
+			this.disposeSandbox(id);
+			throw err;
+		}
+		// The confirmation is awaited before the id is handed out (FAIL-TYPED-2): the agent cannot run
+		// before it anyway (it waits for the go byte), and a sandbox that was not established is then a
+		// typed refusal of this spawn, which the chat shows as such and never retries, instead of an
+		// agent that died for no reason it can tell.
+		const confirmation = launch ? await launch.confirm(child).catch((err: Error) => ({ ok: false as const, error: err.message })) : undefined;
+		if (launch && confirmation && !confirmation.ok) {
+			this.logService.warn(`[volt-sandbox-spawn] ${id} not confirmed: ${confirmation.error}`);
+			child.on('error', () => undefined);
+			await launch.terminate(child).catch(() => undefined);
+			for (const stream of child.stdio) {
+				stream?.destroy();
+			}
+			this.disposeSandbox(id);
+			throw new SandboxUnavailableError(`The sandbox could not be established, so the agent was not started: ${confirmation.error}`, 'failed');
+		}
 		if (launch) {
-			void launch.confirm(child).then(confirmation => {
-				if (!confirmation.ok) {
-					// Never left running unconfirmed: the agent exits and the transcript says why.
-					this.logService.warn(`[volt-sandbox-spawn] ${id} not confirmed: ${confirmation.error}`);
-					this._onSandboxEvent.fire({ id, warning: `The sandbox could not be established, so the agent was stopped: ${confirmation.error}` });
-					void launch.terminate(child);
-				} else {
-					const attestation = launch.attestation();
-					if (attestation) {
-						this.logService.info(`[volt-sandbox-spawn] ${id} attested ${attestation.backend} ${JSON.stringify(attestation.evidence)} policy=${attestation.launchPolicyHash.slice(0, 12)}`);
-					}
-					launch.warnings.forEach(warning => this._onSandboxEvent.fire({ id, warning }));
-				}
-			});
+			const attestation = launch.attestation();
+			if (attestation) {
+				this.logService.info(`[volt-sandbox-spawn] ${id} attested ${attestation.backend} ${JSON.stringify(attestation.evidence)} policy=${attestation.launchPolicyHash.slice(0, 12)}`);
+			}
+			launch.warnings.forEach(warning => this._onSandboxEvent.fire({ id, warning }));
 		}
 		this.processes.set(id, child);
 		this.track(child, command);
@@ -664,12 +690,26 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 				void launch.terminate(child);
 			}
 			// A moment for the kernel log to deliver the last denials of a process that just ended.
-			setTimeout(() => {
-				launch.dispose();
-				this.sandboxTags.delete(launch.tag);
-			}, 3_000);
+			this.retire(launch, 3_000);
 			this.sandboxes.delete(id);
 		}
+	}
+
+	/** Disposes `launch` after `ms` (or when the service is disposed, if sooner). */
+	private retire(launch: ISandboxLaunch, ms: number): void {
+		if (this._store.isDisposed) {
+			this.retired(launch);
+			return;
+		}
+		this.retiring.set(launch, setTimeout(() => this.retired(launch), ms));
+	}
+
+	private retired(launch: ISandboxLaunch): void {
+		clearTimeout(this.retiring.get(launch));
+		this.retiring.delete(launch);
+		launch.dispose();
+		this.sandboxTags.delete(launch.tag);
+		this.execTags.delete(launch.tag);
 	}
 
 	async write(id: string, data: string): Promise<void> {
@@ -827,14 +867,16 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		this.pruneFinishedJobs();
 		if (launch) {
 			const sandboxed = launch;
+			this.execTags.set(sandboxed.tag, run);
 			void sandboxed.confirm(child).then(confirmation => {
 				if (!confirmation.ok) {
 					run.appendError(`Volt sandbox: ${confirmation.error}\n`);
 					void sandboxed.terminate(child);
 				}
 			});
-			// Nothing a sandboxed command started outlives it; then its sandbox is torn down.
-			run.onDone(() => void sandboxed.terminate(child).finally(() => sandboxed.dispose()));
+			// Nothing a sandboxed command started outlives it; then its sandbox is torn down, a moment
+			// later, so the kernel log's last denials of the command still reach its result.
+			run.onDone(() => void sandboxed.terminate(child).finally(() => this.retire(sandboxed, EXEC_DENIAL_GRACE_MS)));
 		}
 		run.onDone(() => {
 			// A command that handed control back stays readable as a job.
@@ -945,6 +987,10 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		if (truncated && !run.running) {
 			logPath = await this.spill(request.spillDir ?? join(tmpdir(), 'volt-exec'), request.id, run.combined.full()).catch(() => undefined);
 		}
+		if (process.platform === 'darwin' && run.sandboxed && !run.running && !run.denials.length && DENIAL_LIKE_OUTPUT.test(combined.text)) {
+			// The kernel log reports a denial a moment after the command saw it (macOS only: Linux reports none, so no wait there).
+			await run.waitForDenial(EXEC_DENIAL_WAIT_MS);
+		}
 		return {
 			id: request.id,
 			exitCode: run.exitCode,
@@ -958,6 +1004,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			timedOut: run.timedOut,
 			cancelled: run.cancelled,
 			running: run.running,
+			...(run.denials.length ? { sandboxDenials: [...run.denials] } : {}),
 		};
 	}
 
@@ -1005,6 +1052,9 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			launch.dispose();
 		}
 		this.sandboxes.clear();
+		for (const launch of [...this.retiring.keys()]) {
+			this.retired(launch);
+		}
 		for (const id of [...this.terminals.keys()]) {
 			void this.endSandboxedTerminal(id);
 		}
@@ -1012,6 +1062,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			run.stop();
 		}
 		this.runs.clear();
+		this.execTags.clear();
 		this.stderr.clear();
 		if (this.dataFlush) {
 			clearImmediate(this.dataFlush);
@@ -1038,6 +1089,9 @@ class ExecRun {
 	yielded = false;
 	private readonly outputListeners = new Set<() => void>();
 	private readonly doneListeners: (() => void)[] = [];
+	/** What the command's sandbox stopped (see `IVoltExecResult.sandboxDenials`). */
+	readonly denials: ISandboxDenial[] = [];
+	private readonly denialListeners = new Set<() => void>();
 
 	constructor(readonly id: string, readonly command: string, readonly child: ChildProcess, readonly startedAt: number, readonly owner?: string, private readonly sandbox?: ISandboxLaunch) {
 		child.stdout?.setEncoding('utf8');
@@ -1078,6 +1132,32 @@ class ExecRun {
 
 	appendError(text: string): void {
 		this.append(this.stderr, text);
+	}
+
+	get sandboxed(): boolean {
+		return !!this.sandbox;
+	}
+
+	noteDenial(denial: ISandboxDenial): void {
+		if (this.denials.length < MAX_EXEC_DENIALS && !this.denials.some(known => known.kind === denial.kind && known.target === denial.target)) {
+			this.denials.push(denial);
+			for (const listener of [...this.denialListeners]) {
+				listener();
+			}
+		}
+	}
+
+	/** Resolves at the first denial, or after `ms`. */
+	waitForDenial(ms: number): Promise<void> {
+		return new Promise(resolve => {
+			const done = () => {
+				clearTimeout(timer);
+				this.denialListeners.delete(done);
+				resolve();
+			};
+			const timer = setTimeout(done, ms);
+			this.denialListeners.add(done);
+		});
 	}
 
 	onDone(listener: () => void): void {

@@ -449,6 +449,15 @@ function ports(values: readonly number[] | undefined): number[] {
 }
 
 /**
+ * Home files macOS's own tools read on every start, relative to the home folder: CoreFoundation's
+ * text encoding id, and the preferences xcodebuild (behind the /usr/bin shims) reads. No secrets.
+ */
+const MAC_HOME_TOOL_FILES: readonly string[] = [
+	'.CFUserTextEncoding', 'Library/Preferences/.GlobalPreferences.plist', 'Library/Preferences/.GlobalPreferences_m.plist',
+	'Library/Preferences/com.apple.dt.Xcode.plist', 'Library/Preferences/com.apple.dt.xcodebuild.plist',
+];
+
+/**
  * The policy an agent CLI process tree runs under. Weaker than the workload profiles by design,
  * because the whole CLI runs inside it, but narrow in what it reads (D-14, on every platform):
  * - readable: the system folders, the programs on PATH and the user's toolchains (`~/.cargo`,
@@ -495,7 +504,9 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		// Its config: the overlay's read-only links, or (no overlay for this launch) the real folder.
 		...(plan ? plan.read : overlay ? [at(overlay.home)] : []),
 		// The login: macOS keychain files are guarded by their own access lists.
-		...(host.platform === 'darwin' ? [at('Library/Keychains')] : []),
+		// CoreFoundation's text encoding id (`0x1F5:0x0:0x0`), read by every program that links it (git,
+		// python), and the preferences xcodebuild reads behind the /usr/bin shims (TOOLCHAIN-MAC-1).
+		...(host.platform === 'darwin' ? [at('Library/Keychains'), ...MAC_HOME_TOOL_FILES.map(at)] : []),
 		// ssh needs its config and known_hosts for git over SSH; the private keys stay denied.
 		...(request.network ? [at('.ssh')] : []),
 	]);

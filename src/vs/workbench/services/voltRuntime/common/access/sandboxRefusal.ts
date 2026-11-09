@@ -11,9 +11,16 @@
 
 export const SANDBOX_UNAVAILABLE_ERROR_NAME = 'SandboxUnavailableError';
 
-/** The spawn was refused because the sandbox cannot be enforced. The name survives IPC; the class does not. */
+/** The stdio layer's refusal of a request without the chat's sandbox or context (`VoltExecRefusedError`): nothing ran either. */
+const EXEC_REFUSED_ERROR_NAME = 'VoltExecRefusedError';
+
+/**
+ * The spawn was refused because the sandbox cannot be enforced, or because the request lacked the
+ * chat's sandbox: nothing ran, and a retry would be refused the same way. The name survives IPC;
+ * the class does not.
+ */
 export function isSandboxUnavailableError(err: unknown): err is Error {
-	return err instanceof Error && err.name === SANDBOX_UNAVAILABLE_ERROR_NAME;
+	return err instanceof Error && (err.name === SANDBOX_UNAVAILABLE_ERROR_NAME || err.name === EXEC_REFUSED_ERROR_NAME);
 }
 
 export function sandboxUnavailableError(message: string): Error {

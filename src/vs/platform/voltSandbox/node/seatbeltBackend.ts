@@ -57,7 +57,7 @@ export interface ISeatbeltBackendOptions {
 export class SeatbeltBackend implements ISandboxBackend {
 
 	readonly id = 'seatbelt' as const;
-	private readonly cache = new ProbeCache<ISandboxBackendCapabilities>();
+	private readonly cache = new ProbeCache<ISandboxBackendCapabilities>(capabilities => !capabilities.available);
 	private monitor: ChildProcess | undefined;
 	private readonly listeners = new Map<string, ISandboxLaunchOptions['onDenial']>();
 	private attestor: SeatbeltAttestor | undefined;
@@ -495,6 +495,12 @@ function confirmLaunch(child: ChildProcess, context: IConfirmContext): Promise<S
 		child.once('exit', (code, signal) => {
 			exited = true;
 			setTimeout(() => finish({ ok: false, error: `sandbox-exec exited before the workload started (${signal ?? code})${stderr ? `: ${stderr.trim()}` : ''}` }), 50);
+		});
+		// Not spawned at all (a helper that lost its execute bit, a missing binary): no 'exit' ever
+		// comes, so without this the launch would wait out the whole confirmation timeout.
+		child.once('error', err => {
+			exited = true;
+			finish({ ok: false, error: `the sandbox could not be started: ${err.message}` });
 		});
 	});
 }

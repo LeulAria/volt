@@ -135,6 +135,41 @@ suite('Volt agent state overlay (B-05)', function () {
 		assert.strictEqual(await fs.lstat(join(home, '.claude.json')).catch(() => undefined), undefined);
 	});
 
+	test('FAIL-LOCK-1: a lock a dead process left is taken over; a live one makes the merge fail, and the next one carries the change', async () => {
+		const p = plan('claude-code');
+		const overlay = await AgentStateOverlay.prepare(p);
+		const lock = join(home, '.claude.json.lock');
+		const turn = async (startups: number) => {
+			const copy = await readJson(join(p.configDir, '.claude.json'));
+			copy.numStartups = startups;
+			await fs.writeFile(join(p.configDir, '.claude.json'), JSON.stringify(copy));
+		};
+		// A CLI that crashed holding the lock: proper-lockfile stopped refreshing it a minute ago.
+		await fs.mkdir(lock);
+		const old = new Date(Date.now() - 60_000);
+		await fs.utimes(lock, old, old);
+		await turn(2);
+		assert.deepStrictEqual((await overlay.sync()).applied, ['numStartups']);
+		assert.strictEqual((await readJson(join(home, '.claude.json'))).numStartups, 2);
+		assert.strictEqual(await fs.lstat(lock).catch(() => undefined), undefined, 'the stale lock is gone');
+		// A live holder (it keeps the lock fresh): the merge gives up after its timeout, nothing written.
+		await fs.mkdir(lock);
+		const refresh = setInterval(() => void fs.utimes(lock, new Date(), new Date()).catch(() => undefined), 500);
+		try {
+			await turn(3);
+			const started = Date.now();
+			await assert.rejects(overlay.sync(), /is locked/);
+			assert.ok(Date.now() - started < 8_000, 'it gives up, it does not hang');
+			assert.strictEqual((await readJson(join(home, '.claude.json'))).numStartups, 2);
+		} finally {
+			clearInterval(refresh);
+			await fs.rmdir(lock);
+		}
+		// The holder let go: the change that could not go back then goes back now.
+		assert.deepStrictEqual((await overlay.sync()).applied, ['numStartups']);
+		assert.strictEqual((await readJson(join(home, '.claude.json'))).numStartups, 3);
+	});
+
 	test('old overlays are pruned', async () => {
 		const stateRoot = join(home, AGENT_STATE_ROOT);
 		await AgentStateOverlay.prepare(plan('claude-code'));

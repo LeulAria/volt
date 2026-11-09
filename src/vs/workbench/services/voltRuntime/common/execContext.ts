@@ -37,6 +37,8 @@ export function chatExecSandbox(settings: IVoltSandboxSettings | undefined, work
 		workspaceRoots: [...workspaceRoots],
 		...(settings.extraWritableRoots?.length ? { extraWritableRoots: [...settings.extraWritableRoots] } : {}),
 		...(settings.allowedDomains?.length ? { allowedDomains: [...settings.allowedDomains] } : {}),
+		// The ports the user granted the chat's dev servers: a native model's `npm run dev` listens like an agent CLI's.
+		...(settings.listenPorts?.length ? { listenPorts: [...settings.listenPorts] } : {}),
 	};
 }
 
