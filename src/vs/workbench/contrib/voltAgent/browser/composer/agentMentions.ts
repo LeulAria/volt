@@ -82,6 +82,10 @@ import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
 import { IAgentDevicesService, IDeviceTarget, IHostDevices } from '../devices/agentDevicesService.js';
 import { OPEN_DEVICE_PREVIEW_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
 import { describeDevice } from '../../common/agentDevices.js';
+import { agentMentionBlock, IOrchestraMachine, LOCAL_MACHINE_ID, localMachine, machineMentionBlock, MENTION_COUNCIL_VALUE, MENTION_TEAM_VALUE, runnerMachine } from '../../../../services/voltRuntime/common/orchestration/orchestra.js';
+import { ORCH_MACHINE_CAPACITY_SETTING, parseMachineCapacity } from '../../../../services/voltRuntime/common/orchestration/machineCapacity.js';
+import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
+import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
 import type { ICanvasDoc } from '../visuals/canvas/canvasModel.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { AgentSlashMenu, rankSlashItems } from './agentSlashMenu.js';
@@ -89,7 +93,7 @@ import { AgentSkillHoverCard } from './agentSkillHoverCard.js';
 import { decodeVoltContextDrag, REVEAL_VOLT_PART_COMMAND_ID, VOLT_CONTEXT_MIME, voltPartIdFromContext } from '../../../voltCustomize/common/voltCustomizeContext.js';
 
 /** `action`: a prompt Volt sent for a button (Generate Draft Commits); the chip stands for it and `value` holds the prompt. */
-export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill' | 'scratch' | 'canvas' | 'action' | 'device';
+export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill' | 'scratch' | 'canvas' | 'action' | 'device' | 'machine' | 'agent';
 
 export interface IAgentImagePayload {
 	id: string;
@@ -279,7 +283,7 @@ export interface IAgentMentionHost {
 	currentModelLabel?(): string | undefined;
 }
 
-type MentionMenuView = 'root' | 'files' | 'computer' | 'terminals' | 'chats' | 'boards' | 'canvases' | 'devices' | DeviceMenuKind;
+type MentionMenuView = 'root' | 'files' | 'computer' | 'terminals' | 'chats' | 'boards' | 'canvases' | 'devices' | 'machines' | 'agents' | DeviceMenuKind;
 
 /** The device kinds `/device` and @ Devices open as submenus. */
 type DeviceMenuKind = 'devices:ios' | 'devices:android' | 'devices:physical';
@@ -420,7 +424,9 @@ export function mentionIconClasses(
 									: mention.kind === 'canvas' ? Codicon.symbolColor
 										: mention.kind === 'action' ? Codicon.gitCommit
 											: mention.kind === 'device' ? Codicon.deviceMobile
-												: Codicon.globe;
+												: mention.kind === 'machine' ? Codicon.server
+													: mention.kind === 'agent' ? Codicon.hubot
+														: Codicon.globe;
 	return ['codicon', `codicon-${icon.id}`];
 }
 
@@ -523,6 +529,8 @@ export class AgentMentionController extends Disposable {
 	private canvasDocs: readonly ICanvasDoc[] | undefined;
 	/** Simulators and emulators for the Devices view; undefined until first listed. */
 	private deviceLists: readonly IHostDevices[] | undefined;
+	/** This machine and the remote servers, read when the Machines list opens. */
+	private machines: readonly IOrchestraMachine[] | undefined;
 	private lastDropAt = 0;
 	private hoveredMentionId: string | undefined;
 	private insertingMention = false;
@@ -2351,8 +2359,25 @@ export class AgentMentionController extends Disposable {
 			};
 		}
 
+		if (view === 'agents') {
+			const agents = this.agentRows(query);
+			return { kind: 'list', rows: [back, ...(agents.length ? agents : [this.message(query ? localize('voltAgent.mention.noMatchingAgents', "No matching agents") : localize('voltAgent.mention.noAgents', "No agents connected. Sign in to a provider in Settings > Providers."))])] };
+		}
+
+		if (view === 'machines') {
+			const machines = this.machineRows(query);
+			return {
+				kind: 'list', rows: [back, ...(machines.length ? machines : [this.message(this.machines === undefined
+					? localize('voltAgent.mention.loadingMachines', "Loading...")
+					: localize('voltAgent.mention.noMatchingMachines', "No matching machines"))])],
+			};
+		}
+
 		const categories: AgentMentionRow[] = [
 			{ kind: 'item', id: 'files', label: localize('voltAgent.mention.files', "Files & Folders"), icon: Codicon.folder, submenu: true, run: () => this.setMenuView('files') },
+			// Who and where: agents of any provider (and a team or council of them), and the machines work can run on.
+			{ kind: 'item', id: 'agents', label: localize('voltAgent.mention.agents', "Agents"), description: localize('voltAgent.mention.agentsDetail', "Models, a team, a council"), icon: Codicon.hubot, submenu: true, run: () => this.setMenuView('agents') },
+			{ kind: 'item', id: 'machines', label: localize('voltAgent.mention.machines', "Machines"), description: localize('voltAgent.mention.machinesDetail', "Where the work runs"), icon: Codicon.server, submenu: true, run: () => this.openMachinesView() },
 			...(this.surfaceService(IAgentDevicesService) ? [{ kind: 'item' as const, id: 'devices', label: localize('voltAgent.mention.devices', "Devices"), icon: Codicon.deviceMobile, submenu: true, run: () => this.openDevicesView() }] : []),
 			{ kind: 'item', id: 'computer', label: THIS_MACHINE, icon: Codicon.deviceDesktop, submenu: true, run: () => this.openComputer(undefined) },
 			{ kind: 'item', id: 'terminals', label: localize('voltAgent.mention.terminals', "Terminals"), icon: Codicon.terminal, submenu: true, run: () => this.setMenuView('terminals') },
@@ -2653,6 +2678,106 @@ export class AgentMentionController extends Disposable {
 		open();
 	}
 
+	/** Team and Council first, then every connected model by provider. */
+	private agentRows(query: string): AgentMentionRow[] {
+		const rows: AgentMentionRow[] = [];
+		const ways = [
+			{ value: MENTION_TEAM_VALUE, label: localize('voltAgent.mention.team', "Team"), detail: localize('voltAgent.mention.teamDetail', "Many agents splitting the work"), icon: Codicon.organization },
+			{ value: MENTION_COUNCIL_VALUE, label: localize('voltAgent.mention.council', "Council"), detail: localize('voltAgent.mention.councilDetail', "Models from different providers decide together"), icon: Codicon.law },
+		];
+		for (const way of ways) {
+			const labelMatches = query ? matchesFuzzy(query, way.label, true) : undefined;
+			if (query && !labelMatches) {
+				continue;
+			}
+			rows.push({ kind: 'item', id: `agent:${way.value}`, label: way.label, labelMatches: labelMatches ?? undefined, description: way.detail, icon: way.icon, run: () => this.pickMention({ id: generateUuid(), kind: 'agent', label: way.label, value: way.value }) });
+		}
+		const items = this.runtime.listCatalog().filter(item => item.enabled);
+		let lastProvider: string | undefined;
+		for (const item of items) {
+			const text = `${item.label} ${item.qualifier ?? ''} ${item.providerId}`;
+			const labelMatches = query ? matchesFuzzy(query, item.label, true) : undefined;
+			if (query && !labelMatches && !matchesFuzzy(query, text, true)) {
+				continue;
+			}
+			if (item.providerId !== lastProvider) {
+				rows.push({ kind: 'header', id: `agents:${item.providerId}`, title: item.providerId });
+				lastProvider = item.providerId;
+			}
+			rows.push({
+				kind: 'item',
+				id: `agent:${item.ref}`,
+				label: item.label,
+				labelMatches: labelMatches ?? undefined,
+				description: [item.qualifier, item.kind === 'agent' ? localize('voltAgent.mention.harness', "agent") : localize('voltAgent.mention.api', "model API")].filter(Boolean).join(' · '),
+				icon: Codicon.hubot,
+				run: () => this.pickMention({ id: generateUuid(), kind: 'agent', label: truncateLabel(item.label, 40), value: item.ref }),
+			});
+			if (rows.length >= MAX_CHAT_ITEMS * 2) {
+				break;
+			}
+		}
+		return rows;
+	}
+
+	/** The Machines list: this machine at once, the remote servers once the relay answers. */
+	private openMachinesView(): void {
+		this.setMenuView('machines');
+		const capacity = parseMachineCapacity(this.configurationService.getValue<unknown>(ORCH_MACHINE_CAPACITY_SETTING));
+		const local = localMachine(THIS_MACHINE, capacity, 0);
+		this.machines = undefined;
+		const cloud = this.surfaceService(IAgentCloudTasksService);
+		const done = (list: readonly IOrchestraMachine[]) => {
+			this.machines = list;
+			if (this.menuView === 'machines') {
+				this.refreshMentionMenu(false);
+			}
+		};
+		if (!cloud) {
+			done([local]);
+			return;
+		}
+		const timeout = new Promise<[]>(resolve => setTimeout(() => resolve([]), 4_000));
+		void Promise.race([cloud.runners(), timeout]).then(
+			runners => done([local, ...runners.map(machine => runnerMachine(machine, Date.now()))]),
+			() => done([local]),
+		);
+	}
+
+	private machineRows(query: string): AgentMentionRow[] {
+		const rows: AgentMentionRow[] = [];
+		for (const machine of this.machines ?? []) {
+			const labelMatches = query ? matchesFuzzy(query, machine.name, true) : undefined;
+			if (query && !labelMatches) {
+				continue;
+			}
+			rows.push({
+				kind: 'item',
+				id: `machine:${machine.id}`,
+				label: machine.name,
+				labelMatches: labelMatches ?? undefined,
+				description: machine.detail || undefined,
+				icon: machine.kind === 'local' ? Codicon.deviceDesktop : Codicon.server,
+				trailing: machine.kind === 'local' ? undefined : machine.online ? localize('voltAgent.mention.online', "Online") : localize('voltAgent.mention.offline', "Offline"),
+				run: () => this.pickMention({ id: generateUuid(), kind: 'machine', label: truncateLabel(machine.name, 40), value: machine.id }),
+			});
+		}
+		if (this.machines && !query) {
+			rows.push({ kind: 'separator', id: 'machines:sep' }, {
+				kind: 'item',
+				id: 'machines:add',
+				label: localize('voltAgent.mention.addMachine', "Add Remote Server..."),
+				icon: Codicon.add,
+				passive: true,
+				run: () => {
+					this.closeMentionMenu();
+					void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, 'orchestration');
+				},
+			});
+		}
+		return rows;
+	}
+
 	/** The Canvases list: read from disk when it opens, then drawn again. */
 	private openCanvasesView(): void {
 		this.setMenuView('canvases');
@@ -2930,6 +3055,17 @@ export class AgentMentionController extends Disposable {
 				const facts = target ? describeDevice(target.device, target.host.label).replace(/^- /, '') : mention.label;
 				const runId = target?.device.platform === 'android' ? target.device.serial ?? id : id;
 				blocks.push(`<attached_device name="${mention.label}" id="${id}">\n${facts}\nThe user picked this device for this chat. Volt started it headless and shows it beside this chat; do not open Simulator.app or an emulator window. Use the device_* tools with device "${id}" (they default to it in this chat), and run the app on it by this id (for example \`flutter run -d ${runId}\`).\n</attached_device>`);
+			} else if (mention.kind === 'machine' && mention.value) {
+				const machine = this.machines?.find(candidate => candidate.id === mention.value)
+					?? (mention.value === LOCAL_MACHINE_ID ? localMachine(THIS_MACHINE, parseMachineCapacity(this.configurationService.getValue<unknown>(ORCH_MACHINE_CAPACITY_SETTING)), 0) : undefined);
+				blocks.push(machineMentionBlock(machine ?? { id: mention.value, name: mention.label, kind: 'runner', online: true, detail: '' }));
+			} else if (mention.kind === 'agent') {
+				// A team or council works with the models mentioned beside it.
+				const models = mentions.filter(other => other.kind === 'agent' && other.value && other.value !== MENTION_TEAM_VALUE && other.value !== MENTION_COUNCIL_VALUE).map(other => other.value!);
+				const way = mentions.some(other => other.kind === 'agent' && (other.value === MENTION_TEAM_VALUE || other.value === MENTION_COUNCIL_VALUE));
+				if (mention.value === MENTION_TEAM_VALUE || mention.value === MENTION_COUNCIL_VALUE || !way) {
+					blocks.push(agentMentionBlock(mention, models));
+				}
 			} else if (mention.kind === 'canvas' && mention.value) {
 				const content = this.surfaceContexts.get(`canvas:${mention.value}`);
 				blocks.push(`<attached_canvas title="${mention.label}" canvasId="${mention.value}">\n${content ? `${content}\n\n` : ''}Work on this canvas: read it with canvas_read and change it with canvas_update (id "${mention.value}") rather than making a new one.\n</attached_canvas>`);
@@ -3580,7 +3716,7 @@ export class AgentMentionController extends Disposable {
 			return mention.value ?? serializeTerminalSelection(mention.terminalQuote);
 		}
 		// Named references; a chat's or terminal's content follows the prompt (see contextBlocks).
-		if (mention.kind === 'chat' || mention.kind === 'terminal' || mention.kind === 'mcp' || mention.kind === 'scratch' || mention.kind === 'canvas' || mention.kind === 'device') {
+		if (mention.kind === 'chat' || mention.kind === 'terminal' || mention.kind === 'mcp' || mention.kind === 'scratch' || mention.kind === 'canvas' || mention.kind === 'device' || mention.kind === 'machine' || mention.kind === 'agent') {
 			return `@${mention.kind}/${mention.label}`;
 		}
 		if (mention.value) {
