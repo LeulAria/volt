@@ -182,6 +182,7 @@ import './contrib/voltAgent/browser/pullRequests/agentPullRequests.contribution.
 import './contrib/voltAgent/browser/trajectory/agentTrajectory.contribution.js';
 import './contrib/voltAgent/browser/runGroups/agentRunGroups.contribution.js';
 import './contrib/voltAgent/browser/orchestration/agentThreadToolService.js';
+import './services/voltRuntime/browser/orchestration/agentOrchestraService.js';
 import './contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';
 import './contrib/voltAgent/browser/orchestration/agentMoveChat.contribution.js';
 import './services/voltRuntime/electron-browser/voltGit.contribution.js';

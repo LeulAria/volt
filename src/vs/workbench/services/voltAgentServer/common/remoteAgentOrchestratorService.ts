@@ -108,7 +108,7 @@ export class RemoteAgentOrchestratorService extends Disposable implements IAgent
 		return this.client.call('orchestrator.configureLimit', threadId, auto);
 	}
 
-	notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult> {
+	notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean; readonly steer?: boolean }): Promise<IOrchSubmitResult> {
 		return this.client.call('orchestrator.notify', threadId, prompt, turnId, options);
 	}
 

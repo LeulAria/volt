@@ -171,6 +171,19 @@ Skip style nits a formatter or linter would catch.
 - End with a one-line verdict: ready to merge, merge after fixes, or needs rework.`,
 	},
 	{
+		name: 'council',
+		title: 'Council',
+		summary: 'Have models from different providers decide this together.',
+		description: 'Have several models from different providers answer on their own, review each other anonymously, and agree on a decision. Use for architecture choices, risky changes and reviews that must be right.',
+		body: `# Council
+
+Put the question to a council with the **council** tool of the volt MCP server.
+
+1. Gather what the council needs first: read the relevant code and write the question with its facts, constraints and the files that matter (\`files\`). A council member sees only what you give it and the code.
+2. Call **council** with \`question\` and, when the user named models (by name or with @), those as \`participants\`; otherwise leave them out (Volt seats one model per connected provider). Keep the default single review round unless the user asks for more debate.
+3. End your turn. The moderator's decision comes back as a report: relay its decision, the main disagreements and the next actions, and offer to carry them out.`,
+	},
+	{
 		name: 'device',
 		title: 'Device',
 		summary: 'Do this on the iOS Simulator or Android Emulator.',
@@ -237,6 +250,20 @@ Answer on the user's Scratch board with **scratch_draw**. When you build on what
 - To change a frame you drew before, redraw it with \`replace\` set to its frameId instead of adding a new one.
 
 A board the user attached with @, or the one open in the right panel (the \`<volt_workspace>\` block lists it), is the one to use: pass its \`boardId\`. Keep the chat reply to a line or two; the user sees the board.`,
+	},
+	{
+		name: 'team',
+		title: 'Team',
+		summary: 'Split this across a team of agents from any providers.',
+		description: 'Start a team of agents (any number, any mix of providers) that split the work through a shared board. Use for work with many independent parts: files, tests, pages, reviews.',
+		body: `# Team
+
+Do this with a team of agents, using **spawn_team** of the volt MCP server.
+
+1. Work out the parts first: list the independent items (a file, a test, a page each) and what one member must do for one item. Read enough code to write a brief a capable colleague could start from without exploring again.
+2. Use the size and mix the user asked for ("30 agents, half Claude and half Codex": \`count: 30\` with two \`members\` groups at \`share: 0.5\`; models they @mentioned go in \`members\`). With no size given, use one member per few items, at most what orchestra_status says this machine runs comfortably.
+3. Call **spawn_team** with \`name\`, \`goal\`, \`brief\`, \`members\`, \`count\` and \`items\`. If it answers WAITING FOR THE USER, call it again with the same arguments until the user has chosen how many run at once.
+4. End your turn. Every member's report comes back in one message when the team is done; check the claims that matter, merge or fix what is left, and tell the user what the team did.`,
 	},
 	{
 		name: 'create-skill',
