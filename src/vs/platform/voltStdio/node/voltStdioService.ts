@@ -30,6 +30,7 @@ import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox
 import { ChildLedger } from './childLedger.js';
 import type { NetworkRoute } from '../../voltSandbox/node/networkBroker.js';
 import { TrustHost } from '../../voltSandbox/node/trustHost.js';
+import { DecisionLog, decisionLogDirFor } from '../../voltSandbox/node/decisionLog.js';
 import type { SubjectKey } from '../../voltSandbox/common/principals.js';
 import type { ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState } from '../../voltSandbox/common/trust.js';
 import { BUILTIN_T2_PLUGINS, IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolRequest, IVoltPluginToolResult, MEMORY_PLUGIN_ID } from '../../voltPlugins/common/pluginHosts.js';
@@ -140,6 +141,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			logger: { info: message => logService.info(message), warn: message => logService.warn(message) },
 			admin: () => this.sandbox.managedPolicyNow,
 			adminReady: () => managedPolicy,
+			decisionLog: new DecisionLog(decisionLogDirFor(this.trust.storePath)),
 		}));
 		this._register(this.sandbox.onDidChangeManagedPolicy(() => this.plugins.adminChanged()));
 		// The windows' gates (extension API, host tools) follow the managed policy too (05-limitations 25):

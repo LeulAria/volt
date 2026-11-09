@@ -51,7 +51,11 @@ export class DecisionLog {
 
 	/** Appends one decision (and its snapshot, once per file). */
 	append(snapshot: PolicySnapshot, request: IAccessRequest, context: ICallContext, decision: IDecision): Promise<void> {
-		const record = decisionRecord(snapshot, request, context, decision);
+		return this.appendRecord(snapshot, decisionRecord(snapshot, request, context, decision));
+	}
+
+	/** Appends a decision record made on `snapshot` (the Authority's `log` hands these over). */
+	appendRecord(snapshot: PolicySnapshot, record: IDecisionLogRecord): Promise<void> {
 		return this.serial(async () => {
 			await this.ensureFile();
 			let text = '';
