@@ -40,16 +40,42 @@ export async function binaryDigest(path: string): Promise<string> {
 	return digest;
 }
 
-/** One cached probe, redone when its key changes. */
+/** How long a failed probe stands before the next launch tries again. */
+export const PROBE_RETRY_MS = 30_000;
+
+/**
+ * One cached probe, redone when its key changes. A failed one (`failed`) is redone too once it is
+ * {@link PROBE_RETRY_MS} old: a trial that timed out under load, or a full temp folder, must not
+ * refuse every chat until Volt restarts. A working one stands until the key changes.
+ */
 export class ProbeCache<T> {
 
 	private key: string | undefined;
 	private value: Promise<T> | undefined;
+	private failedAt: number | undefined;
+
+	constructor(
+		private readonly failed: (value: T) => boolean = () => false,
+		private readonly retryMs = PROBE_RETRY_MS,
+		private readonly now: () => number = Date.now,
+	) { }
 
 	get(key: string, probe: () => Promise<T>): Promise<T> {
-		if (this.value === undefined || this.key !== key) {
+		const stale = this.failedAt !== undefined && this.now() - this.failedAt >= this.retryMs;
+		if (this.value === undefined || this.key !== key || stale) {
 			this.key = key;
-			this.value = probe();
+			this.failedAt = undefined;
+			const value = probe();
+			this.value = value;
+			void value.then(result => {
+				if (this.value === value && this.failed(result)) {
+					this.failedAt = this.now();
+				}
+			}, () => {
+				if (this.value === value) {
+					this.failedAt = this.now();
+				}
+			});
 		}
 		return this.value;
 	}

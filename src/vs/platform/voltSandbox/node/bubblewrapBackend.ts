@@ -211,7 +211,7 @@ interface IStatusInfo {
 export class BubblewrapBackend implements ISandboxBackend {
 
 	readonly id = 'bubblewrap' as const;
-	private readonly cache = new ProbeCache<IBubblewrapState | ISandboxBackendCapabilities>();
+	private readonly cache = new ProbeCache<IBubblewrapState | ISandboxBackendCapabilities>(state => !('capabilities' in state ? state.capabilities : state).available);
 
 	/** Cached per (OS build, bubblewrap digest): the trials cost a few sandboxes' startup; an upgrade re-probes. */
 	async probe(): Promise<ISandboxBackendCapabilities> {

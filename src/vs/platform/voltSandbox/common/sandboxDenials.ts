@@ -97,6 +97,82 @@ export function isNoiseDenial(denial: ISandboxDenial): boolean {
 		|| /^\/(private\/)?var\/folders\//.test(target);
 }
 
+/** Shell startup files: every shell the agent starts reads them, and they often hold tokens, so they stay denied. */
+const SHELL_STARTUP_FILE = /^\.(?:zshrc|zshenv|zprofile|zlogin|zlogout|bashrc|bash_profile|bash_login|bash_logout|profile|inputrc|kshrc|mkshrc)$/;
+const SHELL_PROCESS = /^-?(?:zsh|bash|sh|dash|ksh|mksh|fish|tcsh|csh)$/;
+/** Home folders a shell reads its framework from at startup. */
+const SHELL_STARTUP_DIR = /^(?:\.config\/fish|\.oh-my-zsh|\.zsh|\.zim|\.zinit|\.zprezto|\.antigen|\.bash_it|\.local\/share\/fish)(?:\/|$)/;
+/**
+ * Credential files a tool reads by itself every time it starts (npm's and yarn's config, curl's
+ * and git's netrc, pip's index config, docker's config): denied, but not something the agent
+ * asked for. By the tool that reads them; any other process reading them (`cat ~/.npmrc`) is.
+ */
+const TOOL_STARTUP_SECRETS: readonly { readonly file: RegExp; readonly process: RegExp }[] = [
+	{ file: /^\.npmrc$/, process: /^(?:node|npm|npx|pnpm|yarn|corepack|bun|deno)$/ },
+	{ file: /^\.yarnrc(?:\.yml)?$/, process: /^(?:node|yarn|corepack|npm|npx|pnpm)$/ },
+	{ file: /^_?netrc$|^\.netrc$/, process: /^(?:git|git-remote-https?|curl|wget|node|python\d*(?:\.\d+)?|pip\d*)$/ },
+	{ file: /^\.pypirc$/, process: /^(?:python\d*(?:\.\d+)?|pip\d*|twine|uv|poetry|pdm|hatch)$/ },
+	{ file: /^\.docker\/config\.json$/, process: /^(?:docker|docker-credential-[\w-]+|com\.docker\.[\w.-]+)$/ },
+];
+
+/** Commands that read a folder or file because they were told to: their read of an ancestor folder is the agent's own (a card). */
+const EXPLICIT_READER = /^(?:ls|find|tree|du|stat|cat|head|tail|less|more|file|wc|bat|eza|exa|lsd|open|xxd|od|strings)$/;
+/** What a tool looks for in each folder above the one it works in: git's repository discovery, ignore files. */
+const ANCESTOR_PROBE_NAME = /^(?:\.git|\.hg|\.svn|\.gitignore|\.ignore|\.rgignore|\.fdignore|\.editorconfig|\.npmrc|\.yarnrc(?:\.yml)?|\.nvmrc|\.node-version|\.tool-versions|\.python-version|package\.json|pyproject\.toml|tsconfig\.json|\.prettierrc(?:\.[a-z]+)?|\.eslintrc(?:\.[a-z]+)?)$/;
+
+/**
+ * A denial that stays denied but gets no card (DENY-QUIET-1): reads a shell, a tool or the agent
+ * CLI makes of its own accord, which every sandboxed turn would otherwise show:
+ * - a shell's startup files (`~/.zshrc`, `~/.config/fish/...`) read by the shell;
+ * - a credential file a tool reads at every start (`~/.npmrc` by npm) read by that tool;
+ * - the home folder, or a folder above the workspace or an allowed folder, listed or probed (git's
+ *   repository discovery, ignore files, the CLI scanning its surroundings) by anything but a
+ *   command that lists or reads what it is told (`ls ~`, `cat ~/x`).
+ * A read by another process (the agent running `cat ~/.zshrc`), a write, or one with no process
+ * named (Linux reports none: then only the shell files count) still gets its card. The caller
+ * logs quiet ones.
+ */
+export function isQuietDenial(denial: ISandboxDenial, home: string, roots: readonly string[] = []): boolean {
+	if (denial.kind !== 'read' || !home) {
+		return false;
+	}
+	const process = denial.process?.replace(/^.*\//, '');
+	if (denial.target.startsWith(`${home}/`)) {
+		const relative = denial.target.slice(home.length + 1);
+		if (SHELL_STARTUP_FILE.test(relative) || SHELL_STARTUP_DIR.test(relative)) {
+			return process === undefined || SHELL_PROCESS.test(process);
+		}
+		if (process !== undefined && TOOL_STARTUP_SECRETS.some(entry => entry.file.test(relative) && entry.process.test(process))) {
+			return true;
+		}
+	}
+	if (process === undefined || EXPLICIT_READER.test(process)) {
+		return false;
+	}
+	const target = denial.target.replace(/\/+$/, '');
+	const slash = target.lastIndexOf('/');
+	const parent = slash > 0 ? target.slice(0, slash) : '/';
+	const ancestors = ancestorFolders([home, ...roots]);
+	return ancestors.has(target) || (ancestors.has(parent) && ANCESTOR_PROBE_NAME.test(target.slice(slash + 1)));
+}
+
+/** `home` and every folder above the given roots (not `/`), and `home` itself. */
+function ancestorFolders(roots: readonly string[]): Set<string> {
+	const out = new Set<string>();
+	for (const [index, root] of roots.entries()) {
+		let current = root.replace(/\/+$/, '');
+		// The home folder counts itself; a workspace or allowed folder only its parents.
+		if (index > 0) {
+			current = current.slice(0, Math.max(0, current.lastIndexOf('/')));
+		}
+		while (current && current !== '/' && !out.has(current)) {
+			out.add(current);
+			current = current.slice(0, Math.max(0, current.lastIndexOf('/')));
+		}
+	}
+	return out;
+}
+
 /** The folder "Allow this folder" adds for a denied path: the path itself when it is a folder, else its parent. */
 export function folderToAllow(target: string, isDirectory: boolean): string {
 	if (isDirectory) {

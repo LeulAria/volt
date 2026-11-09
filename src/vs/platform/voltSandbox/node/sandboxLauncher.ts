@@ -15,8 +15,8 @@ import { ILaunchCompileInput, ILaunchCompileRecord, ISandboxCompositionNote, ISa
 import { chatSubject, corePrincipal, ICallContext, IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
 import { MCP_HOST_QUOTAS, mcpHostPolicy } from '../common/sandboxMcp.js';
 import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
-import { IAttestation, ISandboxBackendCapabilities, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
-import { ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
+import { IAttestation, ISandboxBackendCapabilities, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { ISandboxDenial, isNoiseDenial, isQuietDenial } from '../common/sandboxDenials.js';
 import { agentStatePlan } from '../common/agentState.js';
 import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
@@ -28,7 +28,7 @@ import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js
 import { readAdminPolicy, systemAdminPolicySource } from './adminPolicy.js';
 import { PrincipalRegistry } from './principalRegistry.js';
 import { IPreparedSandbox, SandboxManager } from './sandboxManager.js';
-import { HostStartResult, SandboxSupervisor } from './supervisor.js';
+import { HostStartResult, killTagged, SandboxSupervisor } from './supervisor.js';
 import { SandboxedExtensionHosts } from './extensionHostSandbox.js';
 import { sandboxHostFacts } from './sandboxResolver.js';
 import { SandboxConfirmation } from './sandboxBackends.js';
@@ -153,6 +153,12 @@ export interface ISandboxViolationEvent {
 	readonly denial: ISandboxDenial;
 }
 
+/** Where a run's denials are judged from: the home folder and the chat's folders (see `isQuietDenial`). */
+interface IDenialContext {
+	readonly home: string;
+	readonly roots: readonly string[];
+}
+
 interface ILogger {
 	info(message: string): void;
 	warn(message: string, ...args: unknown[]): void;
@@ -209,7 +215,8 @@ export class VoltSandboxLauncher extends Disposable {
 		super();
 		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
 		// The broker judges connections by the managed policy as last read here (launches, `invalidate`).
-		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}), ...(options.grants ? { grants: options.grants } : {}), adminPolicy: () => this.adminNow });
+		// Runs a dead Volt left behind are reaped by their tag before their folders go (FAIL-CRASH-1).
+		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}), ...(options.grants ? { grants: options.grants } : {}), adminPolicy: () => this.adminNow, reap: killTagged });
 		this.now = options.now ?? Date.now;
 		this.registry = new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now);
 		// Disposed at once (its disposal starts killing the hosts); the shutdown below waits for those kills.
@@ -320,7 +327,14 @@ export class VoltSandboxLauncher extends Disposable {
 			});
 			sealed = this.registry.sealLaunchPolicy(principal, prepared.launchPolicyHash);
 			launched = true;
-			return this.launch(prepared, overlay, policy, sealed);
+			// The folders above these are the ones a CLI or a tool probes by itself (quiet denials).
+			const given = [...request.workspaceRoots, ...request.extraWritableRoots ?? []];
+			const roots = [...new Set([...given, ...await Promise.all(given.map(root => fs.realpath(root).catch(() => root)))])];
+			return this.launch(prepared, overlay, policy, sealed, { home: host.home, roots });
+		} catch (err) {
+			// Every failure here (a cache or overlay folder that can't be made, a config that can't be
+			// linked) is the sandbox refusing, typed, so the chat says so and never retries it (FAIL-TYPED-1).
+			throw err instanceof SandboxUnavailableError ? err : new SandboxUnavailableError(`Volt could not prepare the sandbox: ${redactSandboxText(err instanceof Error ? err.message : String(err), host.home)}`, 'unavailable');
 		} finally {
 			if (!launched) {
 				this.registry.retire(principal.id);
@@ -581,12 +595,12 @@ export class VoltSandboxLauncher extends Disposable {
 		return this.admin;
 	}
 
-	private launch(prepared: IPreparedSandbox, overlay: AgentStateOverlay | undefined, policy: IVoltSandboxPolicy, principal: IPrincipal): ISandboxLaunch {
+	private launch(prepared: IPreparedSandbox, overlay: AgentStateOverlay | undefined, policy: IVoltSandboxPolicy, principal: IPrincipal, where: IDenialContext): ISandboxLaunch {
 		const listener = prepared.onDenial(denial => {
 			if (denial.kind === 'process' || denial.kind === 'limit') {
 				return;
 			}
-			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}), ...(denial.denialId ? { denialId: denial.denialId } : {}), ...(denial.epoch !== undefined ? { epoch: denial.epoch } : {}) });
+			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}), ...(denial.denialId ? { denialId: denial.denialId } : {}), ...(denial.epoch !== undefined ? { epoch: denial.epoch } : {}) }, where);
 		});
 		const warnings = prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`);
 		if (policy.network.listen) {
@@ -645,13 +659,21 @@ export class VoltSandboxLauncher extends Disposable {
 
 	private stateRootPruned = false;
 
-	private report(tag: string, denial: ISandboxDenial): void {
+	private report(tag: string, denial: ISandboxDenial, { home, roots }: IDenialContext): void {
 		if (isNoiseDenial(denial)) {
 			return;
 		}
-		const key = `${tag}|${denial.kind}|${denial.target}`;
+		const quiet = isQuietDenial(denial, home, roots);
+		// A quiet read (by the shell) never hides the agent's own read of the same file (by `cat`).
+		const key = `${tag}|${denial.kind}|${denial.target}${quiet ? `|quiet|${denial.process ?? ''}` : ''}`;
 		const now = Date.now();
 		if ((this.recent.get(key) ?? 0) > now - 10_000) {
+			return;
+		}
+		if (quiet) {
+			// Still denied, and on record here; no card in the chat (a shell's or a tool's own startup read).
+			this.recent.set(key, now);
+			this.logger.info(`[volt-sandbox] ${tag} quiet denial: ${denial.kind} ${redactSandboxText(denial.target, home)}${denial.process ? ` (${denial.process})` : ''}`);
 			return;
 		}
 		this.recent.set(key, now);
