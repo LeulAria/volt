@@ -10,6 +10,8 @@ import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../../../
 import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltPromptBudget, IVoltSandboxApproval, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../../../../platform/voltStdio/common/voltStdio.js';
 import type { ISandboxWorkloadInfo } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import type { SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
+import type { IVoltSandboxRequest } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import type { ISandboxPolicyFilesInfo } from '../../../../platform/voltSandbox/common/sandboxPolicyFiles.js';
 import { EMPTY_TRUST_STATE, ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState } from '../../../../platform/voltSandbox/common/trust.js';
 import { projectRunEnv } from './projectRunEnv.js';
 
@@ -55,6 +57,7 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	listJobs(): Promise<readonly IVoltJobOutput[]> { return this.inner.listJobs(); }
 	sandboxSupport(): Promise<IVoltSandboxSupportInfo> { return this.inner.sandboxSupport!(); }
 	managedPolicy(): Promise<IAdminPolicy> { return this.inner.managedPolicy ? this.inner.managedPolicy() : Promise.resolve({}); }
+	async sandboxPolicyFiles(request: IVoltSandboxRequest): Promise<ISandboxPolicyFilesInfo> { return this.inner.sandboxPolicyFiles ? this.inner.sandboxPolicyFiles(request) : { files: [], ignored: [] }; }
 	allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> { return this.inner.allowSandboxDomains!(id, domains); }
 	sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> { return this.inner.sandboxAllows!(id, path, access); }
 	/** Git runs with the user's environment only: HostGit drops anything that would redirect it. */

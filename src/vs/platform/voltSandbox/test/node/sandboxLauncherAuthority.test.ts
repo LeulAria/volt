@@ -23,6 +23,7 @@ import { IResolvedSandboxPolicy } from '../../common/sandboxResolved.js';
 import { ISandboxBackend, ISandboxLaunchSpec } from '../../node/sandboxBackends.js';
 import { launchSubject, sandboxCacheKey, VoltSandboxLauncher } from '../../node/sandboxLauncher.js';
 import { SandboxManager } from '../../node/sandboxManager.js';
+import { SandboxPolicyFiles } from '../../node/sandboxPolicyFiles.js';
 import { sandboxHostFacts } from '../../node/sandboxResolver.js';
 
 class RecordingBackend implements ISandboxBackend {
@@ -84,6 +85,8 @@ suite('Volt sandbox launcher on the Policy Authority (C2 step 4)', () => {
 			mode: () => mode,
 			admin: async () => admin,
 			executionHost: 'test',
+			// Not the developer's own `~/.volt/sandbox.json`.
+			policyFiles: new SandboxPolicyFiles(join(root, 'no-user-policy.json')),
 		}));
 	}
 

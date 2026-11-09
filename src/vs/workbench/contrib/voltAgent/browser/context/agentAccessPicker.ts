@@ -5,6 +5,7 @@
 
 import { $, addDisposableListener, append, EventHelper } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { raceTimeout } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { isWindows } from '../../../../../base/common/platform.js';
@@ -12,6 +13,8 @@ import { sandboxPlatformUnavailable } from '../../../../services/voltRuntime/com
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { describeSandbox, IVoltSandboxSettings, VoltSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import type { ISandboxPolicyFilesInfo } from '../../../../../platform/voltSandbox/common/sandboxPolicyFiles.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { ACCESS_MODE_OPTIONS, accessModeOption, VoltAccessMode } from '../../../../services/voltRuntime/common/access/accessModes.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { createAccessIcon, createSandboxIcon } from '../chrome/accessIcons.js';
@@ -37,7 +40,46 @@ function sandboxUnavailableHere(): string | undefined {
 type AccessPick =
 	| { readonly kind: 'mode'; readonly mode: VoltAccessMode }
 	| { readonly kind: 'sandbox'; readonly level: VoltSandboxLevel }
-	| { readonly kind: 'network' };
+	| { readonly kind: 'network' }
+	/** A quiet line about the sandbox policy files; not pickable. */
+	| { readonly kind: 'info' };
+
+const USER_POLICY_FILE = '~/.volt/sandbox.json';
+const REPO_POLICY_FILE = '.volt/sandbox.json';
+
+/**
+ * Quiet lines under the sandbox levels: the policy files in effect, a broken one, and what was
+ * ignored from them (a repository's widenings, the user's the managed policy denies).
+ */
+function policyFileItems(info: ISandboxPolicyFilesInfo | undefined): IVoltMenuItem<AccessPick>[] {
+	if (!info) {
+		return [];
+	}
+	const items: IVoltMenuItem<AccessPick>[] = [];
+	const line = (id: string, label: string, warning: boolean, subtitle?: string, tooltip?: string): void => {
+		items.push({ id: `policy-file:${id}`, label, ...(subtitle ? { subtitle } : {}), icon: warning ? Codicon.warning : Codicon.info, disabled: true, ...(tooltip ? { tooltip } : {}), data: { kind: 'info' } });
+	};
+	for (const file of info.files) {
+		const name = file.source === 'user' ? USER_POLICY_FILE : REPO_POLICY_FILE;
+		if (file.state === 'error') {
+			line(`${file.source}:${file.path}`, file.source === 'user'
+				? localize('voltAgent.sandbox.userPolicyError', "{0} has an error; the agent won't start", name)
+				: localize('voltAgent.sandbox.repoPolicyError', "Ignored {0}: it has an error", name), true, file.problem, file.path);
+		} else {
+			line(`${file.source}:${file.path}`, file.source === 'user'
+				? localize('voltAgent.sandbox.userPolicy', "Rules from {0}", name)
+				: localize('voltAgent.sandbox.repoPolicy', "Narrowed by {0}", name), false, undefined, file.path);
+		}
+	}
+	for (const source of ['workspace', 'user'] as const) {
+		const notes = info.ignored.filter(note => note.source === source);
+		if (notes.length) {
+			const name = source === 'user' ? USER_POLICY_FILE : REPO_POLICY_FILE;
+			line(`ignored:${source}`, localize('voltAgent.sandbox.policyIgnored', "Ignored from {0}: {1}", name, notes.map(note => `${note.field} ${note.value}`).join(', ')), false, undefined, notes.map(note => `${note.field} ${note.value}: ${note.reason}`).join('\n'));
+		}
+	}
+	return items;
+}
 
 /**
  * The chat's permissions under the composer, as in Codex: Full access, Auto, Auto-accept edits or
@@ -55,6 +97,7 @@ export class AgentAccessPicker extends Disposable {
 		private readonly host: IAgentAccessPickerHost,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
+		@IVoltStdioService private readonly stdio: IVoltStdioService,
 	) {
 		super();
 		this.element = $('button.volt-agent-status-access') as HTMLButtonElement;
@@ -65,7 +108,7 @@ export class AgentAccessPicker extends Disposable {
 		this.element.appendChild(renderIcon(Codicon.chevronDown)).classList.add('chevron');
 		this._register(addDisposableListener(this.element, 'click', e => {
 			EventHelper.stop(e, true);
-			this.open();
+			void this.open();
 		}));
 		this._register(this.runtime.onDidChangeAccess(() => this.render()));
 		this.render();
@@ -88,6 +131,12 @@ export class AgentAccessPicker extends Disposable {
 		this.element.setAttribute('aria-label', localize('voltAgent.accessAria', "Permissions: {0}", option.label));
 	}
 
+	/** What the sandbox policy files do to the chat's sandbox, read as its next launch would (a few stats). */
+	private async readPolicyFiles(sessionId: string): Promise<ISandboxPolicyFilesInfo | undefined> {
+		const request = this.host.isAgent() ? this.runtime.chatExec(sessionId, 'agent').sandbox : undefined;
+		return request && this.stdio.sandboxPolicyFiles ? this.stdio.sandboxPolicyFiles(request).catch(() => undefined) : undefined;
+	}
+
 	/** The editor moved it into or out of a new chat's picker row (placeAccess in agentEditor.ts). */
 	setInLandingRow(inLandingRow: boolean): void {
 		if (this.inLandingRow !== inLandingRow) {
@@ -96,8 +145,10 @@ export class AgentAccessPicker extends Disposable {
 		}
 	}
 
-	private open(): void {
+	private async open(): Promise<void> {
 		const sessionId = this.host.sessionId();
+		// A slow execution host never holds the menu up: it opens without the lines.
+		const policyFiles = await raceTimeout(this.readPolicyFiles(sessionId), 250);
 		const current = this.runtime.getAccessMode(sessionId);
 		const sections: IVoltMenuSection<AccessPick>[] = [{
 			id: 'access',
@@ -112,7 +163,7 @@ export class AgentAccessPicker extends Disposable {
 			})),
 		}];
 		if (this.host.isAgent()) {
-			sections.push(this.sandboxSection(this.runtime.getSandboxSettings(sessionId)));
+			sections.push(this.sandboxSection(this.runtime.getSandboxSettings(sessionId), policyFiles));
 		}
 		this.element.setAttribute('aria-expanded', 'true');
 		showVoltMenu<AccessPick>(this.contextViewService, {
@@ -128,7 +179,7 @@ export class AgentAccessPicker extends Disposable {
 		});
 	}
 
-	private sandboxSection(settings: IVoltSandboxSettings): IVoltMenuSection<AccessPick> {
+	private sandboxSection(settings: IVoltSandboxSettings, policyFiles: ISandboxPolicyFilesInfo | undefined): IVoltMenuSection<AccessPick> {
 		// No OS sandbox on this machine: the levels show why instead of silently running unconfined. Off stays pickable.
 		const unavailable = sandboxUnavailableHere();
 		const level = (id: VoltSandboxLevel, label: string, subtitle: string): IVoltMenuItem<AccessPick> => ({
@@ -151,11 +202,15 @@ export class AgentAccessPicker extends Disposable {
 				checked: settings.network,
 				data: { kind: 'network' },
 			});
+			items.push(...policyFileItems(policyFiles));
 		}
 		return { id: 'sandbox', title: localize('voltAgent.sandbox.heading', "Sandbox"), items };
 	}
 
 	private async pick(sessionId: string, pick: AccessPick): Promise<void> {
+		if (pick.kind === 'info') {
+			return;
+		}
 		if (pick.kind === 'mode') {
 			await this.runtime.setAccessMode(pick.mode, sessionId);
 			return;

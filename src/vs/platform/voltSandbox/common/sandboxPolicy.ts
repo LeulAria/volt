@@ -513,7 +513,8 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		// Read-only holds even when the workspace sits below a writable folder (a repo in /tmp).
 		protect.push(...workspace.filter(root => !extra.some(allowed => isPathInside(root, allowed))));
 	}
-	protect.push(...agentStateProtections(home, footprint), ...(plan?.protect ?? []), ...PROTECTED_GIT_PATTERNS);
+	// The user's own sandbox policy, which may widen: read-only even when the user lets the agent write `~/.volt`.
+	protect.push(at('.volt/sandbox.json'), ...agentStateProtections(home, footprint), ...(plan?.protect ?? []), ...PROTECTED_GIT_PATTERNS);
 
 	const ownCredentials = new Set(footprint.credentials ?? []);
 	const deny = [

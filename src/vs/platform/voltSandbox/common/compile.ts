@@ -47,9 +47,22 @@ export interface ISandboxCompositionNote {
 	readonly reason: string;
 }
 
+/**
+ * A read or write entry an untrusted layer narrowed to: a path strictly inside entries the policy
+ * already had. Once canonical it must still be inside one of them, which only the resolver can
+ * tell without a race (a symlink swapped in between a check here and the launch, B-32).
+ */
+export interface ISandboxContainedPath {
+	readonly field: 'filesystem.read' | 'filesystem.write';
+	readonly path: string;
+	readonly within: readonly string[];
+}
+
 export interface ISandboxComposition {
 	readonly policy: IVoltSandboxPolicy;
 	readonly ignored: readonly ISandboxCompositionNote[];
+	/** Entries untrusted layers narrowed to, for the resolver's check. */
+	readonly contained: readonly ISandboxContainedPath[];
 	readonly sources: readonly SandboxLayerSource[];
 	/**
 	 * The layer each path, host and port entry of the result came from (`filesystem.write:/a`,
@@ -76,6 +89,7 @@ function union<T>(a: readonly T[], b: readonly T[]): T[] {
 export function composeSandboxPolicy(base: IVoltSandboxPolicy, layers: readonly ISandboxLayer[], options: ISandboxCompositionOptions = {}): ISandboxComposition {
 	let policy = base;
 	const ignored: ISandboxCompositionNote[] = [];
+	const contained: ISandboxContainedPath[] = [];
 	const origins: Record<string, SandboxLayerSource> = {};
 	const record = (from: IVoltSandboxPolicy, source: SandboxLayerSource) => {
 		for (const [field, values] of originFields(from)) {
@@ -86,7 +100,7 @@ export function composeSandboxPolicy(base: IVoltSandboxPolicy, layers: readonly 
 	};
 	record(base, 'builtin');
 	for (const entry of layers) {
-		policy = entry.trusted ? widen(policy, entry.layer) : narrow(policy, entry, ignored, options);
+		policy = entry.trusted ? widen(policy, entry.layer) : narrow(policy, entry, ignored, options, contained);
 		record(policy, entry.source);
 	}
 	// Only what the result holds.
@@ -96,7 +110,7 @@ export function composeSandboxPolicy(base: IVoltSandboxPolicy, layers: readonly 
 			delete origins[key];
 		}
 	}
-	return { policy, ignored, sources: layers.map(layer => layer.source), origins };
+	return { policy, ignored, contained: contained.filter(entry => kept.has(`${entry.field}:${entry.path}`)), sources: layers.map(layer => layer.source), origins };
 }
 
 function originFields(policy: IVoltSandboxPolicy): [string, readonly (string | number)[]][] {
@@ -151,7 +165,7 @@ function withoutReserved(set: Readonly<Record<string, string>> | undefined): Rec
 }
 
 /** An untrusted layer: only what it can prove is inside the current policy survives. */
-function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISandboxCompositionNote[], options: ISandboxCompositionOptions): IVoltSandboxPolicy {
+function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISandboxCompositionNote[], options: ISandboxCompositionOptions, contained: ISandboxContainedPath[]): IVoltSandboxPolicy {
 	const { layer, source } = entry;
 	const note = (field: string, value: string, reason: string) => ignored.push({ source, field, value, reason });
 	const fs = layer.filesystem ?? {};
@@ -168,7 +182,7 @@ function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISan
 		return entryInside(resolved, real(parent) ?? parent);
 	};
 
-	const intersectPaths = (field: string, have: readonly string[], want: readonly string[] | undefined): readonly string[] => {
+	const intersectPaths = (field: ISandboxContainedPath['field'], have: readonly string[], want: readonly string[] | undefined): readonly string[] => {
 		if (!want) {
 			return have;
 		}
@@ -176,6 +190,9 @@ function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISan
 		for (const path of want) {
 			if (have.some(parent => insideReally(path, parent))) {
 				out.push(path);
+				if (!have.includes(path)) {
+					contained.push({ field, path, within: have.filter(parent => entryInside(path, parent)) });
+				}
 			} else if (have.some(parent => entryInside(path, parent))) {
 				note(field, path, 'resolves outside what the policy already allows through a symlink');
 			} else {
@@ -271,12 +288,18 @@ function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISan
 		}
 		inherit = out;
 	}
+	// Only new, harmless variables: never one that names a secret or a host endpoint (`VSCODE_*`,
+	// `SSH_AUTH_SOCK`), and never a change to one the policy already sets or copies from the host.
 	const set: Record<string, string> = { ...current.env.set };
 	for (const [name, value] of Object.entries(layer.env?.set ?? {})) {
 		if (isReservedEnvName(name)) {
 			note('env.set', name, 'reserved for Volt');
 		} else if (isInjectionEnvName(name)) {
 			note('env.set', name, 'a loader or interpreter hook');
+		} else if (isSecretEnvName(name)) {
+			note('env.set', name, 'may name a secret or a host endpoint');
+		} else if (Object.prototype.hasOwnProperty.call(current.env.set, name) || current.env.inherit.includes(name)) {
+			note('env.set', name, 'already set by the policy');
 		} else {
 			set[name] = value;
 		}
@@ -338,8 +361,14 @@ export interface ILaunchCompileInput {
 	readonly epoch: number;
 	readonly request: IVoltSandboxRequest;
 	readonly host: IAgentSandboxHost;
-	/** Layers on top of the agent profile (a repository's policy, admin narrowing): applied as untrusted, so they only narrow. */
+	/**
+	 * Layers on top of the agent profile, in order. Only a trusted `user` layer (`~/.volt/sandbox.json`,
+	 * already capped by the managed policy) may widen; every other one (a repository's
+	 * `.volt/sandbox.json`, admin narrowing) is applied as untrusted, so it only narrows.
+	 */
 	readonly layers?: readonly ISandboxLayer[];
+	/** Real paths of the absolute entries the narrowing compares, as the node side read them (B-32). */
+	readonly realpaths?: Readonly<Record<string, string>>;
 }
 
 /** A compiled launch policy: frozen, named by its digest, tied to the epoch and subject it was compiled for. */
@@ -351,6 +380,8 @@ export interface ICompiledLaunch {
 	readonly policy: IVoltSandboxPolicy;
 	/** Widenings a narrowing layer attempted and the compiler dropped. */
 	readonly ignored: readonly ISandboxCompositionNote[];
+	/** Entries narrowing layers narrowed to, which the resolver checks once canonical. */
+	readonly contained: readonly ISandboxContainedPath[];
 }
 
 /** Thrown when a launch the Authority refused is handed to the compiler: a caller bug, never a fallback. */
@@ -412,14 +443,16 @@ export function compileLaunchPolicy(decision: ILaunchDecision, input: ILaunchCom
 	if (!decision.allow) {
 		throw new LaunchNotAllowedError(decision);
 	}
-	let policy = agentSandboxPolicy(input.request, input.host);
-	let ignored: readonly ISandboxCompositionNote[] = [];
-	if (input.layers?.length) {
-		const composed = composeSandboxPolicy(policy, input.layers.map(layer => ({ ...layer, trusted: false })));
-		policy = composed.policy;
-		ignored = composed.ignored;
+	const { policy, ignored, contained } = composeLaunchLayers(agentSandboxPolicy(input.request, input.host), input.layers ?? [], input.realpaths);
+	return deepFreeze({ subject: input.subject, epoch: input.epoch, inputDigest, policy, ignored, contained });
+}
+
+/** A launch's layers on its agent profile: only a `user` layer is ever trusted (see `ILaunchCompileInput.layers`). */
+export function composeLaunchLayers(base: IVoltSandboxPolicy, layers: readonly ISandboxLayer[], realpaths?: Readonly<Record<string, string>>): Pick<ISandboxComposition, 'policy' | 'ignored' | 'contained'> {
+	if (!layers.length) {
+		return { policy: base, ignored: [], contained: [] };
 	}
-	return deepFreeze({ subject: input.subject, epoch: input.epoch, inputDigest, policy, ignored });
+	return composeSandboxPolicy(base, layers.map(layer => ({ ...layer, trusted: layer.source === 'user' && layer.trusted })), realpaths ? { realpath: path => realpaths[path] } : {});
 }
 
 /** What a launch's compile is replayed from (POL-DET-1): the input and what it compiled to. */

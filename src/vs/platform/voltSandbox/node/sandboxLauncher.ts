@@ -11,7 +11,9 @@ import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { join } from '../../../base/common/path.js';
 import { chatLaunchView, evaluateLaunch, IAdminPolicy, ILaunchDecision, IWorkspaceRestriction, PolicyAuthorityMode, PolicySnapshot } from '../common/authority.js';
-import { ILaunchCompileInput, ILaunchCompileRecord, ISandboxCompositionNote, ISandboxLayer, LaunchPolicyCache, launchCompileRecord, launchPolicyBytes } from '../common/compile.js';
+import { composeLaunchLayers, ILaunchCompileInput, ILaunchCompileRecord, ISandboxComposition, ISandboxCompositionNote, ISandboxLayer, LaunchPolicyCache, launchCompileRecord, launchPolicyBytes } from '../common/compile.js';
+import { describeIgnoredEntries, ISandboxPolicyFilesInfo } from '../common/sandboxPolicyFiles.js';
+import { ISandboxPolicyFileLayers, SandboxPolicyFiles } from './sandboxPolicyFiles.js';
 import { chatSubject, corePrincipal, ICallContext, IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
 import { MCP_HOST_QUOTAS, mcpHostPolicy } from '../common/sandboxMcp.js';
 import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
@@ -112,6 +114,8 @@ export interface IVoltSandboxLauncherOptions {
 	readonly networkMode?: () => NetworkBrokerMode;
 	/** Where the network broker's grants live (the grant store); not with `manager`. */
 	readonly grants?: () => Promise<INetworkGrantSource | undefined>;
+	/** `~/.volt/sandbox.json` and the workspaces' `.volt/sandbox.json`; tests point the user's elsewhere. */
+	readonly policyFiles?: SandboxPolicyFiles;
 }
 
 /** A stdio MCP server Volt starts for a sandboxed chat (see {@link VoltSandboxLauncher.startMcpHost}). */
@@ -196,6 +200,7 @@ export class VoltSandboxLauncher extends Disposable {
 	private adminNow: IAdminPolicy | undefined;
 	private workspace: IWorkspaceRestriction | undefined;
 	private layers: readonly ISandboxLayer[] = [];
+	private readonly policyFiles: SandboxPolicyFiles;
 	private epoch = 0;
 	private readonly _shadowDiffs: ILaunchShadowDiff[] = [];
 	private readonly compiles: ILaunchCompileRecord[] = [];
@@ -222,6 +227,7 @@ export class VoltSandboxLauncher extends Disposable {
 		this.mode = options.mode ?? (() => 'enforce');
 		this.readAdmin = options.admin ?? (() => readAdminPolicy(systemAdminPolicySource()));
 		this.workspace = options.workspace;
+		this.policyFiles = options.policyFiles ?? new SandboxPolicyFiles();
 		this.cache.invalidate(this.epoch);
 	}
 
@@ -293,6 +299,11 @@ export class VoltSandboxLauncher extends Disposable {
 					throw new SandboxUnavailableError(`Volt's sandbox policy refused this launch: ${decision.reason}.`, 'unavailable');
 				}
 			}
+			// The policy files, before any folder is made: a broken `~/.volt/sandbox.json` refuses here.
+			const files = await this.readPolicyFiles(request, host);
+			if (files.refusal) {
+				throw new SandboxUnavailableError(files.refusal, 'unavailable');
+			}
 			// The backend's probe (once per process, cached) runs while the folders and the overlay are made.
 			void this.manager.capabilities().catch(() => undefined);
 			const sshAuthSock = options.hostEnv.SSH_AUTH_SOCK && await fs.stat(options.hostEnv.SSH_AUTH_SOCK).then(s => s.isSocket(), () => false) ? options.hostEnv.SSH_AUTH_SOCK : undefined;
@@ -303,14 +314,14 @@ export class VoltSandboxLauncher extends Disposable {
 			const statePlan = request.stateKey !== undefined ? agentStatePlan(request.providerId, request.stateKey, { platform: host.platform, home: host.home, root: this.stateRoot(host.home), hostEnv: options.hostEnv }, AGENT_CONFIG_NAMES) : undefined;
 			const overlay = statePlan ? await AgentStateOverlay.prepare(statePlan, { warn: message => this.logger.warn(message) }) : undefined;
 			const agentHost: IAgentSandboxHost = { ...host, cacheDir, ...(sshAuthSock ? { sshAuthSock } : {}), ...(statePlan ? { statePlan } : {}) };
-			const policy = this.policyFor(principal.subject, mode, decision, { subject: principal.subject, epoch, request, host: agentHost, ...this.layers.length ? { layers: this.layers } : {} });
+			const { policy, ignored, contained } = this.policyFor(principal.subject, mode, decision, this.compileInput(principal.subject, epoch, request, agentHost, files), files);
 			// The overlay's variables win over the user's own (`CLAUDE_CONFIG_DIR` set in their shell).
 			const env = statePlan ? { ...options.env, ...statePlan.env } : options.env;
 			const prepared = await this.manager.prepare({
 				command,
 				args: [...nativeSandboxOffArgs(request.providerId), ...args],
 				policy,
-				context: { workspaceRoots: request.workspaceRoots.filter(root => !root.endsWith('/.git')), cwd: options.cwd, hostEnv: options.hostEnv, env },
+				context: { workspaceRoots: request.workspaceRoots.filter(root => !root.endsWith('/.git')), cwd: options.cwd, hostEnv: options.hostEnv, env, ...contained.length ? { contained } : {} },
 				terminal: !!options.terminal,
 				label: options.label ?? `${request.providerId} agent`,
 				isolate: [{ root: host.cacheDir, keep: cacheDir }],
@@ -320,7 +331,7 @@ export class VoltSandboxLauncher extends Disposable {
 			});
 			sealed = this.registry.sealLaunchPolicy(principal, prepared.launchPolicyHash);
 			launched = true;
-			return this.launch(prepared, overlay, policy, sealed);
+			return this.launch(prepared, overlay, policy, sealed, [...files.warnings, ...describeIgnoredEntries([...files.ignored, ...ignored], policyFileName)]);
 		} finally {
 			if (!launched) {
 				this.registry.retire(principal.id);
@@ -349,6 +360,8 @@ export class VoltSandboxLauncher extends Disposable {
 		const { stateKey: _stateKey, ...request } = launch.sandbox;
 		const subject = chatSubject(launch.chatId);
 		const judgeAs = corePrincipal(`mcp-launch:${launch.chatId}`, subject, 'mcp');
+		/** What the policy files narrowed to, as of the latest compute: the resolver checks it at each (re)start. */
+		let contained: ISandboxComposition['contained'] = [];
 		const compute = async (): Promise<IVoltSandboxPolicy> => {
 			const epoch = this.epoch;
 			const mode = this.mode();
@@ -359,8 +372,13 @@ export class VoltSandboxLauncher extends Disposable {
 					throw new McpHostPolicyRefusal(`Volt's sandbox policy refused this chat's launch: ${decision.reason}.`);
 				}
 			}
-			const chat = this.policyFor(subject, mode, decision, { subject, epoch, request, host: { ...host, cacheDir: join(host.cacheDir, sandboxCacheKey(request)) }, ...this.layers.length ? { layers: this.layers } : {} });
-			return mcpHostPolicy({ server: launch.server, chat, request, platform: host.platform, home: host.home, allowedHosts: launch.allowedHosts ?? [] }).policy;
+			const files = await this.readPolicyFiles(request, host);
+			if (files.refusal) {
+				throw new McpHostPolicyRefusal(files.refusal);
+			}
+			const chat = this.policyFor(subject, mode, decision, this.compileInput(subject, epoch, request, { ...host, cacheDir: join(host.cacheDir, sandboxCacheKey(request)) }, files), files);
+			contained = chat.contained;
+			return mcpHostPolicy({ server: launch.server, chat: chat.policy, request, platform: host.platform, home: host.home, allowedHosts: launch.allowedHosts ?? [] }).policy;
 		};
 		let first: IVoltSandboxPolicy | undefined;
 		try {
@@ -395,6 +413,8 @@ export class VoltSandboxLauncher extends Disposable {
 				storageDir,
 				hostEnv: launch.hostEnv,
 				...(launch.env ? { env: launch.env } : {}),
+				// Read by the resolver after `policy` above ran for this (re)start.
+				get contained() { return contained; },
 			},
 			ipc: false,
 			stdio: 'pipe',
@@ -483,7 +503,7 @@ export class VoltSandboxLauncher extends Disposable {
 	 * The policy that acts: the compiled one in `enforce`, the earlier composition in `shadow`.
 	 * Both are computed when they can be, and a difference is recorded with what explains it.
 	 */
-	private policyFor(subject: SubjectKey, mode: PolicyAuthorityMode, decision: ILaunchDecision, input: ILaunchCompileInput): IVoltSandboxPolicy {
+	private policyFor(subject: SubjectKey, mode: PolicyAuthorityMode, decision: ILaunchDecision, input: ILaunchCompileInput, files: ISandboxPolicyFileLayers): Pick<ISandboxComposition, 'policy' | 'ignored' | 'contained'> {
 		const compiled = decision.allow ? this.cache.compile(decision, input) : undefined;
 		if (compiled) {
 			this.compiles.push(launchCompileRecord(compiled, input));
@@ -491,11 +511,36 @@ export class VoltSandboxLauncher extends Disposable {
 				this.compiles.shift();
 			}
 		}
-		const legacy = agentSandboxPolicy(input.request, input.host);
-		if (compiled && launchPolicyBytes(compiled.policy) !== launchPolicyBytes(legacy)) {
+		// The policy files apply in both modes: they are the user's and the repository's, not the Authority's.
+		const legacy = composeLaunchLayers(agentSandboxPolicy(input.request, input.host), files.layers, files.realpaths);
+		if (compiled && launchPolicyBytes(compiled.policy) !== launchPolicyBytes(legacy.policy)) {
 			this.recordDiff({ subject, mode, kind: 'policy', decision, ignored: compiled.ignored });
 		}
-		return mode === 'enforce' && compiled ? compiled.policy : legacy;
+		return mode === 'enforce' && compiled ? compiled : legacy;
+	}
+
+	/** A launch's compile input: the policy files' layers first, then the launcher's own narrowing layers (never trusted). */
+	private compileInput(subject: SubjectKey, epoch: number, request: IVoltSandboxRequest, host: IAgentSandboxHost, files: ISandboxPolicyFileLayers): ILaunchCompileInput {
+		const layers = [...files.layers, ...this.layers.map(layer => ({ ...layer, trusted: false }))];
+		return { subject, epoch, request, host, ...layers.length ? { layers } : {}, ...files.realpaths ? { realpaths: files.realpaths } : {} };
+	}
+
+	private async readPolicyFiles(request: IVoltSandboxRequest, host: Omit<IAgentSandboxHost, 'sshAuthSock'>): Promise<ISandboxPolicyFileLayers> {
+		return this.policyFiles.read(host.home, request.workspaceRoots, await this.adminPolicy());
+	}
+
+	/**
+	 * What the policy files do to a chat with `request` (its Access menu): the files, what was ignored
+	 * from them, and the refusal a broken user file causes. Read and composed as a launch would.
+	 */
+	async policyFilesInfo(request: IVoltSandboxRequest): Promise<ISandboxPolicyFilesInfo> {
+		const host = await this.hostFacts();
+		const files = await this.readPolicyFiles(request, host);
+		if (files.refusal) {
+			return { files: files.files, ignored: files.ignored, refusal: files.refusal };
+		}
+		const { ignored } = composeLaunchLayers(agentSandboxPolicy(request, { ...host, cacheDir: join(host.cacheDir, sandboxCacheKey(request)) }), files.layers, files.realpaths);
+		return { files: files.files, ignored: [...files.ignored, ...ignored] };
 	}
 
 	private recordDiff(diff: Omit<ILaunchShadowDiff, 'at'>): void {
@@ -581,14 +626,15 @@ export class VoltSandboxLauncher extends Disposable {
 		return this.admin;
 	}
 
-	private launch(prepared: IPreparedSandbox, overlay: AgentStateOverlay | undefined, policy: IVoltSandboxPolicy, principal: IPrincipal): ISandboxLaunch {
+	private launch(prepared: IPreparedSandbox, overlay: AgentStateOverlay | undefined, policy: IVoltSandboxPolicy, principal: IPrincipal, notices: readonly string[]): ISandboxLaunch {
 		const listener = prepared.onDenial(denial => {
 			if (denial.kind === 'process' || denial.kind === 'limit') {
 				return;
 			}
 			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}), ...(denial.denialId ? { denialId: denial.denialId } : {}), ...(denial.epoch !== undefined ? { epoch: denial.epoch } : {}) });
 		});
-		const warnings = prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`);
+		// The policy files' problems and ignored entries first: they explain the rules this run has.
+		const warnings = [...notices, ...prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`)];
 		if (policy.network.listen) {
 			warnings.push('Sandbox is partial here: with the network on, Linux cannot limit listening to the ports you allowed, so the agent may listen on any port.');
 		}
@@ -692,6 +738,11 @@ export class VoltSandboxLauncher extends Disposable {
 		return this.agentHost;
 	}
 
+}
+
+/** How the transcript names the file an ignored entry came from. */
+function policyFileName(source: ISandboxCompositionNote['source']): string | undefined {
+	return source === 'user' ? '~/.volt/sandbox.json' : source === 'workspace' ? '.volt/sandbox.json' : undefined;
 }
 
 /**

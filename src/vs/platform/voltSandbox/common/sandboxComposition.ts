@@ -11,4 +11,4 @@
 
 export { allowCovers, entryInside } from './authority.js';
 export { composeSandboxPolicy } from './compile.js';
-export type { ISandboxComposition, ISandboxCompositionNote, ISandboxCompositionOptions, ISandboxLayer, SandboxLayerSource } from './compile.js';
+export type { ISandboxComposition, ISandboxCompositionNote, ISandboxCompositionOptions, ISandboxContainedPath, ISandboxLayer, SandboxLayerSource } from './compile.js';

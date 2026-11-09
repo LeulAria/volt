@@ -9,6 +9,7 @@ import { IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPl
 import { createDecorator } from '../../instantiation/common/instantiation.js';
 import type { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGit/common/hostGit.js';
 import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
+import type { ISandboxPolicyFilesInfo } from '../../voltSandbox/common/sandboxPolicyFiles.js';
 import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
 import type { ISandboxWorkloadInfo } from '../../voltSandbox/common/sandboxWorkloads.js';
 import type { SubjectKey } from '../../voltSandbox/common/principals.js';
@@ -302,6 +303,8 @@ export interface IVoltStdioService {
 	sandboxSupport?(): Promise<IVoltSandboxSupportInfo>;
 	/** The managed (admin) policy this execution host enforces; the window's gates judge by it too. */
 	managedPolicy?(): Promise<IAdminPolicy>;
+	/** What `~/.volt/sandbox.json` and the workspace's `.volt/sandbox.json` do to a chat with this sandbox. */
+	sandboxPolicyFiles?(request: IVoltSandboxRequest): Promise<ISandboxPolicyFilesInfo>;
 	/** Lets a sandboxed process (network off) reach more hosts, without a restart. */
 	allowSandboxDomains?(id: string, domains: readonly string[]): Promise<void>;
 	/**

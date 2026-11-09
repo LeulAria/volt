@@ -50,7 +50,7 @@ export const PROTECTED_ROOT_NAMES: readonly string[] = [
 	'.husky', '.githooks', '.pre-commit-config.yaml', 'lefthook.yml', '.lefthook.yml',
 	'.claude/settings.json', '.claude/settings.local.json', '.claude/commands', '.claude/agents', '.claude/hooks',
 	'.cursor/mcp.json', '.cursor/hooks.json', '.cursor/hooks', '.cursor/worktrees.json',
-	'.volt/hooks.json', '.volt/hooks', '.volt/mcp.json', '.volt/worktrees.json', 'volt.json', 't3.json',
+	'.volt/hooks.json', '.volt/hooks', '.volt/mcp.json', '.volt/worktrees.json', '.volt/sandbox.json', 'volt.json', 't3.json',
 	'opencode.json', 'opencode.jsonc', '.opencode',
 	'HEAD', 'objects', 'refs',
 ];
