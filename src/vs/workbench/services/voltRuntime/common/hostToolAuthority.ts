@@ -11,6 +11,7 @@ import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '.
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { FilesAccess, filesPlan, ISandboxPathContext } from '../../../../platform/voltFiles/common/filesBroker.js';
 import { decisionRecord, IAccessRequest, IAdminPolicy, IChatView, IDecision, IDecisionLogRecord, IManifestView, PolicyAuthorityMode, POLICY_AUTHORITY_MODE_SETTING, PolicySnapshot, evaluate } from '../../../../platform/voltSandbox/common/authority.js';
+import { capabilityIdCovers } from '../../../../platform/voltPlugins/common/capabilityCatalog.js';
 import { FLOW_CAPABILITY, IGrant } from '../../../../platform/voltSandbox/common/grants.js';
 import { chatSubject, corePrincipal, extensionSubject, ICallContext, SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
 import { IVoltSandboxSettings, SandboxStrategy } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
@@ -269,7 +270,22 @@ export class HostToolAuthority extends Disposable {
 	}
 
 	private snapshot(chats: readonly IChatView[], manifests: readonly IManifestView[]): PolicySnapshot {
-		return PolicySnapshot.build({ epoch: this.epoch, asOf: this.now(), grants: this.flowGrants, chats, manifests, ...(this.managed ? { admin: this.managed } : {}) });
+		return PolicySnapshot.build({ epoch: this.epoch, asOf: this.now(), grants: this.hostGrants.length ? [...this.flowGrants, ...this.hostGrants] : this.flowGrants, chats, manifests, ...(this.managed ? { admin: this.managed } : {}) });
+	}
+
+	/** Extensions' and plugins' "Allow host" grants (the grant store's, which the network broker applies): where they can send data. */
+	private hostGrants: IGrant[] = [];
+
+	/**
+	 * The grant store's `net.connect` grants of subjects that are not chats: a sandboxed extension's
+	 * tool flows are judged by its declarations plus these (05-limitations #26).
+	 */
+	setStoredHostGrants(grants: readonly IGrant[]): void {
+		const next = grants.filter(grant => !grant.subject.startsWith('chat:') && capabilityIdCovers(grant.capability, 'net.connect')).map(grant => ({ ...grant, epoch: 0 }));
+		if (next.map(grant => grant.id).sort().join('\n') !== this.hostGrants.map(grant => grant.id).sort().join('\n')) {
+			this.epoch++;
+			this.hostGrants = next;
+		}
 	}
 
 	private managed: IAdminPolicy | undefined;

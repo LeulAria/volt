@@ -8,7 +8,7 @@ import { StringSHA1 } from '../../../base/common/hash.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { bareCapability, capabilityClass, capabilityIdCovers, capabilityTargetMatches, VoltCapabilityClass, voltCapabilityClassRank, VOLT_CAPABILITY_CLASSES } from '../../voltPlugins/common/capabilityCatalog.js';
 import { FIRST_PARTY_CEILINGS, IVoltCeilingEntry } from '../../voltPlugins/common/firstPartyCeilings.js';
-import { canonicalJson, FLOW_CAPABILITY, GrantKind, grantCovers, grantValid, hasRefusal, IGrant, IGrantContext, IRefusal, nextGrantExpiry } from './grants.js';
+import { canonicalJson, FLOW_CAPABILITY, GrantKind, grantCovers, grantExpiry, grantValid, hasRefusal, IGrant, IGrantContext, IRefusal, nextGrantExpiry } from './grants.js';
 import { gestureValid, ICallContext, IPrincipal, isChatSubject, isFirstPartySubject, isPluginSubject, MAX_CALL_CHAIN, SubjectKey, subjectChatId, subjectExtensionId } from './principals.js';
 import { classifyAddress } from './networkAddress.js';
 import { isExfilHost, networkEntryWithin, networkRuleCovers, networkRulesCover, normalizeNetworkHost, parseNetworkRule, splitAuthority } from './networkRules.js';
@@ -681,10 +681,20 @@ export type Egress = readonly string[] | typeof ALL;
  * plus where its own flow approvals let it pass data on.
  */
 export function egressOf(snapshot: PolicySnapshot, subject: SubjectKey, context: ICallContext): Egress {
-	const network = networkEgress(snapshot, subject);
-	if (network === ALL) {
+	const declared = networkEgress(snapshot, subject);
+	if (declared === ALL) {
 		return ALL;
 	}
+	// A plugin or extension behind the broker also reaches what the user let it reach ("Allow host":
+	// its `net.connect` grants, the ones the broker adds). Counted while not revoked or expired,
+	// whatever their session: more egress only makes a flow to it stricter.
+	const hostGrants = isChatSubject(subject) ? [] : snapshot.grants(subject)
+		.filter(grant => !grant.revoked && capabilityIdCovers(grant.capability, 'net.connect') && (grantExpiry(grant) ?? Infinity) > snapshot.asOf)
+		.flatMap(grant => grant.scope.targets ?? ['*']);
+	if (hostGrants.includes('*')) {
+		return ALL;
+	}
+	const network = hostGrants.length ? unionEgress(declared, hostGrants.map(host => host.toLowerCase())) : declared;
 	// The subjects it may pass data to are part of its egress (G.6), as subject keys: a host pattern never matches one.
 	const grantCtx = approvalContext(snapshot, subject, context);
 	const subjects = snapshot.grants(subject).filter(grant => grant.capability === FLOW_CAPABILITY && grantValid(grant, grantCtx)).flatMap(grant => grant.scope.targets ?? []);

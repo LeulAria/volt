@@ -13,6 +13,7 @@ import { ICommandService } from '../../../../../platform/commands/common/command
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { HOST_MCP_TOKEN_TTL_MS, hostMcpSessionToken, parseHostMcpSessionToken } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
 import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
+import { extensionSubject } from '../../../../../platform/voltSandbox/common/principals.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { VoltHostToolService } from '../../browser/host/hostToolService.js';
@@ -636,6 +637,28 @@ suite('Volt host tool service', () => {
 		assert.ok((await second.invokeTool('linear_sync', {}, offline)).error, 'gone when revoked');
 		first.setApprover(undefined);
 		second.setApprover(undefined);
+	});
+
+	test('PERM-FLOW-2: a sandboxed extension\'s tool flows are judged by its declared hosts plus the "Allow host" grants in the grant store (05-limitations #26)', async () => {
+		const { service } = setup();
+		const owner: IVoltHostToolOwner = { extensionId: 'acme.linear', label: 'Linear', firstParty: false, sandboxed: true, toolClass: 'network', declared: [{ id: 'tools.register' }, { id: 'net.connect', targets: ['api.linear.app'] }] };
+		store.add(service.registerToolProvider({ tools: [{ name: 'linear_sync', title: 'Synced', description: '', inputSchema: {} }], invoke: async () => ({ text: 'ran' }), owner }));
+		const chat = { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, allowedDomains: ['api.linear.app'] } };
+		const sync = () => service.invokeTool('linear_sync', {}, chat);
+		assert.strictEqual((await sync()).text, 'ran', 'its declared host is one the chat reaches');
+
+		// The user allowed it another host (the broker's session grant of its host process).
+		const allowHost: IGrant = { id: 'g-host', subject: extensionSubject('acme.linear', false), capability: 'net.connect@1', scope: { targets: ['paste.evil.com'] }, kind: 'session', sessionId: 'p:t3-run', source: 'user', grantedAt: 1, lastUsedAt: 1, epoch: 4 };
+		const asked: IVoltHostFlowApproval[] = [];
+		service.setApprover({ approve: async () => false, approveFlow: async request => { asked.push(request); return undefined; } });
+		service.setStoredHostGrants([allowHost, { ...allowHost, id: 'g-chat', subject: 'chat:s1', scope: { targets: ['other.com'] } }]);
+		assert.ok((await sync()).error, 'it can now send what it is given to paste.evil.com');
+		assert.deepStrictEqual(asked.map(request => request.hosts), [['paste.evil.com']], 'the card names the granted host the chat does not reach');
+		// Revoked on the Access page: the store no longer has it.
+		service.setStoredHostGrants([]);
+		assert.strictEqual((await sync()).text, 'ran');
+		assert.strictEqual(asked.length, 1);
+		service.setApprover(undefined);
 	});
 
 	test('PERM-FLOW-1: an extension tool whose class the gate can\'t judge without its arguments stays refused in a sandboxed chat', async () => {

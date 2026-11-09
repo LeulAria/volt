@@ -446,6 +446,10 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		this.authority.setStoredFlowGrants(grants);
 	}
 
+	setStoredHostGrants(grants: readonly IGrant[]): void {
+		this.authority.setStoredHostGrants(grants);
+	}
+
 	/** Where the chat may work (its folder as named and resolved through symlinks), and the machine facts the rules need. */
 	private async sandboxContext(call: IVoltHostToolCall): Promise<ISandboxPathContext> {
 		const named = [...new Set([call.sessionId ? this.sandboxes?.folder(call.sessionId) : undefined, call.cwd].filter((folder): folder is string => !!folder && isAbsolute(folder)))];
