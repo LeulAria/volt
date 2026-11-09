@@ -24,7 +24,7 @@ import { TestConfigurationService } from '../../../configuration/test/common/tes
 import { NullLogService } from '../../../log/common/log.js';
 import { IVoltSandboxRequest } from '../../../voltSandbox/common/sandboxPolicy.js';
 import { VoltSandboxLauncher } from '../../../voltSandbox/node/sandboxLauncher.js';
-import { ptyLauncherScript, PTY_GATE_SCRIPT } from '../../../voltSandbox/node/sandboxPty.js';
+import { ptyLauncherScript, PTY_ECHO_OFF, PTY_GATE_SCRIPT } from '../../../voltSandbox/node/sandboxPty.js';
 import { realSandboxAvailable } from '../../../voltSandbox/test/node/sandboxSuiteGate.js';
 import { execRefusal, IVoltExecContext, IVoltExecRequest, VoltExecRefusedError } from '../../common/voltStdio.js';
 import { VoltStdioService } from '../../node/voltStdioService.js';
@@ -50,8 +50,10 @@ suite('Volt exec context (B-04, B-06)', () => {
 	});
 
 	test('the PTY launcher text depends only on the channels, and opens them in their directions', () => {
-		assert.strictEqual(ptyLauncherScript(['out']), 'exec 3>"$1" || exit 125\nshift 1\nexec "$@"');
-		assert.strictEqual(ptyLauncherScript(['out', 'out', 'in', 'in']), 'exec 3>"$1" 4>"$2" 5<"$3" 6<"$4" || exit 125\nshift 4\nexec "$@"');
+		const echoOff = `${PTY_ECHO_OFF}\n`;
+		assert.ok(PTY_ECHO_OFF.startsWith('{ /bin/stty -echo || /usr/bin/stty -echo; } 2>/dev/null\n'), 'echo goes off first, with the system stty');
+		assert.strictEqual(ptyLauncherScript(['out']), `${echoOff}exec 3>"$1" || exit 125\nshift 1\nexec "$@"`);
+		assert.strictEqual(ptyLauncherScript(['out', 'out', 'in', 'in']), `${echoOff}exec 3>"$1" 4>"$2" 5<"$3" 6<"$4" || exit 125\nshift 4\nexec "$@"`);
 		assert.throws(() => ptyLauncherScript([]));
 		assert.ok(!/\$\{|`/.test(PTY_GATE_SCRIPT), 'the gate expands nothing it was not given');
 	});
@@ -204,6 +206,26 @@ suite('Volt exec context against real sandboxes (LIFE-PATH, B-04, F.6)', functio
 		assert.strictEqual(await exists(marker), false, 'no marker in the home folder');
 	});
 
+	test('PTY-ECHO-1: the go line is never echoed: the terminal\'s first output is the command\'s own', async () => {
+		const id = `term-echo-${counter++}`;
+		const { pty, output, exited } = await startTerminal(id, 'echo volt-first-line; echo second');
+		const go = await stdio.confirmSandboxedTerminal(id, pty.pid);
+		// As the window and the agent server do: typed the moment the sandbox is confirmed.
+		pty.write(go);
+		assert.strictEqual(await exited, 0, output());
+		const text = output().replace(/\r/g, '');
+		assert.ok(text.startsWith('volt-first-line\n'), `the first bytes are the command's: ${JSON.stringify(text.slice(0, 80))}`);
+		assert.ok(!text.includes(go.trim()), 'the go line never reaches the output the user and the agent read');
+		// The terminal echoes again for the user once the gate let the shell go.
+		const typed = `term-echo-typed-${counter++}`;
+		const { pty: second, output: secondOutput, exited: secondExited } = await startTerminal(typed, 'read line; echo "got:$line"');
+		second.write(await stdio.confirmSandboxedTerminal(typed, second.pid));
+		await new Promise(resolve => setTimeout(resolve, 300));
+		second.write('volt-typed\r');
+		assert.strictEqual(await secondExited, 0, secondOutput());
+		assert.ok(secondOutput().replace(/\r/g, '').includes('volt-typed\ngot:volt-typed'), `echo is back on: ${JSON.stringify(secondOutput())}`);
+	});
+
 	test('F.6: a terminal whose go line never comes, or is wrong, runs nothing', async () => {
 		const inside = join(ws, `gate-${counter++}`);
 		const id = `term-gate-${counter++}`;
@@ -220,7 +242,8 @@ suite('Volt exec context against real sandboxes (LIFE-PATH, B-04, F.6)', functio
 	test('F.6: a process that is not the launcher Volt prepared is not confirmed', async () => {
 		const id = `term-forged-${counter++}`;
 		const launch = await stdio.prepareSandboxedTerminal({ id, file: '/bin/sh', args: ['-c', 'true'], cwd: ws, env: {}, sandbox: chatSandbox(), context: chat(true, 'terminal') });
-		const [fifo3, fifo4] = [launch.args[3], launch.args[4]];
+		// After the script, its name and the gate's mark file.
+		const [fifo3, fifo4] = [launch.args[4], launch.args[5]];
 		// Something else writes plausible evidence into the channels: no bubblewrap or Seatbelt, no sandbox.
 		const forgery = process.platform === 'linux'
 			? `printf 'NoNewPrivs:1 Seccomp:2\\n' > ${quote(fifo3)}; printf '{"child-pid": %s}\\n' "$$" > ${quote(fifo4)}; sleep 30`

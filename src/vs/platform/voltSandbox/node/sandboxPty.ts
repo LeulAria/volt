@@ -30,14 +30,33 @@ const execFileAsync = promisify(execFile);
  * nothing else to the PTY before the go line.
  */
 
+/** The file the gate makes in the run's temp folder once it has read the go line (see the launcher's watcher). */
+const PTY_GO_MARK = '.volt-pty-go';
+
 /** Runs inside the sandbox, first: waits for the go line, then becomes the workload. */
 export const PTY_GATE_SCRIPT = [
 	'stty -echo 2>/dev/null',
 	'IFS= read -r go',
 	'stty echo 2>/dev/null',
+	// The launcher's watcher turns echo back on outside the sandbox when this appears: Seatbelt
+	// denies a run every ioctl on a terminal device, its own PTY included, so `stty` fails in here.
+	`: > "$TMPDIR/${PTY_GO_MARK}" 2>/dev/null`,
 	'[ -n "$VOLT_PTY_GO" ] && [ "$go" = "$VOLT_PTY_GO" ] || { printf "volt: the sandbox was not confirmed, so nothing ran\\n" >&2; exit 125; }',
 	'unset VOLT_PTY_GO',
 	'exec "$@"',
+].join('\n');
+
+/**
+ * The launcher's first lines, outside the sandbox: the system's `stty` (never one found on PATH)
+ * turns the PTY's echo off, and a watcher turns it back on once the gate inside has read the go
+ * line (its mark file, `$1`, appears), or after 30 s, through `/dev/tty` (a background list's
+ * stdin is `/dev/null`). It holds none of the channels (it starts before they are opened) and is
+ * a child of the run's root, so the run's kill takes it too.
+ */
+export const PTY_ECHO_OFF = [
+	'{ /bin/stty -echo || /usr/bin/stty -echo; } 2>/dev/null',
+	'( n=0; while [ ! -e "$1" ] && [ $n -lt 600 ]; do /bin/sleep 0.05; n=$((n+1)); done; { /bin/stty echo || /usr/bin/stty echo; } </dev/tty 2>/dev/null ) &',
+	'shift 1',
 ].join('\n');
 
 /** `$0` of the gate, shown by `ps` until the workload execs. */
@@ -48,9 +67,10 @@ const PTY_LAUNCHER_ARGV0 = 'volt-sandbox-pty';
 const CONFIRM_LIMIT_MS = 20_000;
 
 /**
- * The launcher, run on the PTY as the user before the sandbox exists: opens the FIFOs (given as its
- * first arguments) as fds 3.. in the backend's directions, then execs the backend's command. The
- * text depends only on the number and direction of the channels, never on a path or a command.
+ * The launcher, run on the PTY as the user before the sandbox exists: turns echo off until the go
+ * line is read (its first argument is the gate's mark file), opens the FIFOs (the next arguments)
+ * as fds 3.. in the backend's directions, then execs the backend's command. The text depends only
+ * on the number and direction of the channels, never on a path or a command.
  */
 export function ptyLauncherScript(directions: readonly ('in' | 'out')[]): string {
 	if (!directions.length || directions.length > 9) {
@@ -58,7 +78,10 @@ export function ptyLauncherScript(directions: readonly ('in' | 'out')[]): string
 	}
 	// `out`: the sandbox writes, so the launcher opens it for writing; `in`: Volt writes it.
 	const opens = directions.map((direction, index) => `${3 + index}${direction === 'out' ? '>' : '<'}"$${index + 1}"`).join(' ');
-	return `exec ${opens} || exit 125\nshift ${directions.length}\nexec "$@"`;
+	// Echo goes off before anything else (PTY-ECHO-1): Volt types the go line the moment the sandbox
+	// is confirmed, which can be before the gate inside it has run, and the terminal would echo the
+	// line into the output the user and the agent read. The watcher turns echo back on once the gate read it.
+	return `${PTY_ECHO_OFF}\nexec ${opens} || exit 125\nshift ${directions.length}\nexec "$@"`;
 }
 
 /** Where `mkfifo` lives: the system's, never one found on PATH. */
@@ -198,9 +221,11 @@ export class SandboxedPtySession {
 					throw new Error('a control channel of the terminal is not the FIFO Volt made');
 				}
 			}
+			// Where the gate marks the go line read: its temp folder as the sandbox sees it, outside too.
+			const mark = join(sandbox.env.TMPDIR || sandbox.policy.tmp, PTY_GO_MARK);
 			const launch: ISandboxedPtyLaunch = {
 				file: '/bin/sh',
-				args: ['-c', ptyLauncherScript(directions), PTY_LAUNCHER_ARGV0, ...paths, sandbox.command, ...sandbox.args],
+				args: ['-c', ptyLauncherScript(directions), PTY_LAUNCHER_ARGV0, mark, ...paths, sandbox.command, ...sandbox.args],
 				env: { ...sandbox.env },
 				cwd: sandbox.cwd,
 			};

@@ -150,7 +150,8 @@ suite('Volt sandbox PTY launch (F.6)', function () {
 	// what the prologue would write proves nothing.
 	test('evidence written into the channels by something else is not accepted', async () => {
 		const session = await SandboxedPtySession.prepare(launcher, '/bin/sh', ['-c', 'true'], request(), { cwd: ws, hostEnv: { PATH: '/usr/bin:/bin', HOME: homedir() } });
-		const [fifo3, fifo4] = [session.launch.args[3], session.launch.args[4]];
+		// After the script, its name and the gate's mark file.
+		const [fifo3, fifo4] = [session.launch.args[4], session.launch.args[5]];
 		const forgery = process.platform === 'linux'
 			? `printf 'NoNewPrivs:1 Seccomp:2\\n' > ${quote(fifo3)}; printf '{"child-pid": %s}\\n' "$$" > ${quote(fifo4)}; sleep 30`
 			: `printf 'volt-sandbox-ready %s cred=denied\\n' "$$" > ${quote(fifo3)}; sleep 30`;
