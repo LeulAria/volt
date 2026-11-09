@@ -314,15 +314,17 @@ export class AgentServerLauncher {
 	 * P6: a one-time ticket the desktop's sandboxed extension host connects to the workbench server
 	 * with, plus where to connect. Made with the server's own token over loopback, like a sign-in link.
 	 */
-	async createExtensionHostTicket(): Promise<IVoltExtensionHostTicket & { readonly port: number }> {
+	async createExtensionHostTicket(extensionsDir?: string): Promise<IVoltExtensionHostTicket & { readonly port: number }> {
 		const info = await this.ensureRunning().then(() => this.healthy());
 		const token = await readAgentServerToken(this.paths);
 		if (!info || !token) {
 			throw new Error('The Volt agent server is not running.');
 		}
 		const host = info.host === 'localhost' ? 'localhost' : '127.0.0.1';
+		// The app's own extension folder: an extension installed the normal way is found there (P6).
+		const body = extensionsDir ? JSON.stringify({ extensionsDir }) : '';
 		const ticket = await new Promise<IVoltExtensionHostTicket>((resolve, reject) => {
-			const req = http.request(`http://${host}:${info.port}${VOLT_EXTHOST_TICKET_PATH}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }, timeout: 5_000 }, res => {
+			const req = http.request(`http://${host}:${info.port}${VOLT_EXTHOST_TICKET_PATH}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)) }, timeout: 5_000 }, res => {
 				let body = '';
 				res.setEncoding('utf8');
 				res.on('data', chunk => body += chunk);
@@ -341,7 +343,7 @@ export class AgentServerLauncher {
 			});
 			req.on('error', reject);
 			req.on('timeout', () => req.destroy(new Error('The Volt agent server did not answer.')));
-			req.end();
+			req.end(body);
 		});
 		return { ...ticket, port: info.port };
 	}

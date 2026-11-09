@@ -87,6 +87,47 @@ suite('Volt agent server: sandboxed extension hosts (P2, P6)', () => {
 		assert.deepStrictEqual(await sandbox.start({ ...params, extensionId: 'pub.missing' }, options), { ok: false, code: 'unknown', reason: 'pub.missing is not installed where Volt\'s server runs extensions.' });
 	});
 
+	test('P6-LOCAL-1: on the desktop, an extension installed the normal way (the app\'s own folder, named with the ticket) runs sandboxed: the window\'s version, never one marked obsolete', async () => {
+		const serverDir = join(root, 'server-extensions');
+		const desktopDir = join(root, 'desktop-extensions');
+		await fs.mkdir(serverDir, { recursive: true });
+		await install(desktopDir, 'vsbx.probe-0.0.1', { publisher: 'vsbx', name: 'probe', version: '0.0.1', main: './extension.js' });
+		const current = await install(desktopDir, 'vsbx.probe-0.0.2', { publisher: 'vsbx', name: 'probe', version: '0.0.2', main: './extension.js' });
+		await install(desktopDir, 'vsbx.probe-0.0.3', { publisher: 'vsbx', name: 'probe', version: '0.0.3', main: './extension.js' });
+		await fs.writeFile(join(desktopDir, '.obsolete'), JSON.stringify({ 'vsbx.probe-0.0.3': true }));
+		const requests: ISandboxedExtensionHostRequest[] = [];
+		const hosts = new class extends SandboxedExtensionHosts {
+			override async start(request: ISandboxedExtensionHostRequest): Promise<SandboxedExtensionHostResult> {
+				requests.push(request);
+				return { ok: false, code: 'launch', reason: 'test' };
+			}
+		}(undefined!, undefined!);
+		const options: IVoltExtensionHostSandboxStartOptions = {
+			hostEnv: {}, args: [],
+			dirs: { extensions: serverDir, builtinExtensions: join(root, 'none'), globalStorage: '/data/User/globalStorage', workspaceStorage: '/data/User/workspaceStorage', logs: '/data/logs/1' },
+		};
+		const params: IVoltSandboxedHostStartParams = { extensionId: 'vsbx.probe', transformURIs: false, workspaceTrusted: true, workspaceRoots: [] };
+		// Without the desktop's folder: refused, as before (the live bug: never installed on the server).
+		const serverOnly = new ServerExtensionSandbox(() => hosts, { bootstrapFork: '/b.js', home: '/home/u' }, new NullLogService());
+		assert.strictEqual((await serverOnly.start(params, options) as { code: string }).code, 'unknown');
+		const desktop = new ServerExtensionSandbox(() => hosts, { bootstrapFork: '/b.js', home: '/home/u', localExtensionDirs: () => [desktopDir] }, new NullLogService());
+		await desktop.start({ ...params, version: '0.0.2' }, options);
+		assert.strictEqual(requests[0].extension.location, current, 'the version the window runs');
+		await desktop.start(params, options);
+		assert.strictEqual(requests[1].extension.location, current, 'the newest that is not obsolete');
+		assert.strictEqual(requests[1].extension.builtin, false);
+
+		// The folder comes with a ticket only (the server's token); a relative or missing one is ignored.
+		const workbench = store.add(new ServerWorkbench({
+			userDataDir: root, serverDir: join(root, 'agentServer'), label: 'test', environmentId: () => 'e', authorize: () => undefined,
+			resolveEnv: async () => ({}), git: undefined!, sendFile: async () => false,
+		}, new TestConfigurationService(), new NullLogService()));
+		await workbench.issueExtensionHostTicket('relative/dir');
+		await workbench.issueExtensionHostTicket(join(root, 'missing'));
+		await workbench.issueExtensionHostTicket(desktopDir);
+		assert.deepStrictEqual((workbench as unknown as { localExtensionsDirs: Set<string> }).localExtensionsDirs, new Set([desktopDir]));
+	});
+
 	test('T3-SRV-3: a sandboxed start needs an extension id and a server that runs sandboxed hosts; URIs map only for a browser window', async () => {
 		const env = { extensionsPath: '/x', builtinExtensionsPath: '/y', userRoamingDataHome: { fsPath: '/data/User' }, workspaceStorageHome: { fsPath: '/data/User/workspaceStorage' }, logsHome: { fsPath: '/data/logs' }, userDataPath: root, appRoot: root, isBuilt: false, args: { 'without-browser-env-var': true } } as unknown as IServerEnvironmentService;
 		const accessor = { environmentService: env, logService: new NullLogService(), configurationService: new TestConfigurationService(), userEnvironment: async () => ({ PATH: '/usr/bin' }) };

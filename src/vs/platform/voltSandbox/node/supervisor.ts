@@ -136,6 +136,8 @@ export interface ISandboxedHost {
 	/** The process Volt spawned (the sandbox's root), while one runs. */
 	readonly pid: number | undefined;
 	readonly restarts: number;
+	/** Its process exited and the supervisor is handling that exit (closing its channel revokes its principal then). */
+	readonly exiting?: boolean;
 	readonly lastResources: ISandboxResourceSample | undefined;
 	readonly onDidChangeState: Event<SandboxWorkloadState>;
 	readonly onExit: Event<IHostExit>;
@@ -509,9 +511,15 @@ class SandboxHost implements ISandboxedHost {
 	private _lastResources: ISandboxResourceSample | undefined;
 	private detail: string | undefined;
 	private disposed = false;
+	/** Its process has exited and the exit is being handled: it is not a host anyone can stop now. */
+	private _exiting = false;
 	readonly startedAt = Date.now();
 	lastActivity = Date.now();
 	tag: string | undefined;
+
+	get exiting(): boolean {
+		return this._exiting;
+	}
 
 	private readonly _onDidChangeState = new Emitter<SandboxWorkloadState>();
 	readonly onDidChangeState = this._onDidChangeState.event;
@@ -600,6 +608,7 @@ class SandboxHost implements ISandboxedHost {
 
 	/** One launch: policy, prepare, spawn, attest, go. Undefined when it runs; else why it refused. */
 	async launch(): Promise<{ refused: SandboxHostRefusal; reason: string } | undefined> {
+		this._exiting = false;
 		this.setState('launching');
 		this.released = false;
 		this.stdoutBuffer = [];
@@ -790,6 +799,7 @@ class SandboxHost implements ISandboxedHost {
 
 	private async onChildExit(child: ChildProcess, prepared: IPreparedSandbox, code: number | null, signal: NodeJS.Signals | null): Promise<void> {
 		clearTimeout(this.idleTimer);
+		this._exiting = true;
 		const wasRunning = this._state === 'running' || this._state === 'idle' || this._state === 'stopping';
 		// Nothing the host started may outlive it.
 		await prepared.terminate(child).catch(() => undefined);

@@ -119,8 +119,9 @@ suite('Volt extension API (vscode.volt)', () => {
 	});
 
 	/** One extension host running `hosted`, over a renderer that knows `extensions`. */
-	function host(extensions: IExtensionDescription[], hosted: readonly string[]) {
-		const rpc = store.add(new TestRPCProtocol());
+	function host(extensions: IExtensionDescription[], hosted: readonly string[], options: { sandboxed?: boolean } = {}) {
+		// `sandboxed`: the host runs its extension in the OS sandbox (fixed by the host manager from its running location).
+		const rpc = Object.assign(store.add(new TestRPCProtocol()), { voltSandboxed: !!options.sandboxed });
 		rpc.hostsExtension = id => hosted.some(own => ExtensionIdentifier.equals(own, typeof id === 'string' ? id : id.value));
 
 		const providers = new Set<IVoltHostToolProvider>();
@@ -363,6 +364,18 @@ suite('Volt extension API (vscode.volt)', () => {
 		assert.strictEqual((await refusal(volt.tools.invokeTool('rename_branch', { name: 'x' }))).deniedBy, 'critical');
 		assert.strictEqual((await refusal(volt.tools.invokeTool('acme_private_tool', {}))).deniedBy, 'critical');
 		assert.ok(!h.invoked.some(call => call.name === 'rename_branch' || call.name === 'acme_private_tool'));
+	});
+
+	test('PERM-FLOW-2: a tool served from a sandboxed extension host is owned as sandboxed (its declared hosts and grants are its egress); from a normal host it reaches everything', async () => {
+		for (const sandboxed of [true, false]) {
+			const h = host([acme()], ['acme.notes'], { sandboxed });
+			h.grant('acme.notes', 'agents.send');
+			const registration = h.voltFor('acme.notes').tools.registerTool('notes_search', () => ({ text: 'x' }));
+			await h.rpc.sync();
+			const owner = [...h.providers].find(provider => provider.tools.some(tool => tool.name === 'notes_search'))?.owner;
+			assert.deepStrictEqual([owner?.extensionId, owner?.firstParty, !!owner?.sandboxed], ['acme.notes', false, sandboxed]);
+			registration.dispose();
+		}
 	});
 
 	test('EXT-RT-storage+settings: own storage and own settings', async () => {

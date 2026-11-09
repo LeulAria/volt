@@ -92,6 +92,8 @@ export function extensionSandboxTier(settings: IExtensionSandboxSettings, extens
  */
 export interface IVoltSandboxedHostStartParams {
 	readonly extensionId: string;
+	/** The version the window runs: the server runs that installed copy when it has it (else its newest). */
+	readonly version?: string;
 	/** A browser workbench (`/code/`): the host maps URIs as VS Code's remote host does. The desktop (P6): it uses the desktop's own `file:` URIs (same machine). */
 	readonly transformURIs: boolean;
 	readonly workspaceTrusted: boolean;

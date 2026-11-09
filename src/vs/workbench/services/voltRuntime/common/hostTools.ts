@@ -228,6 +228,8 @@ export interface IVoltHostSandboxResolver {
 	folder(sessionId: string): string | undefined;
 	/** How the chat's agent is sandboxed (its provider's strategy at its level); unknown: `wrap`. */
 	strategy?(sessionId: string): SandboxStrategy | undefined;
+	/** Whether `chatId` is the calling chat (by any of its session ids) or one of its subagents or side chats, at any depth. */
+	inSubtree?(sessionId: string, chatId: string): boolean;
 }
 
 /** Who an outside agent is, from the grant the user approved. */
@@ -1136,6 +1138,8 @@ export interface IVoltHostToolService {
 	setFlowGrantStore?(store: IVoltFlowGrantStore | undefined): void;
 	/** The grant store's flow approvals (its session grants of chats), after any change to it. */
 	setStoredFlowGrants?(grants: readonly IGrant[]): void;
+	/** The grant store's "Allow host" grants of extensions and plugins (what the network broker lets them reach), after any change. */
+	setStoredHostGrants?(grants: readonly IGrant[]): void;
 }
 
 export interface IVoltFlowGrantStore {

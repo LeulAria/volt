@@ -417,7 +417,7 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 		};
 	}
 
-	createContext(extension: IExtensionDescription, subscriptions: DisposableStore): IVoltPluginContext {
+	createContext(extension: IExtensionDescription, subscriptions: DisposableStore, options?: { readonly sandboxed?: boolean }): IVoltPluginContext {
 		const manifest = voltManifestOf(extension);
 		const firstParty = isFirstPartyExtension(extension);
 		const contributes = manifest.contributes ?? {};
@@ -436,6 +436,7 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 			firstParty,
 			capabilities: contributes.voltCapabilities ?? {},
 			ownSettings: ownSettingsOf(extension),
+			...(options?.sandboxed ? { sandboxed: true } : {}),
 		};
 		return Object.freeze({
 			extensionId: principal.extensionId,

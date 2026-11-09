@@ -31,9 +31,10 @@ export function voltSandboxedExtension(runningLocations: ExtensionRunningLocatio
 }
 
 /** What the server is asked for: the extension, URI mapping, and the workspace and its trust as this window knows them. */
-export function voltSandboxParams(extensionId: string, transformURIs: boolean, contextService: IWorkspaceContextService, trustService: IWorkspaceTrustManagementService): IVoltSandboxedHostStartParams {
+export function voltSandboxParams(extensionId: string, transformURIs: boolean, contextService: IWorkspaceContextService, trustService: IWorkspaceTrustManagementService, version?: string): IVoltSandboxedHostStartParams {
 	return {
 		extensionId,
+		...(version ? { version } : {}),
 		transformURIs,
 		workspaceTrusted: trustService.isWorkspaceTrusted(),
 		workspaceRoots: contextService.getWorkspace().folders.map(folder => folder.uri.path),
@@ -86,7 +87,7 @@ export function voltSandboxedRemoteDataProvider(
 					throw new Error('A sandboxed extension host holds exactly one extension.');
 				}
 				extensionId = extension.identifier.value;
-				return voltSandboxParams(extensionId, transformURIs, services.context, services.trust);
+				return voltSandboxParams(extensionId, transformURIs, services.context, services.trust, extension.version);
 			},
 			report: state => extensionId && services.sandbox.report(extensionId, state),
 		},

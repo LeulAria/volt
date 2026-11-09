@@ -13,7 +13,7 @@ import { Event } from '../../../base/common/event.js';
 import { parse as parseJsonc } from '../../../base/common/json.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
 import { FileAccess } from '../../../base/common/network.js';
-import { dirname, join, normalize, sep } from '../../../base/common/path.js';
+import { dirname, isAbsolute, join, normalize, sep } from '../../../base/common/path.js';
 import { IServerChannel, ProxyChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { IConfigurationService } from '../../../platform/configuration/common/configuration.js';
 import { parseArgs } from '../../../platform/environment/node/argv.js';
@@ -188,7 +188,10 @@ export class ServerWorkbench extends Disposable {
 	 * P6: a single-use ticket (a minute) the desktop app's sandboxed extension hosts connect with,
 	 * in place of a browser's session cookie. Only the server's own token gets one (agentServerMain).
 	 */
-	async issueExtensionHostTicket(): Promise<IVoltExtensionHostTicket> {
+	async issueExtensionHostTicket(extensionsDir?: string): Promise<IVoltExtensionHostTicket> {
+		if (extensionsDir) {
+			await this.addLocalExtensionsDir(extensionsDir);
+		}
 		const now = Date.now();
 		for (const [ticket, expiresAt] of this.tickets) {
 			if (expiresAt <= now) {
@@ -202,6 +205,23 @@ export class ServerWorkbench extends Disposable {
 	}
 
 	private readonly tickets = new Map<string, number>();
+
+	/**
+	 * P6: extension folders of desktop apps on this computer (their main process names its own when
+	 * it asks for a ticket, with the server's token). Their opted-in extensions are found there: the
+	 * host's policy reads only that one extension's folder. An absolute, existing folder, by its real path.
+	 */
+	private readonly localExtensionsDirs = new Set<string>();
+
+	private async addLocalExtensionsDir(dir: string): Promise<void> {
+		if (!isAbsolute(dir) || this.localExtensionsDirs.size >= 8) {
+			return;
+		}
+		const real = await fs.realpath(dir).catch(() => undefined);
+		if (real && (await fs.stat(real).catch(() => undefined))?.isDirectory()) {
+			this.localExtensionsDirs.add(real);
+		}
+	}
 
 	private consumeTicket(ticket: string): boolean {
 		const expiresAt = this.tickets.get(ticket);
@@ -402,7 +422,7 @@ export class ServerWorkbench extends Disposable {
 			registerChannels: socketServer => this.registerChannels(socketServer),
 			webConfiguration: req => this.webConfiguration(req),
 			// P2/P6: opted-in extensions run alone in sandboxed hosts, under the same supervisor as this server's other hosts.
-			extensionHostSandbox: new ServerExtensionSandbox(() => this.stdio().sandboxedExtensionHosts(), { bootstrapFork: FileAccess.asFileUri('bootstrap-fork').fsPath, home: homedir() }, this.logService),
+			extensionHostSandbox: new ServerExtensionSandbox(() => this.stdio().sandboxedExtensionHosts(), { bootstrapFork: FileAccess.asFileUri('bootstrap-fork').fsPath, home: homedir(), localExtensionDirs: () => [...this.localExtensionsDirs] }, this.logService),
 		};
 		const server = await createServer(null, args, dataDir, embedder);
 		this._register(toDisposable(() => server.dispose()));

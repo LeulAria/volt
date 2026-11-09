@@ -12,6 +12,7 @@ import { IVoltSandboxSettings, SandboxStrategy, sandboxStrategy } from '../../..
 import { CHAT_SANDBOX_PLATFORM } from '../../../services/voltRuntime/common/access/chatSandbox.js';
 import { IAgentHistoryService } from '../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltHostToolResult, IVoltHostToolService, LEGACY_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
+import { chatInSubtree } from '../../../services/voltRuntime/common/hostToolSandbox.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 
 /**
@@ -57,6 +58,8 @@ export class VoltHostMcpBridge extends Disposable {
 			settings: sessionId => this.sandboxOf(this.runtime.chatFor(sessionId)),
 			folder: sessionId => this.runtime.workingFolder(this.runtime.chatFor(sessionId)),
 			strategy: sessionId => this.strategyOf(this.runtime.chatFor(sessionId)),
+			// A chat's own subtree: its subagents and side chats, by the parent the history records.
+			inSubtree: (sessionId, chatId) => chatInSubtree(this.runtime.chatFor(sessionId), this.runtime.chatFor(chatId), id => this.history.get(id)?.parentId ?? this.history.sessionParent(id)),
 		});
 		this._register(toDisposable(() => {
 			this.hostTools.setSandboxResolver(undefined);

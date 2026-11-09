@@ -162,7 +162,9 @@ export class NativeExtensionService extends AbstractExtensionService implements 
 
 		super._onExtensionHostCrashed(extensionHost, code, signal);
 
-		if (extensionHost.kind === ExtensionHostKind.LocalProcess) {
+		// Volt: a sandboxed extension's host is local to the extension but runs on the agent server; it
+		// restarts alone (super), never with every local extension host.
+		if (extensionHost.kind === ExtensionHostKind.LocalProcess && !this._isVoltSandboxedHost(extensionHost)) {
 			if (code === ExtensionHostExitCode.VersionMismatch) {
 				this._notificationService.prompt(
 					Severity.Error,

@@ -19,6 +19,7 @@ import { IAgentWorktreeSetupService } from '../../../../services/voltRuntime/com
 import { AgentSessionStatus, IAgentHistoryService, IAgentSessionMeta, IAgentSessionTurn } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { matchesHistoryListOptions } from '../../../../services/voltRuntime/common/history/agentHistoryLog.js';
 import { IVoltExternalCaller, IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
+import { chatInSubtree, isSandboxed } from '../../../../services/voltRuntime/common/hostToolSandbox.js';
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchThread, readOrchLimits } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { isTerminalTaskState, titleFromBrief } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
@@ -120,7 +121,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		try {
 			switch (name) {
 				case 'orchestrator_capabilities': return this.capabilities(caller);
-				case 'thread_list': return this.list(caller, args);
+				case 'thread_list': return this.list(caller, args, this.confinedTo(caller, call));
 				case 'thread_search': return await this.search(caller, args);
 				case 'thread_read': return await this.read(caller, args);
 				case 'thread_send': return await this.send(caller, args, token);
@@ -386,7 +387,15 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		return { text: lines.join('\n') };
 	}
 
-	private list(caller: ICaller, args: Record<string, unknown>): IVoltHostToolResult {
+	/** A sandboxed chat sees only itself, its subagents and the side chats started from it (titles and status included). */
+	private confinedTo(caller: ICaller, call: IVoltHostToolCall | undefined): ((id: string) => boolean) | undefined {
+		if (caller.external || !isSandboxed(call?.sandbox)) {
+			return undefined;
+		}
+		return id => chatInSubtree(caller.id, id, child => this.history.get(child)?.parentId ?? this.history.sessionParent(child));
+	}
+
+	private list(caller: ICaller, args: Record<string, unknown>, confined?: (id: string) => boolean): IVoltHostToolResult {
 		const project = this.projectArg(caller, args.project);
 		const includeSubagents = args.include_subagents === true;
 		const statuses = new Set(stringList(args.status, 12));
@@ -401,7 +410,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		const now = Date.now();
 		const lines: IThreadLineInfo[] = [];
 		for (const meta of metas) {
-			if ((meta.subagent && !includeSubagents) || (query && !meta.title.toLowerCase().includes(query))) {
+			if ((meta.subagent && !includeSubagents) || (query && !meta.title.toLowerCase().includes(query)) || (confined && !confined(meta.id))) {
 				continue;
 			}
 			const info = this.lineInfo(meta.id, caller, meta);
@@ -412,7 +421,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		}
 		const page = lines.slice(cursor, cursor + limit);
 		const next = cursor + limit < lines.length ? cursor + limit : undefined;
-		const scope = project === 'all' ? 'every project' : project ? `project ${project.displayName}` : 'every project';
+		const scope = confined ? 'this chat and the chats it started (it runs in Volt\'s sandbox, so other chats are not listed)' : project === 'all' ? 'every project' : project ? `project ${project.displayName}` : 'every project';
 		return {
 			text: [
 				`${lines.length} chat${lines.length === 1 ? '' : 's'} in ${scope}${lines.length > page.length ? ` (showing ${cursor + 1}-${cursor + page.length})` : ''}:`,

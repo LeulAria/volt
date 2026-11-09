@@ -26,7 +26,7 @@ import { ExtensionHostKind, extensionHostKindToString } from './extensionHostKin
 import { IExtensionHostManager } from './extensionHostManagers.js';
 import { IExtensionDescriptionDelta } from './extensionHostProtocol.js';
 import { IExtensionHostProxy, IResolveAuthorityResult } from './extensionHostProxy.js';
-import { ExtensionRunningLocation } from './extensionRunningLocation.js';
+import { ExtensionRunningLocation, isVoltSandboxedRunningLocation } from './extensionRunningLocation.js';
 import { ActivationKind, ExtensionActivationReason, ExtensionHostStartup, IExtensionHost, IExtensionInspectInfo, IInternalExtensionService } from './extensions.js';
 import { Proxied, ProxyIdentifier } from './proxyIdentifier.js';
 import { IRPCProtocolLogger, RPCProtocol, RequestInitiator, ResponsiveState } from './rpcProtocol.js';
@@ -259,6 +259,7 @@ export class ExtensionHostManager extends Disposable implements IExtensionHostMa
 			remoteAuthority: this._extensionHost.remoteAuthority,
 			extensionHostKind: this.kind,
 			hostsExtension: (extensionId: ExtensionIdentifier | string): boolean => this.containsExtension(new ExtensionIdentifier(typeof extensionId === 'string' ? extensionId : extensionId.value)),
+			voltSandboxed: isVoltSandboxedRunningLocation(this._extensionHost.runningLocation),
 			getProxy: <T>(identifier: ProxyIdentifier<T>): Proxied<T> => this._rpcProtocol!.getProxy(identifier),
 			set: <T, R extends T>(identifier: ProxyIdentifier<T>, instance: R): R => this._rpcProtocol!.set(identifier, instance),
 			dispose: (): void => this._rpcProtocol!.dispose(),

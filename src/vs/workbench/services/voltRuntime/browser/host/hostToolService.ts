@@ -20,7 +20,7 @@ import { HOST_MCP_TOKEN_RENEW_MS, hostMcpSessionToken, IHostMcpLease, newHostMcp
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFlowGrantStore, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolOwner, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
-import { hostToolSandboxUse, isSandboxed, ISandboxPathContext, legacyHostToolRefusal, legacySandboxCovers, sandboxBrowserUrlRefusal, sandboxRefusalMessage } from '../../common/hostToolSandbox.js';
+import { hostToolSandboxUse, IHostToolSandboxUse, isSandboxed, ISandboxPathContext, legacyHostToolRefusal, legacySandboxCovers, readTargets, sandboxBrowserUrlRefusal, sandboxRefusalMessage } from '../../common/hostToolSandbox.js';
 import { HostToolAuthority, IGateChat, IPolicyShadowDiff, PolicyAuthorityMode } from '../../common/hostToolAuthority.js';
 import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
 import { chatSubject } from '../../../../../platform/voltSandbox/common/principals.js';
@@ -255,7 +255,7 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		if (!call || !isSandboxed(sandbox)) {
 			return undefined;
 		}
-		const use = hostToolSandboxUse(name, args);
+		const use = this.ownReads(hostToolSandboxUse(name, args), call);
 		const owner = use ? undefined : this.toolOwner(name);
 		if (owner) {
 			return this.checkExtensionTool(name, args, owner, call, sandbox);
@@ -304,6 +304,21 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 			}
 		}
 		return undefined;
+	}
+
+	/**
+	 * A sandboxed chat reads its own thread, its subagents and the side chats started from it (their
+	 * transcripts, waits, queues, checkouts): those reads are its own (`agents.read:current`). Any
+	 * other chat stays `agents.read:other`, which a sandboxed chat is refused.
+	 */
+	private ownReads(use: IHostToolSandboxUse | undefined, call: IVoltHostToolCall): IHostToolSandboxUse | undefined {
+		const caller = call.sessionId;
+		if (use?.kind !== 'reads-other' || use.readsAnyChat || !caller) {
+			return use;
+		}
+		const targets = readTargets(use);
+		const own = (target: string) => target === caller || !!this.sandboxes?.inSubtree?.(caller, target);
+		return targets.length && targets.every(own) ? { kind: 'reads-other' } : use;
 	}
 
 	/** The gate's read rule for one call: an absolute path, through its symlinks, against the chat's sandbox. */
@@ -429,6 +444,10 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 
 	setStoredFlowGrants(grants: readonly IGrant[]): void {
 		this.authority.setStoredFlowGrants(grants);
+	}
+
+	setStoredHostGrants(grants: readonly IGrant[]): void {
+		this.authority.setStoredHostGrants(grants);
 	}
 
 	/** Where the chat may work (its folder as named and resolved through symlinks), and the machine facts the rules need. */

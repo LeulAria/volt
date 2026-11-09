@@ -29,6 +29,7 @@ import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { MemoryBrokerAudit } from '../../../voltSandbox/common/broker.js';
 import { PrincipalRegistry } from '../../../voltSandbox/node/principalRegistry.js';
+import { VoltSandboxLauncher } from '../../../voltSandbox/node/sandboxLauncher.js';
 import { SandboxManager } from '../../../voltSandbox/node/sandboxManager.js';
 import { ISandboxHostFacts, sandboxHostFacts } from '../../../voltSandbox/node/sandboxResolver.js';
 import { SandboxSupervisor } from '../../../voltSandbox/node/supervisor.js';
@@ -122,7 +123,7 @@ suite('Volt T2 plugin host (P1, real sandboxes)', function () {
 		home = join(root, 'home');
 		ws = join(root, 'ws');
 		runRoot = join(home, '.volt', 'sandbox', 'runs');
-		for (const dir of [home, ws, runRoot, join(root, 'bundles')]) {
+		for (const dir of [home, ws, runRoot, join(root, 'bundles'), join(root, 'user-data')]) {
 			await fs.mkdir(dir, { recursive: true });
 		}
 		await fs.writeFile(join(root, 'bundles', 'notes.js'), NOTES_PLUGIN);
@@ -303,6 +304,52 @@ suite('Volt T2 plugin host (P1, real sandboxes)', function () {
 		assert.match((await svc.invokeTool('volt.notes-test', 'echo', { text: 'x' })).error ?? '', /stopped after repeated crashes.*Restart/);
 		await svc.restart('volt.notes-test');
 		assert.deepStrictEqual(await svc.invokeTool('volt.notes-test', 'echo', { text: 'back' }), { text: 'back' });
+	});
+
+	test('T2-HOST-9 / H.6: a call made while the host restarts waits for that restart; it never starts a second host', async () => {
+		const { service: svc, supervisor } = service();
+		store.add(svc.register(notes()));
+		await svc.invokeTool('volt.notes-test', 'echo', { text: 'up' });
+		// A call in flight when the host dies fails at once and says so.
+		const inFlight = svc.invokeTool('volt.notes-test', 'hang', {});
+		await svc.invokeTool('volt.notes-test', 'crash', {});
+		assert.ok(await waitFor(() => svc.status()[0].state === 'restarting', 10_000), JSON.stringify(svc.status()));
+		assert.match((await inFlight).error ?? '', /stopped while it worked on this|did not answer/);
+		// Calls made during the backoff: answered by the restarted host.
+		const during = await Promise.all([1, 2, 3].map(n => svc.invokeTool('volt.notes-test', 'echo', { text: `during ${n}` })));
+		assert.deepStrictEqual(during, [{ text: 'during 1' }, { text: 'during 2' }, { text: 'during 3' }]);
+		assert.strictEqual(supervisor.list().length, 1, 'one host for the plugin, before and after the restart');
+		assert.strictEqual(svc.status()[0].restarts, 1);
+	});
+
+	test('T2-FAIL-1: wired as the execution host wires it (the launcher\'s registry and supervisor), a host that dies before its hello is a crash: the call fails at once with why, restarts stay within the budget, then it is broken with its stderr', async () => {
+		const launcher = new VoltSandboxLauncher(join(root, 'user-data'), { info: () => undefined, warn: () => undefined }, { manager: new SandboxManager(undefined, { runRoot, host }) });
+		store.add({ dispose: () => launcher.dispose() });
+		// SES that can't load: the host exits before it says hello, and never runs anything unlocked.
+		const svc = new VoltPluginHostService({ supervisor: launcher.supervisor, registry: launcher.registry, home, defaultFolders: () => ({ workspace: ws }), sesPath: join(root, 'no-ses-here') });
+		store.add(svc);
+		store.add(svc.register(notes()));
+		const started = Date.now();
+		const first = await svc.invokeTool('volt.notes-test', 'echo', { text: 'x' });
+		assert.match(first.error ?? '', /stopped before it was ready|stopped after repeated crashes/, JSON.stringify(first));
+		assert.ok(Date.now() - started < 10_000, `failed in ${Date.now() - started} ms, not after the hello deadline`);
+		assert.ok(await waitFor(() => svc.status()[0].state === 'broken', 30_000), `a crash loop ends broken, never stopped: ${JSON.stringify(svc.status())}`);
+		const status = svc.status()[0];
+		assert.ok(status.restarts >= 1, `restarted as a crash: ${JSON.stringify(status)}`);
+		assert.match(status.stderr ?? '', /ses|Cannot find module|MODULE_NOT_FOUND|plugin host/i, 'its stderr is kept for its page');
+		assert.match((await svc.invokeTool('volt.notes-test', 'echo', { text: 'x' })).error ?? '', /stopped after repeated crashes/);
+		assert.strictEqual(launcher.supervisor.list().filter(h => h.state === 'running').length, 0, 'nothing runs');
+	});
+
+	test('T2-FAIL-2: the same wiring with its runtime: a note written is read back, and the host stays up', async () => {
+		const launcher = new VoltSandboxLauncher(join(root, 'user-data'), { info: () => undefined, warn: () => undefined }, { manager: new SandboxManager(undefined, { runRoot, host }) });
+		store.add({ dispose: () => launcher.dispose() });
+		const svc = new VoltPluginHostService({ supervisor: launcher.supervisor, registry: launcher.registry, home, defaultFolders: () => ({ workspace: ws }) });
+		store.add(svc);
+		store.add(svc.register(notes('volt.wired-test')));
+		assert.deepStrictEqual(await svc.invokeTool('volt.wired-test', 'note_write', { path: 'n.md', text: 'kept' }), { text: 'saved n.md' });
+		assert.deepStrictEqual(await svc.invokeTool('volt.wired-test', 'note_read', { path: 'n.md' }), { text: 'kept' });
+		assert.deepStrictEqual(svc.status().map(s => [s.state, s.restarts]), [['running', 0]]);
 	});
 
 	test('T2-HOST-7 / H.2: idle hosts stop, and the next call starts them again', async () => {
