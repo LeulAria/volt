@@ -25,6 +25,11 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 				...(event.modelRef !== undefined ? { modelRef: event.modelRef } : {}),
 				...(event.modelLabel !== undefined ? { modelLabel: event.modelLabel } : {}),
 			}));
+		case 'thread.children':
+			return updateThread(state, event.threadId, thread => {
+				const { maxChildren: _maxChildren, ...rest } = thread;
+				return event.maxRunning === undefined ? rest : { ...rest, maxChildren: event.maxRunning };
+			});
 		case 'thread.blocked':
 			return updateThread(state, event.threadId, thread => {
 				const { blocked: _blocked, ...rest } = thread;
@@ -200,8 +205,9 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 					endedAt: event.at,
 					...(event.result !== undefined ? { result: event.result } : {}),
 					...(event.error !== undefined ? { error: event.error } : {}),
-					// Harness subagents report inside the parent's own turn; only Volt tasks wake their parent.
-					delivery: task.source === 'volt' && event.state !== 'cancelled' ? 'pending' : 'none',
+					// Harness subagents report inside the parent's own turn; only Volt tasks wake their parent,
+					// and a quiet one (a council's answers, read by its later stages) does not.
+					delivery: task.source === 'volt' && event.state !== 'cancelled' && !task.quiet ? 'pending' : 'none',
 				};
 			});
 		case 'task.delivery': {
