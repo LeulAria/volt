@@ -20,6 +20,7 @@ import { dataUrlBytes, decodeDataUrl, encodeImage, scaleScreenshot } from '../..
 import { createBrowserTools } from '../../browser/tools/browserTool.js';
 import { BrowserBlockReason, IVoltBrowserAccessService } from '../../common/browserAccess.js';
 import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostFlowApproval, IVoltHostToolApproval, IVoltHostToolCall, IVoltHostToolOwner, IVoltHostToolInvocation, IVoltMcpServer, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
+import { chatInSubtree } from '../../common/hostToolSandbox.js';
 import { VoltMode } from '../../common/modes.js';
 import { createImage, IRgbaImage } from '../../common/tools/imageAnalysis.js';
 
@@ -231,6 +232,31 @@ suite('Volt host tool service', () => {
 		assert.match((await service.invokeTool('thread_search', { query: 'token', project: 'this' }, { sessionId: 's1', sandbox: WORKSPACE_WRITE })).error ?? '', /agents\.read:other/);
 		assert.deepStrictEqual(ran, []);
 		assert.strictEqual((await service.invokeTool('thread_search', { query: 'token' }, { sessionId: 's1', sandbox: { level: 'off', network: true } })).text, 'ran thread_search');
+	});
+
+	test('GATE-XCHAT-4: a sandboxed chat reads its own subtree (subagents, side chats) through thread_read, thread_wait, queue_list and worktree_status; no other chat', async () => {
+		const { service } = setup();
+		// What the bridge registers: parents as the history records them (s1 -> agent-1 -> agent-2; other is unrelated).
+		const parents = new Map([['agent-1', 's1'], ['agent-2', 'agent-1'], ['side', 'other']]);
+		service.setSandboxResolver({ settings: () => ({ level: 'off', network: true }), folder: () => '/ws', inSubtree: (sessionId, chatId) => chatInSubtree(sessionId, chatId, id => parents.get(id)) });
+		const tools = ['thread_read', 'thread_wait', 'queue_list', 'worktree_status'];
+		const ran = serve(service, tools);
+		const call = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		for (const name of tools) {
+			const args = (id: string) => name === 'thread_wait' ? { thread_ids: [id] } : { thread_id: id };
+			assert.strictEqual((await service.invokeTool(name, args('agent-1'), call)).text, `ran ${name}`, `${name}: its subagent`);
+			assert.strictEqual((await service.invokeTool(name, args('agent-2'), call)).text, `ran ${name}`, `${name}: its subagent's subagent`);
+			for (const other of ['other', 'side']) {
+				assert.match((await service.invokeTool(name, args(other), call)).error ?? '', /agents\.read:other/, `${name}: ${other}`);
+			}
+		}
+		assert.match((await service.invokeTool('thread_wait', { thread_ids: ['agent-1', 'other'] }, call)).error ?? '', /agents\.read:other/, 'one chat outside its subtree refuses the whole wait');
+		assert.match((await service.invokeTool('thread_read', { thread_id: 's1' }, { sessionId: 'agent-1', sandbox: WORKSPACE_WRITE })).error ?? '', /agents\.read:other/, 'a subagent does not read its parent');
+		assert.strictEqual(ran.length, tools.length * 2);
+		// Unsandboxed: as before.
+		for (const name of tools) {
+			assert.strictEqual((await service.invokeTool(name, { thread_id: 'other', thread_ids: ['other'] }, { sessionId: 's1' })).text, `ran ${name}`);
+		}
 	});
 
 	test('the native loop\'s calls are judged by the chat\'s own sandbox, which they do not carry', async () => {

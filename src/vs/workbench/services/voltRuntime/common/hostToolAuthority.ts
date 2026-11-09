@@ -16,7 +16,7 @@ import { chatSubject, corePrincipal, extensionSubject, ICallContext, SubjectKey 
 import { IVoltSandboxSettings, SandboxStrategy } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 // Registers `volt.sandbox.networkBroker` beside the Authority's own setting (the main process and agent server read it).
 import '../../../../platform/voltSandbox/common/networkBrokerSetting.js';
-import { hostToolClassCapability, HostToolSandboxClass, IHostToolSandboxUse } from './hostToolSandbox.js';
+import { hostToolClassCapability, HostToolSandboxClass, IHostToolSandboxUse, readTargets } from './hostToolSandbox.js';
 
 /**
  * The host-tool gate's side of the Policy Authority (spec C2, M.3): every class decision the gate
@@ -133,8 +133,10 @@ export class HostToolAuthority extends Disposable {
 		}
 		switch (use.kind) {
 			case 'reads-other': {
-				const other = use.readsAnyChat || (use.target !== undefined && use.target !== callerId);
-				return { capability: other ? 'agents.read:other' : 'agents.read:current', surface: 'host-tool', ...(use.target ? { target: chatSubject(use.target) } : {}) };
+				const targets = readTargets(use);
+				const other = use.readsAnyChat || targets.some(target => target !== callerId);
+				const named = targets.find(target => target !== callerId) ?? targets[0];
+				return { capability: other ? 'agents.read:other' : 'agents.read:current', surface: 'host-tool', ...(named ? { target: chatSubject(named) } : {}) };
 			}
 			case 'delegates':
 				// Prompting another chat moves this chat's words into it: a data-flow edge, judged by INV-11.

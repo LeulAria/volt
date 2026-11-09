@@ -198,7 +198,8 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	thread_search: 'reads-other',
 	thread_read: 'reads-other',
 	thread_send: 'delegates',
-	thread_wait: 'safe',
+	// Its answer carries the waited-on chat's last reply.
+	thread_wait: 'reads-other',
 	thread_interrupt: 'safe',
 	thread_fork: 'spawns',
 	// git add, commit and merge in both checkouts.
@@ -206,13 +207,15 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	thread_launch: 'spawns',
 	thread_update: 'safe',
 	thread_configure: 'safe',
-	queue_list: 'safe',
+	// Another chat's queued prompts, word for word.
+	queue_list: 'reads-other',
 	queue_edit: 'delegates',
 	queue_cancel: 'safe',
 	queue_reorder: 'safe',
 	queue_send_now: 'delegates',
 	queue_resume: 'delegates',
-	worktree_status: 'safe',
+	// The status of another chat's checkout (its changed files).
+	worktree_status: 'reads-other',
 	worktree_list: 'safe',
 	worktree_handoff: 'escapes',
 };
@@ -234,6 +237,8 @@ export interface IHostToolSandboxUse {
 	readonly target?: string;
 	/** `reads-other`: it reads chats in general, never only the caller's own. */
 	readonly readsAnyChat?: boolean;
+	/** `reads-other`: more chats it reads (thread_wait's list), besides `target`. */
+	readonly targets?: readonly string[];
 }
 
 const MANAGE_AUTOMATION_SAFE = new Set(['list', 'delete']);
@@ -301,7 +306,13 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 		case 'queue_send_now':
 		case 'queue_resume':
 		case 'thread_read':
+		case 'queue_list':
+		case 'worktree_status':
 			return { kind, target: threadIdArg(args.thread_id) };
+		case 'thread_wait': {
+			const targets = [...(Array.isArray(args.thread_ids) ? args.thread_ids : []).map(threadIdArg), threadIdArg(args.thread_id)].filter((id): id is string => !!id);
+			return { kind, ...(targets.length ? { targets } : { readsAnyChat: true }) };
+		}
 		case 'thread_search':
 			return { kind, readsAnyChat: true };
 	}
@@ -503,7 +514,27 @@ export function legacyHostToolRefusal(use: IHostToolSandboxUse | undefined, call
 		case 'delegates':
 			return !!use.target && use.target !== callerSessionId && !covers;
 		case 'reads-other':
-			return !!use.readsAnyChat || (use.target !== undefined && use.target !== callerSessionId);
+			return !!use.readsAnyChat || readTargets(use).some(target => target !== callerSessionId);
+	}
+	return false;
+}
+
+/** The chats a `reads-other` call names (`target` and `targets`). */
+export function readTargets(use: IHostToolSandboxUse): string[] {
+	return [...use.target !== undefined ? [use.target] : [], ...use.targets ?? []];
+}
+
+/**
+ * Whether `target` is `caller` or one of its children (its subagents and the side chats started
+ * from it, at any depth), by `parentOf`. A sandboxed chat reads only those.
+ */
+export function chatInSubtree(caller: string, target: string, parentOf: (id: string) => string | undefined): boolean {
+	let current: string | undefined = target;
+	for (let depth = 0; current !== undefined && depth < 32; depth++) {
+		if (current === caller) {
+			return true;
+		}
+		current = parentOf(current);
 	}
 	return false;
 }

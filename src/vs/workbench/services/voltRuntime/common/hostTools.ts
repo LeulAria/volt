@@ -228,6 +228,8 @@ export interface IVoltHostSandboxResolver {
 	folder(sessionId: string): string | undefined;
 	/** How the chat's agent is sandboxed (its provider's strategy at its level); unknown: `wrap`. */
 	strategy?(sessionId: string): SandboxStrategy | undefined;
+	/** Whether `chatId` is the calling chat (by any of its session ids) or one of its subagents or side chats, at any depth. */
+	inSubtree?(sessionId: string, chatId: string): boolean;
 }
 
 /** Who an outside agent is, from the grant the user approved. */
