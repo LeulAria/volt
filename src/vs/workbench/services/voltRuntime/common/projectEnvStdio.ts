@@ -86,6 +86,9 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	async approveSandboxDenial(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval> {
 		return this.inner.approveSandboxDenial ? this.inner.approveSandboxDenial(id, denialId, expectedEpoch, scope) : { ok: false, epoch: expectedEpoch, reason: 'this host has no network broker' };
 	}
+	async approveChatDenial(chatId: string, denialId: string, deniedEpoch: number): Promise<IVoltSandboxApproval> {
+		return this.inner.approveChatDenial ? this.inner.approveChatDenial(chatId, denialId, deniedEpoch) : { ok: false, epoch: deniedEpoch, reason: 'this host has no network broker' };
+	}
 	async refuseSandboxDenial(id: string, denialId: string): Promise<boolean> { return this.inner.refuseSandboxDenial ? this.inner.refuseSandboxDenial(id, denialId) : false; }
 	async trustState(): Promise<ITrustState> { return this.inner.trustState ? this.inner.trustState() : EMPTY_TRUST_STATE; }
 	trustCommit(change: ITrustChange): Promise<ITrustCommitResult> {

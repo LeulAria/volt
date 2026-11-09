@@ -157,10 +157,20 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	async approveSandboxDenial(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval> {
 		const route = this.routeOfDenial(id, denialId);
 		if (!route) {
-			return { ok: false, epoch: this.sandbox.supervisor.manager.currentBroker?.epoch ?? expectedEpoch, reason: 'this denial is not one of that agent\'s, or its run has ended' };
+			return { ok: false, epoch: this.sandbox.supervisor.manager.currentBroker?.epoch ?? expectedEpoch, reason: 'the run that was blocked has ended. Allow for This Chat lets the chat\'s next runs reach it' };
 		}
 		const result = await route.approve(denialId, expectedEpoch, scope === 'chat' ? 'chat' : 'run');
 		this.logService.info(`[volt-sandbox] ${id} denial ${denialId} ${result.ok ? `approved for this ${scope} at epoch ${result.epoch}` : `not approved: ${result.reason}`}`);
+		return result;
+	}
+
+	async approveChatDenial(chatId: string, denialId: string, deniedEpoch: number): Promise<IVoltSandboxApproval> {
+		const broker = this.sandbox.supervisor.manager.currentBroker;
+		if (!broker) {
+			return { ok: false, epoch: deniedEpoch, reason: 'this host has no network broker' };
+		}
+		const result = await broker.approveForChat(chatId, denialId, deniedEpoch);
+		this.logService.info(`[volt-sandbox] chat ${chatId} denial ${denialId} ${result.ok ? `approved for the chat at epoch ${result.epoch}` : `not approved: ${result.reason}`}`);
 		return result;
 	}
 

@@ -384,6 +384,13 @@ export interface IVoltStdioService {
 	 * store until revoked. Refused when the denial is not that spawn's, or the epoch moved.
 	 */
 	approveSandboxDenial?(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval>;
+	/**
+	 * "Allow for This Chat" by the broker's record of chat `chatId`'s denial, whether or not the run
+	 * that was refused is still open (a turn's agent process usually has ended by the time the card
+	 * is answered). `deniedEpoch` is the epoch the denial was recorded at; the grant applies to the
+	 * chat's open runs at once and to its later runs, kept in the grant store until revoked.
+	 */
+	approveChatDenial?(chatId: string, denialId: string, deniedEpoch: number): Promise<IVoltSandboxApproval>;
 	/** Skip on a denial card: counts toward the route's refusals (two auto-deny, G.12). */
 	refuseSandboxDenial?(id: string, denialId: string): Promise<boolean>;
 	/** The grant store (`~/.volt/trust/grants.json`) as the Access page shows it. */

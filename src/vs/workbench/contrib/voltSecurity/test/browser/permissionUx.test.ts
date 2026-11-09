@@ -32,7 +32,7 @@ import { IVoltExtensionApiService } from '../../../../services/voltPlugins/commo
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { VoltTrustService } from '../../../../services/voltTrust/browser/voltTrustService.js';
 import { IVoltTrustService } from '../../../../services/voltTrust/common/voltTrust.js';
-import { renderSandboxDenialCard, RUN_OUTSIDE_CONFIRMATION } from '../../../voltAgent/browser/editor/sandboxDenialCard.js';
+import { answerNetworkDenial, renderSandboxDenialCard, RUN_OUTSIDE_CONFIRMATION } from '../../../voltAgent/browser/editor/sandboxDenialCard.js';
 import { AccessPageSection } from '../../browser/accessPage.js';
 import { installSheetDrafts, installSheetGroups, installSheetKey } from '../../browser/installSheet.js';
 import { permissionsSummaryText } from '../../browser/permissionsSummary.js';
@@ -76,6 +76,8 @@ class FakeTrust implements IVoltTrustService {
 	}
 	async record() { return { epoch: 1, changed: true }; }
 	async approveDenial(...args: unknown[]) { this.approvals.push(args); return { ok: true as const, epoch: 2 }; }
+	readonly chatApprovals: unknown[][] = [];
+	async approveChatDenial(...args: unknown[]) { this.chatApprovals.push(args); return { ok: true as const, epoch: 2 }; }
 	async refuseDenial(_processId: string, denialId: string) { this.refusals.push(denialId); }
 	async history() { return [{ at: 5, source: 'network' as const, subject: 'chat:c1' as const, action: 'CONNECT', target: 'api.test', decision: 'allow' as const }, { at: 4, source: 'decision' as const, subject: 'plugin:acme.notes@local' as const, action: 'agents.send', decision: 'deny' as const, reason: 'needs consent' }]; }
 	async brokerBudgets() { return [{ subject: 'chat:c1' as const, refusals: 2, autoDenied: true, promptsToday: 1 }]; }
@@ -112,6 +114,22 @@ suite('Volt permission UX in the window (P4)', () => {
 		const real = card({ kind: 'network', target: 'api.test', source: 'proxy', denialId: 'd1', epoch: 3 });
 		assert.deepStrictEqual(real.buttons(), ['Skip', 'Allow for This Chat', 'Allow', 'Run Outside Sandbox']);
 		assert.match(real.tray.textContent ?? '', /only reaches the hosts it was allowed/, 'why, in Volt\'s words');
+	});
+
+	test('UX-6: Allow for This Chat needs no live run; Allow after the run ended says so instead of approving', async () => {
+		const { trust } = card({ kind: 'network', target: 'api.test', source: 'proxy', denialId: 'd1', epoch: 3 }, { processId: undefined });
+		const denial: ISandboxDenial = { kind: 'network', target: 'api.test', source: 'proxy', denialId: 'd1', epoch: 3 };
+		const chat = await answerNetworkDenial({ denial, chatId: 'c1', trust, processId: () => undefined }, 'chat', trust.gestures.mint('chat:c1'));
+		assert.deepStrictEqual(chat, { kind: 'allowed' });
+		assert.deepStrictEqual(trust.chatApprovals.map(args => args.slice(0, 3)), [['c1', 'd1', 3]], 'by the chat and the broker\'s denial id and epoch, no process');
+		const run = await answerNetworkDenial({ denial, chatId: 'c1', trust, processId: () => undefined }, 'run', trust.gestures.mint('chat:c1'));
+		assert.deepStrictEqual(run, { kind: 'ended' });
+		assert.strictEqual(trust.approvals.length, 0, 'nothing asked of the broker for a run that is over');
+		const live = await answerNetworkDenial({ denial, chatId: 'c1', trust, processId: () => 'proc-9' }, 'run', trust.gestures.mint('chat:c1'));
+		assert.deepStrictEqual(live, { kind: 'allowed' });
+		assert.deepStrictEqual(trust.approvals[0].slice(0, 5), ['c1', 'proc-9', 'd1', 3, 'run']);
+		const unrecorded = await answerNetworkDenial({ denial: { kind: 'network', target: 'x.test', source: 'output' }, chatId: 'c1', trust, processId: () => 'proc-9' }, 'chat', trust.gestures.mint('chat:c1'));
+		assert.strictEqual(unrecorded.kind, 'refused', 'B-34');
 	});
 
 	test('UX-3: a spent prompt budget offers no Allow, only the way to Settings, Access', () => {
@@ -172,6 +190,12 @@ suite('Volt permission UX in the window (P4)', () => {
 		const result = await trust.approveDenial('c1', 'proc-1', 'd1', 3, 'chat', trust.gestures.mint('chat:c1'));
 		assert.ok(result.ok);
 		assert.deepStrictEqual(asked, [['proc-1', 'd1', 3, 'chat']], 'the denial id, its epoch and the scope, nothing the client chose about the host');
+		// "Allow for This Chat" without a live run (UX-6): the same token rule, the chat instead of a process.
+		const chatAsked: unknown[][] = [];
+		(stdio as { approveChatDenial?: IVoltStdioService['approveChatDenial'] }).approveChatDenial = async (...args) => { chatAsked.push(args); return { ok: true, epoch: 5 }; };
+		assert.ok(!(await trust.approveChatDenial('c1', 'd1', 3, trust.gestures.mint('chat:other'))).ok, 'another chat\'s token');
+		assert.ok((await trust.approveChatDenial('c1', 'd1', 3, trust.gestures.mint('chat:c1'))).ok);
+		assert.deepStrictEqual(chatAsked, [['c1', 'd1', 3]]);
 
 		const draft = { id: 'x', subject: 'plugin:acme.notes@local' as const, capability: 'agents.send@1', scope: {}, kind: 'persistent' as const, source: 'user' as const, grantedAt: 1, lastUsedAt: 1 };
 		await assert.rejects(trust.grant(draft.subject, [draft], undefined), /not given by a click/);

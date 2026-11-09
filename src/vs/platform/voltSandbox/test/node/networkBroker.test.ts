@@ -703,6 +703,45 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		}
 		assert.deepStrictEqual(connected, []);
 	});
+
+	test('NET-25: "Allow for This Chat" works after the refused run ended, by the broker\'s record of that chat only', async () => {
+		const chatId = `ended-${++principalCount}`;
+		const first = await route([], { principal: principal(`chat:${chatId}`) });
+		assert.match((await open(first.port, connect(first, 'later.test:443'))).line, /403/);
+		const denial = denials.at(-1)!;
+		assert.match((await open(first.port, connect(first, '10.0.0.7:443'))).line, /403/);
+		const privateDenial = denials.at(-1)!;
+		// The turn ends: its agent process and route go. Other chats' approvals move the epoch meanwhile.
+		first.dispose();
+		const other = await route([]);
+		await other.allowHosts(['unrelated.test']);
+		assert.ok(broker.epoch > denial.epoch);
+		assert.deepStrictEqual(await broker.approveForChat('someone-else', denial.denialId, denial.epoch), { ok: false, epoch: broker.epoch, reason: 'Volt has no record of this denial for this chat (it may be too old); allow the host when it is blocked again' }, 'only that chat\'s record');
+		assert.ok(!(await broker.approveForChat(chatId, denial.denialId, denial.epoch + 1)).ok, 'the epoch the card was shown with');
+		assert.ok(!(await broker.approveForChat(chatId, privateDenial.denialId, privateDenial.epoch)).ok, 'a private-address refusal is never approvable');
+		assert.ok(!(await broker.approveForChat(chatId, 'forged', denial.epoch)).ok, 'an unrecorded denial gets nothing (B-34)');
+		const approved = await broker.approveForChat(chatId, denial.denialId, denial.epoch);
+		assert.ok(approved.ok, 'approved on the latest epoch, not refused as stale');
+		assert.ok(!(await broker.approveForChat(chatId, denial.denialId, denial.epoch)).ok, 'approved once');
+		const grant = broker.grantsOf(`chat:${chatId}`).find(candidate => candidate.scope.targets?.[0] === 'later.test');
+		assert.ok(grant && grant.sessionId === chatId && grant.kind === 'session', 'the chat\'s grant, bound to the chat');
+		// The chat's next run (a new agent process, a new principal) reaches it from its first connection.
+		const next = await route([], { principal: principal(`chat:${chatId}`) });
+		assert.match((await open(next.port, connect(next, 'later.test:443'))).line, /200/);
+		assert.match((await open(other.port, connect(other, 'later.test:443'))).line, /403/, 'another chat does not get it');
+		next.dispose();
+		assert.ok(broker.grantsOf(`chat:${chatId}`).some(candidate => candidate.id === grant.id), 'it outlives the run');
+	});
+
+	test('NET-26: "Allow for This Chat" while the run is open applies to that run\'s next connection at once', async () => {
+		const chatId = `live-${++principalCount}`;
+		const r = await route([], { principal: principal(`chat:${chatId}`) });
+		assert.match((await open(r.port, connect(r, 'now.test:443'))).line, /403/);
+		const denial = denials.at(-1)!;
+		assert.ok((await broker.approveForChat(chatId, denial.denialId, denial.epoch)).ok);
+		assert.match((await open(r.port, connect(r, 'now.test:443'))).line, /200/, 'no restart');
+		assert.ok(!(await r.approve(denial.denialId, broker.epoch)).ok, 'and the route\'s own record is spent too');
+	});
 });
 
 /** A grant source another writer can change (like the GrantStore under ~/.volt/trust), with change events. */
