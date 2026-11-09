@@ -284,7 +284,7 @@ export class AccessPageSection {
 		if (status === 'torn') {
 			kit.sectionHint(localize('voltAccess.torn', "Permissions were reset: Volt could not read the permissions file, so it started again from nothing. Built-in features keep theirs."));
 		} else if (trust.state.readOnly) {
-			kit.sectionHint(localize('voltAccess.newer', "A newer Volt wrote the permissions file. This version reads it without third-party permissions and does not change it."));
+			kit.sectionHint(localize('voltAccess.newer', "A newer Volt wrote the permissions file. This version reads it without third-party permissions and can't add any to it. Revoking still works."));
 		}
 
 		kit.sectionLabel(localize('voltAccess.permissions', "Permissions"));
