@@ -287,7 +287,12 @@ export function systemReadPaths(platform: string, env: Readonly<Record<string, s
  */
 export function agentSystemReadPaths(platform: string): readonly string[] {
 	if (platform === 'darwin') {
-		return ['/Library/Keychains', '/private/var/db/mds', '/private/var/run/resolv.conf', '/private/var/db/xcode_select_link', '/Library/Preferences/com.apple.security.plist', '/System/Volumes/Preboot/Cryptexes'];
+		return [
+			'/Library/Keychains', '/private/var/db/mds', '/private/var/run/resolv.conf', '/private/var/db/xcode_select_link', '/Library/Preferences/com.apple.security.plist', '/System/Volumes/Preboot/Cryptexes',
+			// xcodebuild, behind every /usr/bin shim (`git`, `pip3`) whenever xcrun's cache misses, loads these
+			// and reads the license acceptance; without them `git` says the Xcode license is not agreed (TOOLCHAIN-MAC-1).
+			'/Library/Developer/PrivateFrameworks', '/Library/Preferences/com.apple.dt.Xcode.plist', '/Library/Preferences/.GlobalPreferences.plist',
+		];
 	}
 	if (platform === 'win32') {
 		return [];

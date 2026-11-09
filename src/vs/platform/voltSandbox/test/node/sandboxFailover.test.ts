@@ -16,11 +16,11 @@
 import assert from 'assert';
 import { ChildProcess, spawn } from 'child_process';
 import { promises as fs } from 'fs';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { allEnforcement, ISandboxBackendCapabilities, SandboxUnavailableError } from '../../common/sandboxBackend.js';
-import { ISandboxDenial, isQuietDenial } from '../../common/sandboxDenials.js';
+import { ISandboxDenial, isNoiseDenial, isQuietDenial } from '../../common/sandboxDenials.js';
 import { agentSandboxPolicy, IVoltSandboxRequest } from '../../common/sandboxPolicy.js';
 import { builtinProfile } from '../../common/sandboxProfiles.js';
 import { IResolvedSandboxPolicy } from '../../common/sandboxResolved.js';
@@ -384,5 +384,36 @@ suite('Volt sandbox failover against real sandboxes (R1)', function () {
 		assert.ok(result.stdout.startsWith('ran') && !result.stdout.includes('canary rc'), 'it ran, and the rc file stayed unreadable');
 		assert.ok(result.denials.some(denial => denial.kind === 'read' && denial.target.endsWith('/.zshrc')), `the kernel reported the run's own denial: ${JSON.stringify(result.denials)}`);
 		assert.ok(!result.denials.some(denial => denial.target.endsWith('/canary')), 'the canary read is the attestation, not a denial');
+	});
+
+	macTest('DENY-QUIET-4, TOOLCHAIN-MAC-1: a login shell running git and python in the agent profile works, and nothing it does by itself is a card', async () => {
+		const repo = join(ws, 'quiet-4');
+		await fs.mkdir(repo, { recursive: true });
+		await fs.writeFile(join(repo, 'a.txt'), 'a');
+		// A home outside the system temp folder, which the agent writes (xcrun, behind /usr/bin/git, keeps its cache there).
+		const agentHome = await fs.realpath(await fs.mkdtemp(join(homedir(), '.volt-quiet-4-')));
+		try {
+			for (const [name, text] of [['.zshrc', '# rc\n'], ['.zshenv', '# env\n'], ['.zprofile', '# profile\n'], ['.npmrc', '//registry.npmjs.org/:_authToken=secret\n'], ['.CFUserTextEncoding', '0x1F5:0x0:0x0'], ['.gitconfig', '[user]\n\tname = Volt Test\n']]) {
+				await fs.writeFile(join(agentHome, name), text);
+			}
+			// As in every real home: Apple's python caches its bytecode under it (a denied write, noise).
+			await fs.mkdir(join(agentHome, 'Library', 'Caches'), { recursive: true });
+			await new Promise<void>((resolve, reject) => spawn('/usr/bin/git', ['init', '-q', repo], { stdio: 'ignore' }).once('exit', code => code === 0 ? resolve() : reject(new Error(`git init: ${code}`))));
+			const agentPolicy = agentSandboxPolicy({ level: 'workspace-write', network: false, providerId: 'claude-code', workspaceRoots: [ws] }, { platform: process.platform, home: agentHome, tempDirs: [await fs.realpath(tmpdir())], cacheDir: join(agentHome, '.volt', 'sandbox-cache') });
+			assert.ok(agentPolicy.filesystem.read.includes(join(agentHome, '.CFUserTextEncoding')));
+			// CoreFoundation reads the account's home, not $HOME: the real one's file is what a real chat's policy allows.
+			const policy = { ...agentPolicy, filesystem: { ...agentPolicy.filesystem, read: [...agentPolicy.filesystem.read, join(homedir(), '.CFUserTextEncoding')] } };
+			const script = `cd "${repo}" && git status --short && git config user.name && /usr/bin/python3 -c "print('py-ok')" && echo all-ok; sleep 1.5`;
+			const manager = new SandboxManager(undefined, { runRoot: join(root, 'runs'), host: { ...host, home: agentHome } });
+			managers.push(manager);
+			const result = await manager.run({ command: '/bin/zsh', args: ['-lic', script], policy, context: { workspaceRoots: [ws], hostEnv: { ...hostEnv(), HOME: agentHome, SHELL: '/bin/zsh' } } }, { timeoutMs: 60_000 });
+			assert.strictEqual(result.status, 'completed', result.error);
+			assert.match(result.stdout, /\?\? a\.txt[\s\S]*Volt Test[\s\S]*py-ok[\s\S]*all-ok/, `the tools worked: ${result.stdout}${result.stderr} ${JSON.stringify(result.denials)}`);
+			assert.ok(result.denials.some(denial => denial.target === join(agentHome, '.zshrc')), `the shell's rc read stays denied: ${JSON.stringify(result.denials)}`);
+			const cards = result.denials.filter(denial => (denial.kind === 'read' || denial.kind === 'write') && !isQuietDenial({ kind: denial.kind, target: denial.target, source: 'os', ...(denial.process ? { process: denial.process } : {}) }, agentHome, [ws]) && !isNoiseDenial({ kind: denial.kind, target: denial.target, source: 'os' }));
+			assert.deepStrictEqual(cards, [], 'nothing the shell, git or python did by itself gets a card');
+		} finally {
+			await fs.rm(agentHome, { recursive: true, force: true });
+		}
 	});
 });
