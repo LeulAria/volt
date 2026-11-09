@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { timeout } from '../../../../../base/common/async.js';
 import { Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { mock } from '../../../../../base/test/common/mock.js';
@@ -38,7 +39,7 @@ import { AbstractExtensionService, IExtensionHostFactory, ResolvedExtensions } f
 import { ExtensionHostKind, ExtensionRunningPreference } from '../../common/extensionHostKind.js';
 import { IExtensionHostManager } from '../../common/extensionHostManagers.js';
 import { ExtensionManifestPropertiesService, IExtensionManifestPropertiesService } from '../../common/extensionManifestPropertiesService.js';
-import { ExtensionRunningLocation } from '../../common/extensionRunningLocation.js';
+import { ExtensionRunningLocation, RemoteRunningLocation } from '../../common/extensionRunningLocation.js';
 import { ExtensionRunningLocationTracker } from '../../common/extensionRunningLocationTracker.js';
 import { IExtensionHost, IExtensionService } from '../../common/extensions.js';
 import { ExtensionsProposedApi } from '../../common/extensionsProposedApi.js';
@@ -189,6 +190,16 @@ suite('ExtensionService', () => {
 
 		private _extHostId = 0;
 		public readonly order: string[] = [];
+		/** Volt: the managers made, and which of them stand for a sandboxed extension's host. */
+		public readonly managers: IExtensionHostManager[] = [];
+		public readonly sandboxedHosts = new Set<IExtensionHostManager>();
+		protected override _voltSandboxedRestartDelayMs = 0;
+		protected override _isVoltSandboxedHost(extensionHost: IExtensionHostManager): boolean {
+			return this.sandboxedHosts.has(extensionHost);
+		}
+		public crash(extensionHost: IExtensionHostManager): void {
+			this._onExtensionHostCrashed(extensionHost, 1, null);
+		}
 		protected _pickExtensionHostKind(extensionId: ExtensionIdentifier, extensionKinds: ExtensionKind[], isInstalledLocally: boolean, isInstalledRemotely: boolean, preference: ExtensionRunningPreference): ExtensionHostKind | null {
 			throw new Error('Method not implemented.');
 		}
@@ -196,7 +207,16 @@ suite('ExtensionService', () => {
 			const order = this.order;
 			const extensionHostId = ++this._extHostId;
 			order.push(`create ${extensionHostId}`);
-			return new class extends mock<IExtensionHostManager>() {
+			const managers = this.managers;
+			const manager = new class extends mock<IExtensionHostManager>() {
+				override friendyName = extensionHost.runningLocation.asString();
+				override kind = extensionHost.runningLocation.kind;
+				override containsExtension() {
+					return false;
+				}
+				override ready(): Promise<void> {
+					return Promise.resolve();
+				}
 				override onDidExit = Event.None;
 				override onDidChangeResponsiveState = Event.None;
 				override disconnect() {
@@ -212,6 +232,8 @@ suite('ExtensionService', () => {
 					return extensionHost.runningLocation.equals(runningLocation);
 				}
 			};
+			managers.push(manager);
+			return manager;
 		}
 		protected _resolveExtensions(): AsyncIterable<ResolvedExtensions> {
 			throw new Error('Method not implemented.');
@@ -288,6 +310,36 @@ suite('ExtensionService', () => {
 
 		await extService.stopExtensionHosts('foo');
 		assert.deepStrictEqual(extService.order, (['create 1', 'create 2', 'create 3']));
+	});
+
+	test('T3-FAIL-1: a sandboxed extension\'s host that crashes (or loses the agent server) restarts alone, where it was; past its budget the user is asked', async () => {
+		const prompts: string[] = [];
+		const notifications = instantiationService.get(INotificationService);
+		notifications.prompt = (_severity, message) => {
+			prompts.push(message);
+			return undefined!;
+		};
+		await extService.startExtensionHosts();
+		assert.deepStrictEqual(extService.order, ['create 1', 'create 2', 'create 3']);
+		// Host 3 stands for an opted-in extension's sandboxed host.
+		let sandboxed = extService.managers[2];
+		for (let crash = 1; crash <= 2; crash++) {
+			extService.sandboxedHosts.add(sandboxed);
+			extService.crash(sandboxed);
+			await timeout(10);
+			const replacement = extService.managers[extService.managers.length - 1];
+			assert.notStrictEqual(replacement, sandboxed, `crash ${crash}: started again`);
+			assert.ok(replacement.representsRunningLocation(new RemoteRunningLocation()), 'in the same running location');
+			sandboxed = replacement;
+		}
+		assert.deepStrictEqual(extService.order, ['create 1', 'create 2', 'create 3', 'dispose 3', 'create 4', 'dispose 4', 'create 5'], 'the other hosts never stopped');
+		assert.deepStrictEqual(prompts, []);
+		extService.sandboxedHosts.add(sandboxed);
+		extService.crash(sandboxed);
+		await timeout(10);
+		assert.deepStrictEqual(extService.order.slice(-1), ['dispose 5'], 'the third crash in 5 minutes: not restarted');
+		assert.strictEqual(prompts.length, 1);
+		assert.match(prompts[0], /stopped 3 times/);
 	});
 
 	test('Extension host not disposed when vetoed (async)', async () => {

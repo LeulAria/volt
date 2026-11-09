@@ -842,11 +842,14 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 	}
 
 	protected _onExtensionHostCrashed(extensionHost: IExtensionHostManager, code: number, signal: string | null): void {
-		console.error(`Extension host (${extensionHost.friendyName}) terminated unexpectedly. Code: ${code}, Signal: ${signal}`);
-		if (this._runningLocations.sandboxedRunningLocations.some(location => extensionHost.representsRunningLocation(location))) {
+		if (this._isVoltSandboxedHost(extensionHost)) {
 			// Volt: one sandboxed extension's host went; the others keep running (it never takes core down, H.9).
-			this._extensionHostManagers.stopOne(extensionHost);
-		} else if (extensionHost.kind === ExtensionHostKind.LocalProcess) {
+			this._logService.error(`Extension host (${extensionHost.friendyName}) terminated unexpectedly. Code: ${code}, Signal: ${signal}`);
+			this._onVoltSandboxedHostCrashed(extensionHost);
+			return;
+		}
+		console.error(`Extension host (${extensionHost.friendyName}) terminated unexpectedly. Code: ${code}, Signal: ${signal}`);
+		if (extensionHost.kind === ExtensionHostKind.LocalProcess) {
 			this._doStopExtensionHosts();
 		} else if (extensionHost.kind === ExtensionHostKind.Remote) {
 			if (signal) {
@@ -854,6 +857,46 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 			}
 			this._extensionHostManagers.stopOne(extensionHost);
 		}
+	}
+
+	/** Volt (P2, P6): the host of one opted-in extension, in the sandbox (the desktop's runs on the local agent server). */
+	protected _isVoltSandboxedHost(extensionHost: IExtensionHostManager): boolean {
+		return this._runningLocations.sandboxedRunningLocations.some(location => extensionHost.representsRunningLocation(location));
+	}
+
+	/** Volt: crashes per sandboxed host, each with its own restart budget (VS Code's: 3 in 5 minutes). */
+	private readonly _voltSandboxedCrashes = new Map<string, ExtensionHostCrashTracker>();
+	/** Volt: how long a crashed sandboxed host waits before it starts again (a restarting agent server comes back). */
+	protected _voltSandboxedRestartDelayMs = 2_000;
+
+	/**
+	 * Volt: a sandboxed extension's host crashed, or its connection to the agent server was lost for
+	 * good (the server restarted). Only that host stops; it starts again where it was, in its own
+	 * sandboxed host (its running location never changes to the shared host), after a short wait
+	 * for a restarting server, within its budget; past that the user is asked.
+	 */
+	private _onVoltSandboxedHostCrashed(extensionHost: IExtensionHostManager): void {
+		this._extensionHostManagers.stopOne(extensionHost);
+		this._logExtensionHostCrash(extensionHost);
+		const location = this._runningLocations.sandboxedRunningLocations.find(candidate => extensionHost.representsRunningLocation(candidate));
+		const key = location?.asString() ?? extensionHost.friendyName;
+		let tracker = this._voltSandboxedCrashes.get(key);
+		if (!tracker) {
+			tracker = new ExtensionHostCrashTracker();
+			this._voltSandboxedCrashes.set(key, tracker);
+		}
+		tracker.registerCrash();
+		const restart = () => this._startExtensionHostsIfNecessary(false, Array.from(this._allRequestedActivateEvents.keys()));
+		if (tracker.shouldAutomaticallyRestart()) {
+			this._logService.info(`Restarting the sandboxed extension host (${extensionHost.friendyName}).`);
+			const timer = setTimeout(restart, this._voltSandboxedRestartDelayMs);
+			this._register({ dispose: () => clearTimeout(timer) });
+			return;
+		}
+		this._notificationService.prompt(Severity.Error, nls.localize('voltSandbox.hostCrashes', "The sandboxed extension host ({0}) stopped 3 times within 5 minutes. It stays off until you restart it; it restarts in its sandbox.", extensionHost.friendyName), [{
+			label: nls.localize('voltSandbox.restartHost', "Restart in Sandbox"),
+			run: restart,
+		}]);
 	}
 
 	private _getExtensionHostExitInfoWithTimeout(reconnectionToken: string): Promise<IExtensionHostExitInfo | null> {
@@ -1285,9 +1328,10 @@ class ExtensionHostCollection extends Disposable {
 	public async stopOne(extensionHostManager: IExtensionHostManager): Promise<void> {
 		const index = this._extensionHostManagers.findIndex(el => el.extensionHost === extensionHostManager);
 		if (index >= 0) {
-			this._extensionHostManagers.splice(index, 1);
+			const [data] = this._extensionHostManagers.splice(index, 1);
 			await extensionHostManager.disconnect();
-			extensionHostManager.dispose();
+			// Volt: with its listeners (onDidExit), so a host stopped alone and started again leaves nothing behind.
+			data.dispose();
 		}
 	}
 
