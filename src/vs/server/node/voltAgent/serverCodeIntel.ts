@@ -11,7 +11,7 @@ import { IConfigurationService } from '../../../platform/configuration/common/co
 import { IFileService } from '../../../platform/files/common/files.js';
 import { fromWire, toWire } from '../../../platform/voltAgentServer/common/wire.js';
 import { columnOfSymbol, IRuntimeCodeIntel } from '../../../workbench/services/voltRuntime/browser/host/codeIntelHost.js';
-import { ICodeLocation, ICodeSymbol, IDiagnostic } from '../../../workbench/services/voltRuntime/browser/tools/codeTools.js';
+import { ICallEdge, ICodeFix, ICodeLocation, ICodeRange, ICodeSymbol, ICodeSymbolRef, IDiagnostic, ITextFileChange } from '../../../workbench/services/voltRuntime/browser/tools/codeTools.js';
 import { LSP_ENABLED_SETTING } from '../../../workbench/services/voltRuntime/common/codeIntelligence.js';
 import { IAgentServerClients } from './serverClients.js';
 
@@ -20,6 +20,9 @@ const NO_WINDOW = 'Diagnostics come from the language servers of an open Volt wi
 const QUERY_TIMEOUT_MS = 30_000;
 /** Marker counts and write notices are answered from memory. */
 const QUICK_TIMEOUT_MS = 10_000;
+/** Renames and code actions may resolve edits across many files. */
+const EDIT_TIMEOUT_MS = 45_000;
+const NO_WINDOW_EDIT = 'Refactors run in the language servers of an open Volt window, and none is open. Edit the files directly.';
 
 /**
  * The folders each connected window has open. A file's code intelligence goes to the window that
@@ -153,6 +156,63 @@ export class ServerCodeIntel extends Disposable implements IRuntimeCodeIntel {
 
 	async symbols(uri: URI): Promise<ICodeSymbol[]> {
 		return this.window ? asArray<ICodeSymbol>(await this.call<ICodeSymbol[]>(uri, QUERY_TIMEOUT_MS, 'symbols', uri).catch(() => [])) : [];
+	}
+
+	async fileText(uri: URI): Promise<string | undefined> {
+		const fromWindow = this.window ? await this.call<unknown>(uri, QUICK_TIMEOUT_MS, 'fileText', uri).catch(() => undefined) : undefined;
+		return typeof fromWindow === 'string' ? fromWindow : this.fileService.readFile(uri).then(file => file.value.toString(), () => undefined);
+	}
+
+	async implementations(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
+		return this.window ? asArray<ICodeLocation>(await this.call<unknown>(uri, QUERY_TIMEOUT_MS, 'implementations', uri, line, column).catch(() => [])) : [];
+	}
+
+	async typeDefinitions(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
+		return this.window ? asArray<ICodeLocation>(await this.call<unknown>(uri, QUERY_TIMEOUT_MS, 'typeDefinitions', uri, line, column).catch(() => [])) : [];
+	}
+
+	async hover(uri: URI, line: number, column: number): Promise<string | undefined> {
+		const value = this.window ? await this.call<unknown>(uri, QUERY_TIMEOUT_MS, 'hover', uri, line, column).catch(() => undefined) : undefined;
+		return typeof value === 'string' ? value : undefined;
+	}
+
+	async workspaceSymbols(query: string, limit: number): Promise<ICodeSymbolRef[]> {
+		return this.window ? asArray<ICodeSymbolRef>(await this.call<unknown>(undefined, QUERY_TIMEOUT_MS, 'workspaceSymbols', query, limit).catch(() => [])) : [];
+	}
+
+	async calls(uri: URI, line: number, column: number, direction: 'incoming' | 'outgoing'): Promise<ICallEdge[] | undefined> {
+		const value = this.window ? await this.call<unknown>(uri, QUERY_TIMEOUT_MS, 'calls', uri, line, column, direction).catch(() => undefined) : undefined;
+		return Array.isArray(value) ? value as ICallEdge[] : undefined;
+	}
+
+	async typeHierarchy(uri: URI, line: number, column: number, direction: 'supertypes' | 'subtypes'): Promise<ICodeSymbolRef[] | undefined> {
+		const value = this.window ? await this.call<unknown>(uri, QUERY_TIMEOUT_MS, 'typeHierarchy', uri, line, column, direction).catch(() => undefined) : undefined;
+		return Array.isArray(value) ? value as ICodeSymbolRef[] : undefined;
+	}
+
+	rename(uri: URI, line: number, column: number, newName: string): Promise<readonly ITextFileChange[] | string> {
+		return this.edit(uri, 'rename', uri, line, column, newName);
+	}
+
+	format(uri: URI): Promise<readonly ITextFileChange[] | string> {
+		return this.edit(uri, 'format', uri);
+	}
+
+	async codeActions(uri: URI, range: ICodeRange, only: string | undefined): Promise<ICodeFix[]> {
+		return this.window ? asArray<ICodeFix>(await this.call<unknown>(uri, QUERY_TIMEOUT_MS, 'codeActions', uri, range, only ?? null).catch(() => [])) : [];
+	}
+
+	applyCodeAction(uri: URI, range: ICodeRange, only: string | undefined, title: string | undefined): Promise<readonly ITextFileChange[] | string> {
+		return this.edit(uri, 'applyCodeAction', uri, range, only ?? null, title ?? null);
+	}
+
+	/** A refactor the window computes: the changed files, or why it could not. */
+	private async edit(uri: URI, method: string, ...params: unknown[]): Promise<readonly ITextFileChange[] | string> {
+		if (!this.window) {
+			return NO_WINDOW_EDIT;
+		}
+		const value = await this.call<unknown>(uri, EDIT_TIMEOUT_MS, method, ...params).catch(err => err instanceof Error ? err.message : String(err));
+		return typeof value === 'string' ? value : asArray<ITextFileChange>(value);
 	}
 
 	async columnOf(uri: URI, line: number, symbol: string): Promise<number | undefined> {
