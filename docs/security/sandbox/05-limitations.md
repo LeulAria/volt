@@ -66,6 +66,10 @@ What the sandbox does **not** guarantee today. Each limit comes with the reason,
 28. **Decision-log replay doesn't prove the logged request**, only the snapshot and the call context. Adding a request digest changes the log's record format, which its reader checks strictly.
 29. **A grant store written by a newer Volt is read-only**, so a revoke there fails while its first-party and chat grants keep applying.
 
+## Found in the 2026-11-10 review (plugins and extensions), not fixed
+
+30. **Built-in Volt extensions' capability declarations reach no runtime gate.** All 30 `extensions/volt-*` packages are manifests without code: their features run in the window as feature modules, which use Volt's services directly and never call their `host.plugin.volt` context. So `FIRST_PARTY_ENFORCED` judges a path no built-in takes, and a feature that used more than it declares would not be refused. What does hold: every declaration stays within its compiled ceiling (EXT-CEIL-CI-1), and the one built-in with sandboxed code, Memory's T2 plugin, uses only what it declares (`tools.register`, `agents.context`, its own storage). Routing feature code through its context is a refactor of every feature module, not a fix here.
+
 ## Future work, in order
 
 1. Load user and repository policy layers (item 23), and use the sandbox for native models (item 16).
