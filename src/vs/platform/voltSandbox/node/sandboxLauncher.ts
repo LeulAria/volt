@@ -457,7 +457,9 @@ export class VoltSandboxLauncher extends Disposable {
 			return;
 		}
 		for (const host of this.supervisor.list()) {
-			if (host.principal.id === principal.id && isLiveWorkloadState(host.state)) {
+			// A host whose process just exited revokes its own principal when its channel closes: that exit is
+			// not a stop (a crash stays a crash, restarted within its budget or broken with its stderr).
+			if (host.principal.id === principal.id && isLiveWorkloadState(host.state) && !host.exiting) {
 				this.logger.info(`[volt-sandbox] ${host.label}: its principal was revoked; stopping it`);
 				void host.terminate('stopped');
 			}

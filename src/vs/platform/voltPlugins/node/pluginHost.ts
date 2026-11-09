@@ -90,6 +90,8 @@ export interface IVoltPluginHostServiceOptions {
 	readonly defaultFolders?: () => IT2CallFolders;
 	/** Test builds only: another host entry (the SES-escape fixture). */
 	readonly hostEntry?: string;
+	/** Test builds only: where the host loads `ses` from (default {@link sesLocation}). */
+	readonly sesPath?: string;
 	/** Default: idle after 60 s, stopped after 5 min (H.2). */
 	readonly idle?: { readonly afterMs: number; readonly stopAfterMs: number };
 	/** How long starting and activating may take. Default 20 s. */
@@ -290,7 +292,14 @@ export class VoltPluginHostService extends Disposable {
 		if (!capabilities.available) {
 			return { sandboxed: false, unsupported: capabilities.diagnostics.join(' ') || 'This system has no OS sandbox.' };
 		}
-		return { sandboxed: true };
+		// A broken install, not an OS that can't sandbox: refused, never degraded mode.
+		const runtime = this.runtimeMissing();
+		return runtime ? { sandboxed: false, refused: runtime } : { sandboxed: true };
+	}
+
+	/** Why the host can't load its lockdown runtime here (SES), if it can't: nothing then starts without it. */
+	runtimeMissing(): string | undefined {
+		return this.options.sesPath || sesLocation() ? undefined : 'Volt\'s plugin runtime (the `ses` package) is missing from this install, so its plugins can\'t start locked down. Reinstall Volt (in a checkout: npm install).';
 	}
 
 	/** Every registered plugin's state (H.9: the Security page, the status bar's count of broken plugins). */
@@ -412,6 +421,8 @@ class T2Plugin {
 	readonly subject: SubjectKey;
 	private host: ISandboxedHost | undefined;
 	private ready: Promise<IReady> | undefined;
+	/** While the supervisor restarts the host: calls wait for it, never start a second host (H.6). */
+	private restartWait: { readonly promise: Promise<IReady>; readonly resolve: (ready: Promise<IReady>) => void; readonly reject: (err: unknown) => void } | undefined;
 	private readonly hostListeners: IDisposable[] = [];
 	private readonly calls = new Map<string, IT2CallFolders>();
 	private state: T2PluginState = 'stopped';
@@ -495,13 +506,17 @@ class T2Plugin {
 			if (this.descriptor.enginesVolt && !apiVersionSatisfies(VOLT_PLUGIN_API_VERSION, this.descriptor.enginesVolt)) {
 				throw new VoltPluginError('InvalidArgument', `${this.descriptor.id} needs volt ${this.descriptor.enginesVolt}; this Volt serves ${VOLT_PLUGIN_API_VERSION}`);
 			}
+			const missing = this.service.runtimeMissing();
+			if (missing) {
+				throw new VoltPluginError('Internal', `${this.label} can't start: ${missing}`);
+			}
 			const source = await fs.readFile(this.descriptor.bundle, 'utf8');
 			const digest = createHash('sha256').update(source).digest('hex');
 			const principal = options.registry.mint({ subject: this.subject, kind: 't2', launchPolicyHash: '', packageDigest: digest, signer: this.descriptor.firstParty ? 'volt' : 'local' });
 			const result = await options.supervisor.start({
 				principal,
 				label: `${this.label} plugin host`,
-				command: { fork: options.hostEntry ?? t2HostEntry(), args: [`--ses=${sesLocation() ?? ''}`] },
+				command: { fork: options.hostEntry ?? t2HostEntry(), args: [`--ses=${options.sesPath ?? sesLocation() ?? ''}`] },
 				policy: t2HostPolicy(t2HostReads(), hostsDeclared(this.descriptor.declared), options.platform, options.memoryMB),
 				context: { workspaceRoots: [], hostEnv: {} },
 				stream: true,
@@ -523,7 +538,10 @@ class T2Plugin {
 			this.coldStartMs = this.service.now() - started;
 			return ready;
 		} catch (err) {
-			this.ready = undefined;
+			if (!this.restartWait) {
+				// (A crash the supervisor restarts keeps the calls waiting for that restart instead.)
+				this.ready = undefined;
+			}
 			const error = VoltPluginError.from(err);
 			if (!this.host) {
 				this.setState('refused', error.message);
@@ -539,17 +557,21 @@ class T2Plugin {
 				this.setLive(0);
 				if (exit.restarting) {
 					this.restarts++;
+					this.awaitRestart();
 					this.setState('restarting', `${exit.reason} (${exit.signal ?? exit.code})`);
 				}
 			}),
 			host.onDidChangeState(state => {
-				if (state === 'running' && this.state === 'restarting' && !this.ready) {
+				const wait = this.restartWait;
+				if (state === 'running' && this.state === 'restarting' && wait) {
 					// A restart is a new principal on a new channel: handshake and activate again.
-					this.ready = (async () => {
+					this.restartWait = undefined;
+					const attached = (async () => {
 						const source = await fs.readFile(this.descriptor.bundle, 'utf8');
 						return this.attach(host, source, createHash('sha256').update(source).digest('hex'), this.service.now());
 					})();
-					this.ready.catch(err => this.service.logger.warn(`[volt-plugin] ${this.descriptor.id} did not come back after a restart: ${err}`));
+					attached.catch(err => this.service.logger.warn(`[volt-plugin] ${this.descriptor.id} did not come back after a restart: ${err}`));
+					wait.resolve(attached);
 				} else if (state === 'idle' && this.state === 'running') {
 					this.setState('idle');
 				} else if (state === 'running' && this.state === 'idle') {
@@ -557,6 +579,7 @@ class T2Plugin {
 				} else if (state === 'broken') {
 					this.ready = undefined;
 					this.setState('broken', this.lastDetail(host));
+					this.settleRestart(new VoltPluginError('Internal', `${this.label} stopped after repeated crashes${this.detail ? ` (${this.detail})` : ''}. Restart it from its page or the status bar.`));
 				} else if (state === 'stopped' || state === 'failed') {
 					this.release();
 					this.setState('stopped');
@@ -564,6 +587,31 @@ class T2Plugin {
 			}),
 			host.onResource(sample => this.checkCpu(host, sample)),
 		);
+	}
+
+	/** The host crashed and the supervisor starts it again: the next calls wait for that start. */
+	private awaitRestart(): void {
+		if (!this.restartWait) {
+			let resolve!: (ready: Promise<IReady>) => void;
+			let reject!: (err: unknown) => void;
+			const promise = new Promise<IReady>((res, rej) => { resolve = res; reject = rej; });
+			// Nobody may be waiting: an unanswered restart is not an unhandled rejection.
+			promise.catch(() => undefined);
+			this.restartWait = { promise, resolve, reject };
+		}
+		this.ready = this.restartWait.promise;
+	}
+
+	/** The restart will not come (broken, stopped): calls waiting for it fail now, with why. */
+	private settleRestart(error: VoltPluginError): void {
+		const wait = this.restartWait;
+		this.restartWait = undefined;
+		if (wait) {
+			if (this.ready === wait.promise) {
+				this.ready = undefined;
+			}
+			wait.reject(error);
+		}
 	}
 
 	private lastDetail(host: ISandboxedHost): string | undefined {
@@ -624,14 +672,23 @@ class T2Plugin {
 		});
 		const onData = (chunk: Buffer) => rpc.receive(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
 		channel.on('data', onData);
-		const closed = () => rpc.close();
+		// A host that goes before it is ready (SES failed to load, its principal revoked, a crash) fails the start now, with why.
+		let closedEarly: ((err: VoltPluginError) => void) | undefined;
+		const closedBeforeReady = new Promise<never>((_, reject) => closedEarly = reject);
+		closedBeforeReady.catch(() => undefined);
+		const closed = () => {
+			rpc.close();
+			const last = this.lastDetail(host);
+			closedEarly?.(new VoltPluginError('Internal', `${this.label}'s host stopped before it was ready${last ? ` (${last})` : ''}`));
+		};
 		channel.once('close', closed);
 		const timeout = this.service.options.activationTimeoutMs ?? 20_000;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
-			await Promise.race([helloSeen, new Promise<never>((_, reject) => timer = setTimeout(() => reject(new VoltPluginError('DeadlineExceeded', `${this.label}'s host did not say hello within ${timeout} ms`)), timeout))]);
+			await Promise.race([helloSeen, closedBeforeReady, new Promise<never>((_, reject) => timer = setTimeout(() => reject(new VoltPluginError('DeadlineExceeded', `${this.label}'s host did not say hello within ${timeout} ms`)), timeout))]);
 			this.handshakeMs = this.service.now() - started;
-			const answer = await rpc.request('host/activate', { source, digest, id: this.descriptor.id, tools: this.descriptor.tools.map(tool => tool.name) }, { deadlineMs: timeout }) as { tools: string[]; context: boolean };
+			const answer = await Promise.race([closedBeforeReady, rpc.request('host/activate', { source, digest, id: this.descriptor.id, tools: this.descriptor.tools.map(tool => tool.name) }, { deadlineMs: timeout })]) as { tools: string[]; context: boolean };
+			closedEarly = undefined;
 			this.setState('running');
 			return { host, rpc, tools: new Set(answer.tools), context: answer.context, channelId };
 		} catch (err) {
@@ -673,6 +730,7 @@ class T2Plugin {
 	}
 
 	private release(): void {
+		this.settleRestart(new VoltPluginError('Cancelled', `${this.label} stopped`));
 		for (const listener of this.hostListeners.splice(0)) {
 			listener.dispose();
 		}
@@ -732,7 +790,8 @@ class T2Plugin {
 			return result.error !== undefined ? { error: result.error } : { text: result.text ?? '' };
 		} catch (err) {
 			const error = VoltPluginError.from(err);
-			return { error: error.type === 'Cancelled' && this.state === 'restarting' ? `${this.label} stopped while it worked on this (it is restarting). Try again.` : error.message };
+			// The channel closing under a call (a crash, a stop) is not the caller's cancel: say what happened.
+			return { error: error.type === 'Cancelled' && !signal?.aborted ? `${this.label} stopped while it worked on this (${this.state === 'broken' ? 'it is broken' : 'a crash restarts it'}). Try again.` : error.message };
 		} finally {
 			this.calls.delete(call);
 		}
