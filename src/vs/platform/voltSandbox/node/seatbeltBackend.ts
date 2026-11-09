@@ -100,31 +100,35 @@ export class SeatbeltBackend implements ISandboxBackend {
 		if (!helper) {
 			return unavailable('The sandbox helper (volt-sandbox-helper) is missing from this build. Developers: node build/volt/sandbox-helper/build.mjs [--install out]');
 		}
+		// Nothing runs the helper before it passed its integrity check.
 		const verified = await verifyHelperBinary(SANDBOX_HELPER_ID, helper);
 		if (!verified.ok) {
 			return unavailable(`The sandbox helper failed its integrity check: ${verified.reason}`);
 		}
-		const spi = await execFileAsync(helper, ['probe'], { timeout: 10_000 }).then(r => r.stdout.trim(), err => String((err as { stdout?: string }).stdout ?? (err as Error).message).trim());
+		// The trials below are independent: they run together, and the first one to fail (in this
+		// order) is the answer, as if they had run one after another.
+		const profile = '(version 1)(deny default)(allow process-exec process-fork)(allow file-read* (literal "/") (subpath "/usr") (subpath "/System") (subpath "/bin"))(allow file-read-metadata)';
+		const [spi, started, escaped, trial, version] = await Promise.all([
+			execFileAsync(helper, ['probe'], { timeout: 10_000 }).then(r => r.stdout.trim(), err => String((err as { stdout?: string }).stdout ?? (err as Error).message).trim()),
+			// A real trial: a deny-default profile must start a process and keep it from writing.
+			execFileAsync(SANDBOX_EXEC_PATH, ['-p', profile, '/usr/bin/true'], { timeout: 10_000 }).then(() => undefined, (err: Error) => err.message),
+			execFileAsync(SANDBOX_EXEC_PATH, ['-p', profile, '/usr/bin/touch', '/private/tmp/.volt-sandbox-probe'], { timeout: 10_000 }).then(() => true, () => false),
+			// And the whole launch protocol once: disclaimed spawn, ready, external attestation, go byte.
+			this.trial(helper),
+			this.version(),
+		]);
 		if (spi !== 'ok') {
 			return unavailable(`This macOS lacks the private interfaces Volt's sandbox needs to verify itself (${spi}).`);
 		}
-		// A real trial: a deny-default profile must start a process and keep it from writing.
-		const profile = '(version 1)(deny default)(allow process-exec process-fork)(allow file-read* (literal "/") (subpath "/usr") (subpath "/System") (subpath "/bin"))(allow file-read-metadata)';
-		try {
-			await execFileAsync(SANDBOX_EXEC_PATH, ['-p', profile, '/usr/bin/true'], { timeout: 10_000 });
-		} catch (err) {
-			return unavailable(`sandbox-exec could not start a sandboxed process: ${(err as Error).message}`);
+		if (started !== undefined) {
+			return unavailable(`sandbox-exec could not start a sandboxed process: ${started}`);
 		}
-		const escaped = await execFileAsync(SANDBOX_EXEC_PATH, ['-p', profile, '/usr/bin/touch', '/private/tmp/.volt-sandbox-probe'], { timeout: 10_000 }).then(() => true, () => false);
 		if (escaped) {
 			return unavailable('A trial sandbox could write outside its policy; Seatbelt is not enforcing.');
 		}
-		// And the whole launch protocol once: disclaimed spawn, ready, external attestation, go byte.
-		const trial = await this.trial(helper);
 		if (!trial.ok) {
 			return unavailable(`The trial sandbox could not be attested: ${trial.error}`);
 		}
-		const version = await this.version();
 		return {
 			backend: 'seatbelt', available: true, enforcement, notes, diagnostics: [],
 			details: [
@@ -306,7 +310,8 @@ export class SeatbeltBackend implements ISandboxBackend {
 				}
 				if (target) {
 					// The helper's sweep (no `ps` spawn); `ps -E` only if the helper is gone.
-					await killRun(target, options.tag, { table: needle => attestor.sweep(needle).catch(() => processTable(needle)) });
+					const root = tracked;
+					await killRun(target, options.tag, { table: needle => attestor.sweep(needle, root).catch(() => processTable(needle)) });
 				}
 			},
 			dispose: async () => {
@@ -549,21 +554,31 @@ class SeatbeltAttestor {
 		}));
 	}
 
-	/** Every process, as `processTable` gives it, from one call into the running helper. */
-	async sweep(needle: string | undefined): Promise<IProcessRow[]> {
-		const value = await this.request(`sweep\t${needle ?? '-'}\t-`);
+	/**
+	 * Every process, as `processTable` gives it, from one call into the running helper. With the
+	 * root of a run the helper tracks, only processes created after that root: none older can be
+	 * in the run's tree, its new session's group, or carry its tag.
+	 */
+	async sweep(needle: string | undefined, trackedRoot?: number): Promise<IProcessRow[]> {
+		const value = await this.request(`sweep\t${needle ?? '-'}\t${trackedRoot ?? '-'}`);
 		if (value.startsWith('-')) {
 			throw new Error(`the sandbox helper could not list processes (${value})`);
 		}
 		const rows: IProcessRow[] = [];
+		let listed = 0;
 		for (const entry of value.split(' ')) {
+			if (entry.startsWith('#')) {
+				listed = Number(entry.slice(1));
+				continue;
+			}
 			// `pid:ppid:pgid:tagged:responsible`; the responsible pid is the helper's own business (its `kill`).
 			const fields = entry.split(':').map(Number);
 			if (fields.length >= 4 && fields.every(Number.isInteger)) {
 				rows.push({ pid: fields[0], ppid: fields[1], pgid: fields[2], tagged: fields[3] === 1 });
 			}
 		}
-		if (!rows.length) {
+		// The count of every process it looked at: rows may be none when nothing is newer than the root.
+		if (!(Number.isInteger(listed) && listed > 0) || (trackedRoot === undefined && !rows.length)) {
 			throw new Error('the sandbox helper listed no processes');
 		}
 		return rows;

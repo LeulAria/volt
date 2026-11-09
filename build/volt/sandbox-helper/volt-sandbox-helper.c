@@ -17,10 +17,13 @@
 //       where a negative number is `-<errno>`.
 //       - `<id>\t<pid>\t<operation or ->\t<path or ->`: sandbox_check's return value (1: sandboxed,
 //         or the operation is denied; 0: not sandboxed, or allowed).
-//       - `<id>\tsweep\t<needle or ->\t-`: one `pid:ppid:pgid:tagged:responsible` per process,
-//         space separated, where tagged is 1 when the process's argv or environment (readable for
-//         this user's processes) contains the needle. The run's process-tree sweep: what `ps -E`
-//         gives, without a process spawn or megabytes of text per sweep.
+//       - `<id>\tsweep\t<needle or ->\t<tracked root pid or ->`: `#<processes listed>`, then one
+//         `pid:ppid:pgid:tagged:responsible` per process, space separated, where tagged is 1 when
+//         the process's argv or environment (readable for this user's processes) contains the
+//         needle. The run's process-tree sweep: what `ps -E` gives, without a process spawn or
+//         megabytes of text per sweep. With the root of a tracked run, only processes created
+//         after that root are listed (kernel unique ids, never reused): no older process can be
+//         its descendant, join its new session's group or carry its tag.
 //       - `<id>\ttrack\t<root pid>\t<process cap or ->`: starts tracking a run (F.10): kqueue
 //         NOTE_FORK and NOTE_EXIT on the root and on every descendant it finds, so a process that
 //         forks and exits at once still has its children recorded. With a cap, a fork that takes
@@ -130,8 +133,8 @@ static uint64_t uniqueId(pid_t pid) {
 	return proc_pidinfo(pid, VOLT_PROC_PIDUNIQIDENTIFIERINFO, 0, &info, sizeof(info)) == (int)sizeof(info) ? info.uniqueid : 0;
 }
 
-/** Every process: parent, group, whether it carries the needle, and its responsible process. */
-static void sweep(const char *id, const char *needle) {
+/** Every process (created since `floor`, a unique id): parent, group, whether it carries the needle, and its responsible process. */
+static void sweep(const char *id, const char *needle, uint64_t floor) {
 	int count = proc_listallpids(NULL, 0);
 	int argmax = 0;
 	size_t size = sizeof(argmax);
@@ -151,10 +154,10 @@ static void sweep(const char *id, const char *needle) {
 	count = proc_listallpids(pids, capacity * (int)sizeof(pid_t));
 	size_t needleLength = strcmp(needle, "-") == 0 ? 0 : strlen(needle);
 	responsible_fn responsible = responsibleFor();
-	printf("%s\t", id);
+	printf("%s\t#%d ", id, count);
 	for (int i = 0; i < count; i++) {
 		struct proc_bsdinfo info;
-		if (pids[i] <= 0 || proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != (int)sizeof(info)) {
+		if (pids[i] <= 0 || (floor && uniqueId(pids[i]) < floor) || proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != (int)sizeof(info)) {
 			continue;
 		}
 		int tagged = 0;
@@ -330,11 +333,7 @@ static int members(Run *run, pid_t *out, int capacity) {
 	total = proc_listallpids(all, (total + 256) * (int)sizeof(pid_t));
 	for (int i = 0; i < total && count < capacity; i++) {
 		pid_t pid = all[i];
-		if (pid <= 1 || pid == getpid() || responsible(pid) != run->root) {
-			continue;
-		}
-		uint64_t id = uniqueId(pid);
-		if (id < run->rootId) {
+		if (pid <= 1 || pid == getpid() || uniqueId(pid) < run->rootId || responsible(pid) != run->root) {
 			continue;
 		}
 		int known = 0;
@@ -492,7 +491,15 @@ static void handleLine(char *line, sandbox_check_fn check, int flags) {
 		return;
 	}
 	if (strcmp(fields[1], "sweep") == 0) {
-		sweep(fields[0], fields[2]);
+		uint64_t floor = 0;
+		if (strcmp(fields[3], "-") != 0) {
+			char *end = NULL;
+			long root = strtol(fields[3], &end, 10);
+			const Run *run = *fields[3] && !*end && root > 1 ? findRun((pid_t)root) : NULL;
+			// Not a tracked run: every process, as without a root.
+			floor = run ? run->rootId : 0;
+		}
+		sweep(fields[0], fields[2], floor);
 		return;
 	}
 	if (strcmp(fields[1], "userprocs") == 0) {

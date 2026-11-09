@@ -65,11 +65,31 @@ async function writeAtomic(path: string, text: string): Promise<void> {
 	await fs.rename(temp, path);
 }
 
-/** A `proper-lockfile` compatible lock (the CLI's own writers take `<file>.lock` the same way). */
-async function withLock<T>(path: string, run: () => Promise<T>): Promise<T> {
+/** This process's holders of each lock, in order: Volt's own merges queue here instead of polling the lock folder. */
+const lockQueues = new Map<string, Promise<unknown>>();
+
+/**
+ * A `proper-lockfile` compatible lock (the CLI's own writers take `<file>.lock` the same way).
+ * Within this process callers take turns; against other processes the lock folder is polled from
+ * 2 ms, doubling to 100 ms (a merge holds it for a few milliseconds).
+ */
+function withLock<T>(path: string, run: () => Promise<T>): Promise<T> {
 	const lock = `${path}.lock`;
+	const previous = lockQueues.get(lock) ?? Promise.resolve();
+	const turn = previous.catch(() => undefined).then(() => withLockFolder(path, lock, run));
+	const settled = turn.catch(() => undefined);
+	lockQueues.set(lock, settled);
+	void settled.then(() => {
+		if (lockQueues.get(lock) === settled) {
+			lockQueues.delete(lock);
+		}
+	});
+	return turn;
+}
+
+async function withLockFolder<T>(path: string, lock: string, run: () => Promise<T>): Promise<T> {
 	const started = Date.now();
-	for (; ;) {
+	for (let wait = 2; ; wait = Math.min(wait * 2, 100)) {
 		try {
 			await fs.mkdir(lock);
 			break;
@@ -86,7 +106,7 @@ async function withLock<T>(path: string, run: () => Promise<T>): Promise<T> {
 		if (Date.now() - started > LOCK_TIMEOUT_MS) {
 			throw new Error(`${path} is locked`);
 		}
-		await new Promise(resolve => setTimeout(resolve, 100));
+		await new Promise(resolve => setTimeout(resolve, wait));
 	}
 	try {
 		return await run();
@@ -139,16 +159,25 @@ export class AgentStateOverlay {
 	/** The user's config read-only through links; anything the sandbox put under a protected name is removed. */
 	private async link(): Promise<void> {
 		const links = new Map(this.plan.links.map(link => [link.path, link.target]));
-		for (const path of this.plan.protect) {
+		const reset = async (path: string) => {
 			const target = links.get(path);
 			const current = await fs.readlink(path).catch(() => undefined);
 			if (target && current === target && await exists(target)) {
-				continue;
+				return;
 			}
 			await fs.rm(path, { recursive: true, force: true });
 			if (target && await exists(target)) {
 				await fs.symlink(target, path);
 			}
+		};
+		const paths = [...new Set(this.plan.protect)];
+		// Names are the config folder's own children, set together; one below another is set in order.
+		if (paths.some(path => paths.some(other => path.startsWith(`${other}/`)))) {
+			for (const path of paths) {
+				await reset(path);
+			}
+		} else {
+			await Promise.all(paths.map(reset));
 		}
 	}
 
@@ -197,9 +226,14 @@ export class AgentStateOverlay {
 			if (after === undefined && !(await exists(seed.path))) {
 				continue;
 			}
+			// What the sandbox changed and which of it is allowed back depend only on the snapshot and
+			// the overlay's file; the user's file is read (under its lock) only when something goes back.
+			const changes = mergeAgentState(snapshot, after, {}, seed.mergeBack);
 			if (!(await exists(seed.from))) {
 				// Never create the user's config from the sandbox: only report.
 				dropped.push(...mergeAgentState(snapshot, after, {}, []).dropped);
+			} else if (!changes.merged) {
+				dropped.push(...changes.dropped);
 			} else {
 				const result = await withLock(seed.from, async () => {
 					const merge = mergeAgentState(snapshot, after, await readJson(seed.from), seed.mergeBack);
@@ -211,7 +245,7 @@ export class AgentStateOverlay {
 				applied.push(...result.applied);
 				dropped.push(...result.dropped);
 			}
-			if (after !== undefined) {
+			if (after !== undefined && (changes.applied.length || changes.dropped.length)) {
 				await writeAtomic(seed.snapshot, JSON.stringify(after));
 			}
 		}

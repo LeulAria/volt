@@ -65,10 +65,12 @@ interface ICanonical {
 	readonly isDirectory: boolean;
 }
 
+type Realpath = (path: string) => Promise<string>;
+
 /** The real path, or the real path of the nearest existing parent plus the rest. */
-export async function canonicalPath(path: string): Promise<ICanonical> {
+export async function canonicalPath(path: string, realpath: Realpath = p => fs.realpath(p)): Promise<ICanonical> {
 	try {
-		const real = await fs.realpath(path);
+		const real = await realpath(path);
 		const stat = await fs.stat(real);
 		return { path: real, exists: true, isDirectory: stat.isDirectory() };
 	} catch {
@@ -80,13 +82,40 @@ export async function canonicalPath(path: string): Promise<ICanonical> {
 		rest.unshift(basename(current));
 		current = dirname(current);
 		try {
-			const real = await fs.realpath(current);
+			const real = await realpath(current);
 			return { path: join(real, ...rest), exists: false, isDirectory: false };
 		} catch {
 			// Keep climbing.
 		}
 	}
 	return { path, exists: false, isDirectory: false };
+}
+
+/**
+ * {@link canonicalPath} for one resolution: each path's lookups start at most once and run
+ * concurrently, so a policy's hundred-odd paths cost about one file-system round trip instead of
+ * one each. Answers are the ones a serial walk would get from the same file system.
+ */
+function canonicalizer(): (path: string) => Promise<ICanonical> {
+	const reals = new Map<string, Promise<string>>();
+	const realpath: Realpath = path => {
+		let real = reals.get(path);
+		if (!real) {
+			real = fs.realpath(path);
+			real.catch(() => undefined);
+			reals.set(path, real);
+		}
+		return real;
+	};
+	const answers = new Map<string, Promise<ICanonical>>();
+	return path => {
+		let answer = answers.get(path);
+		if (!answer) {
+			answer = canonicalPath(path, realpath);
+			answers.set(path, answer);
+		}
+		return answer;
+	};
 }
 
 export function isInside(path: string, root: string): boolean {
@@ -121,32 +150,41 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	const notes: string[] = [];
 	const refuse = (message: string): never => { throw new SandboxUnavailableError(message, 'unavailable'); };
 	const home = host.home;
+	const canonical = canonicalizer();
+	for (const root of context.workspaceRoots) {
+		if (isAbsolute(root)) {
+			void canonical(root);
+		}
+	}
 
 	const workspaceRoots: string[] = [];
 	for (const root of context.workspaceRoots) {
 		if (!isAbsolute(root)) {
 			refuse(`Workspace root is not absolute: ${root}`);
 		}
-		const canonical = await canonicalPath(root);
-		if (!canonical.exists || !canonical.isDirectory) {
+		const resolved = await canonical(root);
+		if (!resolved.exists || !resolved.isDirectory) {
 			notes.push(`workspace root does not exist: ${root}`);
 			continue;
 		}
-		if (canonical.path === '/' || isInside(home, canonical.path)) {
-			refuse(`Refusing a workspace that is / or contains the home folder: ${canonical.path}`);
+		if (resolved.path === '/' || isInside(home, resolved.path)) {
+			refuse(`Refusing a workspace that is / or contains the home folder: ${resolved.path}`);
 		}
-		workspaceRoots.push(canonical.path);
+		workspaceRoots.push(resolved.path);
 	}
 	let storage: string | undefined;
 	if (context.storageDir) {
 		await fs.mkdir(context.storageDir, { recursive: true, mode: 0o700 });
-		storage = (await canonicalPath(context.storageDir)).path;
+		storage = (await canonical(context.storageDir)).path;
 	}
 	await fs.mkdir(join(runTmp, 'home'), { recursive: true, mode: 0o700 });
 
 	const hostPath = host.platform === 'win32' ? Object.entries(context.hostEnv).find(([key]) => key.toLowerCase() === 'path')?.[1] : context.hostEnv.PATH;
-	const pathDirs = await toolchainDirs(hostPath, home, notes, pathDelimiter(host.platform));
-	const systemDirs = (await Promise.all(systemReadPaths(host.platform, context.hostEnv).map(canonicalPath))).filter(c => c.exists).map(c => c.path);
+	const [pathDirs, systemCanonical] = await Promise.all([
+		toolchainDirs(hostPath, home, notes, pathDelimiter(host.platform), canonical),
+		Promise.all(systemReadPaths(host.platform, context.hostEnv).map(canonical)),
+	]);
+	const systemDirs = systemCanonical.filter(c => c.exists).map(c => c.path);
 	if (host.platform === 'darwin' && host.developerDir && host.developerDir.startsWith('/Applications/')) {
 		// `/usr/bin/git` and friends are shims that load frameworks from the selected Xcode.
 		systemDirs.push(dirname(host.developerDir));
@@ -173,12 +211,29 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 		}
 	};
 
+	// Every path below is looked up at once; the loops then take the answers in order.
+	const unmask = new Set(policy.filesystem.unmask);
+	const namedPaths = [
+		...policy.filesystem.read.filter(e => e !== '/'),
+		...policy.filesystem.write,
+		...[...policy.filesystem.deny, ...policy.filesystem.protect].filter(entry => !unmask.has(entry) && !entry.startsWith('**/')),
+		...policy.host.unixSockets,
+	];
+	for (const entry of namedPaths) {
+		for (const path of expand(entry)) {
+			void canonical(path);
+		}
+	}
+	if (context.cwd) {
+		void canonical(context.cwd);
+	}
+
 	// Reads.
 	const readAll = policy.filesystem.read.includes('/');
 	const read: string[] = [];
 	for (const entry of policy.filesystem.read.filter(e => e !== '/')) {
 		for (const path of expand(entry)) {
-			const c = await canonicalPath(path);
+			const c = await canonical(path);
 			if (c.exists) {
 				read.push(c.path);
 			}
@@ -190,7 +245,7 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	const writeFiles: string[] = [];
 	for (const entry of policy.filesystem.write) {
 		for (const path of expand(entry)) {
-			const c = await canonicalPath(path);
+			const c = await canonical(path);
 			if (c.path === '/' || isInside(home, c.path)) {
 				refuse(`Refusing to make ${c.path === '/' ? '/' : 'the home folder or one of its parents'} writable`);
 			}
@@ -205,7 +260,6 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	}
 
 	// Denies (credentials), minus what a trusted layer unmasked.
-	const unmask = new Set(policy.filesystem.unmask);
 	const deny: string[] = [];
 	const denyPatterns: IResolvedPattern[] = [];
 	const protect: string[] = [];
@@ -235,7 +289,7 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 				continue;
 			}
 			for (const path of expand(entry)) {
-				const c = await canonicalPath(path);
+				const c = await canonical(path);
 				paths.push(c.path);
 				if (c.path !== path) {
 					paths.push(path);
@@ -265,7 +319,7 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	const unixSockets: string[] = [];
 	for (const entry of policy.host.unixSockets) {
 		for (const path of expand(entry)) {
-			const c = await canonicalPath(path);
+			const c = await canonical(path);
 			if (c.exists) {
 				unixSockets.push(c.path);
 			} else {
@@ -316,7 +370,7 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	const usableDir = (dir: string) => readable(dir) && !deny.some(path => isInside(dir, path));
 	let cwd = runTmp;
 	if (context.cwd) {
-		cwd = (await canonicalPath(context.cwd)).path;
+		cwd = (await canonical(context.cwd)).path;
 		if (!usableDir(cwd)) {
 			refuse(`The working directory is not readable inside the sandbox: ${cwd}`);
 		}
@@ -381,14 +435,13 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
  * user's node, python or cargo. `<prefix>/bin` gives `<prefix>` (libraries live beside it), except
  * where the prefix is a catch-all such as `~/.local` or the home folder.
  */
-async function toolchainDirs(pathVar: string | undefined, home: string, notes: string[], delimiter = ':'): Promise<string[]> {
+async function toolchainDirs(pathVar: string | undefined, home: string, notes: string[], delimiter = ':', canonical: (path: string) => Promise<ICanonical> = canonicalPath): Promise<string[]> {
 	const out: string[] = [];
 	const isRoot = (path: string) => path === '/' || dirname(path) === path;
-	for (const dir of (pathVar ?? '').split(delimiter)) {
-		if (!isAbsolute(dir)) {
-			continue;
-		}
-		const c = await canonicalPath(dir);
+	const dirs = (pathVar ?? '').split(delimiter).filter(dir => isAbsolute(dir));
+	const answers = await Promise.all(dirs.map(dir => canonical(dir)));
+	for (const [index, dir] of dirs.entries()) {
+		const c = answers[index];
 		if (!c.exists || !c.isDirectory || isRoot(c.path) || c.path === home) {
 			continue;
 		}

@@ -209,7 +209,33 @@ function mergeFilters(filters: readonly SeatbeltFilter[]): string[] {
 	return out.flatMap(item => typeof item === 'string' ? [item] : groupRegexes(item));
 }
 
-function groupRegexes(group: readonly IPathRegex[]): string[] {
+/**
+ * Merged groups by their exact input: suffix, case mode and the set of prefixes (the merge sorts
+ * and dedupes them, so their order does not matter). Most of a launch's groups (credentials, the
+ * `.env` patterns of every root) are the same on every launch; a run's own folders miss.
+ */
+const mergedGroups = new Map<string, readonly string[]>();
+const MERGED_GROUPS_KEPT = 256;
+
+function groupRegexes(group: readonly IPathRegex[]): readonly string[] {
+	const { suffix, caseInsensitive } = group[0];
+	// Paths never hold control characters (the resolver refuses them), so these separators are unambiguous.
+	const key = `${caseInsensitive ? 'i' : 's'}\u0001${suffix}\u0001${[...new Set(group.map(filter => filter.prefix))].sort().join('\u0000')}`;
+	const known = mergedGroups.get(key);
+	if (known) {
+		mergedGroups.delete(key);
+		mergedGroups.set(key, known);
+		return known;
+	}
+	const merged = Object.freeze(mergeGroup(group));
+	mergedGroups.set(key, merged);
+	if (mergedGroups.size > MERGED_GROUPS_KEPT) {
+		mergedGroups.delete(mergedGroups.keys().next().value!);
+	}
+	return merged;
+}
+
+function mergeGroup(group: readonly IPathRegex[]): string[] {
 	const { suffix, caseInsensitive } = group[0];
 	const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 	const below = coversBelow(suffix);

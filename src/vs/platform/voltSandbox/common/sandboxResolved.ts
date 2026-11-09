@@ -104,16 +104,25 @@ export function resolvedPolicyAllows(policy: IResolvedSandboxPolicy, path: strin
 	if (!path.startsWith('/') || path.split('/').some(segment => segment === '..')) {
 		return false;
 	}
-	const fold = policy.platform === 'darwin' ? (s: string) => s.toLowerCase() : (s: string) => s;
+	const fold = policy.platform === 'darwin' ? FOLD_CASE : KEEP_CASE;
 	const p = path.length > 1 ? path.replace(/\/+$/, '') : path;
+	const fp = fold(p);
 	const inside = (root: string, exact = false) => root === '/' || p === root || (!exact && p.startsWith(`${root}/`));
-	const insideFolded = (root: string) => root === '/' || fold(p) === fold(root) || fold(p).startsWith(`${fold(root)}/`);
-	const matches = (pattern: IResolvedPattern) => {
-		if (!insideFolded(pattern.root) || fold(p) === fold(pattern.root)) {
+	// Roots and names come folded once per policy (they are fixed once resolved); only the path is folded per call.
+	const insideFolded = (root: IFoldedRoot) => root.root === '/' || fp === root.folded || fp.startsWith(root.below);
+	// The path's components below a root, folded, by the root's length (patterns share their roots).
+	const below = new Map<number, string[]>();
+	const matches = (pattern: IFoldedPattern) => {
+		if (!insideFolded(pattern) || fp === pattern.folded) {
 			return false;
 		}
-		const parts = (pattern.root === '/' ? p.slice(1) : p.slice(pattern.root.length + 1)).split('/').map(fold);
-		const names = pattern.names.map(fold);
+		const at = pattern.root === '/' ? 1 : pattern.root.length + 1;
+		let parts = below.get(at);
+		if (!parts) {
+			parts = p.slice(at).split('/').map(fold);
+			below.set(at, parts);
+		}
+		const names = pattern.names;
 		for (let i = 0; i + names.length <= parts.length; i++) {
 			if (names.every((name, j) => parts[i + j] === name)) {
 				return true;
@@ -121,27 +130,29 @@ export function resolvedPolicyAllows(policy: IResolvedSandboxPolicy, path: strin
 		}
 		return false;
 	};
-	if (policy.deny.some(insideFolded) || policy.denyPatterns.some(matches)) {
+	const deny = foldedRoots(policy.deny, fold);
+	if (deny.some(insideFolded) || foldedPatterns(policy.denyPatterns, fold).some(matches)) {
 		return false;
 	}
-	if ((policy.isolated ?? []).some(({ root, keep }) => insideFolded(root) && !inside(keep))) {
+	if ((policy.isolated ?? []).some(({ root, keep }) => insideFolded(foldedRoot(root, fold)) && !inside(keep))) {
 		return false;
 	}
 	if (access === 'read') {
-		return policy.readAll || [...policy.read, ...policy.write].some(root => inside(root)) || policy.writeFiles.some(file => inside(file, true));
+		return policy.readAll || policy.read.some(root => inside(root)) || policy.write.some(root => inside(root)) || policy.writeFiles.some(file => inside(file, true));
 	}
-	if (policy.protect.some(insideFolded) || policy.protectPatterns.some(matches)) {
+	if (foldedRoots(policy.protect, fold).some(insideFolded) || foldedPatterns(policy.protectPatterns, fold).some(matches)) {
 		return false;
 	}
 	const name = fold(p.slice(p.lastIndexOf('/') + 1));
-	if (name === '.git' && policy.newRepositoryGuard.some(root => insideFolded(root))) {
+	if (name === '.git' && foldedRoots(policy.newRepositoryGuard, fold).some(insideFolded)) {
 		return false;
 	}
 	for (const dir of policy.gitDirs) {
-		if (!insideFolded(dir.root)) {
+		const root = foldedRoot(dir.root, fold);
+		if (!insideFolded(root)) {
 			continue;
 		}
-		const parts = fold(p) === fold(dir.root) ? [] : (dir.root === '/' ? p.slice(1) : p.slice(dir.root.length + 1)).split('/');
+		const parts = fp === root.folded ? [] : (dir.root === '/' ? p.slice(1) : p.slice(dir.root.length + 1)).split('/');
 		const at = dir.anyDepth ? parts.findIndex(part => fold(part) === '.git') : -1;
 		if (dir.anyDepth && at < 0) {
 			continue;
@@ -152,6 +163,51 @@ export function resolvedPolicyAllows(policy: IResolvedSandboxPolicy, path: strin
 	}
 	return policy.write.some(root => inside(root))
 		|| policy.writeFiles.some(file => p === file || (p.startsWith(`${file}.`) && /^\.(lock|tmp|backup|bak|swp)/.test(p.slice(file.length))));
+}
+
+const FOLD_CASE = (s: string) => s.toLowerCase();
+const KEEP_CASE = (s: string) => s;
+
+interface IFoldedRoot {
+	readonly root: string;
+	readonly folded: string;
+	/** `<folded>/`: what a path strictly below the root starts with. */
+	readonly below: string;
+}
+
+interface IFoldedPattern extends IFoldedRoot {
+	readonly names: readonly string[];
+}
+
+function foldedRoot(root: string, fold: (s: string) => string): IFoldedRoot {
+	const folded = fold(root);
+	return { root, folded, below: `${folded}/` };
+}
+
+/**
+ * Folded copies of a resolved policy's lists, kept per list (and per fold: a policy resolved for
+ * macOS folds case). Resolved policies are never changed in place; a new list is a new key.
+ */
+const foldedRootLists = new WeakMap<readonly string[], { readonly fold: (s: string) => string; readonly roots: readonly IFoldedRoot[] }>();
+const foldedPatternLists = new WeakMap<readonly IResolvedPattern[], { readonly fold: (s: string) => string; readonly patterns: readonly IFoldedPattern[] }>();
+function foldedRoots(list: readonly string[], fold: (s: string) => string): readonly IFoldedRoot[] {
+	const known = foldedRootLists.get(list);
+	if (known?.fold === fold && known.roots.length === list.length) {
+		return known.roots;
+	}
+	const roots = list.map(root => foldedRoot(root, fold));
+	foldedRootLists.set(list, { fold, roots });
+	return roots;
+}
+
+function foldedPatterns(list: readonly IResolvedPattern[], fold: (s: string) => string): readonly IFoldedPattern[] {
+	const known = foldedPatternLists.get(list);
+	if (known?.fold === fold && known.patterns.length === list.length) {
+		return known.patterns;
+	}
+	const patterns = list.map(pattern => ({ ...foldedRoot(pattern.root, fold), names: pattern.names.map(fold) }));
+	foldedPatternLists.set(list, { fold, patterns });
+	return patterns;
 }
 
 /**

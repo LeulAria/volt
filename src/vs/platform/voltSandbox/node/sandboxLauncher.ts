@@ -286,6 +286,8 @@ export class VoltSandboxLauncher extends Disposable {
 					throw new SandboxUnavailableError(`Volt's sandbox policy refused this launch: ${decision.reason}.`, 'unavailable');
 				}
 			}
+			// The backend's probe (once per process, cached) runs while the folders and the overlay are made.
+			void this.manager.capabilities().catch(() => undefined);
 			const sshAuthSock = options.hostEnv.SSH_AUTH_SOCK && await fs.stat(options.hostEnv.SSH_AUTH_SOCK).then(s => s.isSocket(), () => false) ? options.hostEnv.SSH_AUTH_SOCK : undefined;
 			// Package caches per principal: one chat's sandbox cannot plant a package another one runs (B-35).
 			const cacheDir = join(host.cacheDir, sandboxCacheKey(request));
@@ -635,28 +637,24 @@ export class VoltSandboxLauncher extends Disposable {
 	private hostFacts(): Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> {
 		this.agentHost ??= (async () => {
 			const facts = await sandboxHostFacts();
-			const temps = new Set<string>([facts.tmpRoot]);
-			for (const dir of ['/tmp', '/var/tmp']) {
-				temps.add(await fs.realpath(dir).catch(() => dir));
-			}
-			if (facts.platform === 'darwin') {
-				const cache = await execFileAsync('/usr/bin/getconf', ['DARWIN_USER_CACHE_DIR']).then(r => fs.realpath(r.stdout.trim()), () => undefined);
-				if (cache) {
-					temps.add(cache);
-				}
-			}
 			// The root of the per-principal caches (see `sandboxCacheKey`); each run gets its own child.
 			const cacheRoot = join(facts.home, '.volt', 'sandbox-cache');
-			await fs.mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-			const cacheDir = await fs.realpath(cacheRoot).catch(() => cacheRoot);
-			const userDataDir = await fs.realpath(this.userDataDir).catch(() => this.userDataDir);
+			// Independent lookups, made together; the temp folders keep this order.
+			const [shared, darwinCache, cacheDir, userDataDir, keys] = await Promise.all([
+				Promise.all(['/tmp', '/var/tmp'].map(dir => fs.realpath(dir).catch(() => dir))),
+				facts.platform === 'darwin' ? execFileAsync('/usr/bin/getconf', ['DARWIN_USER_CACHE_DIR']).then(r => fs.realpath(r.stdout.trim()), () => undefined) : Promise.resolve(undefined),
+				fs.mkdir(cacheRoot, { recursive: true, mode: 0o700 }).then(() => fs.realpath(cacheRoot).catch(() => cacheRoot)),
+				fs.realpath(this.userDataDir).catch(() => this.userDataDir),
+				sshPrivateKeys(join(facts.home, '.ssh')),
+			]);
+			const temps = new Set<string>([facts.tmpRoot, ...shared, ...darwinCache ? [darwinCache] : []]);
 			return {
 				platform: facts.platform,
 				home: facts.home,
 				tempDirs: [...temps].filter(dir => dir !== '/' && dir !== facts.home),
 				uid: process.getuid?.(),
 				userDataDir,
-				sshPrivateKeys: await sshPrivateKeys(join(facts.home, '.ssh')),
+				sshPrivateKeys: keys,
 				cacheDir,
 			};
 		})();
