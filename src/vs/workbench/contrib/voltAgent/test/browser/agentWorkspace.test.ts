@@ -163,7 +163,7 @@ suite('Agent workspaces', () => {
 		assert.strictEqual(surfaceKindForMenuAction('scratch'), 'scratch');
 		assert.strictEqual(surfaceKindForMenuAction('canvas'), 'canvas');
 		assert.strictEqual(surfaceKindForMenuAction('gitGraph'), 'gitGraph');
-		assert.deepStrictEqual(agentSurfaceMenuItems().map(item => item.id), ['file', 'terminal', 'browser', 'device', 'changes', 'gitGraph', 'scratch', 'canvas', 'automations', 'workflows', 'sideChat']);
+		assert.deepStrictEqual(agentSurfaceMenuItems().map(item => item.id), ['file', 'terminal', 'browser', 'device', 'changes', 'gitGraph', 'scratch', 'canvas', 'automations', 'workflows', 'http', 'sideChat']);
 
 		const service = store.add(new AgentWorkspaceService(store.add(new InMemoryStorageService()), store.add(new VoltWindowScopeService(undefined, undefined, undefined))));
 		const first = service.openSurface('a', { kind: 'changes', title: 'Changes' }, true);
