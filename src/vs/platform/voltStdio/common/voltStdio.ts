@@ -10,7 +10,7 @@ import { createDecorator } from '../../instantiation/common/instantiation.js';
 import type { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGit/common/hostGit.js';
 import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
 import type { ISandboxPolicyFilesInfo } from '../../voltSandbox/common/sandboxPolicyFiles.js';
-import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
+import type { IVoltSandboxRequest, IVoltSandboxSettings } from '../../voltSandbox/common/sandboxPolicy.js';
 import type { ISandboxWorkloadInfo } from '../../voltSandbox/common/sandboxWorkloads.js';
 import type { SubjectKey } from '../../voltSandbox/common/principals.js';
 import type { ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState } from '../../voltSandbox/common/trust.js';
@@ -339,6 +339,14 @@ export interface IVoltStdioService {
 	/** Writes `path` for sandboxed spawn `id`, the same way; a file with more than one link is refused. */
 	sandboxWriteFile?(id: string, path: string, content: string): Promise<IVoltSandboxFileResult>;
 	/**
+	 * A file Volt itself reads, writes or deletes for a sandboxed chat (a native model's file tools,
+	 * host tools that change files), after the host-tool gate allowed it: judged again by the gate's
+	 * path rule (the files broker's, `filesPlan`) on the real path, and opened without following a
+	 * symlink anywhere in the path, so a link swapped in after the gate's check cannot redirect it
+	 * (SEC3-3). Never throws: a refusal is `ok: false`.
+	 */
+	chatFile?(request: IVoltChatFileRequest): Promise<IVoltChatFileResult>;
+	/**
 	 * A sandboxed chat's terminal (spec F.6). node-pty passes no extra file descriptors, so the
 	 * sandbox's control channels are FIFOs in the run's private folder, opened by the launcher this
 	 * returns. Start it on a PTY, then {@link confirmSandboxedTerminal}. Rejects (nothing to start)
@@ -446,6 +454,44 @@ export async function runGitThrough(stdio: IVoltStdioService, request: IHostGitR
 		return { exitCode: null, stdout: '', stderr: message, error: message };
 	}
 }
+
+/** One file operation Volt performs for a sandboxed chat ({@link IVoltStdioService.chatFile}). */
+export interface IVoltChatFileRequest {
+	readonly op: 'read' | 'write' | 'delete';
+	/** Absolute, as Volt resolved the agent's path (before symlinks). */
+	readonly path: string;
+	/** The chat (its principal is `chat:<id>`). */
+	readonly chatId: string;
+	/** The chat's sandbox, from Volt's record. */
+	readonly sandbox: IVoltSandboxSettings;
+	/** The chat's folders (its worktree or project), from Volt's record. */
+	readonly roots: readonly string[];
+	/** Write: the file's whole new text (UTF-8). */
+	readonly content?: string;
+	/** Write: the text the file must hold now (an edit computed against it); a file that changed since is not written. */
+	readonly expected?: string;
+	/** Read: `base64` for bytes (images); default `utf8`. */
+	readonly encoding?: 'utf8' | 'base64';
+	/** Read: refused when the file is larger. */
+	readonly maxBytes?: number;
+}
+
+export type IVoltChatFileResult =
+	| {
+		readonly ok: true;
+		/** The final path of the opened file. */
+		readonly path: string;
+		/** Read: the content, in the encoding asked for. */
+		readonly content?: string;
+		/** Write and delete: whether the file existed before. */
+		readonly existed?: boolean;
+	}
+	| {
+		readonly ok: false;
+		readonly reason: string;
+		/** `changed`: an edit's text changed since it was read; `missing`: no such file; else a refusal. */
+		readonly refusal?: string;
+	};
 
 /** A file read or written for a sandboxed spawn. */
 export type IVoltSandboxFileResult =

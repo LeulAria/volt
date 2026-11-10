@@ -14,6 +14,7 @@ import { NullLogService } from '../../../../platform/log/common/log.js';
 import { InMemoryStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { AgentServerMethod, AgentServerRole, IAgentServerClientInfo } from '../../../../platform/voltAgentServer/common/protocolServer.js';
 import { IVoltHostMcpService, IVoltHostMcpToolInfo } from '../../../../platform/voltHostMcp/common/voltHostMcp.js';
+import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { VoltHostMcpBridge } from '../../../../workbench/contrib/voltAgent/common/voltHostMcpBridge.js';
 // The agent server runs this same service (agentServerMain.ts); it has no DOM dependency.
@@ -39,7 +40,7 @@ suite('Agent server feature enablement mirror', () => {
 		const workspace = { getWorkspace: () => ({ folders: [{ uri: URI.file('/ws') }] }) } as unknown as IWorkspaceContextService;
 		const access = { blockReason: () => undefined } as unknown as IVoltBrowserAccessService;
 		const files = { readFile: async () => { throw new Error('missing'); } } as unknown as IFileService;
-		const service = store.add(new VoltHostToolService(commands, files, workspace, access));
+		const service = store.add(new VoltHostToolService(commands, files, workspace, access, {} as IVoltStdioService));
 		// The server's memory service serves its tools here, as it does in agentServerMain.
 		store.add(service.registerToolProvider({ tools: VOLT_MEMORY_TOOLS, invoke: async name => ({ text: `ran ${name}` }) }));
 		return service;

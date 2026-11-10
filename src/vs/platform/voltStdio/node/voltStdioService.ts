@@ -23,6 +23,7 @@ import type { ISandboxPolicyFilesInfo } from '../../voltSandbox/common/sandboxPo
 import { IAdminPolicy, POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../../voltSandbox/common/authority.js';
 import { brokerReadFile, brokerWriteFile, defaultFsdPath } from '../../voltFiles/node/sandboxFileBroker.js';
 import { SafeOpenError } from '../../voltFiles/node/safeOpen.js';
+import { chatFileOp } from '../../voltFiles/node/chatFiles.js';
 import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.js';
 import { SandboxUnavailableError } from '../../voltSandbox/common/sandboxBackend.js';
 import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
@@ -40,7 +41,7 @@ import { BUILTIN_T2_PLUGINS, IVoltPluginAvailability, IVoltPluginFolders, IVoltP
 import { builtinT2Descriptor, VoltPluginHostService } from '../../voltPlugins/node/pluginHost.js';
 import { SandboxedPtySession } from '../../voltSandbox/node/sandboxPty.js';
 import { ISandboxedHost } from '../../voltSandbox/node/supervisor.js';
-import { describeExecContext, execRefusal, IVoltExecContext, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltPromptBudget, IVoltSandboxApproval, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
+import { describeExecContext, execRefusal, IVoltChatFileRequest, IVoltChatFileResult, IVoltExecContext, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltPromptBudget, IVoltSandboxApproval, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -638,6 +639,18 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		} catch (err) {
 			return { ok: false, reason: this.fileRefusal(id, path, 'write', err) };
 		}
+	}
+
+	async chatFile(request: IVoltChatFileRequest): Promise<IVoltChatFileResult> {
+		if (request?.op !== 'read' && request?.sandbox?.level === 'workspace-write') {
+			// I.6: what a sandboxed writer changes in a build entry is shown before Volt runs it for the user.
+			await this.snapshotBuildEntries({ level: request.sandbox.level, network: request.sandbox.network, providerId: '', workspaceRoots: [...request.roots ?? []], ...(request.sandbox.extraWritableRoots?.length ? { extraWritableRoots: [...request.sandbox.extraWritableRoots] } : {}) });
+		}
+		const result = await chatFileOp(request, { fsdPath: defaultFsdPath() });
+		if (!result.ok && result.refusal !== 'missing' && result.refusal !== 'changed') {
+			this.logService.info(`[volt-sandbox-files] chat:${request?.chatId} ${request?.op} ${request?.path} refused: ${result.refusal ? `${result.refusal}: ` : ''}${result.reason}`);
+		}
+		return result;
 	}
 
 	private fileRefusal(id: string, path: string, access: 'read' | 'write', err: unknown): string {
