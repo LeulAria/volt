@@ -14,6 +14,7 @@ import { AUTOMATION_TOOL_NAMES, canonicalHostToolName, COMMIT_PLAN_TOOL_NAMES, P
 import { HOST_TOOL_SANDBOX_CLASSES, hostToolSandboxUse, ISandboxPathContext, sandboxBrowserUrlRefusal, sandboxCovers, sandboxReadRefusal, sandboxRefusalMessage, sandboxWriteRefusal } from '../../common/hostToolSandbox.js';
 import { MEMORY_TOOL_NAMES } from '../../common/memory/voltMemory.js';
 import { AGENT_TASK_TOOL_NAMES } from '../../common/orchestration/agentTasks.js';
+import { ORCHESTRA_TOOL_NAMES } from '../../common/orchestration/orchestra.js';
 import { PLAYGROUND_TOOL_NAMES } from '../../common/playgroundTools.js';
 import { WATCHED_TASK_TOOL_NAMES } from '../../common/terminals/watchedTasks.js';
 import { TERMINAL_TOOL_NAMES } from '../../common/terminalTools.js';
@@ -29,6 +30,7 @@ const SERVED_TOOLS = new Set<string>([
 	...VISUAL_TOOL_NAMES.map(canonicalHostToolName), ...DEVICE_TOOL_NAMES, ...CAPTURE_TOOL_NAMES, ...DESKTOP_TOOL_NAMES,
 	...PLAYGROUND_TOOL_NAMES, ...MEMORY_TOOL_NAMES, ...TERMINAL_TOOL_NAMES, ...AGENT_TASK_TOOL_NAMES, ...WATCHED_TASK_TOOL_NAMES,
 	INSTANT_GREP_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, FIND_FILES_TOOL_NAME, WORKSPACE_STATUS_TOOL_NAME, 'scratch_draw', 'scratch_read',
+	...ORCHESTRA_TOOL_NAMES,
 ]);
 
 suite('Volt host tool sandbox classes', () => {
@@ -215,6 +217,37 @@ suite('Volt host tool sandbox classes', () => {
 		assert.match(page('javascript:alert(1)', online) ?? '', /pages are not opened/);
 		assert.match(page('view-source:http://localhost:3000', online) ?? '', /pages are not opened/);
 		assert.strictEqual(page('file:///etc/passwd', OFF), undefined, 'unsandboxed');
+	});
+
+	test('ORCH-SBX-1: the orchestra tools are classified by what each call does', () => {
+		const use = (name: string, args: Record<string, unknown> = {}) => hostToolSandboxUse(name, args);
+		for (const name of ORCHESTRA_TOOL_NAMES) {
+			assert.ok(use(name), `${name} is classified`);
+		}
+		// Members and seats inherit the caller's sandbox; members in new worktrees need Volt's setup outside it.
+		assert.deepStrictEqual(use('spawn_team', { brief: 'x', count: 3 }), { kind: 'safe' });
+		assert.deepStrictEqual(use('spawn_team', { brief: 'x', count: 3, isolation: 'shared' }), { kind: 'safe' });
+		assert.deepStrictEqual(use('spawn_team', { brief: 'x', count: 3, isolation: 'worktree' }), { kind: 'escapes' });
+		assert.deepStrictEqual(use('council', { question: 'x', isolation: 'worktree' }), { kind: 'safe' }, 'a council takes no isolation: its seats share the checkout');
+		// Which chats a team call reaches only the orchestra knows: the gate asks it and judges each.
+		assert.deepStrictEqual(use('team_send', { to: 'all', message: 'x' }), { kind: 'delegates', chatsByProvider: true });
+		for (const op of ['note', 'done', 'release', 'block', 'add']) {
+			assert.deepStrictEqual(use('team_board', { op }), { kind: 'delegates', chatsByProvider: true }, `${op} posts to the team`);
+		}
+		for (const op of [undefined, 'read', 'claim', 'something_new', 'NOTE']) {
+			assert.deepStrictEqual(use('team_board', op === undefined ? {} : { op }), { kind: 'reads-other', chatsByProvider: true }, `${op} reads the board`);
+		}
+		assert.deepStrictEqual(use('orchestra_status', {}), { kind: 'safe' }, 'machines, models, budget and the caller\'s own teams');
+		assert.deepStrictEqual(use('orchestra_status', { team_id: '  ' }), { kind: 'safe' });
+		assert.deepStrictEqual(use('orchestra_status', { team_id: 'team-1' }), { kind: 'reads-other', chatsByProvider: true });
+		// A remote runner runs its agent outside any sandbox; apply runs git here. Own runs' records are Volt's.
+		for (const args of [{}, { op: 'run', machine: 'local' }, { op: 'run', machine: 'studio' }, { op: 'apply', run_id: 'r' }, { op: 'Status' }, { op: 'other' }]) {
+			assert.deepStrictEqual(use('machine_run', args), { kind: 'escapes' }, JSON.stringify(args));
+		}
+		assert.deepStrictEqual(use('machine_run', { op: 'status' }), { kind: 'safe' });
+		assert.deepStrictEqual(use('machine_run', { op: 'cancel', run_id: 'r' }), { kind: 'safe' });
+		assert.match(sandboxRefusalMessage('machine_run', 'escapes', WRITE), /^machine_run was not run: .*would run outside it\. A remote server runs its agent outside any sandbox.*delegate_task and spawn_team run inside this chat's sandbox/);
+		assert.match(sandboxRefusalMessage('spawn_team', 'escapes', WRITE), /Start the team without `isolation: "worktree"`/);
 	});
 
 	test('refusals tell the model what to do instead', () => {

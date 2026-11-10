@@ -20,7 +20,7 @@ import { createDecorator, IInstantiationService } from '../../../../../platform/
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { cloudAgentForFamily, cloudTaskStatusText, ICloudTask, isCloudTaskActive } from '../../common/cloud/cloudTasks.js';
 import { IVoltHostToolCall, IVoltHostToolChatReach, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
-import { chatInSubtree, isSandboxed, sandboxRefusalMessage } from '../../common/hostToolSandbox.js';
+import { chatInSubtree, isSandboxed, sandboxReachRefusal, sandboxRefusalMessage } from '../../common/hostToolSandbox.js';
 import { CHAT_SANDBOX_PLATFORM, chatSandboxScope, sandboxedInstructionRefusal } from '../../common/access/chatSandbox.js';
 import { IVoltSandboxSettings, SandboxStrategy, sandboxStrategy, VoltSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { blindLabel, blindOrder, describeSpend, formatUsd, isLiveTaskState, isTerminalTaskState, normalizeTaskRole, stringListArg, TASK_WAIT_MS } from '../../common/orchestration/agentTasks.js';
@@ -480,6 +480,12 @@ export class AgentOrchestraService extends Disposable implements IAgentOrchestra
 		const member = this.memberOf(board, caller);
 		const author = this.authorName(board, caller);
 		const itemId = str(args.item_id, 20);
+		if (op === 'done' || op === 'release' || op === 'block' || op === 'note' || op === 'add') {
+			const refusal = await this.postRefusal(board, caller, op);
+			if (refusal) {
+				return { error: refusal };
+			}
+		}
 		switch (op) {
 			case 'read':
 				return { text: this.describeTeam(board, true, caller) };
@@ -786,7 +792,7 @@ export class AgentOrchestraService extends Disposable implements IAgentOrchestra
 		}
 		const { targets, unknown } = this.sendTargets(board, caller, args);
 		if (!targets.size) {
-			return { error: unknown.length ? `No teammate named ${unknown.join(', ')}. Members: ${board.members.map(member => member.name).join(', ')}.` : 'Nobody to send to: the others have finished.' };
+			return { error: unknown.length ? `No teammate named ${unknown.join(', ')}. Members: ${board.members.map(member => member.name).join(', ')}.` : 'Nobody to send to: the others have finished. Read their reports (team_board read), or message one by name: it resumes its task to answer.' };
 		}
 		if (args.wait === true && targets.size > 1) {
 			return { error: 'wait works with one recipient. Send to several without wait, or ask one at a time.' };
@@ -877,6 +883,20 @@ export class AgentOrchestraService extends Disposable implements IAgentOrchestra
 			display: { text: `${from}: ${message}` },
 		};
 		const turnId = `tm-${generateUuid()}`;
+		// A member whose task finished (or has not started) runs only its task's turns: the message is
+		// its task's next round, as message_task sends one. A finished member resumes to answer and
+		// reports again; like every subagent turn, that one is confined before it starts (startTurn).
+		const task = thread?.taskId ? this.orchestrator.getTask(thread.taskId) : undefined;
+		if (task && (task.state === 'queued' || isTerminalTaskState(task.state))) {
+			const events = await this.orchestrator.dispatch({ type: 'task.message', taskId: task.id, turnId, prompt: { ...prompt, ...(task.mode ? { mode: task.mode } : {}), ...(task.modelRef ? { modelRef: task.modelRef } : {}) } });
+			if (!events.length) {
+				return { text: 'not sent: its agent\'s own harness runs it, and Volt cannot send it messages. Read its report instead (team_board read; the lead also has task_status), or start a new member for the question.' };
+			}
+			return {
+				text: events.some(event => event.type === 'task.resumed') ? 'it had finished: it resumes to answer, and its new report comes to the lead' : 'queued: it reads it once it starts (it is waiting for a free slot)',
+				turnId,
+			};
+		}
 		// Always a notification, read between steps when the agent takes messages: never the user's
 		// prompt (that would start a new request's budget) and never a stop of the running turn.
 		const result = await this.orchestrator.notify(threadId, prompt, turnId, { steer: true });
@@ -1229,14 +1249,37 @@ export class AgentOrchestraService extends Disposable implements IAgentOrchestra
 			const prompts = [...this.sendTargets(board, caller, args).targets].map(([id, label]) => ({ id, label }));
 			return { prompts, ...(args.wait === true ? { reads: prompts } : {}) };
 		}
-		const others = this.teamChats(board).filter(chat => chat.id !== threadId);
 		const op = name === TEAM_BOARD_TOOL_NAME ? str(args.op, 20) ?? 'read' : 'read';
 		if (op === 'read' || op === 'claim') {
-			return board.leadId === threadId || this.memberOf(board, caller) ? {} : { reads: others };
+			return board.leadId === threadId || this.memberOf(board, caller) ? {} : { reads: this.teamChats(board).filter(chat => chat.id !== threadId) };
 		}
-		const readers = board.leadId === threadId ? others : others.filter(chat => chat.id !== board.leadId);
+		return { prompts: this.boardReaders(board, caller, op) };
+	}
+
+	/**
+	 * The chats a post on the board reaches besides the poster's: every other chat of the team, as
+	 * each reads the board. The lead reads posts from its own subtree (its members) as its own;
+	 * anyone else's are judged against it too. `block` also messages the lead.
+	 */
+	private boardReaders(board: ITeamBoard, caller: ICaller, op: string): { readonly id: string; readonly label: string }[] {
+		const others = this.teamChats(board).filter(chat => chat.id !== caller.threadId);
+		const readers = this.inSubtree(board.leadId, caller.threadId) ? others.filter(chat => chat.id !== board.leadId) : others;
 		const lead = op === 'block' ? others.find(chat => chat.id === board.leadId) : undefined;
-		return { prompts: lead ? [...readers, lead] : readers };
+		return lead && !readers.includes(lead) ? [...readers, lead] : readers;
+	}
+
+	/**
+	 * Why a sandboxed caller may not post on the board: a teammate that reads it would act on it with
+	 * more access (INV-11). The gate judged the same chats; this holds for the team as it is now.
+	 */
+	private async postRefusal(board: ITeamBoard, caller: ICaller, op: string): Promise<string | undefined> {
+		if (!isSandboxed(caller.sandbox)) {
+			return undefined;
+		}
+		const readers = this.boardReaders(board, caller, op);
+		const refused = await Promise.all(readers.map(chat => this.instructionRefusal(caller, chat.id, chat.label)));
+		const less = readers.filter((_chat, index) => refused[index]).map(chat => chat.label);
+		return less.length ? sandboxReachRefusal(TEAM_BOARD_TOOL_NAME, 'delegates', less, caller.sandbox) : undefined;
 	}
 
 	/** A team's chats: its lead and its members (from the orchestrator's tasks too, so members whose roster is not saved yet count). */

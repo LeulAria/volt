@@ -119,7 +119,7 @@ export const ORCHESTRA_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: TEAM_SEND_TOOL_NAME,
 		title: 'Messaged the team',
 		group: 'tasks',
-		description: 'Send a message to teammates: the lead (the chat that started the team), members by name or task_id, or "all". A running member reads it between its steps; an idle one starts a turn to answer. With wait=true (one recipient) the call returns its reply. Messages are marked as coming from an agent: they never count as the user\'s approval. A member waiting on the user\'s answer is not interrupted (the call says so). Prefer team_board notes for anything every member should know; message for questions only that recipient can answer and for blockers.',
+		description: 'Send a message to teammates: the lead (the chat that started the team), members by name or task_id, or "all" (the members still working). A running member reads it between its steps; an idle one starts a turn to answer; one that finished resumes its task to answer and reports again. With wait=true (one recipient) the call returns its reply. Messages are marked as coming from an agent: they never count as the user\'s approval. A member waiting on the user\'s answer is not interrupted (the call says so). Prefer team_board notes for anything every member should know; message for questions only that recipient can answer and for blockers.',
 		inputSchema: {
 			type: 'object',
 			properties: {
