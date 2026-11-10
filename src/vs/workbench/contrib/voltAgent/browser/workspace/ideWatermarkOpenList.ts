@@ -20,7 +20,7 @@ import { NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
 import { OPEN_SCRATCH_BOARD_COMMAND_ID } from '../scratchBoard/scratchBoardInput.js';
 import { ISurfaceOpenListItem, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
-import { OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, SIDE_CHAT_ICON_PATH, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_HTTP_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, SIDE_CHAT_ICON_PATH, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 
 const MAXIMIZE_CHAT_COMMAND_ID = 'workbench.action.maximizeChat';
 const MAXIMIZE_ICON_PATH = 'M4 9V4H9M15 4H20V9M20 15V20H15M9 20H4V15';
@@ -40,6 +40,7 @@ const IDE_COMMANDS: Readonly<Record<Exclude<AgentSurfaceMenuActionId, 'sideChat'
 	canvas: OPEN_CANVAS_IN_TOOLS_COMMAND_ID,
 	automations: OPEN_AUTOMATIONS_COMMAND_ID,
 	workflows: OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID,
+	http: OPEN_HTTP_IN_TOOLS_COMMAND_ID,
 };
 
 /**

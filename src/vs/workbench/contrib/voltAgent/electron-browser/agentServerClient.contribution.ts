@@ -36,6 +36,7 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
+import { ICodeRange } from '../../../services/voltRuntime/browser/tools/codeTools.js';
 import { lspAllowedFor } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltBrowserAccessService } from '../../../services/voltRuntime/common/browserAccess.js';
 import { IHostService } from '../../../services/host/browser/host.js';
@@ -306,6 +307,36 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 		this._register(client.registerHandler('codeIntel.definitions', (uri, line, column) => allowed(uri) && position(line, column) ? host.definitions(uri, line as number, column as number) : []));
 		this._register(client.registerHandler('codeIntel.references', (uri, line, column) => allowed(uri) && position(line, column) ? host.references(uri, line as number, column as number) : []));
 		this._register(client.registerHandler('codeIntel.symbols', uri => allowed(uri) ? host.symbols(uri) : []));
+		const direction = <T extends string>(value: unknown, options: readonly T[]): T | undefined => options.find(option => option === value);
+		const range = (value: unknown): ICodeRange | undefined => {
+			const record = value as Partial<ICodeRange> | undefined;
+			return record && Number.isInteger(record.startLine) && Number.isInteger(record.endLine) ? { startLine: record.startLine!, endLine: record.endLine! } : undefined;
+		};
+		const text = (value: unknown) => typeof value === 'string' ? value : undefined;
+		this._register(client.registerHandler('codeIntel.fileText', uri => allowed(uri) ? host.fileText(uri) : undefined));
+		this._register(client.registerHandler('codeIntel.implementations', (uri, line, column) => allowed(uri) && position(line, column) ? host.implementations(uri, line as number, column as number) : []));
+		this._register(client.registerHandler('codeIntel.typeDefinitions', (uri, line, column) => allowed(uri) && position(line, column) ? host.typeDefinitions(uri, line as number, column as number) : []));
+		this._register(client.registerHandler('codeIntel.hover', (uri, line, column) => allowed(uri) && position(line, column) ? host.hover(uri, line as number, column as number) : undefined));
+		this._register(client.registerHandler('codeIntel.workspaceSymbols', (query, limit) => typeof query === 'string' ? host.workspaceSymbols(query, Number.isInteger(limit) ? limit as number : 80) : []));
+		this._register(client.registerHandler('codeIntel.calls', (uri, line, column, way) => {
+			const value = direction(way, ['incoming', 'outgoing'] as const);
+			return allowed(uri) && position(line, column) && value ? host.calls(uri, line as number, column as number, value) : undefined;
+		}));
+		this._register(client.registerHandler('codeIntel.typeHierarchy', (uri, line, column, way) => {
+			const value = direction(way, ['supertypes', 'subtypes'] as const);
+			return allowed(uri) && position(line, column) && value ? host.typeHierarchy(uri, line as number, column as number, value) : undefined;
+		}));
+		const off = 'Language servers are off for this checkout (Settings > Code Intelligence). Edit the files directly.';
+		this._register(client.registerHandler('codeIntel.rename', (uri, line, column, newName) => allowed(uri) && position(line, column) && typeof newName === 'string' ? host.rename(uri, line as number, column as number, newName) : off));
+		this._register(client.registerHandler('codeIntel.format', uri => allowed(uri) ? host.format(uri) : off));
+		this._register(client.registerHandler('codeIntel.codeActions', (uri, value, only) => {
+			const lines = range(value);
+			return allowed(uri) && lines ? host.codeActions(uri, lines, text(only)) : [];
+		}));
+		this._register(client.registerHandler('codeIntel.applyCodeAction', (uri, value, only, title) => {
+			const lines = range(value);
+			return allowed(uri) && lines ? host.applyCodeAction(uri, lines, text(only), text(title)) : off;
+		}));
 	}
 
 	/**

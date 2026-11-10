@@ -3,18 +3,20 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { raceTimeout } from '../../../../../base/common/async.js';
+import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Disposable, IDisposable, IReference } from '../../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../../base/common/map.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { Position } from '../../../../../editor/common/core/position.js';
-import { DocumentSymbol, Location, LocationLink } from '../../../../../editor/common/languages.js';
+import { Range } from '../../../../../editor/common/core/range.js';
+import { CodeAction, CodeActionProvider, CodeActionTriggerType, DocumentSymbol, IWorkspaceTextEdit, Location, LocationLink, ProviderResult, TextEdit, WorkspaceEdit } from '../../../../../editor/common/languages.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
 import { ILanguageFeaturesService } from '../../../../../editor/common/services/languageFeatures.js';
 import { IResolvedTextEditorModel, ITextModelService } from '../../../../../editor/common/services/resolverService.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IMarker, IMarkerService, MarkerSeverity } from '../../../../../platform/markers/common/markers.js';
-import { ICodeIntelHost, ICodeLocation, ICodeSymbol, IDiagnostic } from '../tools/codeTools.js';
+import { ICallEdge, ICodeFix, ICodeIntelHost, ICodeLocation, ICodeRange, ICodeSymbol, ICodeSymbolRef, IDiagnostic, ITextFileChange } from '../tools/codeTools.js';
 
 const SYMBOL_KINDS = ['file', 'module', 'namespace', 'package', 'class', 'method', 'property', 'field', 'constructor', 'enum', 'interface', 'function', 'variable', 'constant', 'string', 'number', 'boolean', 'array', 'object', 'key', 'null', 'enum member', 'struct', 'event', 'operator', 'type parameter'];
 
@@ -25,6 +27,10 @@ const MARKER_SETTLE_MS = 400;
 /** Opened documents stay open a while so repeated checks are instant. */
 const KEEP_OPEN_MS = 90_000;
 const MAX_OPEN = 24;
+/** A language server that has not answered by then is treated as having nothing to say. */
+const PROVIDER_TIMEOUT_MS = 10_000;
+/** Rename and code actions can touch many files; they get longer. */
+const EDIT_TIMEOUT_MS = 30_000;
 
 /** What the runtime needs from code intelligence: the agent tools, plus checks after its own edits. */
 export interface IRuntimeCodeIntel extends ICodeIntelHost, IDisposable {
@@ -38,6 +44,23 @@ export interface IRuntimeCodeIntel extends ICodeIntelHost, IDisposable {
 }
 
 let runtimeCodeIntelFactory: (() => IRuntimeCodeIntel) | undefined;
+
+/**
+ * Call and type hierarchies and workspace symbols live in workbench contributions this layer may
+ * not import (the agent server loads it too); the window's code intelligence contribution sets
+ * them here.
+ */
+export interface ICodeIntelHierarchy {
+	calls(model: ITextModel, position: Position, direction: 'incoming' | 'outgoing', token: CancellationToken): Promise<ICallEdge[] | undefined>;
+	types(model: ITextModel, position: Position, direction: 'supertypes' | 'subtypes', token: CancellationToken): Promise<ICodeSymbolRef[] | undefined>;
+	workspaceSymbols(query: string, limit: number, token: CancellationToken): Promise<ICodeSymbolRef[]>;
+}
+
+let codeIntelHierarchy: ICodeIntelHierarchy | undefined;
+
+export function setCodeIntelHierarchy(hierarchy: ICodeIntelHierarchy | undefined): void {
+	codeIntelHierarchy = hierarchy;
+}
 
 /**
  * The agent server has no editor models or language servers: it sets a factory whose code
@@ -207,6 +230,224 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 		return columnOfSymbol(model.getLineContent(line), symbol);
 	}
 
+	async fileText(uri: URI): Promise<string | undefined> {
+		return (await this.model(uri).catch(() => undefined))?.getValue();
+	}
+
+	async implementations(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
+		const model = await this.model(uri);
+		const position = new Position(line, column);
+		for (const provider of this.languageFeatures.implementationProvider.ordered(model)) {
+			const result = await this.ask(token => provider.provideImplementation(model, position, token));
+			const found = result ? (Array.isArray(result) ? result : [result]) : [];
+			if (found.length) {
+				return this.withPreviews(found.map(toLocation));
+			}
+		}
+		return [];
+	}
+
+	async typeDefinitions(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
+		const model = await this.model(uri);
+		const position = new Position(line, column);
+		for (const provider of this.languageFeatures.typeDefinitionProvider.ordered(model)) {
+			const result = await this.ask(token => provider.provideTypeDefinition(model, position, token));
+			const found = result ? (Array.isArray(result) ? result : [result]) : [];
+			if (found.length) {
+				return this.withPreviews(found.map(toLocation));
+			}
+		}
+		return [];
+	}
+
+	async hover(uri: URI, line: number, column: number): Promise<string | undefined> {
+		const model = await this.model(uri);
+		const position = new Position(line, column);
+		const parts: string[] = [];
+		for (const provider of this.languageFeatures.hoverProvider.ordered(model)) {
+			const result = await this.ask(token => provider.provideHover(model, position, token));
+			for (const content of result?.contents ?? []) {
+				const value = content.value.trim();
+				if (value && !parts.includes(value)) {
+					parts.push(value);
+				}
+			}
+		}
+		const joined = parts.join('\n\n').replace(/\n{3,}/g, '\n\n');
+		return joined ? (joined.length > 2_000 ? `${joined.slice(0, 2_000)}\u2026` : joined) : undefined;
+	}
+
+	async workspaceSymbols(query: string, limit: number): Promise<ICodeSymbolRef[]> {
+		if (!codeIntelHierarchy) {
+			return [];
+		}
+		const cancel = new CancellationTokenSource();
+		try {
+			const found = await raceTimeout(codeIntelHierarchy.workspaceSymbols(query, limit, cancel.token), PROVIDER_TIMEOUT_MS, () => cancel.cancel());
+			return (found ?? []).filter(symbol => this.policy(symbol.uri));
+		} finally {
+			cancel.dispose();
+		}
+	}
+
+	async calls(uri: URI, line: number, column: number, direction: 'incoming' | 'outgoing'): Promise<ICallEdge[] | undefined> {
+		const hierarchy = codeIntelHierarchy;
+		if (!hierarchy) {
+			return undefined;
+		}
+		const model = await this.model(uri);
+		return this.ask(token => hierarchy.calls(model, new Position(line, column), direction, token));
+	}
+
+	async typeHierarchy(uri: URI, line: number, column: number, direction: 'supertypes' | 'subtypes'): Promise<ICodeSymbolRef[] | undefined> {
+		const hierarchy = codeIntelHierarchy;
+		if (!hierarchy) {
+			return undefined;
+		}
+		const model = await this.model(uri);
+		return this.ask(token => hierarchy.types(model, new Position(line, column), direction, token));
+	}
+
+	async rename(uri: URI, line: number, column: number, newName: string): Promise<readonly ITextFileChange[] | string> {
+		const model = await this.model(uri);
+		const position = new Position(line, column);
+		const providers = this.languageFeatures.renameProvider.ordered(model);
+		if (!providers.length) {
+			return 'No language server offers rename for this file.';
+		}
+		for (const provider of providers) {
+			const result = await this.ask(token => provider.provideRenameEdits(model, position, newName, token), EDIT_TIMEOUT_MS);
+			if (result?.rejectReason) {
+				return result.rejectReason;
+			}
+			if (result?.edits.length) {
+				return this.textChanges(result);
+			}
+		}
+		return 'The language server found nothing to rename there. Point at the symbol\'s name (line + symbol).';
+	}
+
+	async format(uri: URI): Promise<readonly ITextFileChange[] | string> {
+		const model = await this.model(uri);
+		const [provider] = this.languageFeatures.documentFormattingEditProvider.ordered(model);
+		if (!provider) {
+			return 'No formatter is registered for this file type. Run the project\'s formatter with shell instead.';
+		}
+		const options = model.getOptions();
+		const edits = await this.ask(token => provider.provideDocumentFormattingEdits(model, { tabSize: options.tabSize, insertSpaces: options.insertSpaces }, token), EDIT_TIMEOUT_MS);
+		if (!edits?.length) {
+			return [];
+		}
+		const before = model.getValue();
+		return [{ uri, before, after: applyTextEdits(model, edits) }];
+	}
+
+	async codeActions(uri: URI, range: ICodeRange, only: string | undefined): Promise<ICodeFix[]> {
+		const offered = await this.offeredActions(uri, range, only);
+		try {
+			return offered.actions.map(({ action }) => ({
+				title: action.title,
+				...(action.kind ? { kind: action.kind } : {}),
+				...(action.isPreferred ? { preferred: true } : {}),
+				...(action.diagnostics?.length ? { fixes: action.diagnostics[0].message.split('\n')[0].slice(0, 160) } : {}),
+				...(action.disabled ? { disabled: action.disabled } : {}),
+			}));
+		} finally {
+			offered.dispose();
+		}
+	}
+
+	async applyCodeAction(uri: URI, range: ICodeRange, only: string | undefined, title: string | undefined): Promise<readonly ITextFileChange[] | string> {
+		const offered = await this.offeredActions(uri, range, only);
+		try {
+			const usable = offered.actions.filter(({ action }) => !action.disabled);
+			const wanted = title?.trim().toLowerCase();
+			const pick = wanted
+				? usable.find(({ action }) => action.title.toLowerCase() === wanted) ?? usable.find(({ action }) => action.title.toLowerCase().includes(wanted))
+				: usable.find(({ action }) => action.isPreferred) ?? (usable.length === 1 || only?.startsWith('source') ? usable[0] : undefined);
+			if (!pick) {
+				if (!usable.length) {
+					return only === 'source.organizeImports' ? [] : `No ${only ?? 'code actions'} offered there.`;
+				}
+				return `${wanted ? `No action titled "${title}". ` : 'Several actions apply; pass title. '}Offered: ${usable.slice(0, 12).map(({ action }) => JSON.stringify(action.title)).join(', ')}.`;
+			}
+			let action: CodeAction | undefined = pick.action;
+			if (!action.edit && pick.provider.resolveCodeAction) {
+				const resolve = pick.provider.resolveCodeAction.bind(pick.provider);
+				action = await this.ask(token => resolve(pick.action, token), EDIT_TIMEOUT_MS) ?? action;
+			}
+			if (!action.edit?.edits.length) {
+				return action.command
+					? `"${action.title}" runs an editor command (${action.command.id}) instead of returning an edit, so it cannot be applied here. Make the change with edit_file.`
+					: `"${action.title}" returned no edit.`;
+			}
+			return this.textChanges(action.edit);
+		} finally {
+			offered.dispose();
+		}
+	}
+
+	/** Every provider's actions for the range, kept with the provider that can resolve them. */
+	private async offeredActions(uri: URI, range: ICodeRange, only: string | undefined): Promise<{ readonly actions: readonly { readonly action: CodeAction; readonly provider: CodeActionProvider }[]; dispose(): void }> {
+		const model = await this.model(uri);
+		const last = Math.min(Math.max(range.startLine, range.endLine), model.getLineCount());
+		const first = Math.min(range.startLine, last);
+		const editorRange = new Range(first, 1, last, model.getLineMaxColumn(last));
+		const lists: IDisposable[] = [];
+		const actions: { action: CodeAction; provider: CodeActionProvider }[] = [];
+		for (const provider of this.languageFeatures.codeActionProvider.ordered(model)) {
+			if (only && provider.providedCodeActionKinds?.length && !provider.providedCodeActionKinds.some(kind => kindMatches(kind, only) || kindMatches(only, kind))) {
+				continue;
+			}
+			const list = await this.ask(token => provider.provideCodeActions(model, editorRange, { trigger: CodeActionTriggerType.Invoke, ...(only ? { only } : {}) }, token));
+			if (!list) {
+				continue;
+			}
+			lists.push(list);
+			for (const action of list.actions) {
+				if (!action.isAI && (!only || (action.kind && kindMatches(action.kind, only)))) {
+					actions.push({ action, provider });
+				}
+			}
+		}
+		actions.sort((a, b) => Number(!!b.action.isPreferred) - Number(!!a.action.isPreferred));
+		return { actions, dispose: () => lists.forEach(list => list.dispose()) };
+	}
+
+	/** The text edits of a workspace edit, applied per file to the text the editor has. */
+	private async textChanges(edit: WorkspaceEdit): Promise<readonly ITextFileChange[] | string> {
+		const byFile = new ResourceMap<TextEdit[]>();
+		for (const item of edit.edits) {
+			const textEdit = item as IWorkspaceTextEdit;
+			if (!textEdit.resource || !textEdit.textEdit) {
+				continue; // file creates/renames and custom edits are not applied by agents
+			}
+			const list = byFile.get(textEdit.resource) ?? [];
+			list.push(textEdit.textEdit);
+			byFile.set(textEdit.resource, list);
+		}
+		const changes: ITextFileChange[] = [];
+		for (const [resource, edits] of byFile) {
+			if (!this.policy(resource)) {
+				return `The edit also changes ${resource.fsPath}, outside what language servers may touch.`;
+			}
+			const model = await this.model(resource);
+			changes.push({ uri: resource, before: model.getValue(), after: applyTextEdits(model, edits) });
+		}
+		return changes;
+	}
+
+	/** One language server call, cancelled and treated as no answer after `timeout`. */
+	private async ask<T>(call: (token: CancellationToken) => ProviderResult<T>, timeout = PROVIDER_TIMEOUT_MS): Promise<T | undefined> {
+		const cancel = new CancellationTokenSource();
+		try {
+			const result = await raceTimeout(Promise.resolve(call(cancel.token)).catch(() => undefined), timeout, () => cancel.cancel());
+			return result ?? undefined;
+		} finally {
+			cancel.dispose();
+		}
+	}
+
 	/** Opens the document for its language service and waits for markers when it was just written. */
 	private async freshen(uri: URI): Promise<void> {
 		const wasOpen = this.open.has(uri);
@@ -283,9 +524,29 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 		}
 		return unique.map(location => {
 			const line = files.get(location.uri)?.[location.line - 1]?.trim();
-			return line ? { ...location, preview: line.length > 160 ? `${line.slice(0, 160)}…` : line } : location;
+			return line ? { ...location, preview: line.length > 160 ? `${line.slice(0, 160)}\u2026` : line } : location;
 		});
 	}
+}
+
+/** `kind` is `scope` or below it (`refactor.extract` is under `refactor`). */
+function kindMatches(kind: string, scope: string): boolean {
+	return kind === scope || kind.startsWith(`${scope}.`);
+}
+
+/** The model's text with `edits` applied (ranges refer to the current text and must not overlap). */
+export function applyTextEdits(model: ITextModel, edits: readonly TextEdit[]): string {
+	const text = model.getValue();
+	const spans = edits.map(edit => ({
+		start: model.getOffsetAt({ lineNumber: edit.range.startLineNumber, column: edit.range.startColumn }),
+		end: model.getOffsetAt({ lineNumber: edit.range.endLineNumber, column: edit.range.endColumn }),
+		text: edit.text ?? '',
+	})).sort((a, b) => b.start - a.start || b.end - a.end);
+	let out = text;
+	for (const span of spans) {
+		out = out.slice(0, span.start) + span.text + out.slice(span.end);
+	}
+	return out;
 }
 
 function toLocation(item: Location | LocationLink): ICodeLocation {

@@ -99,6 +99,7 @@ import { createAccessIcon, createVoltGuardIcon } from '../chrome/accessIcons.js'
 import { AgentAccessPicker } from '../context/agentAccessPicker.js';
 import { AgentTerminalChips } from '../terminals/agentTerminalChips.js';
 import { AgentWatchedTaskCard } from '../terminals/agentWatchedTaskCard.js';
+import { AgentIdeCard } from '../ide/agentIdeCard.js';
 import { IAgentTerminalsService } from '../terminals/agentTerminals.js';
 import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
 import { agentMessagePlainText, formatContextTokens, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
@@ -836,6 +837,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** The chat's servers and watchers, as chips at the top. */
 	private terminalChips: AgentTerminalChips | undefined;
 	private watchedTaskCard: AgentWatchedTaskCard | undefined;
+	private ideCard: AgentIdeCard | undefined;
 	private readonly runGroupBarStore = this._register(new MutableDisposable());
 	/** Compact context was clicked and its turn has not started yet. */
 	private compactRequested = false;
@@ -1415,6 +1417,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// Long builds Volt watches for the agent (task_watch): their state and latest output.
 		this.watchedTaskCard = this._register(this.instantiationService.createInstance(AgentWatchedTaskCard, () => this.layoutInputEditor()));
 		append(this.composerEl, this.watchedTaskCard.element);
+		// What the agent runs in the IDE (tests, debug sessions, tasks): state, details, Open/Stop.
+		this.ideCard = this._register(this.instantiationService.createInstance(AgentIdeCard, () => this.layoutInputEditor()));
+		append(this.composerEl, this.ideCard.element);
 		append(this.composerEl, this.composerQueue.agentsElement);
 		// The same run status chip the browser's dock shows ("Waiting for approval", "Worked 2m").
 		this._register(this.onDidChangeDock(() => this.syncStatusChip()));
@@ -8492,6 +8497,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.syncQuestionTray();
 		this.commitReviewSlot?.setSession(this.sessionKey);
 		this.watchedTaskCard?.setChat(this.sessionKey ? this.runtime.chatFor(this.sessionKey) : undefined);
+		this.ideCard?.setChat(this.sessionKey ? this.runtime.chatFor(this.sessionKey) : undefined);
 		if (!this.composerQueue) {
 			return;
 		}

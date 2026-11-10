@@ -55,6 +55,22 @@
 	},
 	"builtInExtensions": [
 		{
+			"name": "ms-azuretools.vscode-containers",
+			"version": "2.4.5",
+			"sha256": "2682ba725c8017867f8e90d7b7737946fa0bb6a897f9011db690917d7bc449f2",
+			"repo": "",
+			"metadata": {
+				"id": "2cd1d691-3d69-4d2d-ae39-fda4bc4cfd3d",
+				"publisherId": {
+					"publisherId": "52b787f2-79a9-4f32-99b4-393afe3005d3",
+					"publisherName": "ms-azuretools",
+					"displayName": "Microsoft",
+					"flags": "verified"
+				},
+				"publisherDisplayName": "Microsoft"
+			}
+		},
+		{
 			"name": "ms-vscode.js-debug-companion",
 			"version": "1.1.3",
 			"sha256": "7380a890787452f14b2db7835dfa94de538caf358ebc263f9d46dd68ac52de93",

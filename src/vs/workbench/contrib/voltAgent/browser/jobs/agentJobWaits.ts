@@ -15,6 +15,7 @@ import { createDecorator } from '../../../../../platform/instantiation/common/in
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { voltExec } from '../../../../services/voltRuntime/common/execContext.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
@@ -335,7 +336,7 @@ export class AgentJobWaitsService extends Disposable implements IAgentJobWaitsSe
 		const cwd = resolveCwd(spec.cwd, call?.cwd);
 		// Unique across windows and reloads: the id also keys the wake, which is never sent twice.
 		const id = `job-${generateUuid().slice(0, 6)}`;
-		const first = await this.check(spec, cwd, `${id}-1`);
+		const first = await this.check(chatId, spec, cwd, `${id}-1`);
 		const outcome = first.outcome;
 		if (outcome.state === 'broken') {
 			return { error: `The check did not work: ${outcome.reason}. Fix it (it runs in ${cwd ?? 'the project'}) and call ${WATCH_JOB_TOOL_NAME} again.` };
@@ -441,7 +442,7 @@ export class AgentJobWaitsService extends Disposable implements IAgentJobWaitsSe
 			return;
 		}
 		watch.checks++;
-		const { outcome, output } = await this.check(watch.spec, watch.cwd, `${watch.id}-${watch.checks}`);
+		const { outcome, output } = await this.check(watch.chatId, watch.spec, watch.cwd, `${watch.id}-${watch.checks}`);
 		if (watch.state !== 'running') {
 			return;
 		}
@@ -477,13 +478,20 @@ export class AgentJobWaitsService extends Disposable implements IAgentJobWaitsSe
 		this._onDidChange.fire(watch.chatId);
 	}
 
-	/** Runs the check (and the pid probe) once. A check that throws counts as one that did not work. */
-	private async check(spec: IJobWatchSpec, cwd: string | undefined, runId: string): Promise<{ readonly outcome: IJobCheckOutcome; readonly output: string }> {
+	/**
+	 * Runs the check (and the pid probe) once. A check that throws counts as one that did not work.
+	 * The check is the agent's own command: it runs in the chat's sandbox when the chat has one, and
+	 * a check that cannot be sandboxed does not run.
+	 */
+	private async check(chatId: string, spec: IJobWatchSpec, cwd: string | undefined, runId: string): Promise<{ readonly outcome: IJobCheckOutcome; readonly output: string }> {
 		let run: IJobCheckRun;
 		try {
-			const alive = spec.pid !== undefined ? await this.isAlive(spec.pid, `${runId}-pid`) : undefined;
+			const alive = spec.pid !== undefined ? await this.isAlive(chatId, spec.pid, `${runId}-pid`) : undefined;
 			if (spec.check) {
-				const result = await this.stdio.exec({ id: runId, command: spec.check, cwd, timeoutMs: CHECK_TIMEOUT_MS, inlineChars: TAIL_CHARS });
+				const result = await this.stdio.exec({ id: runId, command: spec.check, cwd, timeoutMs: CHECK_TIMEOUT_MS, inlineChars: TAIL_CHARS, ...this.runtime.chatExec(chatId, 'agent-shell') });
+				if (result.refused) {
+					return { outcome: { state: 'broken', reason: result.refused.reason }, output: '' };
+				}
 				run = { exitCode: result.exitCode, output: result.combined, timedOut: result.timedOut, ...(alive !== undefined ? { alive } : {}) };
 			} else {
 				run = { exitCode: 0, output: '', timedOut: false, ...(alive !== undefined ? { alive } : {}) };
@@ -494,9 +502,10 @@ export class AgentJobWaitsService extends Disposable implements IAgentJobWaitsSe
 		return { outcome: judgeJobCheck(spec, run), output: run.output };
 	}
 
-	private async isAlive(pid: number, runId: string): Promise<boolean> {
+	/** Volt's own probe: the pid is a number, so nothing the agent wrote runs. */
+	private async isAlive(chatId: string, pid: number, runId: string): Promise<boolean> {
 		const command = isWindows ? `tasklist /FI "PID eq ${pid}" /NH` : `kill -0 ${pid} 2>/dev/null && echo alive || echo gone`;
-		const result = await this.stdio.exec({ id: runId, command, timeoutMs: CHECK_TIMEOUT_MS, inlineChars: 2_000 });
+		const result = await this.stdio.exec({ id: runId, command, timeoutMs: CHECK_TIMEOUT_MS, inlineChars: 2_000, ...voltExec('volt', chatId) });
 		return isWindows ? new RegExp(`\\b${pid}\\b`).test(result.stdout) : result.stdout.trim() === 'alive';
 	}
 

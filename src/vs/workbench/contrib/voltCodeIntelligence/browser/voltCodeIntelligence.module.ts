@@ -8,6 +8,7 @@ import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/c
 import { IVoltFeatureModule, IVoltFeatureModuleHost } from '../../voltCustomize/browser/voltFeatureModules.js';
 import { CODE_INTELLIGENCE_SECTION_ID } from '../common/voltCodeIntelligence.js';
 import { CodeIntelligencePage } from './codeIntelligencePage.js';
+import { CodeIntelHierarchyContribution } from './codeIntelHierarchy.js';
 import { CodeIndexWarmup, CodeIntelligenceHostTools } from './codeIntelligenceTools.js';
 
 /**
@@ -24,6 +25,9 @@ export const codeIntelligenceModule: IVoltFeatureModule = {
 		host.registerPart('settingsKitPage', CODE_INTELLIGENCE_SECTION_ID, {
 			render: (pageInstantiationService, kit) => pageInstantiationService.createInstance(CodeIntelligencePage, kit).render(),
 		});
+
+		// code_nav's callers, callees, type hierarchy and workspace symbols, from the editor's providers.
+		subscriptions.add(new CodeIntelHierarchyContribution());
 
 		// The desktop window serves the volt MCP server's tool calls; in a browser the agent server does.
 		if (!isWeb) {

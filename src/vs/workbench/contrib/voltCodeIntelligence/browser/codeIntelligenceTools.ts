@@ -11,11 +11,30 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { ISearchService } from '../../../services/search/common/search.js';
-import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, readCodeIndexOptions, readFffSettings } from '../../../services/voltRuntime/common/codeIntelligence.js';
-import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
+import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
+import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
+import { IMarkerService } from '../../../../platform/markers/common/markers.js';
+import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
+import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, lspAllowedFor, readCodeIndexOptions, readFffSettings } from '../../../services/voltRuntime/common/codeIntelligence.js';
+import { IVoltHostFileChange, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { isSandboxed } from '../../../services/voltRuntime/common/hostToolSandbox.js';
+import { IVoltTool } from '../../../services/voltRuntime/common/tools/tool.js';
+import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
 import { ISearchConfinement, VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
+import { createCodeIndexNav } from '../../../services/voltRuntime/browser/tools/codeIndexNav.js';
+import { CODE_ACTION_DESCRIPTION, CODE_ACTION_SCHEMA, CODE_NAV_DESCRIPTION, CODE_NAV_SCHEMA, createCodeTools, DIAGNOSTICS_DESCRIPTION, DIAGNOSTICS_SCHEMA } from '../../../services/voltRuntime/browser/tools/codeTools.js';
+import { IFileToolHost, writeComputedEdit } from '../../../services/voltRuntime/browser/tools/fileTools.js';
 import { createSearchTools } from '../../../services/voltRuntime/browser/tools/searchTools.js';
+
+/**
+ * The editor's language servers for agents that bring their own tools: the same code_nav,
+ * diagnostics and code_action the native agent has, answered from the buffers the user sees.
+ */
+const LANGUAGE_SERVER_TOOLS: readonly IVoltHostToolInfo[] = [
+	{ name: 'code_nav', title: 'Navigated code', group: 'core', description: CODE_NAV_DESCRIPTION, inputSchema: CODE_NAV_SCHEMA },
+	{ name: 'diagnostics', title: 'Read diagnostics', group: 'core', description: DIAGNOSTICS_DESCRIPTION, inputSchema: DIAGNOSTICS_SCHEMA },
+	{ name: 'code_action', title: 'Refactored code', group: 'core', description: CODE_ACTION_DESCRIPTION, inputSchema: CODE_ACTION_SCHEMA, approvalInReadOnlyModes: 'changes files' },
+];
 
 /** Indexes the open project's folders in the background, so the first agent search is already fast. */
 export class CodeIndexWarmup extends Disposable {
@@ -50,20 +69,27 @@ export class CodeIndexWarmup extends Disposable {
 
 /**
  * The index for agents that bring their own tools (Claude Code, Codex): `instant_grep` and
- * `find_symbol` on the volt MCP server, run by the same code as the native agent's grep.
+ * `find_symbol` on the volt MCP server, run by the same code as the native agent's grep, and the
+ * window's language servers (code_nav, diagnostics, code_action).
  * Registered by the desktop, whose window serves the MCP server's tool calls.
  */
 export class CodeIntelligenceHostTools extends Disposable {
 
 	private readonly search: VoltSearch;
+	/** The window's language servers, for code_nav / diagnostics / code_action over MCP. */
+	private readonly codeIntel: CodeIntelHost;
 
 	constructor(
 		@IVoltHostToolService hostTools: IVoltHostToolService,
-		@IVoltCodeIndexService codeIndex: IVoltCodeIndexService,
+		@IVoltCodeIndexService private readonly codeIndex: IVoltCodeIndexService,
 		@ISearchService searchService: ISearchService,
-		@IFileService fileService: IFileService,
-		@IConfigurationService configurationService: IConfigurationService,
+		@IFileService private readonly fileService: IFileService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
+		@IMarkerService markerService: IMarkerService,
+		@ITextModelService textModelService: ITextModelService,
+		@ILanguageFeaturesService languageFeatures: ILanguageFeaturesService,
+		@ITextFileService private readonly textFileService: ITextFileService,
 	) {
 		super();
 		this.search = this._register(new VoltSearch(searchService, {
@@ -72,8 +98,10 @@ export class CodeIntelligenceHostTools extends Disposable {
 			options: () => readCodeIndexOptions(configurationService),
 			fff: () => readFffSettings(configurationService),
 		}, fileService.onDidFilesChange));
+		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeatures, fileService));
+		this.codeIntel.setLspPolicy(uri => lspAllowedFor(configurationService, !workspace.isInsideWorkspace(uri)));
 		this._register(hostTools.registerToolProvider({
-			tools: CODE_INTELLIGENCE_TOOLS,
+			tools: [...CODE_INTELLIGENCE_TOOLS, ...LANGUAGE_SERVER_TOOLS],
 			invoke: (name, args, call) => this.invoke(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) })),
 		}));
 	}
@@ -88,18 +116,56 @@ export class CodeIntelligenceHostTools extends Disposable {
 			}
 			confine = { readRefusal: call.readRefusal };
 		}
-		const tools = createSearchTools(this.search, () => root, confine);
-		const tool = tools.find(candidate => candidate.name === (name === INSTANT_GREP_TOOL_NAME ? 'grep' : name === FIND_SYMBOL_TOOL_NAME ? 'find_symbol' : name === FIND_FILES_TOOL_NAME ? 'find_files' : ''));
+		const changes: IVoltHostFileChange[] = [];
+		const tool = this.toolFor(name, root, confine);
 		if (!tool) {
 			return { error: `Unknown tool ${name}.` };
 		}
 		const abort = new AbortController();
 		const cancel = call?.token?.onCancellationRequested(() => abort.abort());
 		try {
-			const result = await tool.execute(args, { signal: abort.signal, ...(call?.cwd ? { cwd: call.cwd } : {}) });
-			return result.isError ? { error: result.text } : { text: result.text };
+			const result = await tool.execute(args, {
+				signal: abort.signal,
+				...(call?.cwd ? { cwd: call.cwd } : {}),
+				// code_action's edits join the chat's change set, like browser_run's.
+				emit: event => {
+					if (event.type === 'file.change' && URI.isUri(event.uri) && typeof event.before === 'string') {
+						changes.push({ uri: event.uri, kind: 'edit', before: event.before, existed: true });
+					}
+				},
+			});
+			return result.isError ? { error: result.text } : { text: result.text, ...(changes.length ? { changes } : {}) };
 		} finally {
 			cancel?.dispose();
 		}
+	}
+
+	private toolFor(name: string, root: URI | undefined, confine: ISearchConfinement | undefined): IVoltTool | undefined {
+		if (name === INSTANT_GREP_TOOL_NAME || name === FIND_SYMBOL_TOOL_NAME || name === FIND_FILES_TOOL_NAME) {
+			const local = name === INSTANT_GREP_TOOL_NAME ? 'grep' : name === FIND_SYMBOL_TOOL_NAME ? 'find_symbol' : 'find_files';
+			return createSearchTools(this.search, () => root, confine).find(candidate => candidate.name === local);
+		}
+		const files: IFileToolHost = {
+			fileService: this.fileService,
+			root: () => root,
+			documents: {
+				dirtyText: uri => {
+					const model = this.textFileService.files.get(uri);
+					return model?.isDirty() ? model.textEditorModel?.getValue() : undefined;
+				},
+				writeOpen: async (uri, text) => {
+					const model = this.textFileService.files.get(uri);
+					const editor = model?.textEditorModel;
+					if (!model || !editor) {
+						return false;
+					}
+					editor.pushEditOperations([], [{ range: editor.getFullModelRange(), text }], () => null);
+					await model.save();
+					return true;
+				},
+			},
+		};
+		const nav = createCodeIndexNav({ service: this.codeIndex, enabled: () => codeIndexEnabled(this.configurationService), options: () => readCodeIndexOptions(this.configurationService) });
+		return createCodeTools(this.codeIntel, () => root, nav, (change, ctx) => writeComputedEdit(files, change.uri, change.before, change.after, ctx)).find(candidate => candidate.name === name);
 	}
 }
