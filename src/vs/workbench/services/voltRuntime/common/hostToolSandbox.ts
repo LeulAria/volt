@@ -28,7 +28,7 @@ import { localImagePaths } from './tools/localImages.js';
  *   (any tool can add writes for a call: browser_run `edits`, a flow `save`).
  * - `persists`: memory and skills, which later chats read, sandboxed or not. Refused.
  * - `delegates`: prompts another chat, which runs with its own sandbox. Only when that chat is
- *   sandboxed at least as strictly as the caller.
+ *   sandboxed at least as strictly as the caller (each chat, when a call reaches several).
  * - `spawns`: starts a new chat or subagent. Refused until new chats inherit the caller's
  *   sandbox (`SPAWNED_CHATS_INHERIT_SANDBOX`).
  * - `sandboxed`: runs a process for the chat inside the chat's own OS sandbox, with its rules
@@ -218,6 +218,26 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	worktree_status: 'reads-other',
 	worktree_list: 'safe',
 	worktree_handoff: 'escapes',
+
+	// Orchestra (orchestration/orchestra.ts, agentOrchestraService.ts). spawn_team and council start
+	// every member and seat as a subagent of the caller, through the orchestrator: each is confined at
+	// least as strictly before each of its turns (the orchestrator's startTurn), and one whose agent
+	// would be sandboxed more weakly is never started. Members in new worktrees need Volt's setup
+	// outside the sandbox (refused, as for delegate_task). team_send prompts teammates and the board's
+	// posts reach them: each such chat must be confined at least as strictly (INV-11); which chats a
+	// call reaches only the orchestra knows (`chatsByProvider`). Reading a team is reading its posts:
+	// the lead's and members' own team, or a team in the caller's subtree; any other team needs
+	// agents.read:other. orchestra_status without a team is Volt's state (machines, models, budget, the
+	// caller's own teams). machine_run sends the brief and the code to a remote runner, whose agent
+	// runs outside any sandbox (the relay runner, B-06), and `apply` fetches its branch into a new
+	// worktree with git here: refused. There is no local machine_run (work for this machine goes
+	// through delegate_task or spawn_team); reading and cancelling this chat's own runs is Volt's state.
+	orchestra_status: 'safe',
+	spawn_team: 'spawns',
+	team_send: 'delegates',
+	team_board: 'reads-other',
+	council: 'spawns',
+	machine_run: 'escapes',
 };
 
 /** What one call would do outside the sandbox. */
@@ -239,6 +259,12 @@ export interface IHostToolSandboxUse {
 	readonly readsAnyChat?: boolean;
 	/** `reads-other`: more chats it reads (thread_wait's list), besides `target`. */
 	readonly targets?: readonly string[];
+	/**
+	 * The chats it prompts or reads are named in the serving provider's own terms (team members by
+	 * name, "all", a team id): the gate asks the provider which (`IVoltHostToolProvider.chatReach`),
+	 * judges each one, and refuses the call when the provider cannot say.
+	 */
+	readonly chatsByProvider?: boolean;
 }
 
 const MANAGE_AUTOMATION_SAFE = new Set(['list', 'delete']);
@@ -315,11 +341,34 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 		}
 		case 'thread_search':
 			return { kind, readsAnyChat: true };
+		case 'spawn_team':
+			return { kind: spawnKind(args.isolation === 'worktree') };
+		case 'council':
+			// Its seats work in this chat's checkout: a council takes no `isolation`.
+			return { kind: spawnKind(false) };
+		case 'team_send':
+			return { kind, chatsByProvider: true };
+		case 'team_board':
+			return { kind: TEAM_BOARD_POSTS.has(opArg(args)) ? 'delegates' : 'reads-other', chatsByProvider: true };
+		case 'orchestra_status':
+			return strings([args.team_id]).length ? { kind: 'reads-other', chatsByProvider: true } : { kind };
+		case 'machine_run':
+			return { kind: MACHINE_RUN_OWN.has(opArg(args)) ? 'safe' : 'escapes' };
 	}
 	if (kind === 'browser') {
 		return { kind, urls: browserCallUrls(args) };
 	}
 	return { kind };
+}
+
+/** team_board ops that post on the board, which every other chat of the team reads (`read` and `claim` only read it). */
+const TEAM_BOARD_POSTS = new Set(['note', 'done', 'release', 'block', 'add']);
+/** machine_run ops on this chat's own runs: Volt's records (`run` and `apply` run outside the sandbox). */
+const MACHINE_RUN_OWN = new Set(['status', 'cancel']);
+
+/** An `op` as the orchestra reads it (trimmed, case kept: an op it does not know runs nothing). */
+function opArg(args: Readonly<Record<string, unknown>>): string {
+	return typeof args.op === 'string' ? args.op.trim() : '';
 }
 
 /** A start of a new chat: refused until spawned chats inherit the sandbox; one in a new worktree runs setup scripts outside it. */
@@ -672,4 +721,43 @@ const INSTEAD: Readonly<Record<string, string>> = {
 	delegate_task: 'Do the work in this chat instead.',
 	thread_launch: 'Do the work in this chat, or ask the user to start the chat.',
 	thread_fork: 'Do the work in this chat, or ask the user to fork it.',
+	// Orchestra.
+	spawn_team: 'Members in their own worktrees need Volt to set those up outside the sandbox. Start the team without `isolation: "worktree"`: members then share this chat\'s checkout and its sandbox (give them items that do not overlap).',
+	machine_run: 'A remote server runs its agent outside any sandbox, and `apply` fetches the run\'s branch with git here. Do the work on this machine instead: delegate_task and spawn_team run inside this chat\'s sandbox. Or ask the user to run it on that machine, or to turn the sandbox off for this chat.',
 };
+
+/** What to do instead when a call reaches chats its sandbox may not, by tool and what it would do. */
+const REACH_INSTEAD: Readonly<Record<string, string>> = {
+	'team_send:delegates': 'Message only teammates at least as sandboxed as this chat, put it in your report (it goes to the lead), or ask the user to give them this chat\'s sandbox.',
+	'team_send:reads-other': 'Send it without `wait`: the answer comes back to this chat as a team message.',
+	'team_board:delegates': 'Every other member reads what you post on the board. Put it in your report instead (it goes to the lead), or ask the user to give them this chat\'s sandbox.',
+	'team_board:reads-other': 'Read the team this chat leads or is on (team_board without team_id), or ask the user for what that team found.',
+	'orchestra_status:reads-other': 'Ask for the team this chat leads or is on, or call orchestra_status without team_id.',
+	'task_status:reads-other': 'It is not one of this chat\'s own tasks: its report goes to the chat that started it. Read this chat\'s own tasks (task_status without task_id) or the team board, or ask the user.',
+	'message_task:reads-other': 'It is not one of this chat\'s own tasks: message a teammate with team_send (judged by its sandbox), or ask the user.',
+};
+
+/** "A", "A and B", "A, B and 3 more". */
+function chatList(labels: readonly string[]): string {
+	const names = [...new Set(labels)].map(label => `"${label}"`);
+	const shown = names.slice(0, 5);
+	const more = names.length - shown.length;
+	if (more > 0) {
+		return `${shown.join(', ')} and ${more} more`;
+	}
+	return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : shown[0] ?? 'another chat';
+}
+
+/**
+ * What the model reads when a call whose provider names the chats it reaches (`chatsByProvider`)
+ * would prompt chats less confined than the caller (`delegates`), or return what chats outside
+ * its subtree wrote (`reads-other`): which chats, and what to do instead.
+ */
+export function sandboxReachRefusal(name: string, kind: 'delegates' | 'reads-other', labels: readonly string[], settings: IVoltSandboxSettings): string {
+	const head = `${name} was not run: this chat runs in Volt's ${settings.level === 'read-only' ? 'read-only ' : ''}sandbox`;
+	const chats = chatList(labels);
+	const instead = REACH_INSTEAD[`${name}:${kind}`] ?? (kind === 'delegates' ? 'Do the work in this chat, or ask the user.' : 'Work from this chat\'s own context, or ask the user.');
+	return kind === 'delegates'
+		? `${head}, and ${chats} ${labels.length === 1 ? 'is' : 'are'} less confined than this chat: ${labels.length === 1 ? 'it' : 'they'} would act on your message with access this chat does not have. ${instead}`
+		: `${head}, and ${name} would return what ${chats} wrote, which needs the agents.read:other permission that sandboxed chats do not have. ${instead}`;
+}

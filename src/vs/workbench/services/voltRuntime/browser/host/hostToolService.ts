@@ -20,7 +20,7 @@ import { HOST_MCP_TOKEN_RENEW_MS, hostMcpSessionToken, IHostMcpLease, newHostMcp
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFlowGrantStore, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolOwner, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
-import { hostToolSandboxUse, IHostToolSandboxUse, isSandboxed, ISandboxPathContext, legacyHostToolRefusal, legacySandboxCovers, readTargets, sandboxBrowserUrlRefusal, sandboxRefusalMessage } from '../../common/hostToolSandbox.js';
+import { hostToolSandboxUse, IHostToolSandboxUse, isSandboxed, ISandboxPathContext, legacyHostToolRefusal, legacySandboxCovers, readTargets, sandboxBrowserUrlRefusal, sandboxReachRefusal, sandboxRefusalMessage } from '../../common/hostToolSandbox.js';
 import { HostToolAuthority, IGateChat, IPolicyShadowDiff, PolicyAuthorityMode } from '../../common/hostToolAuthority.js';
 import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
 import { chatSubject } from '../../../../../platform/voltSandbox/common/principals.js';
@@ -260,6 +260,12 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		if (owner) {
 			return this.checkExtensionTool(name, args, owner, call, sandbox);
 		}
+		if (use?.chatsByProvider) {
+			const reach = await this.checkChatReach(name, args, use, call, sandbox);
+			if (reach) {
+				return reach;
+			}
+		}
 		// The class decision: the Policy Authority's, compared with the earlier rules (shadow mode, M.3).
 		// escapes, persists and spawns are refused; network needs the chat's network; a delegate must be
 		// confined at least as much (INV-11); another chat's transcript needs agents.read:other (INV-26).
@@ -364,6 +370,47 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 			caller: { ...caller, ...(callerFolder ? { folder: callerFolder } : {}) },
 			target: { ...other, ...(targetFolder ? { folder: targetFolder } : {}) },
 		};
+	}
+
+	/**
+	 * A call that names the chats it reaches in its provider's terms (`chatsByProvider`: team members
+	 * by name, "all", a team). The provider says which chats; each one it prompts or posts to must be
+	 * confined at least as strictly as the caller (INV-11, judged like thread_send's target), and each
+	 * one whose content it returns must be the caller's own or in its subtree (INV-26). Fails closed:
+	 * a provider that cannot say gets the call refused. The class decision follows (no target left).
+	 */
+	private async checkChatReach(name: string, args: Record<string, unknown>, use: IHostToolSandboxUse, call: IVoltHostToolCall, sandbox: IVoltSandboxSettings): Promise<IVoltHostToolResult | undefined> {
+		const provider = [...this.providers].find(candidate => candidate.tools.some(tool => tool.name === name));
+		const reach = provider?.chatReach ? await provider.chatReach(name, args, call).catch(() => undefined) : undefined;
+		if (!reach) {
+			return { error: sandboxRefusalMessage(name, use.kind, sandbox) };
+		}
+		const subject = chatSubject(call.sessionId ?? '(none)');
+		const less: string[] = [];
+		for (const chat of reach.prompts ?? []) {
+			if (chat.id === call.sessionId) {
+				continue;
+			}
+			const prompt: IHostToolSandboxUse = { kind: 'delegates', target: chat.id };
+			const chats = await this.gateChats(chat.id, sandbox, call);
+			const covers = !!chats.target && legacySandboxCovers(chats.target.settings, sandbox, { targetStrategy: chats.target.strategy, callerStrategy: chats.caller.strategy, target: chats.target.folder, caller: chats.caller.folder });
+			if (this.authority.compare(name, subject, legacyHostToolRefusal(prompt, call.sessionId, sandbox, covers), this.authority.classDecision(prompt, chats.caller, chats.target))) {
+				less.push(chat.label);
+			}
+		}
+		if (less.length) {
+			return { error: sandboxReachRefusal(name, 'delegates', less, sandbox) };
+		}
+		const reads = (reach.reads ?? []).filter(chat => chat.id !== call.sessionId);
+		if (!reads.length) {
+			return undefined;
+		}
+		const read = this.ownReads({ kind: 'reads-other', targets: reads.map(chat => chat.id) }, call);
+		if (!this.authority.compare(name, subject, legacyHostToolRefusal(read, call.sessionId, sandbox, false), this.authority.classDecision(read, this.gateChat(call, sandbox)))) {
+			return undefined;
+		}
+		const own = (id: string) => !!call.sessionId && !!this.sandboxes?.inSubtree?.(call.sessionId, id);
+		return { error: sandboxReachRefusal(name, 'reads-other', reads.filter(chat => !own(chat.id)).map(chat => chat.label), sandbox) };
 	}
 
 	/** The extension that registered `name` through the `volt` API, if one did. */

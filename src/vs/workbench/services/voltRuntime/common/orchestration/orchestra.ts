@@ -21,6 +21,7 @@
  * `browser/orchestration/agentOrchestraService.ts`.
  */
 
+import { SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import type { IVoltHostToolInfo } from '../hostTools.js';
 import { describeMachineLoad, IRelayMachine, RELAY_AGENT_IDS } from '../relay/relayMachines.js';
 import { AGENT_TASK_ROLES } from './agentTasks.js';
@@ -118,7 +119,7 @@ export const ORCHESTRA_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: TEAM_SEND_TOOL_NAME,
 		title: 'Messaged the team',
 		group: 'tasks',
-		description: 'Send a message to teammates: the lead (the chat that started the team), members by name or task_id, or "all". A running member reads it between its steps; an idle one starts a turn to answer. With wait=true (one recipient) the call returns its reply. Messages are marked as coming from an agent: they never count as the user\'s approval. A member waiting on the user\'s answer is not interrupted (the call says so). Prefer team_board notes for anything every member should know; message for questions only that recipient can answer and for blockers.',
+		description: 'Send a message to teammates: the lead (the chat that started the team), members by name or task_id, or "all" (the members still working). A running member reads it between its steps; an idle one starts a turn to answer; one that finished resumes its task to answer and reports again. With wait=true (one recipient) the call returns its reply. Messages are marked as coming from an agent: they never count as the user\'s approval. A member waiting on the user\'s answer is not interrupted (the call says so). Prefer team_board notes for anything every member should know; message for questions only that recipient can answer and for blockers.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -307,6 +308,27 @@ export function memberNames(bases: readonly string[], sizes: readonly number[]):
 			return unique(`${base} ${next}`);
 		});
 	});
+}
+
+/**
+ * Why a sandboxed lead may not start these members or seats (INV-11, B-10): those whose agent would
+ * run with a weaker sandbox than the lead's at its level (`none`: none on this machine). A member
+ * whose provider is not known yet ("auto") is judged when its turn starts. Undefined: all may start.
+ */
+export function orchestraMemberSandboxRefusal(tool: string, level: VoltSandboxLevel, leadProvider: string | undefined, members: readonly { readonly label: string; readonly providerId?: string }[], strategyOf: (providerId: string, level: VoltSandboxLevel) => SandboxStrategy): string | undefined {
+	if (level === 'off') {
+		return undefined;
+	}
+	// A lead whose agent is unknown counts as fully wrapped: its members must be too.
+	const lead = leadProvider ? strategyOf(leadProvider, level) : 'wrap';
+	const weaker = members.filter(member => member.providerId && !strategyAtLeast(strategyOf(member.providerId, level), lead));
+	if (!weaker.length) {
+		return undefined;
+	}
+	const labels = [...new Set(weaker.map(member => member.label))];
+	const none = weaker.every(member => strategyOf(member.providerId!, level) === 'none');
+	const named = labels.length > 1 ? `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}` : labels[0];
+	return `${tool} did not start anything: this chat runs in Volt's ${level === 'read-only' ? 'read-only ' : ''}sandbox, and ${named} would run ${none ? 'without a sandbox on this machine' : 'with a weaker sandbox than this chat\'s'}. Pick models that run in this chat's sandbox (orchestra_status lists them), or ask the user to start them.`;
 }
 
 /** Items dealt round-robin: member i gets items i, i+n, i+2n… */
@@ -565,13 +587,18 @@ export const MENTION_COUNCIL_VALUE = 'orchestra:council';
 
 const quote = (text: string) => text.replace(/"/g, '\'');
 
-/** What a machine chip tells the agent: where the user wants the work to run, and how to get it there. */
-export function machineMentionBlock(machine: Pick<IOrchestraMachine, 'id' | 'name' | 'kind' | 'online' | 'detail'>): string {
+/**
+ * What a machine chip tells the agent: where the user wants the work to run, and how to get it there.
+ * In a sandboxed chat (`sandboxed`), a remote server is out of reach: machine_run is refused there.
+ */
+export function machineMentionBlock(machine: Pick<IOrchestraMachine, 'id' | 'name' | 'kind' | 'online' | 'detail'>, sandboxed = false): string {
 	const how = machine.kind === 'local'
 		? 'The user wants this work to run here, on this machine: do it yourself, or with delegate_task / spawn_team (they run here). Keep within what it can hold (orchestra_status).'
-		: machine.online
-			? `The user wants this work to run on this remote server: send it with machine_run {"machine":"${machine.id}","task":"…"} (a complete brief: the runner sees only that and the code). Its report comes back to this chat; machine_run apply brings its changes here.`
-			: 'This remote server is offline: tell the user, and ask whether to wait, run the work elsewhere (machine_run with machine "auto"), or here.';
+		: sandboxed
+			? 'The user wants this work to run on this remote server, but this chat runs in Volt\'s sandbox and a remote server runs its agent outside it, so Volt does not send work there from this chat (machine_run is refused). Tell the user, and offer to do the work here (yourself, or with delegate_task / spawn_team, which run inside this chat\'s sandbox), or ask them to turn the sandbox off for this chat.'
+			: machine.online
+				? `The user wants this work to run on this remote server: send it with machine_run {"machine":"${machine.id}","task":"…"} (a complete brief: the runner sees only that and the code). Its report comes back to this chat; machine_run apply brings its changes here.`
+				: 'This remote server is offline: tell the user, and ask whether to wait, run the work elsewhere (machine_run with machine "auto"), or here.';
 	return `<attached_machine name="${quote(machine.name)}" machine="${machine.id}" kind="${machine.kind === 'local' ? 'this machine' : 'remote server'}">\n${machine.detail ? `${machine.detail}\n` : ''}${how}\n</attached_machine>`;
 }
 

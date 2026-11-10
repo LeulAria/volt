@@ -3058,7 +3058,10 @@ export class AgentMentionController extends Disposable {
 			} else if (mention.kind === 'machine' && mention.value) {
 				const machine = this.machines?.find(candidate => candidate.id === mention.value)
 					?? (mention.value === LOCAL_MACHINE_ID ? localMachine(THIS_MACHINE, parseMachineCapacity(this.configurationService.getValue<unknown>(ORCH_MACHINE_CAPACITY_SETTING)), 0) : undefined);
-				blocks.push(machineMentionBlock(machine ?? { id: mention.value, name: mention.label, kind: 'runner', online: true, detail: '' }));
+				// A sandboxed chat's work stays on this machine: the block says so instead of pointing at machine_run.
+				const sessionId = this.host.sessionId?.();
+				const sandboxed = !!sessionId && this.runtime.getSandboxSettings(sessionId).level !== 'off';
+				blocks.push(machineMentionBlock(machine ?? { id: mention.value, name: mention.label, kind: 'runner', online: true, detail: '' }, sandboxed));
 			} else if (mention.kind === 'agent') {
 				// A team or council works with the models mentioned beside it.
 				const models = mentions.filter(other => other.kind === 'agent' && other.value && other.value !== MENTION_TEAM_VALUE && other.value !== MENTION_COUNCIL_VALUE).map(other => other.value!);
