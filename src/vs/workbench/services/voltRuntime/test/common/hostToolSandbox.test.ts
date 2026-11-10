@@ -229,7 +229,7 @@ suite('Volt host tool sandbox classes', () => {
 		assert.match(sandboxRefusalMessage('new_tool', undefined, WRITE), /not cleared to run from a sandboxed chat/);
 	});
 
-	test('IDE-SBX-1: the IDE tools, the language-server tools and the job waits are classified op by op', () => {
+	test('DEV-SBX-1: the IDE tools, the language-server tools and the job waits are classified op by op', () => {
 		const use = (name: string, args: Record<string, unknown> = {}) => hostToolSandboxUse(name, args);
 		// tests: results and listing are Volt's state, a run executes the test command in the chat's sandbox.
 		assert.deepStrictEqual(use('tests', { op: 'list' }), { kind: 'reads', reads: ['.'] });
@@ -292,7 +292,7 @@ suite('Volt host tool sandbox classes', () => {
 		assert.deepStrictEqual(use('unwatch_job', {}), { kind: 'safe' });
 	});
 
-	test('IDE-SBX-2: every op of every ide capability says what it does outside the sandbox', () => {
+	test('DEV-SBX-2: every op of every ide capability says what it does outside the sandbox', () => {
 		const escapes: string[] = [];
 		for (const capability of IDE_CAPABILITIES) {
 			for (const op of capability.ops) {
@@ -306,7 +306,7 @@ suite('Volt host tool sandbox classes', () => {
 		assert.deepStrictEqual(escapes, ['notebook.run', 'remote.hosts', 'remote.exec', 'extensions.run']);
 	});
 
-	test('IDE-SBX-3: an IDE refusal names the op and says what to do instead', () => {
+	test('DEV-SBX-3: an IDE refusal names the op and says what to do instead', () => {
 		const message = (name: string, args: Record<string, unknown>) => sandboxRefusalMessage(name, hostToolSandboxUse(name, args)?.kind, WRITE, args);
 		assert.strictEqual(message('debug', { op: 'start', program: 'a.js' }), 'debug was not run: this chat runs in Volt\'s sandbox, and debug (op start) would run outside it. Run the program with your own shell tool instead (it runs inside the sandbox) and add logging where you need runtime values, or ask the user to debug it.');
 		assert.match(message('debug', { op: 'evaluate', expression: 'x' }), /debug \(op evaluate\) would run outside it\. It would run code in a debug session outside the sandbox/);

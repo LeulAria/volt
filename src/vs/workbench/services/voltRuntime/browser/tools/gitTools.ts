@@ -112,6 +112,48 @@ function paths(args: unknown): string[] {
 	return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && !!item.trim()) : [];
 }
 
+export interface IChatGitRequest {
+	readonly id: string;
+	readonly cwd: string;
+	readonly args: readonly string[];
+	readonly timeoutMs: number;
+	/** Output kept per stream (default 30,000 characters in a sandbox, 8 MB through HostGit). */
+	readonly maxChars?: number;
+}
+
+export interface IChatGitResult {
+	readonly exitCode: number | null;
+	readonly stdout: string;
+	readonly stderr: string;
+	/** git did not run: the sandbox could not be set up, or HostGit refused the repository. */
+	readonly refused?: string;
+}
+
+/**
+ * git for a chat's tools (B-03, B-06, INV-16). A sandboxed chat's runs inside its sandbox, with
+ * HostGit's guards (no fsmonitor, hooks or `ext::`); any other chat's goes through HostGit on the
+ * host. A sandboxed chat's exec without its sandbox runs nothing. Cancel with `stdio.cancelExec(request.id)`.
+ */
+export async function runChatGit(stdio: IVoltStdioService, exec: IChatExec, request: IChatGitRequest): Promise<IChatGitResult> {
+	if (exec.context.sandboxed && !exec.sandbox) {
+		const refused = 'this chat runs in Volt\'s sandbox, and Volt has no sandbox to run git in for it';
+		return { exitCode: null, stdout: '', stderr: refused, refused };
+	}
+	if (exec.sandbox) {
+		const result = await stdio.exec({
+			id: request.id,
+			command: ['git', ...hostGitArgs(['--no-pager', ...request.args], { hooksPath: '/dev/null' })].map(quote).join(' '),
+			cwd: request.cwd,
+			timeoutMs: request.timeoutMs,
+			inlineChars: request.maxChars ?? 30_000,
+			...exec,
+		});
+		return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, ...(result.refused ? { refused: result.refused.reason } : {}) };
+	}
+	const result = await runGitThrough(stdio, { id: request.id, cwd: request.cwd, args: ['--no-pager', ...request.args], timeoutMs: request.timeoutMs, maxBytes: request.maxChars ?? 8 * 1024 * 1024 });
+	return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr || result.error || '', ...(result.refused ? { refused: result.error ?? result.stderr } : {}) };
+}
+
 async function runGitIn(stdio: IVoltStdioService, exec: IChatExec, cwd: URI | undefined, argv: readonly string[], name: string, ctx: IToolContext): Promise<IToolResult> {
 	if (!cwd) {
 		return { callId: '', name, kind: 'search', text: 'No workspace is open.', isError: true };
@@ -120,18 +162,7 @@ async function runGitIn(stdio: IVoltStdioService, exec: IChatExec, cwd: URI | un
 	const onAbort = () => void stdio.cancelExec(id);
 	ctx.signal.addEventListener('abort', onAbort);
 	try {
-		// A sandboxed chat's git runs inside its sandbox, with HostGit's guards (no fsmonitor, hooks or
-		// `ext::`); any other chat's goes through HostGit on the host (B-03, B-06).
-		const result = exec.sandbox
-			? await stdio.exec({
-				id,
-				command: ['git', ...hostGitArgs(['--no-pager', ...argv], { hooksPath: '/dev/null' })].map(quote).join(' '),
-				cwd: cwd.fsPath,
-				timeoutMs: 30_000,
-				inlineChars: 30_000,
-				...exec,
-			})
-			: await runGitThrough(stdio, { id, cwd: cwd.fsPath, args: ['--no-pager', ...argv], timeoutMs: 30_000, maxBytes: 8 * 1024 * 1024 });
+		const result = await runChatGit(stdio, exec, { id, cwd: cwd.fsPath, args: argv, timeoutMs: 30_000 });
 		const failed = result.exitCode !== 0;
 		const output = (failed ? `${result.stdout}\n${result.stderr}` : result.stdout).trim();
 		return {

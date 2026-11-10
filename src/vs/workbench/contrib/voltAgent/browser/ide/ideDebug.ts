@@ -12,6 +12,9 @@ import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IConfig, IDebugService, IDebugSession, IExpression, IStackFrame, IThread, State } from '../../../debug/common/debug.js';
 
+/** Ops that act on a session (the rest start one, or set breakpoints). */
+const SESSION_OPS: ReadonlySet<string> = new Set(['continue', 'step', 'pause', 'run_to', 'state', 'variables', 'evaluate', 'watch', 'output', 'stop']);
+
 const DEFAULT_WAIT_MS = 20_000;
 const MAX_WAIT_MS = 120_000;
 const MAX_FRAMES = 12;
@@ -77,7 +80,27 @@ export class IdeDebug {
 		private readonly fileService: IFileService,
 	) { }
 
-	async invoke(key: string, root: URI | undefined, args: IDebugArgs, watcher: IDebugWatcher | undefined, token: CancellationToken): Promise<IDebugToolResult> {
+	/**
+	 * `ownOnly`: a sandboxed chat's call, which may act only on a session the chat itself started
+	 * (never the user's: its program's state and output are theirs). The gate refuses it everything
+	 * that would start or drive one.
+	 */
+	async invoke(key: string, root: URI | undefined, args: IDebugArgs, watcher: IDebugWatcher | undefined, token: CancellationToken, ownOnly = false): Promise<IDebugToolResult> {
+		if (ownOnly && (args.op === 'start' || args.op === 'attach')) {
+			// The gate refuses these; a debugger never starts for a sandboxed chat, whoever asks.
+			return { text: 'The debugger was not started: this chat runs in Volt\'s sandbox, and a debug session runs the program outside it. Run it with your own shell tool instead.', isError: true };
+		}
+		if (ownOnly && args.op === 'breakpoints' && (args.condition?.trim() || args.log?.trim())) {
+			// A condition or a logpoint is code the debuggee evaluates, outside the sandbox, the next time anyone debugs it.
+			return { text: 'No breakpoint was set: this chat runs in Volt\'s sandbox, and a condition or logpoint runs code in a debug session outside it. Set a plain breakpoint, or add logging and run the program with your own shell tool.', isError: true };
+		}
+		if (ownOnly && SESSION_OPS.has(args.op)) {
+			const own = this.session(key, args.session, true);
+			if (!own) {
+				return { text: 'This chat has no debug session of its own: it runs in Volt\'s sandbox, which a debugger cannot start in, and the user\'s sessions are theirs. Run the program with your own shell tool and add logging instead.', isError: true };
+			}
+			args = { ...args, session: own.getId() };
+		}
 		switch (args.op) {
 			case 'start': return this.start(key, root, args, watcher, token, false);
 			case 'attach': return this.start(key, root, args, watcher, token, true);
@@ -209,20 +232,22 @@ export class IdeDebug {
 		return 'attach needs port or pid.';
 	}
 
-	/** The session to act on: the one named, else this chat's newest live one, else the focused one. */
-	private session(key: string, wanted: string | undefined): IDebugSession | undefined {
+	/** The session to act on: the one named, else this chat's newest live one, else (unless `ownOnly`) the focused one. */
+	private session(key: string, wanted: string | undefined, ownOnly = false): IDebugSession | undefined {
 		const sessions = this.debugService.getModel().getSessions();
+		const started = this.started.get(key) ?? [];
+		const mine = (session: IDebugSession | undefined) => session && (!ownOnly || started.includes(this.rootOf(session).getId())) ? session : undefined;
 		if (wanted) {
 			const lower = wanted.toLowerCase();
-			return sessions.find(session => session.getId() === wanted) ?? sessions.find(session => session.getLabel().toLowerCase().includes(lower));
+			return mine(sessions.find(session => session.getId() === wanted) ?? sessions.find(session => session.getLabel().toLowerCase().includes(lower)));
 		}
-		for (const id of [...(this.started.get(key) ?? [])].reverse()) {
+		for (const id of [...started].reverse()) {
 			const own = sessions.find(session => session.getId() === id);
 			if (own) {
 				return this.pausedIn(own) ?? own;
 			}
 		}
-		return this.debugService.getViewModel().focusedSession ?? sessions[0];
+		return ownOnly ? undefined : this.debugService.getViewModel().focusedSession ?? sessions[0];
 	}
 
 	private rootOf(session: IDebugSession): IDebugSession {
