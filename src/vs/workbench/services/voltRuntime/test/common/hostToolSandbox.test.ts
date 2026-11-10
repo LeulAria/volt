@@ -6,7 +6,10 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
-import { FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME } from '../../common/codeIntelligence.js';
+import { CODE_INTELLIGENCE_TOOLS, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, LANGUAGE_SERVER_TOOL_NAMES } from '../../common/codeIntelligence.js';
+import { IDE_CAPABILITIES } from '../../common/ide/ideCapabilities.js';
+import { IDE_TOOL_NAMES, IDE_TOOLS } from '../../common/ide/ideTools.js';
+import { JOB_WATCH_TOOL_NAMES, JOB_WATCH_TOOLS } from '../../common/jobs/jobWatch.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from '../../common/deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from '../../common/desktopTools.js';
 import { WORKSPACE_STATUS_TOOL_NAME } from '../../common/harness/workspaceContext.js';
@@ -31,6 +34,9 @@ const SERVED_TOOLS = new Set<string>([
 	...PLAYGROUND_TOOL_NAMES, ...MEMORY_TOOL_NAMES, ...TERMINAL_TOOL_NAMES, ...AGENT_TASK_TOOL_NAMES, ...WATCHED_TASK_TOOL_NAMES,
 	INSTANT_GREP_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, FIND_FILES_TOOL_NAME, WORKSPACE_STATUS_TOOL_NAME, 'scratch_draw', 'scratch_read',
 	...ORCHESTRA_TOOL_NAMES,
+	...IDE_TOOL_NAMES, ...IDE_TOOLS.map(tool => tool.name),
+	...LANGUAGE_SERVER_TOOL_NAMES, ...CODE_INTELLIGENCE_TOOLS.map(tool => tool.name),
+	...JOB_WATCH_TOOL_NAMES, ...JOB_WATCH_TOOLS.map(tool => tool.name),
 ]);
 
 suite('Volt host tool sandbox classes', () => {
@@ -254,5 +260,93 @@ suite('Volt host tool sandbox classes', () => {
 		assert.strictEqual(sandboxRefusalMessage('terminal_start', 'escapes', WRITE), 'terminal_start was not run: this chat runs in Volt\'s sandbox, and terminal_start would run outside it. Run the command with your own shell tool instead: it runs inside the sandbox.');
 		assert.match(sandboxRefusalMessage('worktree_handoff', 'escapes', READ), /^worktree_handoff was not run: this chat runs in Volt's read-only sandbox, .* Run git with your own shell tool instead/);
 		assert.match(sandboxRefusalMessage('new_tool', undefined, WRITE), /not cleared to run from a sandboxed chat/);
+	});
+
+	test('DEV-SBX-1: the IDE tools, the language-server tools and the job waits are classified op by op', () => {
+		const use = (name: string, args: Record<string, unknown> = {}) => hostToolSandboxUse(name, args);
+		// tests: results and listing are Volt's state, a run executes the test command in the chat's sandbox.
+		assert.deepStrictEqual(use('tests', { op: 'list' }), { kind: 'reads', reads: ['.'] });
+		assert.deepStrictEqual(use('tests', { op: 'list', path: 'src/a' }), { kind: 'reads', reads: ['src/a'] });
+		assert.deepStrictEqual(use('tests', { op: 'results' }), { kind: 'reads', reads: ['.'] });
+		assert.deepStrictEqual(use('tests', { op: 'run', targets: ['a.test.ts'] }), { kind: 'sandboxed' });
+		// debug: a session runs the program and its adapter outside the sandbox; driving it runs code there.
+		for (const op of ['start', 'attach', 'continue', 'step', 'pause', 'run_to', 'evaluate', 'watch', 'brand_new_op']) {
+			assert.strictEqual(use('debug', { op })?.kind, 'escapes', `debug ${op}`);
+		}
+		for (const op of ['state', 'variables', 'output', 'stop', 'breakpoints']) {
+			assert.strictEqual(use('debug', { op })?.kind, 'safe', `debug ${op}`);
+		}
+		assert.strictEqual(use('debug', { op: 'breakpoints', path: 'a.ts', line: 3, condition: 'x > 1' })?.kind, 'escapes', 'a condition is code the debuggee runs');
+		assert.strictEqual(use('debug', { op: 'breakpoints', path: 'a.ts', line: 3, log: 'x={x}' })?.kind, 'escapes', 'so is a logpoint');
+		// tasks: a run is a command in a task terminal outside the sandbox.
+		assert.strictEqual(use('tasks', { op: 'run', name: 'build' })?.kind, 'escapes');
+		for (const op of ['list', 'status', 'output', 'stop']) {
+			assert.strictEqual(use('tasks', { op })?.kind, 'safe', `tasks ${op}`);
+		}
+		// ide: per capability and op.
+		const ide = (capability: string, op: string, args: Record<string, unknown> = {}) => use('ide', { capability, op, args });
+		assert.deepStrictEqual(ide('editor', 'state'), { kind: 'reads', reads: ['.'] });
+		assert.deepStrictEqual(ide('editor', 'open', { path: '/Users/me/.ssh/id_rsa' }), { kind: 'reads', reads: ['/Users/me/.ssh/id_rsa'] });
+		assert.deepStrictEqual(ide('editor', 'clear'), { kind: 'safe' });
+		for (const op of ['branches', 'conflicts', 'blame', 'history', 'show', 'stage', 'unstage', 'commit', 'switch', 'stash']) {
+			assert.deepStrictEqual(ide('git', op), { kind: 'sandboxed' }, `git ${op}`);
+		}
+		assert.deepStrictEqual(ide('notebook', 'cells', { path: 'n.ipynb' }), { kind: 'reads', reads: ['n.ipynb'] });
+		assert.deepStrictEqual(ide('notebook', 'edit', { path: 'n.ipynb', cell: 0, source: 'x' }), { kind: 'writes', writes: ['n.ipynb'] });
+		assert.deepStrictEqual(ide('notebook', 'run', { path: 'n.ipynb' }), { kind: 'escapes' }, 'the kernel runs outside any sandbox');
+		for (const capability of ['docker', 'k8s', 'ci', 'analyze']) {
+			for (const spec of IDE_CAPABILITIES.find(item => item.id === capability)!.ops) {
+				assert.deepStrictEqual(ide(capability, spec.name), { kind: 'sandboxed' }, `${capability} ${spec.name}: its CLI runs in the chat's sandbox`);
+			}
+		}
+		assert.deepStrictEqual(ide('http', 'send', { method: 'GET', url: 'https://api.example.com/x' }), { kind: 'reads', reads: ['.'], urls: ['https://api.example.com/x'] });
+		assert.deepStrictEqual(ide('http', 'send', { name: 'login' }), { kind: 'reads', reads: ['.'] }, 'a named request is judged once its URL is filled in');
+		assert.deepStrictEqual(ide('http', 'envs'), { kind: 'reads', reads: ['.'] });
+		assert.deepStrictEqual(ide('profile', 'cpu', { command: 'node a.js' }), { kind: 'sandboxed' });
+		assert.deepStrictEqual(ide('profile', 'summary', { path: 'a.cpuprofile' }), { kind: 'reads', reads: ['a.cpuprofile'] });
+		assert.deepStrictEqual(ide('coverage', 'report', { path: 'src/a.ts' })?.reads?.slice(0, 3), ['.', 'coverage/coverage-final.json', 'coverage/lcov.info'], 'the report files it may read, not the source file it asks about');
+		assert.deepStrictEqual(ide('remote', 'info'), { kind: 'reads', reads: ['.', '.devcontainer/devcontainer.json', '.devcontainer.json'] });
+		assert.deepStrictEqual(ide('remote', 'hosts'), { kind: 'escapes' }, '~/.ssh/config, read by Volt');
+		assert.deepStrictEqual(ide('remote', 'exec', { host: 'h', command: 'ls' }), { kind: 'escapes' }, 'ssh with the user\'s keys');
+		assert.deepStrictEqual(ide('remote', 'devcontainer'), { kind: 'sandboxed' });
+		assert.deepStrictEqual(ide('extensions', 'list'), { kind: 'safe' });
+		assert.deepStrictEqual(ide('extensions', 'run', { command: 'workbench.action.terminal.new' }), { kind: 'escapes' }, 'any command in the window');
+		assert.deepStrictEqual(use('ide', { capability: 'git', op: 'help' }), { kind: 'safe' }, 'help');
+		assert.deepStrictEqual(use('ide', { capability: 'nope', op: 'x' }), { kind: 'safe' }, 'the tool answers with its capabilities; nothing runs');
+		// Language servers: the files named are judged; code_action writes the file it changes.
+		assert.deepStrictEqual(use('code_nav', { op: 'references', path: 'src/a.ts', line: 1, symbol: 'x' }), { kind: 'reads', reads: ['src/a.ts'] });
+		assert.deepStrictEqual(use('code_nav', { op: 'workspace_symbols', query: 'x' }), { kind: 'reads', reads: ['.'] });
+		assert.deepStrictEqual(use('diagnostics', { paths: ['a.ts', 'b.ts'] }), { kind: 'reads', reads: ['a.ts', 'b.ts'] });
+		assert.deepStrictEqual(use('diagnostics', {}), { kind: 'reads', reads: ['.'] });
+		assert.deepStrictEqual(use('code_action', { op: 'rename', path: 'src/a.ts', line: 1, symbol: 'x', new_name: 'y' }), { kind: 'writes', reads: ['src/a.ts'], writes: ['src/a.ts'] });
+		assert.deepStrictEqual(use('code_action', { op: 'fixes', path: 'src/a.ts' }), { kind: 'reads', reads: ['src/a.ts'] });
+		// Job waits: the check runs in the chat's sandbox.
+		assert.deepStrictEqual(use('watch_job', { title: 'x', check: 'test -f done' }), { kind: 'sandboxed' });
+		assert.deepStrictEqual(use('unwatch_job', {}), { kind: 'safe' });
+	});
+
+	test('DEV-SBX-2: every op of every ide capability says what it does outside the sandbox', () => {
+		const escapes: string[] = [];
+		for (const capability of IDE_CAPABILITIES) {
+			for (const op of capability.ops) {
+				const kind = hostToolSandboxUse('ide', { capability: capability.id, op: op.name, args: {} })?.kind;
+				assert.ok(kind && kind === op.sandbox, `${capability.id} ${op.name}`);
+				if (kind === 'escapes') {
+					escapes.push(`${capability.id}.${op.name}`);
+				}
+			}
+		}
+		assert.deepStrictEqual(escapes, ['notebook.run', 'remote.hosts', 'remote.exec', 'extensions.run']);
+	});
+
+	test('DEV-SBX-3: an IDE refusal names the op and says what to do instead', () => {
+		const message = (name: string, args: Record<string, unknown>) => sandboxRefusalMessage(name, hostToolSandboxUse(name, args)?.kind, WRITE, args);
+		assert.strictEqual(message('debug', { op: 'start', program: 'a.js' }), 'debug was not run: this chat runs in Volt\'s sandbox, and debug (op start) would run outside it. Run the program with your own shell tool instead (it runs inside the sandbox) and add logging where you need runtime values, or ask the user to debug it.');
+		assert.match(message('debug', { op: 'evaluate', expression: 'x' }), /debug \(op evaluate\) would run outside it\. It would run code in a debug session outside the sandbox/);
+		assert.match(message('tasks', { op: 'run', name: 'build' }), /tasks \(op run\) would run outside it\. Run the task's command with your own shell tool instead/);
+		assert.match(message('ide', { capability: 'notebook', op: 'run', args: { path: 'n.ipynb' } }), /ide \(notebook run\) would run outside it\. The notebook's kernel runs outside the sandbox/);
+		assert.match(message('ide', { capability: 'remote', op: 'hosts' }), /credential folder/);
+		assert.match(message('ide', { capability: 'extensions', op: 'run', args: { command: 'x' } }), /Ask the user to run the command/);
+		assert.strictEqual(sandboxRefusalMessage('terminal_start', 'escapes', WRITE, {}), sandboxRefusalMessage('terminal_start', 'escapes', WRITE), 'other tools read as before');
 	});
 });

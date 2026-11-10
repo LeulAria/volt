@@ -6,6 +6,7 @@
 import { chatCovers } from '../../../../platform/voltSandbox/common/authority.js';
 import { chatSubject } from '../../../../platform/voltSandbox/common/principals.js';
 import { domainAllowed, isPathInside, IVoltSandboxSettings, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { ideSandboxInstead, ideToolSandboxUse } from './ide/ideSandbox.js';
 import { threadIdArg } from './orchestration/agentThreadTools.js';
 import { parseActScript } from './tools/actScript.js';
 import { localImagePaths } from './tools/localImages.js';
@@ -238,6 +239,24 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	team_board: 'reads-other',
 	council: 'spawns',
 	machine_run: 'escapes',
+	// Agent IDE: by tool and op (`ideToolSandboxUse`, ide/ideSandbox.ts). A test run executes the
+	// project's test command in the chat's sandbox; debug sessions, tasks and notebook kernels run
+	// outside it; the `ide` gateway's ops say what they do in ideCapabilities.ts.
+	tests: 'sandboxed',
+	debug: 'escapes',
+	tasks: 'escapes',
+	ide: 'escapes',
+
+	// Code intelligence: the editor's language servers, in Volt's process. The files named are judged;
+	// for a sandboxed chat its results (locations, previews, bodies, other files' diagnostics) are only
+	// what it may read, and code_action writes only where the sandbox would let the agent write.
+	code_nav: 'reads',
+	diagnostics: 'reads',
+	code_action: 'writes',
+
+	// Job waits: the agent's check command runs in the chat's sandbox; Volt's pid probe runs only a number.
+	watch_job: 'sandboxed',
+	unwatch_job: 'safe',
 };
 
 /** What one call would do outside the sandbox. */
@@ -354,6 +373,19 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 			return strings([args.team_id]).length ? { kind: 'reads-other', chatsByProvider: true } : { kind };
 		case 'machine_run':
 			return { kind: MACHINE_RUN_OWN.has(opArg(args)) ? 'safe' : 'escapes' };
+		case 'tests':
+		case 'debug':
+		case 'tasks':
+		case 'ide':
+			return ideToolSandboxUse(name, args) ?? { kind };
+		case 'code_nav':
+			// workspace_symbols names no file: it searches the chat's folder.
+			return { kind, reads: strings([args.path, args.file]).length ? strings([args.path, args.file]) : ['.'] };
+		case 'diagnostics':
+			return { kind, reads: listOf(args.paths).length ? listOf(args.paths) : ['.'] };
+		case 'code_action':
+			// `fixes` only lists what the language server offers; the others change `path` (a rename, other files too: judged as they come).
+			return args.op === 'fixes' ? { kind: 'reads', reads: strings([args.path]) } : { kind, reads: strings([args.path]), writes: strings([args.path]) };
 	}
 	if (kind === 'browser') {
 		return { kind, urls: browserCallUrls(args) };
@@ -386,6 +418,11 @@ function asList(value: unknown): Record<string, unknown>[] {
 
 function strings(values: readonly unknown[]): string[] {
 	return values.filter((value): value is string => typeof value === 'string' && !!value.trim()).map(value => value.trim());
+}
+
+/** A string or a list of strings. */
+function listOf(value: unknown): string[] {
+	return strings(Array.isArray(value) ? value : [value]);
 }
 
 /** browser_run `edits`: each `path` it changes. */
@@ -671,12 +708,12 @@ export function isLoopbackHost(host: string): boolean {
 	return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '0.0.0.0' || /^127(\.\d{1,3}){3}$/.test(host);
 }
 
-/** What the model reads when a tool is refused for a sandboxed chat: what happened and what to do instead. */
-export function sandboxRefusalMessage(name: string, kind: HostToolSandboxClass | undefined, settings: IVoltSandboxSettings): string {
+/** What the model reads when a tool is refused for a sandboxed chat: what happened and what to do instead. `args`: the call's, for op-specific advice. */
+export function sandboxRefusalMessage(name: string, kind: HostToolSandboxClass | undefined, settings: IVoltSandboxSettings, args?: Readonly<Record<string, unknown>>): string {
 	const head = `${name} was not run: this chat runs in Volt's ${settings.level === 'read-only' ? 'read-only ' : ''}sandbox`;
 	switch (kind) {
 		case 'escapes':
-			return `${head}, and ${name} would run outside it. ${INSTEAD[name] ?? 'Do it with your own tools inside the sandbox, or ask the user to turn the sandbox off for this chat.'}`;
+			return `${head}, and ${name}${ideOpLabel(name, args)} would run outside it. ${(args && ideSandboxInstead(name, args)) ?? INSTEAD[name] ?? 'Do it with your own tools inside the sandbox, or ask the user to turn the sandbox off for this chat.'}`;
 		case 'persists':
 			return `${head}, and ${name} would save something later chats read outside the sandbox. Put what matters in your reply instead, or ask the user to save it.`;
 		case 'spawns':
@@ -690,6 +727,14 @@ export function sandboxRefusalMessage(name: string, kind: HostToolSandboxClass |
 		default:
 			return `${head}, and ${name} is not cleared to run from a sandboxed chat. Continue without it, or ask the user to turn the sandbox off for this chat.`;
 	}
+}
+
+/** ` (op run)`, ` (notebook run)`: which op of an op-based IDE tool was refused. */
+function ideOpLabel(name: string, args: Readonly<Record<string, unknown>> | undefined): string {
+	if (!args || typeof args.op !== 'string' || !args.op || !['tests', 'debug', 'tasks', 'ide'].includes(name)) {
+		return '';
+	}
+	return name === 'ide' && typeof args.capability === 'string' ? ` (${args.capability} ${args.op})` : ` (op ${args.op})`;
 }
 
 const SHELL_INSTEAD = 'Run the command with your own shell tool instead: it runs inside the sandbox.';

@@ -13,7 +13,7 @@ import { IEditorService } from '../../../../../services/editor/common/editorServ
 import { COVERAGE_REPORT_FILES, IFileCoverageSummary, lineRanges, parseCoverage } from '../../../../../services/voltRuntime/common/ide/coverageReports.js';
 import { formatCpuProfile, summarizeCpuProfile } from '../../../../../services/voltRuntime/common/ide/cpuProfile.js';
 import { stripAnsi } from '../../../../../services/voltRuntime/common/ide/testReports.js';
-import { display, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, list, num, ok, resolvePath, str } from './capability.js';
+import { confinedReadRefusal, display, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, list, num, ok, resolvePath, str } from './capability.js';
 
 /** The newest coverage report in the project, summarized; per file, the lines that never ran. */
 export class CoverageCapability implements IIdeCapability {
@@ -39,6 +39,11 @@ export class CoverageCapability implements IIdeCapability {
 		}
 		if (!newest) {
 			return fail('No coverage report found (coverage/coverage-final.json, lcov.info, coverage.xml, coverage.out). Run tests with coverage first: tests op run coverage: true, or the project\'s coverage script.');
+		}
+		// The report may be a link the agent made: read it only where the chat's sandbox reads.
+		const refused = await confinedReadRefusal(ctx, newest.uri);
+		if (refused) {
+			return fail(`${newest.name} was not read: ${refused}.`);
 		}
 		const files = parseCoverage(newest.name, (await this.fileService.readFile(newest.uri)).value.toString());
 		const covered = files.reduce((sum, file) => sum + file.covered, 0);
@@ -268,12 +273,22 @@ export class ProfileCapability implements IIdeCapability {
 				if (!command) {
 					return fail('cpu needs command (e.g. "node scripts/build.js" or "npm run bench").');
 				}
-				const dir = joinPath(this.environment.cacheHome, 'volt-profiles', generateUuid());
+				const dir = joinPath(this.outputFolder(ctx), generateUuid());
 				await this.fileService.createFolder(dir);
 				// Every Node process the command starts writes a profile; the biggest is the work.
 				const started = Date.now();
 				const result = await ctx.cli.shell(command, { timeoutMs: num(args, 'timeout_ms') ?? 600_000, env: { NODE_OPTIONS: `--cpu-prof --cpu-prof-dir=${dir.fsPath}` } });
-				const entries = (await this.fileService.resolve(dir).catch(() => undefined))?.children?.filter(child => child.name.endsWith('.cpuprofile')) ?? [];
+				if (result.refused) {
+					return fail(`The command did not run: ${result.refused}`);
+				}
+				const listed = (await this.fileService.resolve(dir).catch(() => undefined))?.children?.filter(child => child.name.endsWith('.cpuprofile')) ?? [];
+				// A sandboxed program wrote these: a link it made in their place is not followed out of the sandbox.
+				const entries = [];
+				for (const entry of listed) {
+					if (!await confinedReadRefusal(ctx, entry.resource)) {
+						entries.push(entry);
+					}
+				}
 				if (!entries.length) {
 					return fail(`No CPU profile was written (exit code ${result.code}). Only Node.js processes are profiled this way.\n${stripAnsi(result.stderr || result.stdout).trim().split('\n').slice(-15).join('\n')}`);
 				}
@@ -291,10 +306,16 @@ export class ProfileCapability implements IIdeCapability {
 				const runs = Math.min(Math.max(num(args, 'runs') ?? 10, 1), 200);
 				const warmup = Math.min(num(args, 'warmup') ?? 1, 20);
 				const hyperfine = await ctx.cli.run('hyperfine', ['--version'], { timeoutMs: 10_000 });
+				if (hyperfine.refused) {
+					return fail(`The command did not run: ${hyperfine.refused}`);
+				}
 				if (!hyperfine.missing && hyperfine.code === 0) {
-					const report = joinPath(this.environment.cacheHome, 'volt-profiles', `${generateUuid()}.json`);
+					const folder = this.outputFolder(ctx);
+					await this.fileService.createFolder(folder).catch(() => undefined);
+					const report = joinPath(folder, `${generateUuid()}.json`);
 					const result = await ctx.cli.run('hyperfine', ['--runs', String(runs), '--warmup', String(warmup), '--export-json', report.fsPath, '--style', 'none', command], { timeoutMs: 1_800_000 });
-					const json = await this.fileService.readFile(report).then(file => JSON.parse(file.value.toString()) as { results: { mean: number; stddev: number; min: number; max: number; median: number }[] }, () => undefined);
+					const readable = !await confinedReadRefusal(ctx, report);
+					const json = readable ? await this.fileService.readFile(report).then(file => JSON.parse(file.value.toString()) as { results: { mean: number; stddev: number; min: number; max: number; median: number }[] }, () => undefined) : undefined;
 					const stats = json?.results[0];
 					return stats ? ok(`${command}: mean ${ms(stats.mean * 1000)} \u00b1 ${ms(stats.stddev * 1000)}, median ${ms(stats.median * 1000)}, min ${ms(stats.min * 1000)}, max ${ms(stats.max * 1000)} (${runs} runs, hyperfine).`) : fail(stripAnsi(result.stderr).slice(0, 2_000));
 				}
@@ -316,6 +337,11 @@ export class ProfileCapability implements IIdeCapability {
 			}
 		}
 		return fail(`profile has no op ${op}.`);
+	}
+
+	/** Where the profiler writes: Volt's cache, or for a sandboxed chat its temp folder (its sandbox cannot write Volt's cache). */
+	private outputFolder(ctx: IIdeCapabilityContext): URI {
+		return ctx.confinement ? joinPath(URI.file(ctx.confinement.tmpdir ?? '/tmp'), 'volt-profiles') : joinPath(this.environment.cacheHome, 'volt-profiles');
 	}
 
 	private format(ctx: IIdeCapabilityContext, raw: string): string {

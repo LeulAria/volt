@@ -673,4 +673,56 @@ suite('Volt host tool service', () => {
 			registration.dispose();
 		}
 	});
+
+	test('DEV-SBX-11: the gate refuses a sandboxed chat\'s debug sessions, tasks, notebook kernels, ssh and editor commands before the IDE runs anything; the rest reaches it with the path rules', async () => {
+		const { service } = setup();
+		const calls: { name: string; args: Record<string, unknown>; call: IVoltHostToolCall | undefined }[] = [];
+		store.add(service.registerToolProvider({
+			tools: ['tests', 'debug', 'tasks', 'ide', 'code_nav', 'diagnostics', 'code_action', 'watch_job', 'unwatch_job'].map(name => ({ name, title: name, description: '', inputSchema: {} })),
+			invoke: async (name, args, call) => { calls.push({ name, args, call }); return { text: `ran ${name}` }; },
+		}));
+		const sandboxed = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		const refused: [string, Record<string, unknown>, RegExp][] = [
+			['debug', { op: 'start', program: 'a.js' }, /^debug was not run: this chat runs in Volt's sandbox, and debug \(op start\) would run outside it\. Run the program with your own shell tool instead/],
+			['debug', { op: 'attach', port: 9229 }, /debug \(op attach\) would run outside it/],
+			['debug', { op: 'evaluate', expression: 'process.env' }, /debug \(op evaluate\) would run outside it\. It would run code in a debug session outside the sandbox/],
+			['debug', { op: 'breakpoints', path: 'a.js', line: 2, condition: 'x' }, /debug \(op breakpoints\) would run outside it/],
+			['tasks', { op: 'run', name: 'build' }, /^tasks was not run: .*tasks \(op run\) would run outside it\. Run the task's command with your own shell tool instead/],
+			['ide', { capability: 'notebook', op: 'run', args: { path: 'n.ipynb' } }, /ide \(notebook run\) would run outside it\. The notebook's kernel runs outside the sandbox/],
+			['ide', { capability: 'remote', op: 'exec', args: { host: 'prod', command: 'ls' } }, /ide \(remote exec\) would run outside it\. ssh would run with the user's keys/],
+			['ide', { capability: 'remote', op: 'hosts' }, /~\/\.ssh is a credential folder/],
+			['ide', { capability: 'extensions', op: 'run', args: { command: 'workbench.action.terminal.new' } }, /ide \(extensions run\) would run outside it\. Editor and extension commands run outside the sandbox/],
+			['ide', { capability: 'http', op: 'send', args: { method: 'POST', url: 'https://collector.example.net/x' } }, /^ide was not run: collector\.example\.net is not reachable: this chat's network is off/],
+			['code_nav', { op: 'references', path: '/etc/passwd', line: 1, symbol: 'root' }, /^code_nav was not run: .*A sandboxed chat reads files only in its workspace/],
+			['code_action', { op: 'rename', path: '.vscode/tasks.json', line: 1, symbol: 'x', new_name: 'y' }, /^code_action did not start: no file was changed/],
+		];
+		for (const [name, args, expected] of refused) {
+			assert.match((await service.invokeTool(name, args, sandboxed)).error ?? '', expected, `${name} ${JSON.stringify(args)}`);
+		}
+		assert.deepStrictEqual(calls.map(item => item.name), [], 'the IDE ran none of them');
+
+		const allowed: [string, Record<string, unknown>][] = [
+			['tests', { op: 'run', targets: ['test/a.test.js'] }],
+			['tests', { op: 'list' }],
+			['debug', { op: 'state' }],
+			['debug', { op: 'breakpoints', path: 'a.js', line: 2 }],
+			['tasks', { op: 'list' }],
+			['ide', { capability: 'git', op: 'branches' }],
+			['ide', { capability: 'docker', op: 'ps' }],
+			['code_nav', { op: 'references', path: 'src/a.ts', line: 1, symbol: 'x' }],
+			['code_action', { op: 'rename', path: 'src/a.ts', line: 1, symbol: 'x', new_name: 'y' }],
+			['watch_job', { title: 'build', check: 'test -f out/done' }],
+		];
+		for (const [name, args] of allowed) {
+			assert.strictEqual((await service.invokeTool(name, args, sandboxed)).text, `ran ${name}`, `${name} ${JSON.stringify(args)}`);
+		}
+		assert.strictEqual(calls.length, allowed.length);
+		// Each carries the gate's rules, for files the provider finds rather than files the agent named (a rename's other files).
+		const rename = calls.find(item => item.name === 'code_action')!.call!;
+		assert.ok(rename.readRefusal && rename.writeRefusal && rename.sandboxPaths);
+		assert.strictEqual(await rename.writeRefusal('/ws/src/b.ts'), undefined);
+		assert.match(await rename.writeRefusal('/ws/.git/hooks/pre-commit') ?? '', /./, 'a hook is not the chat\'s to write');
+		assert.match(await rename.readRefusal!('/etc/passwd') ?? '', /./);
+		assert.strictEqual(await rename.readRefusal!('/ws/src/b.ts'), undefined);
+	});
 });

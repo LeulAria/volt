@@ -5,7 +5,7 @@
 
 import { maskSecret } from '../../../../../services/voltRuntime/common/ide/httpFile.js';
 import { stripAnsi } from '../../../../../services/voltRuntime/common/ide/testReports.js';
-import { cliText, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, num, ok, resolvePath, safeName, str, tail } from './capability.js';
+import { cliText, fail, ICliResult, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, num, ok, resolvePath, safeName, str, tail } from './capability.js';
 
 function jsonLines<T>(text: string): T[] {
 	return text.split('\n').filter(line => line.trim().startsWith('{')).flatMap(line => {
@@ -17,11 +17,17 @@ function jsonLines<T>(text: string): T[] {
 	});
 }
 
-const DOCKER_DOWN = /Cannot connect to the Docker daemon|error during connect|docker daemon is not running/i;
+const DOCKER_DOWN = /Cannot connect to the Docker daemon|error during connect|docker daemon is not running|permission denied while trying to connect to the docker/i;
+
+/** A CLI that failed inside the chat's sandbox: what the sandbox kept from it, so the model does not retry blindly. */
+function inSandbox(result: IIdeCapabilityResult, ctx: IIdeCapabilityContext, what: string): IIdeCapabilityResult {
+	return result.isError && ctx.cli.sandboxed ? { ...result, text: `${result.text}\n(This ran in the chat's sandbox, which keeps ${what} out of reach. Ask the user to run it, or to allow what it needs.)` } : result;
+}
 
 /**
  * Containers through the docker CLI (the Container Tools extension's views show the same daemon):
  * state, logs and health in a few lines each, so "why does it keep restarting" is one or two calls.
+ * A sandboxed chat's docker runs in its sandbox, which does not reach Docker's socket.
  */
 export class DockerCapability implements IIdeCapability {
 
@@ -31,7 +37,11 @@ export class DockerCapability implements IIdeCapability {
 		const docker = async (dockerArgs: string[], timeoutMs = 30_000) => {
 			const result = await ctx.cli.run('docker', dockerArgs, { timeoutMs });
 			if (result.code !== 0 && DOCKER_DOWN.test(result.stderr)) {
-				return { ...result, stderr: 'Docker is not running. Start it (docker_ensure does it when the volt tools offer it) and try again.' };
+				return {
+					...result, stderr: ctx.cli.sandboxed
+						? 'docker ran in this chat\'s sandbox, which does not reach Docker\'s socket. Ask the user to run the docker command, or to turn the sandbox off for this chat.'
+						: 'Docker is not running. Start it (docker_ensure does it when the volt tools offer it) and try again.',
+				};
 			}
 			return result;
 		};
@@ -169,7 +179,7 @@ export class KubernetesCapability implements IIdeCapability {
 	async invoke(op: string, args: Readonly<Record<string, unknown>>, ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
 		const namespace = safeName(str(args, 'namespace'));
 		const ns = args.all_namespaces === true ? ['-A'] : namespace ? ['-n', namespace] : [];
-		const kubectl = (kubeArgs: string[], timeoutMs = 30_000, maxLines = 150) => ctx.cli.run('kubectl', kubeArgs, { timeoutMs }).then(result => cliText(result, 'kubectl', maxLines));
+		const kubectl = (kubeArgs: string[], timeoutMs = 30_000, maxLines = 150) => ctx.cli.run('kubectl', kubeArgs, { timeoutMs }).then(result => inSandbox(cliText(result, 'kubectl', maxLines), ctx, '~/.kube and the cluster\'s network'));
 		const kind = safeName(str(args, 'kind'));
 		const name = safeName(str(args, 'name'));
 		const deployment = safeName(str(args, 'deployment'));
@@ -206,17 +216,18 @@ export class CiCapability implements IIdeCapability {
 
 	async invoke(op: string, args: Readonly<Record<string, unknown>>, ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
 		const gh = (ghArgs: string[], timeoutMs = 60_000) => ctx.cli.run('gh', ghArgs, { timeoutMs });
+		const ghText = (result: ICliResult) => inSandbox(cliText(result, 'gh'), ctx, 'gh\'s login (~/.config/gh) and, with the network off, GitHub');
 		const run = safeName(str(args, 'run'));
 		switch (op) {
 			case 'runs': {
 				let branch = safeName(str(args, 'branch'));
 				if (!branch) {
-					const current = await ctx.cli.run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: 10_000 });
+					const current = await ctx.cli.git(['rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: 10_000 });
 					branch = safeName(current.stdout.trim());
 				}
 				const result = await gh(['run', 'list', ...(branch ? ['--branch', branch] : []), '--limit', String(Math.min(num(args, 'limit') ?? 10, 50)), '--json', 'databaseId,displayTitle,workflowName,status,conclusion,createdAt,event']);
 				if (result.code !== 0) {
-					return cliText(result, 'gh');
+					return ghText(result);
 				}
 				const runs = JSON.parse(result.stdout || '[]') as { databaseId: number; displayTitle: string; workflowName: string; status: string; conclusion: string; createdAt: string; event: string }[];
 				return ok(runs.length ? runs.map(item => `${item.databaseId}  ${item.conclusion || item.status}  ${item.workflowName}: ${item.displayTitle}  (${item.event}, ${item.createdAt})`).join('\n') : `No runs${branch ? ` for ${branch}` : ''}.`);
@@ -227,7 +238,7 @@ export class CiCapability implements IIdeCapability {
 				}
 				const result = await gh(['run', 'view', run, '--json', 'jobs,conclusion,status,url,displayTitle,workflowName']);
 				if (result.code !== 0) {
-					return cliText(result, 'gh');
+					return ghText(result);
 				}
 				const view = JSON.parse(result.stdout) as { jobs: { name: string; conclusion: string; status: string; steps?: { name: string; conclusion: string; number: number }[] }[]; conclusion: string; status: string; url: string; displayTitle: string; workflowName: string };
 				const lines = [`${view.workflowName}: ${view.displayTitle} - ${view.conclusion || view.status}  ${view.url}`];
@@ -247,7 +258,7 @@ export class CiCapability implements IIdeCapability {
 				}
 				const result = await gh(['run', 'view', run, '--log-failed'], 120_000);
 				if (result.code !== 0) {
-					return cliText(result, 'gh');
+					return ghText(result);
 				}
 				return ok(failedLogDigest(result.stdout) || 'No failed step logs (the run may still be going, or nothing failed).');
 			}
@@ -255,7 +266,7 @@ export class CiCapability implements IIdeCapability {
 				if (!run) {
 					return fail('rerun needs run.');
 				}
-				return cliText(await gh(['run', 'rerun', run, ...(args.failed === true ? ['--failed'] : [])]), 'gh');
+				return ghText(await gh(['run', 'rerun', run, ...(args.failed === true ? ['--failed'] : [])]));
 			}
 		}
 		return fail(`ci has no op ${op}.`);
