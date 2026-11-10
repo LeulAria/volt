@@ -1119,6 +1119,13 @@ export interface IVoltHostToolService {
 	/** A chat's host MCP tokens with key epoch `epoch` or below must be refused from now on. */
 	readonly onDidRevokeMcpSession: Event<{ readonly sessionId: string; readonly epoch: number }>;
 	setQuestionHandler(handler: IVoltQuestionHandler | undefined): void;
+	/**
+	 * Asks the user in the chat's question tray (as `ask_question` does) on behalf of a Volt tool,
+	 * and waits up to `ms` for the answers. With `requestId`, keeps waiting on a question asked
+	 * before (the agent called the tool again). Resolves undefined when there is no chat to ask in
+	 * or no such question; `response` is unset while the user is still answering.
+	 */
+	askUser?(sessionId: string, draft: AgentQuestionDraft, options: { readonly requestId?: string; readonly ms: number; readonly token: CancellationToken }): Promise<{ readonly requestId: string; readonly response?: IAgentQuestionResponse } | undefined>;
 	/** Mode and folder per chat, for the mode gate and relative image paths. */
 	setSessionResolver(resolver: IVoltHostSessionResolver | undefined): void;
 	/** Asks the user when a chat's mode does not allow a call. Without one, such calls are refused. */

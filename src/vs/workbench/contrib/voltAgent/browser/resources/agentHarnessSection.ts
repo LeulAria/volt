@@ -315,6 +315,7 @@ export class AgentHarnessSection extends Disposable {
 					{ key: 'volt.agent.multitask.maxParallel', title: localize('agentHarness.maxParallel', "Parallel tasks per chat") },
 					{ key: 'volt.agent.multitask.maxParallelTotal', title: localize('agentHarness.maxParallelTotal', "Parallel tasks in total") },
 					{ key: 'volt.agent.multitask.maxPerCall', title: localize('agentHarness.maxPerCall', "Tasks per delegation") },
+					{ key: 'volt.orchestra.maxAgentsPerRequest', title: localize('agentHarness.maxAgentsPerRequest', "Agents per team or council") },
 					{ key: 'volt.agent.keepWorking', title: localize('agentHarness.keepWorking', "Keep working until done") },
 					{ key: 'volt.agent.resumeAfterRestart', title: localize('agentHarness.resumeAfterRestart', "Resume after restart") },
 					{ key: 'volt.agent.autoResumeAfterLimit', title: localize('agentHarness.autoResumeAfterLimit', "Resume after a usage limit") },

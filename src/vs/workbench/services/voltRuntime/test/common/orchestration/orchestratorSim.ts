@@ -90,6 +90,9 @@ export class OrchSim {
 			...(extra.after ? { after: extra.after } : {}),
 			...(extra.budgetUsd !== undefined ? { budgetUsd: extra.budgetUsd } : {}),
 			...(extra.fallbacks ? { fallbacks: extra.fallbacks } : {}),
+			...(extra.team ? { team: extra.team } : {}),
+			...(extra.blind ? { blind: extra.blind } : {}),
+			...(extra.quiet ? { quiet: true } : {}),
 		};
 		return this.run({ type: 'task.spawn', spawn });
 	}

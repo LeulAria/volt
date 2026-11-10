@@ -80,6 +80,7 @@ import '../pullRequests/agentPullRequests.contribution.js';
 import '../trajectory/agentTrajectory.contribution.js';
 import '../runGroups/agentRunGroups.contribution.js';
 import '../orchestration/agentThreadToolService.js';
+import '../../../../services/voltRuntime/browser/orchestration/agentOrchestraService.js';
 import '../orchestration/agentWorkspaceMover.js';
 import '../orchestration/agentMoveChat.contribution.js';
 

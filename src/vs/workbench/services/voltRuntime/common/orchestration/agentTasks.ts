@@ -61,6 +61,10 @@ export const TASK_WAIT_MS = 45_000;
 export const TASK_RESULT_CHARS = 12_000;
 /** An upstream task's report as a dependent task receives it (`after`). */
 export const UPSTREAM_REPORT_CHARS = 6_000;
+/** Reports one notification carries in full; past that they share `BATCH_REPORT_CHARS`. */
+const BATCH_REPORTS_FULL = 4;
+const BATCH_REPORT_CHARS = 32_000;
+const BATCH_REPORT_MIN_CHARS = 600;
 
 /**
  * What "done" means for a task, beyond its brief: the handoff contract. A child sees only what it
@@ -466,16 +470,59 @@ export function lintTaskBrief(brief: string, role: AgentTaskRole, contract: ITas
  * A dependent task's brief once the tasks it waited for (`after`) are done: their reports go
  * after its own prompt (pi's chain `{previous}`, cline's team `dependsOn`).
  */
-export function withUpstreamReports(text: string, upstream: readonly IOrchTask[]): string {
+/** Anonymized upstream reports: labels by place in `pool`, presented in an order of the reader's own (`seed`). */
+export interface IBlindReports {
+	readonly pool: readonly string[];
+	readonly seed: string;
+}
+
+export function withUpstreamReports(text: string, upstream: readonly IOrchTask[], blind?: IBlindReports): string {
 	if (!upstream.length) {
 		return text;
 	}
 	const parts = [text, '', '<upstream_reports>'];
-	for (const task of upstream) {
-		parts.push(`<report task_id="${task.id}" title="${task.title.replace(/"/g, '\'')}" status="${task.state}"${task.modelLabel ? ` model="${task.modelLabel.replace(/"/g, '\'')}"` : ''}>`, task.result?.trim() ? clip(task.result, UPSTREAM_REPORT_CHARS) : '(no report)', '</report>');
+	if (blind) {
+		// Anonymized (council critique): no ids, titles or models. Labels come from the shared pool, so
+		// every judge names an answer the same way; the order is the reader's own, so no answer is
+		// always read first (judges favour position as well as authorship).
+		// Reports outside the pool (a later round's reviews) are numbered on their own.
+		let review = 0;
+		for (const task of blindOrder(upstream, blind.seed)) {
+			const place = blind.pool.indexOf(task.id);
+			const label = place >= 0 ? `Response ${blindLabel(place)}` : `Review ${++review}`;
+			parts.push(`<report label="${label}"${task.state === 'completed' ? '' : ` status="${task.state}"`}>`, task.result?.trim() && task.state === 'completed' ? clip(task.result, UPSTREAM_REPORT_CHARS) : '(no report: this member did not finish)', '</report>');
+		}
+	} else {
+		for (const task of upstream) {
+			parts.push(`<report task_id="${task.id}" title="${task.title.replace(/"/g, '\'')}" status="${task.state}"${task.modelLabel ? ` model="${task.modelLabel.replace(/"/g, '\'')}"` : ''}>`, task.result?.trim() ? clip(task.result, UPSTREAM_REPORT_CHARS) : '(no report)', '</report>');
+		}
 	}
 	parts.push('</upstream_reports>');
 	return parts.join('\n');
+}
+
+/** "A", "B", … "Z", "AA": the anonymous label of the `index`th blind report. */
+export function blindLabel(index: number): string {
+	let label = '';
+	let rest = index;
+	do {
+		label = String.fromCharCode(65 + (rest % 26)) + label;
+		rest = Math.floor(rest / 26) - 1;
+	} while (rest >= 0);
+	return label;
+}
+
+/** Tasks in an order fixed by `seed` and their ids (the same on every replay) but not by spawn order. */
+export function blindOrder<T extends Pick<IOrchTask, 'id'>>(tasks: readonly T[], seed = ''): T[] {
+	const key = (id: string) => {
+		const text = `${seed}\u0000${id}`;
+		let value = 2166136261;
+		for (let i = 0; i < text.length; i++) {
+			value = Math.imul(value ^ text.charCodeAt(i), 16777619) >>> 0;
+		}
+		return value;
+	};
+	return [...tasks].sort((a, b) => key(a.id) - key(b.id) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 export function formatUsd(value: number): string {
@@ -532,7 +579,7 @@ function statusWord(task: IOrchTask): string {
 }
 
 /** One task as tools report it: compact, quotable, with the report once there is one. */
-export function describeTask(task: IOrchTask, now: number, options: { readonly includeResult: boolean }): string {
+export function describeTask(task: IOrchTask, now: number, options: { readonly includeResult: boolean; readonly resultChars?: number }): string {
 	const elapsed = task.startedAt ? formatDuration((task.endedAt ?? now) - task.startedAt) : undefined;
 	const lines = [
 		`task_id: ${task.id}`,
@@ -579,7 +626,7 @@ export function describeTask(task: IOrchTask, now: number, options: { readonly i
 		lines.push(`error: ${task.error}`);
 	}
 	if (options.includeResult && isTerminalTaskState(task.state)) {
-		lines.push('report:', task.result?.trim() ? clip(task.result, TASK_RESULT_CHARS) : '(no report)');
+		lines.push('report:', task.result?.trim() ? clip(task.result, options.resultChars ?? TASK_RESULT_CHARS) : '(no report)');
 	}
 	return lines.join('\n');
 }
@@ -610,10 +657,16 @@ export function buildTaskNotification(finished: readonly IOrchTask[], others: re
 		? `[Volt] Delegated task "${finished[0].title}" ${statusWord(finished[0])}.`
 		: `[Volt] ${finished.length} delegated tasks finished.`;
 	const parts = [head, '', '<task_results>'];
+	// Many reports at once (a team): each gets its share of one budget, so 30 reports do not flood
+	// the context; the full text stays in task_status and the team board.
+	const share = finished.length > BATCH_REPORTS_FULL ? Math.max(BATCH_REPORT_MIN_CHARS, Math.floor(BATCH_REPORT_CHARS / finished.length)) : undefined;
 	for (const task of finished) {
-		parts.push('<task>', describeTask(task, now, { includeResult: true }), '</task>');
+		parts.push('<task>', describeTask(task, now, { includeResult: true, ...(share ? { resultChars: share } : {}) }), '</task>');
 	}
 	parts.push('</task_results>', '');
+	if (share) {
+		parts.push(`Reports are shortened to about ${share.toLocaleString('en-US')} characters each here; task_status with a task_id reads one in full${finished.some(task => task.team) ? ', and team_board read shows the result of every item' : ''}.`);
+	}
 	if (others.length) {
 		parts.push(`Still running: ${others.map(task => `${task.id} "${task.title}"${task.modelLabel ? ` (${task.modelLabel})` : ''}`).join('; ')}. Their reports will arrive the same way.`);
 	}

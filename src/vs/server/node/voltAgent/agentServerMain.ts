@@ -96,6 +96,8 @@ import { IAgentWorktreeSetupService } from '../../../workbench/services/voltRunt
 import { AgentHistoryService, setAgentHistoryAppender } from '../../../workbench/services/voltRuntime/browser/history/agentHistoryService.js';
 import { VoltHostToolService } from '../../../workbench/services/voltRuntime/browser/host/hostToolService.js';
 import { AgentOrchestratorService } from '../../../workbench/services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
+import { AgentOrchestraService, IAgentOrchestraService } from '../../../workbench/services/voltRuntime/browser/orchestration/agentOrchestraService.js';
+import { AgentCloudTasksService, IAgentCloudTasksService } from '../../../workbench/services/voltRuntime/browser/cloud/agentCloudTasksService.js';
 import { VoltSessionContextService } from '../../../workbench/services/voltRuntime/browser/sessionContextService.js';
 import { VoltWindowScopeService } from '../../../workbench/services/voltWindowScope/common/voltWindowScopeService.js';
 import { IVoltWindowScopeService } from '../../../workbench/services/voltWindowScope/common/voltWindowScope.js';
@@ -341,6 +343,9 @@ export async function main(argv: string[]): Promise<void> {
 	services.set(IAgentChatSearchService, new SyncDescriptor(AgentChatSearchService));
 	services.set(IAgentRunGroupService, new SyncDescriptor(ServerAgentRunGroupService));
 	services.set(IAgentChatForkService, new SyncDescriptor(AgentThreadToolService));
+	// Teams, councils and remote machine runs: their tools run beside the orchestrator they drive.
+	services.set(IAgentCloudTasksService, new SyncDescriptor(AgentCloudTasksService));
+	services.set(IAgentOrchestraService, new SyncDescriptor(AgentOrchestraService));
 	// It watches each chat's work tree itself (the server has no workspace folders), so unchanged projects reuse the last snapshot.
 	services.set(IAgentCheckpointService, new SyncDescriptor(ServerAgentCheckpointService));
 	services.set(IAgentWorktreeSetupService, new SyncDescriptor(AgentWorktreeSetupService));
@@ -387,6 +392,7 @@ export async function main(argv: string[]): Promise<void> {
 	// Moves to another checkout run here: a window's mover does not reach the server's orchestrator.
 	disposables.add(instantiationService.createInstance(AgentWorkspaceMover));
 	instantiationService.invokeFunction(accessor => accessor.get(IAgentChatForkService));
+	instantiationService.invokeFunction(accessor => accessor.get(IAgentOrchestraService));
 	// The browser menu's per-chat "Let Agents Use the Browser" lives in a window's storage: it sends its copy.
 	instantiationService.invokeFunction(accessor => {
 		const browserAccess = accessor.get(IVoltBrowserAccessService);

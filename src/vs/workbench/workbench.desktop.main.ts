@@ -182,6 +182,7 @@ import './contrib/voltAgent/browser/pullRequests/agentPullRequests.contribution.
 import './contrib/voltAgent/browser/trajectory/agentTrajectory.contribution.js';
 import './contrib/voltAgent/browser/runGroups/agentRunGroups.contribution.js';
 import './contrib/voltAgent/browser/orchestration/agentThreadToolService.js';
+import './services/voltRuntime/browser/orchestration/agentOrchestraService.js';
 import './contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';
 import './contrib/voltAgent/browser/orchestration/agentMoveChat.contribution.js';
 import './services/voltRuntime/electron-browser/voltGit.contribution.js';
@@ -197,6 +198,7 @@ import './contrib/voltAgent/electron-browser/agentOpenInNewWindow.contribution.j
 // Volt agent server client (after the agent services it can replace)
 import './contrib/voltAgent/electron-browser/agentServerClient.contribution.js';
 import './contrib/voltAgent/electron-browser/agentComputerName.contribution.js';
+import './contrib/voltAgent/electron-browser/agentMachineCapacity.contribution.js';
 
 // Volt dev hot reload (VSCODE_DEV only)
 import './contrib/voltAgent/electron-browser/voltDevReload.contribution.js';
