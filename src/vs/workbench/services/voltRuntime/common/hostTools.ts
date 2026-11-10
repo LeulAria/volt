@@ -1059,6 +1059,27 @@ export interface IVoltHostToolProvider {
 	 * extension's word): the gate judges a sandboxed chat's call by it (G.6, PERM-FLOW-1).
 	 */
 	readonly owner?: IVoltHostToolOwner;
+	/**
+	 * For the sandbox gate, a call whose arguments name other chats in this provider's own terms
+	 * (`IHostToolSandboxUse.chatsByProvider`: team members by name, "all", a team): the chats it
+	 * would prompt and those whose content it would return. Asked before `invoke`, for sandboxed
+	 * callers only; a provider without it, or one that throws, gets the call refused.
+	 */
+	chatReach?(name: string, args: Record<string, unknown>, call: IVoltHostToolCall): Promise<IVoltHostToolChatReach>;
+}
+
+/** The other chats one call reaches (`IVoltHostToolProvider.chatReach`). */
+export interface IVoltHostToolChatReach {
+	/** Chats it prompts or posts to: each must be confined at least as strictly as the caller (INV-11). */
+	readonly prompts?: readonly IVoltHostToolChatRef[];
+	/** Chats whose transcripts, replies or outputs it returns: the caller's own subtree only (INV-26). */
+	readonly reads?: readonly IVoltHostToolChatRef[];
+}
+
+/** A chat by its id and the name the model knows it by (a team member's name). */
+export interface IVoltHostToolChatRef {
+	readonly id: string;
+	readonly label: string;
 }
 
 /** Who serves an extension's tool, as core recorded it at registration. */
