@@ -26,7 +26,8 @@ export class RunModeTracker extends Disposable implements IVoltHostSessionResolv
 		return this.modes.get(sessionId);
 	}
 
+	/** The checkout the chat works in: its worktree, else its project folder (never the window's, which may be another project or none). */
 	cwd(sessionId: string): string | undefined {
-		return this.modes.has(sessionId) ? this.runtime.getOrCreateSession(sessionId).worktreePath : undefined;
+		return this.modes.has(sessionId) ? this.runtime.workingFolder(sessionId) : undefined;
 	}
 }
