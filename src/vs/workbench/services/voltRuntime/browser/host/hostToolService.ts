@@ -467,8 +467,10 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 
 	/**
 	 * A path an agent named, as the file it reaches: relative to `base`, `file://` decoded, and through
-	 * symlinks. Tools decode `%xx` in some paths, so both readings are returned. A reading that
-	 * cannot be placed is `{ why }`: a relative path without a base, or one that does not resolve.
+	 * symlinks. Tools decode `%xx` in some paths and take `\` for `/` in others (browser_run's edits),
+	 * so every reading is returned (SEC3-5). A reading that cannot be placed is `{ why }`: a relative
+	 * path without a base, one with a NUL or another control character (no file has one, and
+	 * layers cut the path there differently), or one that does not resolve.
 	 */
 	private async realPaths(raw: string, base: string | undefined): Promise<(string | { readonly why: string })[]> {
 		const value = raw.trim();
@@ -478,8 +480,11 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		} catch {
 			// not percent-encoded
 		}
-		const readings = [...new Set([value, decoded])];
+		const readings = [...new Set([value, decoded].flatMap(reading => [reading, reading.replace(/\\/g, '/')]))];
 		return Promise.all(readings.map(async reading => {
+			if (/[\u0000-\u001f\u007f]/.test(reading)) {
+				return { why: `${JSON.stringify(raw)} has a control character in it, so the file it names is unclear` };
+			}
 			const uri = /^file:\/\//i.test(reading) ? URI.parse(reading) : isAbsolute(reading) ? URI.file(reading) : base ? joinPath(URI.file(base), reading) : undefined;
 			if (!uri) {
 				return { why: `${raw} is relative and this chat has no folder` };

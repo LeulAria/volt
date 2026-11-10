@@ -34,6 +34,32 @@ function pick(raw: Record<string, unknown>, keys: readonly string[]): unknown {
 
 export const MAX_FILE_EDITS = 40;
 
+/**
+ * Every path `edits` could write, for the sandbox gate (SEC3-4): each edit's path under any key
+ * `parseFileEdits` reads, as written and as `safeEditPath` places it (`.git\hooks\x` is
+ * `.git/hooks/x` there). A superset of what the call writes, so the gate never judges less.
+ */
+export function fileEditPaths(input: unknown): string[] {
+	const list = Array.isArray(input) ? input : input && typeof input === 'object' ? [input] : [];
+	const out = new Set<string>();
+	for (const value of list.slice(0, MAX_FILE_EDITS)) {
+		if (!value || typeof value !== 'object' || Array.isArray(value)) {
+			continue;
+		}
+		for (const key of PATH_KEYS) {
+			const path = (value as Record<string, unknown>)[key];
+			if (typeof path === 'string' && path.trim()) {
+				out.add(path.trim());
+				const placed = safeEditPath(path.trim());
+				if (placed) {
+					out.add(placed);
+				}
+			}
+		}
+	}
+	return [...out];
+}
+
 export function parseFileEdits(input: unknown): { edits: IFileEdit[]; errors: string[] } {
 	const list = Array.isArray(input) ? input : input && typeof input === 'object' ? [input] : [];
 	const edits: IFileEdit[] = [];

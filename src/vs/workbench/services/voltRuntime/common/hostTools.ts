@@ -110,7 +110,8 @@ export const LEGACY_TOOL_NAMES: Readonly<Record<string, string>> = {
 
 /** The current name of a host tool an agent may call by an earlier one. */
 export function canonicalHostToolName(name: string): string {
-	return LEGACY_TOOL_NAMES[name] ?? name;
+	// Own keys only: `constructor` or `toString` is a name the gate refuses, never a prototype member (SEC3-4).
+	return Object.prototype.hasOwnProperty.call(LEGACY_TOOL_NAMES, name) ? LEGACY_TOOL_NAMES[name] : name;
 }
 
 /** A visual a render tool published: where its spec or page is stored, for the transcript to draw. */
