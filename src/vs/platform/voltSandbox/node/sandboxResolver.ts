@@ -385,7 +385,11 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	const usableDir = (dir: string) => readable(dir) && !deny.some(path => isInside(dir, path));
 	let cwd = runTmp;
 	if (context.cwd) {
-		cwd = (await canonical(context.cwd)).path;
+		const dir = await canonical(context.cwd);
+		cwd = dir.path;
+		if (!dir.exists || !dir.isDirectory) {
+			refuse(`The working directory does not exist: ${cwd}. Pick the chat's project folder again.`);
+		}
 		if (!usableDir(cwd)) {
 			refuse(`The working directory is not readable inside the sandbox: ${cwd}`);
 		}

@@ -535,3 +535,32 @@ suite('Volt sandbox pattern walk scope (B-27)', () => {
 		}
 	});
 });
+
+suite('Volt sandbox resolver refusals', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('LIFE-CWD-1: a working directory that does not exist is refused as missing, not as unreadable', async () => {
+		const root = await fs.realpath(await fs.mkdtemp(join(homedir(), '.volt-cwd-missing-')));
+		try {
+			const ws = join(root, 'project');
+			await fs.mkdir(ws);
+			const facts = await sandboxHostFacts();
+			const policy = agentSandboxPolicy(
+				{ level: 'workspace-write', network: false, providerId: '', workspaceRoots: [ws] },
+				{ platform: process.platform, home: facts.home, tempDirs: [facts.tmpRoot], cacheDir: join(root, 'cache') },
+			);
+			const runTmp = join(root, 'run');
+			await fs.mkdir(runTmp);
+			const missing = join(root, 'tmp', 'project');
+			await assert.rejects(
+				resolveSandboxPolicy(policy, { workspaceRoots: [ws], cwd: missing, hostEnv: { PATH: '/usr/bin:/bin', HOME: facts.home } }, facts, runTmp),
+				(err: Error) => err.message.includes('does not exist') && err.message.includes(missing),
+			);
+			// The workspace itself still resolves.
+			await resolveSandboxPolicy(policy, { workspaceRoots: [ws], cwd: ws, hostEnv: { PATH: '/usr/bin:/bin', HOME: facts.home } }, facts, runTmp);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+});
