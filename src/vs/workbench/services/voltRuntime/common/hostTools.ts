@@ -12,6 +12,7 @@ import type { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import type { IGrant } from '../../../../platform/voltSandbox/common/grants.js';
 import type { IVoltSandboxSettings, SandboxStrategy } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import type { ISandboxPathContext } from '../../../../platform/voltFiles/common/filesBroker.js';
 import type { IPolicyShadowDiff, PolicyAuthorityMode } from './hostToolAuthority.js';
 import type { HostToolSandboxClass } from './hostToolSandbox.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
@@ -221,6 +222,18 @@ export interface IVoltHostToolCall {
 	 * filter them with it (B-15).
 	 */
 	readonly readRefusal?: (path: string) => Promise<string | undefined>;
+	/**
+	 * Set next to `readRefusal`: why the chat may not write an absolute path, by the gate's write rule
+	 * (the one the OS enforces on the agent). Providers that write files the agent did not name (a
+	 * rename's other files, a formatter's output) check every one before writing any.
+	 */
+	readonly writeRefusal?: (path: string) => Promise<string | undefined>;
+	/**
+	 * Set with the rules: the folders and machine facts they judge by. The agent server sends it with
+	 * a call a window serves (functions do not cross the socket), so the window applies the same
+	 * files-broker rules (`sandboxPathRules`) instead of refusing.
+	 */
+	readonly sandboxPaths?: ISandboxPathContext;
 }
 
 /** Each chat's sandbox, for the sandbox gate: the caller's workspace, and other chats a call would prompt (thread_send). */

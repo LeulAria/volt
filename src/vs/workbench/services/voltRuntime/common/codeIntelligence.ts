@@ -124,7 +124,81 @@ export const INSTANT_GREP_TOOL_NAME = 'instant_grep';
 export const FIND_SYMBOL_TOOL_NAME = 'find_symbol';
 export const FIND_FILES_TOOL_NAME = 'find_files';
 
-export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
+/** The editor's language servers as tools: the native agent's and, over MCP, every other agent's. */
+export const CODE_NAV_TOOL_NAME = 'code_nav';
+export const DIAGNOSTICS_TOOL_NAME = 'diagnostics';
+export const CODE_ACTION_TOOL_NAME = 'code_action';
+export const LANGUAGE_SERVER_TOOL_NAMES = [CODE_NAV_TOOL_NAME, DIAGNOSTICS_TOOL_NAME, CODE_ACTION_TOOL_NAME] as const;
+
+export const CODE_NAV_OPS = ['definition', 'references', 'implementations', 'type_definition', 'hover', 'inspect', 'symbols', 'workspace_symbols', 'callers', 'callees', 'supertypes', 'subtypes'] as const;
+export type CodeNavOp = typeof CODE_NAV_OPS[number];
+
+export const CODE_ACTION_OPS = ['rename', 'format', 'organize_imports', 'fixes', 'fix'] as const;
+
+function toolSchema(properties: Record<string, object>, required: string[]): object {
+	return { type: 'object', properties, required, additionalProperties: false };
+}
+
+export const CODE_NAV_DESCRIPTION = [
+	'Precise navigation from the language servers the editor runs (live, unsaved buffers included), with Volt\'s code index as fallback.',
+	'Positional ops take path + line + symbol (the name as written on that line) or column:',
+	'definition, references, implementations, type_definition, hover (type, signature, docs),',
+	'inspect (hover + definition with its body + references by file + implementations, in one call: start here for an unfamiliar symbol),',
+	'callers / callees (call hierarchy), supertypes / subtypes (type hierarchy).',
+	'symbols: the outline of path. workspace_symbols: find symbols by name across the workspace (query).',
+	'Use grep for text and strings, find_symbol for a name you know, this for meaning (who calls X, what implements Y, what type is Z).',
+].join(' ');
+
+export const CODE_NAV_SCHEMA = toolSchema({
+	op: { type: 'string', enum: [...CODE_NAV_OPS] },
+	path: { type: 'string' },
+	line: { type: 'integer', description: '1-based line' },
+	column: { type: 'integer', description: '1-based column' },
+	symbol: { type: 'string', description: 'Symbol name on that line, instead of a column' },
+	query: { type: 'string', description: 'workspace_symbols: the name to look for' },
+}, ['op']);
+
+export const DIAGNOSTICS_DESCRIPTION = [
+	'Errors and warnings from the editor\'s language services (type checker, linter) for the given files, or the whole workspace.',
+	'Use right after editing to confirm the change type-checks; it is much faster than a full build.',
+	'Only files the language service knows about are covered; a build or test run is still the final word.',
+].join(' ');
+
+export const DIAGNOSTICS_SCHEMA = toolSchema({
+	paths: { type: 'array', items: { type: 'string' }, description: 'Files to check (default: all open problems)' },
+	severity: { type: 'string', enum: ['error', 'warning', 'all'], description: 'Default error' },
+}, []);
+
+export const CODE_ACTION_DESCRIPTION = [
+	'Language-server refactors applied to the workspace, safer than hand edits across files.',
+	'rename: renames the symbol at path + line + symbol (or column) everywhere it is used (new_name).',
+	'format: formats path with its formatter. organize_imports: sorts and prunes path\'s imports.',
+	'fixes: lists quick fixes and refactors offered at path (line, or the whole file); kind narrows (quickfix, refactor, source).',
+	'fix: applies the one whose title contains title (default: the preferred fix at line).',
+	'Returns the diff of every changed file. Run diagnostics afterwards.',
+].join(' ');
+
+export const CODE_ACTION_SCHEMA = toolSchema({
+	op: { type: 'string', enum: [...CODE_ACTION_OPS] },
+	path: { type: 'string' },
+	line: { type: 'integer', description: '1-based line' },
+	end_line: { type: 'integer', description: 'fixes/fix: last line of the range (default line)' },
+	column: { type: 'integer' },
+	symbol: { type: 'string', description: 'rename: the name on that line, instead of a column' },
+	new_name: { type: 'string' },
+	kind: { type: 'string', description: 'fixes/fix: quickfix (default), refactor, source, or a full kind such as refactor.extract' },
+	title: { type: 'string', description: 'fix: part of the action title from fixes' },
+}, ['op', 'path']);
+
+/** code_nav, diagnostics and code_action for agents that bring their own tools, answered from the buffers the user sees. */
+export const LANGUAGE_SERVER_TOOLS: readonly IVoltHostToolInfo[] = [
+	{ name: CODE_NAV_TOOL_NAME, title: 'Navigated code', group: 'core', description: CODE_NAV_DESCRIPTION, inputSchema: CODE_NAV_SCHEMA },
+	{ name: DIAGNOSTICS_TOOL_NAME, title: 'Read diagnostics', group: 'core', description: DIAGNOSTICS_DESCRIPTION, inputSchema: DIAGNOSTICS_SCHEMA },
+	{ name: CODE_ACTION_TOOL_NAME, title: 'Refactored code', group: 'core', description: CODE_ACTION_DESCRIPTION, inputSchema: CODE_ACTION_SCHEMA, approvalInReadOnlyModes: 'changes files' },
+];
+
+/** The index's search tools. */
+const CODE_SEARCH_TOOLS: readonly IVoltHostToolInfo[] = [
 	{
 		name: INSTANT_GREP_TOOL_NAME,
 		title: 'Searched code',
@@ -191,5 +265,8 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 		},
 	},
 ];
+
+/** Every tool the Code Intelligence feature serves on the volt MCP server: what goes away when it is off. */
+export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [...CODE_SEARCH_TOOLS, ...LANGUAGE_SERVER_TOOLS];
 
 //#endregion

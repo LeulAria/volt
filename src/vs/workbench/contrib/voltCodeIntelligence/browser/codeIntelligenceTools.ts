@@ -16,25 +16,15 @@ import { ILanguageFeaturesService } from '../../../../editor/common/services/lan
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
 import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, lspAllowedFor, readCodeIndexOptions, readFffSettings } from '../../../services/voltRuntime/common/codeIntelligence.js';
-import { IVoltHostFileChange, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
+import { IVoltHostFileChange, IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { isSandboxed } from '../../../services/voltRuntime/common/hostToolSandbox.js';
 import { IVoltTool } from '../../../services/voltRuntime/common/tools/tool.js';
 import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
 import { ISearchConfinement, VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
 import { createCodeIndexNav } from '../../../services/voltRuntime/browser/tools/codeIndexNav.js';
-import { CODE_ACTION_DESCRIPTION, CODE_ACTION_SCHEMA, CODE_NAV_DESCRIPTION, CODE_NAV_SCHEMA, createCodeTools, DIAGNOSTICS_DESCRIPTION, DIAGNOSTICS_SCHEMA } from '../../../services/voltRuntime/browser/tools/codeTools.js';
+import { createCodeTools } from '../../../services/voltRuntime/browser/tools/codeTools.js';
 import { IFileToolHost, writeComputedEdit } from '../../../services/voltRuntime/browser/tools/fileTools.js';
 import { createSearchTools } from '../../../services/voltRuntime/browser/tools/searchTools.js';
-
-/**
- * The editor's language servers for agents that bring their own tools: the same code_nav,
- * diagnostics and code_action the native agent has, answered from the buffers the user sees.
- */
-const LANGUAGE_SERVER_TOOLS: readonly IVoltHostToolInfo[] = [
-	{ name: 'code_nav', title: 'Navigated code', group: 'core', description: CODE_NAV_DESCRIPTION, inputSchema: CODE_NAV_SCHEMA },
-	{ name: 'diagnostics', title: 'Read diagnostics', group: 'core', description: DIAGNOSTICS_DESCRIPTION, inputSchema: DIAGNOSTICS_SCHEMA },
-	{ name: 'code_action', title: 'Refactored code', group: 'core', description: CODE_ACTION_DESCRIPTION, inputSchema: CODE_ACTION_SCHEMA, approvalInReadOnlyModes: 'changes files' },
-];
 
 /** Indexes the open project's folders in the background, so the first agent search is already fast. */
 export class CodeIndexWarmup extends Disposable {
@@ -101,7 +91,7 @@ export class CodeIntelligenceHostTools extends Disposable {
 		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeatures, fileService));
 		this.codeIntel.setLspPolicy(uri => lspAllowedFor(configurationService, !workspace.isInsideWorkspace(uri)));
 		this._register(hostTools.registerToolProvider({
-			tools: [...CODE_INTELLIGENCE_TOOLS, ...LANGUAGE_SERVER_TOOLS],
+			tools: CODE_INTELLIGENCE_TOOLS,
 			invoke: (name, args, call) => this.invoke(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) })),
 		}));
 	}

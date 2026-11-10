@@ -8,7 +8,9 @@ import { CancellationToken, CancellationTokenSource } from '../../../../base/com
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFeatureEnablementMirror, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../voltRuntime/common/hostTools.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
 import { VoltMode } from '../../voltRuntime/common/modes.js';
+import { withSandboxPathRules } from '../../voltRuntime/common/sandboxPathRules.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
 /** A host tool call as it crosses the socket (no cancellation token). */
@@ -20,6 +22,8 @@ export interface IRemoteHostToolCall {
 	readonly external?: IVoltHostToolCall['external'];
 	/** The calling chat's sandbox: a window's tool and the nested calls it makes stay confined. */
 	readonly sandbox?: IVoltHostToolCall['sandbox'];
+	/** The folders the server's gate judged the call's paths by: the window applies the same rules to what its tool finds. */
+	readonly sandboxPaths?: IVoltHostToolCall['sandboxPaths'];
 	/** Set on calls the server may cancel (`hostTools.cancel`). */
 	readonly cancelKey?: string;
 }
@@ -35,6 +39,7 @@ export function toRemoteHostToolCall(call: IVoltHostToolCall | undefined): IRemo
 		...(call.source ? { source: call.source } : {}),
 		...(call.external ? { external: call.external } : {}),
 		...(call.sandbox ? { sandbox: call.sandbox } : {}),
+		...(call.sandboxPaths ? { sandboxPaths: call.sandboxPaths } : {}),
 	};
 }
 
@@ -63,7 +68,10 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 	private disabledTools = new Set<string>();
 	private featureEnablement: IVoltFeatureEnablementMirror | undefined;
 
-	constructor(@IAgentServerClientService private readonly client: IAgentServerClientService) {
+	constructor(
+		@IAgentServerClientService private readonly client: IAgentServerClientService,
+		@IFileService private readonly fileService: IFileService,
+	) {
 		super();
 		this.publishTools = this._register(new RunOnceScheduler(() => this.sendTools(), 50));
 		this._register(client.onHostToolsEvent(event => {
@@ -178,12 +186,13 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 		return [...this.providers].find(candidate => candidate.tools.some(tool => tool.name === name));
 	}
 
+	/** A server's call as this window's providers see it: a sandboxed chat's carries the gate's path rules, rebuilt here (`sandboxPathRules`). */
 	private localCall(call: IRemoteHostToolCall | undefined, token: CancellationToken): IVoltHostToolCall | undefined {
 		if (!call) {
 			return undefined;
 		}
 		const { cancelKey: _cancelKey, ...rest } = call;
-		return { ...rest, mode: call.mode as VoltMode | undefined, token };
+		return withSandboxPathRules({ ...rest, mode: call.mode as VoltMode | undefined, token }, this.fileService);
 	}
 
 	/** The server runs a tool one of this window's providers serves. */
