@@ -90,6 +90,8 @@ export class AgentAccessPicker extends Disposable {
 	readonly element: HTMLButtonElement;
 	private readonly icon: HTMLElement;
 	private readonly label: HTMLElement;
+	/** The sandbox level's glyph after the label while the chat's agent is sandboxed. */
+	private readonly sandboxIcon: HTMLElement;
 	/** In a new chat's picker row it has no tooltip, like project, branch and machine beside it. */
 	private inLandingRow = false;
 
@@ -105,6 +107,7 @@ export class AgentAccessPicker extends Disposable {
 		this.element.setAttribute('aria-haspopup', 'menu');
 		this.icon = append(this.element, $('span.icon'));
 		this.label = append(this.element, $('span.label'));
+		this.sandboxIcon = append(this.element, $('span.sandbox'));
 		this.element.appendChild(renderIcon(Codicon.chevronDown)).classList.add('chevron');
 		this._register(addDisposableListener(this.element, 'click', e => {
 			EventHelper.stop(e, true);
@@ -124,11 +127,18 @@ export class AgentAccessPicker extends Disposable {
 		this.element.dataset.mode = option.id;
 		const sandbox = this.runtime.getSandboxSettings(sessionId);
 		const unavailable = sandboxUnavailableHere();
-		const tooltip = this.host.isAgent() && sandbox.level !== 'off'
+		const sandboxed = this.host.isAgent() && sandbox.level !== 'off';
+		const tooltip = sandboxed
 			? `${option.description}\n${unavailable ? localize('voltAgent.sandbox.unavailableTooltip', "{0} This chat's agent will not start until its sandbox is off.", unavailable) : describeSandbox(sandbox)}`
 			: option.description;
 		setAgentTooltip(this.element, this.inLandingRow ? undefined : tooltip);
-		this.element.setAttribute('aria-label', localize('voltAgent.accessAria', "Permissions: {0}", option.label));
+		// The permissions say what is asked first; the sandbox what the agent can reach at all. Both show.
+		this.sandboxIcon.replaceChildren(...(sandboxed ? [createSandboxIcon(sandbox.level)] : []));
+		this.sandboxIcon.classList.toggle('hidden', !sandboxed);
+		this.element.classList.toggle('sandboxed', sandboxed);
+		this.element.setAttribute('aria-label', sandboxed
+			? localize('voltAgent.accessSandboxAria', "Permissions: {0}. Sandbox: {1}", option.label, sandbox.level === 'read-only' ? localize('voltAgent.sandbox.readOnly', "Read-only") : localize('voltAgent.sandbox.workspace', "Workspace write"))
+			: localize('voltAgent.accessAria', "Permissions: {0}", option.label));
 	}
 
 	/** What the sandbox policy files do to the chat's sandbox, read as its next launch would (a few stats). */

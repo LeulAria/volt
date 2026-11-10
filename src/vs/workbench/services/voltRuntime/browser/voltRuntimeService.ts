@@ -2282,6 +2282,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const next = normalizeSandboxSettings(settings);
 		this.sandboxChats = { ...this.sandboxChats, [sessionId]: next };
 		this.storeSandbox();
+		// The chat's chip and menu show its sandbox, whoever changed it (the menu, a refusal card's "Turn off sandbox").
+		this._onDidChangeAccess.fire();
 		// "Allow host": hosts are not part of the launch key, so the running agent keeps its process
 		// and its proxy lets the new hosts through from its next connection (F.9, B-31).
 		const added = (next.allowedDomains ?? []).filter(domain => !(before.allowedDomains ?? []).includes(domain));

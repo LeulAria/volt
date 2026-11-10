@@ -5863,6 +5863,28 @@ pre.volt-agent-searchable {
 	display: inline-flex;
 }
 
+/* The sandbox level after the label while the chat is sandboxed (agentAccessPicker.ts). */
+.volt-agent-status-access .sandbox {
+	display: inline-flex;
+	align-items: center;
+	opacity: 0.8;
+}
+
+.volt-agent-status-access .sandbox.hidden {
+	display: none;
+}
+
+.volt-agent-status-access .sandbox .volt-agent-svg-icon,
+.volt-agent-status-access .sandbox .volt-agent-svg-icon svg {
+	display: block;
+	width: 13px;
+	height: 13px;
+}
+
+.volt-agent-status-access .sandbox svg :is(path, rect, circle) {
+	stroke-width: 1.5;
+}
+
 .volt-agent-status-access .icon .volt-agent-svg-icon,
 .volt-agent-status-access .icon .volt-agent-svg-icon svg {
 	display: block;
