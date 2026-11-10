@@ -2467,7 +2467,7 @@ export class AgentSurfaceHost extends Disposable {
 				this.openBrowser();
 				return;
 			case 'device':
-				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_DEVICE_PREVIEW_COMMAND_ID));
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_DEVICE_PREVIEW_COMMAND_ID, undefined, this.sessionId));
 				return;
 			case 'changes':
 				this.openChanges();

@@ -411,6 +411,13 @@ webview.volt-browser-frame {
 	border-radius: 999px;
 }
 
+/* Dragged by its blank parts (voltDraggableBox.ts), like the screenshot thumbnail on macOS. */
+.volt-box-dragging,
+.volt-box-dragging * {
+	cursor: grabbing !important;
+	user-select: none;
+}
+
 .volt-browser-prompt > .volt-browser-agent-composer {
 	position: relative;
 	z-index: 1;

@@ -76,13 +76,14 @@ import { ACCESS_MODE_OPTIONS } from '../../../../services/voltRuntime/common/acc
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService, type IVoltCompactionPlan } from '../../../../services/voltRuntime/common/runtime.js';
 import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
-import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, IOrchSubmitResult, OrchDelivery } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, IOrchSubmitResult, OrchDelivery, OrchEvent } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { AgentQueueOverlay } from '../../common/agentQueueOverlay.js';
 import { IAgentPromptHostOptions, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
 import { peekTurnDisplay } from '../orchestration/agentTurnDisplays.js';
 import { IAgentSubagentChatService } from '../orchestration/agentSubagentChats.js';
 import { AgentHistoryCodec, resolveActivityImage } from '../history/agentHistoryCodec.js';
 import { agentRow, dockModel, formatElapsed as formatOrchElapsed, isMultitaskTask } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
+import { jobWakeEnd } from '../../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { harnessSubagentChatId, harnessTaskOfChat, isHarnessSubagentChatId } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { createReportStackIcon, isLiveSubagentState, isResumableSubagent, isRetryableSubagentState, ISubagentView, renderCursorSubagentRow, resumeSubagentTask, retryHarnessSubagent, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView } from '../chrome/agentSubagents.js';
 import type { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
@@ -152,6 +153,7 @@ import { AGENT_PROMPT_HISTORY_SETTING } from '../../common/agentComposerSettings
 import { AGENT_TOOL_DENSITY_SETTING, readToolDensity } from '../../common/agentAppearanceSettings.js';
 import { AgentComposerQueue, IAgentComposerQueueState, IAgentQueueEditContent, IAgentQueueEditSurface, IAgentQueueHost, queueRowActions, QueuePause } from '../composer/agentComposerQueue.js';
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
+import { AgentJobWaitRows } from '../jobs/agentJobWaitRows.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentComposerTraySlot } from '../composer/agentComposerTraySlot.js';
 import { COMMIT_REVIEW_FEATURE_ID, ICommitReviewModule } from '../../../voltCommitReview/common/voltCommitReview.js';
@@ -774,6 +776,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private threadView!: AgentThreadView;
 	private visualParking!: HTMLElement;
 	private turnNav!: AgentTurnNav;
+	private jobWaitRows!: AgentJobWaitRows;
 	private threadEl!: HTMLElement;
 	private threadInner!: HTMLElement;
 	/** The latest prompt's turn, whose Stop shows while its run streams. */
@@ -882,6 +885,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** A queued prompt loaded into the composer for editing, and the draft it replaced. */
 	/** A queued prompt open for editing; `surface` is the composer it is in when not this chat's own (the browser dock's). */
 	private queueEdit: { readonly id: string; readonly stash: IAgentQueueEditContent; readonly surface?: IAgentQueueEditSurface } | undefined;
+	/**
+	 * Pause or Resume just clicked on the queue card, shown until the orchestrator's state has it (with
+	 * the agent server that is a round trip). `settled`: the call came back first; the next change of the chat ends it.
+	 */
+	private queuePauseIntent: { readonly threadId: string; readonly paused: boolean; readonly settled?: boolean } | undefined;
 	/** Arrow Up/Down through earlier prompts. */
 	private readonly promptHistory = new AgentPromptHistoryNavigator();
 	private prewarmTimer: IDisposable | undefined;
@@ -1187,6 +1195,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const threadFollow = this.threadFollow = new ThreadFollow(this.threadScroll, this.threadEl, () => this.stickToBottom && !this.threadScrollFrozen && this.editingUserIndex === undefined);
 		this._register(toDisposable(() => threadFollow.cancel()));
 		this.turnNav = this._register(new AgentTurnNav(this.threadView));
+		// Jobs the idle agent left running, under its last reply.
+		this.jobWaitRows = this._register(this.instantiationService.createInstance(AgentJobWaitRows, this.threadInner, () => this.scheduleScrollSync(this.stickToBottom)));
 		this.turnNav.setUndrawn({ count: () => this.headUsers, draw: () => this.flushDeferredHead() });
 		this._register(new AgentThreadSelectionActions(this.threadEl, {
 			isVisible: () => this.isVisible(),
@@ -1349,6 +1359,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (change.threads.includes(this.sessionKey)) {
 				this.followAgentHandoff();
 				this.followThreadModel();
+				const intent = this.queuePauseIntent;
+				if (intent && (intent.settled || this.queuePauseLanded(intent))) {
+					this.queuePauseIntent = undefined;
+				}
 				this.syncQueueStack();
 				this.updateSendButton();
 				// A move (Project checkout or a worktree) rebinds the chat without a git event; the footer reads the binding again.
@@ -2217,6 +2231,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.tickMeta();
 		}
 		this.threadInput = input;
+		this.jobWaitRows.setChat(this.sessionKey);
 		if (!followTail && chat.scrollTop !== undefined) {
 			this.threadScroll.setScrollPosition({ scrollTop: chat.scrollTop });
 		}
@@ -3520,7 +3535,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			// A watched pull request woke the chat: its icon, and a click opens it.
 			const prUrl = /^\[Volt\] (?:Update on|Volt stopped watching) pull request #\d+ \((https?:\/\/[^\s)]+)\)/.exec(message.agentText ?? '')?.[1];
 			const restarted = (message.agentText ?? '').startsWith('[Volt] Volt restarted');
-			head.appendChild(renderIcon(prUrl ? Codicon.gitPullRequest : restarted ? Codicon.debugRestart : Codicon.layers));
+			// A job the agent left running ended (watch_job, or its own background command).
+			const job = jobWakeEnd(message.agentText);
+			if (job) {
+				head.classList.add('job', job);
+			}
+			head.appendChild(renderIcon(prUrl ? Codicon.gitPullRequest : restarted ? Codicon.debugRestart : job === 'done' ? Codicon.passFilled : job === 'failed' ? Codicon.error : job ? Codicon.watch : Codicon.layers));
 			append(head, $('span.volt-agent-notification-text')).textContent = message.text;
 			if (prUrl) {
 				head.classList.add('pull-request');
@@ -7984,30 +8004,82 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	}
 
 	/**
-	 * Lets the queue run again after it paused (an error, a restart). The orchestrator drains
-	 * queues on its own otherwise: after every turn, whether or not a panel shows the chat.
+	 * Lets the queue run again after it paused (the user's Pause, an error, a restart). The orchestrator
+	 * drains queues on its own otherwise: after every turn, whether or not a panel shows the chat.
 	 */
 	private drainPromptQueue(): void {
-		if (this.orchestrator.getThread(this.sessionKey)?.pause) {
+		// A Pause the state does not show yet is undone too.
+		if (this.orchestrator.getThread(this.sessionKey)?.pause || (this.queuePauseIntent?.threadId === this.sessionKey && this.queuePauseIntent.paused)) {
 			const threadId = this.sessionKey;
-			void this.threadLifecycle.bringBack(threadId).then(() => this.orchestrator.dispatch({ type: 'queue.resume', threadId }));
+			this.queuePauseIntent = { threadId, paused: false };
+			this.settleQueuePause(threadId, this.threadLifecycle.bringBack(threadId).then(() => this.orchestrator.dispatch({ type: 'queue.resume', threadId })));
 		}
 		this.syncQueueStack();
 		this.updateSendButton();
 	}
 
-	/** Why queued prompts wait for the user while nothing runs. */
-	private queuePause(): QueuePause | undefined {
-		if (this.isStreaming()) {
-			return undefined;
+	/** The queue card's Pause: what is queued waits for Resume, even once the running turn ends. */
+	pauseQueue(): void {
+		const threadId = this.sessionKey;
+		if (this.orchestrator.getThread(threadId)?.pause === 'user') {
+			return;
 		}
+		this.queuePauseIntent = { threadId, paused: true };
+		this.settleQueuePause(threadId, this.orchestrator.dispatch({ type: 'queue.pause', threadId, reason: 'user' }));
+		this.syncQueueStack();
+	}
+
+	/** The orchestrator's state shows the Pause or Resume the user clicked. */
+	private queuePauseLanded(intent: { readonly threadId: string; readonly paused: boolean }): boolean {
+		const pause = this.orchestrator.getThread(intent.threadId)?.pause;
+		return intent.paused ? pause === 'user' : !pause;
+	}
+
+	/** Ends the click's local state once its command came back: at once when the state shows it (or nothing changed), else at the chat's next change. */
+	private settleQueuePause(threadId: string, dispatched: Promise<readonly OrchEvent[]>): void {
+		const done = (events: readonly OrchEvent[] | undefined) => {
+			const intent = this.queuePauseIntent;
+			if (intent?.threadId !== threadId) {
+				return;
+			}
+			if (events?.length && !this.queuePauseLanded(intent)) {
+				this.queuePauseIntent = { ...intent, settled: true };
+				return;
+			}
+			this.queuePauseIntent = undefined;
+			if (!this._store.isDisposed) {
+				this.syncQueueStack();
+				this.updateSendButton();
+			}
+		};
+		dispatched.then(done, err => {
+			this.logService.warn('[volt agent] pausing or resuming the queue failed', err);
+			done(undefined);
+		});
+	}
+
+	/**
+	 * Why queued prompts wait for the user. The user's pause shows while a turn runs too (its end is
+	 * when the pause holds the queue); the others only while nothing runs.
+	 */
+	private queuePause(): QueuePause | undefined {
 		const thread = this.orchestrator.getThread(this.sessionKey);
 		// Prompts, or subagent reports, are waiting on the user.
 		const waiting = this.queuedItems.length || this.orchestrator.tasksOf(this.sessionKey).some(task => task.delivery === 'pending');
 		if (!waiting) {
 			return undefined;
 		}
+		const intent = this.queuePauseIntent?.threadId === this.sessionKey ? this.queuePauseIntent : undefined;
+		if (intent) {
+			return intent.paused ? 'user' : undefined;
+		}
 		const pause = thread?.pause;
+		if (pause === 'user') {
+			return 'user';
+		}
+		if (this.isStreaming()) {
+			return undefined;
+		}
 		return pause === 'failed' ? 'failed' : pause === 'interrupted' ? 'interrupted' : pause === 'wakeups' ? 'wakeups' : pause ? 'stopped' : undefined;
 	}
 
@@ -8015,7 +8087,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	queueState(): IAgentComposerQueueState {
 		const running = this.isStreaming();
 		return {
-			paused: running ? undefined : this.queuePause(),
+			paused: this.queuePause(),
 			editingId: this.queueEdit?.id,
 			running,
 			steer: running && this.canSteer(),

@@ -307,7 +307,7 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 		title: 'Resumed queue',
 		group: 'threads',
 		approvalInReadOnlyModes: CHANGES_CHATS,
-		description: 'Let a paused queue run again (it pauses after a failed turn, a stop, a restart, or too many wake-ups in a row).',
+		description: 'Let a paused queue run again (it pauses after a failed turn, a stop, a restart, or too many wake-ups in a row, and when the user pauses it: paused "user". Resume a queue the user paused only when they ask you to).',
 		inputSchema: { type: 'object', properties: { thread_id: THREAD_ID } },
 	},
 	{

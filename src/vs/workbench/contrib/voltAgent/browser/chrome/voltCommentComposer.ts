@@ -17,6 +17,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../../pla
 import { BrowserAgentComposer } from '../preview/browserComposer.js';
 import { setAgentTooltip } from './agentTooltip.js';
 import { BATCH_EDITS_STORAGE_KEY } from './voltAnnotations.js';
+import { makeBoxDraggable } from './voltDraggableBox.js';
 
 /** What a comment is about, in px in the parent element's coordinate space. */
 export interface IVoltCommentAnchor {
@@ -124,6 +125,8 @@ export class VoltCommentComposer extends Disposable {
 	/** Stands in for the chip in the composer's text, so the comment is only what was typed. */
 	private readonly chipMarker = `[[volt-comment-target:${generateUuid()}]]`;
 	private anchor: IVoltCommentAnchor | undefined;
+	/** Where the user dragged it, from the anchor's top-left: it keeps that spot as the board pans, until it closes. */
+	private moved: { dx: number; dy: number } | undefined;
 	private chip = '';
 	private shown = false;
 
@@ -187,6 +190,12 @@ export class VoltCommentComposer extends Disposable {
 		for (const type of ['pointerdown', 'wheel'] as const) {
 			this._register(addDisposableListener(this.element, type, e => e.stopPropagation()));
 		}
+		this._register(makeBoxDraggable(this.element, position => {
+			if (this.anchor) {
+				this.moved = { dx: position.left - this.anchor.x, dy: position.top - this.anchor.y };
+				this.place(this.anchor);
+			}
+		}));
 	}
 
 	get visible(): boolean {
@@ -196,6 +205,7 @@ export class VoltCommentComposer extends Disposable {
 	/** Opens at `anchor` (placed below / above / right / left of it like the browser's prompt), chip = what it is about, `text` = an existing comment to edit. Focuses the input. */
 	show(anchor: IVoltCommentAnchor, chip: string, options?: { readonly text?: string; readonly deletable?: boolean }): void {
 		this.anchor = anchor;
+		this.moved = undefined;
 		this.chip = chip;
 		this.shown = true;
 		this.deleteButton.classList.toggle('hidden', !options?.deletable);
@@ -231,7 +241,12 @@ export class VoltCommentComposer extends Disposable {
 			right: this.parent.clientWidth - (insets.right ?? 0),
 			bottom: this.parent.clientHeight - (insets.bottom ?? 0),
 		};
-		const { left, top } = placeBesideAnchor(anchor, { width, height }, bounds);
+		const { left, top } = this.moved
+			? {
+				left: Math.min(Math.max(bounds.left + EDGE_PAD, anchor.x + this.moved.dx), Math.max(bounds.left + EDGE_PAD, bounds.right - width - EDGE_PAD)),
+				top: Math.min(Math.max(bounds.top + EDGE_PAD, anchor.y + this.moved.dy), Math.max(bounds.top + EDGE_PAD, bounds.bottom - height - EDGE_PAD)),
+			}
+			: placeBesideAnchor(anchor, { width, height }, bounds);
 		const nextLeft = `${Math.round(left)}px`;
 		const nextTop = `${Math.round(top)}px`;
 		if (this.element.style.left !== nextLeft) {

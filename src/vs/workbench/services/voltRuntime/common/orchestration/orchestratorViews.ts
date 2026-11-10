@@ -17,7 +17,7 @@ import { IOrchQueueItem, IOrchState, IOrchTask, IOrchThread, nextQueued, OrchPau
  * - `needsInput`: the running turn waits for an approval or an answer.
  * - `delegating`: no turn runs, but subagents this chat started still work.
  * - `queued`: idle for a moment with prompts about to be sent.
- * - `paused`: prompts or subagent reports wait for the user (after an error or a restart).
+ * - `paused`: prompts or subagent reports wait for the user (after an error or a restart, or the user paused the queue).
  * - `blocked`: the chat cannot run yet (its project is cloning, its worktree is being made).
  * - `moving`: its files are moving to another checkout; the queue waits.
  * - `limited`: parked at a provider usage limit until the reset (see limitRecovery.ts).

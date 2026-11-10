@@ -15,7 +15,7 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { Emitter, Event as BaseEvent } from '../../../../../base/common/event.js';
-import { Disposable, DisposableMap, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
@@ -49,6 +49,7 @@ import { BrowserAgentComposer } from './browserComposer.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createVoltButton } from '../chrome/voltButton.js';
+import { makeBoxDraggable } from '../chrome/voltDraggableBox.js';
 import { BrowserDeviceMode } from './browserDevices.js';
 import { BrowserAgentDock } from './browserDock.js';
 import { BROWSER_PRESENT_EVENT, BROWSER_PRESENTATION_EVENT, BrowserPresentation, DEFAULT_BROWSER_URL, VoltBrowserEditorInput } from './browserEditorInput.js';
@@ -70,6 +71,9 @@ interface IPinnedBrowserComment {
 	bounds: { x: number; y: number; w: number; h: number };
 	/** Its first element's key in the page's tracked elements: the pin follows it. */
 	track?: string;
+	/** Where the user dragged the open comment, from its element's top-left, until it folds back into its pin. */
+	moved?: { dx: number; dy: number };
+	readonly drag: IDisposable;
 }
 const PROBE_SCRIPT = `(() => {
 	const x = __X__;
@@ -639,6 +643,8 @@ export class VoltBrowserView extends Disposable {
 	private selection: IBrowserSelection | undefined;
 	/** The first element of the open draft: the draft box stays beside it while more are added. */
 	private draftAnchor: IBrowserSelection | undefined;
+	/** Where the user dragged the draft box, from its element's top-left: it keeps that spot (scrolling with the element) until the draft closes. */
+	private promptMoved: { dx: number; dy: number } | undefined;
 	private readonly marks = new Map<string, { box: HTMLElement; accent: number; bounds: { x: number; y: number; w: number; h: number }; track?: string }>();
 	/** Where each tracked element was last read, in page CSS pixels (see {@link followTracked}). */
 	private readonly trackedBounds = new Map<string, { x: number; y: number; w: number; h: number }>();
@@ -1389,6 +1395,13 @@ export class VoltBrowserView extends Disposable {
 			images: true,
 		}));
 		append(this.promptEl, this.composer.element);
+		this._register(makeBoxDraggable(this.promptEl, position => {
+			const sel = this.selection?.bounds;
+			if (sel) {
+				this.promptMoved = { dx: position.left - sel.x, dy: position.top - sel.y };
+				this.positionPrompt();
+			}
+		}));
 	}
 
 	/** The model the chat that owns this tab sends on: its composer's pick, else the chat's stored model. */
@@ -2784,6 +2797,7 @@ export class VoltBrowserView extends Disposable {
 			this.composer?.clear();
 			this.draftRefs.clear();
 			this.draftAnchor = cloneBrowserSelection(selection);
+			this.promptMoved = undefined;
 		}
 		this.selection = this.draftAnchor;
 		this.promptEl.classList.remove('hidden');
@@ -2895,6 +2909,7 @@ export class VoltBrowserView extends Disposable {
 	private closeDraft(): void {
 		this.selection = undefined;
 		this.draftAnchor = undefined;
+		this.promptMoved = undefined;
 		this.selectBox.classList.add('hidden');
 		this.drawBox.classList.add('hidden');
 		this.promptEl?.classList.add('hidden');
@@ -3006,8 +3021,18 @@ export class VoltBrowserView extends Disposable {
 			this.promptEl.style.width = nextWidth;
 		}
 		const height = Math.max(this.composer?.element.offsetHeight || 72, 72);
-		const placed = this.placeAroundSelection(width, height);
+		const placed = this.promptMoved ? this.placeMoved(this.selection.bounds, this.promptMoved, width, height) : this.placeAroundSelection(width, height);
 		this.applyPromptBox({ left: placed.left, top: placed.top, width, height }, false);
+	}
+
+	/** A box the user dragged: at its offset from its element, kept 8px inside the stage as placed boxes are. */
+	private placeMoved(sel: { x: number; y: number }, moved: { dx: number; dy: number }, width: number, height: number): { left: number; top: number } {
+		const stage = this.stage.getBoundingClientRect();
+		const pad = 8;
+		return {
+			left: Math.round(Math.min(Math.max(pad, sel.x + moved.dx), Math.max(pad, stage.width - width - pad))),
+			top: Math.round(Math.min(Math.max(pad, sel.y + moved.dy), Math.max(pad, stage.height - height - pad))),
+		};
 	}
 
 	//#region Comments
@@ -3156,7 +3181,11 @@ export class VoltBrowserView extends Disposable {
 				next.addMedia(current?.mentions ?? []);
 			},
 		});
-		pin = { commentId: comment.id, card, refs: new Map(), markIds: [], bounds: { ...comment.refs[0]?.bounds ?? { x: 8, y: 8, w: 0, h: 0 } } };
+		const drag = makeBoxDraggable(card.element, position => {
+			pin.moved = { dx: position.left - pin.bounds.x, dy: position.top - pin.bounds.y };
+			this.placeComment(pin);
+		}, () => card.expanded);
+		pin = { commentId: comment.id, card, refs: new Map(), markIds: [], bounds: { ...comment.refs[0]?.bounds ?? { x: 8, y: 8, w: 0, h: 0 } }, drag };
 		this.pins.set(comment.id, pin);
 		this.overlay.appendChild(card.element);
 		getWindow(card.element).requestAnimationFrame(() => this.placeComment(pin));
@@ -3182,6 +3211,7 @@ export class VoltBrowserView extends Disposable {
 			this.removeMark(id);
 		}
 		this.pins.delete(pin.commentId);
+		pin.drag.dispose();
 		pin.card.dispose();
 	}
 
@@ -3218,6 +3248,7 @@ export class VoltBrowserView extends Disposable {
 	private collapseComment(pin: IPinnedBrowserComment): void {
 		const wasOpen = pin.card.expanded;
 		pin.card.collapse();
+		pin.moved = undefined;
 		if (wasOpen) {
 			this.savePin(pin);
 		}
@@ -3311,7 +3342,7 @@ export class VoltBrowserView extends Disposable {
 				el.style.width = nextWidth;
 			}
 			const height = Math.max(el.offsetHeight, 72);
-			const placed = this.placeAroundSelection(width, height, sel);
+			const placed = pin.moved ? this.placeMoved(sel, pin.moved, width, height) : this.placeAroundSelection(width, height, sel);
 			el.style.left = `${placed.left}px`;
 			el.style.top = `${placed.top}px`;
 			el.style.height = 'auto';

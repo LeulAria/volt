@@ -9,6 +9,7 @@ import { DEFAULT_ORCH_LIMITS, emptyOrchState, ORCH_HOLD_SETTLED } from '../../..
 import { extractRoot, isRootLive, mergeRoot, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { harnessTaskId, RESTART_RESUME_TEXT, scheduleOrch } from '../../../common/orchestration/orchestratorDecider.js';
 import { applyOrchEvents } from '../../../common/orchestration/orchestratorProjector.js';
+import { rescueDueAt } from '../../../common/orchestration/rescue.js';
 import { harnessSubagentChatId, harnessTaskOfChat, isHarnessSubagentChatId } from '../../../common/orchestration/harnessSubagents.js';
 import { agentRow, dockModel, formatElapsed, lineage, threadStatus } from '../../../common/orchestration/orchestratorViews.js';
 import { OrchSim, prompt } from './orchestratorSim.js';
@@ -50,6 +51,123 @@ suite('Volt orchestrator: turns and queue', () => {
 		sim.run({ type: 'queue.resume', threadId: 'a' });
 		assert.strictEqual(sim.state.threads.a.active?.id, queued.turnId);
 		assert.strictEqual(sim.state.threads.a.pause, undefined);
+	});
+
+	test('the user\'s pause holds the queue when the running turn ends, until Resume', () => {
+		const sim = new OrchSim();
+		sim.submit('a', 'one');
+		sim.start('a');
+		const queued = sim.submit('a', 'two');
+		const later = sim.submit('a', 'three');
+		sim.run({ type: 'queue.pause', threadId: 'a', reason: 'user' });
+		assert.strictEqual(sim.thread('a').pause, 'user');
+		assert.strictEqual(threadStatus(sim.state, 'a').kind, 'working', 'the running turn goes on');
+
+		const mark = sim.effects.length;
+		sim.settle('a', 'done');
+		assert.strictEqual(sim.thread('a').active, undefined, 'nothing queued goes when the turn ends');
+		assert.strictEqual(sim.effectsOf('startTurn', mark).length, 0);
+		assert.deepStrictEqual(sim.thread('a').queue.map(item => item.id), [queued.turnId, later.turnId]);
+		assert.strictEqual(threadStatus(sim.state, 'a').kind, 'paused');
+
+		// A prompt the user sends goes; what was queued stays held behind it.
+		assert.strictEqual(sim.submit('a', 'typed while paused').decision.outcome, 'started');
+		assert.strictEqual(sim.thread('a').pause, 'user');
+		sim.complete('a');
+		assert.strictEqual(sim.thread('a').active, undefined);
+
+		sim.run({ type: 'queue.resume', threadId: 'a' });
+		assert.strictEqual(sim.thread('a').active?.id, queued.turnId, 'Resume sends the next queued message');
+		assert.strictEqual(sim.thread('a').pause, undefined);
+		sim.complete('a');
+		assert.strictEqual(sim.thread('a').active?.id, later.turnId, 'and the queue keeps draining');
+
+		// Resumed while a turn runs, the queue goes on after it.
+		sim.start('a');
+		const after = sim.submit('a', 'after');
+		sim.run({ type: 'queue.pause', threadId: 'a', reason: 'user' });
+		sim.run({ type: 'queue.resume', threadId: 'a' });
+		assert.strictEqual(sim.thread('a').active?.id, later.turnId);
+		sim.settle('a', 'done');
+		assert.strictEqual(sim.thread('a').active?.id, after.turnId);
+	});
+
+	test('Volt\'s own pauses, stops and restarts leave the user\'s pause in place', () => {
+		const sim = new OrchSim({ ...DEFAULT_ORCH_LIMITS, supervise: true });
+		const { turnId } = sim.submit('a', 'one');
+		sim.start('a');
+		const queued = sim.submit('a', 'queued');
+		sim.run({ type: 'queue.pause', threadId: 'a', reason: 'user' });
+
+		// An error does not turn it into an error pause, which the next turn out would lift.
+		sim.settle('a', 'failed', undefined, 'something broke');
+		assert.strictEqual(sim.thread('a').pause, 'user');
+		// Volt's restart continues the cut-off work; the queue stays held behind it.
+		const rescue = sim.thread('a').rescue;
+		assert.ok(rescue, 'the failed work waits to be restarted');
+		sim.now = rescueDueAt(rescue, 'a');
+		sim.run({ type: 'rescue.tick' });
+		assert.strictEqual(sim.thread('a').active?.id, `${turnId}~s1`);
+		assert.strictEqual(sim.thread('a').pause, 'user');
+		sim.complete('a');
+		assert.strictEqual(sim.thread('a').active, undefined, 'the queued message still waits');
+
+		// Stop, and another reason to pause, do not replace it.
+		sim.submit('a', 'typed');
+		sim.start('a');
+		sim.run({ type: 'turn.cancel', threadId: 'a' });
+		sim.settle('a', 'cancelled');
+		sim.run({ type: 'queue.pause', threadId: 'a', reason: 'stopped' });
+		assert.strictEqual(sim.thread('a').pause, 'user');
+
+		// A restart continues the running turn and keeps the pause.
+		sim.submit('a', 'again');
+		sim.start('a');
+		sim.run({ type: 'recover', resume: 'all' });
+		assert.strictEqual(sim.thread('a').active?.kind, 'resume', 'the cut-off turn continues');
+		assert.strictEqual(sim.thread('a').pause, 'user');
+		sim.complete('a');
+		assert.strictEqual(sim.thread('a').active, undefined);
+
+		// Another agent's message waits too, and cannot stop the turn to get past the pause.
+		sim.submit('a', 'more');
+		sim.start('a');
+		assert.ok(sim.run({ type: 'thread.notify', threadId: 'a', turnId: 'm-1', prompt: prompt('Stop and do this instead'), interrupt: true }).rejected);
+		assert.notStrictEqual(sim.thread('a').active?.phase, 'cancelling');
+		assert.strictEqual(sim.run({ type: 'thread.notify', threadId: 'a', turnId: 'm-2', prompt: prompt('news') }).outcome, 'queued');
+		sim.complete('a');
+		assert.strictEqual(sim.thread('a').active, undefined);
+		assert.deepStrictEqual(sim.thread('a').queue.map(item => item.id), [queued.turnId, 'm-2']);
+
+		sim.run({ type: 'queue.resume', threadId: 'a' });
+		assert.strictEqual(sim.thread('a').active?.id, queued.turnId);
+		sim.complete('a');
+		assert.strictEqual(sim.thread('a').active?.id, 'm-2');
+	});
+
+	test('Send now on a paused queue sends that message alone; with the queue empty the pause ends', () => {
+		const sim = new OrchSim();
+		sim.submit('a', 'one');
+		sim.start('a');
+		const first = sim.submit('a', 'first');
+		const urgent = sim.submit('a', 'urgent');
+		sim.run({ type: 'queue.pause', threadId: 'a', reason: 'user' });
+		sim.run({ type: 'queue.sendNow', threadId: 'a', itemId: urgent.turnId, canSteer: false });
+		assert.strictEqual(sim.thread('a').active?.phase, 'cancelling', 'the agent cannot take it mid-turn: it is stopped');
+		sim.settle('a', 'cancelled');
+		assert.strictEqual(sim.thread('a').active?.id, urgent.turnId, 'it goes once the stop lands');
+		assert.strictEqual(sim.thread('a').pause, 'user');
+		sim.complete('a');
+		assert.strictEqual(sim.thread('a').active, undefined, 'the rest stays held');
+		assert.deepStrictEqual(sim.thread('a').queue.map(item => item.id), [first.turnId]);
+
+		sim.run({ type: 'queue.remove', threadId: 'a', itemId: first.turnId });
+		assert.strictEqual(sim.thread('a').pause, undefined, 'nothing is left to hold');
+		sim.submit('a', 'busy');
+		sim.start('a');
+		const next = sim.submit('a', 'next');
+		sim.complete('a');
+		assert.strictEqual(sim.thread('a').active?.id, next.turnId, 'a new queue drains as usual');
 	});
 
 	test('Send now steers an agent that takes messages, and otherwise stops it and goes first', () => {
@@ -743,6 +861,22 @@ suite('Volt orchestrator: recovery and persistence', () => {
 		const parsed = parseRootSnapshot(JSON.parse(JSON.stringify(extractRoot(sim.state, 'a', sim.log, 5))));
 		assert.ok(parsed);
 		assert.deepStrictEqual(parsed.threads.find(thread => thread.id === 'a')?.queue.map(item => [item.id, !!item.held]), [[held.turnId, false]]);
+	});
+
+	test('the user\'s pause survives a reload; a message sent past it waits with the rest', () => {
+		const sim = new OrchSim();
+		sim.submit('a', 'one');
+		sim.start('a');
+		const first = sim.submit('a', 'first');
+		const urgent = sim.submit('a', 'urgent');
+		sim.run({ type: 'queue.pause', threadId: 'a', reason: 'user' });
+		sim.run({ type: 'queue.sendNow', threadId: 'a', itemId: urgent.turnId, canSteer: false });
+		assert.strictEqual(sim.thread('a').queue[0].sendNow, true);
+		const parsed = parseRootSnapshot(JSON.parse(JSON.stringify(extractRoot(sim.state, 'a', sim.log, 5))));
+		assert.ok(parsed);
+		const thread = parsed.threads.find(candidate => candidate.id === 'a');
+		assert.strictEqual(thread?.pause, 'user');
+		assert.deepStrictEqual(thread?.queue.map(item => [item.id, !!item.sendNow]), [[urgent.turnId, false], [first.turnId, false]]);
 	});
 
 	test('the scheduler is idempotent after every command', () => {

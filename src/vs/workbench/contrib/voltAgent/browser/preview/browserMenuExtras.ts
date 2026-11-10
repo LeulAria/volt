@@ -62,7 +62,8 @@ export function browserMenuExtras(accessor: ServicesAccessor, context: IBrowserM
 	const devices: BrowserMenuEntry[] = [{
 		kind: 'item',
 		label: localize('voltBrowser.menu.simulators', "Open iOS Simulator / Android Emulator"),
-		run: () => void commandService.executeCommand(OPEN_DEVICE_PREVIEW_COMMAND_ID),
+		// In the panel of the chat this browser tab belongs to.
+		run: () => void commandService.executeCommand(OPEN_DEVICE_PREVIEW_COMMAND_ID, undefined, context.sessionId),
 	}];
 	const agents: BrowserMenuEntry[] = access ? [{
 		kind: 'toggle',

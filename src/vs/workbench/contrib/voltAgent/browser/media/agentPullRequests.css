@@ -357,6 +357,12 @@
 	cursor: default;
 }
 
+/* Running its action (Merging…): it keeps its look, with the spinner in place of its icon. */
+.volt-pr-button.busy:disabled {
+	opacity: 1;
+	cursor: progress;
+}
+
 /* White like Commit & Push in the Changes header; dark on light themes. */
 .volt-pr-button.primary {
 	background: #f3f3f3;

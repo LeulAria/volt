@@ -148,6 +148,10 @@ export class AgentPullRequestView extends Disposable {
 	private loading = false;
 	private visible = false;
 	private busy: string | undefined;
+	/** The running action is a merge: its spinner and label show inside the merge button, not in a pill. */
+	private busyInMerge = false;
+	/** The merge button on screen, with what it shows when nothing runs. */
+	private mergeButton: { readonly button: HTMLButtonElement; readonly icon: ThemeIcon; readonly label: string; readonly enabled: boolean } | undefined;
 	/** When the last read finished; its own change event must not start another. */
 	private loadedAt = 0;
 	/** Drafts typed into reply boxes, kept across re-renders. */
@@ -965,11 +969,14 @@ export class AgentPullRequestView extends Disposable {
 		const method = this.mergeMethod(pr);
 		const split = append(parent, $('.volt-pr-split'));
 		const auto = action === 'autoMerge';
-		const main = this.button(split, auto ? localize('voltPr.autoMergeMethod', "Auto-merge ({0})", MERGE_METHOD_NAMES[method]) : MERGE_LABELS[method], async e => {
+		const label = auto ? localize('voltPr.autoMergeMethod', "Auto-merge ({0})", MERGE_METHOD_NAMES[method]) : MERGE_LABELS[method];
+		const main = this.button(split, label, async e => {
 			const quick = !!(e as MouseEvent | undefined)?.shiftKey;
 			await this.merge(pr, method, auto, quick);
 		}, 'primary', Codicon.gitMerge);
 		main.disabled = !pr.viewerCanMerge || !!this.busy;
+		this.mergeButton = { button: main, icon: Codicon.gitMerge, label, enabled: pr.viewerCanMerge };
+		this.syncMergeButton();
 		setAgentTooltip(main, auto
 			? localize('voltPr.autoTip', "Merge with {0} once checks pass and reviews allow", MERGE_METHOD_NAMES[method])
 			: localize('voltPr.mergeTip', "{0} into {1}. Hold Shift to skip the confirmation.", MERGE_LABELS[method], pr.baseRefName));
@@ -2186,7 +2193,7 @@ export class AgentPullRequestView extends Disposable {
 			auto,
 			headOid: pr.headRefOid,
 			deleteBranch,
-		}));
+		}), true, true);
 	}
 
 	private async updateBranch(pr: IVoltPullRequestDetail, rebase: boolean): Promise<void> {
@@ -2287,17 +2294,26 @@ export class AgentPullRequestView extends Disposable {
 		});
 	}
 
-	/** Runs an action with the header showing it is busy; errors become notifications; the pull request is read again after. */
-	private async run(label: string, action: () => Promise<unknown>, reload = true): Promise<void> {
+	/**
+	 * Runs an action with the header showing it is busy (`inMergeButton`: inside the merge button);
+	 * errors become notifications; the pull request is read again after.
+	 */
+	private async run(label: string, action: () => Promise<unknown>, reload = true, inMergeButton = false): Promise<void> {
 		if (this.busy) {
 			return;
 		}
 		this.busy = label;
+		this.busyInMerge = inMergeButton && !!this.mergeButton?.button.isConnected;
 		this.element.classList.add('busy');
 		this.element.setAttribute('aria-busy', 'true');
-		const status = append(this.element, $('.volt-pr-busy'));
-		status.appendChild(renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')));
-		append(status, $('span')).textContent = label;
+		let status: HTMLElement | undefined;
+		if (this.busyInMerge) {
+			this.syncMergeButton();
+		} else {
+			status = append(this.element, $('.volt-pr-busy'));
+			status.appendChild(renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')));
+			append(status, $('span')).textContent = label;
+		}
 		try {
 			await action();
 		} catch (err) {
@@ -2310,7 +2326,12 @@ export class AgentPullRequestView extends Disposable {
 			this.busy = undefined;
 			this.element.classList.remove('busy');
 			this.element.removeAttribute('aria-busy');
-			status.remove();
+			status?.remove();
+			if (this.busyInMerge) {
+				this.busyInMerge = false;
+				// A failed merge reads back the same pull request, which draws nothing: put the button back here.
+				this.syncMergeButton();
+			}
 			if (reload) {
 				await this.load(false);
 				// Stack actions change the other layers too: read every linked pull request again.
@@ -2319,6 +2340,23 @@ export class AgentPullRequestView extends Disposable {
 				this.render();
 			}
 		}
+	}
+
+	/** The merge button shows the running merge (a spinner and "Merging…") in place of its icon and label. */
+	private syncMergeButton(): void {
+		const merge = this.mergeButton;
+		if (!merge?.button.isConnected) {
+			return;
+		}
+		const busy = this.busyInMerge ? this.busy : undefined;
+		merge.button.classList.toggle('busy', !!busy);
+		if (busy) {
+			merge.button.setAttribute('aria-busy', 'true');
+		} else {
+			merge.button.removeAttribute('aria-busy');
+		}
+		merge.button.replaceChildren(renderIcon(busy ? ThemeIcon.modify(Codicon.loading, 'spin') : merge.icon), $('span', undefined, busy ?? merge.label));
+		merge.button.disabled = !merge.enabled || !!this.busy;
 	}
 
 	private async copy(text: string, message: string): Promise<void> {
