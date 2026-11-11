@@ -4,11 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { Emitter } from '../../../../../base/common/event.js';
+import { toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { voltPartIdFromContext } from '../../common/voltCustomizeContext.js';
+import { CODE_ACTION_TOOL_NAME, CODE_NAV_TOOL_NAME, DIAGNOSTICS_TOOL_NAME } from '../../../../services/voltRuntime/common/codeIntelligence.js';
 import { HOST_TOOL_SANDBOX_CLASSES } from '../../../../services/voltRuntime/common/hostToolSandbox.js';
+import { DEV_ENVIRONMENT_FEATURE_ID, IDE_TOOL_NAMES } from '../../../../services/voltRuntime/common/ide/ideTools.js';
+import { JOB_WATCH_TOOL_NAMES } from '../../../../services/voltRuntime/common/jobs/jobWatch.js';
+import { ORCHESTRA_FEATURE_ID, ORCHESTRA_TOOL_NAMES } from '../../../../services/voltRuntime/common/orchestration/orchestra.js';
+import { HTTP_CLIENT_FEATURE_ID, HTTP_CLIENT_SURFACE_ID } from '../../../voltHttp/common/voltHttp.js';
 import { VOLT_FEATURE_MANIFESTS } from '../../common/voltFeatureManifests.generated.js';
-import { loadVoltFeatures, VOLT_FEATURE_CATEGORIES, VOLT_FEATURES, VOLT_FEATURES_HAND_WRITTEN, VOLT_FEATURES_SOURCE, VoltFeatureCategoryId, voltFeatureOwning, voltFeatureSettingMatches } from '../../common/voltFeatures.js';
+import { IVoltFeatureService, loadVoltFeatures, VOLT_FEATURE_CATEGORIES, VOLT_FEATURES, VOLT_FEATURES_HAND_WRITTEN, VOLT_FEATURES_SOURCE, voltFeature, VoltFeatureCategoryId, voltFeatureContextKey, voltFeatureOn, voltFeatureOwning, voltFeatureSettingMatches, whileVoltFeatureOn } from '../../common/voltFeatures.js';
 import { resolveVoltSlotPlacement, unplacedVoltSlotItems, VOLT_SLOT_ITEMS } from '../../common/voltSlots.js';
 
 suite('Volt features', () => {
@@ -98,5 +105,102 @@ suite('Volt features', () => {
 		const automations = VOLT_FEATURES.find(feature => feature.id === 'automations')!;
 		assert.ok(voltFeatureSettingMatches(automations, 'volt.automations.enabled'));
 		assert.ok(!voltFeatureSettingMatches(automations, 'volt.automationsX'));
+	});
+
+	test('FEAT-R4-1: Orchestra, Dev environment and the HTTP client are listed with their extensions and parts; job waits are core Terminals', () => {
+		const listed = (id: string, extensionId: string) => {
+			const feature = voltFeature(id);
+			assert.ok(feature, `${id} is listed`);
+			assert.strictEqual(feature.extensionId, extensionId);
+			assert.ok(VOLT_FEATURE_MANIFESTS.some(manifest => `${manifest.publisher}.${manifest.name}` === extensionId && manifest.contributes?.voltModule?.feature === id), `${extensionId} carries ${id}`);
+			return feature;
+		};
+		const orchestra = listed(ORCHESTRA_FEATURE_ID, 'volt.orchestra');
+		assert.deepStrictEqual(orchestra.tools, [...ORCHESTRA_TOOL_NAMES]);
+		assert.deepStrictEqual(orchestra.sections, ['orchestration'], 'Settings > Orchestration');
+		assert.deepStrictEqual(orchestra.commands, ['volt.orchestra.measureCapacity']);
+		const dev = listed(DEV_ENVIRONMENT_FEATURE_ID, 'volt.dev-environment');
+		assert.deepStrictEqual(dev.tools, ['tests', 'debug', 'tasks', 'ide']);
+		assert.deepStrictEqual(dev.tools, [...IDE_TOOL_NAMES]);
+		const http = listed(HTTP_CLIENT_FEATURE_ID, 'volt.http-client');
+		assert.deepStrictEqual(http.surfaces, [HTTP_CLIENT_SURFACE_ID], 'the right panel\'s + menu entry');
+		assert.strictEqual(http.tools, undefined, 'agents send requests through the ide gateway (Dev environment)');
+		// The language-server tools joined Code Intelligence.
+		const codeIntelligence = listed('codeIntelligence', 'volt.code-intelligence');
+		for (const name of [CODE_NAV_TOOL_NAME, DIAGNOSTICS_TOOL_NAME, CODE_ACTION_TOOL_NAME]) {
+			assert.ok(codeIntelligence.tools?.includes(name), name);
+		}
+		// Each part has one switch.
+		for (const name of ORCHESTRA_TOOL_NAMES) {
+			assert.strictEqual(voltFeatureOwning('tool', name), ORCHESTRA_FEATURE_ID, name);
+		}
+		for (const name of IDE_TOOL_NAMES) {
+			assert.strictEqual(voltFeatureOwning('tool', name), DEV_ENVIRONMENT_FEATURE_ID, name);
+		}
+		assert.strictEqual(voltFeatureOwning('section', 'orchestration'), ORCHESTRA_FEATURE_ID);
+		assert.strictEqual(voltFeatureOwning('surface', HTTP_CLIENT_SURFACE_ID), HTTP_CLIENT_FEATURE_ID);
+		// Job waits are Volt's core: under Terminals, with no switch.
+		const terminals = voltFeature('terminals')!;
+		assert.strictEqual(terminals.extensionId, undefined);
+		for (const name of JOB_WATCH_TOOL_NAMES) {
+			assert.ok(terminals.tools?.includes(name), name);
+			assert.strictEqual(voltFeatureOwning('tool', name), undefined, `${name} has no switch`);
+		}
+	});
+
+	test('FEAT-R4-3: every tool a feature lists is classified by the sandbox gate, and a manifest declares the class Volt gives it', () => {
+		let checked = 0;
+		for (const feature of VOLT_FEATURES) {
+			for (const name of feature.tools ?? []) {
+				assert.ok(Object.prototype.hasOwnProperty.call(HOST_TOOL_SANDBOX_CLASSES, name), `${feature.id}: ${name} is not classified (the gate refuses it for sandboxed chats)`);
+				checked++;
+			}
+		}
+		for (const name of ['orchestra', 'dev-environment', 'code-intelligence']) {
+			const manifest = VOLT_FEATURE_MANIFESTS.find(entry => entry.name === name)!;
+			const tools = manifest.contributes?.voltTools ?? [];
+			assert.ok(tools.length, `${name} declares its tools`);
+			for (const tool of tools) {
+				assert.strictEqual(tool.class, HOST_TOOL_SANDBOX_CLASSES[tool.name], `${name}: ${tool.name}`);
+			}
+		}
+		assert.strictEqual(HOST_TOOL_SANDBOX_CLASSES['machine_run'], 'escapes');
+		assert.strictEqual(HOST_TOOL_SANDBOX_CLASSES['tests'], 'sandboxed');
+		assert.ok(checked > 100, `checked ${checked} tools`);
+	});
+
+	test('FEAT-R4-5: a feature without a module: its when clause and what it keeps follow the switch', () => {
+		const on = voltFeatureOn(HTTP_CLIENT_FEATURE_ID);
+		const context = (value: boolean | undefined) => ({ getValue: <T>(key: string) => (key === voltFeatureContextKey(HTTP_CLIENT_FEATURE_ID) ? value : undefined) as T | undefined });
+		assert.strictEqual(voltFeatureContextKey(HTTP_CLIENT_FEATURE_ID), 'voltFeature.httpClient');
+		assert.strictEqual(on.evaluate(context(true)), true);
+		assert.strictEqual(on.evaluate(context(false)), false, 'off: views and Command Palette entries go');
+		// The eager feature service binds the key at startup; a part nothing has said is on stays hidden.
+		assert.strictEqual(on.evaluate(context(undefined)), false);
+
+		const changed = new Emitter<void>();
+		const off = new Set<string>([DEV_ENVIRONMENT_FEATURE_ID]);
+		const features: IVoltFeatureService = {
+			_serviceBrand: undefined,
+			onDidChange: changed.event,
+			isEnabled: id => !off.has(id),
+			isOn: () => true,
+			setEnabled: async (id, enabled) => { if (enabled) { off.delete(id); } else { off.add(id); } changed.fire(); },
+		};
+		const made: string[] = [];
+		const kept = whileVoltFeatureOn(features, DEV_ENVIRONMENT_FEATURE_ID, () => {
+			made.push('made');
+			return toDisposable(() => made.push('disposed'));
+		});
+		assert.deepStrictEqual(made, [], 'nothing while it is off');
+		void features.setEnabled(DEV_ENVIRONMENT_FEATURE_ID, true);
+		void features.setEnabled(HTTP_CLIENT_FEATURE_ID, false);
+		assert.deepStrictEqual(made, ['made'], 'made once it turns on, and not again for another feature');
+		void features.setEnabled(DEV_ENVIRONMENT_FEATURE_ID, false);
+		assert.deepStrictEqual(made, ['made', 'disposed'], 'disposed when it turns off');
+		void features.setEnabled(DEV_ENVIRONMENT_FEATURE_ID, true);
+		kept.dispose();
+		assert.deepStrictEqual(made, ['made', 'disposed', 'made', 'disposed'], 'and with the gate');
+		changed.dispose();
 	});
 });

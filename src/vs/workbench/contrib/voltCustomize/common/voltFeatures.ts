@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../base/common/event.js';
+import { DisposableStore, IDisposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { ContextKeyExpr, ContextKeyExpression } from '../../../../platform/contextkey/common/contextkey.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { CODE_INTELLIGENCE_TOOLS } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from '../../../services/voltRuntime/common/deviceTools.js';
@@ -451,6 +453,39 @@ export function voltFeature(id: string): IVoltFeature | undefined {
 
 export function voltFeatureSettingMatches(feature: IVoltFeature, key: string): boolean {
 	return !!feature.settings?.some(setting => setting.endsWith('.') ? key.startsWith(setting) : key === setting);
+}
+
+/** `voltFeature.<id>`: the context key `IVoltFeatureService` keeps true while the feature is on. */
+export function voltFeatureContextKey(featureId: string): string {
+	return `voltFeature.${featureId}`;
+}
+
+/**
+ * A when clause that holds while the feature is on, for the views, menus and commands of a feature
+ * without a module. The feature service is eager and binds the key (true for a feature that is on,
+ * or whose manifest is missing) when the window starts, in every workbench these parts are in.
+ */
+export function voltFeatureOn(featureId: string): ContextKeyExpression {
+	return ContextKeyExpr.has(voltFeatureContextKey(featureId));
+}
+
+/**
+ * Keeps what `create` makes (a controller, a provider registration) while the feature is on: made
+ * now or when it turns on, disposed when it turns off, for a feature without a module.
+ */
+export function whileVoltFeatureOn(features: IVoltFeatureService, featureId: string, create: () => IDisposable): IDisposable {
+	const store = new DisposableStore();
+	const part = store.add(new MutableDisposable());
+	const update = () => {
+		if (!features.isEnabled(featureId)) {
+			part.clear();
+		} else if (!part.value) {
+			part.value = create();
+		}
+	};
+	update();
+	store.add(features.onDidChange(update));
+	return store;
 }
 
 /**

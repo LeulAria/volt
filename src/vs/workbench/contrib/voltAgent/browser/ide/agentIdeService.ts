@@ -35,7 +35,8 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { IVoltHostToolCall, IVoltHostToolInvocation, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
-import { DEBUG_TOOL_NAME, IDE_TOOLS, isIdeToolName, TASKS_TOOL_NAME, TESTS_TOOL_NAME } from '../../../../services/voltRuntime/common/ide/ideTools.js';
+import { DEBUG_TOOL_NAME, DEV_ENVIRONMENT_FEATURE_ID, IDE_TOOLS, isIdeToolName, TASKS_TOOL_NAME, TESTS_TOOL_NAME } from '../../../../services/voltRuntime/common/ide/ideTools.js';
+import { IVoltFeatureService, whileVoltFeatureOn } from '../../../voltCustomize/common/voltFeatures.js';
 import { IDE_CAPABILITIES, IDE_GATEWAY_TOOL_NAME, ideHelp, ideOp } from '../../../../services/voltRuntime/common/ide/ideCapabilities.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IDebugService, IDebugSession, REPL_VIEW_ID, State, VIEWLET_ID as DEBUG_VIEWLET_ID } from '../../../debug/common/debug.js';
@@ -588,4 +589,14 @@ class AgentIdeContribution implements IWorkbenchContribution {
 }
 
 registerWorkbenchContribution2(AgentIdeContribution.ID, AgentIdeContribution, WorkbenchPhase.AfterRestored);
-registerWorkbenchContribution2(VoltTestController.ID, VoltTestController, WorkbenchPhase.Eventually);
+
+/** The Testing view's Volt tests, while the Dev environment feature (`volt.dev-environment`) is on. */
+class VoltTestControllerGate extends Disposable implements IWorkbenchContribution {
+	static readonly ID = VoltTestController.ID;
+	constructor(@IVoltFeatureService features: IVoltFeatureService, @IInstantiationService instantiationService: IInstantiationService) {
+		super();
+		this._register(whileVoltFeatureOn(features, DEV_ENVIRONMENT_FEATURE_ID, () => instantiationService.createInstance(VoltTestController)));
+	}
+}
+
+registerWorkbenchContribution2(VoltTestControllerGate.ID, VoltTestControllerGate, WorkbenchPhase.Eventually);

@@ -14,7 +14,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { EnablementState, IWorkbenchExtensionEnablementService, IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
-import { IVoltFeatureService, VOLT_FEATURES, voltFeature, voltFeatureOwning, VoltFeaturePart } from '../common/voltFeatures.js';
+import { IVoltFeatureService, VOLT_FEATURES, voltFeature, voltFeatureContextKey, voltFeatureOwning, VoltFeaturePart } from '../common/voltFeatures.js';
 
 /**
  * A feature is off when the user disabled its built-in extension (globally or for this workspace). An extension that isn't there at all (a build that doesn't ship it) leaves its
@@ -50,7 +50,7 @@ export class VoltFeatureService extends Disposable implements IVoltFeatureServic
 		this.disabled = new Set(VOLT_FEATURES.filter(feature => feature.extensionId && globallyDisabled.some(id => areSameExtensions(id, { id: feature.extensionId! }))).map(feature => feature.id));
 		for (const feature of VOLT_FEATURES) {
 			// `voltFeature.usage`: for when clauses on menus and commands.
-			this.contextKeys.set(feature.id, new RawContextKey<boolean>(`voltFeature.${feature.id}`, true).bindTo(contextKeyService));
+			this.contextKeys.set(feature.id, new RawContextKey<boolean>(voltFeatureContextKey(feature.id), true).bindTo(contextKeyService));
 		}
 		this.apply();
 		this._register(this.enablement.onEnablementChanged(() => this.recompute.schedule()));

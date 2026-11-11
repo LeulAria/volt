@@ -27,6 +27,12 @@ import { describeMachineLoad, IRelayMachine, RELAY_AGENT_IDS } from '../relay/re
 import { AGENT_TASK_ROLES } from './agentTasks.js';
 import { describeMachine, IMachineCapacity } from './machineCapacity.js';
 
+/**
+ * `voltModule.feature` of `extensions/volt-orchestra`: off, its tools, the Orchestration settings
+ * page and the @ Agents / @ Machines mentions go away.
+ */
+export const ORCHESTRA_FEATURE_ID = 'orchestra';
+
 //#region Settings
 
 /** Models a council asks when the request names none. */

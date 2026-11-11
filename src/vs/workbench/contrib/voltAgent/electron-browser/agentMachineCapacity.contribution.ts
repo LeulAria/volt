@@ -13,6 +13,8 @@ import { INativeHostService } from '../../../../platform/native/common/native.js
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { computeMachineCapacity, describeMachine, IMachineCapacity, ORCH_MACHINE_CAPACITY_SETTING, ORCH_MEASURE_CAPACITY_COMMAND_ID, parseMachineCapacity } from '../../../services/voltRuntime/common/orchestration/machineCapacity.js';
+import { ORCHESTRA_FEATURE_ID } from '../../../services/voltRuntime/common/orchestration/orchestra.js';
+import { voltFeatureOn } from '../../voltCustomize/common/voltFeatures.js';
 
 /** Reads memory and cores from the main process and saves what the machine can run in the user's settings. */
 async function measureAndSave(nativeHostService: INativeHostService, configurationService: IConfigurationService): Promise<IMachineCapacity> {
@@ -64,6 +66,8 @@ registerAction2(class MeasureMachineCapacityAction extends Action2 {
 			title: localize2('voltOrchestra.measureCapacity', "Measure How Many Agents This Machine Can Run"),
 			category: localize2('voltOrchestra.category', "Volt"),
 			f1: true,
+			// Not in the Command Palette while the Orchestra feature is off (its Settings page goes too).
+			precondition: voltFeatureOn(ORCHESTRA_FEATURE_ID),
 		});
 	}
 

@@ -13,9 +13,10 @@ import assert from 'assert';
 import { Emitter } from '../../../../../base/common/event.js';
 import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { FIRST_PARTY_ENFORCED, firstPartyCapabilityMode, firstPartyCeiling } from '../../../../../platform/voltPlugins/common/firstPartyCeilings.js';
+import { declarationsOutsideCeiling, FIRST_PARTY_ENFORCED, firstPartyCapabilityMode, firstPartyCeiling } from '../../../../../platform/voltPlugins/common/firstPartyCeilings.js';
 import { VOLT_FEATURE_MANIFESTS } from '../../../../contrib/voltCustomize/common/voltFeatureManifests.generated.js';
-import { ICapabilityReporter, ICapabilityRequest, IVoltPluginPrincipal, IWouldBeDenial, VoltCapabilityError } from '../../common/capabilities.js';
+import { HOST_TOOL_SANDBOX_CLASSES } from '../../../voltRuntime/common/hostToolSandbox.js';
+import { ICapabilityReporter, ICapabilityRequest, IVoltPluginPrincipal, IWouldBeDenial, toolClassCapability, VoltCapabilityError } from '../../common/capabilities.js';
 import { IVoltConsentStore, VoltExtensionCapabilityPolicy } from '../../common/extensionCapabilityPolicy.js';
 import { VoltFeatureCapabilityReporter } from '../../common/featureCapabilityMode.js';
 import { createVoltApi, IVoltApi, IVoltApiBackend } from '../../common/voltApi.js';
@@ -188,6 +189,46 @@ suite('Volt first-party ceilings enforced (M5)', () => {
 			}
 		}
 		assert.ok(checked > 20, `checked ${checked} calls`);
+	});
+
+	test('FEAT-R4-2: Orchestra, Dev environment and the HTTP client: a ceiling as narrow as the manifest, enforced or in report mode for a reason', async () => {
+		const declaredIds = (manifest: IVoltPluginManifest) => {
+			const capabilities = manifest.contributes?.voltCapabilities ?? {};
+			return [...capabilities.required ?? [], ...capabilities.optional ?? []];
+		};
+		for (const id of ['volt.orchestra', 'volt.dev-environment', 'volt.http-client', 'volt.code-intelligence']) {
+			const manifest = VOLT_FEATURE_MANIFESTS.find(entry => idOf(entry) === id)!;
+			const ceiling = firstPartyCeiling(id);
+			assert.ok(ceiling, `${id} has a first-party ceiling`);
+			const declared = declaredIds(manifest);
+			assert.deepStrictEqual(declarationsOutsideCeiling(id, declared), [], `${id} declares only what its ceiling holds`);
+			assert.deepStrictEqual(ceiling.filter(entry => !declared.some(declaration => declaration.id === entry.id)).map(entry => entry.id), [], `${id}'s ceiling holds nothing its manifest doesn't declare`);
+			// Every tool it serves: the capability its class implies is declared, so serving it is never refused for that.
+			for (const tool of manifest.contributes?.voltTools ?? []) {
+				const implied = toolClassCapability(HOST_TOOL_SANDBOX_CLASSES[tool.name]);
+				assert.ok(declared.some(declaration => declaration.id === implied), `${id}: ${tool.name} (${HOST_TOOL_SANDBOX_CLASSES[tool.name]}) needs ${implied}`);
+			}
+			// Every declaration says why (the extension page and the consent dialog show it).
+			for (const declaration of declared.filter(entry => entry.id !== 'tools.register')) {
+				assert.ok(declaration.reason?.trim(), `${id}: ${declaration.id} has no reason`);
+			}
+		}
+		// The HTTP client declares nothing critical: 0 would-be denials, so it is enforced.
+		const http = VOLT_FEATURE_MANIFESTS.find(entry => idOf(entry) === 'volt.http-client')!;
+		assert.deepStrictEqual(await wouldBeDenials(http), []);
+		assert.strictEqual(firstPartyCapabilityMode('volt.http-client'), 'enforce');
+		// Orchestra and Dev environment run programs on the host (spawn.unsandboxed; the ide gateway's
+		// extensions capability runs commands, commands.execute:*). The API never grants critical, so
+		// their only would-be denials are those, and they stay in report mode until that changes.
+		for (const id of ['volt.orchestra', 'volt.dev-environment']) {
+			const manifest = VOLT_FEATURE_MANIFESTS.find(entry => idOf(entry) === id)!;
+			const denials = await wouldBeDenials(manifest);
+			assert.ok(denials.length, `${id} shows its would-be denials`);
+			assert.deepStrictEqual(denials.filter(denial => denial.deniedBy !== 'critical').map(denial => `${denial.capability}:${denial.deniedBy}`), [], `${id}: every would-be denial is a critical capability`);
+			const critical = new Set(declaredIds(manifest).filter(entry => entry.class === 'critical').map(entry => entry.id.replace(/:\*$/, '')));
+			assert.ok(denials.every(denial => [...critical].some(capability => denial.capability.startsWith(capability))), `${id}: ${denials.map(denial => denial.capability).join(', ')}`);
+			assert.strictEqual(firstPartyCapabilityMode(id), 'report');
+		}
 	});
 
 	test('M5-ZERO-PROMPT-2: a built-in never consults consent, so it is never asked (G.12)', () => {
