@@ -430,6 +430,19 @@ suite('Volt sandbox agent profile', () => {
 		assert.strictEqual(policy.network.mode, 'host');
 	});
 
+	test('SSH-1: network on reads only what ssh needs in ~/.ssh (config, known hosts, public keys), never the folder', () => {
+		const readable = ['/Users/me/.ssh/config', '/Users/me/dotfiles/ssh/config', '/Users/me/.ssh/config.d', '/Users/me/.ssh/known_hosts', '/Users/me/.ssh/id_ed25519.pub'];
+		const policy = agentSandboxPolicy({ level: 'workspace-write', network: true, providerId: 'claude-code', workspaceRoots: ['/Users/me/repo'] }, { ...host, sshReadable: [...readable, '/Users/me', 'relative/config'] });
+		for (const path of readable) {
+			assert.ok(policy.filesystem.read.includes(path), path);
+		}
+		assert.ok(!policy.filesystem.read.includes('/Users/me/.ssh'), 'not the folder: notes, tokens and keys under other names stay unreadable');
+		assert.ok(!policy.filesystem.read.includes('/Users/me') && !policy.filesystem.read.includes('relative/config'), 'never the home folder or a relative path');
+		assert.ok(policy.filesystem.deny.includes('/Users/me/.ssh/id_ed25519'), 'a key under a readable name is still denied');
+		const off = agentSandboxPolicy({ level: 'workspace-write', network: false, providerId: 'claude-code', workspaceRoots: ['/Users/me/repo'] }, { ...host, sshReadable: readable });
+		assert.ok(!readable.some(path => off.filesystem.read.includes(path)) && off.filesystem.deny.includes('/Users/me/.ssh'), 'network off: no ssh at all');
+	});
+
 	test('read-only protects the workspace even inside temp; home and / are never roots', () => {
 		const policy = agentSandboxPolicy({ level: 'read-only', network: false, providerId: 'grok', workspaceRoots: ['/private/tmp/repo', '/Users/me', '/'], extraWritableRoots: ['/Users'] }, host);
 		assert.ok(policy.filesystem.protect.includes('/private/tmp/repo'));

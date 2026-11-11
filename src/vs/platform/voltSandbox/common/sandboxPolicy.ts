@@ -456,8 +456,14 @@ export interface IAgentSandboxHost {
 	readonly uid?: number;
 	/** Volt's user data: the agent-server token, the host MCP state. No agent may read it. */
 	readonly userDataDir?: string;
-	/** Private keys in `~/.ssh` (found by content): denied even when `~/.ssh` stays readable for git over SSH. */
+	/** Private keys in `~/.ssh` and its folders (found by content), as named and as real paths: denied on top of everything. */
 	readonly sshPrivateKeys?: readonly string[];
+	/**
+	 * What ssh reads for git over SSH with the network on: `~/.ssh/config`, `config.d` and what the
+	 * configs `Include`, the known hosts files and the public keys, as named and as real paths (see
+	 * `sshReadablePaths`). The rest of `~/.ssh` stays unreadable.
+	 */
+	readonly sshReadable?: readonly string[];
 	/** The ssh-agent socket, granted when the chat's network is on. */
 	readonly sshAuthSock?: string;
 	/** Where sandboxed package caches live (see `SANDBOX_CACHE_ENV`). */
@@ -530,8 +536,9 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		// CoreFoundation's text encoding id (`0x1F5:0x0:0x0`), read by every program that links it (git,
 		// python), and the preferences xcodebuild reads behind the /usr/bin shims (TOOLCHAIN-MAC-1).
 		...(host.platform === 'darwin' ? [at('Library/Keychains'), ...MAC_HOME_TOOL_FILES.map(at)] : []),
-		// ssh needs its config and known_hosts for git over SSH; the private keys stay denied.
-		...(request.network ? [at('.ssh')] : []),
+		// git over SSH: ssh reads its config, known hosts and public keys, and signs through the agent
+		// socket; nothing else in `~/.ssh` (notes, tokens, keys under any name) is readable (SSH-1).
+		...(request.network ? (host.sshReadable ?? []).map(normalizeSandboxPath).filter(path => isAbsolute(path) && path !== home) : []),
 	]);
 
 	const protect: string[] = [];
@@ -555,10 +562,11 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		...credentialDenyEntries()
 			// Keychain items are guarded by their own access lists; the CLI reads its login from there.
 			.filter(entry => entry !== '${home}/Library/Keychains')
-			// With network on, ssh needs its config and known_hosts; only the private keys stay denied.
+			// With network on, the few files ssh reads are allowed above; the rest of `~/.ssh` is simply not readable.
 			.filter(entry => !(entry === '${home}/.ssh' && request.network))
 			.map(entry => entry.replace(/^\$\{home\}/, home)),
-		...(request.network ? (host.sshPrivateKeys ?? []) : []),
+		// Also with network off: a key linked into `~/.ssh` from a readable folder is denied at its real path.
+		...(host.sshPrivateKeys ?? []),
 		...ALL_AGENT_CREDENTIALS.filter(path => !ownCredentials.has(path)).map(at),
 		...(host.userDataDir ? [normalizeSandboxPath(host.userDataDir)] : []),
 		// The overlay's seed snapshots are Volt's: the merge compares against them.

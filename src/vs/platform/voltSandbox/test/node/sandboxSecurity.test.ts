@@ -30,6 +30,7 @@ import { AGENT_STATE_ROOT, agentSandboxPolicy, IVoltSandboxRequest } from '../..
 import { AGENT_CONFIG_NAMES, builtinProfile } from '../../common/sandboxProfiles.js';
 import { AgentStateOverlay } from '../../node/agentStateOverlay.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer } from '../../common/sandboxSchema.js';
+import { sshPrivateKeys, sshReadablePaths } from '../../node/sandboxLauncher.js';
 import { SandboxManager } from '../../node/sandboxManager.js';
 import { SandboxPolicyFiles } from '../../node/sandboxPolicyFiles.js';
 import { composeLaunchLayers } from '../../common/compile.js';
@@ -267,6 +268,136 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		const result = await sh(agent(false), `ln '${join(f.home, '.aws', 'credentials')}' ${f.ws}/hl; cat ${f.ws}/hl`);
 		assert.ok(!result.stdout.includes('CANARY'));
 		assert.ok(!await exists(join(f.ws, 'hl')));
+	});
+
+	test('SSH-1, SSH-2: with the network on, an agent reads only ssh\'s configs (and what they include), known hosts and public keys; keys in any format, name, folder or link, and anything made after the launch, stay unreadable', async () => {
+		const ssh = join(f.home, '.ssh');
+		const made: string[] = [];
+		const write = async (relative: string, text: string) => {
+			const path = join(ssh, relative);
+			await fs.mkdir(join(path, '..'), { recursive: true });
+			await fs.writeFile(path, text, { mode: 0o600 });
+			made.push(path);
+			return path;
+		};
+		const keygen = async (relative: string, args: string[], fallback: string) => {
+			const path = join(ssh, relative);
+			await fs.mkdir(join(path, '..'), { recursive: true });
+			try {
+				// Throwaway keys, made here for this test only.
+				execFileSync('ssh-keygen', ['-q', '-C', 'volt-test', '-f', path, ...args], { stdio: 'ignore' });
+				made.push(path, `${path}.pub`);
+				return path;
+			} catch {
+				// No ssh-keygen (the Linux rig): the same first line, which is what Volt judges.
+				return write(`${relative}.pub`, 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl volt-test\n').then(() => write(relative, `${fallback}\nVOLTTESTKEYBODY\n`));
+			}
+		};
+		const elsewhere = join(f.root, 'kept-elsewhere');
+		const dotfiles = join(f.home, 'dotfiles');
+		await fs.mkdir(elsewhere, { recursive: true });
+		await fs.mkdir(dotfiles, { recursive: true });
+		try {
+			// Keys in every format and under names that do not say "key".
+			await keygen('id_ecdsa_pem', ['-t', 'ecdsa', '-m', 'PEM', '-N', ''], '-----BEGIN EC PRIVATE KEY-----');
+			await keygen('id_rsa_pem', ['-t', 'rsa', '-b', '1024', '-m', 'PEM', '-N', ''], '-----BEGIN RSA PRIVATE KEY-----');
+			await keygen('pkcs8', ['-t', 'ecdsa', '-m', 'PKCS8', '-N', ''], '-----BEGIN PRIVATE KEY-----');
+			await keygen('pkcs8_encrypted', ['-t', 'ecdsa', '-m', 'PKCS8', '-N', 'volt-test-passphrase'], '-----BEGIN ENCRYPTED PRIVATE KEY-----');
+			await keygen('pem_encrypted', ['-t', 'rsa', '-b', '1024', '-m', 'PEM', '-N', 'volt-test-passphrase'], '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED');
+			await keygen('github', ['-t', 'ed25519', '-N', ''], '-----BEGIN OPENSSH PRIVATE KEY-----');
+			await keygen('keys/work/deploy', ['-t', 'ed25519', '-N', ''], '-----BEGIN OPENSSH PRIVATE KEY-----');
+			await write('putty.ppk', 'PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\n');
+			await write('ssh2_key', '---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----\nComment: "volt-test"\n');
+			// A private key under a name ssh's files have (`*.pub`): judged by content, not name.
+			await write('mislabeled.pub', '-----BEGIN OPENSSH PRIVATE KEY-----\nVOLTTESTKEYBODY\n');
+			await write('notes.txt', 'a token kept next to the keys\n');
+			// What ssh needs: its config (linked from a dotfiles folder), included files (config.d, by name,
+			// by glob, outside ~/.ssh as OrbStack and Colima add), known hosts (default and named), public keys.
+			// An `Include` or `UserKnownHostsFile` naming a private key does not make it readable.
+			// (The lines naming files are in a config the ssh check below doesn't load: ssh takes `~` and
+			// a relative path's folder from the user database, which is the real home, never $HOME.)
+			await fs.writeFile(join(dotfiles, 'ssh_config'), 'Host volt-canary\n\tUser voltcanaryuser\n\tHostName 127.0.0.1\n');
+			await fs.symlink(join(dotfiles, 'ssh_config'), join(ssh, 'config'));
+			made.push(join(ssh, 'config'));
+			await write('config.d/work', 'Host volt-work\n\tUser voltworkuser\n');
+			await write('config.d/files', [
+				'Include work_config "conf/*.conf" ~/.orb/ssh/config github',
+				'Host volt-files',
+				'\tUserKnownHostsFile=~/.ssh/known_hosts_work pkcs8',
+				'\tIdentityFile ~/.ssh/keys/work/deploy',
+				'',
+			].join('\n'));
+			await write('work_config', 'Host volt-named\n\tUser voltnameduser\n');
+			await write('conf/a.conf', 'Host volt-glob\n\tUser voltglobuser\n');
+			await write('conf/b.txt', 'not matched by the glob\n');
+			await fs.mkdir(join(f.home, '.orb', 'ssh'), { recursive: true });
+			await fs.writeFile(join(f.home, '.orb', 'ssh', 'config'), 'Host volt-orb\n\tUser voltorbuser\n');
+			await write('known_hosts', 'volt-canary.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n');
+			await write('known_hosts_work', 'volt-work.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n');
+			// A key kept outside and linked in; a hard link of a key under a public key's name.
+			await fs.writeFile(join(elsewhere, 'linked_key'), '-----BEGIN OPENSSH PRIVATE KEY-----\nVOLTTESTKEYBODY\n');
+			await fs.symlink(join(elsewhere, 'linked_key'), join(ssh, 'linked'));
+			made.push(join(ssh, 'linked'));
+			await fs.link(join(ssh, 'github'), join(ssh, 'hardlink.pub'));
+			made.push(join(ssh, 'hardlink.pub'));
+
+			// What a launch computes (sandboxLauncher), on this home.
+			const host = { ...agentHost(), sshPrivateKeys: await sshPrivateKeys(ssh), sshReadable: await sshReadablePaths(ssh) };
+			const policy = agentSandboxPolicy({ level: 'workspace-write', network: true, providerId: 'claude-code', workspaceRoots: [f.ws] }, host);
+			// Made after the launch: a new key, a key dropped into config.d, a key under a public key's name.
+			await write('late_key', '-----BEGIN OPENSSH PRIVATE KEY-----\nVOLTTESTKEYBODY\n');
+			await write('config.d/late', '-----BEGIN OPENSSH PRIVATE KEY-----\nVOLTTESTKEYBODY\n');
+			await write('late.pub', '-----BEGIN OPENSSH PRIVATE KEY-----\nVOLTTESTKEYBODY\n');
+			await fs.symlink(join(ssh, 'github'), join(f.ws, 'ssh-link'));
+			made.push(join(f.ws, 'ssh-link'));
+
+			const denied = ['id_ed25519', 'id_ecdsa_pem', 'id_rsa_pem', 'pkcs8', 'pkcs8_encrypted', 'pem_encrypted', 'github', 'keys/work/deploy', 'putty.ppk', 'ssh2_key', 'mislabeled.pub', 'notes.txt', 'linked', 'hardlink.pub', 'late_key', 'config.d/late', 'late.pub', 'conf/b.txt'];
+			// Linux: bubblewrap mounts a link's target, not the link, so a linked config is not at
+			// `~/.ssh/config` there (05-limitations item 5; git over SSH has no ssh-agent on Linux anyway).
+			const readable = [...isLinux ? [] : ['config'], 'config.d/work', 'work_config', 'conf/a.conf', 'known_hosts', 'known_hosts_work', 'github.pub', 'keys/work/deploy.pub', '../.orb/ssh/config'];
+			assert.ok(host.sshReadable.includes(join(dotfiles, 'ssh_config')), 'the linked config at its real path');
+			// Probes print READABLE or DENIED, never what a file holds.
+			const probe = (label: string, path: string) => `if head -c 1 '${path}' >/dev/null 2>&1; then echo 'READABLE ${label}'; else echo 'DENIED ${label}'; fi`;
+			const result = await sh(policy, [
+				...[...denied, ...readable].map(name => probe(name, join(ssh, name))),
+				probe('ws/ssh-link', join(f.ws, 'ssh-link')),
+				probe('kept-elsewhere', join(elsewhere, 'linked_key')),
+				// File names are not secret; the listing shows at most the readable ones (Linux binds only those).
+				`echo "LISTING $(ls -a '${ssh}' 2>/dev/null | tr '\\n' ' ')"`,
+				`echo "LISTKEYS $(ls -a '${join(ssh, 'keys', 'work')}' 2>/dev/null | tr '\\n' ' ')"`,
+			].join('\n'));
+			const lines = result.stdout.trim().split('\n');
+			const verdicts = new Map(lines.filter(line => !line.startsWith('LIST')).map(line => [line.slice(line.indexOf(' ') + 1), line.slice(0, line.indexOf(' '))]));
+			for (const name of [...denied, 'ws/ssh-link', 'kept-elsewhere']) {
+				assert.strictEqual(verdicts.get(name), 'DENIED', `${name}: ${result.stdout}`);
+			}
+			const listing = (tag: string) => (lines.find(line => line.startsWith(`${tag} `)) ?? '').split(' ').slice(1).filter(Boolean);
+			// (Linux shows `keys/`: it holds a readable public key, so bubblewrap made the folder.)
+			assert.deepStrictEqual(listing('LISTING').filter(name => ['id_ed25519', 'github', 'notes.txt', 'late_key', 'pkcs8'].includes(name)), [], `the folder lists no key or note: ${listing('LISTING').join(' ')}`);
+			assert.ok(!listing('LISTKEYS').includes('deploy'), `nor a key in a subfolder: ${listing('LISTKEYS').join(' ')}`);
+			for (const name of readable) {
+				assert.strictEqual(verdicts.get(name), 'READABLE', `${name} is what ssh needs: ${result.stdout} ${result.stderr}`);
+			}
+			assert.ok(!result.stdout.includes('VOLTTESTKEYBODY') && !result.stdout.includes('PRIVATE KEY'));
+			if (isMac) {
+				// git over SSH: ssh reads its config (through the dotfiles link) and the included file. `-F`
+				// names this home's files: ssh takes `~` from the user database, never $HOME.
+				const config = await sh(policy, `ssh -F '${join(ssh, 'config')}' -G volt-canary 2>&1 | grep -i '^user '; ssh -F '${join(ssh, 'config.d', 'work')}' -G volt-work 2>&1 | grep -i '^user '`);
+				assert.match(config.stdout, /user voltcanaryuser/i, config.stdout + config.stderr);
+				assert.match(config.stdout, /user voltworkuser/i, config.stdout + config.stderr);
+			}
+		} finally {
+			for (const path of made.reverse()) {
+				await fs.rm(path, { force: true });
+			}
+			await fs.rm(join(ssh, 'keys'), { recursive: true, force: true });
+			await fs.rm(join(ssh, 'config.d'), { recursive: true, force: true });
+			await fs.rm(join(ssh, 'conf'), { recursive: true, force: true });
+			await fs.rm(join(f.home, '.orb'), { recursive: true, force: true });
+			await fs.rm(elsewhere, { recursive: true, force: true });
+			await fs.rm(dotfiles, { recursive: true, force: true });
+		}
+		await assertHostUnchanged();
 	});
 
 	test('writes outside the workspace and into protected paths are denied; the host is unchanged', async () => {
