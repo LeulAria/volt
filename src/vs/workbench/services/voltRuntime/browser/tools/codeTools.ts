@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { URI } from '../../../../../base/common/uri.js';
-import { CODE_ACTION_DESCRIPTION, CODE_ACTION_OPS, CODE_ACTION_SCHEMA, CODE_NAV_DESCRIPTION, CODE_NAV_OPS, CODE_NAV_SCHEMA, CodeNavOp, DIAGNOSTICS_DESCRIPTION, DIAGNOSTICS_SCHEMA } from '../../common/codeIntelligence.js';
+import { CODE_ACTION_DESCRIPTION, CODE_ACTION_OPS, CODE_ACTION_SCHEMA, CODE_NAV_DESCRIPTION, CODE_NAV_OPS, CODE_NAV_SCHEMA, CodeNavOp, DIAGNOSTICS_DESCRIPTION, DIAGNOSTICS_SCHEMA, lspOffMessage } from '../../common/codeIntelligence.js';
 import { asRecord, pickNumber, pickString } from '../../common/tools/args.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
 import { displayPath, resolveWorkspaceUri } from './workspacePath.js';
@@ -197,7 +197,7 @@ export async function runDiagnostics(host: ICodeIntelHost, root: URI | undefined
 	const severity = (pickString(args, 'severity') ?? 'error') as 'error' | 'warning' | 'all';
 	const checked = uris.filter(uri => host.lspAllowed(uri));
 	if (uris.length && !checked.length) {
-		return { callId: '', name: 'diagnostics', kind: 'read', text: 'Language servers are off for this checkout (Settings > Code Intelligence), so the editor has no diagnostics for it. Run the project\'s type checker or linter instead.' };
+		return { callId: '', name: 'diagnostics', kind: 'read', text: lspOffMessage('diagnostics') };
 	}
 	try {
 		const found = await host.diagnostics(checked.length ? checked : undefined, severity);
@@ -442,7 +442,7 @@ export async function runCodeAction(host: ICodeIntelHost, root: URI | undefined,
 		return fail('code_action', 'path is missing or outside the workspace.');
 	}
 	if (!host.lspAllowed(uri)) {
-		return fail('code_action', 'Language servers are off for this checkout (Settings > Code Intelligence). Edit the files directly.');
+		return fail('code_action', lspOffMessage('code_action'));
 	}
 	const line = pickNumber(args, 'line');
 	const range: ICodeRange | undefined = line ? { startLine: line, endLine: pickNumber(args, 'end_line') ?? line } : undefined;

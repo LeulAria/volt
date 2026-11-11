@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { URI } from '../../../../base/common/uri.js';
 import type { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import type { IVoltCodeIndexOptions, IVoltCodeSymbol, IVoltLspLimits, VoltCodeSymbolKind, VoltFffMode } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import type { IVoltHostToolInfo } from './hostTools.js';
@@ -60,6 +61,28 @@ export function lspAllowedFor(configuration: IConfigurationService, inWorktree: 
 		return false;
 	}
 	return !inWorktree || configuration.getValue<boolean>(LSP_WORKTREES_SETTING) === true;
+}
+
+/**
+ * Whether a file is in a checkout Volt made for a chat (`~/.volt/worktrees/<repo>/<checkout>`), whose
+ * language servers are opt-in (`LSP_WORKTREES_SETTING`). A project the user opened is not one,
+ * whether or not it is one of the window's folders (the agent window has none).
+ */
+export function inVoltWorktree(path: string): boolean {
+	return /[\\/]\.volt[\\/]worktrees[\\/]/.test(path);
+}
+
+/** The language-server policy for a window: a file outside its folders is opted in only when it is in a chat's worktree. */
+export function lspPolicy(configuration: IConfigurationService, insideWindow: (uri: URI) => boolean): (uri: URI) => boolean {
+	return uri => lspAllowedFor(configuration, !insideWindow(uri) && inVoltWorktree(uri.fsPath));
+}
+
+/** What a language-server tool answers when language servers are off for a file's checkout: why, and what to use instead. */
+export function lspOffMessage(tool: 'diagnostics' | 'code_action'): string {
+	const why = 'Language servers are off for this checkout (Settings > Code Intelligence: "Enable LSPs", or "Enable LSPs for Worktrees" for a chat\'s worktree)';
+	return tool === 'diagnostics'
+		? `${why}, so the editor has no diagnostics for it. Run the project's type checker or linter with your shell tool instead (for example \`npx tsc --noEmit\`, \`cargo check\`, \`ruff check\`).`
+		: `${why}, so nothing was changed. Edit the files with your own edit tools; code_nav definition and references (pass symbol) still answer from the code index, and grep finds the rest.`;
 }
 
 export function rtkEnabled(configuration: IConfigurationService): boolean {
