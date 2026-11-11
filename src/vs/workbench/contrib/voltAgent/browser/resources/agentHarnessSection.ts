@@ -306,7 +306,7 @@ export class AgentHarnessSection extends Disposable {
 					{ key: 'volt.browser.allowAgents', title: localize('agentHarness.allowBrowser', "Agents can use the browser") },
 					{ key: 'volt.agent.hooks.enabled', title: localize('agentHarness.hooks', "Run hooks") },
 					{ key: 'volt.agent.hooks.thirdParty', title: localize('agentHarness.hooksThirdParty', "Run other harnesses' hooks") },
-					{ link: true, title: localize('agentHarness.access', "Default access & approvals"), description: localize('agentHarness.accessDesc', "What new chats may run without asking: Full access, Auto, Accept edits or Supervised."), run: openSettings('general') },
+					{ link: true, title: localize('agentHarness.access', "Default access & approvals"), description: localize('agentHarness.accessDesc', "What new chats may run without asking: Supervised (default), Auto-accept edits, Auto or Full access."), run: openSettings('general') },
 				],
 			},
 			{
