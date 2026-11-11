@@ -4,11 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { localize } from '../../../../nls.js';
-import { Extensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { ConfigurationScope, Extensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING } from '../../../services/voltRuntime/common/compaction.js';
 import { HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_DEFAULT_MAX_TOKENS, HANDOFF_DEFAULT_PERCENT, HANDOFF_MAX_TOKENS_SETTING, HANDOFF_MIN_TOKENS } from '../../../services/voltRuntime/common/contextHandoff.js';
-import { DEFAULT_ORCH_LIMITS, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_DEFAULT_BUDGET_USD, ORCH_KEEP_WORKING_SETTING, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCH_ROLE_MODELS_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_DEFAULT_BUDGET_USD, ORCH_KEEP_WORKING_SETTING, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_MAX_TEAM_AGENTS_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCH_ROLE_MODELS_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { ORCH_MACHINE_CAPACITY_SETTING } from '../../../services/voltRuntime/common/orchestration/machineCapacity.js';
+import { ORCHESTRA_COUNCIL_MODERATOR_SETTING, ORCHESTRA_COUNCIL_PARTICIPANTS_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestra.js';
 import { LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 import { LEARN_FROM_RUNS_SETTING } from '../../../services/voltRuntime/common/harness/experience.js';
 import { EVIDENCE_GATE_SETTING, PROOF_REVIEW_SETTING } from '../../../services/voltRuntime/common/harness/evidenceObserver.js';
@@ -65,17 +67,46 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 		},
 		[ORCH_MAX_PARALLEL_SETTING]: {
 			type: 'number',
-			default: DEFAULT_ORCH_LIMITS.runningPerParent,
-			minimum: 1,
+			default: 0,
+			minimum: 0,
 			maximum: ORCH_LIMIT_MAX.runningPerParent,
-			description: localize('voltAgent.multitaskMaxParallel', "How many multitask agents and subagents one chat runs at once. More wait their turn and start as others finish. Each one is its own agent session, so more at once costs more memory and usage."),
+			description: localize('voltAgent.multitaskMaxParallel', "How many multitask agents and subagents one chat runs at once. More wait their turn and start as others finish. Each one is its own agent session, so more at once costs more memory and usage. 0 (the default): what this machine runs comfortably, as Volt measured it (Settings > Orchestration)."),
 		},
 		[ORCH_MAX_PARALLEL_TOTAL_SETTING]: {
 			type: 'number',
-			default: DEFAULT_ORCH_LIMITS.runningTotal,
-			minimum: 1,
+			default: 0,
+			minimum: 0,
 			maximum: ORCH_LIMIT_MAX.runningTotal,
-			description: localize('voltAgent.multitaskMaxParallelTotal', "How many multitask agents and subagents run at once across all chats in this window. Never fewer than one chat's limit."),
+			description: localize('voltAgent.multitaskMaxParallelTotal', "How many multitask agents and subagents run at once across all chats. Never fewer than one chat's limit. 0 (the default): the most this machine can run, as Volt measured it (Settings > Orchestration)."),
+		},
+		[ORCH_MACHINE_CAPACITY_SETTING]: {
+			type: 'object',
+			default: null,
+			// Per machine: a synced laptop's numbers must not size a workstation's swarms.
+			scope: ConfigurationScope.MACHINE,
+			properties: {
+				recommended: { type: 'number', minimum: 1, description: localize('voltAgent.capacity.recommended', "Agents at once that leave room for your own work: the default for one request.") },
+				max: { type: 'number', minimum: 1, description: localize('voltAgent.capacity.max', "The most agents at once before this machine slows down: past it Volt asks first.") },
+			},
+			markdownDescription: localize('voltAgent.machineCapacity', "How many agents this machine can run at once. Volt measures it on first launch from memory and cores; edit `recommended` and `max` to change them, or use **Measure again** in Settings > Orchestration. A request for more agents at once than `recommended` asks you how many to run at a time."),
+		},
+		[ORCH_MAX_TEAM_AGENTS_SETTING]: {
+			type: 'number',
+			default: DEFAULT_ORCH_LIMITS.maxTeamAgents,
+			minimum: 1,
+			maximum: ORCH_LIMIT_MAX.teamAgents,
+			description: localize('voltAgent.maxAgentsPerRequest', "The most agents one request may start as a team or council (spawn 30 agents, half Claude and half Codex). They run as many at a time as the machine allows; the rest wait their turn."),
+		},
+		[ORCHESTRA_COUNCIL_PARTICIPANTS_SETTING]: {
+			type: 'array',
+			items: { type: 'string' },
+			default: [],
+			markdownDescription: localize('voltAgent.councilParticipants', "The models a council asks when the request names none, as the model picker names them (`Claude Opus 5.5`, `codex:gpt-6-sol`). Empty: one model of each connected provider, at most four."),
+		},
+		[ORCHESTRA_COUNCIL_MODERATOR_SETTING]: {
+			type: 'string',
+			default: '',
+			markdownDescription: localize('voltAgent.councilModerator', "The model that writes a council's final decision when the request names none. Empty: the chat's own model."),
 		},
 		[ORCH_MAX_PER_CALL_SETTING]: {
 			type: 'number',
