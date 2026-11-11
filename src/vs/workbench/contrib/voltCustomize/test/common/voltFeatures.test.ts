@@ -69,7 +69,7 @@ suite('Volt features', () => {
 
 	test('M1 catalog parity: the catalog generated from the manifests deep-equals the hand-written one', () => {
 		assert.deepStrictEqual(VOLT_FEATURES_SOURCE, { source: 'manifests' });
-		assert.strictEqual(VOLT_FEATURE_MANIFESTS.length, 30);
+		assert.strictEqual(VOLT_FEATURE_MANIFESTS.length, 33);
 		assert.deepStrictEqual(VOLT_FEATURES, VOLT_FEATURES_HAND_WRITTEN);
 	});
 

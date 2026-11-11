@@ -342,6 +342,18 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 					name: 'find_files',
 					class: 'reads',
 				},
+				{
+					name: 'code_nav',
+					class: 'reads',
+				},
+				{
+					name: 'diagnostics',
+					class: 'reads',
+				},
+				{
+					name: 'code_action',
+					class: 'writes',
+				},
 			],
 			voltSettingsPages: [
 				{
@@ -360,13 +372,18 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						class: 'low',
 						reason: 'Indexes and searches the chat\'s project.',
 					},
+					{
+						id: 'files.write',
+						class: 'medium',
+						reason: 'code_action applies language-server refactors (rename, format, fixes) to the project.',
+					},
 				],
 			},
 			voltModule: {
 				feature: 'codeIntelligence',
 				entry: 'voltCodeIntelligence',
 				label: 'Code intelligence',
-				description: 'Volt\'s code index: instant grep, symbol and file search for agents.',
+				description: 'Volt\'s code index (instant grep, symbol and file search) and the editor\'s language servers (navigation, diagnostics, refactors) for agents.',
 				category: 'workspace',
 				icon: 'symbol-class',
 				order: 40,
@@ -512,6 +529,101 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				order: 10,
 				commands: ['volt.customize.open', 'volt.customize.openPlayground', 'volt.customize.selectLayout', 'volt.customize.selectLook'],
 				settings: ['volt.customize.', 'volt.look.'],
+			},
+		},
+	},
+	{
+		publisher: 'volt',
+		name: 'dev-environment',
+		engines: {
+			volt: '^1.0.0',
+		},
+		contributes: {
+			voltTools: [
+				{
+					name: 'tests',
+					class: 'sandboxed',
+				},
+				{
+					name: 'debug',
+					class: 'escapes',
+				},
+				{
+					name: 'tasks',
+					class: 'escapes',
+				},
+				{
+					name: 'ide',
+					class: 'escapes',
+				},
+			],
+			voltCapabilities: {
+				required: [
+					{
+						id: 'tools.register',
+						class: 'low',
+					},
+					{
+						id: 'files.read:workspace',
+						class: 'low',
+						reason: 'Test results, launch configurations and task definitions in the chat\'s project.',
+					},
+					{
+						id: 'files.write',
+						class: 'medium',
+						reason: 'The ide gateway\'s notebook capability edits and inserts cells.',
+					},
+					{
+						id: 'terminals.run',
+						class: 'medium',
+						reason: 'Tasks run in terminals.',
+					},
+					{
+						id: 'git.read',
+						class: 'medium',
+						reason: 'The ide gateway\'s git capability reads branches, history, blame and conflicts.',
+					},
+					{
+						id: 'git.write',
+						class: 'high',
+						reason: 'The ide gateway\'s git capability stages, commits, switches branches and stashes.',
+					},
+					{
+						id: 'hosting.read',
+						class: 'medium',
+						reason: 'The ide gateway\'s ci capability reads GitHub Actions runs and their logs through gh.',
+					},
+					{
+						id: 'net.connect',
+						class: 'low',
+						reason: 'The ide gateway\'s http capability sends requests through the HTTP client\'s service.',
+					},
+					{
+						id: 'net.loopback.connect:*',
+						class: 'high',
+						reason: 'The ide gateway\'s http capability reaches the user\'s local servers.',
+					},
+					{
+						id: 'commands.execute:*',
+						class: 'critical',
+						reason: 'The ide gateway\'s extensions capability runs a command the user approves.',
+					},
+					{
+						id: 'spawn.unsandboxed',
+						class: 'critical',
+						reason: 'Debug sessions, tasks, notebook kernels and the docker, kubectl and gh programs run on the host; a sandboxed chat\'s run in its sandbox or are refused.',
+					},
+				],
+			},
+			voltModule: {
+				feature: 'devEnvironment',
+				label: 'Tests, debugging and tasks',
+				description: 'Agents run tests, debug programs, run tasks and use the editor\'s other services through the ide gateway.',
+				category: 'workspace',
+				icon: 'debug-alt',
+				order: 45,
+				commands: ['volt.agentIde.openActivityTab'],
+				settings: ['volt.agent.ide.'],
 			},
 		},
 	},
@@ -678,6 +790,54 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				commands: ['volt.gitGraph.open', 'volt.gitGraph.openInTools', 'volt.gitGraph.fileHistory', 'volt.gitGraph.lineHistory'],
 				settings: ['volt.gitGraph.'],
 				entry: 'voltGitGraph',
+			},
+		},
+	},
+	{
+		publisher: 'volt',
+		name: 'http-client',
+		engines: {
+			volt: '^1.0.0',
+		},
+		contributes: {
+			voltSurfaces: [
+				{
+					id: 'http',
+					label: 'HTTP Client',
+				},
+			],
+			voltCapabilities: {
+				required: [
+					{
+						id: 'net.connect',
+						class: 'low',
+						reason: 'The requests the user sends.',
+					},
+					{
+						id: 'net.loopback.connect:*',
+						class: 'high',
+						reason: 'Requests to the user\'s local servers.',
+					},
+					{
+						id: 'files.read:workspace',
+						class: 'low',
+						reason: 'The project\'s .http files and environments.',
+					},
+					{
+						id: 'files.write',
+						class: 'medium',
+						reason: 'Saves a request the user keeps as an .http file.',
+					},
+				],
+			},
+			voltModule: {
+				feature: 'httpClient',
+				label: 'HTTP client',
+				description: 'Send and save requests in .http files and read the responses, from the right panel\'s + menu.',
+				category: 'tools',
+				icon: 'send',
+				order: 25,
+				commands: ['volt.http.openInTools', 'volt.http.newRequest', 'volt.http.selectEnvironment', 'volt.http.refresh'],
 			},
 		},
 	},
@@ -850,6 +1010,95 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				category: 'productivity',
 				icon: 'database',
 				order: 30,
+			},
+		},
+	},
+	{
+		publisher: 'volt',
+		name: 'orchestra',
+		engines: {
+			volt: '^1.0.0',
+		},
+		contributes: {
+			voltTools: [
+				{
+					name: 'orchestra_status',
+					class: 'safe',
+				},
+				{
+					name: 'spawn_team',
+					class: 'spawns',
+				},
+				{
+					name: 'team_send',
+					class: 'delegates',
+				},
+				{
+					name: 'team_board',
+					class: 'reads-other',
+				},
+				{
+					name: 'council',
+					class: 'spawns',
+				},
+				{
+					name: 'machine_run',
+					class: 'escapes',
+				},
+			],
+			voltSettingsPages: [
+				{
+					id: 'orchestration',
+					label: 'Orchestration',
+				},
+			],
+			voltCapabilities: {
+				required: [
+					{
+						id: 'tools.register',
+						class: 'low',
+					},
+					{
+						id: 'agents.create',
+						class: 'high',
+						reason: 'Team members and council seats are chats.',
+					},
+					{
+						id: 'agents.send',
+						class: 'medium',
+						reason: 'team_send and the team board reach teammates.',
+					},
+					{
+						id: 'agents.read:other',
+						class: 'high',
+						reason: 'The team board and orchestra_status show teammates\' posts.',
+					},
+					{
+						id: 'net.connect',
+						class: 'low',
+						reason: 'machine_run sends work to the user\'s other Volt servers.',
+					},
+					{
+						id: 'git.write',
+						class: 'high',
+						reason: 'machine_run apply fetches a run\'s branch into a new worktree.',
+					},
+					{
+						id: 'spawn.unsandboxed',
+						class: 'critical',
+						reason: 'Members in new worktrees run the worktree\'s setup on the host.',
+					},
+				],
+			},
+			voltModule: {
+				feature: 'orchestra',
+				label: 'Teams and councils',
+				description: 'Agent teams with a shared board, councils that weigh a question across models, and runs on your other machines.',
+				category: 'agents',
+				icon: 'organization',
+				order: 35,
+				commands: ['volt.orchestra.measureCapacity'],
+				settings: ['volt.orchestra.'],
 			},
 		},
 	},

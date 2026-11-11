@@ -9,8 +9,11 @@ import { CODE_INTELLIGENCE_TOOLS } from '../../../services/voltRuntime/common/co
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from '../../../services/voltRuntime/common/deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from '../../../services/voltRuntime/common/desktopTools.js';
 import { ASK_QUESTION_TOOL_NAME, AUTOMATION_TOOL_NAMES, AWAIT_ANSWERS_TOOL_NAME, BROWSER_DESIGN_TOOL_NAMES, BROWSER_TOOL_NAMES, COMMIT_PLAN_TOOL_NAMES, IMAGE_INSPECT_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, THREAD_TOOL_NAMES, VISUAL_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
+import { IDE_TOOL_NAMES } from '../../../services/voltRuntime/common/ide/ideTools.js';
+import { JOB_WATCH_TOOL_NAMES } from '../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { MEMORY_TOOL_NAMES } from '../../../services/voltRuntime/common/memory/voltMemory.js';
 import { AGENT_TASK_TOOL_NAMES } from '../../../services/voltRuntime/common/orchestration/agentTasks.js';
+import { ORCHESTRA_TOOL_NAMES } from '../../../services/voltRuntime/common/orchestration/orchestra.js';
 import { PLAYGROUND_TOOL_NAMES } from '../../../services/voltRuntime/common/playgroundTools.js';
 import { TERMINAL_TOOL_NAMES } from '../../../services/voltRuntime/common/terminalTools.js';
 import { IVoltPluginManifest, validateVoltContributes, VoltModuleCategory } from '../../../services/voltPlugins/common/voltContributions.js';
@@ -139,8 +142,8 @@ const CORE = {
 	},
 	terminals: {
 		id: 'terminals', label: 'Terminals and dev servers', category: 'workspace', icon: 'terminal',
-		description: 'Long-running processes the user can watch, Docker, and opening apps.',
-		tools: [...TERMINAL_TOOL_NAMES, 'docker_ensure', 'app_open'],
+		description: 'Long-running processes the user can watch, background jobs an agent waits on, Docker, and opening apps.',
+		tools: [...TERMINAL_TOOL_NAMES, ...JOB_WATCH_TOOL_NAMES, 'docker_ensure', 'app_open'],
 		settings: ['terminal.integrated.'],
 	},
 	workspaceContext: {
@@ -178,6 +181,14 @@ export const VOLT_FEATURES_HAND_WRITTEN: readonly IVoltFeature[] = [
 	CORE.threads,
 	CORE.queue,
 	CORE.subagents,
+	{
+		id: 'orchestra', label: 'Teams and councils', category: 'agents', icon: 'organization', extensionId: 'volt.orchestra',
+		description: 'Agent teams with a shared board, councils that weigh a question across models, and runs on your other machines.',
+		tools: [...ORCHESTRA_TOOL_NAMES],
+		commands: ['volt.orchestra.measureCapacity'],
+		settings: ['volt.orchestra.'],
+		sections: ['orchestration'],
+	},
 	CORE.runGroups,
 	CORE.questions,
 	// --- Workspace (core) ---
@@ -186,10 +197,17 @@ export const VOLT_FEATURES_HAND_WRITTEN: readonly IVoltFeature[] = [
 	CORE.workspaceContext,
 	{
 		id: 'codeIntelligence', label: 'Code intelligence', category: 'workspace', icon: 'symbol-class', extensionId: 'volt.code-intelligence',
-		description: 'Volt\'s code index: instant grep, symbol and file search for agents.',
+		description: 'Volt\'s code index (instant grep, symbol and file search) and the editor\'s language servers (navigation, diagnostics, refactors) for agents.',
 		tools: CODE_INTELLIGENCE_TOOLS.map(tool => tool.name),
 		settings: ['volt.codeIntelligence.'],
 		sections: ['codeIntelligence'],
+	},
+	{
+		id: 'devEnvironment', label: 'Tests, debugging and tasks', category: 'workspace', icon: 'debug-alt', extensionId: 'volt.dev-environment',
+		description: 'Agents run tests, debug programs, run tasks and use the editor\'s other services through the ide gateway.',
+		tools: [...IDE_TOOL_NAMES],
+		commands: ['volt.agentIde.openActivityTab'],
+		settings: ['volt.agent.ide.'],
 	},
 	{
 		id: 'gitGraph', label: 'Git Graph', category: 'workspace', icon: 'git-commit', extensionId: 'volt.git-graph',
@@ -233,6 +251,12 @@ export const VOLT_FEATURES_HAND_WRITTEN: readonly IVoltFeature[] = [
 		id: 'playgrounds', label: 'Playgrounds', category: 'tools', icon: 'beaker', extensionId: 'volt.playgrounds',
 		description: 'Throwaway pages agents build and check outside the project.',
 		tools: PLAYGROUND_TOOL_NAMES,
+	},
+	{
+		id: 'httpClient', label: 'HTTP client', category: 'tools', icon: 'send', extensionId: 'volt.http-client',
+		description: 'Send and save requests in .http files and read the responses, from the right panel\'s + menu.',
+		commands: ['volt.http.openInTools', 'volt.http.newRequest', 'volt.http.selectEnvironment', 'volt.http.refresh'],
+		surfaces: ['http'],
 	},
 	{
 		id: 'visuals', label: 'Charts, HTML and canvas', category: 'tools', icon: 'graph', extensionId: 'volt.visuals',

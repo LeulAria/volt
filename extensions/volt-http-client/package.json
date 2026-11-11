@@ -1,0 +1,71 @@
+{
+	"name": "http-client",
+	"displayName": "Volt: HTTP Client",
+	"description": "Send and save requests in .http files and read the responses, from the right panel's + menu. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*",
+		"volt": "^1.0.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {
+		"voltModule": {
+			"feature": "httpClient",
+			"label": "HTTP client",
+			"description": "Send and save requests in .http files and read the responses, from the right panel's + menu.",
+			"category": "tools",
+			"icon": "send",
+			"order": 25,
+			"commands": [
+				"volt.http.openInTools",
+				"volt.http.newRequest",
+				"volt.http.selectEnvironment",
+				"volt.http.refresh"
+			]
+		},
+		"voltSurfaces": [
+			{
+				"id": "http",
+				"label": "HTTP Client"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "net.connect",
+					"class": "low",
+					"reason": "The requests the user sends."
+				},
+				{
+					"id": "net.loopback.connect:*",
+					"class": "high",
+					"reason": "Requests to the user's local servers."
+				},
+				{
+					"id": "files.read:workspace",
+					"class": "low",
+					"reason": "The project's .http files and environments."
+				},
+				{
+					"id": "files.write",
+					"class": "medium",
+					"reason": "Saves a request the user keeps as an .http file."
+				}
+			]
+		}
+	}
+}

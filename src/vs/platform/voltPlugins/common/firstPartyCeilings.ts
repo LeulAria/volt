@@ -34,18 +34,32 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
 	],
 	'volt.browser': [{ id: 'tools.register' }, { id: 'browser.drive' }, { id: 'browser.read' }, { id: 'files.read:workspace' }, { id: 'files.write' }],
 	'volt.claude-accounts': [{ id: 'secrets.manage' }],
-	'volt.code-intelligence': [{ id: 'tools.register' }, { id: 'files.read:workspace' }],
+	// code_action applies language-server edits (rename, format, fixes) to the project.
+	'volt.code-intelligence': [{ id: 'tools.register' }, { id: 'files.read:workspace' }, { id: 'files.write' }],
 	'volt.commit-review': [{ id: 'tools.register' }, { id: 'git.read' }, { id: 'git.write' }, { id: 'spawn.unsandboxed' }],
 	'volt.computer-use': [{ id: 'tools.register' }, { id: 'desktop.control' }, { id: 'screen.capture' }, { id: 'spawn.unsandboxed' }],
 	'volt.customize': [{ id: 'files.write', targets: ['~/.volt/customize/*'] }],
+	// Tests run in a sandboxed chat's sandbox; debug sessions, tasks and notebook kernels run on the host.
+	// The ide gateway's capabilities: git (read and write), ci (gh), http, notebooks, extensions' commands.
+	'volt.dev-environment': [
+		{ id: 'tools.register' }, { id: 'files.read:workspace' }, { id: 'files.write' }, { id: 'terminals.run' },
+		{ id: 'git.read' }, { id: 'git.write' }, { id: 'hosting.read' }, { id: 'net.connect' }, { id: 'net.loopback.connect:*' },
+		{ id: 'commands.execute:*' }, { id: 'spawn.unsandboxed' },
+	],
 	'volt.devices': [{ id: 'tools.register' }, { id: 'devices.drive' }, { id: 'screen.capture' }, { id: 'spawn.unsandboxed' }],
 	'volt.git-graph': [{ id: 'git.read' }, { id: 'git.write' }, { id: 'git.push' }, { id: 'agents.send' }],
+	'volt.http-client': [{ id: 'net.connect' }, { id: 'net.loopback.connect:*' }, { id: 'files.read:workspace' }, { id: 'files.write' }],
 	// The first T2 plugin (P1): project notes and skills through the files broker; its user notes are its own storage.
 	'volt.memory': [
 		{ id: 'tools.register' }, { id: 'agents.context' },
 		{ id: 'files.read:workspace', targets: ['*/.volt/memory', '*/.volt/memory/*'] },
 		// `~/.volt/skills/*` names the home folder's skills as a folder the broker may reach (`*/...` names none).
 		{ id: 'files.write', targets: ['*/.volt/memory/*', '*/.volt/skills/*', '~/.volt/skills/*'] },
+	],
+	// Members and seats are chats; machine_run reaches the user's other servers and applies a run's branch here.
+	'volt.orchestra': [
+		{ id: 'tools.register' }, { id: 'agents.create' }, { id: 'agents.send' }, { id: 'agents.read:other' },
+		{ id: 'net.connect' }, { id: 'git.write' }, { id: 'spawn.unsandboxed' },
 	],
 	'volt.playgrounds': [{ id: 'tools.register' }, { id: 'net.listen:*' }],
 	'volt.provider-antigravity': PROVIDER('antigravity'),
@@ -88,14 +102,15 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
  * Extension hosts (`vscode.volt`) are always enforced; this list is only for trusted-core code.
  *
  * Still in report mode (each has a would-be denial in M5-MODE-1 today): agent-resources,
- * automations, claude-accounts, commit-review, computer-use, devices, memory, pull-requests,
- * visuals.
+ * automations, claude-accounts, commit-review, computer-use, dev-environment, devices, memory,
+ * orchestra, pull-requests, visuals.
  */
 export const FIRST_PARTY_ENFORCED: ReadonlySet<string> = new Set([
 	'volt.browser',
 	'volt.code-intelligence',
 	'volt.customize',
 	'volt.git-graph',
+	'volt.http-client',
 	'volt.playgrounds',
 	'volt.remote-devices',
 	'volt.scratch-board',
