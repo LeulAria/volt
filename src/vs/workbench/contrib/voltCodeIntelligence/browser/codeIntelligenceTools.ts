@@ -22,9 +22,9 @@ import { IToolContext, IVoltTool } from '../../../services/voltRuntime/common/to
 import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
 import { VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
 import { createCodeIndexNav } from '../../../services/voltRuntime/browser/tools/codeIndexNav.js';
-import { confineCodeIntel, ICodeIntelRules } from '../../../services/voltRuntime/browser/tools/codeIntelConfinement.js';
 import { createCodeTools, ITextFileChange } from '../../../services/voltRuntime/browser/tools/codeTools.js';
 import { IFileToolHost, writeComputedEdit } from '../../../services/voltRuntime/browser/tools/fileTools.js';
+import { confineCodeIntel, ICodeIntelRules } from './codeIntelConfinement.js';
 import { createSearchTools } from '../../../services/voltRuntime/browser/tools/searchTools.js';
 
 /** Indexes the open project's folders in the background, so the first agent search is already fast. */

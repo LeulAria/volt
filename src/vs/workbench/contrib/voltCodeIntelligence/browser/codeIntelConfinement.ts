@@ -3,9 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Schemas } from '../../../../../base/common/network.js';
-import { URI } from '../../../../../base/common/uri.js';
-import { ICallEdge, ICodeIntelHost, ICodeLocation, ICodeNavIndex, ICodeRange, ICodeSymbolRef, ITextFileChange } from './codeTools.js';
+import { Schemas } from '../../../../base/common/network.js';
+import { URI } from '../../../../base/common/uri.js';
+import { ICallEdge, ICodeIntelHost, ICodeLocation, ICodeNavIndex, ICodeRange, ICodeSymbolRef, ITextFileChange } from '../../../services/voltRuntime/browser/tools/codeTools.js';
 
 /** A sandboxed chat's path rules: the gate's, on absolute paths (through symlinks). */
 export interface ICodeIntelRules {

@@ -4,13 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import { URI } from '../../../../../../base/common/uri.js';
-import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { TestConfigurationService } from '../../../../../../platform/configuration/test/common/testConfigurationService.js';
-import { confineCodeIntel, HOVER_WITHHELD, ICodeIntelRules } from '../../../browser/tools/codeIntelConfinement.js';
-import { ICodeIntelHost, ICodeLocation, ICodeNavIndex, ITextFileChange, runCodeAction, runCodeNav, runDiagnostics } from '../../../browser/tools/codeTools.js';
-import { inVoltWorktree, LSP_ENABLED_SETTING, LSP_WORKTREES_SETTING, lspOffMessage, lspPolicy } from '../../../common/codeIntelligence.js';
-import { IToolContext } from '../../../common/tools/tool.js';
+import { URI } from '../../../../../base/common/uri.js';
+import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
+import { ICodeIntelHost, ICodeLocation, ICodeNavIndex, ITextFileChange, runCodeAction, runCodeNav, runDiagnostics } from '../../../../services/voltRuntime/browser/tools/codeTools.js';
+import { inVoltWorktree, LSP_ENABLED_SETTING, LSP_WORKTREES_SETTING, lspOffMessage, lspPolicy } from '../../../../services/voltRuntime/common/codeIntelligence.js';
+import { IToolContext } from '../../../../services/voltRuntime/common/tools/tool.js';
+import { confineCodeIntel, HOVER_WITHHELD, ICodeIntelRules } from '../../browser/codeIntelConfinement.js';
 
 const ROOT = URI.file('/ws');
 const at = (path: string, line: number, preview?: string): ICodeLocation => ({ uri: URI.file(path), line, column: 1, ...(preview ? { preview } : {}) });
