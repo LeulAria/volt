@@ -14,6 +14,7 @@ import { IVoltTool } from '../../common/tools/tool.js';
 import { createBrowserTools } from './browserTool.js';
 import { createCodeIndexNav } from './codeIndexNav.js';
 import { createCodeTools, ICodeIntelHost } from './codeTools.js';
+import { withEditDiagnostics } from './editDiagnostics.js';
 import { createFileTools, IFileToolHost, IToolDocuments, writeComputedEdit } from './fileTools.js';
 import { createGitTools } from './gitTools.js';
 import { createIdeTools } from './ideTools.js';
@@ -61,8 +62,10 @@ export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] 
 		documents: services.documents,
 		rulesFor: services.rulesFor,
 	};
+	const codeIntel = services.codeIntel;
 	return [
-		...createFileTools(files),
+		// With language servers, writes answer with the file's errors (no extra diagnostics turn).
+		...createFileTools(files).map(tool => codeIntel && (tool.name === 'edit_file' || tool.name === 'write_file') ? withEditDiagnostics(tool, codeIntel, services.root) : tool),
 		...createSearchTools(services.search, services.root),
 		...(services.codeIntel ? createCodeTools(
 			services.codeIntel,

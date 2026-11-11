@@ -3,10 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { buildTaskNotification, describeSpend, formatTokens, formatUsd, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay, withUpstreamReports } from './agentTasks.js';
+import { buildTaskNotification, describeSpend, formatTokens, formatUsd, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay, verifyFailedText, withUpstreamReports, withVerification } from './agentTasks.js';
 import { isRetryableFailure, isTransientFailure } from '../jobs/retryPolicy.js';
 import { LIMIT_CANARY_WAIT_MS, LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitAutoResumes, limitDueAt, limitResumeDisplay } from './limitRecovery.js';
-import { DEFAULT_ORCH_LIMITS, ORCH_LIMIT_MAX, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchRescue, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchTaskUsage, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, ORCH_LIMIT_MAX, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchRescue, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchTaskUsage, IOrchThread, IOrchTurn, IOrchVerification, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
 import { MAX_STALE_PLAN_ROUNDS, MAX_STEP_CONTINUATIONS, planContinuationCount, planContinueText, planTurnId, stepLimitContinueText, RESCUE_STAGGER_MS, rescueDueAt, rescueLabel, rescueResumeText, rescueTurnId, rescueWaits } from './rescue.js';
 import { normalizeVoltMode } from '../modes.js';
@@ -273,6 +273,8 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			events.push({ type: 'queue.added', threadId: task.childId, item });
 			return { events, taskId: task.id };
 		}
+		case 'task.verified':
+			return decideVerified(state, command, limits);
 		case 'task.ack': {
 			const ids = command.taskIds.filter(id => {
 				const task = state.tasks[id];
@@ -1059,7 +1061,10 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 	const task = thread.taskId ? state.tasks[thread.taskId] : undefined;
 	if (task && (task.state === 'running' || task.state === 'waiting')) {
 		const continues = outcome === 'done' && !!nextQueued(thread) && !thread.pause;
-		if (!continues) {
+		// It says it is done and has checks: Volt runs them before the report goes up (the task keeps running).
+		if (!continues && outcome === 'done' && !superseded && task.source === 'volt' && task.verify?.length && !thread.pause) {
+			events.push({ type: 'task.verifying', taskId: task.id, round: (task.verification?.round ?? 0) + 1, at, ...(reply !== undefined ? { result: reply } : {}) });
+		} else if (!continues) {
 			events.push({
 				type: 'task.settled',
 				taskId: task.id,
@@ -1087,6 +1092,43 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 	}
 	return { events };
 }
+
+/**
+ * Volt's run of a subagent's checks came back. Passed or skipped: the report goes up with the
+ * result. Failed: the subagent gets the output and fixes it in the same chat (the task keeps its
+ * slot), until `maxVerifyRounds`; then the report goes up saying the checks still fail, and the
+ * parent decides. A result for an earlier round, or for a task stopped meanwhile, changes nothing.
+ */
+function decideVerified(state: IOrchState, command: Extract<OrchCommand, { type: 'task.verified' }>, limits: IOrchLimits): IOrchDecision {
+	const task = state.tasks[command.taskId];
+	if (!task || task.verification?.state !== 'running' || task.verification.round !== command.round || (task.state !== 'running' && task.state !== 'waiting')) {
+		return { events: [] };
+	}
+	const verification: IOrchVerification = { round: command.round, state: command.outcome, summary: command.summary.slice(0, VERIFY_SUMMARY_CHARS), at: command.at };
+	const events: OrchEvent[] = [{ type: 'task.verification', taskId: task.id, verification }];
+	const child = task.childId ? state.threads[task.childId] : undefined;
+	if (command.outcome === 'failed' && command.round < limits.maxVerifyRounds && child && !child.pause && !child.active) {
+		events.push(
+			{ type: 'task.updated', taskId: task.id, activity: 'Fixing what Volt\'s checks found' },
+			{
+				type: 'queue.added',
+				threadId: child.id,
+				item: {
+					id: `${task.id}-v${command.round}`,
+					prompt: { text: verifyFailedText(verification.summary ?? '', command.round, limits.maxVerifyRounds), display: { text: `Volt's checks failed (round ${command.round} of ${limits.maxVerifyRounds}): fix and report again`, notification: true } },
+					at: command.at,
+					kind: 'followup',
+				},
+			},
+		);
+		return { events };
+	}
+	events.push({ type: 'task.settled', taskId: task.id, state: 'completed', at: command.at, result: withVerification(task.result, verification) });
+	return { events };
+}
+
+/** What a check run may add to a report: the failing output's tail, not a full log. */
+const VERIFY_SUMMARY_CHARS = 4_000;
 
 /**
  * A subagent's round failed on its model (a provider error, a usage limit, a model that is not
@@ -1208,6 +1250,7 @@ function decideSpawn(state: IOrchState, command: Extract<OrchCommand, { type: 't
 		...(spawn.blind?.length ? { blind: [...spawn.blind] } : {}),
 		...(spawn.team ? { team: spawn.team } : {}),
 		...(spawn.quiet ? { quiet: true } : {}),
+		...(spawn.verify?.length ? { verify: [...spawn.verify] } : {}),
 	};
 	const child = newThread(spawn.childId, command.at, parent, {
 		title: spawn.title,
@@ -1357,6 +1400,18 @@ function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume,
 			push([{ type: 'move.finished', threadId: thread.id, result: { id: current.moving.id, at, ok: false, label: current.moving.label, by: current.moving.by, error: 'Volt restarted while the chat was moving. Check both checkouts with git status before moving it again.' } }]);
 		}
 		const task = current.taskId ? next.tasks[current.taskId] : undefined;
+		if (task && !current.active && task.verification?.state === 'running' && (task.state === 'running' || task.state === 'waiting')) {
+			// Volt stopped while it ran the task's checks: they run again (the report waits in `result`),
+			// unless nothing may continue on its own; then the report goes up saying they did not finish.
+			if (resume !== 'off') {
+				push([{ type: 'task.verifying', taskId: task.id, round: task.verification.round, at }]);
+				continued.add(task.id);
+			} else {
+				const verification = { round: task.verification.round, state: 'skipped' as const, summary: 'Volt restarted before its checks finished, so they did not run. Run them before relying on the report.', at };
+				push([{ type: 'task.verification', taskId: task.id, verification }, { type: 'task.settled', taskId: task.id, state: 'completed', at, result: withVerification(task.result, verification) }]);
+			}
+			continue;
+		}
 		const keepsGoing = continuesAfterRestart(current, task, resume, limits);
 		if (current.active) {
 			// A resume of a usage-limit park parks again (decideRunSettled) and goes at the next tick.
@@ -1818,7 +1873,7 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 		if (task && (task.state === 'queued' || isTerminalTaskState(task.state))) {
 			continue;
 		}
-		if (task && task.source === 'volt' && !current.queue.length && !hasPendingReports(next, current.id)) {
+		if (task && task.source === 'volt' && !current.queue.length && !hasPendingReports(next, current.id) && task.verification?.state !== 'running') {
 			// Its brief or follow-ups were removed before they ran: nothing is left to do.
 			push({ type: 'task.settled', taskId: task.id, state: 'cancelled', at, error: 'Its prompt was removed before it ran.' });
 			continue;
@@ -1951,7 +2006,12 @@ export function effectsFor(events: readonly OrchEvent[], state: IOrchState): Orc
 			case 'task.settled':
 			case 'task.waiting':
 			case 'task.restarted':
+			case 'task.verification':
 				changed.add(event.taskId);
+				break;
+			case 'task.verifying':
+				changed.add(event.taskId);
+				effects.push({ kind: 'verifyTask', taskId: event.taskId, round: event.round });
 				break;
 			case 'move.started':
 				if (state.threads[event.threadId]?.moving?.id === event.move.id) {

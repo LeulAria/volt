@@ -389,6 +389,24 @@ export interface IOrchTask {
 	 * answers and reviews; only the verdict reaches the chat). task_status still shows it.
 	 */
 	readonly quiet?: boolean;
+	/**
+	 * Commands that prove the work (a test file, a type-check). When the subagent reports done, Volt
+	 * runs them in its checkout, in its sandbox, before the report goes up: a failure sends the
+	 * subagent back with the output (`maxVerifyRounds`), and the result is part of the report.
+	 * Harness-agnostic: it holds Claude Code, Codex and Cursor subagents to the same checks.
+	 */
+	readonly verify?: readonly string[];
+	readonly verification?: IOrchVerification;
+}
+
+/** Volt's own run of a task's `verify` commands, for its latest report. */
+export interface IOrchVerification {
+	/** 1 for the first report, 2 after one fix, ... */
+	readonly round: number;
+	readonly state: 'running' | 'passed' | 'failed' | 'skipped';
+	/** One line per command (pass/fail, time) and the tail of what failed. */
+	readonly summary?: string;
+	readonly at: number;
 }
 
 export interface IOrchConflict {
@@ -459,6 +477,8 @@ export interface IOrchTaskSpawn {
 	readonly team?: string;
 	/** Its report reaches only the tasks that wait on it (`IOrchTask.quiet`). */
 	readonly quiet?: boolean;
+	/** Commands Volt runs before the report goes up (`IOrchTask.verify`). */
+	readonly verify?: readonly string[];
 	/** Id for the new task and its child chat, picked by the caller so a retry can be recognized. */
 	readonly taskId: string;
 	readonly childId: string;
@@ -514,6 +534,8 @@ export type OrchCommandBody =
 	| { readonly type: 'task.message'; readonly taskId: string; readonly turnId: string; readonly prompt: IOrchPrompt }
 	/** The parent's agent read these reports itself (task_status, wait_tasks): no notification turn. */
 	| { readonly type: 'task.ack'; readonly taskIds: readonly string[] }
+	/** Volt ran a task's `verify` commands for its report of `round` (`skipped`: they could not run). */
+	| { readonly type: 'task.verified'; readonly taskId: string; readonly round: number; readonly outcome: 'passed' | 'failed' | 'skipped'; readonly summary: string }
 	| { readonly type: 'task.progress'; readonly taskId: string; readonly activity?: string; readonly steps?: number; readonly files?: readonly string[] }
 	/** What a Volt task spent so far (totals): it adds to its root's spend, and a budget it passes stops the work. */
 	| { readonly type: 'task.usage'; readonly taskId: string; readonly usage: IOrchTaskUsage }
@@ -588,6 +610,11 @@ export const ORCH_BUDGET_USD_SETTING = 'volt.agent.multitask.budgetUsd';
 export const ORCH_BUDGET_TOKENS_SETTING = 'volt.agent.multitask.budgetTokens';
 /** The model `model: "auto"` picks for each task role (role -> model value). */
 export const ORCH_ROLE_MODELS_SETTING = 'volt.agent.multitask.roleModels';
+/**
+ * How subagents are sandboxed. `inherit`: never less than the chat that started them. `confine`:
+ * that, and at least their checkout (research and review read-only) even when the parent runs free.
+ */
+export const ORCH_SUBAGENT_SANDBOX_SETTING = 'volt.agent.multitask.sandbox';
 /** Team members one request may start (`maxTeamAgents`). */
 export const ORCH_MAX_TEAM_AGENTS_SETTING = 'volt.orchestra.maxAgentsPerRequest';
 
@@ -633,6 +660,12 @@ export type OrchEvent =
 	/** Volt restarted while the task ran and it continues in a resume turn. */
 	| { readonly type: 'task.restarted'; readonly taskId: string; readonly at: number }
 	| { readonly type: 'task.delivery'; readonly taskIds: readonly string[]; readonly delivery: AgentTaskDelivery }
+	/**
+	 * The subagent reported done and Volt runs its `verify` commands: the task stays running (it
+	 * keeps its slot) and its report waits in `result` until they pass, fail for good, or are skipped.
+	 */
+	| { readonly type: 'task.verifying'; readonly taskId: string; readonly round: number; readonly at: number; readonly result?: string }
+	| { readonly type: 'task.verification'; readonly taskId: string; readonly verification: IOrchVerification }
 	/** Old finished tasks leave the state (their chats stay in history). */
 	| { readonly type: 'task.pruned'; readonly taskIds: readonly string[] }
 	| { readonly type: 'handoff.requested'; readonly threadId: string; readonly handoff: IOrchHandoff }
@@ -679,7 +712,9 @@ export type OrchEffect =
 	/** A subagent asked for a worktree; the service creates it before its first turn starts. */
 	| { readonly kind: 'prepareWorktree'; readonly taskId: string }
 	/** Move a chat's checkout (see `IOrchWorkspaceMover`); ends with `move.finished`. */
-	| { readonly kind: 'moveWorkspace'; readonly threadId: string; readonly move: IOrchMove };
+	| { readonly kind: 'moveWorkspace'; readonly threadId: string; readonly move: IOrchMove }
+	/** Run a task's `verify` commands in its checkout; ends with `task.verified` for `round`. */
+	| { readonly kind: 'verifyTask'; readonly taskId: string; readonly round: number };
 
 //#endregion
 
@@ -729,6 +764,8 @@ export interface IOrchLimits {
 	readonly budgetUsd: number;
 	/** The same in fresh tokens (input, output, cache writes; 0: no limit), for models without a price. */
 	readonly budgetTokens: number;
+	/** Runs of a task's `verify` commands per report: past the last, a failing report goes up as it is. */
+	readonly maxVerifyRounds: number;
 }
 
 export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
@@ -747,6 +784,7 @@ export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
 	supervise: false,
 	budgetUsd: 0,
 	budgetTokens: 0,
+	maxVerifyRounds: 3,
 };
 
 /** The subagent budget per request the setting starts at (USD). */

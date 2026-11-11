@@ -93,6 +93,7 @@ export class OrchSim {
 			...(extra.team ? { team: extra.team } : {}),
 			...(extra.blind ? { blind: extra.blind } : {}),
 			...(extra.quiet ? { quiet: true } : {}),
+			...(extra.verify ? { verify: extra.verify } : {}),
 		};
 		return this.run({ type: 'task.spawn', spawn });
 	}

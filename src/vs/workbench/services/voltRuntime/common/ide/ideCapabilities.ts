@@ -107,10 +107,21 @@ export const IDE_CAPABILITIES: readonly IIdeCapabilitySpec[] = [
 		],
 	},
 	{
-		id: 'profile', summary: 'CPU profiles and benchmarks', ops: [
-			{ name: 'cpu', help: 'command (a node script/command): run it with the V8 CPU profiler and return the hottest functions with file:line, self and total time. Opens the profile.' },
-			{ name: 'bench', help: 'command, runs? (10), warmup? (1): time a command repeatedly (hyperfine when installed): mean, min, max, stddev.' },
-			{ name: 'summary', readOnly: true, help: 'path: summarize an existing .cpuprofile.' },
+		id: 'profile', summary: 'profile CPU, memory and usage in the Profiler tab with the user; show any data as flame graph, lines or heat map', ops: [
+			{ name: 'cpu', help: 'command, timeout_ms?, interval_us?: run a Node command under the V8 CPU profiler. Returns where time goes by source, the hottest functions (self and total) with file:line, the hottest stacks and notes; opens the profile in the Profiler beside the chat (flame chart, flame graph, heat map). Returns a profile id (p1).' },
+			{ name: 'heap', help: 'command, timeout_ms?: the same with the V8 sampling heap profiler: bytes allocated (and still live) by call path.' },
+			{ name: 'sample', help: 'command, interval_ms? (200), timeout_ms?: run any program (any language: a server under load, a build) and record memory (RSS) and CPU of its whole process tree over time. Peak, growth and mean come back; the lines open in the Profiler. macOS and Linux.' },
+			{ name: 'open', readOnly: true, help: 'path, compare_with?: open a profile file: .cpuprofile, .heapprofile, speedscope JSON (py-spy --format speedscope, rbspy), Chrome trace events JSON, folded stacks ("a;b;c 42" per line: perf + stackcollapse, async-profiler, inferno) or a Volt profile. compare_with: the run before (a diff).' },
+			{ name: 'analyze', readOnly: true, help: 'profile? (id or path; default this chat\'s newest), window? [start_ms, end_ms] (a stretch of the timeline), function? (one function: callers, callees, cost), filter? (functions or files matching), limit?: read a profile again without re-recording.' },
+			{ name: 'compare', readOnly: true, help: 'base (the run before), profile? (the run after; default newest): what got slower and faster by function, totals and change; opens the difference (red slower, blue faster). Profile, change, profile again, compare: the proof a fix worked.' },
+			{ name: 'focus', readOnly: true, help: 'profile?, function?, window? [start_ms, end_ms], view? (chart|graph|heatmap|table|counters|diff), search?, reset?: point the user\'s Profiler at what you found (selects the function and zooms the timeline to it). Use it while you explain.' },
+			{ name: 'annotate', readOnly: true, help: 'profile?, note, function?, window?: pin a short note on a function or a stretch of time; the user sees it on the flame chart and graph and in the side panel. clear_notes removes yours.' },
+			{ name: 'clear_notes', readOnly: true, help: 'profile?: remove your notes.' },
+			{ name: 'selection', readOnly: true, help: 'profile?: what the user is looking at in the Profiler: the selected function (cost, callers, callees), the time window, view and search. Read it when the user says "this" or "here".' },
+			{ name: 'list', readOnly: true, help: 'The profiles of this chat: id, title, format, file.' },
+			{ name: 'show', readOnly: true, help: 'title, unit? (milliseconds|bytes|samples|count|percent), kind?, stacks? (folded text "a;b;c 42" per line, or [{stack: ["a","b"], value: 42}]), series? ([{name, unit, points: [[ms, value], ...]}]), matrix? ({rows, columns, values: [[...]], unit}): show data in the Profiler instead of drawing it: bundle size by folder (stacks in bytes), time per phase (stacks in ms), memory or latency over time (series), latency by endpoint and percentile (matrix).' },
+			{ name: 'bench', help: 'command, runs? (10), warmup? (1): time a command repeatedly (hyperfine when installed): mean, stddev, median, min, max.' },
+			{ name: 'summary', readOnly: true, help: 'path: the same as analyze for a profile file.' },
 		],
 	},
 	{

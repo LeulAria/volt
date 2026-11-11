@@ -61,6 +61,12 @@ export interface IVoltExecRequest {
 	readonly inlineChars?: number;
 	/** Directory for the full log when output is shaped. */
 	readonly spillDir?: string;
+	/**
+	 * Run the command in the OS sandbox of the chat it runs for (`chatSandboxRequest`), with
+	 * credentials dropped from the environment. Where the OS has no sandbox it runs with a warning
+	 * in its stderr, like an agent process does.
+	 */
+	readonly sandbox?: IVoltSandboxRequest;
 }
 
 /** A program run directly, without a shell: its arguments are passed as they are, never parsed. */
@@ -73,6 +79,8 @@ export interface IVoltExecFileRequest {
 	readonly timeoutMs: number;
 	/** Output beyond this many bytes per stream fails the call (default 1 MB). */
 	readonly maxBytes?: number;
+	/** As for {@link IVoltExecRequest.sandbox}. */
+	readonly sandbox?: IVoltSandboxRequest;
 }
 
 export interface IVoltExecFileResult {

@@ -261,9 +261,10 @@ registerAction2(class extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor, request?: IOpenTabRequest): Promise<void> {
-		// Remote connections and the editor capability open nothing: the first changes where the
-		// window runs, the second already shows the user the file it points at.
-		if (!request?.chatId || request.key === 'remote' || request.key === 'editor' || accessor.get(IConfigurationService).getValue<boolean>(IDE_AUTO_OPEN_SETTING) === false) {
+		// Remote connections, the editor and the profiler open no activity tab: the first changes where
+		// the window runs, the second already shows the user the file it points at, and the profiler
+		// opens its own tab (the Profiler) with what the agent recorded, focused or noted.
+		if (!request?.chatId || request.key === 'remote' || request.key === 'editor' || request.key === 'profile' || accessor.get(IConfigurationService).getValue<boolean>(IDE_AUTO_OPEN_SETTING) === false) {
 			return;
 		}
 		const dismissKey = `${request.chatId}\u0000${request.key}`;

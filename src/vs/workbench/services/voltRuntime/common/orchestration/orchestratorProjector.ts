@@ -153,7 +153,8 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 		case 'task.resumed':
 			// Another round waits for a slot like a new task; `task.started` restarts its clock.
 			return updateTask(state, event.taskId, task => {
-				const { result: _result, error: _error, endedAt: _endedAt, waitingOn: _waitingOn, startedAt: _startedAt, ...rest } = task;
+				// A new round is new work: its checks start over at round 1.
+				const { result: _result, error: _error, endedAt: _endedAt, waitingOn: _waitingOn, startedAt: _startedAt, verification: _verification, ...rest } = task;
 				return { ...rest, state: 'queued', rounds: task.rounds + 1, delivery: 'none' };
 			});
 		case 'task.restarted':
@@ -210,6 +211,15 @@ export function applyOrchEvent(state: IOrchState, event: OrchEvent): IOrchState 
 					delivery: task.source === 'volt' && event.state !== 'cancelled' && !task.quiet ? 'pending' : 'none',
 				};
 			});
+		case 'task.verifying':
+			return updateTask(state, event.taskId, task => ({
+				...task,
+				...(event.result !== undefined ? { result: event.result } : {}),
+				activity: task.verify?.length === 1 ? 'Volt is running its check' : `Volt is running its ${task.verify?.length ?? 0} checks`,
+				verification: { round: event.round, state: 'running', at: event.at },
+			}));
+		case 'task.verification':
+			return updateTask(state, event.taskId, task => ({ ...task, verification: event.verification }));
 		case 'task.delivery': {
 			let next = state;
 			for (const id of event.taskIds) {

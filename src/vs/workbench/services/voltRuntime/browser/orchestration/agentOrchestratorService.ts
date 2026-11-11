@@ -15,6 +15,9 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IVoltUsageService } from '../../../../../platform/voltUsage/common/voltUsage.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { attenuateSandbox, chatSandboxRequest, IVoltSandboxSettings, sandboxWorkspaceRoots, strongerSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { stripAnsi } from '../../common/ide/testReports.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { ILifecycleService } from '../../../lifecycle/common/lifecycle.js';
 import { IVoltEventEnvelope } from '../../common/events.js';
@@ -25,11 +28,11 @@ import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { retryDelay, RUN_START_RETRY } from '../../common/jobs/retryPolicy.js';
 import { normalizeVoltMode } from '../../common/modes.js';
-import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, contractFromArgs, DELEGATE_TASK_TOOL_NAME, describeSpend, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, lintTaskBrief, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeContextLevel, normalizeTaskRole, stringListArg, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, TaskContextLevel, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
+import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, contractFromArgs, verifyFromArgs, DELEGATE_TASK_TOOL_NAME, describeSpend, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, lintTaskBrief, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeContextLevel, normalizeTaskRole, stringListArg, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, TaskContextLevel, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { buildParentCapsule, userRequests } from '../../common/orchestration/taskContext.js';
 import { foldSpend, ITaskSpendTracker, ITaskTokenRates, seedSpendTracker, spendUsage } from '../../common/orchestration/taskSpend.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSpawnOutcome, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, IOrchModelChoice, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_KEEP_WORKING_SETTING, ORCH_ROLE_MODELS_SETTING, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_MAX_TEAM_AGENTS_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, orchHoldReason, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSpawnOutcome, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, IOrchModelChoice, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_KEEP_WORKING_SETTING, ORCH_ROLE_MODELS_SETTING, ORCH_SUBAGENT_SANDBOX_SETTING, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_MAX_TEAM_AGENTS_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, orchHoldReason, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
 import { ORCH_MACHINE_CAPACITY_SETTING } from '../../common/orchestration/machineCapacity.js';
 import { ILimitSignal, isClaudeProvider, isRealAnswer, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
@@ -80,6 +83,13 @@ const PROGRESS_PERSIST_MS = 5_000;
 const LIMIT_TICK_RECHECK_MS = 30_000;
 /** How often a running subagent's spend is folded into the orchestrator (and checked against its budget). */
 const USAGE_FLUSH_MS = 3_000;
+/** Saves an effect waits for before it runs regardless (see `persistDurably`), and the back-off between them. */
+const OUTBOX_ATTEMPTS = 4;
+const OUTBOX_RETRY_MS = 400;
+/** One `verify` command may run this long; a check that hangs fails instead of holding the report forever. */
+const VERIFY_COMMAND_MS = 10 * 60_000;
+/** Output lines of a failing check the subagent (and the report) get. */
+const VERIFY_TAIL_LINES = 40;
 
 export class AgentOrchestratorService extends Disposable implements IAgentOrchestratorService {
 
@@ -153,6 +163,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly rates = new Map<string, ITaskTokenRates | null>();
 	private readonly ratesLoading = new Map<string, Promise<void>>();
 	private readonly loading = new Map<string, Promise<void>>();
+	/** Effects run in the order they were decided, each once the batch that decided it is on disk. */
+	private effectChain: Promise<void> = Promise.resolve();
+	/** Check runs in progress (`verify`), by task: a stop or a newer round cancels the older one. */
+	private readonly verifyRuns = new Map<string, { readonly round: number; readonly execIds: Set<string>; cancelled: boolean }>();
 	private readonly ready = new DeferredPromise<void>();
 	readonly whenReady: Promise<void> = this.ready.p;
 
@@ -176,8 +190,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 		@ILifecycleService lifecycleService: ILifecycleService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
+		@IVoltStdioService private readonly stdio: IVoltStdioService,
 	) {
 		super();
+		this._register(toDisposable(() => [...this.verifyRuns.keys()].forEach(taskId => this.stopVerify(taskId))));
 		this._register(toDisposable(() => this.staleRecordTimers.forEach(timer => clearTimeout(timer))));
 		this.store = new OrchestratorStore(joinPath(environmentService.userRoamingDataHome, 'voltOrchestrator'), fileService, logService);
 		this.claims = new DurableClaims(joinPath(environmentService.userRoamingDataHome, 'voltJobs', 'claims'), fileService, logService);
@@ -567,6 +583,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				if (envelope.event.type === 'thread.forgotten') {
 					this.runtime.releaseSession(envelope.event.threadId);
 				}
+				// A task that ended (stopped, its parent stopped) while Volt ran its checks: they stop too.
+				if (envelope.event.type === 'task.settled' && this.verifyRuns.has(envelope.event.taskId)) {
+					this.stopVerify(envelope.event.taskId);
+				}
 			}
 		}
 		if (step.effects.length) {
@@ -575,9 +595,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 					this.owedStarts.add(effect.turn.id);
 				}
 			}
-			// Outbox: the events that asked for these effects are on disk before the effects run.
-			const persisted = this.persistNow();
-			void persisted.then(() => {
+			// Outbox: the events that asked for these effects are on disk before the effects run (a
+			// failed write is tried again first), and effects run in the order they were decided, so
+			// a stop never overtakes the start it stops.
+			const landed = this.persistDurably();
+			this.effectChain = this.effectChain.then(() => landed).then(() => {
 				for (const effect of step.effects) {
 					try {
 						this.runEffect(effect);
@@ -586,7 +608,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 						this.logService.error('[volt orchestrator] effect failed', effect.kind, err);
 					}
 				}
-			});
+			}).catch(err => this.logService.error('[volt orchestrator] running effects failed', err));
 		} else if (step.envelopes.length) {
 			// A subagent's progress line (activity, step count) is cosmetic: batch those writes.
 			this.schedulePersist(step.envelopes.every(envelope => envelope.event.type === 'task.updated') ? PROGRESS_PERSIST_MS : PERSIST_MS);
@@ -640,7 +662,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	 * writes per file, so an earlier write of the same root lands first); `persisting` follows every
 	 * round, for `flush`. An effect waits only for its own events, not for other chats' writes.
 	 */
-	private persistNow(): Promise<void> {
+	private persistNow(): Promise<boolean> {
 		if (this.persistTimer !== undefined) {
 			clearTimeout(this.persistTimer);
 			this.persistTimer = undefined;
@@ -683,14 +705,34 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			});
 		}
 		const round = Promise.all(writes).then(results => {
-			if (results.every(ok => ok)) {
+			const landed = results.every(ok => ok);
+			if (landed) {
 				this.persistFailures = 0;
 			} else {
 				this.retryPersist();
 			}
+			return landed;
 		});
 		this.persisting = Promise.all([this.persisting, round]).then(() => undefined);
 		return round;
+	}
+
+	/**
+	 * Writes now and resolves once this batch is on disk. A write that fails is tried again (with the
+	 * newest state) a few times; past that the effects run anyway and say so in the log: a chat that
+	 * cannot save is degraded, one whose agents never start is broken.
+	 */
+	private async persistDurably(): Promise<void> {
+		for (let attempt = 1; ; attempt++) {
+			if (await this.persistNow()) {
+				return;
+			}
+			if (attempt >= OUTBOX_ATTEMPTS || this._store.isDisposed) {
+				this.logService.error(`[volt orchestrator] could not save the orchestration state after ${attempt} attempts; running its effects anyway (a restart now may repeat or lose them)`);
+				return;
+			}
+			await timeout(OUTBOX_RETRY_MS * attempt);
+		}
 	}
 
 	private retryPersist(): void {
@@ -954,8 +996,122 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			case 'moveWorkspace':
 				void this.moveWorkspace(effect);
 				return;
+			case 'verifyTask':
+				void this.verifyTask(effect.taskId, effect.round);
+				return;
 		}
 	}
+
+	//#region Verification
+
+	/**
+	 * Runs a task's `verify` commands in its checkout, under the subagent's own sandbox, one after
+	 * another until one fails, and reports the result for `round`. The commands come from the
+	 * delegating agent, like any command it runs; the sandbox keeps them to what the subagent may do.
+	 */
+	private async verifyTask(taskId: string, round: number): Promise<void> {
+		const task = this.state.tasks[taskId];
+		if (!task?.verify?.length || task.verification?.state !== 'running' || task.verification.round !== round) {
+			return;
+		}
+		const running = this.verifyRuns.get(taskId);
+		if (running?.round === round && !running.cancelled) {
+			// Already running (a restart re-asked, or the effect came twice): one run per round.
+			return;
+		}
+		if (running) {
+			this.stopVerify(taskId);
+		}
+		const run = { round, execIds: new Set<string>(), cancelled: false };
+		this.verifyRuns.set(taskId, run);
+		const current = () => !run.cancelled && this.state.tasks[taskId]?.verification?.state === 'running' && this.state.tasks[taskId]?.verification?.round === round;
+		let outcome: 'passed' | 'failed' | 'skipped' = 'passed';
+		const lines: string[] = [];
+		try {
+			const project = this.sessionContext.rootFor(task.parentId)?.fsPath;
+			const cwd = task.worktreePath ?? (task.childId ? this.sessionContext.rootFor(task.childId)?.fsPath : undefined) ?? project;
+			if (!cwd) {
+				outcome = 'skipped';
+				lines.push('No checkout to run them in.');
+			} else {
+				const sandbox = task.childId ? chatSandboxRequest(this.runtime.getSandboxSettings(task.childId), sandboxWorkspaceRoots(cwd, project, !!task.worktreePath)) : undefined;
+				for (const command of task.verify) {
+					if (!current()) {
+						return;
+					}
+					const id = `volt-verify-${generateUuid()}`;
+					run.execIds.add(id);
+					const started = Date.now();
+					const result = await this.stdio.exec({ id, command, cwd, timeoutMs: VERIFY_COMMAND_MS, inlineChars: 16_000, ...(sandbox ? { sandbox } : {}) }).finally(() => run.execIds.delete(id));
+					const took = `${((Date.now() - started) / 1000).toFixed(1)}s`;
+					if (result.exitCode === 0 && !result.timedOut) {
+						lines.push(`- passed: \`${command}\` (${took})`);
+						continue;
+					}
+					outcome = 'failed';
+					lines.push(`- FAILED: \`${command}\` (${result.timedOut ? 'timed out' : `exit code ${result.exitCode ?? 'none'}`}, ${took})`);
+					const output = stripAnsi(result.combined || `${result.stdout}\n${result.stderr}`).trim().split('\n');
+					lines.push('```', ...(output.length > VERIFY_TAIL_LINES ? [`[${output.length - VERIFY_TAIL_LINES} earlier lines]`, ...output.slice(-VERIFY_TAIL_LINES)] : output), '```');
+					// Later checks usually fail for the same reason: the first failure is what to fix.
+					const rest = task.verify.length - task.verify.indexOf(command) - 1;
+					if (rest > 0) {
+						lines.push(`(${rest} more check${rest === 1 ? '' : 's'} not run after this failure)`);
+					}
+					break;
+				}
+			}
+		} catch (err) {
+			outcome = 'skipped';
+			lines.push(`Volt could not run the checks: ${err instanceof Error ? err.message : String(err)}`);
+		} finally {
+			if (this.verifyRuns.get(taskId) === run) {
+				this.verifyRuns.delete(taskId);
+			}
+		}
+		if (current()) {
+			this.logService.info(`[volt orchestrator] ${taskId}: checks ${outcome} (round ${round})`);
+			this.apply({ type: 'task.verified', taskId, round, outcome, summary: lines.join('\n') });
+		}
+	}
+
+	private stopVerify(taskId: string): void {
+		const run = this.verifyRuns.get(taskId);
+		if (!run) {
+			return;
+		}
+		run.cancelled = true;
+		this.verifyRuns.delete(taskId);
+		for (const id of run.execIds) {
+			void this.stdio.cancelExec(id).catch(() => undefined);
+		}
+	}
+
+	/**
+	 * A subagent is never sandboxed less than the chat that started it (`attenuateSandbox`), and with
+	 * `confine` at least to its checkout. Set before its first turn starts the agent process, whose
+	 * OS sandbox is fixed at launch. A failure to set it fails the start rather than run unconfined.
+	 */
+	private async inheritSandbox(childId: string, parentId: string, role: AgentTaskRole | undefined): Promise<void> {
+		let parent: IVoltSandboxSettings;
+		let child: IVoltSandboxSettings;
+		try {
+			parent = this.runtime.getSandboxSettings(parentId);
+			child = this.runtime.getSandboxSettings(childId);
+		} catch (err) {
+			this.logService.warn('[volt orchestrator] could not read sandbox settings', err);
+			return;
+		}
+		let next = attenuateSandbox(child, parent);
+		if (this.configurationService.getValue<string>(ORCH_SUBAGENT_SANDBOX_SETTING) === 'confine') {
+			next = { ...next, level: strongerSandboxLevel(next.level, role === 'research' || role === 'review' ? 'read-only' : 'workspace-write') };
+		}
+		if (JSON.stringify(next) !== JSON.stringify(child)) {
+			await this.runtime.setSandboxSettings(childId, next);
+			this.logService.info(`[volt orchestrator] ${childId}: sandbox ${next.level}${next.network ? '' : ', network off'} (from ${parentId})`);
+		}
+	}
+
+	//#endregion
 
 	/** Runs the mover for a started move and reports how it went; a missing mover waits for one. */
 	private async moveWorkspace(effect: Extract<OrchEffect, { kind: 'moveWorkspace' }>): Promise<void> {
@@ -1020,6 +1176,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 			const thread = this.state.threads[threadId];
 			if (thread?.taskId && thread.parentId && turn.kind === 'brief') {
+				await this.inheritSandbox(threadId, thread.parentId, this.state.tasks[thread.taskId]?.role);
 				await host.prepareChild?.(threadId, thread.parentId);
 			}
 			const runId = await host.startTurn({ threadId, turn, thread: this.state.threads[threadId] ?? thread, isCurrent: () => this.isTurnCurrent(threadId, turn.id) });
@@ -1878,6 +2035,9 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const isolation = args.isolation === 'worktree' ? 'worktree' : 'shared';
 		// The handoff contract (a new round keeps the last one's unless it gives its own).
 		const contract = contractFromArgs(args) ?? previous?.contract;
+		// Checks Volt runs before the report goes up (a new round keeps the last one's).
+		const given = verifyFromArgs(args);
+		const verify = given.length ? given : previous?.verify ?? [];
 		const scope = stringListArg(args.scope, 40, 300);
 		const after = stringListArg(args.after, 16, 40);
 		const contextLevel = normalizeContextLevel(args.context);
@@ -1924,6 +2084,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				...(team ? { team } : {}),
 				...(blind.length ? { blind } : {}),
 				...(quiet ? { quiet: true } : {}),
+				...(verify.length ? { verify } : {}),
 				childPrompt: {
 					text: buildTaskPrompt(brief, {
 						parentTitle: parent?.title,
@@ -1937,6 +2098,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 						...(requestLeftUsd !== undefined || budgetUsd !== undefined ? { budget: { ...(requestLeftUsd !== undefined ? { requestLeftUsd } : {}), ...(budgetUsd !== undefined ? { taskUsd: budgetUsd } : {}) } } : {}),
 						// A blind reviewer is not told which tasks it reviews (task_status would unmask them).
 						...(after.length && !blind.length ? { after } : {}),
+						...(verify.length ? { verify } : {}),
 					}),
 					display: { text: brief, brief: true },
 					mode,
@@ -2265,7 +2427,7 @@ function isRunLive(status: string): boolean {
 }
 
 /** The contract and run fields a `tasks` entry may set for itself (others come from the call). */
-const ENTRY_CONTRACT_KEYS = ['goal', 'constraints', 'done_when', 'files', 'context', 'budget_usd', 'fallback_models'] as const;
+const ENTRY_CONTRACT_KEYS = ['goal', 'constraints', 'done_when', 'verify', 'files', 'context', 'budget_usd', 'fallback_models'] as const;
 
 /**
  * A `tasks` entry's `after`: 1-based positions of earlier entries (their tasks) or task ids. A

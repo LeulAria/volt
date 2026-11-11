@@ -8,7 +8,7 @@ import { ConfigurationScope, Extensions, IConfigurationRegistry } from '../../..
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { COMPACT_CHIP_THRESHOLD_SETTING, COMPACT_OLD_THREADS_SETTING } from '../../../services/voltRuntime/common/compaction.js';
 import { HANDOFF_BUDGET_PERCENT_SETTING, HANDOFF_DEFAULT_MAX_TOKENS, HANDOFF_DEFAULT_PERCENT, HANDOFF_MAX_TOKENS_SETTING, HANDOFF_MIN_TOKENS } from '../../../services/voltRuntime/common/contextHandoff.js';
-import { DEFAULT_ORCH_LIMITS, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_DEFAULT_BUDGET_USD, ORCH_KEEP_WORKING_SETTING, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_MAX_TEAM_AGENTS_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCH_ROLE_MODELS_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_DEFAULT_BUDGET_USD, ORCH_KEEP_WORKING_SETTING, ORCH_LIMIT_MAX, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_MAX_TEAM_AGENTS_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCH_ROLE_MODELS_SETTING, ORCH_SUBAGENT_SANDBOX_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { ORCH_MACHINE_CAPACITY_SETTING } from '../../../services/voltRuntime/common/orchestration/machineCapacity.js';
 import { ORCHESTRA_COUNCIL_MODERATOR_SETTING, ORCHESTRA_COUNCIL_PARTICIPANTS_SETTING } from '../../../services/voltRuntime/common/orchestration/orchestra.js';
 import { LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING } from '../../../services/voltRuntime/common/orchestration/limitRecovery.js';
@@ -120,6 +120,16 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			default: ORCH_DEFAULT_BUDGET_USD,
 			minimum: 0,
 			description: localize('voltAgent.multitaskBudgetUsd', "What the subagents of one request may spend together, in US dollars (the agent's reported cost, else list price). Past it, Volt stops the subagents still working, tells the chat why, and starts no more until your next message. 0 turns the limit off."),
+		},
+		[ORCH_SUBAGENT_SANDBOX_SETTING]: {
+			type: 'string',
+			enum: ['inherit', 'confine'],
+			enumDescriptions: [
+				localize('voltAgent.subagentSandbox.inherit', "A subagent is never sandboxed less than the chat that started it: the stricter level, network only when both allow it, and only the folders and hosts the parent has."),
+				localize('voltAgent.subagentSandbox.confine', "As inherit, and every subagent is at least confined to its checkout, even when the parent chat runs without a sandbox. Research and review subagents run read-only."),
+			],
+			default: 'inherit',
+			description: localize('voltAgent.subagentSandbox', "How subagents are sandboxed (agents that run in the OS sandbox: Claude Code, Codex, Cursor and other ACP agents)."),
 		},
 		[ORCH_BUDGET_TOKENS_SETTING]: {
 			type: 'number',

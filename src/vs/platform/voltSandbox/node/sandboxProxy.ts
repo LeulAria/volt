@@ -9,6 +9,9 @@ import { domainAllowed } from '../common/sandboxPolicy.js';
 
 export const PROXY_BLOCK_MESSAGE = (host: string) => `Blocked by Volt sandbox: network access to ${host} is off for this chat. Ask the user to allow it.`;
 
+/** An allowed host that does not answer: the agent gets a 504 instead of a request that hangs forever. */
+const CONNECT_TIMEOUT_MS = 20_000;
+
 /**
  * Volt's filtering HTTP proxy for one sandboxed agent whose network is off. The OS sandbox lets
  * the agent reach loopback only; this lets the agent's own API (and hosts the user allowed)
@@ -66,6 +69,8 @@ export class SandboxNetworkProxy {
 			return;
 		}
 		const upstream = net.connect(port, host, () => {
+			// Connected: long-lived tunnels (streams, websockets) have no timeout.
+			upstream.setTimeout(0);
 			client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 			if (head.length) {
 				upstream.write(head);
@@ -74,8 +79,14 @@ export class SandboxNetworkProxy {
 			client.pipe(upstream);
 		});
 		this.sockets.add(upstream);
+		upstream.setTimeout(CONNECT_TIMEOUT_MS, () => {
+			upstream.destroy();
+			client.end(`HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n`);
+		});
 		upstream.on('close', () => this.sockets.delete(upstream));
 		upstream.on('error', () => client.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n'));
+		// The agent hung up: the upstream connection goes too, so dead tunnels do not pile up.
+		client.on('close', () => upstream.destroy());
 	}
 
 	private forward(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -91,9 +102,17 @@ export class SandboxNetworkProxy {
 			res.writeHead(403, { 'Content-Type': 'text/plain' }).end(`${PROXY_BLOCK_MESSAGE(target.hostname)}\n`);
 			return;
 		}
-		const upstream = http.request(target, { method: req.method, headers: req.headers }, reply => {
+		const upstream = http.request(target, { method: req.method, headers: req.headers, timeout: CONNECT_TIMEOUT_MS }, reply => {
+			// It answered: a slow body (a long poll, a stream) is not a dead host.
+			upstream.setTimeout(0);
 			res.writeHead(reply.statusCode ?? 502, reply.headers);
 			reply.pipe(res);
+		});
+		upstream.on('timeout', () => {
+			upstream.destroy();
+			if (!res.headersSent) {
+				res.writeHead(504).end();
+			}
 		});
 		upstream.on('error', () => {
 			if (!res.headersSent) {

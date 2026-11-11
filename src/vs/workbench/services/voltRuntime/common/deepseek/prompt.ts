@@ -148,6 +148,7 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 	}
 	if (has('ide')) {
 		tools.push('- ide reaches the rest of the IDE by capability (editor, git, notebook, docker, k8s, ci, http, profile, analyze, coverage, remote, extensions); call op help on a capability once to learn its arguments.');
+		tools.push('- For "slow", "memory" or "why does this take": measure before changing code (ide profile cpu, heap or sample), fix the hottest function you own, profile again and compare. In the Profiler beside the chat, focus and annotate to point the user at what you found; show turns any data into a flame graph, lines or a heat map instead of an HTML page.');
 	}
 	sections.push(tools.join('\n'));
 

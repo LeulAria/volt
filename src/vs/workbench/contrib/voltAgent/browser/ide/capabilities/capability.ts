@@ -8,6 +8,7 @@ import { isAbsolute } from '../../../../../../base/common/path.js';
 import { joinPath, relativePath } from '../../../../../../base/common/resources.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../../base/common/uuid.js';
+import type { IVoltSandboxRequest } from '../../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IVoltStdioService } from '../../../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltHostFileChange } from '../../../../../services/voltRuntime/common/hostTools.js';
 import { shellQuote } from '../../../../../services/voltRuntime/common/ide/testFrameworks.js';
@@ -46,30 +47,49 @@ export interface ICliResult {
 
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
+export interface ICliOptions {
+	readonly cwd?: string;
+	readonly timeoutMs?: number;
+	readonly env?: Record<string, string>;
+	/** Folders the program writes besides the chat's own (a profiler's output folder), when it runs sandboxed. */
+	readonly writable?: readonly string[];
+}
+
 /**
  * Runs programs for capabilities: without a shell when the platform offers it (arguments are never
  * parsed, so names from the agent cannot inject), with the user's environment, bounded in time.
+ * For a sandboxed chat they run in that chat's OS sandbox, so `git commit` hooks, a profiled
+ * script or a linter plugin get exactly the access the chat's agent has.
  */
 export class IdeCli {
 
-	constructor(private readonly stdio: IVoltStdioService, private readonly cwd: string | undefined) { }
+	constructor(private readonly stdio: IVoltStdioService, private readonly cwd: string | undefined, readonly sandbox?: IVoltSandboxRequest) { }
 
-	async run(file: string, args: readonly string[], options?: { readonly cwd?: string; readonly timeoutMs?: number; readonly env?: Record<string, string> }): Promise<ICliResult> {
+	async run(file: string, args: readonly string[], options?: ICliOptions): Promise<ICliResult> {
 		const cwd = options?.cwd ?? this.cwd;
 		const timeoutMs = options?.timeoutMs ?? 60_000;
+		const sandbox = this.sandboxWith(options?.writable);
 		if (this.stdio.execFile && !options?.env) {
-			const result = await this.stdio.execFile({ file, args, ...(cwd ? { cwd } : {}), timeoutMs, maxBytes: MAX_OUTPUT });
+			const result = await this.stdio.execFile({ file, args, ...(cwd ? { cwd } : {}), timeoutMs, maxBytes: MAX_OUTPUT, ...(sandbox ? { sandbox } : {}) });
 			const missing = !!result.error && /ENOENT|not found|cannot find/i.test(result.error);
 			return { code: result.exitCode, stdout: result.stdout, stderr: result.error && !result.stderr ? result.error : result.stderr, ...(missing ? { missing } : {}) };
 		}
-		return this.shell([file, ...args].map(arg => shellQuote(arg, isWindows)).join(' '), { ...(cwd ? { cwd } : {}), timeoutMs, ...(options?.env ? { env: options.env } : {}) });
+		return this.shell([file, ...args].map(arg => shellQuote(arg, isWindows)).join(' '), { ...options, ...(cwd ? { cwd } : {}), timeoutMs });
 	}
 
 	/** A shell command line (the agent's own command, as written). */
-	async shell(command: string, options?: { readonly cwd?: string; readonly timeoutMs?: number; readonly env?: Record<string, string> }): Promise<ICliResult> {
-		const result = await this.stdio.exec({ id: `volt-ide-${generateUuid()}`, command, ...(options?.cwd ?? this.cwd ? { cwd: options?.cwd ?? this.cwd } : {}), ...(options?.env ? { env: options.env } : {}), timeoutMs: options?.timeoutMs ?? 120_000, inlineChars: 200_000 });
+	async shell(command: string, options?: ICliOptions): Promise<ICliResult> {
+		const sandbox = this.sandboxWith(options?.writable);
+		const result = await this.stdio.exec({ id: `volt-ide-${generateUuid()}`, command, ...(options?.cwd ?? this.cwd ? { cwd: options?.cwd ?? this.cwd } : {}), ...(options?.env ? { env: options.env } : {}), timeoutMs: options?.timeoutMs ?? 120_000, inlineChars: 200_000, ...(sandbox ? { sandbox } : {}) });
 		const missing = result.exitCode === 127 || /command not found|is not recognized/.test(result.stderr);
 		return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr, ...(missing ? { missing } : {}) };
+	}
+
+	private sandboxWith(writable: readonly string[] | undefined): IVoltSandboxRequest | undefined {
+		if (!this.sandbox || !writable?.length) {
+			return this.sandbox;
+		}
+		return { ...this.sandbox, extraWritableRoots: [...(this.sandbox.extraWritableRoots ?? []), ...writable] };
 	}
 }
 

@@ -6,12 +6,15 @@
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
-import { relativePath } from '../../../../../base/common/resources.js';
+import { isAbsolute } from '../../../../../base/common/path.js';
+import { joinPath, relativePath } from '../../../../../base/common/resources.js';
+import { chatSandboxRequest, IVoltSandboxRequest, IVoltSandboxSettings, sandboxLaunchKey } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { guardToolText } from '../../../../services/voltRuntime/common/ide/toolOutput.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
-import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { IMarkerService } from '../../../../../platform/markers/common/markers.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
@@ -33,7 +36,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
-import { DEBUG_TOOL_NAME, IDE_TOOLS, TASKS_TOOL_NAME, TESTS_TOOL_NAME } from '../../../../services/voltRuntime/common/ide/ideTools.js';
+import { DEBUG_TOOL_NAME, IDE_TOOLS, isIdeReadOnlyCall, TASKS_TOOL_NAME, TESTS_TOOL_NAME } from '../../../../services/voltRuntime/common/ide/ideTools.js';
 import { IDE_CAPABILITIES, IDE_GATEWAY_TOOL_NAME, ideHelp, ideOp } from '../../../../services/voltRuntime/common/ide/ideCapabilities.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IDebugService, IDebugSession, REPL_VIEW_ID, State, VIEWLET_ID as DEBUG_VIEWLET_ID } from '../../../debug/common/debug.js';
@@ -55,7 +58,9 @@ import { GitCapability } from './capabilities/gitCapability.js';
 import { CiCapability, DockerCapability, KubernetesCapability } from './capabilities/infraCapabilities.js';
 import { NotebookCapability } from './capabilities/notebookCapability.js';
 import { RemoteCapability } from './capabilities/remoteCapability.js';
-import { AnalyzeCapability, CoverageCapability, ProfileCapability } from './capabilities/qualityCapabilities.js';
+import { AnalyzeCapability, CoverageCapability } from './capabilities/qualityCapabilities.js';
+import { ProfileCapability } from './capabilities/profileCapability.js';
+import { IVoltProfilerService } from '../profiler/voltProfilerService.js';
 import { ExtensionsCapability, HttpCapability } from './capabilities/workbenchCapabilities.js';
 import { VoltTestController } from './voltTestController.js';
 
@@ -149,6 +154,9 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 	private readonly logs = new Map<string, IAgentIdeLogEntry[]>();
 	private readonly _onDidLog = this._register(new Emitter<{ readonly chatId: string; readonly key: AgentIdeTabKey }>());
 	readonly onDidLog = this._onDidLog.event;
+	/** Ops the user let run outside a chat's sandbox: by chat and tool, the sandbox it was allowed under. */
+	private readonly allowedOutside = new Map<string, string>();
+	private readonly fileService: IFileService;
 
 	constructor(
 		@IVoltHostToolService hostTools: IVoltHostToolService,
@@ -167,6 +175,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 		@IInstantiationService instantiationService: IInstantiationService,
 	) {
 		super();
+		this.fileService = fileService;
 		this.tests = new IdeTests(testService, testResults, testProfiles);
 		this.debug = new IdeDebug(debugService, fileService);
 		this.tasks = new IdeTasks(taskService, terminalService);
@@ -185,7 +194,10 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			new KubernetesCapability(),
 			new CiCapability(),
 			instantiationService.invokeFunction(accessor => new HttpCapability(accessor.get(IVoltHttpService))),
-			instantiationService.invokeFunction(accessor => new ProfileCapability(fileService, accessor.get(IEnvironmentService), accessor.get(IEditorService))),
+			instantiationService.invokeFunction(accessor => {
+				const configuration = accessor.get(IConfigurationService);
+				return new ProfileCapability(fileService, accessor.get(IVoltProfilerService), () => configuration.getValue<boolean>(IDE_AUTO_OPEN_SETTING) !== false);
+			}),
 			instantiationService.invokeFunction(accessor => new AnalyzeCapability(fileService, accessor.get(IMarkerService))),
 			new CoverageCapability(fileService),
 			instantiationService.invokeFunction(accessor => new RemoteCapability(accessor.get(IWorkbenchEnvironmentService), fileService, accessor.get(IPathService))),
@@ -196,10 +208,71 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 		this._register(hostTools.registerToolProvider({
 			tools: IDE_TOOLS,
 			invoke: (name, args, call) => this.invokeLogged(name, args, call),
-			// Some ops ask every time, whatever the access mode (cluster deletes, editor commands).
-			needsApproval: async (name, args) => name === IDE_GATEWAY_TOOL_NAME ? ideOp(String(args.capability ?? ''), String(args.op ?? ''))?.confirm : undefined,
+			// Some ops ask every time, whatever the access mode (cluster deletes, editor commands);
+			// in a sandboxed chat, ops that run code where the sandbox cannot reach ask once.
+			needsApproval: async (name, args, call) => (name === IDE_GATEWAY_TOOL_NAME ? ideOp(String(args.capability ?? ''), String(args.op ?? ''))?.confirm : undefined) ?? this.outsideSandbox(name, args, call),
+			approved: (name, args, call) => this.rememberOutside(name, args, call),
 		}));
 		this._register({ dispose: () => this.activities.forEach(entry => entry.store.dispose()) });
+	}
+
+	// --- Tools -------------------------------------------------------------------------------
+
+	// --- Sandbox -----------------------------------------------------------------------------
+
+	/** The chat's sandbox settings (a subagent's session answers for its chat). */
+	private sandboxSettings(sessionId: string): IVoltSandboxSettings {
+		const own = this.runtime.getSandboxSettings(sessionId);
+		const chatId = this.runtime.chatFor(sessionId);
+		return own.level !== 'off' || chatId === sessionId ? own : this.runtime.getSandboxSettings(chatId);
+	}
+
+	/**
+	 * What a call would do outside the chat's sandbox, when it would and the user has not allowed it
+	 * for this chat yet: test runs, debug sessions, tasks and notebook kernels run through the IDE's
+	 * own services (in Volt's process and terminals), where the OS sandbox does not reach. Programs
+	 * capabilities run themselves go through the sandbox instead (see `IdeCli`), so they never ask.
+	 */
+	private async outsideSandbox(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<string | undefined> {
+		if (!call?.sessionId || isIdeReadOnlyCall(name, args)) {
+			return undefined;
+		}
+		const settings = this.sandboxSettings(call.sessionId);
+		const what = escapesSandbox(name, args, settings);
+		if (!what || this.allowedOutside.get(outsideKey(this.runtime.chatFor(call.sessionId), name, args)) === sandboxLaunchKey(settings)) {
+			return undefined;
+		}
+		return `${what} outside this chat's sandbox (${settings.level === 'read-only' ? 'read-only' : 'workspace only'}${settings.network ? '' : ', network off'}); allowing it covers this chat until its sandbox changes`;
+	}
+
+	private rememberOutside(name: string, args: Record<string, unknown>, call: IVoltHostToolCall): void {
+		if (call.sessionId && escapesSandbox(name, args, this.sandboxSettings(call.sessionId))) {
+			this.allowedOutside.set(outsideKey(this.runtime.chatFor(call.sessionId), name, args), sandboxLaunchKey(this.sandboxSettings(call.sessionId)));
+		}
+	}
+
+	/** The OS sandbox programs run in for this call: the chat's, with its checkout (and a worktree's git dir). */
+	private async sandboxFor(call: IVoltHostToolCall | undefined, root: URI | undefined): Promise<IVoltSandboxRequest | undefined> {
+		if (!call?.sessionId || !root) {
+			return undefined;
+		}
+		const settings = this.sandboxSettings(call.sessionId);
+		if (settings.level === 'off') {
+			return undefined;
+		}
+		return chatSandboxRequest(settings, [root.fsPath, ...await this.gitCommonDir(root)]);
+	}
+
+	/** A linked worktree's `.git` is a file naming its gitdir; commits write to the main repository's. */
+	private async gitCommonDir(root: URI): Promise<string[]> {
+		const pointer = await this.fileService.readFile(joinPath(root, '.git')).then(file => file.value.toString(), () => undefined);
+		const gitdir = pointer && /^gitdir:\s*(.+)$/m.exec(pointer)?.[1].trim();
+		if (!gitdir) {
+			return [];
+		}
+		const absolute = isAbsolute(gitdir) ? gitdir : joinPath(root, gitdir).fsPath;
+		const common = /^(.*\/\.git)\/worktrees\/[^/]+\/?$/.exec(absolute.replace(/\\/g, '/'))?.[1];
+		return common ? [common] : [];
 	}
 
 	// --- Tools -------------------------------------------------------------------------------
@@ -207,7 +280,9 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 	/** Runs a call, records it in the chat's tab for that capability, and opens the tab beside the chat. */
 	private async invokeLogged(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		const started = Date.now();
-		const result = await this.invoke(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) }));
+		const raw = await this.invoke(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) }));
+		// Credentials in an env dump or a CI log never reach the model, and no single call floods its context.
+		const result: IVoltHostToolResult = { ...raw, ...(raw.text !== undefined ? { text: guardToolText(raw.text) } : {}), ...(raw.error !== undefined ? { error: guardToolText(raw.error) } : {}) };
 		const chatId = call?.sessionId ? this.runtime.chatFor(call.sessionId) : undefined;
 		const key = name === IDE_GATEWAY_TOOL_NAME ? (typeof args.capability === 'string' ? args.capability : '') : name;
 		const op = name === IDE_GATEWAY_TOOL_NAME ? String(args.op ?? '') : String(args.op ?? '');
@@ -251,7 +326,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			case DEBUG_TOOL_NAME:
 				return toResult(await this.debug.invoke(key, root, args as unknown as IDebugArgs, chatId ? { started: (session, title) => this.trackDebug(chatId, session, title) } : undefined, token));
 			case IDE_GATEWAY_TOOL_NAME:
-				return this.invokeCapability(args, root, chatId, token);
+				return this.invokeCapability(args, root, chatId, token, await this.sandboxFor(call, root));
 			case TASKS_TOOL_NAME:
 				return toResult(await this.tasks.invoke(root, op, str(args.name), num(args.wait_ms), chatId ? {
 					started: (task, title) => this.trackTask(chatId, task, title),
@@ -261,7 +336,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 		return { error: `Unknown tool ${name}.` };
 	}
 
-	private async invokeCapability(args: Record<string, unknown>, root: URI | undefined, chatId: string | undefined, token: CancellationToken): Promise<IVoltHostToolResult> {
+	private async invokeCapability(args: Record<string, unknown>, root: URI | undefined, chatId: string | undefined, token: CancellationToken, sandbox: IVoltSandboxRequest | undefined): Promise<IVoltHostToolResult> {
 		const id = typeof args.capability === 'string' ? args.capability : '';
 		const op = typeof args.op === 'string' ? args.op : '';
 		const capability = this.capabilities.get(id);
@@ -275,7 +350,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			return { error: `${id} has no op "${op}".\n${ideHelp(id)}` };
 		}
 		const opArgs = args.args && typeof args.args === 'object' ? args.args as Record<string, unknown> : {};
-		const result = await capability.invoke(op, opArgs, { root, chatId, token, cli: new IdeCli(this.stdio, root?.fsPath) });
+		const result = await capability.invoke(op, opArgs, { root, chatId, token, cli: new IdeCli(this.stdio, root?.fsPath, sandbox) });
 		return result.isError ? { error: result.text } : { text: result.text, ...(result.changes?.length ? { changes: result.changes } : {}) };
 	}
 
@@ -443,6 +518,40 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			this._onDidChange.fire(entry.view.chatId);
 		}
 	}
+}
+
+/**
+ * What a call does where a sandboxed chat's OS sandbox cannot reach, in words for the approval;
+ * undefined when it runs confined (programs started through `IdeCli`) or changes nothing.
+ */
+function escapesSandbox(name: string, args: Record<string, unknown>, settings: IVoltSandboxSettings): string | undefined {
+	if (settings.level === 'off') {
+		return undefined;
+	}
+	const op = typeof args.op === 'string' ? args.op : '';
+	switch (name) {
+		case TESTS_TOOL_NAME:
+			return op === 'run' ? 'runs the project\'s tests' : undefined;
+		case DEBUG_TOOL_NAME:
+			return op === 'start' ? 'starts a program under the debugger' : op === 'attach' ? 'attaches the debugger to a running process' : op === 'evaluate' ? 'evaluates code in the debugged program' : undefined;
+		case TASKS_TOOL_NAME:
+			return op === 'run' ? 'runs a workspace task' : undefined;
+		case IDE_GATEWAY_TOOL_NAME: {
+			const capability = typeof args.capability === 'string' ? args.capability : '';
+			if (capability === 'notebook') {
+				return op === 'run' ? 'runs notebook cells in their kernel' : settings.level === 'read-only' && ['create', 'edit', 'insert'].includes(op) ? 'changes a notebook' : undefined;
+			}
+			if (capability === 'http' && op === 'send' && !settings.network) {
+				return 'sends an HTTP request from Volt';
+			}
+			return undefined;
+		}
+	}
+	return undefined;
+}
+
+function outsideKey(chatId: string, name: string, args: Record<string, unknown>): string {
+	return `${chatId}\u0000${name === IDE_GATEWAY_TOOL_NAME ? `ide:${String(args.capability ?? '')}` : name}`;
 }
 
 function rootOf(session: IDebugSession): IDebugSession {

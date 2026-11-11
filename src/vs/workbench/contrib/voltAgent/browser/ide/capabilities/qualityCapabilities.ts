@@ -5,15 +5,11 @@
 
 import { joinPath } from '../../../../../../base/common/resources.js';
 import { URI } from '../../../../../../base/common/uri.js';
-import { generateUuid } from '../../../../../../base/common/uuid.js';
-import { IEnvironmentService } from '../../../../../../platform/environment/common/environment.js';
 import { IFileService } from '../../../../../../platform/files/common/files.js';
 import { IMarkerData, IMarkerService, MarkerSeverity } from '../../../../../../platform/markers/common/markers.js';
-import { IEditorService } from '../../../../../services/editor/common/editorService.js';
 import { COVERAGE_REPORT_FILES, IFileCoverageSummary, lineRanges, parseCoverage } from '../../../../../services/voltRuntime/common/ide/coverageReports.js';
-import { formatCpuProfile, summarizeCpuProfile } from '../../../../../services/voltRuntime/common/ide/cpuProfile.js';
 import { stripAnsi } from '../../../../../services/voltRuntime/common/ide/testReports.js';
-import { display, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, list, num, ok, resolvePath, str } from './capability.js';
+import { display, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, list, ok, resolvePath, str } from './capability.js';
 
 /** The newest coverage report in the project, summarized; per file, the lines that never ran. */
 export class CoverageCapability implements IIdeCapability {
@@ -241,89 +237,4 @@ export class AnalyzeCapability implements IIdeCapability {
 		}
 		this.markerService.changeAll(`volt-analyze/${tool}`, [...byFile].map(([resource, markers]) => markers.map(marker => ({ resource: URI.parse(resource), marker }))).flat());
 	}
-}
-
-/** CPU profiles (V8) and benchmarks, summarized to the functions and numbers that matter. */
-export class ProfileCapability implements IIdeCapability {
-
-	readonly id = 'profile';
-
-	constructor(
-		private readonly fileService: IFileService,
-		private readonly environment: IEnvironmentService,
-		private readonly editorService: IEditorService,
-	) { }
-
-	async invoke(op: string, args: Readonly<Record<string, unknown>>, ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
-		switch (op) {
-			case 'summary': {
-				const uri = resolvePath(ctx.root, str(args, 'path'));
-				if (!uri) {
-					return fail('summary needs path to a .cpuprofile.');
-				}
-				return ok(this.format(ctx, (await this.fileService.readFile(uri)).value.toString()));
-			}
-			case 'cpu': {
-				const command = str(args, 'command');
-				if (!command) {
-					return fail('cpu needs command (e.g. "node scripts/build.js" or "npm run bench").');
-				}
-				const dir = joinPath(this.environment.cacheHome, 'volt-profiles', generateUuid());
-				await this.fileService.createFolder(dir);
-				// Every Node process the command starts writes a profile; the biggest is the work.
-				const started = Date.now();
-				const result = await ctx.cli.shell(command, { timeoutMs: num(args, 'timeout_ms') ?? 600_000, env: { NODE_OPTIONS: `--cpu-prof --cpu-prof-dir=${dir.fsPath}` } });
-				const entries = (await this.fileService.resolve(dir).catch(() => undefined))?.children?.filter(child => child.name.endsWith('.cpuprofile')) ?? [];
-				if (!entries.length) {
-					return fail(`No CPU profile was written (exit code ${result.code}). Only Node.js processes are profiled this way.\n${stripAnsi(result.stderr || result.stdout).trim().split('\n').slice(-15).join('\n')}`);
-				}
-				const sized = await Promise.all(entries.map(async entry => ({ uri: entry.resource, size: (await this.fileService.stat(entry.resource)).size })));
-				const biggest = sized.sort((a, b) => b.size - a.size)[0];
-				void this.editorService.openEditor({ resource: biggest.uri, options: { pinned: true, preserveFocus: true } });
-				const text = this.format(ctx, (await this.fileService.readFile(biggest.uri)).value.toString());
-				return ok(`Ran in ${((Date.now() - started) / 1000).toFixed(1)}s, exit code ${result.code}. ${entries.length > 1 ? `${entries.length} processes profiled; the largest:` : ''}\n${text}\nProfile: ${biggest.uri.fsPath} (opened in the editor).`);
-			}
-			case 'bench': {
-				const command = str(args, 'command');
-				if (!command) {
-					return fail('bench needs command.');
-				}
-				const runs = Math.min(Math.max(num(args, 'runs') ?? 10, 1), 200);
-				const warmup = Math.min(num(args, 'warmup') ?? 1, 20);
-				const hyperfine = await ctx.cli.run('hyperfine', ['--version'], { timeoutMs: 10_000 });
-				if (!hyperfine.missing && hyperfine.code === 0) {
-					const report = joinPath(this.environment.cacheHome, 'volt-profiles', `${generateUuid()}.json`);
-					const result = await ctx.cli.run('hyperfine', ['--runs', String(runs), '--warmup', String(warmup), '--export-json', report.fsPath, '--style', 'none', command], { timeoutMs: 1_800_000 });
-					const json = await this.fileService.readFile(report).then(file => JSON.parse(file.value.toString()) as { results: { mean: number; stddev: number; min: number; max: number; median: number }[] }, () => undefined);
-					const stats = json?.results[0];
-					return stats ? ok(`${command}: mean ${ms(stats.mean * 1000)} \u00b1 ${ms(stats.stddev * 1000)}, median ${ms(stats.median * 1000)}, min ${ms(stats.min * 1000)}, max ${ms(stats.max * 1000)} (${runs} runs, hyperfine).`) : fail(stripAnsi(result.stderr).slice(0, 2_000));
-				}
-				const times: number[] = [];
-				for (let i = 0; i < warmup + runs; i++) {
-					const started = Date.now();
-					const result = await ctx.cli.shell(command, { timeoutMs: 600_000 });
-					if (result.code !== 0) {
-						return fail(`Run ${i + 1} failed with exit code ${result.code}:\n${stripAnsi(result.stderr || result.stdout).trim().split('\n').slice(-15).join('\n')}`);
-					}
-					if (i >= warmup) {
-						times.push(Date.now() - started);
-					}
-				}
-				const mean = times.reduce((sum, value) => sum + value, 0) / times.length;
-				const stddev = Math.sqrt(times.reduce((sum, value) => sum + (value - mean) ** 2, 0) / times.length);
-				const sorted = [...times].sort((a, b) => a - b);
-				return ok(`${command}: mean ${ms(mean)} \u00b1 ${ms(stddev)}, median ${ms(sorted[Math.floor(sorted.length / 2)])}, min ${ms(sorted[0])}, max ${ms(sorted[sorted.length - 1])} (${runs} runs, wall time incl. shell start; install hyperfine for precise numbers).`);
-			}
-		}
-		return fail(`profile has no op ${op}.`);
-	}
-
-	private format(ctx: IIdeCapabilityContext, raw: string): string {
-		const root = ctx.root?.fsPath.replace(/\\/g, '/');
-		return formatCpuProfile(summarizeCpuProfile(raw), location => root && location.startsWith(root) ? location.slice(root.length + 1) : location.replace(/^.*node_modules\//, 'node_modules/'));
-	}
-}
-
-function ms(value: number): string {
-	return value >= 1000 ? `${(value / 1000).toFixed(2)}s` : `${value.toFixed(1)}ms`;
 }

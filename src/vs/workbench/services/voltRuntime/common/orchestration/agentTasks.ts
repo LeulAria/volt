@@ -101,6 +101,14 @@ export function stringListArg(value: unknown, max = 24, chars = 600): string[] {
 		.slice(0, max);
 }
 
+/** At most this many `verify` commands per task: they run one after another before every report. */
+export const MAX_VERIFY_COMMANDS = 6;
+
+/** The `verify` commands from delegate_task's arguments: one line each, no blanks. */
+export function verifyFromArgs(args: Record<string, unknown>): string[] {
+	return stringListArg(args.verify, MAX_VERIFY_COMMANDS, 500).filter(command => !/[\r\n]/.test(command));
+}
+
 /** The contract from delegate_task's arguments (one task or one `tasks` entry); undefined when it names nothing. */
 export function contractFromArgs(args: Record<string, unknown>): ITaskContract | undefined {
 	const goal = typeof args.goal === 'string' && args.goal.trim() ? args.goal.trim().slice(0, 1_000) : undefined;
@@ -163,6 +171,7 @@ const CONTRACT_ARGS = {
 	goal: { type: 'string', description: 'The outcome you want, in a sentence or two (what is true when the work is done).' },
 	constraints: { type: 'array', items: { type: 'string' }, description: 'Rules the work must keep: what must not change, APIs to keep, style to follow.' },
 	done_when: { type: 'array', items: { type: 'string' }, description: 'The checks that prove it is done (a test that passes, a type-check, what the page shows). The subagent checks each one and reports met or not met.' },
+	verify: { type: 'array', items: { type: 'string' }, description: 'Shell commands that prove the work (a test file, a type-check, a build), run by Volt itself in the subagent\'s checkout when it reports done. A failure goes back to the subagent with the output before you hear from it, so its report arrives verified. Fast, targeted commands (each at most 10 minutes); any agent and model is held to them.' },
 	files: { type: 'array', items: { type: 'string' }, description: 'Files to read before starting (paths), so it does not explore to find them.' },
 	scope: { type: 'array', items: { type: 'string' }, description: 'Files or folders this task owns: the only ones it may change. Volt flags two tasks claiming the same paths.' },
 	context: { type: 'string', enum: ['brief', 'full', 'none'], description: 'How much of this chat the subagent gets besides your brief. brief (default): the user\'s request, your plan and latest reply, and what the other subagents are doing. full: more of the conversation. none: only your brief (an unbiased second opinion).' },
@@ -196,7 +205,7 @@ function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
 				tasks: {
 					type: 'array',
 					maxItems: maxPerCall,
-					description: `Start up to ${maxPerCall} subagents in one call, one entry per part of the work. Each entry takes the same fields as a single task (task, title, model, role, isolation, goal, scope, files, constraints, done_when, context, budget_usd, fallback_models) plus \`after\`; fields left out use this call's top-level values. Use instead of \`task\`.`,
+					description: `Start up to ${maxPerCall} subagents in one call, one entry per part of the work. Each entry takes the same fields as a single task (task, title, model, role, isolation, goal, scope, files, constraints, done_when, verify, context, budget_usd, fallback_models) plus \`after\`; fields left out use this call's top-level values. Use instead of \`task\`.`,
 					items: {
 						type: 'object',
 						properties: {
@@ -360,6 +369,8 @@ export interface ITaskBriefContext {
 	readonly budget?: { readonly requestLeftUsd?: number; readonly taskUsd?: number };
 	/** The tasks it waits for (`after`); their reports are added when it starts. */
 	readonly after?: readonly string[];
+	/** Commands Volt runs before its report goes up (`IOrchTask.verify`). */
+	readonly verify?: readonly string[];
 }
 
 /**
@@ -408,6 +419,9 @@ export function buildTaskPrompt(brief: string, context: ITaskBriefContext): stri
 	const contract = contractLines(context.contract, readOnly ? undefined : context.scope);
 	if (contract.length) {
 		lines.push('', '<contract>', ...contract, '</contract>');
+	}
+	if (context.verify?.length) {
+		lines.push('', `[Volt subagent] When you report done, Volt itself runs ${context.verify.length === 1 ? 'this command' : 'these commands'} in your checkout before your report goes up: ${context.verify.map(command => `\`${command}\``).join(', ')}. A failure comes back to you with its output, so run ${context.verify.length === 1 ? 'it' : 'them'} yourself first and fix what fails. Never weaken, skip or delete a check to make it pass.`);
 	}
 	lines.push('', reportFormat(context.role, !!context.contract?.doneWhen?.length));
 	return lines.join('\n');
@@ -542,6 +556,28 @@ export function formatTokens(value: number): string {
 	return String(Math.round(value));
 }
 
+/** The subagent's checks failed: what it gets back (model-facing) instead of its report going up. */
+export function verifyFailedText(summary: string, round: number, maxRounds: number): string {
+	const left = maxRounds - round;
+	return [
+		`[Volt] Volt ran your task's checks after your report, and they failed (round ${round} of ${maxRounds}). Your report has not gone to the other agent yet.`,
+		'',
+		summary.trim(),
+		'',
+		`Find the cause and fix it, run the failing check yourself until it passes, then end with an updated report. Never weaken, skip or delete a check to make it pass. ${left > 1 ? `Volt checks again after your report (${left} more tries).` : 'Volt checks once more; if it still fails, your report goes up saying so.'}`,
+	].join('\n');
+}
+
+/** The report as the parent reads it: the subagent's own, then what Volt's run of its checks found. */
+export function withVerification(report: string | undefined, verification: { readonly state: 'passed' | 'failed' | 'skipped' | 'running'; readonly round: number; readonly summary?: string }): string {
+	const head = verification.state === 'passed'
+		? `## Volt verification\nPassed: Volt ran the checks itself after the report${verification.round > 1 ? ` (it took ${verification.round} rounds)` : ''}.`
+		: verification.state === 'failed'
+			? `## Volt verification\nFAILED after ${verification.round} round${verification.round === 1 ? '' : 's'}: the checks still fail. Treat the report's claims with care.`
+			: '## Volt verification\nNot run.';
+	return [report?.trim() || '(no report)', '', head, ...(verification.summary?.trim() ? [verification.summary.trim()] : [])].join('\n');
+}
+
 /** A follow-up round in an existing child chat. */
 export function buildTaskFollowUp(message: string): string {
 	return `[Volt] The agent that delegated your task sent a follow-up. Answer it, then end with an updated report.\n\n${message.trim()}`;
@@ -610,6 +646,14 @@ export function describeTask(task: IOrchTask, now: number, options: { readonly i
 	}
 	if (task.failedOn?.length) {
 		lines.push(`failed on: ${task.failedOn.join(', ')}; continued on ${task.modelLabel ?? task.modelRef ?? 'the next model'}`);
+	}
+	if (task.verify?.length) {
+		const verification = task.verification;
+		const state = !verification ? 'not run yet (they run when it reports done)'
+			: verification.state === 'running' ? `Volt is running them (round ${verification.round}); its report waits for them`
+				: verification.state === 'failed' && isLiveTaskState(task.state) ? `failed in round ${verification.round}; it is fixing what they found`
+					: `${verification.state} (round ${verification.round})`;
+		lines.push(`checks: ${state}`);
 	}
 	if (task.usage && (task.usage.tokens || task.usage.costUsd)) {
 		lines.push(`spent: ${describeUsage(task.usage)}${task.budgetUsd !== undefined ? ` (budget ${formatUsd(task.budgetUsd)})` : ''}`);
