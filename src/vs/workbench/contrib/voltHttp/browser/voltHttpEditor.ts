@@ -61,6 +61,8 @@ export interface IHttpDraft {
 	name: string;
 	method: string;
 	url: string;
+	/** Query params unchecked in the Params table: out of the URL, kept for the table. */
+	disabledParams?: IKeyValue[];
 	headers: IKeyValue[];
 	bodyMode: BodyMode;
 	body: string;
@@ -567,7 +569,7 @@ export class VoltHttpRequestEditor extends EditorPane {
 		const draft = this.draft;
 		switch (this.requestTab) {
 			case 'params':
-				this.renderKeyValues(this.tabBody, localize('voltHttp.queryParams', "Query Params"), this.queryParams().map(([key, value]) => ({ key, value, enabled: true })), rows => this.setQueryParams(rows));
+				this.renderKeyValues(this.tabBody, localize('voltHttp.queryParams', "Query Params"), [...this.queryParams().map(([key, value]) => ({ key, value, enabled: true })), ...draft.disabledParams ?? []], rows => this.setQueryParams(rows));
 				break;
 			case 'headers':
 				this.renderKeyValues(this.tabBody, localize('voltHttp.headers', "Headers"), draft.headers, rows => this.change(next => next.headers = rows));
@@ -590,7 +592,11 @@ export class VoltHttpRequestEditor extends EditorPane {
 		const base = this.draft.url.split('?')[0];
 		const query = rows.filter(row => row.enabled && row.key).map(row => `${encodeParam(row.key)}${row.value ? `=${encodeParam(row.value)}` : ''}`).join('&');
 		const url = query ? `${base}?${query}` : base;
-		this.change(next => next.url = url);
+		const disabled = rows.filter(row => !row.enabled && (row.key || row.value)).map(row => ({ ...row }));
+		this.change(next => {
+			next.url = url;
+			next.disabledParams = disabled.length ? disabled : undefined;
+		});
 		if (this.urlBox && this.urlBox.value !== url) {
 			this.syncingUrl = true;
 			try {
