@@ -6,13 +6,21 @@
 import { MenuRegistry } from '../../../../../../platform/actions/common/actions.js';
 import { CommandsRegistry, ICommandService } from '../../../../../../platform/commands/common/commands.js';
 import { IExtensionService } from '../../../../../services/extensions/common/extensions.js';
+import { URI } from '../../../../../../base/common/uri.js';
+import { sandboxBrowserUrlRefusal } from '../../../../../services/voltRuntime/common/hostToolSandbox.js';
 import { HTTP_METHODS, IHttpRequestSpec, maskSecret } from '../../../../../services/voltRuntime/common/ide/httpFile.js';
-import { IVoltHttpService } from '../../../../voltHttp/browser/voltHttpService.js';
-import { display, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, num, ok, str } from './capability.js';
+import { IHttpConfinement, IVoltHttpService } from '../../../../voltHttp/browser/voltHttpService.js';
+import { confinedReadRefusal, display, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, num, ok, str } from './capability.js';
 
 const MAX_BODY_CHARS = 6_000;
 
-/** HTTP requests through the HTTP client's service: the same history, environments and chaining the user's tab has. */
+/**
+ * HTTP requests through the HTTP client's service: the same history, environments and chaining the
+ * user's tab has, with the chat's folder's request files. A request goes out from Volt's process, so
+ * a sandboxed chat's follows its network rules here (`IHttpConfinement`): the URL that goes out is
+ * judged, redirects are not followed, only files it may read are used, and chaining reads only its
+ * own earlier responses.
+ */
 export class HttpCapability implements IIdeCapability {
 
 	readonly id = 'http';
@@ -20,14 +28,28 @@ export class HttpCapability implements IIdeCapability {
 	constructor(private readonly http: IVoltHttpService) { }
 
 	async invoke(op: string, args: Readonly<Record<string, unknown>>, ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
+		const sandbox = ctx.confinement?.sandbox;
+		const confined: IHttpConfinement | undefined = sandbox && {
+			key: ctx.chatId ?? 'sandboxed',
+			urlRefusal: url => sandboxBrowserUrlRefusal(sandbox, url),
+			readable: async uri => !await confinedReadRefusal(ctx, uri),
+		};
+		const index = async () => {
+			const files = await this.http.index(ctx.root);
+			if (!confined) {
+				return files;
+			}
+			const readable = await Promise.all(files.map(file => confined.readable(file.uri)));
+			return files.filter((_, at) => readable[at]);
+		};
 		switch (op) {
 			case 'list': {
-				const files = await this.http.index();
+				const files = await index();
 				const lines = files.flatMap(file => [`${display(ctx.root, file.uri)}`, ...file.requests.map(request => `  ${request.name ?? '(unnamed)'}  ${request.method} ${request.url}  :${request.line}`)]);
 				return ok(lines.length ? lines.join('\n') : 'No .http or .rest files in the workspace. Send ad hoc with method + url, or create requests.http.');
 			}
 			case 'envs': {
-				const envs = await this.http.environments();
+				const envs = await this.http.environments(ctx.root, confined?.readable);
 				const names = Object.keys(envs);
 				if (!names.length) {
 					return ok('No environments (http-client.env.json).');
@@ -36,18 +58,21 @@ export class HttpCapability implements IIdeCapability {
 			}
 			case 'send': {
 				const envName = str(args, 'env');
-				if (envName && envName !== this.http.environment) {
-					const envs = await this.http.environments();
+				if (envName && (confined || envName !== this.http.environment)) {
+					const envs = await this.http.environments(ctx.root, confined?.readable);
 					if (!envs[envName]) {
 						return fail(`No environment "${envName}". Available: ${Object.keys(envs).join(', ') || 'none'}.`);
 					}
-					this.http.setEnvironment(envName);
+					// A sandboxed chat's pick is its send's alone: the user's next send keeps the user's environment.
+					if (!confined) {
+						this.http.setEnvironment(envName);
+					}
 				}
 				const name = str(args, 'name');
 				let request: IHttpRequestSpec | undefined;
-				let source;
+				let source: URI | undefined;
 				if (name) {
-					for (const file of await this.http.index()) {
+					for (const file of await index()) {
 						const found = file.requests.find(item => item.name === name);
 						if (found) {
 							request = found;
@@ -69,7 +94,7 @@ export class HttpCapability implements IIdeCapability {
 					const headers = body && args.body !== undefined && typeof args.body !== 'string' && !rawHeaders.some(([key]) => key.toLowerCase() === 'content-type') ? [...rawHeaders, ['Content-Type', 'application/json'] as const] : rawHeaders;
 					request = { method, url, headers, ...(body !== undefined ? { body } : {}), line: 0 };
 				}
-				const exchange = await this.http.send(request, { ...(source ? { source } : {}), token: ctx.token, ...(num(args, 'timeout_ms') ? { timeoutMs: num(args, 'timeout_ms') } : {}) });
+				const exchange = await this.http.send(request, { ...(source ? { source } : {}), token: ctx.token, ...(num(args, 'timeout_ms') ? { timeoutMs: num(args, 'timeout_ms') } : {}), ...(ctx.root ? { root: ctx.root } : {}), ...(confined ? { confined, ...(envName ? { environment: envName } : {}) } : {}) });
 				if (exchange.error || !exchange.response) {
 					return fail(`${exchange.method} ${exchange.url}: ${exchange.error ?? 'no response'}`);
 				}
@@ -85,6 +110,7 @@ export class HttpCapability implements IIdeCapability {
 				return ok([
 					`${exchange.method} ${exchange.url}`,
 					`${response.status} ${response.statusText}  ${response.durationMs}ms  ${formatBytes(response.size)}`,
+					...(confined && response.status >= 300 && response.status < 400 ? ['(Not followed: this chat runs in Volt\'s sandbox. Send the location to follow it; its host is judged by the chat\'s network rules.)'] : []),
 					...headerLines,
 					'',
 					body.length > MAX_BODY_CHARS ? `${body.slice(0, MAX_BODY_CHARS)}\n\u2026 (${body.length - MAX_BODY_CHARS} more characters)` : body,
