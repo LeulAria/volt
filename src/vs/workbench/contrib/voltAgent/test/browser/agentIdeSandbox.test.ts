@@ -17,7 +17,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { Range } from '../../../../../editor/common/core/range.js';
 import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
 import { ITextModelService } from '../../../../../editor/common/services/resolverService.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
@@ -391,7 +391,8 @@ suite('Volt agent IDE tools in the sandbox', () => {
 		instantiation.stub(IWorkspaceContextService, { getWorkspace: () => ({ folders: [{ uri: URI.file('/volt-checkout') }] }) } as unknown as IWorkspaceContextService);
 		const stdio = new FakeStdio();
 		instantiation.stub(IVoltStdioService, stdio.asService());
-		instantiation.stub(ICommandService, { executeCommand: async () => undefined } as unknown as ICommandService);
+		const commands: string[] = [];
+		instantiation.stub(ICommandService, { executeCommand: async (id: string) => { commands.push(id); } } as unknown as ICommandService);
 		for (const id of [ITestService, ITestResultService, ITestProfileService, IDebugService, ITaskService, ITerminalService, IFileService, IViewsService, IEditorService, ICodeEditorService, ITextFileService,
 			INotebookEditorModelResolverService, INotebookKernelService, INotebookExecutionService, INotebookExecutionStateService, ITextModelService, IContextKeyService, IVoltHttpService, IEnvironmentService,
 			IMarkerService, IWorkbenchEnvironmentService, IPathService, IExtensionService]) {
@@ -399,7 +400,7 @@ suite('Volt agent IDE tools in the sandbox', () => {
 		}
 		store.add(instantiation.createInstance(AgentIdeService));
 		const invoke = async (args: Record<string, unknown>, call: IVoltHostToolCall) => provider!.invoke('ide', args, call);
-		return { invoke, stdio, recorded };
+		return { invoke, stdio, recorded, commands };
 	}
 
 	test('DEV-SBX-8: the ide gateway runs a sandboxed chat\'s programs in its sandbox, refuses a chat without a folder, and the stricter of the call and the chat wins', async () => {
@@ -431,6 +432,28 @@ suite('Volt agent IDE tools in the sandbox', () => {
 		recorded.clear();
 		await invoke(branches, { sessionId: 's1', cwd: '/proj' });
 		assert.deepStrictEqual(stdio.gits.map(request => request.cwd), ['/proj']);
+	});
+
+	test('DEV-SBX-18: a sandboxed call that reaches the ide gateway without the gate still runs no notebook kernel, ssh or editor command', async () => {
+		const { invoke, stdio, commands } = ideServiceRig();
+		store.add(CommandsRegistry.registerCommand('test.devSbx18.openTerminal', () => undefined));
+		const sandboxed: IVoltHostToolCall = { sessionId: 's1', cwd: '/proj', sandbox: WORKSPACE_WRITE, readRefusal: async () => undefined, writeRefusal: async () => undefined };
+		const refused: [Record<string, unknown>, RegExp][] = [
+			[{ capability: 'notebook', op: 'run', args: { path: 'n.ipynb' } }, /^ide was not run: this chat runs in Volt's sandbox, and ide \(notebook run\) would run outside it\. The notebook's kernel runs outside the sandbox/],
+			[{ capability: 'remote', op: 'exec', args: { host: 'prod', command: 'ls' } }, /ide \(remote exec\) would run outside it\. ssh would run with the user's keys/],
+			[{ capability: 'remote', op: 'hosts' }, /ide \(remote hosts\) would run outside it\. ~\/\.ssh is a credential folder/],
+			[{ capability: 'extensions', op: 'run', args: { command: 'test.devSbx18.openTerminal' } }, /ide \(extensions run\) would run outside it\. Editor and extension commands run outside the sandbox/],
+		];
+		for (const [args, expected] of refused) {
+			assert.match((await invoke(args, sandboxed)).error ?? '', expected, JSON.stringify(args));
+		}
+		// (Volt's own command that shows the chat's IDE tab is not the agent's.)
+		const agents = () => commands.filter(id => !id.startsWith('volt.agentIde.'));
+		assert.deepStrictEqual([stdio.runs, stdio.gits, agents()], [[], [], []], 'nothing ran');
+
+		// Unsandboxed, as before: the editor command runs.
+		assert.match((await invoke({ capability: 'extensions', op: 'run', args: { command: 'test.devSbx18.openTerminal' } }, { sessionId: 's1', cwd: '/proj' })).text ?? '', /^Ran test\.devSbx18\.openTerminal\./);
+		assert.deepStrictEqual(agents(), ['test.devSbx18.openTerminal']);
 	});
 
 	// --- Job waits ----------------------------------------------------------------------------

@@ -15,7 +15,7 @@ import { IEnvironmentService } from '../../../../../platform/environment/common/
 import { IMarkerService } from '../../../../../platform/markers/common/markers.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { chatExec, IChatExec, voltExec } from '../../../../services/voltRuntime/common/execContext.js';
-import { hostToolSandboxUse, isSandboxed } from '../../../../services/voltRuntime/common/hostToolSandbox.js';
+import { hostToolSandboxUse, isSandboxed, sandboxRefusalMessage } from '../../../../services/voltRuntime/common/hostToolSandbox.js';
 import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
 import { ITextModelService } from '../../../../../editor/common/services/resolverService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
@@ -378,8 +378,13 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 		if (op === 'help' || !op) {
 			return { text: ideHelp(id) ?? '' };
 		}
-		if (!ideOp(id, op) || !ctx) {
+		const spec = ideOp(id, op);
+		if (!spec || !ctx) {
 			return { error: `${id} has no op "${op}".\n${ideHelp(id)}` };
+		}
+		if (ctx.confinement && spec.sandbox === 'escapes') {
+			// The gate refuses these before they get here; a sandboxed call that reached this service another way runs nothing outside the sandbox either.
+			return { error: sandboxRefusalMessage(IDE_GATEWAY_TOOL_NAME, 'escapes', ctx.confinement.sandbox, args) };
 		}
 		const opArgs = args.args && typeof args.args === 'object' ? args.args as Record<string, unknown> : {};
 		const result = await capability.invoke(op, opArgs, ctx);
