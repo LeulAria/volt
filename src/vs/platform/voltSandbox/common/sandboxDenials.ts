@@ -128,15 +128,23 @@ const ANCESTOR_PROBE_NAME = /^(?:\.git|\.hg|\.svn|\.gitignore|\.ignore|\.rgignor
  * - the home folder, or a folder above the workspace or an allowed folder, listed or probed (git's
  *   repository discovery, ignore files, the CLI scanning its surroundings) by anything but a
  *   command that lists or reads what it is told (`ls ~`, `cat ~/x`).
- * A read by another process (the agent running `cat ~/.zshrc`), a write, or one with no process
- * named (Linux reports none: then only the shell files count) still gets its card. The caller
- * logs quiet ones.
+ * - the agent CLI's own background state outside its overlay (`own`, from its footprint's
+ *   `quietPaths`), read or written by the CLI's own process, and the folders on the way to it.
+ * A read by another process (the agent running `cat ~/.zshrc`), any other write, or one with no
+ * process named (Linux reports none: then only the shell files count) still gets its card. The
+ * caller logs quiet ones.
  */
-export function isQuietDenial(denial: ISandboxDenial, home: string, roots: readonly string[] = []): boolean {
+export function isQuietDenial(denial: ISandboxDenial, home: string, roots: readonly string[] = [], own?: { readonly processes: readonly string[]; readonly paths: readonly string[] }): boolean {
+	const process = denial.process?.replace(/^.*\//, '');
+	if (own && process !== undefined && own.processes.includes(process) && (denial.kind === 'read' || denial.kind === 'write')) {
+		const touched = denial.target.replace(/\/+$/, '');
+		if (own.paths.some(path => touched === path || touched.startsWith(`${path}/`) || (denial.kind === 'read' && isPathAbove(touched, path, home)))) {
+			return true;
+		}
+	}
 	if (denial.kind !== 'read' || !home) {
 		return false;
 	}
-	const process = denial.process?.replace(/^.*\//, '');
 	if (denial.target.startsWith(`${home}/`)) {
 		const relative = denial.target.slice(home.length + 1);
 		if (SHELL_STARTUP_FILE.test(relative) || SHELL_STARTUP_DIR.test(relative)) {
@@ -171,6 +179,11 @@ function ancestorFolders(roots: readonly string[]): Set<string> {
 		}
 	}
 	return out;
+}
+
+/** `folder` is above `path` and inside `home` (not `home` itself, which has its own rule). */
+function isPathAbove(folder: string, path: string, home: string): boolean {
+	return !!home && folder.startsWith(`${home}/`) && path.startsWith(`${folder}/`);
 }
 
 /** The folder "Allow this folder" adds for a denied path: the path itself when it is a folder, else its parent. */

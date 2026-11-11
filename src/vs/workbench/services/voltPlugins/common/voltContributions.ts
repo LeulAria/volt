@@ -122,6 +122,8 @@ export interface IVoltAgentStateContribution {
 	readonly env?: Readonly<Record<string, string>>;
 	/** Environment variables it reads its keys and endpoints from, passed even though they look secret. */
 	readonly envKeys?: readonly string[];
+	/** Folders it reads and writes by itself outside its overlay, and its process names: still denied, logged without a card. */
+	readonly quietPaths?: { readonly processes: readonly string[]; readonly paths: readonly string[] };
 	/** H.12 shorthand for a provider without seeds: keys merged back to the real config after a turn. */
 	readonly mergeBack?: readonly string[];
 }
@@ -349,6 +351,7 @@ export const VOLT_CONTRIBUTION_SCHEMAS: Readonly<Record<keyof IVoltContributes, 
 						tmpDirs: STRINGS,
 						env: ENV_RECORD,
 						envKeys: { type: 'array', items: ENV_NAME },
+						quietPaths: { type: 'object', required: ['processes', 'paths'], additionalProperties: false, properties: { processes: STRINGS, paths: STRINGS } },
 						mergeBack: STRINGS,
 					},
 				},

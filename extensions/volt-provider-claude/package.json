@@ -141,6 +141,16 @@
 					"env": {
 						"DISABLE_AUTOUPDATER": "1"
 					},
+					"quietPaths": {
+						"processes": [
+							"claude"
+						],
+						"paths": [
+							".claude/skills/synced",
+							".claude/plugins",
+							".local/state/claude"
+						]
+					},
 					"envKeys": [
 						"ANTHROPIC_API_KEY",
 						"ANTHROPIC_AUTH_TOKEN",

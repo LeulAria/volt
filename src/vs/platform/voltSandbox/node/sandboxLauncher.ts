@@ -20,7 +20,7 @@ import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
 import { IAttestation, ISandboxBackendCapabilities, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial, isQuietDenial } from '../common/sandboxDenials.js';
 import { agentStatePlan } from '../common/agentState.js';
-import { AGENT_STATE_ROOT, agentQuietDomains, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { AGENT_STATE_ROOT, agentQuietDomains, agentQuietPaths, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
@@ -157,10 +157,11 @@ export interface ISandboxViolationEvent {
 	readonly denial: ISandboxDenial;
 }
 
-/** Where a run's denials are judged from: the home folder and the chat's folders (see `isQuietDenial`). */
+/** Where a run's denials are judged from: the home folder, the chat's folders and the CLI's own state (see `isQuietDenial`). */
 interface IDenialContext {
 	readonly home: string;
 	readonly roots: readonly string[];
+	readonly own?: { readonly processes: readonly string[]; readonly paths: readonly string[] };
 }
 
 interface ILogger {
@@ -340,10 +341,12 @@ export class VoltSandboxLauncher extends Disposable {
 			});
 			sealed = this.registry.sealLaunchPolicy(principal, prepared.launchPolicyHash);
 			launched = true;
-			// The folders above these are the ones a CLI or a tool probes by itself (quiet denials).
-			const given = [...request.workspaceRoots, ...request.extraWritableRoots ?? []];
+			// The folders above these are the ones a CLI or a tool probes by itself (quiet denials): the
+			// chat's, and temp's (`/private/var` above the macOS user temp folder).
+			const given = [...request.workspaceRoots, ...request.extraWritableRoots ?? [], ...host.tempDirs];
 			const roots = [...new Set([...given, ...await Promise.all(given.map(root => fs.realpath(root).catch(() => root)))])];
-			return this.launch(prepared, overlay, policy, sealed, [...files.warnings, ...describeIgnoredEntries([...files.ignored, ...ignored], policyFileName)], { home: host.home, roots });
+			const own = agentQuietPaths(request.providerId, host.home);
+			return this.launch(prepared, overlay, policy, sealed, [...files.warnings, ...describeIgnoredEntries([...files.ignored, ...ignored], policyFileName)], { home: host.home, roots, ...(own ? { own } : {}) });
 		} catch (err) {
 			// Every failure here (a cache or overlay folder that can't be made, a config that can't be
 			// linked) is the sandbox refusing, typed, so the chat says so and never retries it (FAIL-TYPED-1).
@@ -732,11 +735,11 @@ export class VoltSandboxLauncher extends Disposable {
 
 	private stateRootPruned = false;
 
-	private report(tag: string, denial: ISandboxDenial, { home, roots }: IDenialContext): void {
+	private report(tag: string, denial: ISandboxDenial, { home, roots, own }: IDenialContext): void {
 		if (isNoiseDenial(denial)) {
 			return;
 		}
-		const quiet = isQuietDenial(denial, home, roots);
+		const quiet = isQuietDenial(denial, home, roots, own);
 		// A quiet read (by the shell) never hides the agent's own read of the same file (by `cat`).
 		const key = `${tag}|${denial.kind}|${denial.target}${quiet ? `|quiet|${denial.process ?? ''}` : ''}`;
 		const now = Date.now();

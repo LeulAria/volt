@@ -21,7 +21,7 @@ import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { allEnforcement, ISandboxBackendCapabilities, SandboxUnavailableError } from '../../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial, isQuietDenial } from '../../common/sandboxDenials.js';
-import { agentSandboxPolicy, IVoltSandboxRequest } from '../../common/sandboxPolicy.js';
+import { agentQuietPaths, agentSandboxPolicy, IVoltSandboxRequest } from '../../common/sandboxPolicy.js';
 import { builtinProfile } from '../../common/sandboxProfiles.js';
 import { IResolvedSandboxPolicy } from '../../common/sandboxResolved.js';
 import { ISandboxBackend, ISandboxLaunchOptions, ISandboxLaunchSpec } from '../../node/sandboxBackends.js';
@@ -84,6 +84,44 @@ suite('Volt sandbox failover: pure parts (R1)', () => {
 		for (const denial of [at(home, 'ls'), at(`${home}/Projects`, 'find'), at(`${home}/Projects/.git`, 'cat'), at(home), at(`${home}/Documents`, 'node'), at(`${home}/Projects/app2`, 'node'), at(`${home}/Projects/secrets.txt`, 'node'), at('/', 'node'), { kind: 'write', target: home, source: 'os', process: 'node' } satisfies ISandboxDenial]) {
 			assert.ok(!isQuietDenial(denial, home, roots), `card: ${denial.kind} ${denial.target} (${denial.process})`);
 		}
+	});
+
+	test('DENY-QUIET-5: Claude Code\'s own synced skills, plugins and locks are quiet when the CLI touches them; the agent\'s commands on them and other paths keep their card', () => {
+		const home = '/Users/u';
+		const own = agentQuietPaths('claude-code', home);
+		assert.ok(own, 'Claude Code has quiet paths');
+		const denial = (kind: 'read' | 'write', target: string, process?: string): ISandboxDenial => ({ kind, target, source: 'os', ...(process ? { process } : {}) });
+		// What a sandboxed Claude Code turn showed as six cards (live, 2026-11-11).
+		const quiet = [
+			denial('read', `${home}/.claude`, 'claude'),
+			denial('write', `${home}/.claude/skills/synced/29bef535_44dec65b/manifest.json`, 'claude'),
+			denial('write', `${home}/.claude/plugins/known_marketplaces_claudeai.json.lock`, 'claude'),
+			denial('write', `${home}/.claude/plugins/synced/29bef535_44dec65b/.marketplaces.json.tmp.8a2a2ca0`, 'claude'),
+			denial('write', `${home}/.claude/plugins/store`, 'claude'),
+			denial('read', `${home}/.local/state/claude/locks`, 'claude'),
+			denial('read', `${home}/.local/state`, '/Users/u/.local/share/claude/versions/2.4.0/claude'),
+		];
+		for (const entry of quiet) {
+			assert.ok(isQuietDenial(entry, home, [], own), `quiet: ${entry.kind} ${entry.target} (${entry.process})`);
+		}
+		const loud = [
+			// The agent's own commands on the same paths.
+			denial('write', `${home}/.claude/plugins/store`, 'cp'), denial('read', `${home}/.claude/skills/synced/x/SKILL.md`, 'cat'), denial('read', `${home}/.claude`, 'ls'),
+			// The CLI writing its config, instructions or anything else of the home folder.
+			denial('write', `${home}/.claude/settings.json`, 'claude'), denial('write', `${home}/.claude/CLAUDE.md`, 'claude'), denial('write', `${home}/.claude/skills/mine/SKILL.md`, 'claude'),
+			denial('write', `${home}/.local/state`, 'claude'), denial('read', `${home}/.ssh/id_ed25519`, 'claude'), denial('write', `${home}/.zshrc`, 'claude'),
+			// Linux names no process.
+			denial('write', `${home}/.claude/plugins/store`),
+		];
+		for (const entry of loud) {
+			assert.ok(!isQuietDenial(entry, home, [], own), `card: ${entry.kind} ${entry.target} (${entry.process})`);
+		}
+		// Another agent has none.
+		assert.strictEqual(agentQuietPaths('codex', home), undefined);
+		assert.ok(!isQuietDenial(denial('write', `${home}/.claude/plugins/store`, 'claude'), home, [], agentQuietPaths('codex', home)));
+		// The folders above temp are probed like the ones above the workspace.
+		assert.ok(isQuietDenial(denial('read', '/private/var', 'claude'), home, ['/private/var/folders/x1/abc/T']));
+		assert.ok(!isQuietDenial(denial('read', '/private/var', 'ls'), home, ['/private/var/folders/x1/abc/T']));
 	});
 
 	test('PROBE-RETRY-1: a failed probe is tried again after a while; a working one stands until its key changes', async () => {

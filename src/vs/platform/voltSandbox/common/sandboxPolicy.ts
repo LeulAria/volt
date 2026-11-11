@@ -129,6 +129,13 @@ export interface IAgentFootprint {
 	 * denial card the user is invited to allow (the user didn't ask for them); audit log only.
 	 */
 	readonly quietDomains?: readonly string[];
+	/**
+	 * Home folders the CLI reads and writes by itself outside its overlay (claude.ai's synced skills
+	 * and plugins, its locks), and the names of its own processes: still denied, but such a denial by
+	 * one of those processes is logged, never a card (the user didn't ask for it). A shell or a
+	 * command the agent runs on the same path (`cat`, `ls`) keeps its card.
+	 */
+	readonly quietPaths?: { readonly processes: readonly string[]; readonly paths: readonly string[] };
 	/** Environment variables the CLI reads its keys and endpoints from, copied even though they look secret. */
 	readonly envKeys?: readonly string[];
 	/** Fixed environment for a sandboxed run (turn off self-updates that would write executables). */
@@ -174,6 +181,8 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		tmpDirs: uid => [`/private/tmp/claude-${uid ?? 0}`, `/tmp/claude-${uid ?? 0}`, '/private/tmp/cc-socks', '/tmp/cc-socks'],
 		domains: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
 		// Its Datadog log intake and Statsig feature gates are quiet through AGENT_TELEMETRY_DOMAINS.
+		// claude.ai's synced skills and plugins go to the real `~/.claude` whatever CLAUDE_CONFIG_DIR says.
+		quietPaths: { processes: ['claude'], paths: ['.claude/skills/synced', '.claude/plugins', '.local/state/claude'] },
 		envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
 		env: { DISABLE_AUTOUPDATER: '1' },
 	},
@@ -329,6 +338,12 @@ export const AGENT_TELEMETRY_DOMAINS: readonly string[] = [
 /** Host rules whose denials for `providerId`'s agent are logged only, never a card (its own telemetry). */
 export function agentQuietDomains(providerId: string): readonly string[] {
 	return [...AGENT_TELEMETRY_DOMAINS, ...(AGENT_FOOTPRINTS[providerId]?.quietDomains ?? [])];
+}
+
+/** Where `providerId`'s CLI keeps background state of its own, as absolute paths (see {@link IAgentFootprint.quietPaths}). */
+export function agentQuietPaths(providerId: string, home: string): { readonly processes: readonly string[]; readonly paths: readonly string[] } | undefined {
+	const own = Object.prototype.hasOwnProperty.call(AGENT_FOOTPRINTS, providerId) ? AGENT_FOOTPRINTS[providerId].quietPaths : undefined;
+	return own && home ? { processes: own.processes, paths: own.paths.map(path => `${normalizeSandboxPath(home)}/${path}`) } : undefined;
 }
 
 /** `/a/b/` and `/a//b` as `/a/b`. Relative paths are returned unchanged (and later rejected). */

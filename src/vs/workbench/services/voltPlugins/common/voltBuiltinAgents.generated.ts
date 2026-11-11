@@ -78,6 +78,10 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 					env: {
 						DISABLE_AUTOUPDATER: '1',
 					},
+					quietPaths: {
+						processes: ['claude'],
+						paths: ['.claude/skills/synced', '.claude/plugins', '.local/state/claude'],
+					},
 					envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
 				},
 				models: {
