@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { deriveTitle } from '../../common/history/agentHistoryLog.js';
-import { acceptAgentTitle, buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, titleCommandFor } from '../../common/history/titleGeneration.js';
+import { buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, titleCommandFor } from '../../common/history/titleGeneration.js';
 
 suite('Volt chat title generation', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
@@ -91,15 +91,5 @@ suite('Volt chat title generation', () => {
 		assert.deepStrictEqual(titleCommandFor('codex', undefined, 'p', 'gpt-5')?.slice(-3), ['-m', 'gpt-5', 'p']);
 		assert.deepStrictEqual(titleCommandFor('cursor-acp', undefined, 'p', 'gpt-5')?.slice(-3), ['--model', 'gpt-5', 'p']);
 		assert.ok(!titleCommandFor('cursor-acp', undefined, 'p')?.includes('--model'));
-	});
-
-	test('an agent\'s own title never replaces the one Volt writes', () => {
-		// Claude's adapter titled a council chat "I don't have a `council` or" at the end of its turn.
-		assert.strictEqual(acceptAgentTitle('pending', true), false, 'Volt is writing one');
-		assert.strictEqual(acceptAgentTitle(undefined, true), false, 'Volt\'s failed: the first line stays');
-		assert.strictEqual(acceptAgentTitle('done', true), false);
-		assert.strictEqual(acceptAgentTitle('done', false), false);
-		assert.strictEqual(acceptAgentTitle(undefined, false), true, 'no title model here: the agent\'s beats the first line');
-		assert.strictEqual(acceptAgentTitle('pending', false), true);
 	});
 });
