@@ -117,4 +117,45 @@ Where the after-run's 36.5 s goes (median run `b1ab-new-2`, load 50):
   `delegate_task` arguments (Volt sees the call start 1.5-2.7 s before the arguments) would hide
   part of it; it needs spares keyed before the subagent chat exists (open issue).
 
+### 3. Claude's first `delegate_task` call (item 2)
+
+Round 1 saw Claude's first `delegate_task` arrive with no arguments (the schema was deferred behind
+Tool Search; 5.9 s and a ToolSearch round trip lost). Commit 023bc9a4f0a answers such a call with
+the arguments to use, so the next call is right without loading the schema.
+
+Live, a request in plain words (`natural-delegate-prompt.txt`: "Ask a subagent (delegate_task, …)
+to read pricing.ts…"), after arm, N=3, load 31-40 (`data/orch/natural.jsonl`):
+
+| Run | Parent's calls | Empty calls | End to end | Subagent agent |
+|---|---|---|---|---|
+| natural-1 | ToolSearch, then `delegate_task` with full arguments | 0 | 13.0 s | pool spare, 65 ms |
+| natural-2 | same | 0 | 12.6 s | pool spare, 2 ms |
+| natural-3 | same | 0 | 14.9 s | pool spare, 22 ms |
+
+- **The empty call did not happen in 3 of 3 runs** (nor in any B1 run, 6 of 6, before or after),
+  so the guidance could not be seen working live; it is covered by the unit test
+  (`agentOrchestratorService.test.ts`, "a delegate_task call without arguments (schema not loaded yet) is told the arguments, so the next call is right"). Claude Code
+  2.1.280 loads the schema with ToolSearch first (about 2 s).
+- In the B1 after-runs Claude called `delegate_task` directly with no ToolSearch at all, because the
+  prompt names the tool's exact arguments.
+
+### 4. Sandbox denials under Full access (item 3)
+
+**Cause.** "Full access" is the approval mode (no prompts); it does not turn the sandbox off. The
+chats run in the user's default sandbox (Supervised: workspace writes, network on), so the kernel
+still refuses what lies outside it, and every refusal was a transcript row. What was refused, in
+every run, was each agent's start-up and nothing the task did:
+
+| Denied | By | Per | Why it happens |
+|---|---|---|---|
+| read `~/.config`, `~/.claude/state`, `/private/var` (as folders) | claude | each new subagent | Claude Code's start-up looks (XDG lookup, its state folder, the walk to the temp root) |
+| read `~/.zshenv`, `~/.zprofile`, `~/.zshrc` | zsh | each agent's first Bash call | the Bash tool's shell reads the user's startup files, which the sandbox keeps out (they may export tokens) |
+| write `~/.claude/plugins/synced/…`, `known_marketplaces_claudeai.json.lock` | claude | the parent (not lean) | claude.ai plugin sync; the config overlay links `plugins` read-only |
+
+**Fix** (`921ce414445`, `sandboxPolicy.ts`): these are housekeeping, like the CLI's other
+background state: still denied, logged in the agent server log, never a row or an "Allow" button.
+A write to an rc file still shows. After the fix: **0 rows per run** in B1 (2 of 2 runs), the
+challenge, the team and the councils; before: 12 (9-24) per B1 run. The agent server log shows the
+same denials as "housekeeping denial, not shown".
+
 <!-- RESULTS -->
