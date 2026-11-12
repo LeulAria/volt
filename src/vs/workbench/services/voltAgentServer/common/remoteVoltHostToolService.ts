@@ -166,7 +166,9 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 		if (!this.client.isReady) {
 			return; // onDidConnect sends them once connected
 		}
-		const tools = [...this.providers].flatMap(provider => provider.tools).filter(tool => !this.disabledTools.has(tool.name));
+		const tools = [...this.providers]
+			.flatMap(provider => provider.needsApproval ? provider.tools : provider.tools.map(tool => ({ ...tool, neverAsks: true })))
+			.filter(tool => !this.disabledTools.has(tool.name));
 		this.client.send('hostTools.setClientTools', tools);
 	}
 

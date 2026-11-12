@@ -176,6 +176,12 @@ export interface IVoltHostToolInfo {
 	 * that answer questions agents otherwise answer worse with their own tools (code_nav).
 	 */
 	readonly alwaysLoad?: boolean;
+	/**
+	 * Set by a window on the tools it lends the agent server: its provider has no `needsApproval`,
+	 * so the server does not ask the window before each call. A busy window that answered that
+	 * question late made code search ask the user ("acts in a Volt window").
+	 */
+	readonly neverAsks?: boolean;
 }
 
 export interface IVoltHostToolResult {

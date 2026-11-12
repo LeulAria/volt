@@ -125,15 +125,17 @@ export class ServerClientTools extends Disposable {
 			this.registration = undefined;
 			const own = new Set(this.hostTools.listTools().map(tool => tool.name));
 			// Every window that serves a name, newest first: the chat's own window, else the newest.
-			const owners = new Map<string, { readonly connectionIds: number[]; tool: IVoltHostToolInfo }>();
+			// neverAsks: no window that serves it asks before a call (code search, code_nav...).
+			const owners = new Map<string, { readonly connectionIds: number[]; tool: IVoltHostToolInfo; neverAsks: boolean }>();
 			for (const [connectionId, tools] of [...this.byConnection].sort((a, b) => b[0] - a[0])) {
 				for (const tool of tools) {
 					if (!own.has(tool.name)) {
 						const owner = owners.get(tool.name);
 						if (owner) {
 							owner.connectionIds.push(connectionId);
+							owner.neverAsks &&= tool.neverAsks === true;
 						} else {
-							owners.set(tool.name, { connectionIds: [connectionId], tool });
+							owners.set(tool.name, { connectionIds: [connectionId], tool, neverAsks: tool.neverAsks === true });
 						}
 					}
 				}
@@ -152,6 +154,10 @@ export class ServerClientTools extends Disposable {
 				// The window's provider decides (desktop control asks every time); the approval itself
 				// is asked here, in the chat, before the window runs anything.
 				needsApproval: async (name, args, call) => {
+					if (owners.get(name)?.neverAsks) {
+						// Nothing to ask the window: a busy one would answer after the timeout, and the user would get a card.
+						return undefined;
+					}
 					const owner = ownerOf(name, call);
 					if (!owner) {
 						return undefined; // invoke reports that no window serves it
