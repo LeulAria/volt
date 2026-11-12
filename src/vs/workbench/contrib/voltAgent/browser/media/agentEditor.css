@@ -1658,20 +1658,25 @@ pre.volt-agent-searchable {
 	animation: volt-agent-status-in 420ms cubic-bezier(0.22, 0.8, 0.24, 1) both;
 }
 
+/*
+ * The two phrases move together, one line apart, like an odometer: the old one leaves upward as the
+ * new one comes up from below, so the two never cover each other mid-swap (they did when the old
+ * one travelled 110% and the new one 70%: up to 5px of "ToolSearch" over "Thinking").
+ */
 @keyframes volt-agent-status-out {
 	from {
 		transform: translateY(0);
 		opacity: 1;
 	}
 	to {
-		transform: translateY(-110%);
+		transform: translateY(-100%);
 		opacity: 0;
 	}
 }
 
 @keyframes volt-agent-status-in {
 	from {
-		transform: translateY(70%);
+		transform: translateY(100%);
 		opacity: 0;
 	}
 	to {
