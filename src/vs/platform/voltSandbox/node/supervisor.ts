@@ -513,7 +513,8 @@ class SandboxHost implements ISandboxedHost {
 	/** What the sandbox refused it (user-facing only), by kind and target, least recent first. */
 	private readonly denials = new Map<string, ISandboxWorkloadDenial>();
 	private deniedCount = 0;
-	private denialListener: IDisposable | undefined;
+	/** Listens to one launch's denials; ends with that launch's sandbox. */
+	private denialListener: { readonly prepared: IPreparedSandbox; readonly listener: IDisposable } | undefined;
 	/** A burst of denials is one change for the window, not one per refusal. */
 	private denialTimer: ReturnType<typeof setTimeout> | undefined;
 	private disposed = false;
@@ -625,6 +626,14 @@ class SandboxHost implements ISandboxedHost {
 		}, DENIAL_COALESCE_MS);
 	}
 
+	/** Stops listening for denials: any launch's, or only `prepared`'s (a restart may already listen to a newer one). */
+	private stopDenials(prepared?: IPreparedSandbox): void {
+		if (this.denialListener && (!prepared || this.denialListener.prepared === prepared)) {
+			this.denialListener.listener.dispose();
+			this.denialListener = undefined;
+		}
+	}
+
 	private setState(state: SandboxWorkloadState): void {
 		if (this._state !== state) {
 			this._state = state;
@@ -682,8 +691,11 @@ class SandboxHost implements ISandboxedHost {
 		}
 		this.prepared = prepared;
 		this.tag = prepared.tag;
-		this.denialListener?.dispose();
-		this.denialListener = prepared.onDenial(denial => this.recordDenial(denial, prepared.policy.home));
+		this.stopDenials();
+		// A host disposed while its sandbox was being prepared takes no listener (it would leak).
+		if (!this.disposed) {
+			this.denialListener = { prepared, listener: prepared.onDenial(denial => this.recordDenial(denial, prepared.policy.home)) };
+		}
 		this._backend = prepared.backend;
 		const piped = request.stdio === 'pipe';
 		let child: ChildProcess;
@@ -698,6 +710,7 @@ class SandboxHost implements ISandboxedHost {
 				windowsHide: true,
 			});
 		} catch (err) {
+			this.stopDenials(prepared);
 			await prepared.dispose();
 			this.prepared = undefined;
 			return this.fail('launch', (err as Error).message);
@@ -843,6 +856,7 @@ class SandboxHost implements ISandboxedHost {
 			this._channelId = undefined;
 		}
 		this._channel = undefined;
+		this.stopDenials(prepared);
 		await prepared.dispose();
 		if (this.prepared === prepared) {
 			this.child = undefined;
@@ -1047,7 +1061,7 @@ class SandboxHost implements ISandboxedHost {
 		clearTimeout(this.idleTimer);
 		clearTimeout(this.backoffTimer);
 		clearTimeout(this.denialTimer);
-		this.denialListener?.dispose();
+		this.stopDenials();
 		for (const emitter of [this._onDidChangeState, this._onExit, this._onResource, this._onMessage, this._onStdout] as Emitter<unknown>[]) {
 			emitter.dispose();
 		}
