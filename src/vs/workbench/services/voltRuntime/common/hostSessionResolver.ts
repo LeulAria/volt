@@ -26,7 +26,13 @@ export class RunModeTracker extends Disposable implements IVoltHostSessionResolv
 		return this.modes.get(sessionId);
 	}
 
+	/**
+	 * Where the chat's agent works: its worktree, or else its project's folder. Only the worktree
+	 * was returned before, so a chat on the project itself had no folder in the agent server (which
+	 * has no workspace to fall back on): its sandbox refused every relative path, and code_nav,
+	 * instant_grep and find_symbol answered "this chat has no folder".
+	 */
 	cwd(sessionId: string): string | undefined {
-		return this.modes.has(sessionId) ? this.runtime.getOrCreateSession(sessionId).worktreePath : undefined;
+		return this.modes.has(sessionId) ? this.runtime.getOrCreateSession(sessionId).worktreePath ?? this.runtime.workingFolder(sessionId) : undefined;
 	}
 }
