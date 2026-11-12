@@ -47,6 +47,11 @@ export async function loadLocalResource(
 	options: {
 		ifNoneMatch: string | undefined;
 		roots: ReadonlyArray<URI>;
+		/**
+		 * Volt: judge the file by its real path, so a symlink inside a root can't lead out of it
+		 * (a sandboxed extension's webview, spec INV-20). Costs a realpath per load.
+		 */
+		resolveSymlinks?: boolean;
 	},
 	fileService: IFileService,
 	logService: ILogService,
@@ -58,6 +63,12 @@ export async function loadLocalResource(
 
 	if (!resourceToLoad) {
 		logService.trace(`Webview.loadLocalResource - access denied. requestUri=${requestUri}, resourceToLoad=${resourceToLoad}`);
+		return WebviewResourceResponse.AccessDenied;
+	}
+
+	// Local files only: a remote resource is read through the remote server's own resource route.
+	if (options.resolveSymlinks && resourceToLoad.scheme === Schemas.file && !await isInsideRootsByRealPath(resourceToLoad, options.roots, fileService)) {
+		logService.warn(`Webview.loadLocalResource - access denied: the real path leaves the webview's roots. requestUri=${requestUri}`);
 		return WebviewResourceResponse.AccessDenied;
 	}
 
@@ -97,6 +108,32 @@ function getResourceToLoad(
 	return undefined;
 }
 
+/**
+ * The resource's real path lies inside the real path of one of the roots. A file system without
+ * symlinks (no realpath support) is judged by the paths themselves; a path that can't be resolved
+ * (missing, or a broken link) is outside.
+ */
+async function isInsideRootsByRealPath(resource: URI, roots: ReadonlyArray<URI>, fileService: IFileService): Promise<boolean> {
+	const real = async (uri: URI): Promise<URI | undefined | null> => {
+		try {
+			return await fileService.realpath(uri) ?? uri;
+		} catch {
+			return null;
+		}
+	};
+	const realResource = await real(resource);
+	if (!realResource) {
+		return false;
+	}
+	for (const root of roots) {
+		const realRoot = await real(root);
+		if (realRoot && containsResource(realRoot, realResource)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 function containsResource(root: URI, resource: URI): boolean {
 	if (root.scheme !== resource.scheme) {
 		return false;
@@ -110,7 +147,8 @@ function containsResource(root: URI, resource: URI): boolean {
 		resourceFsPath = resourceFsPath.toLowerCase();
 	}
 
-	return resourceFsPath.startsWith(rootPath);
+	// Volt: a root may also be one file (a custom editor's document whose folder is too broad to read).
+	return resourceFsPath.startsWith(rootPath) || resourceFsPath === rootPath.slice(0, -1);
 }
 
 function normalizeResourcePath(resource: URI): URI {

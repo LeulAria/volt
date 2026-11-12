@@ -15,6 +15,15 @@ export interface ISandboxDenial {
 	readonly source: 'os' | 'proxy' | 'volt' | 'output';
 	/** The process that tried (`touch`, `node`), when known. */
 	readonly process?: string;
+	/** False: the network broker says no "Allow" may be offered for it (a private address, the prompt budget spent). */
+	readonly promptable?: boolean;
+	/**
+	 * B-34: the broker's own record of the refusal. Only a denial with one gets "Allow" buttons; an
+	 * approval names it and the epoch, and the broker rebuilds the rule from its record.
+	 */
+	readonly denialId?: string;
+	/** The grant epoch the broker refused at (compare-and-swap on approval). */
+	readonly epoch?: number;
 }
 
 /** Seatbelt operation names as denial kinds. */

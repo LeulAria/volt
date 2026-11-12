@@ -37,6 +37,7 @@ registerAction2(class OpenVoltSettingsAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_VOLT_SETTINGS_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltSettings.open', "Volt Settings"),
 			category: Categories.Preferences,
 			f1: true,

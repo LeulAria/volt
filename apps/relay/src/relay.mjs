@@ -26,6 +26,10 @@ export const DEFAULT_FALLBACK_SEC = 90;
 /** A runner silent this long while working on a task fails it. */
 const RUNNER_LOST_MS = 90_000;
 const PAIRING_TTL_MS = 15 * 60_000;
+/** Wrong pairing attempts a live code absorbs before it is locked (B-24). */
+export const PAIR_FAILURES_PER_CODE = 10;
+/** Wrong pairing attempts one address may make in a minute. */
+export const PAIR_FAILURES_PER_SOURCE = 20;
 const LOG_LIMIT_BYTES = 8 * 1024 * 1024;
 
 const TASK_ACTIVE = new Set(['queued', 'claimed', 'preparing', 'running', 'finishing']);
@@ -52,6 +56,8 @@ export class Relay {
 			this.state.relayId = newId('relay');
 		}
 		this.rates = new Map();
+		/** Wrong pairing attempts per source address (times in the last minute). */
+		this.pairFailures = new Map();
 		this.claimWaiters = new Set();
 		this.adminToken = this.loadAdminToken();
 	}
@@ -117,20 +123,47 @@ export class Relay {
 		return { code, kind: pairing.kind, expiresAt: pairing.expiresAt };
 	}
 
-	/** Trades a one-time code (or the enrollment key, for runners) for a long-lived device token. */
-	async pair(body) {
+	/**
+	 * Trades a one-time code (or the enrollment key, for runners) for a long-lived device token.
+	 * Wrong attempts are limited twice: per source address ({@link PAIR_FAILURES_PER_SOURCE} a
+	 * minute), and per code: every live code takes the hit of each wrong guess, and a code that
+	 * has absorbed {@link PAIR_FAILURES_PER_CODE} is locked (gone), so it can't be brute forced
+	 * from many addresses either.
+	 */
+	async pair(body, source = 'unknown') {
 		const now = Date.now();
+		const recent = (this.pairFailures.get(source) ?? []).filter(at => now - at < 60_000);
+		if (recent.length >= PAIR_FAILURES_PER_SOURCE) {
+			throw new HttpError(429, 'Too many wrong pairing attempts from this address. Wait a minute, then try again.');
+		}
+		const failed = async message => {
+			this.pairFailures.delete(source);
+			this.pairFailures.set(source, [...recent, now]);
+			while (this.pairFailures.size > 4096) {
+				this.pairFailures.delete(this.pairFailures.keys().next().value);
+			}
+			const live = this.state.pairings.filter(candidate => candidate.expiresAt > now);
+			for (const pairing of live) {
+				pairing.failures = (pairing.failures ?? 0) + 1;
+			}
+			const locked = live.filter(pairing => pairing.failures >= PAIR_FAILURES_PER_CODE);
+			if (locked.length) {
+				this.state.pairings = this.state.pairings.filter(pairing => !locked.includes(pairing));
+			}
+			await this.store.save();
+			throw new HttpError(403, message);
+		};
 		let kind;
 		if (body.enrollKey) {
 			if (!this.options.enrollKey || !safeEqual(body.enrollKey, this.options.enrollKey)) {
-				throw new HttpError(403, 'Wrong enrollment key.');
+				await failed('Wrong enrollment key.');
 			}
 			kind = body.kind === 'client' ? 'client' : 'runner';
 		} else {
 			const hash = sha256(normalizePairingCode(body.code));
 			const pairing = this.state.pairings.find(candidate => candidate.codeHash === hash && candidate.expiresAt > now);
 			if (!pairing) {
-				throw new HttpError(403, 'That pairing code is wrong or expired. Make a new one with `volt-relay pair`.');
+				await failed('That pairing code is wrong, expired or locked after too many wrong tries. Make a new one with `volt-relay pair`.');
 			}
 			this.state.pairings = this.state.pairings.filter(candidate => candidate !== pairing);
 			kind = pairing.kind;

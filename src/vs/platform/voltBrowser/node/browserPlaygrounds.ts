@@ -5,15 +5,27 @@
 
 import { execFile } from 'child_process';
 import { promises as fs } from 'fs';
-import * as http from 'http';
-import { AddressInfo } from 'net';
+import type * as http from 'http';
 import { tmpdir } from 'os';
 import { dirname, extname, join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
+import { createAuthenticatedServer, ListenerAuth, listenOn, loopbackHostNames, newListenerSecret, secretsEqual } from '../../voltListeners/node/listenerAuth.js';
 import { IVoltLocalServer, IVoltPlayground, IVoltPlaygroundMock, IVoltPlaygroundRequest, IVoltPlaygroundUpdate, matchPlaygroundMock, PLAYGROUND_CONTENT_TYPES, safePlaygroundPath } from '../common/browserAgent.js';
 
 /** Every playground folder lives here, so a sweep can never touch anything else. */
 export const PLAYGROUND_ROOT = join(tmpdir(), 'volt-playgrounds');
+/** The query parameter that carries a playground's secret in its URL (traded for a cookie). */
+export const PLAYGROUND_SECRET_PARAM = 'volt_pg';
+
+function readCookie(req: http.IncomingMessage, name: string): string | undefined {
+	for (const part of (req.headers.cookie ?? '').split(';')) {
+		const index = part.indexOf('=');
+		if (index > 0 && part.slice(0, index).trim() === name) {
+			return part.slice(index + 1).trim();
+		}
+	}
+	return undefined;
+}
 /** Folders left behind by a crash are removed at the next start after this long. */
 const STALE_MS = 24 * 60 * 60 * 1000;
 const MAX_PLAYGROUNDS_PER_CHAT = 12;
@@ -26,6 +38,8 @@ interface IEntry {
 	readonly createdAt: number;
 	readonly server: http.Server;
 	url: string;
+	origin: string;
+	readonly secret: string;
 	files: Set<string>;
 	mocks: readonly IVoltPlaygroundMock[];
 	requests: number;
@@ -52,24 +66,47 @@ export class BrowserPlaygrounds {
 		const id = `pg-${generateUuid().slice(0, 8)}`;
 		const dir = join(PLAYGROUND_ROOT, id);
 		await fs.mkdir(dir, { recursive: true });
+		// Its own secret: the URL carries it once (`?volt_pg=`), the page then keeps it in a
+		// cookie named for this playground (cookies ignore the port), and tools may send it as a bearer.
+		const secret = newListenerSecret();
+		const cookie = `volt_pg_${id.slice(3)}`;
+		let port = 0;
+		const auth = new ListenerAuth<true>({
+			hosts: () => ({ names: loopbackHostNames(port) }),
+			extract: req => {
+				const query = new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get(PLAYGROUND_SECRET_PARAM);
+				if (query) {
+					return { secret: query, via: 'query' };
+				}
+				const fromCookie = readCookie(req, cookie);
+				return fromCookie ? { secret: fromCookie, via: 'cookie' } : undefined;
+			},
+			verify: candidate => secretsEqual(candidate, secret) || undefined,
+			browserOrigins: ['self'],
+		});
 		const entry: IEntry = {
 			id,
 			sessionId: request.sessionId,
 			title: request.title?.trim() || 'Playground',
 			dir,
 			createdAt: Date.now(),
-			server: http.createServer((req, res) => void this.serve(entry, req, res)),
+			server: createAuthenticatedServer(auth, (req, res, _principal, via) => {
+				if (via === 'query') {
+					res.setHeader('Set-Cookie', `${cookie}=${secret}; Path=/; HttpOnly; SameSite=Strict`);
+				}
+				void this.serve(entry, req, res);
+			}),
 			url: '',
+			origin: '',
+			secret,
 			files: new Set(),
 			mocks: request.mocks ?? [],
 			requests: 0,
 		};
 		await this.writeFiles(entry, request.files);
-		await new Promise<void>((resolve, reject) => {
-			entry.server.once('error', reject);
-			entry.server.listen(0, '127.0.0.1', () => resolve());
-		});
-		entry.url = `http://127.0.0.1:${(entry.server.address() as AddressInfo).port}/`;
+		port = await listenOn(entry.server, 0);
+		entry.origin = `http://127.0.0.1:${port}/`;
+		entry.url = `${entry.origin}?${PLAYGROUND_SECRET_PARAM}=${secret}`;
 		this.entries.set(id, entry);
 		this.log(`[volt] playground ${id} serving ${dir} at ${entry.url}`);
 		return this.describe(entry);
@@ -121,7 +158,7 @@ export class BrowserPlaygrounds {
 	}
 
 	private describe(entry: IEntry): IVoltPlayground {
-		return { id: entry.id, sessionId: entry.sessionId, title: entry.title, url: entry.url, dir: entry.dir, files: [...entry.files].sort(), mocks: entry.mocks.length, createdAt: entry.createdAt, requests: entry.requests };
+		return { id: entry.id, sessionId: entry.sessionId, title: entry.title, url: entry.url, origin: entry.origin, secret: entry.secret, dir: entry.dir, files: [...entry.files].sort(), mocks: entry.mocks.length, createdAt: entry.createdAt, requests: entry.requests };
 	}
 
 	private async writeFiles(entry: IEntry, files: Readonly<Record<string, string>>): Promise<void> {
@@ -139,11 +176,6 @@ export class BrowserPlaygrounds {
 
 	private async serve(entry: IEntry, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
 		entry.requests++;
-		const host = (req.headers.host ?? '').replace(/:\d+$/, '');
-		if (host !== '127.0.0.1' && host !== 'localhost') {
-			res.writeHead(403).end('Forbidden');
-			return;
-		}
 		const url = new URL(req.url ?? '/', 'http://127.0.0.1');
 		const mock = matchPlaygroundMock(entry.mocks, decodeURIComponent(url.pathname), req.method ?? 'GET');
 		if (mock) {

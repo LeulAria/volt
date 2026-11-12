@@ -4,14 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../../base/common/lifecycle.js';
-import { isWindows } from '../../../../../base/common/platform.js';
 import { join, normalize } from '../../../../../base/common/path.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { FileOperationError, FileOperationResult, IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltStdioService, runGitThrough } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { IPathService } from '../../../path/common/pathService.js';
 import { IAgentHistoryService } from '../../common/history/agentHistory.js';
@@ -195,26 +194,10 @@ export class AgentWorktreeService implements IAgentWorktreeService {
 	}
 
 	async git(cwd: string, args: readonly string[]): Promise<IGitRunResult> {
-		try {
-			const result = await this.stdio.exec({
-				id: `git-${generateUuid().slice(0, 8)}`,
-				command: ['git', '--no-pager', ...args].map(quoteArg).join(' '),
-				cwd,
-				timeoutMs: GIT_TIMEOUT_MS,
-				inlineChars: 20_000,
-			});
-			return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
-		} catch (err) {
-			return { exitCode: 1, stdout: '', stderr: err instanceof Error ? err.message : String(err) };
-		}
+		// HostGit: creating, listing and removing worktrees never runs the repository's hooks (post-checkout).
+		const result = await runGitThrough(this.stdio, { id: `git-${generateUuid().slice(0, 8)}`, cwd, args: ['--no-pager', ...args], timeoutMs: GIT_TIMEOUT_MS });
+		return { exitCode: result.exitCode ?? 1, stdout: result.stdout, stderr: result.error && !result.stderr.includes(result.error) ? `${result.stderr}\n${result.error}`.trim() : result.stderr };
 	}
-}
-
-function quoteArg(arg: string): string {
-	if (/^[\w@%+=:,./~^-]+$/.test(arg)) {
-		return arg;
-	}
-	return isWindows ? `"${arg.replace(/"/g, '""')}"` : `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
 class AgentWorktreeRetentionContribution extends Disposable {

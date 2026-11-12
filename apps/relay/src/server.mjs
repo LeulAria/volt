@@ -59,7 +59,7 @@ export async function startRelayServer(options) {
 			return sendJson(res, result.status, result.body);
 		}
 		if (method === 'POST' && parts[0] === 'api' && parts[1] === 'pair' && parts.length === 2) {
-			const result = await relay.pair(await readJson(req));
+			const result = await relay.pair(await readJson(req), req.socket.remoteAddress ?? 'unknown');
 			return sendJson(res, 200, { ...result, relay: relay.info(base) });
 		}
 

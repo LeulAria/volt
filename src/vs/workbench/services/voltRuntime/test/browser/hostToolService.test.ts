@@ -11,12 +11,15 @@ import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
+import { HOST_MCP_TOKEN_TTL_MS, hostMcpSessionToken, parseHostMcpSessionToken } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
+import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
+import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { VoltHostToolService } from '../../browser/host/hostToolService.js';
 import { dataUrlBytes, decodeDataUrl, encodeImage, scaleScreenshot } from '../../browser/host/imageCodec.js';
 import { createBrowserTools } from '../../browser/tools/browserTool.js';
 import { BrowserBlockReason, IVoltBrowserAccessService } from '../../common/browserAccess.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostToolApproval, IVoltHostToolInvocation, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
+import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostFlowApproval, IVoltHostToolApproval, IVoltHostToolCall, IVoltHostToolOwner, IVoltHostToolInvocation, IVoltMcpServer, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
 import { VoltMode } from '../../common/modes.js';
 import { createImage, IRgbaImage } from '../../common/tools/imageAnalysis.js';
 
@@ -41,8 +44,9 @@ suite('Volt host tool service', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function setup(options: { pageUrl?: string; files?: Map<string, Uint8Array> } = {}) {
+	function setup(options: { pageUrl?: string; files?: Map<string, Uint8Array>; links?: ReadonlyMap<string, string>; onAutomate?: (name: string, args: Record<string, unknown>, page: { url?: string }) => void } = {}) {
 		const calls: ICommandCall[] = [];
+		const page: { url?: string } = { url: options.pageUrl };
 		const commands = {
 			_serviceBrand: undefined,
 			onWillExecuteCommand: Event.None,
@@ -50,19 +54,37 @@ suite('Volt host tool service', () => {
 			executeCommand: async (id: string, ...args: unknown[]) => {
 				calls.push({ id, args });
 				if (id === BROWSER_PAGE_URL_COMMAND_ID) {
-					return options.pageUrl;
+					return page.url;
+				}
+				if (id === AUTOMATE_BROWSER_COMMAND_ID) {
+					options.onAutomate?.(String(args[1]), args[2] as Record<string, unknown>, page);
 				}
 				return { text: `ran ${String(args[1])}` };
 			},
 		} as unknown as ICommandService;
+		const written = new Map<string, string>();
+		// Symlinks: a path at or below a link resolves into its target.
+		const real = (path: string) => {
+			for (const [link, target] of options.links ?? []) {
+				if (path === link || path.startsWith(`${link}/`)) {
+					return target + path.slice(link.length);
+				}
+			}
+			return path;
+		};
 		const files = {
 			readFile: async (uri: URI) => {
-				const bytes = options.files?.get(uri.path);
+				const bytes = options.files?.get(uri.path) ?? (written.has(uri.path) ? VSBuffer.fromString(written.get(uri.path)!).buffer : undefined);
 				if (!bytes) {
 					throw new Error('missing');
 				}
 				return { value: VSBuffer.wrap(bytes) };
 			},
+			writeFile: async (uri: URI, content: VSBuffer) => {
+				written.set(uri.path, content.toString());
+				return {};
+			},
+			realpath: async (uri: URI) => URI.file(real(uri.path)),
 		} as unknown as IFileService;
 		const workspace = { getWorkspace: () => ({ folders: [{ uri: URI.file('/ws') }] }) } as unknown as IWorkspaceContextService;
 		const blocked = new Map<string | undefined, BrowserBlockReason>();
@@ -70,16 +92,272 @@ suite('Volt host tool service', () => {
 		const service = store.add(new VoltHostToolService(commands, files, workspace, access));
 		const modes = new Map<string, VoltMode>();
 		service.setSessionResolver({ mode: id => modes.get(id), cwd: () => undefined });
+		// What the MCP bridge registers: each chat's sandbox and the folder it works in.
+		const sandboxes = new Map<string, IVoltSandboxSettings>();
+		const folders = new Map<string, string>();
+		service.setSandboxResolver({ settings: id => sandboxes.get(id) ?? { level: 'off', network: true }, folder: id => folders.get(id) ?? '/ws' });
 		const automated = () => calls.filter(call => call.id === AUTOMATE_BROWSER_COMMAND_ID);
-		return { service, calls, modes, automated, blocked };
+		return { service, calls, modes, automated, blocked, written, page, sandboxes, folders };
 	}
 
-	test('hands agents the endpoint with the bearer token and optional tool groups', () => {
+	/** A provider serving `names`, recording what ran. */
+	function serve(service: VoltHostToolService, names: readonly string[]): string[] {
+		const ran: string[] = [];
+		store.add(service.registerToolProvider({
+			tools: names.map(name => ({ name, title: name, description: '', inputSchema: {} })),
+			invoke: async name => { ran.push(name); return { text: `ran ${name}` }; },
+		}));
+		return ran;
+	}
+
+	const WORKSPACE_WRITE: IVoltSandboxSettings = { level: 'workspace-write', network: false };
+	const READ_ONLY: IVoltSandboxSettings = { level: 'read-only', network: false };
+
+	test('hands each chat\'s agent a token for its own session and groups, never the server secret', () => {
 		const { service } = setup();
 		assert.deepStrictEqual(service.getMcpServers('s1'), []);
 		service.setMcpEndpoint('http://127.0.0.1:4000/mcp', 'tok');
-		assert.deepStrictEqual(service.getMcpServers('chat 1'), [{ type: 'http', name: 'volt', url: 'http://127.0.0.1:4000/mcp/chat%201', headers: [{ name: 'Authorization', value: 'Bearer tok' }] }]);
-		assert.strictEqual(service.getMcpServers('s', { groups: ['core', 'image'] })[0].url, 'http://127.0.0.1:4000/mcp/s?groups=core,image');
+		// The token carries the lease it was issued with (key epoch, expiry) and is signed over it.
+		const bearer = (servers: readonly IVoltMcpServer[]) => servers[0].headers[0].value.replace(/^Bearer /, '');
+		const before = Date.now();
+		const lease = parseHostMcpSessionToken(bearer(service.getMcpServers('chat 1')));
+		assert.ok(lease && lease.epoch >= before && lease.expiry === lease.epoch + HOST_MCP_TOKEN_TTL_MS, 'a lease from now, valid for a day');
+		assert.deepStrictEqual(service.getMcpServers('chat 1'), [{ type: 'http', name: 'volt', url: 'http://127.0.0.1:4000/mcp/chat%201', headers: [{ name: 'Authorization', value: `Bearer ${hostMcpSessionToken('tok', 'chat 1', undefined, lease)}` }] }]);
+		const grouped = service.getMcpServers('s', { groups: ['core', 'image'] })[0];
+		assert.strictEqual(grouped.url, 'http://127.0.0.1:4000/mcp/s?groups=core,image');
+		const groupedLease = parseHostMcpSessionToken(bearer([grouped]))!;
+		assert.deepStrictEqual(grouped.headers, [{ name: 'Authorization', value: `Bearer ${hostMcpSessionToken('tok', 's', ['core', 'image'], groupedLease)}` }]);
+		assert.notStrictEqual(hostMcpSessionToken('tok', 's', ['core', 'image'], groupedLease), hostMcpSessionToken('tok', 's', undefined, groupedLease));
+		// The same chat always gets the same config, so a live agent session is not mistaken for a stale one.
+		assert.deepStrictEqual(service.getMcpServers('chat 1'), service.getMcpServers('chat 1'));
+		// Without a chat there is nothing to authenticate as: the server is listed (Volt has tools) with no credentials.
+		assert.deepStrictEqual(service.getMcpServers(), [{ type: 'http', name: 'volt', url: 'http://127.0.0.1:4000/mcp', headers: [] }]);
+		assert.ok(JSON.stringify([service.getMcpServers('chat 1'), service.getMcpServers()]).indexOf('Bearer tok') < 0);
+	});
+
+	test('IPC-2: revoking a chat announces an epoch at or above its tokens\' and issues later tokens above it', () => {
+		const { service } = setup();
+		service.setMcpEndpoint('http://127.0.0.1:4000/mcp', 'tok');
+		const leaseOf = (sessionId: string) => parseHostMcpSessionToken(service.getMcpServers(sessionId)[0].headers[0].value.replace(/^Bearer /, ''))!;
+		const first = leaseOf('chat 1');
+		const other = leaseOf('chat 2');
+		const revoked: { sessionId: string; epoch: number }[] = [];
+		store.add(service.onDidRevokeMcpSession(event => revoked.push(event)));
+		service.revokeMcpSession('chat 1');
+		assert.strictEqual(revoked.length, 1);
+		assert.strictEqual(revoked[0].sessionId, 'chat 1');
+		assert.ok(revoked[0].epoch >= first.epoch, 'the server refuses the old token (epoch <= the revoked one)');
+		const second = leaseOf('chat 1');
+		assert.ok(second.epoch > revoked[0].epoch, 'a token issued after the revocation is above it');
+		assert.notDeepStrictEqual(second, first);
+		assert.deepStrictEqual(leaseOf('chat 2'), other, 'another chat keeps its token');
+		// Many revocations in the same millisecond still order strictly.
+		for (let i = 0; i < 5; i++) {
+			service.revokeMcpSession('chat 1');
+		}
+		assert.ok(revoked.slice(1).every((event, i) => event.epoch > revoked[i].epoch));
+		assert.ok(leaseOf('chat 1').epoch > revoked.at(-1)!.epoch);
+	});
+
+	test('sandbox gate: escapes, memory, new chats and unknown tools are refused for a sandboxed chat; an unsandboxed chat is unaffected', async () => {
+		const { service } = setup();
+		const names = ['terminal_start', 'task_watch', 'app_open', 'docker_ensure', 'device_install_app', 'device_launch_app', 'desktop_act', 'window_capture', 'worktree_handoff', 'thread_merge_back', 'rename_branch', 'memory_write', 'skill_write', 'memory_read', 'thread_launch', 'delegate_task', 'brand_new_tool', 'manage_automations', 'automation', 'device_act', 'render_chart'];
+		const ran = serve(service, names);
+		const sandboxed = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		const error = async (name: string, args: Record<string, unknown> = {}, call = sandboxed) => (await service.invokeTool(name, args, call)).error ?? '';
+
+		// Terminals and docker_ensure run in the chat's own sandbox now (sandboxPty.ts, F.6): the gate lets them through, the tools carry the sandbox.
+		assert.strictEqual(await error('terminal_start', { command: 'npm test' }), '');
+		assert.strictEqual(await error('docker_ensure'), '');
+		assert.strictEqual(await error('terminal_start', {}, { sessionId: 's1', sandbox: READ_ONLY }), '');
+		assert.deepStrictEqual(ran.splice(0), ['terminal_start', 'docker_ensure', 'terminal_start']);
+		for (const name of ['task_watch', 'app_open', 'device_install_app', 'device_launch_app', 'desktop_act', 'window_capture', 'worktree_handoff', 'thread_merge_back', 'rename_branch']) {
+			assert.match(await error(name), /would run outside it\./, name);
+		}
+		assert.match(await error('memory_write', { name: 'x', content: 'y' }), /would save something later chats read outside the sandbox/);
+		assert.match(await error('skill_write'), /later chats read/);
+		// New chats inherit the caller's sandbox, so these run; one in a new worktree does not (Volt runs its setup outside).
+		assert.strictEqual(await error('thread_launch', { prompt: 'go' }), '');
+		assert.strictEqual(await error('delegate_task', { task: 'go' }), '');
+		assert.match(await error('thread_launch', { prompt: 'go', workspace: { type: 'worktree' } }), /would run outside it/);
+		assert.match(await error('brand_new_tool'), /^brand_new_tool was not run: .*is not cleared to run from a sandboxed chat/);
+		assert.match(await error('manage_automations', { action: 'create' }), /would run outside it/);
+		assert.match(await error('manage_automations', { action: 'run_now' }), /would run outside it/);
+		assert.match(await error('automation', { action: 'open_pr' }), /would run outside it/);
+		assert.match(await error('automation', { action: 'send_slack' }), /network off, and automation would reach the internet/);
+		assert.match(await error('device_act', { script: 'launch com.example.app\ntap "Sign in"' }), /Steps that open a deep link or an app/);
+		assert.match(await error('device_act', { run: 'login' }), /saved flows/);
+		assert.match(await error('app_open', {}, { sessionId: 's1', sandbox: READ_ONLY }), /Volt's read-only sandbox/);
+		assert.deepStrictEqual(ran, ['thread_launch', 'delegate_task'], 'only the chat starts ran: they inherit the sandbox');
+		ran.length = 0;
+
+		// What stays inside Volt runs.
+		assert.strictEqual(await error('memory_read', { name: 'x' }), '');
+		assert.strictEqual(await error('render_chart', {}), '');
+		assert.strictEqual(await error('manage_automations', { action: 'list' }), '');
+		assert.strictEqual(await error('automation', { action: 'memory_read' }), '');
+		assert.strictEqual(await error('automation', { action: 'send_slack' }, { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, network: true } }), '');
+		assert.strictEqual(await error('device_act', { script: 'tap "Sign in"\ntype "Email" a@b.co' }), '');
+		assert.deepStrictEqual(ran, ['memory_read', 'render_chart', 'manage_automations', 'automation', 'automation', 'device_act']);
+
+		// No sandbox, or the sandbox off: every tool runs as before.
+		ran.length = 0;
+		for (const name of names) {
+			assert.strictEqual((await service.invokeTool(name, { action: 'create' }, { sessionId: 's1' })).text, `ran ${name}`, name);
+			assert.strictEqual((await service.invokeTool(name, { action: 'create' }, { sessionId: 's1', sandbox: { level: 'off', network: false } })).text, `ran ${name}`, name);
+		}
+		assert.strictEqual(ran.length, names.length * 2);
+	});
+
+	test('GATE-XCHAT-1: a sandboxed chat cannot read another chat (thread_read); its own chat it may', async () => {
+		const { service } = setup();
+		const ran = serve(service, ['thread_read']);
+		const call = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		for (const id of ['other', 'volt://session/other']) {
+			const refused = await service.invokeTool('thread_read', { thread_id: id }, call);
+			assert.match(refused.error ?? '', /^thread_read was not run: .*would read other chats, which needs the agents\.read:other permission/, id);
+		}
+		assert.strictEqual((await service.invokeTool('thread_read', {}, call)).text, 'ran thread_read', 'its own transcript');
+		assert.strictEqual((await service.invokeTool('thread_read', { thread_id: 's1' }, call)).text, 'ran thread_read');
+		assert.deepStrictEqual(ran.splice(0), ['thread_read', 'thread_read']);
+		// Unsandboxed: as before.
+		assert.strictEqual((await service.invokeTool('thread_read', { thread_id: 'other' }, { sessionId: 's1' })).text, 'ran thread_read');
+	});
+
+	test('GATE-XCHAT-2: a sandboxed chat cannot search other chats (thread_search)', async () => {
+		const { service } = setup();
+		const ran = serve(service, ['thread_search']);
+		assert.match((await service.invokeTool('thread_search', { query: 'token' }, { sessionId: 's1', sandbox: READ_ONLY })).error ?? '', /agents\.read:other/);
+		assert.match((await service.invokeTool('thread_search', { query: 'token', project: 'this' }, { sessionId: 's1', sandbox: WORKSPACE_WRITE })).error ?? '', /agents\.read:other/);
+		assert.deepStrictEqual(ran, []);
+		assert.strictEqual((await service.invokeTool('thread_search', { query: 'token' }, { sessionId: 's1', sandbox: { level: 'off', network: true } })).text, 'ran thread_search');
+	});
+
+	test('the native loop\'s calls are judged by the chat\'s own sandbox, which they do not carry', async () => {
+		const { service, sandboxes } = setup();
+		const ran = serve(service, ['thread_read', 'app_open']);
+		sandboxes.set('s2', WORKSPACE_WRITE);
+		assert.match((await service.invokeTool('thread_read', { thread_id: 'other' }, { sessionId: 's2', source: 'native' })).error ?? '', /agents\.read:other/);
+		assert.match((await service.invokeTool('app_open', { target: 'Calculator' }, { sessionId: 's2', source: 'native' })).error ?? '', /would run outside it/);
+		assert.deepStrictEqual(ran, []);
+		assert.strictEqual((await service.invokeTool('thread_read', { thread_id: 'other' }, { sessionId: 's3', source: 'native' })).text, 'ran thread_read', 'a chat without a sandbox');
+	});
+
+	test('sandbox gate: browser_run edits write only where the OS sandbox lets the agent write, never through a link', async () => {
+		const { service, written } = setup({ pageUrl: 'http://localhost:3000/', links: new Map([['/ws/rc', '/Users/someone/.zshrc'], ['/ws/out', '/elsewhere']]) });
+		const run = (path: string, sandbox?: IVoltSandboxSettings) => service.invokeTool('browser_run', { edits: [{ path, content: 'x' }] }, { sessionId: 's1', ...(sandbox ? { sandbox } : {}) });
+		// The page is the chat's dev server: a local port the user granted (B-16: no other local page with the network off).
+		const DEV_SERVER: IVoltSandboxSettings = { ...WORKSPACE_WRITE, listenPorts: [3000] };
+
+		const ok = await run('src/app.ts', DEV_SERVER);
+		assert.strictEqual(ok.error, undefined);
+		assert.ok(written.has('/ws/src/app.ts'));
+		for (const path of ['.git/config', '.vscode/tasks.json', '.claude/settings.json', '.git/hooks/pre-commit', 'rc', 'out/x.ts', '/etc/x', '../x.ts']) {
+			const refused = await run(path, DEV_SERVER);
+			assert.match(refused.error ?? '', /^browser_run did not start: no file was changed\./, path);
+		}
+		assert.match((await run('src/other.ts', { ...READ_ONLY, listenPorts: [3000] })).error ?? '', /sandbox is read-only/);
+		assert.match((await run('src/other.ts', WORKSPACE_WRITE)).error ?? '', /local server on a port this chat's sandbox was not granted/, 'the page itself, on a port not granted');
+		assert.deepStrictEqual([...written.keys()], ['/ws/src/app.ts']);
+
+		// Unsandboxed: as before (inside the project).
+		assert.strictEqual((await run('.vscode/tasks.json')).error, undefined);
+	});
+
+	test('sandbox gate: image and page reads stay in the workspace and temp, never through a link out of it', async () => {
+		const png = dataUrlBytes(await encodeImage(createImage(8, 8, [1, 2, 3]), 'png')).bytes;
+		const files = new Map([['/ws/design/ref.png', png], ['/tmp/shot.png', png], ['/etc/secret.png', png], ['/Users/someone/.ssh/key.png', png]]);
+		const { service } = setup({ files, links: new Map([['/ws/design/key.png', '/Users/someone/.ssh/key.png']]) });
+		serve(service, ['html_render', 'canvas_render', 'screens_capture']);
+		const sandboxed = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		const inspect = async (path: string, call: IVoltHostToolCall = sandboxed) => service.invokeTool('image_inspect', { path }, call);
+
+		assert.ok((await inspect('design/ref.png')).text?.includes('Size: 8×8'));
+		assert.ok((await inspect('/tmp/shot.png')).text?.includes('Size: 8×8'));
+		for (const path of ['/etc/secret.png', 'design/key.png', '../etc/secret.png', '/ws/../etc/secret.png', '/ws/%2E%2E/etc/secret.png', 'file:///etc/secret.png']) {
+			assert.match((await inspect(path)).error ?? '', /^image_inspect was not run: .*outside this chat's workspace/, path);
+		}
+		assert.match((await service.invokeTool('browser_compare_image', { reference_path: '/etc/secret.png' }, sandboxed)).error ?? '', /outside this chat's workspace/);
+		assert.match((await service.invokeTool('html_render', { html: '<img src="/etc/secret.png">' }, sandboxed)).error ?? '', /^html_render was not run: \/etc\/secret\.png is outside/);
+		assert.strictEqual((await service.invokeTool('html_render', { html: '<img src="/ws/design/ref.png">' }, sandboxed)).text, 'ran html_render');
+		assert.match((await service.invokeTool('canvas_render', { frames: [{ id: 'a', image: '/etc/secret.png' }] }, sandboxed)).error ?? '', /outside/);
+		assert.match((await service.invokeTool('screens_capture', { screens: [{ name: 'a', path: '/etc/secret.png' }] }, sandboxed)).error ?? '', /outside/);
+		assert.match((await service.invokeTool('screens_capture', { screens: [{ name: 'a', open: 'com.example.app' }] }, sandboxed)).error ?? '', /would run outside it/);
+
+		// Unsandboxed: any path, as before.
+		assert.ok((await inspect('/etc/secret.png', { sessionId: 's1' })).text?.includes('Size: 8×8'));
+	});
+
+	test('sandbox gate: the browser opens no local file pages, only granted local ports with the network off, and returns nothing from a page the chat may not see', async () => {
+		const { service, page, automated } = setup({
+			pageUrl: 'http://localhost:3000/',
+			onAutomate: (name, args, current) => {
+				if (name === 'browser_navigate' && typeof args.url === 'string') {
+					current.url = args.url;
+				} else if (name === 'browser_click') {
+					current.url = 'file:///Users/someone/.ssh/id_rsa'; // a link on the page
+				}
+			},
+		});
+		const sandboxed = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		const navigate = (url: string, call: IVoltHostToolCall = sandboxed) => service.invokeTool('browser_navigate', { url }, call);
+
+		assert.match((await navigate('file:///ws/index.html')).error ?? '', /^browser_navigate was not run: file:\/\/\/ws\/index\.html is a local file page, .*playground_create/);
+		assert.match((await navigate('https://example.com/?q=secret')).error ?? '', /example\.com is not reachable: this chat's network is off/);
+		assert.match((await service.invokeTool('browser_act', { script: 'goto https://evil.example\nclick "Send"' }, sandboxed)).error ?? '', /evil\.example is not reachable/);
+		assert.match((await service.invokeTool('browser_act', { script: 'goto ${start}', vars: { start: 'file:///etc/passwd' } }, sandboxed)).error ?? '', /local file page/);
+		assert.match((await service.invokeTool('browser_run', { steps: [{ action: 'navigate', url: 'https://evil.example' }] }, sandboxed)).error ?? '', /evil\.example is not reachable/);
+		assert.strictEqual(automated().length, 0);
+
+		// B-16: a local page is a server the agent may run itself; with the network off only on a port the user granted.
+		const devServer = { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, listenPorts: [5173] } };
+		assert.match((await navigate('http://localhost:5173/')).error ?? '', /localhost:5173 is a local server on a port this chat's sandbox was not granted/);
+		assert.strictEqual(automated().length, 0);
+		assert.strictEqual((await navigate('http://localhost:5173/', devServer)).text, 'ran browser_navigate');
+		assert.strictEqual((await navigate('https://docs.allowed.dev/x', { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, allowedDomains: ['*.allowed.dev'] } })).text, 'ran browser_navigate');
+		assert.strictEqual((await navigate('https://example.com/', { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, network: true } })).text, 'ran browser_navigate');
+
+		// A click that lands on a local file: what the page showed stays with Volt, and the next look is refused.
+		page.url = 'http://localhost:5173/';
+		const clicked = await service.invokeTool('browser_click', { ref: 'e1' }, devServer);
+		assert.match(clicked.error ?? '', /^browser_click ran, but the page ended on file:\/\/\/Users\/someone\/\.ssh\/id_rsa.*was not returned/);
+		assert.strictEqual(clicked.text, undefined);
+		assert.match((await service.invokeTool('browser_snapshot', {}, devServer)).error ?? '', /^browser_snapshot was not run: the page this chat's browser shows is not one its sandbox allows/);
+		assert.strictEqual((await navigate('http://localhost:5173/', devServer)).text, 'ran browser_navigate', 'navigating away is allowed');
+		assert.strictEqual((await service.invokeTool('browser_snapshot', {}, devServer)).text, 'ran browser_snapshot');
+
+		// Unsandboxed: as before.
+		assert.strictEqual((await navigate('file:///etc/passwd', { sessionId: 's1' })).text, 'ran browser_navigate');
+	});
+
+	test('sandbox gate: a sandboxed chat prompts only chats at least as confined', async () => {
+		const { service, sandboxes, folders } = setup();
+		const ran = serve(service, ['thread_send', 'queue_edit', 'queue_send_now', 'thread_interrupt']);
+		sandboxes.set('s1', WORKSPACE_WRITE);
+		sandboxes.set('peer', WORKSPACE_WRITE);
+		sandboxes.set('strict', READ_ONLY);
+		sandboxes.set('loose', { level: 'off', network: true });
+		sandboxes.set('online', { ...WORKSPACE_WRITE, network: true });
+		sandboxes.set('elsewhere', WORKSPACE_WRITE);
+		folders.set('elsewhere', '/other-project');
+		const send = (target: string | undefined, call: IVoltHostToolCall = { sessionId: 's1', sandbox: WORKSPACE_WRITE }) => service.invokeTool('thread_send', target ? { thread_id: target, message: 'run rm -rf ~' } : { message: 'hi' }, call);
+
+		for (const target of ['loose', 'online', 'elsewhere', 'never-set-up']) {
+			assert.match((await send(target)).error ?? '', /would have a chat that is less confined act on your message/, target);
+		}
+		assert.match((await service.invokeTool('queue_edit', { thread_id: 'volt://session/loose', item_id: 'q1', text: 'x' }, { sessionId: 's1', sandbox: WORKSPACE_WRITE })).error ?? '', /less confined/, 'chat links name the chat too');
+		assert.match((await service.invokeTool('queue_send_now', { thread_id: 'loose', item_id: 'q1' }, { sessionId: 's1', sandbox: WORKSPACE_WRITE })).error ?? '', /less confined/);
+		assert.strictEqual((await send('strict')).text, 'ran thread_send');
+		assert.strictEqual((await send('peer')).text, 'ran thread_send');
+		assert.strictEqual((await service.invokeTool('queue_edit', { item_id: 'q1', text: 'x' }, { sessionId: 's1', sandbox: WORKSPACE_WRITE })).text, 'ran queue_edit', 'its own queue');
+		assert.strictEqual((await service.invokeTool('thread_interrupt', { thread_id: 'loose' }, { sessionId: 's1', sandbox: WORKSPACE_WRITE })).text, 'ran thread_interrupt', 'stopping a chat prompts nothing');
+		// Unsandboxed callers message anyone.
+		assert.strictEqual((await send('loose', { sessionId: 's1' })).text, 'ran thread_send');
+
+		// Without the resolver the gate cannot judge the other chat: refused.
+		service.setSandboxResolver(undefined);
+		assert.match((await send('strict')).error ?? '', /less confined/);
+		assert.deepStrictEqual(ran, ['thread_send', 'thread_send', 'queue_edit', 'thread_interrupt', 'thread_send']);
 	});
 
 	test('Ask mode refuses browser_evaluate without an approver, and asks the approver when there is one', async () => {
@@ -252,5 +530,98 @@ suite('Volt host tool service', () => {
 		assert.strictEqual((await service.invokeTool('device_tap', { x: 1, y: 2 }, { sessionId: 's1' })).text, 'ran device_tap');
 		assert.strictEqual(asked.length, 1);
 		assert.deepStrictEqual(ran, ['device_list', 'device_tap', 'device_tap']);
+	});
+
+	test('PERM-FLOW-1: a network-off chat calling an extension\'s network tool is refused until the flow card allows it; for this chat holds until revoked, once is spent', async () => {
+		const { service } = setup();
+		const ran: string[] = [];
+		const owner: IVoltHostToolOwner = { extensionId: 'acme.linear', label: 'Linear', firstParty: false, toolClass: 'network', declared: [{ id: 'tools.register' }, { id: 'net.connect', targets: ['api.linear.app'] }] };
+		store.add(service.registerToolProvider({
+			tools: [{ name: 'linear_sync', title: 'Synced', description: '', inputSchema: {} }, { name: 'linear_write', title: 'Wrote', description: '', inputSchema: {} }],
+			invoke: async name => { ran.push(name); return { text: `ran ${name}` }; },
+			owner,
+		}));
+		const offline = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		const sync = () => service.invokeTool('linear_sync', { issue: 'L-1' }, offline);
+		// No one to ask: refused, saying why.
+		assert.match((await sync()).error ?? '', /belongs to Linear, which can send what it is given to any host .* needs the user's approval/);
+
+		const asked: IVoltHostFlowApproval[] = [];
+		let answer: 'once' | 'chat' | undefined;
+		service.setApprover({ approve: async () => false, approveFlow: async request => { asked.push(request); return answer; } });
+		assert.match((await sync()).error ?? '', /did not allow sending this chat's content/);
+		assert.deepStrictEqual(asked.map(request => [request.sessionId, request.name, request.extension, request.hosts]), [['s1', 'linear_sync', 'Linear', 'all']], 'unsandboxed extension code can reach anything: the card says so');
+
+		answer = 'once';
+		assert.strictEqual((await sync()).text, 'ran linear_sync');
+		assert.deepStrictEqual(service.flowApprovals('s1'), [], 'once is spent by the call it allowed');
+		answer = undefined;
+		assert.ok((await sync()).error, 'asked again after once');
+
+		answer = 'chat';
+		assert.strictEqual((await sync()).text, 'ran linear_sync');
+		answer = undefined;
+		assert.strictEqual((await sync()).text, 'ran linear_sync', 'for this chat: not asked again');
+		assert.ok((await service.invokeTool('linear_sync', {}, { sessionId: 's2', sandbox: WORKSPACE_WRITE })).error, 'only this chat');
+		assert.deepStrictEqual(service.flowApprovals('s1').map(grant => [grant.kind, grant.scope.targets, grant.scope.hosts]), [['session', ['plugin:acme.linear@local'], ['*']]], 'visible');
+		assert.strictEqual(service.revokeFlowApprovals('s1'), 1);
+		assert.ok((await sync()).error, 'revocable');
+		assert.strictEqual(asked.length, 6);
+
+		// A chat with the network on is compatible: no card. Unsandboxed chats are not gated at all.
+		assert.strictEqual((await service.invokeTool('linear_sync', {}, { sessionId: 's3', sandbox: { ...WORKSPACE_WRITE, network: true } })).text, 'ran linear_sync');
+		assert.strictEqual((await service.invokeTool('linear_sync', {}, { sessionId: 's4', sandbox: { level: 'off', network: false } })).text, 'ran linear_sync');
+		assert.strictEqual(asked.length, 6);
+
+		// Shadow mode: the earlier rule (every unknown tool refused) acts, and the difference is recorded.
+		const diffs: string[] = [];
+		store.add(service.onDidShadowDiff(diff => diffs.push(`${diff.what}:${diff.legacy}:${diff.mode}`)));
+		service.setPolicyAuthorityMode('shadow');
+		assert.ok((await service.invokeTool('linear_sync', {}, { sessionId: 's3', sandbox: { ...WORKSPACE_WRITE, network: true } })).error);
+		service.setPolicyAuthorityMode('enforce');
+		assert.deepStrictEqual(diffs, ['linear_sync:deny:shadow']);
+		assert.deepStrictEqual(ran, ['linear_sync', 'linear_sync', 'linear_sync', 'linear_sync', 'linear_sync']);
+		service.setApprover(undefined);
+	});
+
+	test('UX-GRANT-2: "Allow for This Chat" on a flow card is kept in the grant store, holds after a restart, and goes when revoked there', async () => {
+		const owner: IVoltHostToolOwner = { extensionId: 'acme.linear', label: 'Linear', firstParty: false, toolClass: 'network', declared: [{ id: 'tools.register' }, { id: 'net.connect', targets: ['api.linear.app'] }] };
+		const offline = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		const kept: IGrant[] = [];
+		const grantStore = { persist: async (grant: IGrant) => { kept.push(grant); }, revoke: async (ids: readonly string[]) => { ids.forEach(id => kept.splice(kept.findIndex(grant => grant.id === id), 1)); } };
+		const serveLinear = (service: ReturnType<typeof setup>['service']) => store.add(service.registerToolProvider({ tools: [{ name: 'linear_sync', title: 'Synced', description: '', inputSchema: {} }], invoke: async () => ({ text: 'ran' }), owner }));
+
+		const first = setup().service;
+		serveLinear(first);
+		first.setFlowGrantStore(grantStore);
+		first.setApprover({ approve: async () => false, approveFlow: async () => 'chat' });
+		assert.strictEqual((await first.invokeTool('linear_sync', {}, offline)).text, 'ran');
+		assert.deepStrictEqual(kept.map(grant => [grant.subject, grant.kind, grant.sessionId]), [['chat:s1', 'session', 's1']], 'persisted as a session grant of the chat');
+
+		// A restart: a new gate, the store's grants loaded, nobody to ask.
+		const second = setup().service;
+		serveLinear(second);
+		second.setApprover({ approve: async () => false, approveFlow: async () => undefined });
+		assert.ok((await second.invokeTool('linear_sync', {}, offline)).error, 'refused before the store is read');
+		second.setStoredFlowGrants(kept);
+		assert.strictEqual((await second.invokeTool('linear_sync', {}, offline)).text, 'ran', 'holds after the restart');
+		// Revoked on the Access page: the store no longer has it.
+		second.setStoredFlowGrants([]);
+		assert.ok((await second.invokeTool('linear_sync', {}, offline)).error, 'gone when revoked');
+		first.setApprover(undefined);
+		second.setApprover(undefined);
+	});
+
+	test('PERM-FLOW-1: an extension tool whose class the gate can\'t judge without its arguments stays refused in a sandboxed chat', async () => {
+		const { service } = setup();
+		for (const toolClass of ['writes', 'reads', 'escapes', 'spawns', 'browser'] as const) {
+			const registration = service.registerToolProvider({
+				tools: [{ name: `ext_${toolClass}`, title: toolClass, description: '', inputSchema: {} }],
+				invoke: async () => ({ text: 'ran' }),
+				owner: { extensionId: 'acme.tools', label: 'Tools', firstParty: false, toolClass, declared: [] },
+			});
+			assert.ok((await service.invokeTool(`ext_${toolClass}`, {}, { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, network: true } })).error, toolClass);
+			registration.dispose();
+		}
 	});
 });

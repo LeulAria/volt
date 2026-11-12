@@ -67,6 +67,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.agent.changes.copyPath',
+			visibility: 'internal',
 			title: localize2('voltAgent.copyPath', 'Copy Path'),
 			icon: Codicon.copy,
 			menu: {
@@ -91,6 +92,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.agent.changes.discard',
+			visibility: 'internal',
 			title: localize2('voltAgent.discardChanges', 'Discard Changes'),
 			icon: Codicon.discard,
 			menu: {
@@ -118,6 +120,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.agent.changes.newBadge',
+			visibility: 'internal',
 			title: localize2('voltAgent.changeNew', 'New'),
 			f1: false,
 			menu: {
@@ -138,6 +141,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.agent.changes.undoPendingFile',
+			visibility: 'internal',
 			title: localize2('voltAgent.undoFile', 'Undo File'),
 			icon: Codicon.close,
 			menu: {
@@ -160,6 +164,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.agent.changes.keepPendingFile',
+			visibility: 'internal',
 			title: localize2('voltAgent.keepFile', 'Keep File'),
 			icon: Codicon.check,
 			menu: {
@@ -205,14 +210,14 @@ CommandsRegistry.registerCommand(CHECKPOINT_BEGIN_TURN_COMMAND_ID, async (access
 	if (args?.sessionId && args.turnId) {
 		await accessor.get(IAgentCheckpointService).beginTurn(args.sessionId, args.turnId);
 	}
-});
+}, 'internal');
 
 /** `{ sessionId, turnId?, userTurn? }` → IAgentRestorePreview | undefined: what a restore would change. */
 CommandsRegistry.registerCommand(CHECKPOINT_PREVIEW_COMMAND_ID, async (accessor, args: ICheckpointArgs | undefined): Promise<IAgentRestorePreview | undefined> => {
 	const checkpoints = accessor.get(IAgentCheckpointService);
 	const ref = await turnRef(checkpoints, args);
 	return ref === undefined ? undefined : checkpoints.previewRestore(args!.sessionId, ref);
-});
+}, 'internal');
 
 /** `{ sessionId, turnId?, userTurn? }` → boolean: files differ from how they were before that message. */
 CommandsRegistry.registerCommand(CHECKPOINT_HAS_CHANGES_COMMAND_ID, async (accessor, args: ICheckpointArgs | undefined): Promise<boolean> => {
@@ -220,7 +225,7 @@ CommandsRegistry.registerCommand(CHECKPOINT_HAS_CHANGES_COMMAND_ID, async (acces
 	const ref = await turnRef(checkpoints, args);
 	const preview = ref === undefined ? undefined : await checkpoints.previewRestore(args!.sessionId, ref).catch(() => undefined);
 	return !!preview?.files.some(file => file.action !== 'none');
-});
+}, 'internal');
 
 /**
  * `{ sessionId, turnId?, userTurn? }` → boolean. Puts the files back as they were before that
@@ -249,7 +254,7 @@ CommandsRegistry.registerCommand(CHECKPOINT_RESTORE_COMMAND_ID, async (accessor,
 		notifications.error(localize('voltAgent.checkpoint.failed', "Could not restore the checkpoint: {0}", toErrorMessage(err)));
 		return false;
 	}
-});
+}, 'internal');
 
 /** `{ sessionId }` → boolean. Undoes the chat's latest restore ("Redo checkpoint"). */
 CommandsRegistry.registerCommand(CHECKPOINT_REDO_COMMAND_ID, async (accessor, args: { readonly sessionId: string } | undefined): Promise<boolean> => {
@@ -278,7 +283,7 @@ CommandsRegistry.registerCommand(CHECKPOINT_REDO_COMMAND_ID, async (accessor, ar
 		notifications.error(localize('voltAgent.checkpoint.redoFailed', "Could not redo the checkpoint: {0}", toErrorMessage(err)));
 		return false;
 	}
-});
+}, 'internal');
 
 /** undefined: cancelled. Otherwise whether to overwrite files edited after the agent. */
 async function askOverwrite(dialogs: IDialogService, preview: IAgentRestorePreview): Promise<boolean | undefined> {

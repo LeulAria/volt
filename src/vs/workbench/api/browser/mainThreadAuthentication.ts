@@ -5,7 +5,7 @@
 
 import { Disposable, DisposableMap } from '../../../base/common/lifecycle.js';
 import * as nls from '../../../nls.js';
-import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
+import { assertHostsExtension, extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { AuthenticationSession, AuthenticationSessionsChangeEvent, IAuthenticationProvider, IAuthenticationService, IAuthenticationExtensionsService, AuthenticationSessionAccount, IAuthenticationProviderSessionOptions, isAuthenticationWwwAuthenticateRequest, IAuthenticationConstraint, IAuthenticationWwwAuthenticateRequest } from '../../services/authentication/common/authentication.js';
 import { ExtHostAuthenticationShape, ExtHostContext, MainContext, MainThreadAuthenticationShape } from '../common/extHost.protocol.js';
 import { IDialogService, IPromptButton } from '../../../platform/dialogs/common/dialogs.js';
@@ -111,7 +111,7 @@ export class MainThreadAuthentication extends Disposable implements MainThreadAu
 	private _suppressUnregisterEvent = false;
 
 	constructor(
-		extHostContext: IExtHostContext,
+		private readonly extHostContext: IExtHostContext,
 		@IAuthenticationService private readonly authenticationService: IAuthenticationService,
 		@IAuthenticationExtensionsService private readonly authenticationExtensionsService: IAuthenticationExtensionsService,
 		@IAuthenticationAccessService private readonly authenticationAccessService: IAuthenticationAccessService,
@@ -462,6 +462,10 @@ export class MainThreadAuthentication extends Disposable implements MainThreadAu
 	}
 
 	async $getSession(providerId: string, scopeListOrRequest: ReadonlyArray<string> | IAuthenticationWwwAuthenticateRequest, extensionId: string, extensionName: string, options: AuthenticationGetSessionOptions): Promise<AuthenticationSession | undefined> {
+		// Access grants, account preferences and silent access are keyed on the extension id the
+		// payload names: only one this host runs may use them (B-08), so an extension cannot claim
+		// to be, say, `vscode.git` from another host to get its GitHub session.
+		assertHostsExtension(this.extHostContext, extensionId);
 		const scopes = isAuthenticationWwwAuthenticateRequest(scopeListOrRequest) ? scopeListOrRequest.fallbackScopes : scopeListOrRequest;
 		if (scopes) {
 			this.sendClientIdUsageTelemetry(extensionId, providerId, scopes);

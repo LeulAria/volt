@@ -19,6 +19,7 @@ import { AuthInfo, Credentials } from '../../request/common/request.js';
 import { StorageScope, StorageTarget } from '../../storage/common/storage.js';
 import { IApplicationStorageMainService } from '../../storage/electron-main/storageMainService.js';
 import { IWindowsMainService } from '../../windows/electron-main/windows.js';
+import { isSandboxBrowserSession } from '../../voltBrowser/electron-main/sandboxBrowserSessions.js';
 
 interface ElectronAuthenticationResponseDetails extends AuthenticationResponseDetails {
 	firstAuthAttempt?: boolean; // https://github.com/electron/electron/blob/84a42a050e7d45225e69df5bd2d2bf9f1037ea41/shell/browser/login_handler.cc#L70
@@ -28,6 +29,7 @@ type LoginEvent = {
 	event?: ElectronEvent;
 	authInfo: AuthInfo;
 	callback?: (username?: string, password?: string) => void;
+	webContents?: WebContents;
 };
 
 export const IProxyAuthService = createDecorator<IProxyAuthService>('proxyAuthService');
@@ -63,8 +65,9 @@ export class ProxyAuthService extends Disposable implements IProxyAuthService {
 	}
 
 	private registerListeners(): void {
-		const onLogin = Event.fromNodeEventEmitter<LoginEvent>(app, 'login', (event: ElectronEvent, _webContents: WebContents, req: ElectronAuthenticationResponseDetails, authInfo: ElectronAuthInfo, callback) => ({ event, authInfo: { ...authInfo, attempt: req.firstAuthAttempt ? 1 : 2 }, callback } satisfies LoginEvent));
-		this._register(onLogin(this.onLogin, this));
+		const onLogin = Event.fromNodeEventEmitter<LoginEvent>(app, 'login', (event: ElectronEvent, webContents: WebContents, req: ElectronAuthenticationResponseDetails, authInfo: ElectronAuthInfo, callback) => ({ event, authInfo: { ...authInfo, attempt: req.firstAuthAttempt ? 1 : 2 }, callback, webContents } satisfies LoginEvent));
+		// Volt: a sandboxed chat's browser signs in to its own proxy with its route token, never through this prompt.
+		this._register(Event.filter(onLogin, e => !e.webContents || e.webContents.isDestroyed() || !isSandboxBrowserSession(e.webContents.session))(this.onLogin, this));
 	}
 
 	async lookupAuthorization(authInfo: AuthInfo): Promise<Credentials | undefined> {

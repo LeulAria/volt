@@ -716,6 +716,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: KEEP_HUNK_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.edits.keepHunk', "Keep Agent Change"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,
@@ -731,6 +732,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: UNDO_HUNK_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.edits.undoHunk', "Undo Agent Change"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,
@@ -746,6 +748,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: KEEP_FILE_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.edits.keepFileTitle', "Keep Agent Changes in File"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,
@@ -761,6 +764,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: UNDO_FILE_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.edits.undoFileTitle', "Undo Agent Changes in File"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,
@@ -775,6 +779,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: KEEP_ALL_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.edits.keepAllTitle', "Keep All Agent Changes"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,
@@ -789,6 +794,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: UNDO_ALL_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.edits.undoAllTitle', "Undo All Agent Changes"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,
@@ -803,6 +809,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: NEXT_HUNK_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.edits.nextHunk', "Go to Next Agent Change"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,
@@ -818,6 +825,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: PREVIOUS_HUNK_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.edits.previousHunk', "Go to Previous Agent Change"),
 			f1: true,
 			precondition: CTX_AGENT_EDITS_PENDING,

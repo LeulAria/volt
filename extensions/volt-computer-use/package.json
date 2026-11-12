@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,52 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "computerUse",
+			"label": "Computer use",
+			"description": "Agents read and drive native apps on this Mac through accessibility.",
+			"category": "tools",
+			"icon": "device-desktop",
+			"order": 60,
+			"settings": [
+				"volt.computerUse."
+			]
+		},
+		"voltTools": [
+			{
+				"name": "desktop_apps",
+				"class": "escapes"
+			},
+			{
+				"name": "desktop_snapshot",
+				"class": "escapes"
+			},
+			{
+				"name": "desktop_act",
+				"class": "escapes"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "desktop.control",
+					"class": "critical"
+				},
+				{
+					"id": "screen.capture",
+					"class": "critical"
+				},
+				{
+					"id": "spawn.unsandboxed",
+					"class": "critical",
+					"reason": "The desktop tools act on the user's apps."
+				}
+			]
+		}
+	}
 }

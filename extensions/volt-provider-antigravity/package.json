@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,74 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.antigravity",
+			"label": "Antigravity",
+			"description": "Antigravity and Gemini models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 70
+		},
+		"voltAgents": [
+			{
+				"id": "antigravity",
+				"label": "Antigravity",
+				"order": 70,
+				"binary": "agy",
+				"versionArgs": [
+					"--version"
+				],
+				"args": [
+					"acp"
+				],
+				"apiHosts": [
+					"*.googleapis.com",
+					"accounts.google.com",
+					"oauth2.googleapis.com"
+				],
+				"state": {
+					"writable": [
+						".gemini/antigravity-cli",
+						".gemini/tmp",
+						".gemini/antigravity/conversations",
+						".gemini/antigravity/brain",
+						".gemini/antigravity/annotations"
+					],
+					"writableFiles": [
+						".gemini/oauth_creds.json",
+						".gemini/google_accounts.json",
+						".gemini/installation_id"
+					],
+					"readable": [
+						".gemini",
+						".antigravity",
+						".config/antigravity"
+					],
+					"credentials": [
+						".gemini/oauth_creds.json",
+						".gemini/antigravity-cli/antigravity-oauth-token",
+						".gemini/jetski-standalone-oauth-token"
+					],
+					"envKeys": [
+						"GEMINI_API_KEY",
+						"GOOGLE_API_KEY",
+						"GOOGLE_CLOUD_PROJECT"
+					]
+				},
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:antigravity",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

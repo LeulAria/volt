@@ -15,6 +15,7 @@ import { dirname, isAbsolute, join, resolve } from '../../../base/common/path.js
 import { generateUuid } from '../../../base/common/uuid.js';
 import { ILogService } from '../../log/common/log.js';
 import { withWorkingGitOnPath } from './gitExecutable.js';
+import { IHostGitInvocation, prepareHostGit } from './hostGit.js';
 import {
 	IVoltGitApplyResult,
 	IVoltGitBranchRef,
@@ -125,16 +126,23 @@ export class VoltGitService extends Disposable implements IVoltGitService {
 			extra.GIT_CONFIG_KEY_0 = `http.${request.authHost ?? 'https://github.com/'}.extraheader`;
 			extra.GIT_CONFIG_VALUE_0 = request.authHeader;
 		}
-		const env = await this.env(extra);
-		if (!env.GIT_SSH_COMMAND) {
+		const base = await this.env(undefined);
+		if (!base.GIT_SSH_COMMAND) {
 			// Keys from the agent still work; a passphrase prompt fails fast instead of hanging.
-			env.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes';
+			extra.GIT_SSH_COMMAND = 'ssh -o BatchMode=yes';
 		}
 		const args = ['clone', '--progress', ...(request.ref ? ['--branch', request.ref] : []), ...(request.recursive ? ['--recurse-submodules'] : []), '--', request.url, request.dest];
 		const emit = (phase: VoltGitClonePhase, percent: number, message?: string) => this._onDidCloneProgress.fire({ jobId: request.jobId, phase, percent, message });
+		// HostGit: no hook of the new repository (or its submodules) runs while it is cloned.
+		let invocation: IHostGitInvocation;
+		try {
+			invocation = await prepareHostGit({ cwd: dirname(request.dest), args: ['--no-pager', ...args], env: extra }, { baseEnv: base });
+		} catch (err) {
+			throw new VoltGitError(['clone'], null, err instanceof Error ? err.message : String(err));
+		}
 		emit('starting', 0);
 		await new Promise<void>((resolvePromise, reject) => {
-			const child = spawn('git', ['--no-pager', ...args], { cwd: dirname(request.dest), env, windowsHide: true });
+			const child = spawn(invocation.file, [...invocation.args], { cwd: invocation.cwd, env: invocation.env, windowsHide: true });
 			this.clones.set(request.jobId, child);
 			let stderr = '';
 			let pending = '';
@@ -293,8 +301,8 @@ export class VoltGitService extends Disposable implements IVoltGitService {
 		if (!await exists(join(gitDir, 'HEAD'))) {
 			await mkdir(root, { recursive: true });
 			await this.run({ cwd: root, args: ['init', '--bare', '-q', gitDir], plain: true });
-			await this.run({ cwd: root, args: ['--git-dir', gitDir, 'config', 'core.bare', 'false'], plain: true });
-			await this.run({ cwd: root, args: ['--git-dir', gitDir, 'config', 'core.worktree', workTree], plain: true });
+			await this.run({ cwd: root, args: ['config', '--file', join(gitDir, 'config'), 'core.bare', 'false'], plain: true });
+			await this.run({ cwd: root, args: ['config', '--file', join(gitDir, 'config'), 'core.worktree', workTree], plain: true });
 			await appendFile(join(gitDir, 'info', 'exclude'), '.DS_Store\nThumbs.db\n').catch(() => undefined);
 		}
 		this.shadows.set(workTree, gitDir);
@@ -743,13 +751,19 @@ export class VoltGitService extends Disposable implements IVoltGitService {
 	}
 
 	private async run(run: IGitRun): Promise<IGitOutput> {
-		const env = await this.env(run.env);
 		const shadow = run.plain ? undefined : this.shadows.get(run.cwd);
-		// A folder outside git: point every command at its private repo, with the folder as work tree.
-		const args = ['--no-pager', ...(shadow ? [`--git-dir=${shadow}`, `--work-tree=${run.cwd}`] : []), ...run.args];
 		const timeoutMs = run.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+		// HostGit (B-03): no fsmonitor, hook or `ext::` remote of the repository runs, and a
+		// redirected repository is refused. A folder outside git: every command points at its
+		// private repo, with the folder as work tree.
+		let invocation: IHostGitInvocation;
+		try {
+			invocation = await prepareHostGit({ cwd: run.cwd, args: ['--no-pager', ...run.args], ...(run.env ? { env: run.env } : {}), ...(shadow ? { gitDir: shadow } : {}) }, { baseEnv: await this.env(undefined) });
+		} catch (err) {
+			throw new VoltGitError(run.args, null, err instanceof Error ? err.message : String(err));
+		}
 		return new Promise<IGitOutput>((resolvePromise, reject) => {
-			const child = spawn('git', args, { cwd: run.cwd, env, windowsHide: true });
+			const child = spawn(invocation.file, [...invocation.args], { cwd: invocation.cwd, env: invocation.env, windowsHide: true });
 			const stdout: Buffer[] = [];
 			let stderr = '';
 			let timedOut = false;

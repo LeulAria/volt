@@ -41,6 +41,7 @@ registerAction2(class OpenInProfilerAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_PROFILER_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltProfiler.open', "Open in Profiler"),
 			category: localize2('voltProfiler.category', "Profiler"),
 			icon: Codicon.flame,
@@ -73,7 +74,7 @@ registerAction2(class OpenInProfilerAction extends Action2 {
 
 registerAction2(class AddProfileToChatAction extends Action2 {
 	constructor() {
-		super({ id: ADD_PROFILE_TO_CHAT_COMMAND_ID, title: localize2('voltProfiler.addToChat', "Add Profile to Chat") });
+		super({ id: ADD_PROFILE_TO_CHAT_COMMAND_ID, visibility: 'internal', title: localize2('voltProfiler.addToChat', "Add Profile to Chat") });
 	}
 
 	override async run(accessor: ServicesAccessor, args?: { readonly label?: string; readonly value?: string; readonly chatId?: string }): Promise<void> {

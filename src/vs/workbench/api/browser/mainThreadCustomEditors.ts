@@ -23,7 +23,7 @@ import { ILabelService } from '../../../platform/label/common/label.js';
 import { IStorageService } from '../../../platform/storage/common/storage.js';
 import { IUndoRedoService, UndoRedoElementType } from '../../../platform/undoRedo/common/undoRedo.js';
 import { MainThreadWebviewPanels } from './mainThreadWebviewPanels.js';
-import { MainThreadWebviews, reviveWebviewExtension } from './mainThreadWebviews.js';
+import { MainThreadWebviews } from './mainThreadWebviews.js';
 import * as extHostProtocol from '../common/extHost.protocol.js';
 import { IRevertOptions, ISaveOptions } from '../../common/editor.js';
 import { CustomEditorInput } from '../../contrib/customEditor/browser/customEditorInput.js';
@@ -111,11 +111,12 @@ export class MainThreadCustomEditors extends Disposable implements extHostProtoc
 	}
 
 	public $registerTextEditorProvider(extensionData: extHostProtocol.WebviewExtensionDescription, viewType: string, options: extHostProtocol.IWebviewPanelOptions, capabilities: extHostProtocol.CustomTextEditorCapabilities, serializeBuffersForPostMessage: boolean): void {
-		this.registerEditorProvider(CustomEditorModelType.Text, reviveWebviewExtension(extensionData), viewType, options, capabilities, true, serializeBuffersForPostMessage);
+		this.registerEditorProvider(CustomEditorModelType.Text, this.mainThreadWebview.ownership.extension(extensionData), viewType, options, capabilities, true, serializeBuffersForPostMessage);
 	}
 
 	public $registerCustomEditorProvider(extensionData: extHostProtocol.WebviewExtensionDescription, viewType: string, options: extHostProtocol.IWebviewPanelOptions, supportsMultipleEditorsPerDocument: boolean, serializeBuffersForPostMessage: boolean): void {
-		this.registerEditorProvider(CustomEditorModelType.Custom, reviveWebviewExtension(extensionData), viewType, options, {}, supportsMultipleEditorsPerDocument, serializeBuffersForPostMessage);
+		// Volt: the extension as core knows it, running in this host (B-08, B-23).
+		this.registerEditorProvider(CustomEditorModelType.Custom, this.mainThreadWebview.ownership.extension(extensionData), viewType, options, {}, supportsMultipleEditorsPerDocument, serializeBuffersForPostMessage);
 	}
 
 	private registerEditorProvider(
@@ -149,7 +150,8 @@ export class MainThreadCustomEditors extends Disposable implements extHostProtoc
 
 				this.mainThreadWebviewPanels.addWebviewInput(handle, webviewInput, { serializeBuffersForPostMessage });
 				webviewInput.webview.options = options;
-				webviewInput.webview.extension = extension;
+				// The document's folder is the extension's to read; restored options are re-clamped.
+				this.mainThreadWebview.setOwner(handle, extension, webviewInput.webview.contentOptions, { document: resource });
 
 				// If there's an old resource this was a move and we must resolve the backup at the same time as the webview
 				// This is because the backup must be ready upon model creation, and the input resolve method comes after

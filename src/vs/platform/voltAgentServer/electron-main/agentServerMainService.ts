@@ -10,6 +10,7 @@ import { IProductService } from '../../product/common/productService.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { IVoltAgentServerEndpoint, IVoltAgentServerMainService } from '../common/agentServerService.js';
+import type { IVoltExtensionHostTicket } from '../common/protocol.js';
 import { AgentServerLauncher } from '../node/agentServerLauncher.js';
 
 export class VoltAgentServerMainService extends Disposable implements IVoltAgentServerMainService {
@@ -58,5 +59,15 @@ export class VoltAgentServerMainService extends Disposable implements IVoltAgent
 
 	setNetworkAccess(enabled: boolean): Promise<IVoltAgentServerEndpoint> {
 		return this.launcher.setNetworkAccess(enabled);
+	}
+
+	createLocalWebLink(path?: string): Promise<string> {
+		this.wanted = true;
+		return this.launcher.createLocalWebLink(path);
+	}
+
+	createExtensionHostTicket(): Promise<IVoltExtensionHostTicket & { readonly port: number }> {
+		this.wanted = true;
+		return this.launcher.createExtensionHostTicket();
 	}
 }

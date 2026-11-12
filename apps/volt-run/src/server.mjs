@@ -48,9 +48,12 @@ export async function readServerFiles(paths) {
 	return { info, token };
 }
 
-/** `http://127.0.0.1:<port>`: the server's address from this computer, whatever it listens on. */
+/**
+ * `http://127.0.0.1:<port>`: the server's address from this computer. `port` is plain HTTP on
+ * loopback whatever else it listens on (devices on the network use its TLS port).
+ */
 export function localBase(info) {
-	return `http://${isLoopbackHost(info.host) || info.host === '0.0.0.0' || info.host === '::' ? LOOPBACK : info.host}:${info.port}`;
+	return `http://${info.host === 'localhost' ? 'localhost' : LOOPBACK}:${info.port}`;
 }
 
 /**
@@ -237,6 +240,28 @@ export async function createPairingCode(base, token) {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * A link that signs this computer's browser in once (`<base>/#local=<nonce>`; the nonce is single
+ * use and valid a minute). Needs the server's own token; a server from before nonces gets the
+ * plain address, which signs in by itself there.
+ * @param {string} base
+ * @param {string} token
+ */
+export async function createLocalLink(base, token) {
+	const response = await request(`${base}/api/auth/link`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' } });
+	if (response?.status === 200) {
+		try {
+			const { nonce } = JSON.parse(response.body);
+			if (typeof nonce === 'string') {
+				return `${base}/#local=${nonce}`;
+			}
+		} catch {
+			// below
+		}
+	}
+	return `${base}/`;
 }
 
 /** The last lines of the server's log, for an error message. */

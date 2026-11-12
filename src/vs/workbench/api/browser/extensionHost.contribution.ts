@@ -82,6 +82,7 @@ import './mainThreadSecretState.js';
 import './mainThreadShare.js';
 import './mainThreadProfileContentHandlers.js';
 import './mainThreadDataChannels.js';
+import './mainThreadVolt.js';
 
 export class ExtensionPoints implements IWorkbenchContribution {
 

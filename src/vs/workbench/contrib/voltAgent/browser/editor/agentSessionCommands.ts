@@ -51,6 +51,7 @@ registerAction2(class NewAgentWithoutProjectAction extends Action2 {
 	constructor() {
 		super({
 			id: NEW_AGENT_WITHOUT_PROJECT_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.newChatWithoutProject', "New Chat Without Project"),
 			category,
 			f1: true,
@@ -88,6 +89,7 @@ registerAction2(class RestartAgentSessionAction extends Action2 {
 	constructor() {
 		super({
 			id: RESTART_AGENT_SESSION_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.restartAgentSession', "Restart Agent Session"),
 			category,
 			f1: true,
@@ -134,6 +136,7 @@ registerAction2(class ShowAgentCommandsAction extends Action2 {
 	constructor() {
 		super({
 			id: SHOW_AGENT_COMMANDS_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.showAgentCommands', "Show Agent Commands"),
 			category,
 			f1: true,

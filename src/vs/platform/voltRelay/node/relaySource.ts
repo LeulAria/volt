@@ -3,12 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { execFile } from 'child_process';
 import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from '../../../base/common/path.js';
 import { generateUuid } from '../../../base/common/uuid.js';
-import { withWorkingGitOnPath } from '../../voltGit/node/gitExecutable.js';
+import { runHostGit } from '../../voltGit/node/hostGit.js';
 import { IVoltCloudSourceSummary, VoltCloudSourceMode } from '../common/voltRelay.js';
 
 /**
@@ -23,17 +22,13 @@ export interface IGitResult {
 	readonly stderr: string;
 }
 
-export async function git(cwd: string, args: readonly string[], env?: NodeJS.ProcessEnv, timeoutMs = 5 * 60_000): Promise<IGitResult> {
-	const baseEnv = await withWorkingGitOnPath(process.env);
-	return new Promise(resolve => {
-		execFile('git', [...args], { cwd, env: { ...baseEnv, GIT_TERMINAL_PROMPT: '0', ...env }, maxBuffer: 256 * 1024 * 1024, timeout: timeoutMs }, (err, stdout, stderr) => {
-			const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : 1) : 0;
-			resolve({ code, stdout: String(stdout), stderr: String(stderr || (err && !stderr ? err.message : '')) });
-		});
-	});
+/** git through HostGit: the repository's fsmonitor, hooks and `ext::` remotes never run (B-03). */
+export async function git(cwd: string, args: readonly string[], env?: Record<string, string>, timeoutMs = 5 * 60_000): Promise<IGitResult> {
+	const result = await runHostGit({ cwd, args, env: { GIT_TERMINAL_PROMPT: '0', ...env }, timeoutMs, maxBytes: 256 * 1024 * 1024 });
+	return { code: result.exitCode ?? 1, stdout: result.stdout, stderr: result.stderr || result.error || '' };
 }
 
-async function gitOk(cwd: string, args: readonly string[], env?: NodeJS.ProcessEnv): Promise<string> {
+async function gitOk(cwd: string, args: readonly string[], env?: Record<string, string>): Promise<string> {
 	const result = await git(cwd, args, env);
 	if (result.code !== 0) {
 		throw new Error(`git ${args[0]} failed: ${(result.stderr || result.stdout).trim().slice(0, 600)}`);

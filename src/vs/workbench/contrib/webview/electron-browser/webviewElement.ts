@@ -83,7 +83,31 @@ export class ElectronWebviewElement extends WebviewElement {
 		// Make sure keyboard handler knows it closed (#71800)
 		this._webviewKeyboardHandler.didBlur();
 
+		if (this._egressKey) {
+			this._egressKey = undefined;
+			this._webviewMainService.setWebviewEgress({ windowId: this._nativeHostService.windowId }, this.id, undefined, undefined).catch(() => { /* the window is going away */ });
+		}
+
 		super.dispose();
+	}
+
+	/** What Electron main last heard about this webview's egress (`origin\nhosts`); undefined: nothing registered. */
+	private _egressKey: string | undefined;
+
+	/**
+	 * Volt: a sandboxed owner's webview is registered with Electron main, whose session dispatcher
+	 * refuses its frames every host but the granted ones (spec I.10, INV-19).
+	 */
+	protected override async updateEgress(): Promise<void> {
+		const hosts = this.egressHosts;
+		const origin = this.encodedWebviewOrigin;
+		const key = hosts && origin ? `${origin}\n${hosts.join(' ')}` : undefined;
+		if (key === this._egressKey || (hosts && !origin)) {
+			return;
+		}
+		this._egressKey = key;
+		// Keyed on the code window: main drops the registration when that window reloads or closes.
+		await this._webviewMainService.setWebviewEgress({ windowId: this._nativeHostService.windowId }, this.id, origin, hosts);
 	}
 
 	protected override webviewContentEndpoint(iframeId: string): string {

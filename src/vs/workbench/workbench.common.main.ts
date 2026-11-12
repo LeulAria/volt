@@ -57,6 +57,7 @@ import '../platform/undoRedo/common/undoRedoService.js';
 import './services/workspaces/common/editSessionIdentityService.js';
 import './services/workspaces/common/canonicalUriService.js';
 import './services/extensions/browser/extensionUrlHandler.js';
+import './services/extensions/browser/voltExtensionSandboxService.js';
 import './services/keybinding/common/keybindingEditing.js';
 import './services/decorations/browser/decorationsService.js';
 import './services/dialogs/common/dialogService.js';
@@ -196,16 +197,21 @@ import './services/voltRuntime/browser/voltRuntimeService.js';
 import './services/voltRuntime/browser/history/agentHistoryService.js';
 import './services/voltRuntime/browser/git/agentWorktreeService.js';
 import './services/voltRuntime/browser/queryCache.js';
+// The grant store as windows see it: prompts, the Access page, gesture tokens (sandbox P4)
+import './services/voltTrust/browser/voltTrustService.js';
 import './contrib/voltSettings/browser/voltSettings.contribution.js';
-import './contrib/voltCodeIntelligence/browser/voltCodeIntelligence.contribution.js';
+// Security page: sandboxed processes, the sandbox supervisor's flag
+import './contrib/voltSecurity/browser/voltSecurity.contribution.js';
+// The code index service and its settings (the feature's own parts: contrib/voltCodeIntelligence, a module)
+import './services/voltRuntime/browser/codeIntelligence.contribution.js';
 
 // New Agent editor
 import './contrib/voltAgent/browser/editor/agentEditor.contribution.js';
 import './contrib/voltAgent/browser/history/agentHistory.contribution.js';
 import './contrib/voltAgent/browser/search/agentChatSearch.contribution.js';
 import './contrib/voltAgent/browser/customize/agentCustomize.contribution.js';
-// Agent Resources: instructions, skills, agents, MCP, hooks and the harness, by scope
-import './contrib/voltAgent/browser/resources/agentResources.contribution.js';
+// Agent Resources: the scan service the files sidebar and Customize share (its page is a module: contrib/voltAgentResources)
+import './contrib/voltAgent/browser/resources/agentResourcesService.js';
 import './contrib/voltAgent/browser/home/agentThreadLifecycle.contribution.js';
 // Per-project tokens, cost and agent time, for Project Settings
 import './contrib/voltAgent/browser/usage/agentProjectUsage.js';

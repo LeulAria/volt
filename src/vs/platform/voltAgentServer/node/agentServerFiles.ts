@@ -46,11 +46,14 @@ export function preferredAgentServerPort(userDataDir: string): number {
 	return 47_100 + (hash.readUInt16BE(0) % 800);
 }
 
-/** Reads the token, creating it (mode 0600) the first time. */
+/** Reads the token, creating it (mode 0600) the first time; a copy other users could read is narrowed to 0600. */
 export async function ensureAgentServerToken(paths: IAgentServerPaths): Promise<string> {
 	try {
 		const token = (await fs.readFile(paths.tokenFile, 'utf8')).trim();
 		if (/^[0-9a-f]{64}$/.test(token)) {
+			if (process.platform !== 'win32' && ((await fs.stat(paths.tokenFile)).mode & 0o077) !== 0) {
+				await fs.chmod(paths.tokenFile, 0o600);
+			}
 			return token;
 		}
 	} catch {

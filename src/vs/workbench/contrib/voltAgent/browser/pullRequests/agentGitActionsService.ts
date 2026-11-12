@@ -35,17 +35,20 @@ import {
 	summarizeResult,
 } from '../../common/agentGitActions.js';
 import { currentLink, isOpenState } from '../../common/agentPullRequests.js';
-import { isPlaceholderBranch, PROPOSE_COMMITS_TOOL_NAME } from '../../common/agentCommitPlan.js';
+import { isPlaceholderBranch, PROPOSE_COMMITS_TOOL_NAME } from '../../../voltCommitReview/common/agentCommitPlan.js';
+import { COMMIT_REVIEW_FEATURE_ID, ICommitReviewModule } from '../../../voltCommitReview/common/voltCommitReview.js';
+import { IVoltFeatureModule, IVoltFeatureModuleService } from '../../../voltCustomize/browser/voltFeatureModules.js';
 import { IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { AGENT_BRANCH_PREFIX_SETTING, AGENT_COMMIT_ATTRIBUTION_SETTING, readBranchPrefix, withCommitAttribution } from '../../common/agentGitSettings.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
-import { IAgentCommitPlanService } from './agentCommitPlanService.js';
 import { followWorktreeBranch } from './agentWorktreeBranch.js';
 import { openPullRequest } from './agentPullRequestUi.js';
 import { showAgentGitCommitDialog } from './agentGitCommitDialog.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { reviewBuildEntries } from '../review/buildEntryReview.js';
 import { resolveRunModelRef } from '../../../../services/voltRuntime/common/models/modelAccess.js';
 
 export const IAgentGitActionsService = createDecorator<IAgentGitActionsService>('agentGitActionsService');
@@ -130,7 +133,8 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-		@IAgentCommitPlanService private readonly commitPlans: IAgentCommitPlanService,
+		@IVoltFeatureModuleService private readonly modules: IVoltFeatureModuleService,
+		@IVoltStdioService private readonly stdio: IVoltStdioService,
 	) {
 		super();
 		// A pull request linked or created elsewhere changes what the quick action offers.
@@ -375,18 +379,22 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 			? pr ? localize('voltGit.chipCommitsPr', "Draft Commits and Open PR") : push ? localize('voltGit.chipCommitsPush', "Draft Commits and Push") : localize('voltGit.chipCommits', "Draft Commits")
 			: pr ? localize('voltGit.chipPr', "Push and Open PR") : localize('voltGit.chipPush', "Push Branch");
 		const display = { text: label, mentions: [{ kind: 'action', label, value: text }] };
-		if (commits) {
+		// The commit review is its own module (volt.commit-review): Draft Commits loads it first.
+		const review = commits
+			? this.modules.activate<IVoltFeatureModule & ICommitReviewModule>(COMMIT_REVIEW_FEATURE_ID).catch(() => undefined)
+			: Promise.resolve(undefined);
+		void review.then(review => {
 			// The review appears at once, generating, instead of only when the agent gets to it.
-			this.commitPlans.startDrafting(sessionId);
-		}
-		// The chat's model: without one the turn falls back to the native agent, not what the chat runs on.
-		const modelRef = resolveRunModelRef({
-			chat: this.orchestrator.getThread(sessionId)?.modelRef,
-			lastUsed: this.runtime.getActiveCatalogRef(),
-		}, this.runtime.listCatalog());
-		void this.orchestrator.submit(sessionId, { text, display, ...(modelRef ? { modelRef } : {}) }, 'auto').catch(err => {
-			this.commitPlans.stopDrafting(sessionId);
-			this.notificationService.error(localize('voltGit.askFailed', "Could not ask the agent: {0}", err instanceof Error ? err.message : String(err)));
+			review?.plans.startDrafting(sessionId);
+			// The chat's model: without one the turn falls back to the native agent, not what the chat runs on.
+			const modelRef = resolveRunModelRef({
+				chat: this.orchestrator.getThread(sessionId)?.modelRef,
+				lastUsed: this.runtime.getActiveCatalogRef(),
+			}, this.runtime.listCatalog());
+			return this.orchestrator.submit(sessionId, { text, display, ...(modelRef ? { modelRef } : {}) }, 'auto').catch(err => {
+				review?.plans.stopDrafting(sessionId);
+				this.notificationService.error(localize('voltGit.askFailed', "Could not ask the agent: {0}", err instanceof Error ? err.message : String(err)));
+			});
 		});
 		return true;
 	}
@@ -474,6 +482,10 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 		}
 
 		const includesCommit = actionIncludesCommit(action, status);
+		// The user's commit and push run their git hooks: hooks or config an agent changed are shown first (I.6).
+		if ((includesCommit || actionIncludesPush(action)) && !await reviewBuildEntries(this.dialogService, this.stdio, [status.root], includesCommit ? 'commit' : 'push')) {
+			return undefined;
+		}
 		const result: { -readonly [K in keyof IAgentGitActionResult]: IAgentGitActionResult[K] } = {};
 		try {
 			let message = options.message?.trim();
@@ -508,7 +520,7 @@ export class AgentGitActionsService extends Disposable implements IAgentGitActio
 			if (actionIncludesPush(action)) {
 				const branch = result.branchCreated ?? status.branch;
 				this.setProgress(folder, status.remote ? localize('voltGit.stage.pushTo', "Pushing to {0}…", `${status.remote}/${branch}`) : localize('voltGit.stage.push', "Pushing…"));
-				const pushed = await this.pullRequests.api.push({ folder });
+				const pushed = await this.pullRequests.api.push({ folder, runHooks: true });
 				result.pushed = { branch: pushed.branch, remote: pushed.remote };
 				if (sessionId) {
 					this.pullRequests.didPush(sessionId);

@@ -13,7 +13,8 @@ import { IReadOnlyExtensionDescriptionRegistry } from './extensionDescriptionReg
 import { ExtensionHostKind, ExtensionRunningPreference, IExtensionHostKindPicker, determineExtensionHostKinds } from './extensionHostKind.js';
 import { IExtensionHostManager } from './extensionHostManagers.js';
 import { IExtensionManifestPropertiesService } from './extensionManifestPropertiesService.js';
-import { ExtensionRunningLocation, LocalProcessRunningLocation, LocalWebWorkerRunningLocation, RemoteRunningLocation } from './extensionRunningLocation.js';
+import { ExtensionRunningLocation, LocalProcessRunningLocation, LocalWebWorkerRunningLocation, RemoteRunningLocation, VOLT_SANDBOX_AFFINITY_BASE } from './extensionRunningLocation.js';
+import { voltRunsSandboxed } from './voltExtensionSandbox.js';
 
 export class ExtensionRunningLocationTracker {
 
@@ -27,6 +28,37 @@ export class ExtensionRunningLocationTracker {
 
 	public get maxLocalWebWorkerAffinity(): number {
 		return this._maxLocalWebWorkerAffinity;
+	}
+
+	/** Volt (P2, P6): the affinity of each opted-in extension's own sandboxed host, stable for the window's life. */
+	private readonly _sandboxAffinities = new ExtensionIdentifierMap<number>();
+	private readonly _sandboxLocations: ExtensionRunningLocation[] = [];
+
+	/** Volt: the hosts of one sandboxed extension each, to be started beside the shared ones. */
+	public get sandboxedRunningLocations(): readonly ExtensionRunningLocation[] {
+		return this._sandboxLocations;
+	}
+
+	/**
+	 * Volt: an opted-in extension gets a host of its own, of the kind VS Code picked for it, in the
+	 * sandbox (H.6: never two extensions in one). Undefined when it is not opted in.
+	 */
+	private _sandboxLocation(extension: IExtensionDescription, kind: ExtensionHostKind | null): ExtensionRunningLocation | undefined {
+		if (kind === null || !voltRunsSandboxed(this._configurationService, extension)) {
+			return undefined;
+		}
+		const known = this._sandboxAffinities.get(extension.identifier);
+		const affinity = known ?? VOLT_SANDBOX_AFFINITY_BASE + this._sandboxLocations.length;
+		if (known === undefined) {
+			this._sandboxAffinities.set(extension.identifier, affinity);
+		}
+		const location = kind === ExtensionHostKind.LocalProcess ? new LocalProcessRunningLocation(affinity)
+			: kind === ExtensionHostKind.LocalWebWorker ? new LocalWebWorkerRunningLocation(affinity)
+				: new RemoteRunningLocation(affinity);
+		if (!this._sandboxLocations.some(existing => existing.equals(location))) {
+			this._sandboxLocations.push(location);
+		}
+		return location;
 	}
 
 	constructor(
@@ -78,7 +110,8 @@ export class ExtensionRunningLocationTracker {
 		for (const extension of this._registry.getAllExtensionDescriptions()) {
 			if (extension.main || extension.browser) {
 				const runningLocation = this._runningLocation.get(extension.identifier);
-				if (runningLocation && runningLocation.kind === extensionHostKind) {
+				// Volt: a sandboxed extension's own host is not a group others can join.
+				if (runningLocation && runningLocation.kind === extensionHostKind && runningLocation.affinity < VOLT_SANDBOX_AFFINITY_BASE) {
 					extensions.set(extension.identifier, extension);
 				}
 			}
@@ -228,6 +261,12 @@ export class ExtensionRunningLocationTracker {
 		const localWebWorkerExtensions: IExtensionDescription[] = [];
 		for (const [extensionIdKey, extensionHostKind] of extensionHostKinds) {
 			let runningLocation: ExtensionRunningLocation | null = null;
+			const sandboxedDescription = extensions.get(extensionIdKey);
+			const sandboxed = sandboxedDescription && this._sandboxLocation(sandboxedDescription, extensionHostKind);
+			if (sandboxed) {
+				result.set(extensionIdKey, sandboxed);
+				continue;
+			}
 			if (extensionHostKind === ExtensionHostKind.LocalProcess) {
 				const extensionDescription = extensions.get(extensionIdKey);
 				if (extensionDescription) {
@@ -302,6 +341,11 @@ export class ExtensionRunningLocationTracker {
 			const isRemote = extension.extensionLocation.scheme === Schemas.vscodeRemote;
 			const extensionHostKind = this._extensionHostKindPicker.pickExtensionHostKind(extension.identifier, extensionKind, !isRemote, isRemote, ExtensionRunningPreference.None);
 			let runningLocation: ExtensionRunningLocation | null = null;
+			const sandboxed = this._sandboxLocation(extension, extensionHostKind);
+			if (sandboxed) {
+				this._runningLocation.set(extension.identifier, sandboxed);
+				continue;
+			}
 			if (extensionHostKind === ExtensionHostKind.LocalProcess) {
 				localProcessExtensions.push(extension);
 			} else if (extensionHostKind === ExtensionHostKind.LocalWebWorker) {

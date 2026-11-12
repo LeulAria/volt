@@ -5,9 +5,9 @@
 
 import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
-import { Emitter } from '../../../../base/common/event.js';
+import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
-import { IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../voltRuntime/common/hostTools.js';
+import { IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFeatureEnablementMirror, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../voltRuntime/common/hostTools.js';
 import { VoltMode } from '../../voltRuntime/common/modes.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
@@ -18,6 +18,8 @@ export interface IRemoteHostToolCall {
 	readonly cwd?: string;
 	readonly source?: 'mcp' | 'native';
 	readonly external?: IVoltHostToolCall['external'];
+	/** The calling chat's sandbox: a window's tool and the nested calls it makes stay confined. */
+	readonly sandbox?: IVoltHostToolCall['sandbox'];
 	/** Set on calls the server may cancel (`hostTools.cancel`). */
 	readonly cancelKey?: string;
 }
@@ -32,6 +34,7 @@ export function toRemoteHostToolCall(call: IVoltHostToolCall | undefined): IRemo
 		...(call.cwd ? { cwd: call.cwd } : {}),
 		...(call.source ? { source: call.source } : {}),
 		...(call.external ? { external: call.external } : {}),
+		...(call.sandbox ? { sandbox: call.sandbox } : {}),
 	};
 }
 
@@ -58,6 +61,7 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 	/** Calls the server is running here, by `cancelKey`. */
 	private readonly running = new Map<string, CancellationTokenSource>();
 	private disabledTools = new Set<string>();
+	private featureEnablement: IVoltFeatureEnablementMirror | undefined;
 
 	constructor(@IAgentServerClientService private readonly client: IAgentServerClientService) {
 		super();
@@ -75,8 +79,11 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 				this._onDidChangeTools.fire();
 			}
 		}));
-		// A new connection (or a restarted server) learns this window's tools again.
-		this._register(client.onDidResync(() => this.sendTools()));
+		// A new connection (or a restarted server) learns this window's tools and turned-off features again.
+		this._register(client.onDidResync(() => {
+			this.sendTools();
+			this.sendFeatureEnablement();
+		}));
 		this._register(client.registerHandler('hostTools.invoke', (name, args, call) => this.invokeLocal(String(name), args, call as IRemoteHostToolCall | undefined)));
 		this._register(client.registerHandler('hostTools.needsApproval', (name, args, call) => {
 			const provider = this.providerFor(String(name));
@@ -120,6 +127,26 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 		this.disabledTools = next;
 		this.publishTools.schedule();
 		this._onDidChangeTools.fire();
+	}
+
+	/**
+	 * The server keeps its own tools (browser, terminals, memory, tasks) and offers them to its
+	 * agents: it takes the turned-off features' tools away there when told, and remembers the global
+	 * choice for when no window is open. Sent again on every (re)connection.
+	 */
+	mirrorFeatureEnablement(state: IVoltFeatureEnablementMirror): void {
+		const next = { global: [...state.global].sort(), workspace: [...state.workspace].sort() };
+		if (JSON.stringify(next) === JSON.stringify(this.featureEnablement)) {
+			return;
+		}
+		this.featureEnablement = next;
+		this.sendFeatureEnablement();
+	}
+
+	private sendFeatureEnablement(): void {
+		if (this.featureEnablement && this.client.isReady) {
+			this.client.send('features.setDisabled', this.featureEnablement);
+		}
 	}
 
 	registerToolProvider(provider: IVoltHostToolProvider): IDisposable {
@@ -200,9 +227,13 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 	// The server's own runtime answers questions, resolves sessions and approves calls; a window
 	// does not take those roles while its agents run there.
 	setMcpEndpoint(): void { }
+	/** The server issues and revokes its agents' tokens; its own runtime releases their chats. */
+	revokeMcpSession(): void { }
+	readonly onDidRevokeMcpSession = Event.None;
 	setQuestionHandler(): void { }
 	setSessionResolver(): void { }
 	setApprover(): void { }
+	setSandboxResolver(): void { }
 }
 
 function asRecord(args: unknown): Record<string, unknown> {

@@ -6,6 +6,7 @@
 import { createDecorator } from '../../instantiation/common/instantiation.js';
 import { IVoltDevServer, IVoltEmulation, IVoltLocalServer, IVoltMockHit, IVoltMockRoute, IVoltPlayground, IVoltPlaygroundRequest, IVoltPlaygroundUpdate } from './browserAgent.js';
 import { IVoltCookieImportRequest, IVoltCookieImportResult, IVoltCookieSource } from './browserCookies.js';
+import { ISandboxBrowserRules } from './sandboxBrowser.js';
 
 export const IVoltBrowserService = createDecorator<IVoltBrowserService>('voltBrowserService');
 export const VOLT_BROWSER_CHANNEL_NAME = 'voltBrowser';
@@ -49,6 +50,13 @@ export interface IVoltSiteData {
  */
 export interface IVoltBrowserService {
 	readonly _serviceBrand: undefined;
+
+	/**
+	 * Sets what a sandboxed chat's own browser profile (`sandboxBrowserPartition`) may reach: its
+	 * sandbox's network rules, through Volt's filtering proxy (B-16). Until this resolves, every
+	 * request of that profile is refused.
+	 */
+	setSandboxBrowserRules(partition: string, rules: ISandboxBrowserRules): Promise<void>;
 
 	/** Clears one kind of data from the in-app browser's session, for every site. */
 	clearData(kind: VoltBrowserDataKind): Promise<void>;

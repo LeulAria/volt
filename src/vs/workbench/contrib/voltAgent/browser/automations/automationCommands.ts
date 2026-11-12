@@ -3,14 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-/** `(automationId?: string, view?: 'settings' | 'runs')`: the Automations page, or one automation. */
-export const OPEN_AUTOMATIONS_COMMAND_ID = 'voltAgent.automations.open';
-
-/** `(options?: { threadId?: string; prompt?: string; mode?: string; modelRef?: string; templateId?: string })`: a new, unsaved automation. */
-export const NEW_AUTOMATION_COMMAND_ID = 'voltAgent.automations.new';
-
-/** `()`: every automation's runs. */
-export const OPEN_AUTOMATION_RUNS_COMMAND_ID = 'voltAgent.automations.runs';
+// The Automations pages' commands are the Automations feature's contract (its module registers them).
+export { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATION_RUNS_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from '../../../voltAutomations/common/voltAutomations.js';
 
 /**
  * Send options an automation run carries in its prompt's `host`: the transcript draws an

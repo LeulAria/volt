@@ -1302,6 +1302,7 @@ export class AgentSessionController extends Disposable implements IAgentSessionC
 						risk: event.request.risk,
 						reason: event.request.reason,
 						pattern: alwaysAllowPattern(event.request.action, event.request.resource.value),
+						...(event.request.alwaysScope === 'chat' ? { alwaysForChat: true } : {}),
 					}),
 				});
 				activity.status = localize('voltAgent.waitingApproval', "Waiting for approval");

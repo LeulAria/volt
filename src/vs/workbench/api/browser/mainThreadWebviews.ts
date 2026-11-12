@@ -10,7 +10,10 @@ import { isWeb } from '../../../base/common/platform.js';
 import { escape } from '../../../base/common/strings.js';
 import { URI } from '../../../base/common/uri.js';
 import { localize } from '../../../nls.js';
+import { IDialogService } from '../../../platform/dialogs/common/dialogs.js';
 import { ExtensionIdentifier } from '../../../platform/extensions/common/extensions.js';
+import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
+import { ILogService } from '../../../platform/log/common/log.js';
 import { IOpenerService } from '../../../platform/opener/common/opener.js';
 import { IProductService } from '../../../platform/product/common/productService.js';
 import { IWebview, WebviewContentOptions, WebviewExtensionDescription } from '../../contrib/webview/browser/webview.js';
@@ -18,6 +21,8 @@ import { IExtHostContext } from '../../services/extensions/common/extHostCustome
 import { SerializableObjectWithBuffers } from '../../services/extensions/common/proxyIdentifier.js';
 import * as extHostProtocol from '../common/extHost.protocol.js';
 import { deserializeWebviewMessage, serializeWebviewMessage } from '../common/extHostWebviewMessaging.js';
+import { externalOpenDecision } from '../../services/voltPlugins/common/externalOpenGate.js';
+import { confirmExternalOpen, IWebviewOwnerContext, WebviewOwnership } from './voltWebviewOwnership.js';
 
 export class MainThreadWebviews extends Disposable implements extHostProtocol.MainThreadWebviewsShape {
 
@@ -33,14 +38,44 @@ export class MainThreadWebviews extends Disposable implements extHostProtocol.Ma
 
 	private readonly _webviews = new Map<string, IWebview>();
 
+	/** Volt: who owns each webview and the options it asked for, before core clamped them (spec B-23). */
+	private readonly _owners = new Map<string, { readonly extension: WebviewExtensionDescription; requested: WebviewContentOptions; readonly context: IWebviewOwnerContext }>();
+
+	/** Core's view of each webview's owner: identity, readable roots, CSP floor and egress (spec I.10). */
+	public readonly ownership: WebviewOwnership;
+
 	constructor(
 		context: IExtHostContext,
 		@IOpenerService private readonly _openerService: IOpenerService,
 		@IProductService private readonly _productService: IProductService,
+		@IInstantiationService instantiationService: IInstantiationService,
+		@IDialogService private readonly _dialogService: IDialogService,
+		@ILogService private readonly _logService: ILogService,
 	) {
 		super();
 
 		this._proxy = context.getProxy(extHostProtocol.ExtHostContext.ExtHostWebviews);
+		this.ownership = this._register(instantiationService.createInstance(WebviewOwnership, context));
+		// Trust, workspace folders or the sandboxed list changed: every webview's roots and floor follow.
+		this._register(this.ownership.onDidChange(() => {
+			for (const [handle, owner] of this._owners) {
+				const webview = this._webviews.get(handle);
+				if (webview) {
+					webview.contentOptions = this.ownership.contentOptions(owner.extension, owner.requested, owner.context);
+				}
+			}
+		}));
+	}
+
+	/**
+	 * Records the webview's owner, as core knows it, and gives the webview the options core derives
+	 * from what it asked for. Later `$setOptions` calls go through the same clamp.
+	 */
+	public setOwner(handle: extHostProtocol.WebviewHandle, extension: WebviewExtensionDescription, requested: WebviewContentOptions, context: IWebviewOwnerContext = {}): void {
+		const webview = this.getWebview(handle);
+		this._owners.set(handle, { extension, requested, context });
+		webview.extension = extension;
+		webview.contentOptions = this.ownership.contentOptions(extension, requested, context);
 	}
 
 	public addWebview(handle: extHostProtocol.WebviewHandle, webview: IWebview, options: { serializeBuffersForPostMessage: boolean }): void {
@@ -58,8 +93,18 @@ export class MainThreadWebviews extends Disposable implements extHostProtocol.Ma
 
 	public $setOptions(handle: extHostProtocol.WebviewHandle, options: extHostProtocol.IWebviewContentOptions): void {
 		const webview = this.tryGetWebview(handle);
-		if (webview) {
-			webview.contentOptions = reviveWebviewContentOptions(options);
+		if (!webview) {
+			return;
+		}
+		const requested = reviveWebviewContentOptions(options);
+		const owner = this._owners.get(handle);
+		if (owner) {
+			owner.requested = requested;
+			webview.contentOptions = this.ownership.contentOptions(owner.extension, requested, owner.context);
+		} else {
+			// Every extension webview gets its owner when it is created or resolved; one without is
+			// given nothing to read rather than what it asked for.
+			webview.contentOptions = { ...requested, localResourceRoots: [] };
 		}
 	}
 
@@ -87,14 +132,35 @@ export class MainThreadWebviews extends Disposable implements extHostProtocol.Ma
 		disposables.add(webview.onDidDispose(() => {
 			disposables.dispose();
 			this._webviews.delete(handle);
+			this._owners.delete(handle);
 		}));
 	}
 
-	private onDidClickLink(handle: extHostProtocol.WebviewHandle, link: string): void {
+	private async onDidClickLink(handle: extHostProtocol.WebviewHandle, link: string): Promise<void> {
 		const webview = this.getWebview(handle);
-		if (this.isSupportedLink(webview, URI.parse(link))) {
-			this._openerService.open(link, { fromUserGesture: true, allowContributedOpeners: true, allowCommands: Array.isArray(webview.contentOptions.enableCommandUris) || webview.contentOptions.enableCommandUris === true, fromWorkspace: true });
+		const uri = URI.parse(link);
+		if (!this.isSupportedLink(webview, uri)) {
+			return;
 		}
+		// Volt: a sandboxed extension's page can click its own links; one leaving Volt for a host it
+		// wasn't granted (or for the mail app) is the same as its openExternal and asks first (I.10).
+		const owner = this._owners.get(handle);
+		let confirmed = false;
+		if (owner && uri.scheme !== Schemas.command && this.ownership.isSandboxed(owner.extension.id.value)) {
+			const caller = this.ownership.externalOpenCaller(owner.extension);
+			const decision = externalOpenDecision(link, caller, this._productService.urlProtocol);
+			if (decision.kind === 'confirm') {
+				if (!await confirmExternalOpen(this._dialogService, this._logService, { id: caller.extensionId, name: caller.name }, link, decision)) {
+					return;
+				}
+				confirmed = true;
+			}
+		}
+		this._openerService.open(link, {
+			fromUserGesture: true, allowContributedOpeners: true, allowCommands: Array.isArray(webview.contentOptions.enableCommandUris) || webview.contentOptions.enableCommandUris === true, fromWorkspace: true,
+			// The user just confirmed this exact link: no second prompt for the same thing.
+			skipValidation: confirmed ? true : undefined,
+		});
 	}
 
 	private isSupportedLink(webview: IWebview, link: URI): boolean {
@@ -139,13 +205,6 @@ export class MainThreadWebviews extends Disposable implements extHostProtocol.Ma
 			<body>${localize('errorMessage', "An error occurred while loading view: {0}", escape(viewType))}</body>
 		</html>`;
 	}
-}
-
-export function reviveWebviewExtension(extensionData: extHostProtocol.WebviewExtensionDescription): WebviewExtensionDescription {
-	return {
-		id: extensionData.id,
-		location: URI.revive(extensionData.location),
-	};
 }
 
 export function reviveWebviewContentOptions(webviewOptions: extHostProtocol.IWebviewContentOptions): WebviewContentOptions {

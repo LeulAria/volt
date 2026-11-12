@@ -88,7 +88,7 @@ async function pickGroup(accessor: ServicesAccessor, groupId: unknown): Promise<
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: OPEN_RUN_GROUP_COMMAND_ID, title: localize2('voltRun.open', "Open Model Comparison"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: OPEN_RUN_GROUP_COMMAND_ID, visibility: 'public', title: localize2('voltRun.open', "Open Model Comparison"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor, groupId?: unknown): Promise<void> {
 		const instantiationService = accessor.get(IInstantiationService);
@@ -101,7 +101,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: STOP_RUN_GROUP_COMMAND_ID, title: localize2('voltRun.stop', "Stop Every Run in a Model Comparison"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: STOP_RUN_GROUP_COMMAND_ID, visibility: 'internal', title: localize2('voltRun.stop', "Stop Every Run in a Model Comparison"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor, groupId?: unknown): Promise<void> {
 		const runGroups = accessor.get(IAgentRunGroupService);
@@ -114,7 +114,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: ARCHIVE_RUN_GROUP_COMMAND_ID, title: localize2('voltRun.archiveCommand', "Archive Model Comparison"), category: localize2('volt', "Volt"), f1: false });
+		super({ id: ARCHIVE_RUN_GROUP_COMMAND_ID, visibility: 'internal', title: localize2('voltRun.archiveCommand', "Archive Model Comparison"), category: localize2('volt', "Volt"), f1: false });
 	}
 	override async run(accessor: ServicesAccessor, groupId?: unknown): Promise<void> {
 		const runGroups = accessor.get(IAgentRunGroupService);

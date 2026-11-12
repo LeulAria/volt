@@ -20,6 +20,7 @@ registerAction2(class CompactAgentContextAction extends Action2 {
 	constructor() {
 		super({
 			id: COMPACT_AGENT_CONTEXT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.compactContext', "Compact Context"),
 			category: localize2('voltAgent.category', "Volt Agent"),
 			f1: true,

@@ -9,7 +9,7 @@ import { VoltCodeSymbolKind } from '../../../../../platform/voltCodeIndex/common
 import { formatSymbols, SYMBOL_KIND_NAMES } from '../../common/codeIntelligence.js';
 import { pickBoolean, pickNumber, pickString } from '../../common/tools/args.js';
 import { IToolResult, IVoltTool } from '../../common/tools/tool.js';
-import { IVoltGrepFile, IVoltSearchMeta, VoltSearch } from '../search/voltSearch.js';
+import { ISearchConfinement, IVoltGrepFile, IVoltSearchMeta, VoltSearch } from '../search/voltSearch.js';
 import { objectSchema } from './schema.js';
 import { resolveWorkspaceUri } from './workspacePath.js';
 
@@ -48,8 +48,8 @@ const FILE_TYPES: Record<string, string> = {
 	svelte: '**/*.svelte',
 };
 
-/** The agent's search tools, answered by Volt's unified search (index, FFF, ripgrep). */
-export function createSearchTools(search: VoltSearch, root: () => URI | undefined): IVoltTool[] {
+/** The agent's search tools, answered by Volt's unified search (index, FFF, ripgrep); `confine` for a sandboxed chat's. */
+export function createSearchTools(search: VoltSearch, root: () => URI | undefined, confine?: ISearchConfinement): IVoltTool[] {
 	return [
 		{
 			name: 'grep',
@@ -78,7 +78,7 @@ export function createSearchTools(search: VoltSearch, root: () => URI | undefine
 			}, ['pattern']),
 			idempotent: true,
 			timeoutMs: 60_000,
-			execute: async (args, ctx) => runGrep(search, root(), args, ctx.signal),
+			execute: async (args, ctx) => runGrep(search, root(), args, ctx.signal, confine),
 		},
 		{
 			name: 'glob',
@@ -98,7 +98,7 @@ export function createSearchTools(search: VoltSearch, root: () => URI | undefine
 			}, ['pattern']),
 			idempotent: true,
 			timeoutMs: 60_000,
-			execute: async (args, ctx) => runGlob(search, root(), args, ctx.signal),
+			execute: async (args, ctx) => runGlob(search, root(), args, ctx.signal, confine),
 		},
 		{
 			name: 'find_files',
@@ -118,7 +118,7 @@ export function createSearchTools(search: VoltSearch, root: () => URI | undefine
 			}, ['query']),
 			idempotent: true,
 			timeoutMs: 30_000,
-			execute: async (args, ctx) => runFindFiles(search, root(), args, ctx.signal),
+			execute: async (args, ctx) => runFindFiles(search, root(), args, ctx.signal, confine),
 		},
 		{
 			name: 'find_symbol',
@@ -140,7 +140,7 @@ export function createSearchTools(search: VoltSearch, root: () => URI | undefine
 			}, ['name']),
 			idempotent: true,
 			timeoutMs: 30_000,
-			execute: async (args, ctx) => runFindSymbol(search, root(), args, ctx.signal),
+			execute: async (args, ctx) => runFindSymbol(search, root(), args, ctx.signal, confine),
 		},
 	];
 }
@@ -150,7 +150,7 @@ function fallbackNote(meta: IVoltSearchMeta): string {
 	return meta.fallback && /error|failed|unusable/i.test(meta.fallback) ? `\n[The code index could not answer (${meta.fallback}); searched with ripgrep.]` : '';
 }
 
-async function runGrep(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal): Promise<IToolResult> {
+async function runGrep(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal, confine?: ISearchConfinement): Promise<IToolResult> {
 	const pattern = pickString(args, 'pattern', 'query', 'regex');
 	if (!pattern) {
 		return fail('grep', 'pattern is required.');
@@ -177,6 +177,7 @@ async function runGrep(search: VoltSearch, root: URI | undefined, args: unknown,
 			includes,
 			maxMatches: mode === 'content' ? limit : Math.max(limit * 20, 2_000),
 			maxLineChars: LINE_CHARS,
+			...(confine ? { confine } : {}),
 		}, tokenFor(signal));
 	} catch (err) {
 		return fail('grep', err instanceof Error ? err.message : String(err));
@@ -243,7 +244,7 @@ export function formatMatches(files: readonly IVoltGrepFile[], limit: number, co
 	return { text: out.join('\n'), view };
 }
 
-async function runGlob(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal): Promise<IToolResult> {
+async function runGlob(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal, confine?: ISearchConfinement): Promise<IToolResult> {
 	const pattern = pickString(args, 'pattern', 'glob', 'file_pattern');
 	if (!pattern) {
 		return fail('glob', 'pattern is required.');
@@ -256,7 +257,7 @@ async function runGlob(search: VoltSearch, root: URI | undefined, args: unknown,
 	const filePattern = pattern.includes('/') || pattern.startsWith('**') ? pattern : `**/${pattern}`;
 	let result;
 	try {
-		result = await search.glob({ root, folder, pattern: filePattern, limit }, tokenFor(signal));
+		result = await search.glob({ root, folder, pattern: filePattern, limit, ...(confine ? { confine } : {}) }, tokenFor(signal));
 	} catch (err) {
 		return fail('glob', err instanceof Error ? err.message : String(err));
 	}
@@ -269,7 +270,7 @@ async function runGlob(search: VoltSearch, root: URI | undefined, args: unknown,
 	};
 }
 
-async function runFindFiles(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal): Promise<IToolResult> {
+async function runFindFiles(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal, confine?: ISearchConfinement): Promise<IToolResult> {
 	const query = pickString(args, 'query', 'name', 'pattern')?.trim();
 	if (!query) {
 		return fail('find_files', 'query is required.');
@@ -281,7 +282,7 @@ async function runFindFiles(search: VoltSearch, root: URI | undefined, args: unk
 	const limit = Math.max(1, Math.min(200, pickNumber(args, 'limit') ?? DEFAULT_FIND_FILES));
 	let result;
 	try {
-		result = await search.findFiles({ root, ...(folder ? { folder } : {}), query, limit }, tokenFor(signal));
+		result = await search.findFiles({ root, ...(folder ? { folder } : {}), query, limit, ...(confine ? { confine } : {}) }, tokenFor(signal));
 	} catch (err) {
 		return fail('find_files', err instanceof Error ? err.message : String(err));
 	}
@@ -293,7 +294,7 @@ async function runFindFiles(search: VoltSearch, root: URI | undefined, args: unk
 	};
 }
 
-async function runFindSymbol(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal): Promise<IToolResult> {
+async function runFindSymbol(search: VoltSearch, root: URI | undefined, args: unknown, signal: AbortSignal, confine?: ISearchConfinement): Promise<IToolResult> {
 	const name = pickString(args, 'name', 'symbol', 'query')?.trim();
 	if (!name) {
 		return fail('find_symbol', 'name is required.');
@@ -314,6 +315,7 @@ async function runFindSymbol(search: VoltSearch, root: URI | undefined, args: un
 			match,
 			...(kind && SYMBOL_KIND_NAMES.includes(kind) ? { kind } : {}),
 			limit,
+			...(confine ? { confine } : {}),
 		}, tokenFor(signal));
 	} catch (err) {
 		return fail('find_symbol', err instanceof Error ? err.message : String(err));

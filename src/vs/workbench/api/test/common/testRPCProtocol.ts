@@ -5,6 +5,7 @@
 
 import { isThenable } from '../../../../base/common/async.js';
 import { CharCode } from '../../../../base/common/charCode.js';
+import { ExtensionIdentifier } from '../../../../platform/extensions/common/extensions.js';
 import { IExtHostRpcService } from '../../common/extHostRpcService.js';
 import { IExtHostContext } from '../../../services/extensions/common/extHostCustomers.js';
 import { ExtensionHostKind } from '../../../services/extensions/common/extensionHostKind.js';
@@ -24,7 +25,9 @@ export function SingleProxyRPCProtocol(thing: any): IExtHostContext & IExtHostRp
 		dispose: undefined!,
 		assertRegistered: undefined!,
 		drain: undefined!,
-		extensionHostKind: ExtensionHostKind.LocalProcess
+		extensionHostKind: ExtensionHostKind.LocalProcess,
+		// A test host runs every extension.
+		hostsExtension: () => true
 	};
 }
 
@@ -45,6 +48,8 @@ export class TestRPCProtocol implements IExtHostContext, IExtHostRpcService {
 	public _serviceBrand: undefined;
 	public remoteAuthority = null!;
 	public extensionHostKind = ExtensionHostKind.LocalProcess;
+	/** The extensions this host runs; by default every one. */
+	public hostsExtension: (extensionId: ExtensionIdentifier | string) => boolean = () => true;
 
 	private _callCountValue: number = 0;
 	private _idle?: Promise<any>;

@@ -3,7 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { parseSshTarget } from '../../../../platform/voltDevices/common/deviceCommands.js';
+import { localize } from '../../../../nls.js';
+import { ConfigurationScope, IConfigurationPropertySchema } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { isSafeSshUser, parseSshTarget } from '../../../../platform/voltDevices/common/deviceCommands.js';
 import { IVoltDevice, IVoltDeviceHost, LOCAL_DEVICE_HOST_ID, VoltDevicePosture } from '../../../../platform/voltDevices/common/voltDevices.js';
 
 /** Machines with simulators that Volt reaches over SSH. */
@@ -28,6 +30,49 @@ function slug(value: string): string {
 	return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'host';
 }
 
+/**
+ * The setting's schema. Application scope: only the user's own settings may name machines Volt
+ * runs ssh and scp against, never a repository's `.vscode/settings.json` (B-36, CFG-1).
+ */
+export const DEVICE_REMOTE_HOSTS_SCHEMA: IConfigurationPropertySchema = {
+	type: 'array',
+	default: [],
+	scope: ConfigurationScope.APPLICATION,
+	markdownDescription: localize('voltDevices.remoteHosts', "Other machines whose iOS simulators and Android emulators Volt (and its agents) can use, reached with `ssh` using keys (no passwords). Each needs Xcode and/or the Android SDK. Example: `[{ \"name\": \"Mac mini\", \"host\": \"me@mac-mini.local\" }]`. Only read from user settings."),
+	items: {
+		type: 'object',
+		properties: {
+			name: { type: 'string', description: localize('voltDevices.host.name', "Name shown in Volt.") },
+			host: { type: 'string', description: localize('voltDevices.host.host', "host, user@host or user@host:port") },
+			user: { type: 'string', pattern: '^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$' },
+			port: { type: 'number' },
+			identityFile: { type: 'string', description: localize('voltDevices.host.identity', "Private key file (ssh -i), as an absolute path or one under ~/.") },
+			androidSdk: { type: 'string', description: localize('voltDevices.host.sdk', "Android SDK folder on that machine, if not ~/Library/Android/sdk or on its PATH.") },
+		},
+		required: ['host'],
+	},
+};
+
+/** A private key path ssh takes as a file: absolute or under `~/`, never an option, no control characters. */
+export function isSafeIdentityFile(path: string): boolean {
+	return /^(?:\/|~\/|[A-Za-z]:[\\/])/.test(path) && !/[\u0000-\u001f\u007f]/.test(path);
+}
+
+/** A remote folder for the Android SDK: absolute or under `~/`, no control characters. */
+function isSafeRemoteFolder(path: string): boolean {
+	return /^(?:\/|~\/)/.test(path) && !/[\u0000-\u001f\u007f]/.test(path);
+}
+
+/**
+ * The `volt.devices.remoteHosts` value a workspace's own settings file sets, if any (a parsed
+ * `.vscode/settings.json` or the `settings` of a `.code-workspace`). Since the setting became
+ * application-scoped it is ignored there; Volt shows the user what it would have used (B-AP-5).
+ */
+export function workspaceRemoteHosts(settings: unknown): unknown[] | undefined {
+	const value = settings && typeof settings === 'object' ? (settings as Record<string, unknown>)[DEVICE_REMOTE_HOSTS_SETTING] : undefined;
+	return Array.isArray(value) && value.length ? value : undefined;
+}
+
 /** Valid entries of the setting, each with a unique id; entries without a usable host are dropped. */
 export function parseRemoteHosts(value: unknown): IVoltDeviceHost[] {
 	if (!Array.isArray(value)) {
@@ -42,6 +87,12 @@ export function parseRemoteHosts(value: unknown): IVoltDeviceHost[] {
 		}
 		const target = parseSshTarget(entry.host);
 		if (!target) {
+			continue;
+		}
+		// A user or key that ssh could read as an option drops the whole entry rather than guess.
+		if ((typeof entry.user === 'string' && entry.user && !isSafeSshUser(entry.user))
+			|| (typeof entry.identityFile === 'string' && entry.identityFile && !isSafeIdentityFile(entry.identityFile))
+			|| (typeof entry.androidSdk === 'string' && entry.androidSdk && !isSafeRemoteFolder(entry.androidSdk))) {
 			continue;
 		}
 		const user = typeof entry.user === 'string' && entry.user ? entry.user : target.user;

@@ -60,6 +60,7 @@ registerAction2(class MeasureMachineCapacityAction extends Action2 {
 	constructor() {
 		super({
 			id: ORCH_MEASURE_CAPACITY_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltOrchestra.measureCapacity', "Measure How Many Agents This Machine Can Run"),
 			category: localize2('voltOrchestra.category', "Volt"),
 			f1: true,

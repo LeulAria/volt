@@ -5,7 +5,7 @@
 
 import { decodeKeybinding, Keybinding } from '../../../base/common/keybindings.js';
 import { OperatingSystem, OS } from '../../../base/common/platform.js';
-import { CommandsRegistry, ICommandHandler, ICommandMetadata } from '../../commands/common/commands.js';
+import { CommandsRegistry, CommandVisibility, ICommandHandler, ICommandMetadata } from '../../commands/common/commands.js';
 import { ContextKeyExpression } from '../../contextkey/common/contextkey.js';
 import { Registry } from '../../registry/common/platform.js';
 import { combinedDisposable, DisposableStore, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
@@ -70,6 +70,8 @@ export const enum KeybindingWeight {
 export interface ICommandAndKeybindingRule extends IKeybindingRule {
 	handler: ICommandHandler;
 	metadata?: ICommandMetadata | null;
+	/** Who may run the command; see {@link CommandVisibility}. Volt's commands must say. */
+	visibility?: CommandVisibility;
 }
 
 export interface IKeybindingsRegistry {

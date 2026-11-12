@@ -12,12 +12,12 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { FileService } from '../../../../../platform/files/common/fileService.js';
 import { InMemoryFileSystemProvider } from '../../../../../platform/files/common/inMemoryFilesystemProvider.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
-import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { AgentOrchestratorService } from '../../browser/orchestration/agentOrchestratorService.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../common/events.js';
 import { IVoltHostToolProvider } from '../../common/hostTools.js';
 import { IOrchStartTurnRequest, IOrchTurnHost } from '../../common/orchestration/orchestrator.js';
 import { IVoltSendRequest } from '../../common/session.js';
+import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 
 /** A runtime that runs nothing: the test starts and ends runs and says what the reply was. */
 class FakeRuntime {
@@ -38,11 +38,11 @@ class FakeRuntime {
 	canSteer() { return false; }
 	steer() { return false; }
 	chatFor(id: string) { return id; }
-	readonly sandboxes = new Map<string, IVoltSandboxSettings>();
-	getSandboxSettings(id: string): IVoltSandboxSettings { return this.sandboxes.get(id) ?? { level: 'off', network: true }; }
-	async setSandboxSettings(id: string, settings: IVoltSandboxSettings) { this.sandboxes.set(id, settings); }
 	getModelOptions() { return {}; }
 	rememberWorktree() { }
+	readonly sandboxes = new Map<string, IVoltSandboxSettings>();
+	getSandboxSettings(threadId: string): IVoltSandboxSettings { return this.sandboxes.get(threadId) ?? DEFAULT_SANDBOX_SETTINGS; }
+	async setSandboxSettings(threadId: string, settings: IVoltSandboxSettings) { this.sandboxes.set(threadId, settings); }
 	getOrCreateSession(threadId: string) {
 		const reply = this.replies.get(threadId);
 		return { providerRef: undefined, messages: reply ? [{ role: 'assistant', content: reply }] : [] };
@@ -219,16 +219,21 @@ suite('Agent orchestrator service', () => {
 		assert.ok(wake?.turn.prompt.text.includes('README written: 40 lines.'));
 	});
 
-	test('a subagent of a sandboxed chat starts no less sandboxed than its parent', async () => {
+	test('a subagent of a sandboxed chat is confined at least as tightly before its first turn', async () => {
 		const { service, runtime, host, tool } = await setup();
-		runtime.sandboxes.set('parent', { level: 'read-only', network: false, allowedDomains: ['api.example.com'] });
-		await service.submit('parent', { text: 'audit it' }, 'auto', 'p1');
+		runtime.sandboxes.set('parent', { level: 'read-only', network: false });
+		runtime.sandboxes.set('other', { level: 'workspace-write', network: true });
+		const gate = new DeferredPromise<void>();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
 		await settle();
-		await tool('parent', 'delegate_task', { task: 'Audit the API', role: 'implementation' });
+		host.gate = gate.p;
+		await tool('parent', 'delegate_task', { task: 'Count the tests' });
 		await settle();
 		const task = service.tasksOf('parent')[0];
-		assert.ok(host.started.some(request => request.threadId === task.childId), 'its brief started');
-		assert.deepStrictEqual(runtime.sandboxes.get(task.childId!), { level: 'read-only', network: false, allowedDomains: ['api.example.com'] }, 'set before its agent process starts');
+		assert.ok(host.started.some(request => request.threadId === task.childId), 'its brief turn is starting');
+		assert.deepStrictEqual(runtime.getSandboxSettings(task.childId!), { level: 'read-only', network: false }, 'confined before the host starts it');
+		gate.complete();
+		await settle();
 	});
 
 	test('a subagent\'s checks run in its checkout before its report wakes the parent', async () => {

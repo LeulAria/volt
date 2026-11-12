@@ -13,6 +13,9 @@ import { IVoltUsageLimitGroup } from '../../voltUsage/common/voltUsage.js';
 export const IVoltAccountsService = createDecorator<IVoltAccountsService>('voltAccountsService');
 export const VOLT_ACCOUNTS_CHANNEL_NAME = 'voltAccounts';
 
+/** The built-in extension that carries the Claude accounts feature; disabling it turns the broker off. */
+export const CLAUDE_ACCOUNTS_EXTENSION_ID = 'volt.claude-accounts';
+
 /** `manual`: the user picks the account. `auto`: Volt moves to the account with the most left near a limit. */
 export const CLAUDE_ACCOUNT_SWITCHING_SETTING = 'volt.claude.accountSwitching';
 /** Percent of the session or weekly limit at which automatic switching moves on. */
@@ -120,4 +123,10 @@ export interface IVoltAccountsService {
 	switchClaudeAccount(id: string): Promise<IVoltClaudeAccountsState>;
 	/** Forgets a saved account. The active one stays signed in to Claude Code. */
 	removeClaudeAccount(id: string): Promise<IVoltClaudeAccountsState>;
+	/**
+	 * The Claude accounts feature is on or off (its built-in extension, disabled for the whole
+	 * profile). Off, the broker switches nothing (automatic switching stops) and refuses to add,
+	 * switch or forget accounts; reading the saved list still works. Kept across restarts.
+	 */
+	setClaudeAccountsEnabled(enabled: boolean): Promise<void>;
 }

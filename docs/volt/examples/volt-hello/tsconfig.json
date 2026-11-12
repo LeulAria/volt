@@ -1,0 +1,21 @@
+{
+	// In your own extension use "@types/vscode" and a copy of apps/volt-extension-api/vscode.proposed.volt.d.ts
+	// instead of these paths into the Volt repository.
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "commonjs",
+		"lib": [
+			"ES2022"
+		],
+		"types": [],
+		"strict": true,
+		"outDir": "out",
+		"rootDir": "src",
+		"skipLibCheck": false
+	},
+	"files": [
+		"src/extension.ts",
+		"../../../../src/vscode-dts/vscode.d.ts",
+		"../../../../apps/volt-extension-api/vscode.proposed.volt.d.ts"
+	]
+}

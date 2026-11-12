@@ -211,7 +211,7 @@ export class CiCapability implements IIdeCapability {
 			case 'runs': {
 				let branch = safeName(str(args, 'branch'));
 				if (!branch) {
-					const current = await ctx.cli.run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: 10_000 });
+					const current = await ctx.cli.git(['rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: 10_000 });
 					branch = safeName(current.stdout.trim());
 				}
 				const result = await gh(['run', 'list', ...(branch ? ['--branch', branch] : []), '--limit', String(Math.min(num(args, 'limit') ?? 10, 50)), '--json', 'databaseId,displayTitle,workflowName,status,conclusion,createdAt,event']);

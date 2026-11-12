@@ -8,7 +8,8 @@ import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
 import { joinPath, relativePath } from '../../../../../base/common/resources.js';
-import { chatSandboxRequest, IVoltSandboxRequest, IVoltSandboxSettings, sandboxLaunchKey } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IVoltSandboxRequest, IVoltSandboxSettings, sandboxLaunchKey } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { chatExecSandbox } from '../../../../services/voltRuntime/common/execContext.js';
 import { guardToolText } from '../../../../services/voltRuntime/common/ide/toolOutput.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
@@ -260,7 +261,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 		if (settings.level === 'off') {
 			return undefined;
 		}
-		return chatSandboxRequest(settings, [root.fsPath, ...await this.gitCommonDir(root)]);
+		return chatExecSandbox(settings, [root.fsPath, ...await this.gitCommonDir(root)]);
 	}
 
 	/** A linked worktree's `.git` is a file naming its gitdir; commits write to the main repository's. */
@@ -350,7 +351,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			return { error: `${id} has no op "${op}".\n${ideHelp(id)}` };
 		}
 		const opArgs = args.args && typeof args.args === 'object' ? args.args as Record<string, unknown> : {};
-		const result = await capability.invoke(op, opArgs, { root, chatId, token, cli: new IdeCli(this.stdio, root?.fsPath, sandbox) });
+		const result = await capability.invoke(op, opArgs, { root, chatId, token, cli: new IdeCli(this.stdio, root?.fsPath, { principal: chatId ? `chat:${chatId}` : 'volt', reason: 'agent-shell', sandboxed: !!sandbox }, sandbox) });
 		return result.isError ? { error: result.text } : { text: result.text, ...(result.changes?.length ? { changes: result.changes } : {}) };
 	}
 

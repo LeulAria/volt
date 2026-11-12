@@ -9,6 +9,7 @@ import { join } from '../../../base/common/path.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
+import { IStateService } from '../../state/node/state.js';
 import { CLAUDE_ACCOUNT_SWITCHING_SETTING, CLAUDE_AUTO_SWITCH_DEFAULT_THRESHOLD, CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING, IVoltAccountsService, IVoltClaudeAccountsState, IVoltClaudeLogin, VoltClaudeLoginResult } from '../common/voltAccounts.js';
 import { IVoltUsageService } from '../../voltUsage/common/voltUsage.js';
 import { ClaudeAccounts } from '../node/claudeAccounts.js';
@@ -17,6 +18,8 @@ import { FileAccountSecrets, KeychainAccountSecrets } from '../node/claudeLogin.
 /** How often automatic switching looks at the active account's limits. */
 const AUTO_SWITCH_INTERVAL_MS = 2 * 60_000;
 const FIRST_TICK_DELAY_MS = 30_000;
+/** Whether the Claude accounts extension was on when a window last said; read before any window is open. */
+const ENABLED_STATE_KEY = 'volt.claudeAccounts.enabled';
 
 /**
  * Saved Claude accounts live in the main process: switching writes Claude Code's keychain item and
@@ -32,11 +35,13 @@ export class VoltAccountsMainService extends Disposable implements IVoltAccounts
 	readonly onDidAutoSwitchClaudeAccount;
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private firstTick: ReturnType<typeof setTimeout> | undefined;
+	private enabled: boolean;
 
 	constructor(
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@ILogService logService: ILogService,
 		@IVoltUsageService usageService: IVoltUsageService,
+		@IStateService private readonly stateService: IStateService,
 	) {
 		super();
 		const home = homedir();
@@ -55,6 +60,8 @@ export class VoltAccountsMainService extends Disposable implements IVoltAccounts
 		}));
 		this.onDidChangeClaudeAccounts = this.claude.onDidChange;
 		this.onDidAutoSwitchClaudeAccount = this.claude.onDidAutoSwitch;
+		this.enabled = stateService.getItem<boolean>(ENABLED_STATE_KEY, true) !== false;
+		this.claude.setEnabled(this.enabled);
 		this.applyConfiguration();
 		this._register(configurationService.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(CLAUDE_ACCOUNT_SWITCHING_SETTING) || e.affectsConfiguration(CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING)) {
@@ -68,7 +75,7 @@ export class VoltAccountsMainService extends Disposable implements IVoltAccounts
 		const switching = this.configurationService.getValue<string>(CLAUDE_ACCOUNT_SWITCHING_SETTING) === 'auto' ? 'auto' : 'manual';
 		const threshold = this.configurationService.getValue<number>(CLAUDE_AUTO_SWITCH_THRESHOLD_SETTING) ?? CLAUDE_AUTO_SWITCH_DEFAULT_THRESHOLD;
 		this.claude.configure(switching, threshold);
-		if (switching === 'auto') {
+		if (switching === 'auto' && this.enabled) {
 			this.startTimer();
 		} else {
 			this.stopTimer();
@@ -115,5 +122,15 @@ export class VoltAccountsMainService extends Disposable implements IVoltAccounts
 
 	removeClaudeAccount(id: string): Promise<IVoltClaudeAccountsState> {
 		return this.claude.remove(id);
+	}
+
+	async setClaudeAccountsEnabled(enabled: boolean): Promise<void> {
+		if (enabled === this.enabled) {
+			return;
+		}
+		this.enabled = enabled;
+		this.stateService.setItem(ENABLED_STATE_KEY, enabled);
+		this.claude.setEnabled(enabled);
+		this.applyConfiguration();
 	}
 }

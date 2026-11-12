@@ -7,7 +7,9 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize } from '../../../../nls.js';
 import { registerMainProcessRemoteService } from '../../../../platform/ipc/electron-browser/services.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
-import { IVoltAccountsService, VOLT_ACCOUNTS_CHANNEL_NAME } from '../../../../platform/voltAccounts/common/voltAccounts.js';
+import { areSameExtensions } from '../../../../platform/extensionManagement/common/extensionManagementUtil.js';
+import { IGlobalExtensionEnablementService } from '../../../../platform/extensionManagement/common/extensionManagement.js';
+import { CLAUDE_ACCOUNTS_EXTENSION_ID, IVoltAccountsService, VOLT_ACCOUNTS_CHANNEL_NAME } from '../../../../platform/voltAccounts/common/voltAccounts.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IHostService } from '../../host/browser/host.js';
 import { IAgentRuntimeService } from '../common/runtime.js';
@@ -43,3 +45,28 @@ class VoltClaudeAutoSwitchNotifier extends Disposable implements IWorkbenchContr
 }
 
 registerWorkbenchContribution2(VoltClaudeAutoSwitchNotifier.ID, VoltClaudeAutoSwitchNotifier, WorkbenchPhase.AfterRestored);
+
+/**
+ * Tells the accounts broker (main process) whether the Claude accounts extension is on for this
+ * profile. The broker is machine-wide, so only the profile-wide choice counts: a workspace-only
+ * disable hides the feature in that window and leaves the broker as it is.
+ */
+class VoltClaudeAccountsGate extends Disposable implements IWorkbenchContribution {
+
+	static readonly ID = 'workbench.contrib.voltClaudeAccountsGate';
+
+	constructor(
+		@IVoltAccountsService accounts: IVoltAccountsService,
+		@IGlobalExtensionEnablementService enablement: IGlobalExtensionEnablementService,
+	) {
+		super();
+		const sync = () => {
+			const enabled = !enablement.getDisabledExtensions().some(id => areSameExtensions(id, { id: CLAUDE_ACCOUNTS_EXTENSION_ID }));
+			void accounts.setClaudeAccountsEnabled(enabled).catch(() => undefined);
+		};
+		sync();
+		this._register(enablement.onDidChangeEnablement(sync));
+	}
+}
+
+registerWorkbenchContribution2(VoltClaudeAccountsGate.ID, VoltClaudeAccountsGate, WorkbenchPhase.AfterRestored);

@@ -1,0 +1,20 @@
+# The LNX-BWRAP-CVE refusal rig (scripts/volt-sandbox-linux-test.sh cve): Ubuntu 24.04's own
+# bubblewrap 0.9.0, which has CVE-2026-87766 (symlinks in bound content redirect setup-time
+# file creation onto the host; fixed in 0.12.0). Volt's probe must refuse it: its CVE trial
+# lands outside the fixture. Otherwise the same as Dockerfile.linux-test.
+
+FROM node:22-bookworm-slim AS node
+
+FROM ubuntu:24.04
+
+RUN apt-get update \
+	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+		bubblewrap socat util-linux procps psmisc curl ca-certificates python3 iproute2 \
+	&& rm -rf /var/lib/apt/lists/*
+RUN bwrap --version | grep -qx 'bubblewrap 0.9.0'
+
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+
+RUN useradd --create-home --uid 1500 --shell /bin/bash volt
+USER volt
+WORKDIR /home/volt

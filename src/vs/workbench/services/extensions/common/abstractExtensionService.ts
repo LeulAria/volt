@@ -784,6 +784,8 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 			locations.push(new LocalWebWorkerRunningLocation(affinity));
 		}
 		locations.push(new RemoteRunningLocation());
+		// Volt (P2, P6): one host per opted-in extension, in the sandbox.
+		locations.push(...this._runningLocations.sandboxedRunningLocations);
 		for (const location of locations) {
 			if (this._extensionHostManagers.getByRunningLocation(location)) {
 				// already running
@@ -841,7 +843,10 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 
 	protected _onExtensionHostCrashed(extensionHost: IExtensionHostManager, code: number, signal: string | null): void {
 		console.error(`Extension host (${extensionHost.friendyName}) terminated unexpectedly. Code: ${code}, Signal: ${signal}`);
-		if (extensionHost.kind === ExtensionHostKind.LocalProcess) {
+		if (this._runningLocations.sandboxedRunningLocations.some(location => extensionHost.representsRunningLocation(location))) {
+			// Volt: one sandboxed extension's host went; the others keep running (it never takes core down, H.9).
+			this._extensionHostManagers.stopOne(extensionHost);
+		} else if (extensionHost.kind === ExtensionHostKind.LocalProcess) {
 			this._doStopExtensionHosts();
 		} else if (extensionHost.kind === ExtensionHostKind.Remote) {
 			if (signal) {

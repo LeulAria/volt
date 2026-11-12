@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,88 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.codex",
+			"label": "Codex",
+			"description": "Codex (OpenAI's CLI) and OpenAI API models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 20
+		},
+		"voltAgents": [
+			{
+				"id": "codex",
+				"label": "Codex",
+				"order": 10,
+				"binary": "codex",
+				"versionArgs": [
+					"--version"
+				],
+				"args": [],
+				"acpAdapter": {
+					"command": "codex-acp",
+					"package": "@agentclientprotocol/codex-acp@1.13.1"
+				},
+				"authProbe": "codex",
+				"login": [
+					"codex",
+					"login"
+				],
+				"apiHosts": [
+					"chatgpt.com",
+					"*.chatgpt.com",
+					"api.openai.com",
+					"*.openai.com",
+					"auth.openai.com"
+				],
+				"state": {
+					"configOverlay": "CODEX_HOME",
+					"configHome": ".codex",
+					"link": [
+						"config.toml",
+						"AGENTS.md",
+						"AGENTS.override.md",
+						"rules",
+						"skills",
+						"plugins",
+						"prompts",
+						"hooks.json"
+					],
+					"loginFiles": [
+						{
+							"name": "auth.json",
+							"freshness": [
+								"last_refresh"
+							],
+							"identity": [
+								"tokens.account_id",
+								"OPENAI_API_KEY"
+							]
+						}
+					],
+					"credentials": [
+						".codex/auth.json"
+					],
+					"envKeys": [
+						"OPENAI_API_KEY",
+						"OPENAI_BASE_URL",
+						"CODEX_HOME"
+					]
+				},
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:codex",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

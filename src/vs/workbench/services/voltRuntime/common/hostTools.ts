@@ -9,6 +9,10 @@ import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import type { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import type { IGrant } from '../../../../platform/voltSandbox/common/grants.js';
+import type { IVoltSandboxSettings, SandboxStrategy } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import type { IPolicyShadowDiff, PolicyAuthorityMode } from './hostToolAuthority.js';
+import type { HostToolSandboxClass } from './hostToolSandbox.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from './deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from './desktopTools.js';
 import { isIdeToolName } from './ide/ideTools.js';
@@ -203,6 +207,29 @@ export interface IVoltHostToolCall {
 	readonly source?: 'mcp' | 'native';
 	/** An agent outside Volt called it over the OAuth MCP server (no chat; `sessionId` is unset). */
 	readonly external?: IVoltExternalCaller;
+	/**
+	 * The OS sandbox of the chat whose agent made the call, resolved by Volt from the session its
+	 * MCP token was issued for (never from the agent). Undefined or `off`: unconfined. The host tool
+	 * service refuses or narrows what a sandboxed chat's call would do outside it (`hostToolSandbox.ts`).
+	 */
+	readonly sandbox?: IVoltSandboxSettings;
+	/**
+	 * Set by the host tool service on a sandboxed chat's call before a provider runs it: why the chat
+	 * may not read an absolute path (resolved through symlinks, judged by the same rules as the gate),
+	 * or undefined when it may. Providers that read files the agent did not name (search results)
+	 * filter them with it (B-15).
+	 */
+	readonly readRefusal?: (path: string) => Promise<string | undefined>;
+}
+
+/** Each chat's sandbox, for the sandbox gate: the caller's workspace, and other chats a call would prompt (thread_send). */
+export interface IVoltHostSandboxResolver {
+	/** The chat's sandbox settings (the default for a chat that never set one). */
+	settings(sessionId: string): IVoltSandboxSettings | undefined;
+	/** The folder the chat's agent may write when its sandbox allows the workspace: its worktree, else its project. */
+	folder(sessionId: string): string | undefined;
+	/** How the chat's agent is sandboxed (its provider's strategy at its level); unknown: `wrap`. */
+	strategy?(sessionId: string): SandboxStrategy | undefined;
 }
 
 /** Who an outside agent is, from the grant the user approved. */
@@ -231,9 +258,25 @@ export interface IVoltHostToolApproval {
 	readonly reason: string;
 }
 
+/**
+ * G.6 (PERM-FLOW-1): a chat calls an extension's tool, and the extension can send what it is given
+ * where the chat can't reach. The card asks "Send this chat's content to … via …?".
+ */
+export interface IVoltHostFlowApproval {
+	readonly sessionId: string;
+	readonly name: string;
+	readonly args: Record<string, unknown>;
+	/** The extension's display name. */
+	readonly extension: string;
+	/** Where it can send the data that this chat can't reach; `all`: anywhere (it runs outside Volt's sandbox). */
+	readonly hosts: readonly string[] | 'all';
+}
+
 /** Asks the user to allow one host tool call that the chat's mode would not run on its own. */
 export interface IVoltHostToolApprover {
 	approve(request: IVoltHostToolApproval, token: CancellationToken): Promise<boolean>;
+	/** The flow card: `once`, `chat` (for this chat), or undefined when refused. */
+	approveFlow?(request: IVoltHostFlowApproval, token: CancellationToken): Promise<'once' | 'chat' | undefined>;
 }
 
 /** Extra inputs for `AUTOMATE_BROWSER_COMMAND_ID`. */
@@ -1008,6 +1051,32 @@ export interface IVoltHostToolProvider {
 	needsApproval?(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<string | undefined>;
 	/** The user allowed a call `needsApproval` asked about. */
 	approved?(name: string, args: Record<string, unknown>, call: IVoltHostToolCall): void;
+	/**
+	 * Set for tools an extension registered through the `volt` API (core's record, never the
+	 * extension's word): the gate judges a sandboxed chat's call by it (G.6, PERM-FLOW-1).
+	 */
+	readonly owner?: IVoltHostToolOwner;
+}
+
+/** Who serves an extension's tool, as core recorded it at registration. */
+export interface IVoltHostToolOwner {
+	readonly extensionId: string;
+	readonly label: string;
+	readonly firstParty: boolean;
+	/** The class Volt holds the tool to: Volt's own class for its names, the declared one, else `escapes`. */
+	readonly toolClass: HostToolSandboxClass;
+	/** `contributes.voltCapabilities`, required and optional. */
+	readonly declared: readonly { readonly id: string; readonly targets?: readonly string[] }[];
+	/** Its host runs in an OS sandbox whose network goes through the broker. Default: unsandboxed (N.1: opt-in). */
+	readonly sandboxed?: boolean;
+}
+
+/** The features (`VOLT_FEATURES` ids) the user turned off, by where the choice was made. */
+export interface IVoltFeatureEnablementMirror {
+	/** Disabled for every window (the extension is disabled globally). */
+	readonly global: readonly string[];
+	/** Disabled only in this window's workspace. */
+	readonly workspace: readonly string[];
 }
 
 export interface IVoltHostToolService {
@@ -1023,6 +1092,12 @@ export interface IVoltHostToolService {
 	 * out of the list agents get and refused if called anyway.
 	 */
 	setDisabledTools(names: Iterable<string>): void;
+	/**
+	 * Which Volt features are off in this window, for where the agents run. The agent server turns
+	 * their tools off for its own agents too (its own tools included) and keeps the global choice
+	 * while no window is connected. A window that runs its agents itself has nothing to mirror.
+	 */
+	mirrorFeatureEnablement(state: IVoltFeatureEnablementMirror): void;
 	/** The browser half of an ACP agent's turn primer (the app serving and open in the chat's browser, audits). */
 	preflightBrowser(sessionId: string, request: IVoltBrowserPreflightRequest, token: CancellationToken): Promise<IVoltBrowserPreflightResult>;
 	invokeTool(name: string, input?: unknown, call?: IVoltHostToolCall): Promise<IVoltHostToolResult>;
@@ -1033,6 +1108,13 @@ export interface IVoltHostToolService {
 	getMcpServers(sessionId?: string, options?: { readonly groups?: readonly VoltHostToolGroup[] }): readonly IVoltMcpServer[];
 	/** The window's MCP server address and the bearer token agents must send. */
 	setMcpEndpoint(url: string | undefined, token?: string): void;
+	/**
+	 * The chat was closed or released: the MCP server refuses the tokens its agents hold (whoever
+	 * serves it listens to `onDidRevokeMcpSession`), and `getMcpServers` issues new ones.
+	 */
+	revokeMcpSession(sessionId: string): void;
+	/** A chat's host MCP tokens with key epoch `epoch` or below must be refused from now on. */
+	readonly onDidRevokeMcpSession: Event<{ readonly sessionId: string; readonly epoch: number }>;
 	setQuestionHandler(handler: IVoltQuestionHandler | undefined): void;
 	/**
 	 * Asks the user in the chat's question tray (as `ask_question` does) on behalf of a Volt tool,
@@ -1045,4 +1127,25 @@ export interface IVoltHostToolService {
 	setSessionResolver(resolver: IVoltHostSessionResolver | undefined): void;
 	/** Asks the user when a chat's mode does not allow a call. Without one, such calls are refused. */
 	setApprover(approver: IVoltHostToolApprover | undefined): void;
+	/** Each chat's sandbox, set by whoever serves the MCP server. Without one, a sandboxed chat may not prompt other chats. */
+	setSandboxResolver(resolver: IVoltHostSandboxResolver | undefined): void;
+	/** Whether the Policy Authority decides the gate's class decisions, or only shadows the earlier rules (M.3). */
+	setPolicyAuthorityMode?(mode: PolicyAuthorityMode): void;
+	/** A call where the earlier rules and the Policy Authority disagreed. */
+	readonly onDidShadowDiff?: Event<IPolicyShadowDiff>;
+	/** The flow approvals (G.6) a chat holds, and revoking them. */
+	flowApprovals?(sessionId: string): readonly IGrant[];
+	revokeFlowApprovals?(sessionId: string): number;
+	/**
+	 * Where "Allow for This Chat" flow approvals are kept (the grant store, P4): they hold across
+	 * restarts until revoked. Without one they last as long as the window.
+	 */
+	setFlowGrantStore?(store: IVoltFlowGrantStore | undefined): void;
+	/** The grant store's flow approvals (its session grants of chats), after any change to it. */
+	setStoredFlowGrants?(grants: readonly IGrant[]): void;
+}
+
+export interface IVoltFlowGrantStore {
+	persist(grant: IGrant): Promise<void>;
+	revoke(ids: readonly string[]): Promise<void>;
 }

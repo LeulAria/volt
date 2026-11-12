@@ -340,7 +340,12 @@ export class VoltHooksService extends Disposable implements IVoltHooksService {
 				env,
 				timeoutMs: definition.timeoutMs,
 				inlineChars: OUTPUT_CHARS,
+				// The chat's, in its sandbox when it has one; refused (a failed hook) when that cannot be set up.
+				...context.exec,
 			});
+			if (result.refused) {
+				failed = result.refused.reason;
+			}
 			exitCode = result.exitCode;
 			stdout = result.stdout;
 			stderr = result.stderr;

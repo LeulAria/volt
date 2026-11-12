@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,27 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "claudeAccounts",
+			"entry": "voltClaudeAccounts",
+			"label": "Claude accounts",
+			"description": "Several Claude logins with one switch, and switching when one runs out.",
+			"category": "providers",
+			"icon": "person",
+			"order": 130,
+			"settings": [
+				"volt.claude."
+			]
+		},
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.manage",
+					"class": "critical",
+					"reason": "Swaps Claude logins under Claude's own locks."
+				}
+			]
+		}
+	}
 }

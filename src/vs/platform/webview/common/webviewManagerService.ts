@@ -40,4 +40,11 @@ export interface IWebviewManagerService {
 	findInFrame(windowId: WebviewWindowId, frameName: string, text: string, options: FindInFrameOptions): Promise<void>;
 
 	stopFindInFrame(windowId: WebviewWindowId, frameName: string, options: { keepSelection?: boolean }): Promise<void>;
+
+	/**
+	 * Volt: the hosts the webview `webviewId` of a sandboxed extension, shown in `windowId` at its
+	 * encoded `vscode-webview` origin, may reach, enforced on every request of the window's
+	 * session; `undefined` hosts remove the webview (spec I.10, INV-19).
+	 */
+	setWebviewEgress(windowId: WebviewWindowId, webviewId: string, encodedOrigin: string | undefined, hosts: readonly string[] | undefined): Promise<void>;
 }

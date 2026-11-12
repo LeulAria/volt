@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,55 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "skills",
+			"entry": "voltSkills",
+			"label": "Skills & Plugins",
+			"description": "Skills, subagents, rules, hooks and MCP servers, and installing more from skills.sh and plugin marketplaces.",
+			"category": "resources",
+			"icon": "extensions",
+			"order": 10,
+			"commands": [
+				"workbench.action.voltAgent.customize",
+				"workbench.action.voltAgent.customize.marketplace"
+			]
+		},
+		"voltSlotItems": [
+			{
+				"id": "volt.customize",
+				"label": "Skills & Plugins"
+			}
+		],
+		"voltSettingsPages": [
+			{
+				"id": "customize",
+				"label": "Skills & Plugins"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "files.read:workspace",
+					"class": "low"
+				},
+				{
+					"id": "files.write",
+					"class": "medium",
+					"reason": "Installs skills and plugins."
+				},
+				{
+					"id": "net.connect",
+					"class": "low",
+					"targets": [
+						"skills.sh",
+						"*.skills.sh",
+						"github.com",
+						"*.githubusercontent.com"
+					],
+					"reason": "The skills.sh and plugin marketplaces."
+				}
+			]
+		}
+	}
 }

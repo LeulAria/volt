@@ -24,6 +24,7 @@ import { AvailableForDownload, DisablementReason, IUpdate, State, StateType, Upd
 import { AbstractUpdateService, createUpdateURL, UpdateErrorClassification } from './abstractUpdateService.js';
 import { IVoltUpdate, VOLT_CHANNEL_APP_NAMES, VoltReleaseChannel } from '../common/voltUpdateFeed.js';
 import { downloadVoltUpdate } from './voltUpdateDownload.js';
+import { verifyVoltInstaller } from '../node/voltInstallerSignature.js';
 
 async function pollUntil(fn: () => boolean, millis = 1000): Promise<void> {
 	while (!fn()) {
@@ -144,11 +145,13 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 
 							return downloadVoltUpdate(this.requestService, update.url!, updatePackagePath, {
 								sha256hash: update.sha256hash,
+								requireSha256: this.voltFeedKeysPinned,
 								size: (update as IVoltUpdate).size,
 								onProgress: this.productService.voltRelease ? progress => this.reportDownloadProgress(update, progress) : undefined,
 							}).then(() => updatePackagePath);
 						});
-					}).then(packagePath => {
+					}).then(async packagePath => {
+						await this.verifyInstaller(packagePath);
 						this.availableUpdate = { packagePath };
 						this.setState(State.Downloaded(update));
 
@@ -201,10 +204,12 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 			if (!await pfs.Promises.exists(setup)) {
 				await downloadVoltUpdate(this.requestService, update.url!, setup, {
 					sha256hash: update.sha256hash,
+					requireSha256: this.voltFeedKeysPinned,
 					size: update.size,
 					onProgress: progress => this.reportDownloadProgress(update, progress),
 				});
 			}
+			await this.verifyInstaller(setup);
 			this.setState(State.Updating(update));
 			const code = await new Promise<number | null>((resolve, reject) => {
 				const child = spawn(setup, ['/verysilent', '/log', '/mergetasks=!runcode,!desktopicon,!quicklaunchicon'], { stdio: 'ignore' });
@@ -219,6 +224,19 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 		} catch (err) {
 			this.logService.error(`update#win32 - installing ${VOLT_CHANNEL_APP_NAMES[channel]} failed`, err);
 			this.setState(State.Idle(getUpdateType(), err instanceof Error ? err.message : String(err)));
+		}
+	}
+
+	/**
+	 * Volt (INV-28): an installer runs only with a valid Authenticode signature by the pinned publisher.
+	 * A refused file is deleted, so a cached copy isn't run later.
+	 */
+	private async verifyInstaller(file: string): Promise<void> {
+		try {
+			await verifyVoltInstaller('win32', file, this.productService.voltRelease, message => this.logService.info(message));
+		} catch (err) {
+			await fs.promises.rm(file, { force: true });
+			throw err;
 		}
 	}
 
@@ -326,6 +344,13 @@ export class Win32UpdateService extends AbstractUpdateService implements IRelaun
 
 		const fastUpdatesEnabled = this.configurationService.getValue('update.enableWindowsBackgroundUpdates');
 		const update: IUpdate = { version: 'unknown', productVersion: 'unknown' };
+
+		try {
+			await verifyVoltInstaller('win32', packagePath, this.productService.voltRelease, message => this.logService.info(message));
+		} catch (err) {
+			this.logService.error('update#win32 - refused to apply', err);
+			return;
+		}
 
 		this.setState(State.Downloading);
 		this.availableUpdate = { packagePath };

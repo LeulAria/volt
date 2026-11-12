@@ -367,6 +367,7 @@ registerAction2(class SearchAgentChatsAction extends Action2 {
 	constructor() {
 		super({
 			id: SEARCH_AGENT_CHATS_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.searchChats', "Search Chats"),
 			category: Categories.View,
 			f1: true,

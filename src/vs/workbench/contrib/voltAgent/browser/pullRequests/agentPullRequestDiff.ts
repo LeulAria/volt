@@ -293,6 +293,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.pullRequest.markFileViewed',
+			visibility: 'internal',
 			title: localize2('voltPr.markViewed', "Mark as Viewed"),
 			icon: Codicon.circleLarge,
 			menu: { id: MenuId.MultiDiffEditorFileToolbar, group: 'navigation', order: 1, when: ContextKeyExpr.and(ContextKeyExpr.has('voltPrFile'), ContextKeyExpr.not('voltPrFileViewed')) },
@@ -307,6 +308,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.pullRequest.markFileUnviewed',
+			visibility: 'internal',
 			title: localize2('voltPr.markUnviewed', "Viewed (click to unmark)"),
 			icon: Codicon.passFilled,
 			menu: { id: MenuId.MultiDiffEditorFileToolbar, group: 'navigation', order: 1, when: ContextKeyExpr.and(ContextKeyExpr.has('voltPrFile'), ContextKeyExpr.has('voltPrFileViewed')) },

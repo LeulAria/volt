@@ -1237,7 +1237,7 @@ function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IB
 	}
 	if (block.decision) {
 		append(footer, $('span.volt-approval-status')).textContent = block.decision === 'allow'
-			? localize('voltAgent.access.allowed', "Allowed {0}", block.scope === 'always' ? localize('voltAgent.access.always', "always") : localize('voltAgent.access.once', "once"))
+			? localize('voltAgent.access.allowed', "Allowed {0}", block.scope === 'always' ? (block.alwaysForChat ? localize('voltAgent.access.forChat', "for this chat") : localize('voltAgent.access.always', "always")) : localize('voltAgent.access.once', "once"))
 			: localize('voltAgent.access.denied', "Denied");
 		return;
 	}
@@ -1245,8 +1245,8 @@ function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IB
 	const skip = append(footer, $('button.volt-approval-btn.text')) as HTMLButtonElement;
 	skip.textContent = localize('voltAgent.access.skip', "Skip");
 	const always = append(footer, $('button.volt-approval-btn.secondary')) as HTMLButtonElement;
-	always.textContent = shell ? localize('voltAgent.access.alwaysRun', "Always Run") : localize('voltAgent.access.alwaysAllowShort', "Always Allow");
-	setAgentTooltip(always, localize('voltAgent.access.allowAlways', "Always allow {0}", block.pattern || block.resource));
+	always.textContent = block.alwaysForChat ? localize('voltAgent.access.allowForChat', "Allow for This Chat") : shell ? localize('voltAgent.access.alwaysRun', "Always Run") : localize('voltAgent.access.alwaysAllowShort', "Always Allow");
+	setAgentTooltip(always, block.alwaysForChat ? localize('voltAgent.access.allowForChatTooltip', "Allow this for the rest of this chat") : localize('voltAgent.access.allowAlways', "Always allow {0}", block.pattern || block.resource));
 	const once = append(footer, $('button.volt-approval-btn.primary')) as HTMLButtonElement;
 	append(once, $('span')).textContent = shell ? localize('voltAgent.access.run', "Run") : localize('voltAgent.access.allow', "Allow");
 	// allow-any-unicode-next-line
@@ -1260,6 +1260,10 @@ function renderApprovalBlock(parent: HTMLElement, block: IApprovalBlock, ctx: IB
 	}));
 	ctx.store.add(addDisposableListener(always, 'click', e => {
 		e.preventDefault();
+		// "Allow for This Chat" on a flow card is kept in the grant store (P4): only the user's own click counts (G.7).
+		if (block.alwaysForChat && !e.isTrusted) {
+			return;
+		}
 		decide('allow', 'always');
 	}));
 	ctx.store.add(addDisposableListener(skip, 'click', e => {

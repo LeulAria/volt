@@ -24,6 +24,11 @@ function getElectronVersion() {
     return target;
 }
 function getEntitlementsForFile(filePath) {
+    // Volt: the sandbox helper only spawns sandbox-exec and asks about other processes: no entitlements.
+    // It is signed with the rest (hardened runtime); signed builds check that signature before every launch.
+    if (filePath.endsWith('/out/volt-helpers/volt-sandbox-helper')) {
+        return [];
+    }
     if (filePath.includes(gpuHelperAppName)) {
         return path_1.default.join(baseDir, 'azure-pipelines', 'darwin', 'helper-gpu-entitlements.plist');
     }

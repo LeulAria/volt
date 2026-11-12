@@ -16,6 +16,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { createDecorator, IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -25,6 +26,7 @@ import { IQuickInputService, IQuickPickItem, IQuickPickSeparator } from '../../.
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { ICommandDetectionCapability, TerminalCapability } from '../../../../../platform/terminal/common/capabilities/capabilities.js';
 import { IVoltDevice } from '../../../../../platform/voltDevices/common/voltDevices.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { resolveRunModelRef } from '../../../../services/voltRuntime/common/models/modelAccess.js';
@@ -37,6 +39,7 @@ import { AGENT_RUN_SHOW_IN_VOLT_SETTING } from '../../common/agentRunSettings.js
 import { agentRunPrompt, AgentRunDeviceKind, detectRunScripts, findLocalUrl, IAgentRunDevice, IAgentRunScript, RUN_DESCRIPTION_SEPARATOR, runCommandFor, RunDevicePlatform, runOpensBrowser } from '../../common/agentRunTargets.js';
 import { IAgentDevicesService, IDeviceTarget, IHostDevices } from '../devices/agentDevicesService.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
+import { reviewBuildEntries } from '../review/buildEntryReview.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { OPEN_DEVICE_PREVIEW_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
 
@@ -200,6 +203,8 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IAgentWorkspaceService private readonly workspaceService: IAgentWorkspaceService,
+		@IDialogService private readonly dialogService: IDialogService,
+		@IVoltStdioService private readonly stdio: IVoltStdioService,
 		@IInstantiationService instantiationService: IInstantiationService,
 	) {
 		super();
@@ -388,7 +393,15 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 		return this.startRunner(target, view.runner, view.device);
 	}
 
+	/** I.6: scripts, tasks or launch configurations a sandboxed agent changed are shown before Run starts any of them. */
+	private reviewed(target: IAgentRunTarget): Promise<boolean> {
+		return reviewBuildEntries(this.dialogService, this.stdio, [target.project.fsPath, target.cwd.fsPath], 'run');
+	}
+
 	private async startRunner(target: IAgentRunTarget, runner: IAgentRunner, device: IAgentRunDeviceChoice | undefined): Promise<void> {
+		if (!await this.reviewed(target)) {
+			return;
+		}
 		this.setChoice(target.project, { runner: runner.key });
 		if (runner.script) {
 			return this.startScript(target, runner.script, device);
@@ -586,7 +599,7 @@ export class AgentRunService extends Disposable implements IAgentRunService {
 						description: localize('agentRun.moreConfigs', "Pick a configuration"),
 						run: async () => {
 							const pick = await provider.pick();
-							if (!pick) {
+							if (!pick || !await this.reviewed(target)) {
 								return;
 							}
 							await configManager.selectConfiguration(pick.launch, pick.config.name, pick.config, { type: provider.type });

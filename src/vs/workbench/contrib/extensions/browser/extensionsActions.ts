@@ -75,6 +75,8 @@ import { IAuthenticationUsageService } from '../../../services/authentication/br
 import { IExtensionGalleryManifestService } from '../../../../platform/extensionManagement/common/extensionGalleryManifest.js';
 import { IWorkbenchIssueService } from '../../issue/common/issue.js';
 import { IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
+import { IVoltExtensionSandboxService } from '../../../services/extensions/common/voltExtensionSandbox.js';
+import { voltSandboxContextOverlay } from '../common/voltExtensionSandboxKeys.js';
 
 export class PromptExtensionInstallFailureAction extends Action {
 
@@ -1258,6 +1260,8 @@ async function getContextMenuActionsGroups(extension: IExtension | undefined | n
 		if (extension) {
 			cksOverlay.push(['extension', extension.identifier.id]);
 			cksOverlay.push(['isBuiltinExtension', extension.isBuiltin]);
+			// Volt (P2): "Run in Sandbox" and its state.
+			cksOverlay.push(...voltSandboxContextOverlay(accessor.get(IVoltExtensionSandboxService), extension.identifier.id));
 			cksOverlay.push(['isDefaultApplicationScopedExtension', extension.local && isApplicationScopedExtension(extension.local.manifest)]);
 			cksOverlay.push(['isApplicationScopedExtension', extension.local && extension.local.isApplicationScoped]);
 			cksOverlay.push(['isWorkspaceScopedExtension', extension.isWorkspaceScoped]);

@@ -8,10 +8,12 @@ import { claudeWorkRulesMeta } from '../../common/harness/claudeWorkRules.js';
 import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Emitter } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { isWindows } from '../../../../../base/common/platform.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
-import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltSandboxEvent, IVoltSandboxFileResult, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { isSandboxUnavailableError, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IAccessDecision } from '../../common/access/accessTypes.js';
 import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent } from '../../browser/agents/acpProvider.js';
@@ -41,8 +43,13 @@ const CONFIG_OPTIONS = [
 class FakeAgentStdio {
 	private readonly onDataEmitter: Emitter<{ id: string; data: string }>;
 	private readonly onExitEmitter: Emitter<{ id: string; code: number | null }>;
+	private readonly onSandboxEventEmitter: Emitter<IVoltSandboxEvent>;
 	readonly written: { process: string; msg: IWire }[] = [];
-	readonly spawned: { command: string; args: readonly string[] }[] = [];
+	readonly spawned: { command: string; args: readonly string[]; sandbox?: unknown }[] = [];
+	/** Runs inside `spawn` before it answers, with the new spawn id (the sandbox warns that early). */
+	onSpawn: ((id: string) => void) | undefined;
+	/** `spawn` rejects with this (the stdio layer refusing a sandbox it cannot enforce). */
+	spawnError: Error | undefined;
 	capabilities: Json = { mcpCapabilities: { http: true, sse: true }, promptCapabilities: { image: true } };
 	/** Top-level `_meta` of the initialize result (Claude advertises `steering` there). */
 	initMeta: Json | undefined;
@@ -50,19 +57,36 @@ class FakeAgentStdio {
 	/** What each new session starts with; every process gets its own copy. */
 	configOptions: Json[] = JSON.parse(JSON.stringify(CONFIG_OPTIONS)) as Json[];
 	private readonly sessionConfig = new Map<string, Json[]>();
+	/** Runs before the agent answers one of Volt's requests (to send a request of its own first). */
+	beforeAnswer: ((process: string, msg: IWire) => void) | undefined;
+	/** The stdio service's file broker for sandboxed spawns: what it was asked, and what it answers. */
+	readonly brokered: { op: 'read' | 'write'; id: string; path: string; content?: string }[] = [];
+	brokerAnswer: IVoltSandboxFileResult = { ok: true, path: '', content: 'from the broker' };
 
-	constructor(store: Pick<DisposableStore, 'add'>) {
+	constructor(private readonly store: Pick<DisposableStore, 'add'>) {
 		this.onDataEmitter = store.add(new Emitter());
 		this.onExitEmitter = store.add(new Emitter());
+		this.onSandboxEventEmitter = store.add(new Emitter());
+	}
+
+	sandboxEvent(event: IVoltSandboxEvent): void {
+		this.onSandboxEventEmitter.fire(event);
 	}
 
 	asService(): IVoltStdioService {
 		return {
 			onData: this.onDataEmitter.event,
 			onExit: this.onExitEmitter.event,
-			spawn: async (options: { command: string; args: string[] }) => {
-				this.spawned.push({ command: options.command, args: options.args });
-				return `p${this.spawned.length}`;
+			// The provider listens for its whole life (it is never disposed): the test's store ends the listener.
+			onSandboxEvent: (listener: (event: IVoltSandboxEvent) => void) => this.store.add(this.onSandboxEventEmitter.event(listener)),
+			spawn: async (options: { command: string; args: string[]; sandbox?: unknown }) => {
+				if (this.spawnError) {
+					throw this.spawnError;
+				}
+				this.spawned.push({ command: options.command, args: options.args, ...(options.sandbox ? { sandbox: options.sandbox } : {}) });
+				const id = `p${this.spawned.length}`;
+				this.onSpawn?.(id);
+				return id;
 			},
 			write: async (process: string, data: string) => {
 				for (const line of data.split('\n').filter(Boolean)) {
@@ -73,6 +97,14 @@ class FakeAgentStdio {
 			},
 			kill: async () => undefined,
 			which: async (command: string) => `/usr/bin/${command}`,
+			sandboxReadFile: async (id: string, path: string) => {
+				this.brokered.push({ op: 'read', id, path });
+				return this.brokerAnswer;
+			},
+			sandboxWriteFile: async (id: string, path: string, content: string) => {
+				this.brokered.push({ op: 'write', id, path, content });
+				return this.brokerAnswer;
+			},
 		} as unknown as IVoltStdioService;
 	}
 
@@ -80,6 +112,7 @@ class FakeAgentStdio {
 		if (msg.id === undefined || !msg.method) {
 			return;
 		}
+		this.beforeAnswer?.(process, msg);
 		const reply = (result: unknown) => queueMicrotask(() => this.send(process, { jsonrpc: '2.0', id: msg.id, result }));
 		switch (msg.method) {
 			case 'initialize':
@@ -622,5 +655,129 @@ suite('ACP provider supervision', () => {
 		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
 		await turn.done;
 		await finish(env, handle);
+	});
+});
+
+suite('ACP provider sandbox', () => {
+
+	const store = ensureNoDisposablesAreLeakedInTestSuite();
+
+	const SANDBOXED: Partial<IAgentStartRequest> = { sandbox: { settings: { level: 'workspace-write', network: true }, workspaceRoots: ['/w'] } };
+
+	function setup() {
+		const agent = new FakeAgentStdio(store);
+		const provider = new AcpAgentProvider('cursor-acp', 'Cursor', 'cursor-agent', ['acp'], agent.asService(),
+			{ getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService,
+			undefined as unknown as IFileService, new NullLogService());
+		provider.setSupervisionOptions({ clock: new FakeWatchdogClock(), idle: ACP_IDLE_TIMINGS });
+		return { agent, provider };
+	}
+
+	const sandboxNotices = (events: readonly IVoltEvent[]) => events.flatMap(event => event.type === 'notice' && event.title === 'Sandbox' ? [event.description] : []);
+
+	test('warnings sent while the agent spawns, and between turns, reach its next turn', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const env = setup();
+		// The stdio layer warns about partial isolation before `spawn` has even answered.
+		env.agent.onSpawn = id => env.agent.sandboxEvent({ id, warning: 'Network is not isolated on this machine.' });
+		const handle = await env.provider.start(request(SANDBOXED));
+		assert.ok(env.agent.spawned[0].sandbox, 'the agent process is wrapped');
+		env.agent.sandboxEvent({ id: 'p1', warning: 'Second warning before the first prompt.' });
+		// Another provider's spawn, after ours started: not kept.
+		env.agent.sandboxEvent({ id: 'p99', warning: 'not ours' });
+		const cts = store.add(new CancellationTokenSource());
+		const turn = collect(env.provider.send(handle, { text: 'go', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		assert.deepStrictEqual(sandboxNotices(turn.events), ['Network is not isolated on this machine.', 'Second warning before the first prompt.']);
+
+		// Shown once: the next turn does not repeat them.
+		const again = collect(env.provider.send(handle, { text: 'again', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		env.agent.answerPrompt(1, { stopReason: 'end_turn' });
+		await again.done;
+		assert.deepStrictEqual(sandboxNotices(again.events), []);
+		await env.provider.dispose(handle);
+	});
+
+	test('a spawn refused for its sandbox fails the start; nothing runs unconfined', async () => {
+		const env = setup();
+		env.agent.spawnError = sandboxUnavailableError('Seatbelt is not available: network isolation cannot be enforced.');
+		await assert.rejects(env.provider.start(request(SANDBOXED)), (err: unknown) => isSandboxUnavailableError(err) && /network isolation/.test((err as Error).message));
+		assert.strictEqual(env.agent.spawned.length, 0, 'no unsandboxed retry');
+		await assert.rejects(env.provider.prewarmSpare(request(SANDBOXED)).then(() => env.provider.start(request(SANDBOXED))), (err: unknown) => isSandboxUnavailableError(err));
+		assert.strictEqual(env.agent.spawned.length, 0);
+	});
+
+	const answerTo = (env: ReturnType<typeof setup>, id: number) => env.agent.written.find(entry => entry.msg.id === id && !entry.msg.method)?.msg;
+	const ALLOW_ALL = { evaluate: () => ({ requestId: 'r', effect: 'allow' as const, scope: 'once' as const }) };
+
+	test('B-17: a sandboxed agent\'s fs/* go through the stdio file broker, never the file service', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const env = setup();
+		env.provider.setAccessGate(ALLOW_ALL);
+		const handle = await env.provider.start(request(SANDBOXED));
+		env.agent.send('p1', { jsonrpc: '2.0', id: 801, method: 'fs/write_text_file', params: { sessionId: 'acp-p1', path: '/w/src/a.ts', content: 'hello' } });
+		env.agent.send('p1', { jsonrpc: '2.0', id: 802, method: 'fs/read_text_file', params: { sessionId: 'acp-p1', path: '/w/src/a.ts' } });
+		await settle();
+		assert.deepStrictEqual(env.agent.brokered, [
+			{ op: 'write', id: 'p1', path: '/w/src/a.ts', content: 'hello' },
+			{ op: 'read', id: 'p1', path: '/w/src/a.ts' },
+		]);
+		assert.deepStrictEqual(answerTo(env, 801)?.result, {});
+		assert.deepStrictEqual(answerTo(env, 802)?.result, { content: 'from the broker' });
+
+		// The broker's refusal (a folder swapped for a link) is the agent's error; nothing else is tried.
+		env.agent.brokerAnswer = { ok: false, reason: '/w/dir goes through a symbolic link' };
+		env.agent.send('p1', { jsonrpc: '2.0', id: 803, method: 'fs/write_text_file', params: { sessionId: 'acp-p1', path: '/w/dir/.zshrc', content: 'x' } });
+		await settle();
+		assert.match(JSON.stringify(answerTo(env, 803)?.error), /Blocked by Volt sandbox: \/w\/dir\/\.zshrc \(\/w\/dir goes through a symbolic link\)/);
+		await env.provider.dispose(handle);
+	});
+
+	test('INV-13: a sandboxed process no chat is bound to yet is refused, unasked', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const env = setup();
+		let asked = false;
+		env.provider.setAccessGate({ evaluate: () => { asked = true; return ALLOW_ALL.evaluate(); } });
+		// The agent writes before its session exists (between spawn and session/new).
+		env.agent.beforeAnswer = (process, msg) => {
+			if (msg.method === 'initialize') {
+				env.agent.send(process, { jsonrpc: '2.0', id: 811, method: 'fs/write_text_file', params: { path: '/w/early.txt', content: 'x' } });
+			}
+		};
+		const handle = await env.provider.start(request(SANDBOXED));
+		await settle();
+		assert.match(JSON.stringify(answerTo(env, 811)?.error), /not bound to a chat/);
+		assert.deepStrictEqual(env.agent.brokered, []);
+		assert.strictEqual(asked, false);
+		await env.provider.dispose(handle);
+	});
+
+	test('an unsandboxed agent keeps the file service path', async () => {
+		const env = setup();
+		const handle = await env.provider.start(request());
+		env.agent.send('p1', { jsonrpc: '2.0', id: 821, method: 'fs/read_text_file', params: { sessionId: 'acp-p1', path: '/w/a.ts' } });
+		await settle();
+		assert.deepStrictEqual(env.agent.brokered, []);
+		// The test's file service is absent: the read reached it.
+		assert.ok(answerTo(env, 821)?.error, 'answered through the file service');
+		await env.provider.dispose(handle);
+	});
+
+	test('without an OS sandbox (Windows) a sandboxed start is refused before anything spawns', async function () {
+		if (!isWindows) {
+			this.skip();
+		}
+		const env = setup();
+		await assert.rejects(env.provider.start(request(SANDBOXED)), (err: unknown) => isSandboxUnavailableError(err) && /Windows/.test((err as Error).message));
+		assert.strictEqual(env.agent.spawned.length, 0);
 	});
 });

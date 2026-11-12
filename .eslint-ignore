@@ -23,6 +23,8 @@
 **/extensions/typescript-language-features/package-manager/node-maintainer/**
 **/extensions/vscode-api-tests/testWorkspace/**
 **/extensions/vscode-api-tests/testWorkspace2/**
+# Generated T2 plugin bundles (scripts/volt-bundle-t2-plugins.mjs)
+**/extensions/volt-*/plugin/**
 **/fixtures/**
 **/node_modules/**
 **/out-*/**/*.js

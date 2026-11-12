@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,38 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.openrouter",
+			"label": "OpenRouter",
+			"description": "Models through OpenRouter.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 120
+		},
+		"voltAgents": [
+			{
+				"id": "openrouter",
+				"label": "OpenRouter",
+				"models": {
+					"source": "api"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "net.connect",
+					"class": "low",
+					"targets": [
+						"openrouter.ai"
+					]
+				},
+				{
+					"id": "secrets.use:openrouter",
+					"class": "high"
+				}
+			]
+		}
+	}
 }

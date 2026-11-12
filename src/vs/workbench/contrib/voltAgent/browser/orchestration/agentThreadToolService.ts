@@ -43,6 +43,10 @@ import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAgentChatForkService, IAgentContinueInNewChatResult, IAgentForkChatOptions, IAgentForkChatResult, IAgentMergeBackResult } from './agentChatFork.js';
 import { IAgentThreadSourceHost, modeLabel, threadSourceOf } from './agentTurnHost.js';
+import { CHAT_SANDBOX_PLATFORM, confineChatSandbox, handoffSandboxRefusal, sandboxedInstructionRefusal } from '../../../../services/voltRuntime/common/access/chatSandbox.js';
+import { ISandboxScope, ISpawnSandboxDecision, stricterSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxInheritance.js';
+import { IVoltSandboxSettings, SandboxStrategy, sandboxStrategy, sandboxWorkspaceRoots } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
 
 /** Chats an agent may start (launch or fork) in one of its turns: a runaway loop stops here. */
 const MAX_STARTS_PER_TURN = 8;
@@ -92,6 +96,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		@ILogService private readonly logService: ILogService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IAgentChatSearchService private readonly chatSearch: IAgentChatSearchService,
+		@IFileService private readonly fileService: IFileService,
 	) {
 		super();
 		this._register(hostTools.registerToolProvider({
@@ -260,6 +265,34 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			throw new Error(`No connected model matches "${raw}". orchestrator_capabilities lists the exact values.`);
 		}
 		return { ref: match.ref, label: match.label, providerId: match.providerId };
+	}
+
+	private providerOf(ref: string | undefined): string | undefined {
+		return ref ? this.runtime.listCatalog().find(item => item.ref === ref)?.providerId : undefined;
+	}
+
+	/** How `providerId`'s agent is sandboxed at `settings`' level on this machine; undefined for an unknown provider. */
+	private strategyFor(providerId: string | undefined, settings: IVoltSandboxSettings): SandboxStrategy | undefined {
+		return providerId ? sandboxStrategy(providerId, settings.level, CHAT_SANDBOX_PLATFORM) : undefined;
+	}
+
+	/** Real paths of `paths` (symlinks resolved); a path that cannot be resolved is kept as named. */
+	private async realRoots(paths: readonly string[]): Promise<string[]> {
+		return Promise.all(paths.map(async path => {
+			try {
+				return (await this.fileService.realpath(URI.file(path)))?.fsPath ?? path;
+			} catch {
+				return path;
+			}
+		}));
+	}
+
+	/** A chat's sandbox scope (INV-11): its agent's strategy and the real paths of the folders it works in. */
+	private async sandboxScope(chatId: string): Promise<ISandboxScope> {
+		const project = this.projectOf(chatId)?.root.fsPath;
+		const worktree = this.history.get(chatId)?.worktreePath;
+		const roots = sandboxWorkspaceRoots(this.runtime.workingFolder(chatId) ?? worktree ?? project, project, !!worktree);
+		return { strategy: this.strategyFor(this.providerOf(this.modelOf(chatId)?.ref), this.runtime.getSandboxSettings(chatId)), roots: await this.realRoots(roots) };
 	}
 
 	private modelOf(threadId: string): { readonly ref: string; readonly label: string } | undefined {
@@ -520,6 +553,10 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		if (task) {
 			return { error: `That chat runs delegated task ${task.id}. Use message_task with task_id ${task.id} for a follow-up, or delegate_task with previous_task_id for a new round.` };
 		}
+		const refusal = caller.external ? undefined : sandboxedInstructionRefusal(this.runtime, caller.id, id, this.titleOf(id));
+		if (refusal) {
+			return { error: refusal };
+		}
 		this.spend(caller, 'sends');
 		const mode = sendModeArg(args.mode);
 		const key = stringArg(args.client_request_id, 200);
@@ -750,6 +787,17 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		});
 		await handle.flush();
 		await this.history.rename(forkId, title);
+		// The fork carries on the source's conversation (and, for thread_fork, the asking chat's work):
+		// it is confined at least as tightly as both.
+		const askedBy = options.from && !options.from.external ? options.from.id : undefined;
+		const sourceSandbox = this.runtime.getSandboxSettings(sourceId);
+		// A fork a chat asked for writes its checkout only where that chat could write too (B-11); one
+		// the user makes keeps the source's sandbox as it is.
+		const forkCwd = created?.path ?? sourceMeta?.worktreePath ?? project?.root.fsPath;
+		await confineChatSandbox(this.runtime, forkId, askedBy ? stricterSandboxSettings(sourceSandbox, this.runtime.getSandboxSettings(askedBy)) : sourceSandbox, askedBy ? {
+			caller: await this.sandboxScope(askedBy),
+			child: { roots: await this.realRoots(sandboxWorkspaceRoots(forkCwd, project?.root.fsPath, !!(created ?? sourceMeta?.worktreePath))) },
+		} : undefined);
 		// The fork's first prompt carries the copied conversation to its agent as a recap.
 		this.runtime.seedSession(forkId, turns.flatMap(turn => [
 			{ role: 'user' as const, content: turn.user.text },
@@ -816,6 +864,8 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			const model = queued ? { ref: queued.ref, label: queued.label } : this.modelOf(sourceId);
 			const mode = modeLabel(item.prompt.mode ?? sourceMeta?.mode);
 			const threadId = `${CHILD_ID_PREFIX}${generateUuid()}`;
+			// It continues the source's work: never less confined than the source.
+			await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(sourceId));
 			const project = this.projectOf(sourceId);
 			if (project) {
 				attachSessionToProject(this.sessionContext, this.workspace, this.history, threadId, project);
@@ -948,22 +998,36 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		if (models.length > 1) {
 			return this.launchCompare(caller, title, message, models, mode, project, workspace);
 		}
-		this.spend(caller, 'starts');
 		const model = this.resolveModel(models[0] ?? args.model) ?? this.defaultModel(caller);
+		const existing = workspace.type === 'existing_worktree' ? await this.findWorktree(project.root.fsPath, workspace.path) : undefined;
+		const branch = existing ? workspace.type === 'existing_worktree' && workspace.branch || existing.branch : undefined;
+		if (existing && !branch) {
+			return { error: `${existing.path} has no branch checked out (detached HEAD); pass a worktree on a branch.` };
+		}
+		this.spend(caller, 'starts');
 		const threadId = `${CHILD_ID_PREFIX}${generateUuid()}`;
+		let confined: ISpawnSandboxDecision = {};
+		if (!caller.external) {
+			// A chat launched by a sandboxed chat is confined at least as tightly (INV-11): an agent no
+			// less sandboxed, and write access only to a workspace this chat could write itself.
+			const childCwd = existing?.path ?? project.root.fsPath;
+			const childRoots = sandboxWorkspaceRoots(childCwd, project.root.fsPath, !!existing || workspace.type === 'worktree');
+			confined = await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(caller.id), {
+				caller: await this.sandboxScope(caller.id),
+				child: { strategy: this.strategyFor(this.providerOf(model?.ref), this.runtime.getSandboxSettings(caller.id)), roots: await this.realRoots(childRoots) },
+			});
+			if (confined.refused) {
+				return { error: `Not launched: ${confined.refused} Do the work in this chat, or ask the user to start the chat.` };
+			}
+		}
 		attachSessionToProject(this.sessionContext, this.workspace, this.history, threadId, project);
 		this.history.open(threadId).setMeta({ title, ...(model ? { model: model.label } : {}), mode: modeLabel(mode) });
 		await this.orchestrator.dispatch({ type: 'thread.upsert', threadId, title, ...(model ? { modelRef: model.ref, modelLabel: model.label } : {}) });
 		let where = `the project's main checkout (${project.root.fsPath})`;
-		if (workspace.type === 'existing_worktree') {
-			const entry = await this.findWorktree(project.root.fsPath, workspace.path);
-			const branch = workspace.branch ?? entry.branch;
-			if (!branch) {
-				return { error: `${workspace.path} has no branch checked out (detached HEAD); pass a worktree on a branch.` };
-			}
-			this.runtime.rememberWorktree(threadId, entry.path, branch);
-			this.history.open(threadId).setMeta({ worktreePath: entry.path, worktreeBranch: branch });
-			where = `the existing worktree ${entry.path} (branch ${branch})`;
+		if (existing && branch) {
+			this.runtime.rememberWorktree(threadId, existing.path, branch);
+			this.history.open(threadId).setMeta({ worktreePath: existing.path, worktreeBranch: branch });
+			where = `the existing worktree ${existing.path} (branch ${branch})`;
 		} else if (workspace.type === 'worktree') {
 			await this.orchestrator.dispatch({ type: 'thread.block', threadId, reason: SETUP_BLOCK });
 			try {
@@ -993,6 +1057,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		return {
 			text: [
 				`Launched ${threadLink(threadId, title)} (id ${threadId})${model ? ` on ${model.label}` : ''}, ${mode} mode, in ${where}.`,
+				...(confined.forcedReadOnly ? ['It runs in a read-only sandbox there: that folder is outside what this sandboxed chat may write, so the new chat may read it but not change it.'] : []),
 				workspace.type === 'worktree' ? 'Its worktree setup runs first; the message is sent when it is done.' : `Its first turn ${result.outcome === 'started' ? 'started' : 'is queued'}.`,
 				'Follow it with thread_wait / thread_read. Mention it to the user as its link.',
 			].join('\n'),
@@ -1015,6 +1080,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 			repoRoot: project.root.fsPath,
 			projectId: project.id,
 			...(workspace.type === 'worktree' && workspace.baseRef ? { baseRef: workspace.baseRef } : {}),
+			...(caller.external ? {} : { sandbox: this.runtime.getSandboxSettings(caller.id) }),
 		});
 		return {
 			text: [
@@ -1072,7 +1138,7 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 	private async runSetup(threadId: string, root: string, path: string, branch: string): Promise<void> {
 		await this.orchestrator.dispatch({ type: 'thread.block', threadId, reason: SETUP_BLOCK });
 		try {
-			await this.worktreeSetup.run(threadId, { repoRoot: root, worktreePath: path, branch, isCancelled: () => false });
+			await this.worktreeSetup.run(threadId, { repoRoot: root, worktreePath: path, branch, isCancelled: () => false, sandbox: this.runtime.getSandboxSettings(threadId) });
 		} catch (err) {
 			// The setup card shows what failed; the chat's next turn retries it first.
 			this.logService.warn('[volt threads] worktree setup failed', err);
@@ -1170,6 +1236,11 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		if (this.orchestrator.getThread(id)?.taskId) {
 			return { error: 'That chat runs a delegated task; its model is set by delegate_task.' };
 		}
+		// The chat keeps its sandbox; the new agent may not be sandboxed more weakly there (B-10, INV-11).
+		const refusal = handoffSandboxRefusal(this.runtime.getSandboxSettings(id), this.providerOf(this.modelOf(id)?.ref), model.providerId, model.label);
+		if (refusal) {
+			return { error: refusal };
+		}
 		const reason = stringArg(args.reason, 300);
 		const events = await this.orchestrator.dispatch({ type: 'thread.handoff', threadId: id, to: model.ref, toLabel: model.label, by: 'agent', ...(reason ? { reason } : {}) });
 		const busy = threadStatus(this.orchestrator.getState(), id).busy;
@@ -1225,6 +1296,11 @@ export class AgentThreadToolService extends Disposable implements IAgentChatFork
 		const text = typeof args.text === 'string' ? args.text.trim() : '';
 		if (!text) {
 			return { error: 'Pass the new `text` (to drop the message, use queue_cancel).' };
+		}
+		// Rewriting another chat's queued prompt instructs that chat, like thread_send.
+		const refusal = caller.external ? undefined : sandboxedInstructionRefusal(this.runtime, caller.id, id, this.titleOf(id));
+		if (refusal) {
+			return { error: refusal };
 		}
 		if (item.held) {
 			return { error: 'The user is editing that message right now; leave it to them.' };

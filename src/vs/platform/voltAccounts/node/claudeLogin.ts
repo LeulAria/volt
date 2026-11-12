@@ -25,7 +25,7 @@ import { basename, dirname, join } from '../../../base/common/path.js';
  */
 
 const SECURITY = '/usr/bin/security';
-/** `security -i` reads 4096-byte lines; longer commands go through argv instead. */
+/** `security -i` reads 4096-byte lines; a longer command would be cut and its rest run as another. */
 const SECURITY_STDIN_LIMIT = 4096 - 64;
 const KEYCHAIN_NOT_FOUND = 44;
 
@@ -87,15 +87,31 @@ function quote(value: string): string {
 	return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-/** Writes the way Claude Code does: hex through `security -i`, so the secret is not in argv. */
+/**
+ * The `security -i` command that stores `value`, or undefined when it does not fit on one line.
+ * Hex (`-X`), as Claude Code writes it; a value too long for that goes as a quoted string (`-w`),
+ * which takes about half the room. The secret only ever travels on stdin, never in argv (INV-24):
+ * any process can read another's arguments.
+ */
+export function keychainSetCommand(service: string, account: string, value: string): string | undefined {
+	const prefix = `add-generic-password -U -a ${quote(account)} -s ${quote(service)}`;
+	const hex = `${prefix} -X ${Buffer.from(value, 'utf8').toString('hex')}\n`;
+	if (Buffer.byteLength(hex) <= SECURITY_STDIN_LIMIT) {
+		return hex;
+	}
+	// `security -i` reads one line per command: a line break in the value would end it early.
+	const quoted = /[\r\n\0]/.test(value) ? undefined : `${prefix} -w ${quote(value)}\n`;
+	return quoted && Buffer.byteLength(quoted) <= SECURITY_STDIN_LIMIT ? quoted : undefined;
+}
+
+/** Writes through `security -i` on stdin, so the secret is not in argv. */
 export function keychainSet(service: string, account: string, value: string): Promise<void> {
-	const hex = Buffer.from(value, 'utf8').toString('hex');
-	const line = `add-generic-password -U -a ${quote(account)} -s ${quote(service)} -X ${hex}\n`;
+	const line = keychainSetCommand(service, account, value);
+	if (!line) {
+		return Promise.reject(new KeychainError(`The credential is too large (${Buffer.byteLength(value)} bytes) to store without passing it on a command line, so Volt did not write it.`));
+	}
 	return new Promise((resolve, reject) => {
-		const viaStdin = line.length <= SECURITY_STDIN_LIMIT;
-		const child = viaStdin
-			? spawn(SECURITY, ['-i'], { stdio: ['pipe', 'ignore', 'pipe'] })
-			: spawn(SECURITY, ['add-generic-password', '-U', '-a', account, '-s', service, '-X', hex], { stdio: ['ignore', 'ignore', 'pipe'] });
+		const child = spawn(SECURITY, ['-i'], { stdio: ['pipe', 'ignore', 'pipe'] });
 		let stderr = '';
 		const timer = setTimeout(() => child.kill(), 10_000);
 		child.stderr?.setEncoding('utf8').on('data', chunk => stderr += chunk);
@@ -112,9 +128,7 @@ export function keychainSet(service: string, account: string, value: string): Pr
 				reject(new KeychainError(`security add-generic-password failed: ${stderr.trim() || `exit ${code}`}`));
 			}
 		});
-		if (viaStdin) {
-			child.stdin!.end(line);
-		}
+		child.stdin!.end(line);
 	});
 }
 

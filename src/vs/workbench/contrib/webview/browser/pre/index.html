@@ -5,7 +5,7 @@
 	<meta charset="UTF-8">
 
 	<meta http-equiv="Content-Security-Policy"
-		content="default-src 'none'; script-src 'sha256-ZcIhtIuU4M9PbKfs7w/CLqHimFJRK8L7mYTXOfiUv0I=' 'self'; frame-src 'self'; style-src 'unsafe-inline';">
+		content="default-src 'none'; script-src 'sha256-9p5I3PfutNKc6eR4uRwVHBzwOhXW0VyQVXE1oRce8dc=' 'self'; frame-src 'self'; style-src 'unsafe-inline';">
 
 	<!-- Disable pinch zooming -->
 	<meta name="viewport"
@@ -885,6 +885,20 @@
 				newDocument.body.setAttribute('role', 'document');
 			}
 
+			// The extension's own CSP, looked up before Volt adds its floor
+			const csp = newDocument.querySelector('meta[http-equiv="Content-Security-Policy"]');
+
+			// Volt: the floor core wrote for this extension's webview (spec I.10). It comes before
+			// every element of the page, so it applies to all of them, and adds to the page's own
+			// CSP: a load must pass both. A page can't lift it by removing the element.
+			if (typeof data.cspFloor === 'string' && data.cspFloor) {
+				const floor = newDocument.createElement('meta');
+				floor.setAttribute('http-equiv', 'Content-Security-Policy');
+				floor.setAttribute('content', data.cspFloor);
+				floor.id = '_voltCspFloor';
+				newDocument.head.prepend(floor);
+			}
+
 			// Inject default script
 			if (options.allowScripts) {
 				const defaultScript = newDocument.createElement('script');
@@ -908,7 +922,6 @@
 			}
 
 			// Check for CSP
-			const csp = newDocument.querySelector('meta[http-equiv="Content-Security-Policy"]');
 			if (!csp) {
 				hostMessaging.postMessage('no-csp-found', undefined);
 			} else {

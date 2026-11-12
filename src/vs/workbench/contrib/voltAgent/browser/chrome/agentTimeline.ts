@@ -12,6 +12,7 @@ import { BUDGET_NOTICE_TITLE, LOOP_NOTICE_TITLE } from '../../../../services/vol
 import { AgentSegment, IAgentActivityItem, IFileChangeBlock, ITerminalBlock, isExploreTool, isPhantomFileBlock, splitMarkdownToBlocks, SupervisionKind } from '../blocks/agentBlocks.js';
 import { computeChangeStats, formatChangeStats, netFileEdit } from '../review/fileChangePreviewModel.js';
 import { isUsageLimitText } from '../../../../services/voltRuntime/common/acpNotices.js';
+import { isSandboxRefusedMessage } from '../../../../services/voltRuntime/common/access/sandboxRefusal.js';
 
 export type ThreadPart =
 	| { kind: 'group'; id: string; title: string; items: IAgentActivityItem[]; thinking?: string }
@@ -730,6 +731,9 @@ export function failureTitle(message: string | undefined): string {
 	}
 	if (isUsageLimitText(text)) {
 		return localize('voltAgent.run.limitTitle', "Usage limit reached");
+	}
+	if (isSandboxRefusedMessage(text)) {
+		return localize('voltAgent.run.sandboxTitle', "Sandbox unavailable");
 	}
 	return localize('voltAgent.run.errorTitle', "Something went wrong");
 }

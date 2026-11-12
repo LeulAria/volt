@@ -186,7 +186,7 @@ import './services/voltRuntime/browser/orchestration/agentOrchestraService.js';
 import './contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';
 import './contrib/voltAgent/browser/orchestration/agentMoveChat.contribution.js';
 import './services/voltRuntime/electron-browser/voltGit.contribution.js';
-import './contrib/voltCodeIntelligence/electron-browser/voltCodeIntelligence.contribution.js';
+import './services/voltRuntime/electron-browser/codeIntelligence.contribution.js';
 import './services/voltRuntime/electron-browser/voltUsage.contribution.js';
 import './services/voltRuntime/electron-browser/voltAccounts.contribution.js';
 import './services/voltRuntime/electron-browser/voltSkillsDirectory.contribution.js';

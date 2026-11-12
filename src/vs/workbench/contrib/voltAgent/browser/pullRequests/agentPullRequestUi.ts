@@ -182,24 +182,7 @@ export async function sendInChat(accessor: ServicesAccessor, sessionId: string, 
 	return true;
 }
 
-/** A chat on screen: the active editor group's first, then any visible one (the side panel in the IDE layout). */
-export function visibleChatSession(accessor: ServicesAccessor): string | undefined {
-	const editorGroupsService = accessor.get(IEditorGroupsService);
-	const parts = editorGroupsService.parts.length ? editorGroupsService.parts : [editorGroupsService.mainPart];
-	const active = editorGroupsService.activeGroup.activeEditor;
-	if (active instanceof AgentEditorInput) {
-		return active.sessionId;
-	}
-	for (const part of parts) {
-		for (const group of part.groups) {
-			const pane = group.activeEditorPane;
-			if (pane?.getId() === AgentEditorInput.EditorID && pane.input instanceof AgentEditorInput) {
-				return pane.input.sessionId;
-			}
-		}
-	}
-	return undefined;
-}
+export { visibleChatSession } from '../workspace/agentVisibleChat.js';
 
 /**
  * Merges a pull request from outside its view (the chip's hover card, the side panel): reads it

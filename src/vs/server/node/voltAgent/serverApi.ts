@@ -85,7 +85,7 @@ const RUNTIME_METHODS = [
 	'setTaskModel', 'setModeProfile', 'refreshCatalog', 'detectAgents', 'refreshProviders', 'setProfileEnabled', 'setHealthCheckInterval',
 	'setModelOptions', 'setAccessMode', 'setSandboxSettings', 'setDefaultSandboxSettings', 'respondToAccessRequest', 'respondToQuestions',
 	'setProjectRules', 'revokeSavedApproval', 'listMcpServers', 'generateText', 'getRunMetrics', 'listReceipts', 'setActiveCatalogRef',
-	'stopAgentBackgroundTask', 'warmPredictor',
+	'stopAgentBackgroundTask', 'warmPredictor', 'listMcpApprovalRequests', 'decideMcpServer', 'listMcpApprovals', 'revokeMcpApproval',
 ] as const;
 const ORCHESTRATOR_METHODS = ['submit', 'move', 'resumeLimit', 'configureLimit', 'notify', 'multitaskQueue', 'cancel', 'dispatch', 'ensureThreadLoaded'] as const;
 const HISTORY_METHODS = [

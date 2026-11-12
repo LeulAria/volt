@@ -8,8 +8,9 @@ import { isAbsolute } from '../../../../../../base/common/path.js';
 import { joinPath, relativePath } from '../../../../../../base/common/resources.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../../base/common/uuid.js';
+import { hostGitArgs } from '../../../../../../platform/voltGit/common/hostGit.js';
 import type { IVoltSandboxRequest } from '../../../../../../platform/voltSandbox/common/sandboxPolicy.js';
-import { IVoltStdioService } from '../../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecContext, IVoltStdioService, runGitThrough } from '../../../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltHostFileChange } from '../../../../../services/voltRuntime/common/hostTools.js';
 import { shellQuote } from '../../../../../services/voltRuntime/common/ide/testFrameworks.js';
 import { stripAnsi } from '../../../../../services/voltRuntime/common/ide/testReports.js';
@@ -63,7 +64,7 @@ export interface ICliOptions {
  */
 export class IdeCli {
 
-	constructor(private readonly stdio: IVoltStdioService, private readonly cwd: string | undefined, readonly sandbox?: IVoltSandboxRequest) { }
+	constructor(private readonly stdio: IVoltStdioService, private readonly cwd: string | undefined, private readonly context: IVoltExecContext, readonly sandbox?: IVoltSandboxRequest) { }
 
 	async run(file: string, args: readonly string[], options?: ICliOptions): Promise<ICliResult> {
 		const cwd = options?.cwd ?? this.cwd;
@@ -77,10 +78,27 @@ export class IdeCli {
 		return this.shell([file, ...args].map(arg => shellQuote(arg, isWindows)).join(' '), { ...options, ...(cwd ? { cwd } : {}), timeoutMs });
 	}
 
+	/**
+	 * git in the chat's folder. A sandboxed chat's runs inside its sandbox with HostGit's guards (no
+	 * fsmonitor, hooks or `ext::`); any other chat's goes through HostGit on the host (B-03, B-06).
+	 */
+	async git(args: readonly string[], options?: { readonly timeoutMs?: number }): Promise<ICliResult> {
+		const timeoutMs = options?.timeoutMs ?? 30_000;
+		if (this.sandbox) {
+			return this.shell(['git', ...hostGitArgs(['--no-pager', ...args], { hooksPath: '/dev/null' })].map(arg => shellQuote(arg, isWindows)).join(' '), { timeoutMs });
+		}
+		if (!this.cwd) {
+			return { code: null, stdout: '', stderr: 'No workspace is open.' };
+		}
+		const result = await runGitThrough(this.stdio, { cwd: this.cwd, args: ['--no-pager', ...args], timeoutMs, maxBytes: MAX_OUTPUT });
+		const missing = !!result.error && /ENOENT|not found/i.test(result.error);
+		return { code: result.exitCode, stdout: result.stdout, stderr: result.error && !result.stderr ? result.error : result.stderr, ...(missing ? { missing } : {}) };
+	}
+
 	/** A shell command line (the agent's own command, as written). */
 	async shell(command: string, options?: ICliOptions): Promise<ICliResult> {
 		const sandbox = this.sandboxWith(options?.writable);
-		const result = await this.stdio.exec({ id: `volt-ide-${generateUuid()}`, command, ...(options?.cwd ?? this.cwd ? { cwd: options?.cwd ?? this.cwd } : {}), ...(options?.env ? { env: options.env } : {}), timeoutMs: options?.timeoutMs ?? 120_000, inlineChars: 200_000, ...(sandbox ? { sandbox } : {}) });
+		const result = await this.stdio.exec({ id: `volt-ide-${generateUuid()}`, command, ...(options?.cwd ?? this.cwd ? { cwd: options?.cwd ?? this.cwd } : {}), ...(options?.env ? { env: options.env } : {}), timeoutMs: options?.timeoutMs ?? 120_000, inlineChars: 200_000, context: this.context, ...(sandbox ? { sandbox } : {}) });
 		const missing = result.exitCode === 127 || /command not found|is not recognized/.test(result.stderr);
 		return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr, ...(missing ? { missing } : {}) };
 	}

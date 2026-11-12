@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { createDecorator } from '../../instantiation/common/instantiation.js';
+import type { IVoltExtensionHostTicket } from './protocol.js';
 
 export const IVoltAgentServerMainService = createDecorator<IVoltAgentServerMainService>('voltAgentServerMainService');
 export const VOLT_AGENT_SERVER_CHANNEL_NAME = 'voltAgentServer';
@@ -24,12 +25,10 @@ export interface IVoltAgentServerEndpoint {
 	readonly token: string;
 	readonly port: number;
 	readonly pid: number;
-	/** Volt in the browser (the sign-in page, then the workbench), with the token in the hash. */
+	/** Volt in the browser (the sign-in page, then the workbench). Carries no token: see `createLocalWebLink`. */
 	readonly webUrl: string;
-	/** Whether the server also listens on the local network (phones pair over it). */
+	/** Whether the server also listens on the local network (phones pair over it, with TLS). */
 	readonly network: boolean;
-	/** Volt in the browser at this Mac's network address, with the token: what a phone pairs with. Set while `network` is on. */
-	readonly pairingUrl?: string;
 }
 
 /**
@@ -46,4 +45,14 @@ export interface IVoltAgentServerMainService {
 	stop(): Promise<void>;
 	/** Lets phones on the local network reach the server (the token is still required), or stops it; restarts the server. */
 	setNetworkAccess(enabled: boolean): Promise<IVoltAgentServerEndpoint>;
+	/**
+	 * Volt in this computer's browser at `path` (default `/`), signed in once: the URL's fragment
+	 * holds a single-use nonce valid for a minute. Starts the server if needed.
+	 */
+	createLocalWebLink(path?: string): Promise<string>;
+	/**
+	 * P6: a single-use ticket (a minute) for one connection of a sandboxed extension host to the
+	 * server's workbench, with its port and connection token. Starts the server if needed.
+	 */
+	createExtensionHostTicket(): Promise<IVoltExtensionHostTicket & { readonly port: number }>;
 }

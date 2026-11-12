@@ -32,10 +32,48 @@ export interface ICommandHandler {
 	(accessor: ServicesAccessor, ...args: any[]): void;
 }
 
+/**
+ * Who may run a command (Volt, spec I.14):
+ * - `internal`: the workbench's own code only. An extension host's call is refused with
+ *   {@link CommandNotAllowedError}, and an extension cannot register a command over it.
+ * - `exported:<capability>`: extensions too; a documented extension API depends on it. The
+ *   capability names what it lets an extension do, for the per-extension grants that come with
+ *   per-extension hosts.
+ * - `public`: any extension, as in VS Code.
+ *
+ * Volt's commands (see {@link isVoltCommandId}) are `internal` unless their registration says
+ * otherwise; every other command is `public` unless marked.
+ */
+export type CommandVisibility = 'internal' | 'public' | `exported:${string}`;
+
 export interface ICommand {
 	id: string;
 	handler: ICommandHandler;
 	metadata?: ICommandMetadata | null;
+	/** See {@link CommandVisibility}; when absent, {@link defaultCommandVisibility} of the id. */
+	visibility?: CommandVisibility;
+	/** Set by `registerCommandAlias`: the alias runs this command and is no more visible than it. */
+	aliasOf?: string;
+}
+
+/** Volt's command id families: `volt.x`, `voltAgent.x`, `_volt.x`, `_voltScratch.x`. */
+export function isVoltCommandId(id: string): boolean {
+	return /^_?volt[A-Za-z0-9]*\./.test(id);
+}
+
+/** A command's visibility when its registration names none (or it is not registered yet). */
+export function defaultCommandVisibility(id: string): CommandVisibility {
+	return isVoltCommandId(id) ? 'internal' : 'public';
+}
+
+/** Thrown to an extension that runs an `internal` command. */
+export class CommandNotAllowedError extends Error {
+	static readonly NAME = 'CommandNotAllowed';
+
+	constructor(readonly commandId: string) {
+		super(`Command '${commandId}' is internal and cannot be run by an extension.`);
+		this.name = CommandNotAllowedError.NAME;
+	}
 }
 
 export interface ICommandMetadata {
@@ -59,11 +97,21 @@ export interface ICommandMetadata {
 
 export interface ICommandRegistry {
 	onDidRegisterCommand: Event<string>;
-	registerCommand(id: string, command: ICommandHandler): IDisposable;
+	registerCommand(id: string, command: ICommandHandler, visibility?: CommandVisibility): IDisposable;
 	registerCommand(command: ICommand): IDisposable;
 	registerCommandAlias(oldId: string, newId: string): IDisposable;
 	getCommand(id: string): ICommand | undefined;
 	getCommands(): ICommandsMap;
+	/**
+	 * Who may run `id` now: the registration's visibility, else the id's default. An alias is
+	 * never more visible than the command it runs.
+	 */
+	getCommandVisibility(id: string): CommandVisibility;
+}
+
+/** Orders visibilities from least to most visible; any `exported:*` sits between the others. */
+function visibilityRank(visibility: CommandVisibility): number {
+	return visibility === 'internal' ? 0 : visibility === 'public' ? 2 : 1;
 }
 
 export const CommandsRegistry: ICommandRegistry = new class implements ICommandRegistry {
@@ -73,7 +121,7 @@ export const CommandsRegistry: ICommandRegistry = new class implements ICommandR
 	private readonly _onDidRegisterCommand = new Emitter<string>();
 	readonly onDidRegisterCommand: Event<string> = this._onDidRegisterCommand.event;
 
-	registerCommand(idOrCommand: string | ICommand, handler?: ICommandHandler): IDisposable {
+	registerCommand(idOrCommand: string | ICommand, handler?: ICommandHandler, visibility?: CommandVisibility): IDisposable {
 
 		if (!idOrCommand) {
 			throw new Error(`invalid command`);
@@ -83,7 +131,7 @@ export const CommandsRegistry: ICommandRegistry = new class implements ICommandR
 			if (!handler) {
 				throw new Error(`invalid command`);
 			}
-			return this.registerCommand({ id: idOrCommand, handler });
+			return this.registerCommand(visibility ? { id: idOrCommand, handler, visibility } : { id: idOrCommand, handler });
 		}
 
 		// add argument validation if rich command metadata is provided
@@ -125,7 +173,21 @@ export const CommandsRegistry: ICommandRegistry = new class implements ICommandR
 	}
 
 	registerCommandAlias(oldId: string, newId: string): IDisposable {
-		return CommandsRegistry.registerCommand(oldId, (accessor, ...args) => accessor.get(ICommandService).executeCommand(newId, ...args));
+		return CommandsRegistry.registerCommand({ id: oldId, handler: (accessor, ...args) => accessor.get(ICommandService).executeCommand(newId, ...args), aliasOf: newId });
+	}
+
+	getCommandVisibility(id: string): CommandVisibility {
+		let visibility = defaultCommandVisibility(id);
+		let current: string | undefined = id;
+		const seen = new Set<string>();
+		while (current !== undefined && !seen.has(current)) {
+			seen.add(current);
+			const command = this.getCommand(current);
+			const own = command?.visibility ?? defaultCommandVisibility(current);
+			visibility = current === id || visibilityRank(own) < visibilityRank(visibility) ? own : visibility;
+			current = command?.aliasOf;
+		}
+		return visibility;
 	}
 
 	getCommand(id: string): ICommand | undefined {

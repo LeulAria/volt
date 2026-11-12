@@ -242,7 +242,7 @@ const category = localize2('volt', "Volt");
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.awake.setUpLidClosedMode', title: localize2('voltAwake.setUpCommand', "Set Up Lid-Closed Mode"), category, f1: true });
+		super({ id: 'volt.awake.setUpLidClosedMode', visibility: 'internal', title: localize2('voltAwake.setUpCommand', "Set Up Lid-Closed Mode"), category, f1: true });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		await setUpLidClosedMode(accessor.get(IVoltAwakeService), accessor.get(INotificationService));
@@ -251,7 +251,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.awake.removeLidClosedModePermission', title: localize2('voltAwake.removeCommand', "Remove Lid-Closed Mode Permission"), category, f1: true });
+		super({ id: 'volt.awake.removeLidClosedModePermission', visibility: 'internal', title: localize2('voltAwake.removeCommand', "Remove Lid-Closed Mode Permission"), category, f1: true });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const awake = accessor.get(IVoltAwakeService);
@@ -266,7 +266,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.awake.allowSleepNow', title: localize2('voltAwake.allowSleepCommand', "Allow Sleep Until Agents Finish"), category, f1: true });
+		super({ id: 'volt.awake.allowSleepNow', visibility: 'internal', title: localize2('voltAwake.allowSleepCommand', "Allow Sleep Until Agents Finish"), category, f1: true });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		await accessor.get(IVoltAwakeService).allowSleepNow();

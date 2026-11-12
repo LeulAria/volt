@@ -33,6 +33,11 @@ export class WebSocketRemoteConnection {
 	constructor(
 		public readonly host: string,
 		public readonly port: number,
+		/**
+		 * Volt (P6): a path in front of the server's root path and one more query parameter, for the
+		 * desktop's sandboxed extension hosts on the local agent server (`/code`, a one-time ticket).
+		 */
+		public readonly volt?: { readonly pathPrefix: string; readonly query: string },
 	) { }
 
 	public toString(): string {

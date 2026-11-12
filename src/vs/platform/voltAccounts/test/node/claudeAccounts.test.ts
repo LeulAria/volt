@@ -188,6 +188,27 @@ suite('Volt Claude accounts', () => {
 			assert.strictEqual((await accounts.getState()).accounts.find(account => account.id === b)?.active, true);
 		});
 
+		test('CLAUDE-ACCOUNTS-OFF: with the extension off nothing writes Claude Code\'s login (no switch, add, forget or automatic switch); reading still works', async () => {
+			const b = await addSecondAccount();
+			accounts.configure('auto', 90);
+			limits.set('token-a', group(95, 40));
+			limits.set('token-b', group(10, 30));
+			const login = await accounts.beginLogin();
+			accounts.setEnabled(false);
+			assert.strictEqual(accounts.autoSwitching, false);
+			await assert.rejects(accounts.switchTo(b), /turned off/);
+			await assert.rejects(accounts.remove(b), /turned off/);
+			await assert.rejects(accounts.beginLogin(), /turned off/);
+			assert.strictEqual((await accounts.completeLogin(login.id)).status, 'failed', 'a sign-in begun before does not land');
+			await accounts.autoSwitchTick();
+			assert.strictEqual(await liveToken(), 'token-a');
+			assert.deepStrictEqual((await accounts.getState()).accounts.map(account => account.email), ['a@x.com', 'b@x.com']);
+			accounts.setEnabled(true);
+			await accounts.autoSwitchTick();
+			assert.strictEqual(await liveToken(), 'token-b', 'on again, it switches');
+			await accounts.cancelLogin(login.id);
+		});
+
 		test('a manual switch onto a full account does not hold automatic switching back', async () => {
 			const b = await addSecondAccount();
 			accounts.configure('auto', 90);

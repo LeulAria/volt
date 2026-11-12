@@ -16,6 +16,9 @@ import { BrowserDevToolsBridge } from './browserDevToolsBridge.js';
 import { isPreviewPartition, IVoltCookieImportRequest, IVoltCookieImportResult, IVoltCookieSource, matchesDomainFilter, parseDomainFilter, siteOf, toElectronCookie } from '../common/browserCookies.js';
 import { IVoltBrowserService, IVoltSiteData, VOLT_BROWSER_PARTITION, VoltBrowserColorScheme, VoltBrowserDataKind, VoltSiteDataKind } from '../common/voltBrowser.js';
 import { listCookieSources, readCookies } from '../node/browserCookieReader.js';
+import { ISandboxBrowserRules } from '../common/sandboxBrowser.js';
+import { SandboxBrowserSessions } from './sandboxBrowserSessions.js';
+import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
 
 interface IPageAgentState {
 	routes: readonly IVoltMockRoute[];
@@ -38,6 +41,8 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 	/** DevTools docked in a browser tab's pane, relayed to the page's debugger. */
 	private readonly devtools: BrowserDevToolsBridge;
 	private shellEnv: Promise<NodeJS.ProcessEnv> | undefined;
+	/** Sandboxed chats' own browser profiles: signed out, the chat's network rules (B-16). */
+	private readonly sandboxSessions: SandboxBrowserSessions;
 
 	constructor(
 		@ILogService private readonly logService: ILogService,
@@ -45,6 +50,7 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IEnvironmentMainService private readonly environmentMainService: IEnvironmentMainService,
 	) {
+		this.sandboxSessions = new SandboxBrowserSessions(message => this.logService.info(message), () => readNetworkBrokerMode(this.configurationService.getValue(NETWORK_BROKER_SETTING)));
 		this.playgrounds = new BrowserPlaygrounds(message => this.logService.info(message));
 		// Started from the Dock, the main process lacks the user's PATH (nvm, Homebrew); a dev server needs it.
 		this.devServers = new DevServers(() => this.shellEnv ??= getResolvedShellEnv(this.configurationService, this.logService, this.environmentMainService.args, process.env).then(env => ({ ...process.env, ...env }), () => process.env), message => this.logService.info(message));
@@ -53,9 +59,14 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 		this.devtools = new BrowserDevToolsBridge((message, error) => this.logService.warn(message, error), page => !this.pages.has(page.id) && (this.userSchemes.get(page.id) ?? 'system') === 'system');
 		lifecycleMainService.onWillShutdown(event => {
 			this.devtools.dispose();
+			this.sandboxSessions.dispose();
 			event.join('voltPlaygrounds', this.playgrounds.dispose());
 			event.join('voltDevServers', this.devServers.dispose());
 		});
+	}
+
+	setSandboxBrowserRules(partition: string, rules: ISandboxBrowserRules): Promise<void> {
+		return this.sandboxSessions.setRules(partition, rules);
 	}
 
 	async clearData(kind: VoltBrowserDataKind): Promise<void> {
@@ -429,12 +440,12 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 		return { imported, skipped, failed, sites: sites.size, warnings: read.warnings };
 	}
 
-	/** Only pages of the in-app browser: any other web contents is out of reach. */
+	/** Only pages of the in-app browser (the shared profile or a sandboxed chat's): any other web contents is out of reach. */
 	private browserPage(id: number): WebContents | undefined {
 		const contents = webContents.fromId(id);
 		if (!contents || contents.isDestroyed() || contents.getType() !== 'webview') {
 			return undefined;
 		}
-		return contents.session === session.fromPartition(VOLT_BROWSER_PARTITION) ? contents : undefined;
+		return contents.session === session.fromPartition(VOLT_BROWSER_PARTITION) || this.sandboxSessions.isSandboxPage(contents) ? contents : undefined;
 	}
 }

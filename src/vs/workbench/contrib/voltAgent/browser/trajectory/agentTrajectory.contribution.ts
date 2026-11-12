@@ -44,6 +44,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: SHOW_TRAJECTORY_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltTrajectory.show', "Show Trajectory"),
 			category: localize2('voltTrajectory.category', "Volt"),
 			f1: true,

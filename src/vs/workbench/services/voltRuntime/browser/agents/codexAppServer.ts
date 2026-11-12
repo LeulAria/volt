@@ -6,6 +6,7 @@
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { isWindows } from '../../../../../base/common/platform.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { voltExec } from '../../common/execContext.js';
 import { codexContextIndex, parseCodexModels } from '../../common/models/harnessCatalog.js';
 import { IModelInfo } from '../../common/providers.js';
 import { probeCodexAuth, readHomeFile, runCli } from './cliAgents.js';
@@ -115,7 +116,7 @@ async function resolveCodexCommand(stdio: IVoltStdioService, preferredCommand?: 
 async function requestModelList(stdio: IVoltStdioService, command: string): Promise<unknown[] | undefined> {
 	let processId: string;
 	try {
-		processId = await stdio.spawn({ command, args: ['app-server', '--stdio'] });
+		processId = await stdio.spawn({ command, args: ['app-server', '--stdio'], ...voltExec('probe') });
 	} catch {
 		return undefined;
 	}

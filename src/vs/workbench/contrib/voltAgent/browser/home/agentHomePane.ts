@@ -59,7 +59,7 @@ import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, is
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID, OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
-import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
+import { AGENT_USAGE_INPUT_ID } from '../../../voltUsage/common/voltUsage.js';
 import { AGENT_FOOTER_ACTIONS, AgentFooterAction, wireAgentFooterAction } from './agentHomeFooterActions.js';
 import { IVoltSlotService, VoltSlotPlacement } from '../../../voltCustomize/common/voltSlots.js';
 import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
@@ -1691,7 +1691,7 @@ export class AgentHomePane extends Disposable {
 
 		let wasOpen = false;
 		const sync = () => {
-			const open = this.editorService.activeEditor instanceof AgentUsageEditorInput;
+			const open = this.editorService.activeEditor?.typeId === AGENT_USAGE_INPUT_ID;
 			// Usage is a page, not a tab: leaving it for a chat drops it so it never resurfaces as one.
 			if (wasOpen && !open && this.editorService.activeEditor) {
 				void this.closeUsage();
@@ -1740,7 +1740,7 @@ export class AgentHomePane extends Disposable {
 	/** Closes every Usage tab; the group falls back to the chat that was open before it. */
 	private async closeUsage(): Promise<void> {
 		for (const group of this.editorGroupsService.getGroups(GroupsOrder.MOST_RECENTLY_ACTIVE)) {
-			const editors = group.editors.filter(editor => editor instanceof AgentUsageEditorInput);
+			const editors = group.editors.filter(editor => editor.typeId === AGENT_USAGE_INPUT_ID);
 			if (editors.length) {
 				await group.closeEditors(editors);
 			}
@@ -3472,6 +3472,7 @@ registerAction2(class RenameAgentChatAction extends Action2 {
 	constructor() {
 		super({
 			id: RENAME_AGENT_CHAT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.home.renameChatCommand', "Rename Chat"),
 			f1: false,
 			keybinding: { primary: KeyCode.F2, weight: KeybindingWeight.WorkbenchContrib, when: agentRowShortcutWhen },
@@ -3490,6 +3491,7 @@ registerAction2(class ArchiveAgentChatAction extends Action2 {
 	constructor() {
 		super({
 			id: ARCHIVE_AGENT_CHAT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.home.archiveChatCommand', "Archive Chat"),
 			f1: false,
 			keybinding: { primary: KeyCode.Delete, mac: { primary: KeyMod.CtrlCmd | KeyCode.Backspace }, weight: KeybindingWeight.WorkbenchContrib, when: agentRowShortcutWhen },
@@ -3508,6 +3510,7 @@ registerAction2(class OpenAgentChatInNewWindowFromListAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_CHAT_IN_NEW_WINDOW_FROM_LIST_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.home.openInNewWindowCommand', "Open Chat in New Window"),
 			f1: false,
 			keybinding: { primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.Enter, weight: KeybindingWeight.WorkbenchContrib, when: agentRowShortcutWhen },

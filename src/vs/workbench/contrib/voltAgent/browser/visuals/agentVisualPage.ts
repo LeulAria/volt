@@ -249,25 +249,9 @@ const IMAGE_MIMES: Readonly<Record<string, string>> = {
 	avif: 'image/avif', svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon',
 };
 
-/** Absolute local image paths in a page: `src="/abs/a.png"`, `url(/abs/b.webp)`, `'file:///abs/c.jpg'`. */
-const LOCAL_IMAGE = /(["'(])((?:file:\/\/)?\/[^"'()<>\s]+\.(png|jpe?g|gif|webp|avif|svg|bmp|ico))(?=["')])/gi;
-
-export function localImagePaths(html: string): string[] {
-	const paths = new Set<string>();
-	for (const match of html.matchAll(LOCAL_IMAGE)) {
-		paths.add(match[2]);
-	}
-	return [...paths];
-}
+// Shared with the sandbox gate, which checks the same paths before a visual tool reads them.
+export { inlineLocalImages, localImagePaths } from '../../../../services/voltRuntime/common/tools/localImages.js';
 
 export function imageMime(path: string): string | undefined {
 	return IMAGE_MIMES[path.slice(path.lastIndexOf('.') + 1).toLowerCase()];
-}
-
-/** The page with each local image path replaced by its data URL (paths missing from `images` stay as they are). */
-export function inlineLocalImages(html: string, images: ReadonlyMap<string, string>): string {
-	return html.replace(LOCAL_IMAGE, (match, quote: string, path: string) => {
-		const data = images.get(path);
-		return data ? `${quote}${data}` : match;
-	});
 }

@@ -30,15 +30,15 @@ import { IVoltSessionContextService, projectIdForRoot, uriFromStoredRoot } from 
 import { AGENT_HOME_NEW_CHAT_ICON_PATH } from '../home/agentHomeIcons.js';
 import { scratchProjectLabel } from '../home/agentHomeWorkspace.js';
 import { ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
-import { AutomationsEditorInput } from '../automations/automationsEditor.js';
-import { AgentCustomizeEditorInput } from '../customize/agentCustomizeEditor.js';
+import { automationsTrail } from '../../../voltAutomations/common/voltAutomations.js';
+import { skillsTrail } from '../../../voltSkills/common/voltSkills.js';
 import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { localEnvironmentLabel } from '../home/agentHomeFilter.js';
 import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { getComputerName, onDidChangeComputerName } from '../usage/agentComputerName.js';
-import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
+import { AGENT_USAGE_INPUT_ID } from '../../../voltUsage/common/voltUsage.js';
 import { displayComputerName, IUsageEnvironmentSelection, showUsageEnvironmentMenu, usageEnvironmentTriggerLabel, usageMachineName } from '../usage/agentUsageEnvironmentMenu.js';
 import { setAgentTooltip } from './agentTooltip.js';
 
@@ -681,15 +681,16 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		this.searchButton.hidden = !showSearch;
 		this.newAgentButton.hidden = !showNew;
 		this.element.classList.toggle('has-controls', showSearch || showNew);
-		const usageOpen = editor instanceof AgentUsageEditorInput;
+		const usageOpen = editor?.typeId === AGENT_USAGE_INPUT_ID;
 		this.usageCrumb = usageOpen;
 		this.envButton.hidden = !usageOpen;
 		this.laptop.hidden = usageOpen;
 		this.titleLabel.hidden = usageOpen;
-		const crumbs = !usageOpen && (editor instanceof AgentCustomizeEditorInput || editor instanceof AutomationsEditorInput) ? editor.crumbs : [];
+		const automations = automationsTrail(editor);
+		const crumbs = usageOpen ? [] : skillsTrail(editor)?.crumbs ?? automations?.crumbs ?? [];
 		this.renderCrumbs(crumbs);
 		// Automations links back to its list from a page past it.
-		this.titleHome = editor instanceof AutomationsEditorInput && crumbs.length ? editor.home : undefined;
+		this.titleHome = automations && crumbs.length ? automations.home : undefined;
 		this.titleLabel.classList.toggle('link', !!this.titleHome);
 		if (this.titleHome) {
 			this.titleLabel.setAttribute('role', 'link');

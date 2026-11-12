@@ -16,7 +16,7 @@ import { ILabelService } from '../../../../platform/label/common/label.js';
 import { ILogService, ILoggerService } from '../../../../platform/log/common/log.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { IConnectionOptions, IRemoteExtensionHostStartParams, connectRemoteAgentExtensionHost } from '../../../../platform/remote/common/remoteAgentConnection.js';
-import { IRemoteAuthorityResolverService, IRemoteConnectionData } from '../../../../platform/remote/common/remoteAuthorityResolver.js';
+import { IRemoteAuthorityResolverService, IRemoteConnectionData, RemoteConnection } from '../../../../platform/remote/common/remoteAuthorityResolver.js';
 import { IRemoteSocketFactoryService } from '../../../../platform/remote/common/remoteSocketFactoryService.js';
 import { ISignService } from '../../../../platform/sign/common/sign.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
@@ -25,8 +25,10 @@ import { IWorkspaceContextService, WorkbenchState } from '../../../../platform/w
 import { IWorkbenchEnvironmentService } from '../../environment/common/environmentService.js';
 import { parseExtensionDevOptions } from './extensionDevOptions.js';
 import { IExtensionHostInitData, MessageType, UIKind, createMessageOfType, isMessageOfType } from './extensionHostProtocol.js';
-import { RemoteRunningLocation } from './extensionRunningLocation.js';
+import { ExtensionRunningLocation } from './extensionRunningLocation.js';
 import { ExtensionHostExtensions, ExtensionHostStartup, IExtensionHost } from './extensions.js';
+import { IVoltSandboxedHostStartParams, parseSandboxRefusal } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
+import type { VoltExtensionSandboxState } from './voltExtensionSandbox.js';
 
 export interface IRemoteExtensionHostInitData {
 	readonly connectionData: IRemoteConnectionData | null;
@@ -41,12 +43,27 @@ export interface IRemoteExtensionHostInitData {
 export interface IRemoteExtensionHostDataProvider {
 	readonly remoteAuthority: string;
 	getInitData(): Promise<IRemoteExtensionHostInitData>;
+	/** Volt (P2): this host is one opted-in extension's, run alone in the server's sandbox. */
+	readonly voltSandbox?: IVoltSandboxedHostProvider;
+	/**
+	 * Volt (P6): a desktop window's host on the local agent server: reached at this address (not
+	 * through a resolver), and to the extension it is a local host (no remote authority; the server
+	 * leaves its URIs as they are, the same machine's files).
+	 */
+	readonly voltLocal?: { address(): Promise<{ readonly connectTo: RemoteConnection; readonly connectionToken: string | undefined }> };
+}
+
+/** Volt: what a sandboxed host asks the server for, and where its outcome is reported. */
+export interface IVoltSandboxedHostProvider {
+	readonly extensionId: string;
+	params(): Promise<IVoltSandboxedHostStartParams>;
+	report(state: VoltExtensionSandboxState): void;
 }
 
 export class RemoteExtensionHost extends Disposable implements IExtensionHost {
 
 	public readonly pid = null;
-	public readonly remoteAuthority: string;
+	public readonly remoteAuthority: string | null;
 	public readonly startup = ExtensionHostStartup.EagerAutoStart;
 	public extensions: ExtensionHostExtensions | null = null;
 
@@ -60,7 +77,7 @@ export class RemoteExtensionHost extends Disposable implements IExtensionHost {
 	private readonly _isExtensionDevHost: boolean;
 
 	constructor(
-		public readonly runningLocation: RemoteRunningLocation,
+		public readonly runningLocation: ExtensionRunningLocation,
 		private readonly _initDataProvider: IRemoteExtensionHostDataProvider,
 		@IRemoteSocketFactoryService private readonly remoteSocketFactoryService: IRemoteSocketFactoryService,
 		@IWorkspaceContextService private readonly _contextService: IWorkspaceContextService,
@@ -75,7 +92,7 @@ export class RemoteExtensionHost extends Disposable implements IExtensionHost {
 		@ISignService private readonly _signService: ISignService
 	) {
 		super();
-		this.remoteAuthority = this._initDataProvider.remoteAuthority;
+		this.remoteAuthority = this._initDataProvider.voltLocal ? null : this._initDataProvider.remoteAuthority;
 		this._protocol = null;
 		this._hasLostConnection = false;
 		this._terminating = false;
@@ -89,24 +106,25 @@ export class RemoteExtensionHost extends Disposable implements IExtensionHost {
 			commit: this._productService.commit,
 			quality: this._productService.quality,
 			addressProvider: {
-				getAddress: async () => {
+				getAddress: this._initDataProvider.voltLocal?.address ?? (async () => {
 					const { authority } = await this.remoteAuthorityResolverService.resolveAuthority(this._initDataProvider.remoteAuthority);
 					return { connectTo: authority.connectTo, connectionToken: authority.connectionToken };
-				}
+				})
 			},
 			remoteSocketFactoryService: this.remoteSocketFactoryService,
 			signService: this._signService,
 			logService: this._logService,
 			ipcLogger: null
 		};
-		return this.remoteAuthorityResolverService.resolveAuthority(this._initDataProvider.remoteAuthority).then((resolverResult) => {
+		const resolved = this._initDataProvider.voltLocal ? Promise.resolve(undefined) : this.remoteAuthorityResolverService.resolveAuthority(this._initDataProvider.remoteAuthority);
+		return resolved.then((resolverResult) => {
 
 			const startParams: IRemoteExtensionHostStartParams = {
 				language: platform.language,
 				debugId: this._environmentService.debugExtensionHost.debugId,
 				break: this._environmentService.debugExtensionHost.break,
 				port: this._environmentService.debugExtensionHost.port,
-				env: { ...this._environmentService.debugExtensionHost.env, ...resolverResult.options?.extensionHostEnv },
+				env: { ...this._environmentService.debugExtensionHost.env, ...resolverResult?.options?.extensionHostEnv },
 			};
 
 			const extDevLocs = this._environmentService.extensionDevelopmentLocationURI;
@@ -123,7 +141,23 @@ export class RemoteExtensionHost extends Disposable implements IExtensionHost {
 				startParams.break = false;
 			}
 
-			return connectRemoteAgentExtensionHost(options, startParams).then(result => {
+			const sandbox = this._initDataProvider.voltSandbox;
+			const connected = sandbox
+				? sandbox.params().then(params => {
+					sandbox.report({ kind: 'starting' });
+					// No debugger for a sandboxed host: its port would be outside the sandbox.
+					return connectRemoteAgentExtensionHost(options, { ...startParams, port: undefined, break: false, voltSandbox: params });
+				}).then(result => {
+					sandbox.report({ kind: 'sandboxed' });
+					return result;
+				}, err => {
+					const text = err instanceof Error ? err.message : String(err);
+					const refusal = parseSandboxRefusal(text);
+					sandbox.report({ kind: 'refused', code: refusal?.code ?? 'launch', reason: refusal?.reason ?? text });
+					throw err;
+				})
+				: connectRemoteAgentExtensionHost(options, startParams);
+			return connected.then(result => {
 				this._register(result);
 				const { protocol, debugPort, reconnectionToken } = result;
 				const isExtensionDevelopmentDebug = typeof debugPort === 'number';
@@ -231,7 +265,7 @@ export class RemoteExtensionHost extends Disposable implements IExtensionHost {
 				name: this._labelService.getWorkspaceLabel(workspace),
 				transient: workspace.transient
 			},
-			remote: {
+			remote: this._initDataProvider.voltLocal ? { isRemote: false, authority: undefined, connectionData: null } : {
 				isRemote: true,
 				authority: this._initDataProvider.remoteAuthority,
 				connectionData: remoteInitData.connectionData

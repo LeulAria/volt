@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,156 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "browser",
+			"label": "Browser",
+			"description": "The in-app browser, and the tools agents use to drive, test and audit pages in it.",
+			"category": "tools",
+			"icon": "globe",
+			"order": 10,
+			"commands": [
+				"workbench.action.openBrowser"
+			],
+			"settings": [
+				"volt.browser."
+			]
+		},
+		"voltTools": [
+			{
+				"name": "browser_navigate",
+				"class": "browser"
+			},
+			{
+				"name": "browser_snapshot",
+				"class": "browser"
+			},
+			{
+				"name": "browser_act",
+				"class": "browser"
+			},
+			{
+				"name": "browser_click",
+				"class": "browser"
+			},
+			{
+				"name": "browser_type",
+				"class": "browser"
+			},
+			{
+				"name": "browser_press_key",
+				"class": "browser"
+			},
+			{
+				"name": "browser_hover",
+				"class": "browser"
+			},
+			{
+				"name": "browser_select_option",
+				"class": "browser"
+			},
+			{
+				"name": "browser_scroll",
+				"class": "browser"
+			},
+			{
+				"name": "browser_resize",
+				"class": "browser"
+			},
+			{
+				"name": "browser_wait_for",
+				"class": "browser"
+			},
+			{
+				"name": "browser_evaluate",
+				"class": "browser"
+			},
+			{
+				"name": "browser_console_messages",
+				"class": "browser"
+			},
+			{
+				"name": "browser_navigate_back",
+				"class": "browser"
+			},
+			{
+				"name": "browser_reload",
+				"class": "browser"
+			},
+			{
+				"name": "browser_screenshot",
+				"class": "browser"
+			},
+			{
+				"name": "browser_compare_image",
+				"class": "reads"
+			},
+			{
+				"name": "browser_network",
+				"class": "browser"
+			},
+			{
+				"name": "browser_devtools",
+				"class": "browser"
+			},
+			{
+				"name": "browser_run",
+				"class": "browser"
+			},
+			{
+				"name": "browser_status",
+				"class": "browser"
+			},
+			{
+				"name": "browser_mock",
+				"class": "browser"
+			},
+			{
+				"name": "browser_emulate",
+				"class": "browser"
+			},
+			{
+				"name": "browser_audit",
+				"class": "browser"
+			}
+		],
+		"voltSurfaces": [
+			{
+				"id": "browser",
+				"label": "Browser"
+			}
+		],
+		"voltDock": [
+			{
+				"id": "browser",
+				"label": "Browser"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "browser.drive",
+					"class": "high"
+				},
+				{
+					"id": "browser.read",
+					"class": "medium"
+				},
+				{
+					"id": "files.read:workspace",
+					"class": "low",
+					"reason": "browser_compare_image reads a reference image."
+				},
+				{
+					"id": "files.write",
+					"class": "medium",
+					"reason": "browser_run edits and saved flows."
+				}
+			]
+		}
+	}
 }

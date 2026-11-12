@@ -13,6 +13,7 @@ import { getPathForFile } from '../../../../../platform/dnd/browser/dnd.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { userExec } from '../../../../services/voltRuntime/common/execContext.js';
 import { formatAttachmentSize, MAX_FILE_ATTACHMENT_BYTES } from '../../../../services/voltRuntime/common/fileAttachments.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { attachmentRoute, heicJpegName, storageMime } from './agentFileAttachments.js';
@@ -83,6 +84,8 @@ export class AgentAttachmentStore {
 				command: ['sips', '-s', 'format', 'jpeg', source, '--out', out.fsPath].map(shellQuote).join(' '),
 				timeoutMs: HEIC_TIMEOUT_MS,
 				inlineChars: 2_000,
+				// The user attached the image.
+				...userExec(),
 			});
 			if (result.exitCode !== 0) {
 				return undefined;

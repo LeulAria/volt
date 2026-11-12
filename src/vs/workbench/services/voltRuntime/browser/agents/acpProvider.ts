@@ -5,10 +5,11 @@
 
 import { claudeWorkRulesMeta } from '../../common/harness/claudeWorkRules.js';
 import { bareTaskToolName } from '../../common/orchestration/agentTasks.js';
-import { timeout } from '../../../../../base/common/async.js';
+import { raceTimeout, timeout } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
+import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -25,8 +26,10 @@ import { parseTokenUsage } from '../../common/tokenUsage.js';
 import { VoltMode } from '../../common/modes.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo } from '../../common/providers.js';
+import { sandboxPlatformUnavailable, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
-import { IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecContext, IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { voltExec } from '../../common/execContext.js';
 import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey, sandboxStrategy, SandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer } from '../../common/hostTools.js';
@@ -80,6 +83,8 @@ interface IAcpSession {
 	settling?: Promise<void>;
 	/** The to-do list as it changed between turns (a background subagent's TaskUpdate): the next turn starts from it. */
 	pendingPlan?: Extract<IVoltEvent, { type: 'plan' }>;
+	/** Sandbox warnings and denials from before a turn ran (a spawn's `partial` warning): the next turn shows them. */
+	pendingSandbox?: IVoltSandboxEvent[];
 	/** Pool key of the setup this session was started with (spares are matched on it). */
 	setupKey?: string;
 	/** The host MCP servers `session/new` connected (JSON), and what they were derived from. */
@@ -278,6 +283,10 @@ const TEXT_ONLY_CANCEL_LINGER_MS = 750;
 /** A spare session nobody adopted is stopped after this long; its process holds a model connection. */
 const SPARE_TTL_MS = 10 * 60_000;
 const MAX_SPARES = 2;
+/** Sandbox events kept per session (or spawn) until a turn shows them. */
+const MAX_PENDING_SANDBOX_EVENTS = 20;
+/** Spawn ids whose sandbox events wait for a session; older ones are dropped first. */
+const MAX_EARLY_SANDBOX_SPAWNS = 16;
 
 const STALL_RESUME_TEXT = 'Your previous response stopped making progress and was interrupted. Continue exactly where you left off; do not repeat work that is already done.';
 
@@ -364,6 +373,21 @@ export class AcpAgentProvider implements IAgentProvider {
 	private questionAsker: AcpQuestionAsker | undefined;
 	private supervision: IAcpSupervisionOptions = {};
 	private readonly spares = new Map<string, IAcpSpare>();
+	/** Every live agent process of this provider (spares too), by spawn id: where its sandbox events go. */
+	private readonly byProcess = new Map<string, IAcpSession>();
+	/**
+	 * Sandbox events for a spawn id no session holds yet. The stdio layer warns about `partial`
+	 * isolation as it spawns, before `spawn` has even answered; these wait for the session.
+	 */
+	private readonly earlySandboxEvents = new Map<string, IVoltSandboxEvent[]>();
+	/**
+	 * Live agent processes started in the OS sandbox, and ones started without it. A file request
+	 * from a process in neither (gone, or never ours) is answered as a sandboxed one: refused.
+	 */
+	private readonly sandboxedProcesses = new Set<string>();
+	private readonly unconfinedProcesses = new Set<string>();
+	/** Spawns in flight: only while one is, an unknown spawn id may be one of ours. */
+	private spawning = 0;
 	private readonly _onDidChangeBackgroundTasks = new Emitter<IAcpBackgroundTask>();
 	/**
 	 * A background task of one of this provider's sessions started, reported progress or ended,
@@ -413,6 +437,17 @@ export class AcpAgentProvider implements IAgentProvider {
 		live.voltSessionId = context.sessionId;
 		live.runId = context.runId;
 		live.mode = context.mode;
+	}
+
+	async allowSandboxDomains(session: IAgentSessionHandle, domains: readonly string[]): Promise<void> {
+		const live = this.sessions.get(session.id);
+		if (live) {
+			await this.stdio.allowSandboxDomains?.(live.processId, domains);
+		}
+	}
+
+	sandboxProcessId(session: IAgentSessionHandle): string | undefined {
+		return this.sessions.get(session.id)?.processId;
 	}
 
 	async applyAccessPolicy(session: IAgentSessionHandle, policy: ICompiledPolicy): Promise<void> {
@@ -674,7 +709,16 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	private async stopSession(live: IAcpSession): Promise<void> {
 		live.client.dispose();
+		this.forgetProcess(live.processId);
 		await this.stdio.kill(live.processId).catch(() => undefined);
+	}
+
+	private forgetProcess(processId: string): void {
+		this.byProcess.delete(processId);
+		this.earlySandboxEvents.delete(processId);
+		// A request that still arrives from it is then judged as from an unknown, possibly sandboxed, process.
+		this.sandboxedProcesses.delete(processId);
+		this.unconfinedProcesses.delete(processId);
 	}
 
 	/** Everything that makes two sessions interchangeable before their first prompt. */
@@ -754,8 +798,27 @@ export class AcpAgentProvider implements IAgentProvider {
 		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 		const env = cliAgentDefinition(this.id)?.acpEnv;
+		const settings = req.sandbox?.settings;
+		if (settings && settings.level !== 'off' && sandboxStrategy(this.id, settings.level, this.sandboxPlatform()) === 'none') {
+			// No OS sandbox here (Windows): a sandboxed chat is refused, never run unconfined.
+			throw sandboxUnavailableError(sandboxPlatformUnavailable(this.sandboxPlatform()) ?? `${this.label} cannot run in an OS sandbox on this machine.`);
+		}
 		const sandbox = this.sandboxRequest(req);
-		const processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}) });
+		let processId: string;
+		this.spawning++;
+		try {
+			// Rejects with a SandboxUnavailableError when the sandbox cannot be enforced; the runtime shows it.
+			// `sandboxed` follows the wrap: an agent whose strategy is its own sandbox gets no Volt wrap here (sandboxStrategy).
+			const context: IVoltExecContext = { principal: req.sessionId ? `chat:${req.sessionId}` : 'volt', reason: 'agent', sandboxed: !!sandbox };
+			processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}), context });
+		} finally {
+			this.spawning--;
+		}
+		// Ours now: its events wait here through initialize and session/new.
+		if (!this.earlySandboxEvents.has(processId)) {
+			this.earlySandboxEvents.set(processId, []);
+		}
+		(sandbox ? this.sandboxedProcesses : this.unconfinedProcesses).add(processId);
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		this.bindClientRequests(client);
 		client.whenDead(() => {
@@ -764,6 +827,7 @@ export class AcpAgentProvider implements IAgentProvider {
 					this.sessions.delete(id);
 				}
 			}
+			this.forgetProcess(processId);
 			// Its listeners filter every stdout chunk of every process: a dead client lets go of them,
 			// after the other death handlers (a spare's) have run.
 			queueMicrotask(() => {
@@ -808,6 +872,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			}
 		} catch (err) {
 			client.dispose();
+			this.forgetProcess(processId);
 			void this.stdio.kill(processId);
 			throw err;
 		}
@@ -834,6 +899,15 @@ export class AcpAgentProvider implements IAgentProvider {
 			resumable: !!initialized.agentCapabilities?.sessionCapabilities?.resume,
 			...(req.textOnly ? { textOnly: { ownPrompt: this.takesSystemPrompt() } } : {}),
 		};
+		// What the sandbox said while the process started waits for the session's first turn.
+		const early = this.earlySandboxEvents.get(processId);
+		this.earlySandboxEvents.delete(processId);
+		if (early?.length) {
+			live.pendingSandbox = early;
+		}
+		if (!client.isDead) {
+			this.byProcess.set(processId, live);
+		}
 		// One listener for the life of the session; it routes to whichever turn is current.
 		client.handleNotifications(note => {
 			if (note.method === 'session/update') {
@@ -881,8 +955,34 @@ export class AcpAgentProvider implements IAgentProvider {
 			workspaceRoots: sandbox.workspaceRoots,
 			...(settings.extraWritableRoots?.length ? { extraWritableRoots: settings.extraWritableRoots } : {}),
 			...(settings.allowedDomains?.length ? { allowedDomains: settings.allowedDomains } : {}),
+			...(settings.listenPorts?.length ? { listenPorts: settings.listenPorts } : {}),
 			loopbackPorts: (this.hostTools?.getMcpServers(req.sessionId) ?? []).map(server => loopbackPort(server.url)).filter((port): port is number => port !== undefined),
+			// The chat's own copy of the CLI's config (B-05): what the agent changes there stays in this chat.
+			stateKey: req.sessionId ?? 'default',
 		};
+	}
+
+	/**
+	 * After a turn: what the agent changed in its config overlay goes back to the user's config only
+	 * for the allowed keys (session ids, counters); everything else is listed in the transcript.
+	 */
+	private async syncSandboxState(live: IAcpSession, turn: AcpPromptTurn): Promise<void> {
+		if (!live.sandbox || live.sandbox.settings.level === 'off' || !this.stdio.syncSandboxState) {
+			return;
+		}
+		try {
+			const result = await raceTimeout(this.stdio.syncSandboxState(live.processId), 3_000);
+			if (result?.dropped.length) {
+				const shown = result.dropped.slice(0, 8).join(', ');
+				this.pushNotice(live, turn, {
+					severity: 'info',
+					title: 'Sandbox kept config changes in this chat',
+					description: `The agent changed ${this.label}'s own settings (${shown}${result.dropped.length > 8 ? `, and ${result.dropped.length - 8} more` : ''}). They stay in this chat's sandbox and were not applied to your ${this.label} config. Make such changes from a chat with the sandbox off, or in ${this.label} itself.`,
+				});
+			}
+		} catch (err) {
+			this.logService.warn('[ACP] sandbox state sync failed', err);
+		}
 	}
 
 	private sandboxStrategyOf(session: IAcpSession): SandboxStrategy {
@@ -898,12 +998,92 @@ export class AcpAgentProvider implements IAgentProvider {
 		return this.stdio.sandboxAllows !== undefined && !await this.stdio.sandboxAllows(session.processId, path, access);
 	}
 
-	private onSandboxEvent(event: IVoltSandboxEvent): void {
-		const session = [...this.sessions.values()].find(candidate => candidate.processId === event.id);
-		const turn = session?.turn && !session.turn.ended ? session.turn : undefined;
-		if (!session || !turn) {
+	/**
+	 * `fs/read_text_file` and `fs/write_text_file` from a sandboxed agent (or one Volt cannot place):
+	 * the access policy, then the stdio service's file broker, which checks the sandbox on the real
+	 * path and opens the file without following a symlink (B-17). Nothing is read or written through
+	 * the file service, which follows links.
+	 */
+	private async answerSandboxedFs(client: AcpJsonRpcClient, live: IAcpSession | undefined, turn: AcpPromptTurn | undefined, requestId: string | number, uri: URI, access: 'read' | 'write', params: { content?: string; line?: number; limit?: number }): Promise<void> {
+		const deny = async (reason: string) => {
+			if (live && turn) {
+				this.pushActivity(live, turn, { type: 'sandbox.denial', denial: { kind: access, target: uri.fsPath, source: 'volt' } });
+			}
+			await client.respondError(requestId, `Blocked by Volt sandbox: ${uri.fsPath} (${reason})`);
+		};
+		if (!live) {
+			// No chat is bound to this process (not yet, or no longer): nothing to judge the request by.
+			await deny('this agent process is not bound to a chat');
 			return;
 		}
+		if (uri.scheme !== Schemas.file || !this.stdio.sandboxReadFile || !this.stdio.sandboxWriteFile) {
+			await deny('Volt can only open local files for a sandboxed agent');
+			return;
+		}
+		const [allowed] = await Promise.all([
+			this.authorizeFs(live, turn, access === 'write' ? 'edit' : 'read', uri.fsPath),
+			// The turn's checkpoint, taken while the prompt already runs, must not see this write.
+			access === 'write' ? turnWriteGate(live.voltSessionId) : undefined,
+		]);
+		if (!allowed) {
+			await client.respondError(requestId, 'Blocked by Volt access policy');
+			return;
+		}
+		if (access === 'read') {
+			const read = await this.stdio.sandboxReadFile(live.processId, uri.fsPath);
+			if (!read.ok) {
+				await deny(read.reason);
+				return;
+			}
+			await client.respond(requestId, { content: sliceLines(read.content ?? '', params.line, params.limit) });
+			return;
+		}
+		const content = params.content ?? '';
+		const written = await this.stdio.sandboxWriteFile(live.processId, uri.fsPath, content);
+		if (!written.ok) {
+			await deny(written.reason);
+			return;
+		}
+		await client.respond(requestId, {});
+		const before = written.content;
+		if (live.voltSessionId) {
+			this.writeObserver?.({ sessionId: live.voltSessionId, runId: live.runId ?? '', uri, before });
+		}
+		if (turn) {
+			this.applyDirectives(live, turn, turn.supervisor.observeWrite(uri.fsPath, before, content));
+		}
+	}
+
+	private onSandboxEvent(event: IVoltSandboxEvent): void {
+		const session = this.byProcess.get(event.id);
+		if (!session) {
+			// Before the session exists (often before `spawn` answers): kept for it, within bounds, as
+			// the id may belong to another provider's spawn.
+			if (this.spawning > 0 || this.earlySandboxEvents.has(event.id)) {
+				const list = this.earlySandboxEvents.get(event.id) ?? [];
+				if (list.length < MAX_PENDING_SANDBOX_EVENTS) {
+					list.push(event);
+				}
+				this.earlySandboxEvents.set(event.id, list);
+				while (this.earlySandboxEvents.size > MAX_EARLY_SANDBOX_SPAWNS) {
+					this.earlySandboxEvents.delete(this.earlySandboxEvents.keys().next().value!);
+				}
+			}
+			return;
+		}
+		const turn = session.turn && !session.turn.ended ? session.turn : undefined;
+		if (!turn) {
+			// Between turns (a spare, or a session before its first prompt): the next turn shows it.
+			session.pendingSandbox ??= [];
+			if (session.pendingSandbox.length < MAX_PENDING_SANDBOX_EVENTS) {
+				session.pendingSandbox.push(event);
+			}
+			return;
+		}
+		this.deliverSandboxEvent(session, turn, event);
+	}
+
+	private deliverSandboxEvent(session: IAcpSession, turn: AcpPromptTurn, event: IVoltSandboxEvent): void {
 		if (event.denial) {
 			this.pushActivity(session, turn, { type: 'sandbox.denial', denial: event.denial });
 		} else if (event.warning) {
@@ -1089,7 +1269,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		const launch = await this.launchFor(profile, profile.args?.length ? [...profile.args] : [...this.defaultArgs]);
 		const cwd = profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
-		const processId = await this.stdio.spawn({ command: launch.command, args: launch.args, cwd });
+		// For no chat: Volt asks what the agent offers. What the CLI loads from its own state is the agent state overlay's (B-05).
+		const processId = await this.stdio.spawn({ command: launch.command, args: launch.args, cwd, ...voltExec('probe') });
 		const client = new AcpJsonRpcClient(this.stdio, processId);
 		try {
 			await withTimeout(client.request('initialize', {
@@ -1143,6 +1324,11 @@ export class AcpAgentProvider implements IAgentProvider {
 		live.pendingPlan = undefined;
 		if (pendingPlan) {
 			this.pushActivity(live, turn, pendingPlan);
+		}
+		const pendingSandbox = live.pendingSandbox;
+		live.pendingSandbox = undefined;
+		for (const event of pendingSandbox ?? []) {
+			this.deliverSandboxEvent(live, turn, event);
 		}
 		const cancel = token.onCancellationRequested(() => this.cancelTurn(live, turn, 'user'));
 		// Not awaited at the end: once `run.end` is out, a cancelled prompt may still be settling.
@@ -1573,6 +1759,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				if (usage) {
 					turn.push(usage);
 				}
+				await this.syncSandboxState(live, turn);
 				this.endTurn(live, turn, result?.stopReason === 'cancelled' || turn.userCancelled ? 'abort' : 'done');
 				return;
 			}
@@ -1965,6 +2152,20 @@ export class AcpAgentProvider implements IAgentProvider {
 				return;
 			}
 			const write = req.method === 'fs/write_text_file';
+			const access = write ? 'write' : 'read';
+			// A sandboxed agent's files go through the sandbox's file broker: checked on the real path and
+			// opened without following a symlink anywhere in it, so a folder swapped for a link between
+			// the check and the open cannot redirect the write (B-17). A process Volt cannot place (no
+			// session bound to it yet, or gone) is refused unless it was started unconfined (INV-13), and so
+			// is a chat Volt should be wrapping whose process it did not wrap. An agent in its own sandbox
+			// (Codex `native`) keeps the checked path below.
+			const sandboxed = this.sandboxedProcesses.has(client.processId)
+				|| !this.unconfinedProcesses.has(client.processId)
+				|| (!!live && this.sandboxStrategyOf(live) === 'wrap');
+			if (sandboxed) {
+				await this.answerSandboxedFs(client, live, turn, req.id, uri, access, params);
+				return;
+			}
 			// The access check and the read are independent: run them together instead of back to back.
 			// Reading has no side effects, so a denied request just drops what was read.
 			const [allowed, current] = await Promise.all([
@@ -1979,7 +2180,6 @@ export class AcpAgentProvider implements IAgentProvider {
 				await client.respondError(req.id, 'Blocked by Volt access policy');
 				return;
 			}
-			const access = write ? 'write' : 'read';
 			if (live && await this.sandboxBlocks(live, uri.fsPath, access)) {
 				if (turn) {
 					this.pushActivity(live, turn, { type: 'sandbox.denial', denial: { kind: access, target: uri.fsPath, source: 'volt' } });
@@ -2124,15 +2324,7 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	private async readTextFile(uri: URI, line?: number, limit?: number): Promise<string> {
 		const file = await this.fileService.readFile(uri);
-		let text = file.value.toString();
-		if (line || limit) {
-			const lines = text.split('\n');
-			const start = Math.max(0, (typeof line === 'number' && line > 0 ? line : 1) - 1);
-			const end = typeof limit === 'number' && limit > 0 ? start + limit : lines.length;
-			text = lines.slice(start, end).join('\n');
-		}
-		const max = 256_000;
-		return text.length > max ? `${text.slice(0, max)}\n\n[truncated after 256KB]` : text;
+		return sliceLines(file.value.toString(), line, limit);
 	}
 
 	private toUri(pathOrUri: string | undefined): URI | undefined {
@@ -2141,6 +2333,18 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		return pathOrUri.includes('://') ? URI.parse(pathOrUri) : URI.file(pathOrUri);
 	}
+}
+
+/** `fs/read_text_file`'s `line` (1-based) and `limit`, and the 256KB cap. */
+function sliceLines(text: string, line?: number, limit?: number): string {
+	if (line || limit) {
+		const lines = text.split('\n');
+		const start = Math.max(0, (typeof line === 'number' && line > 0 ? line : 1) - 1);
+		const end = typeof limit === 'number' && limit > 0 ? start + limit : lines.length;
+		text = lines.slice(start, end).join('\n');
+	}
+	const max = 256_000;
+	return text.length > max ? `${text.slice(0, max)}\n\n[truncated after 256KB]` : text;
 }
 
 function availableCommandsUpdate(params: unknown): ReadonlySet<string> | undefined {

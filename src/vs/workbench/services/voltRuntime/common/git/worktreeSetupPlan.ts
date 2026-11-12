@@ -5,11 +5,13 @@
 
 import { Event } from '../../../../../base/common/event.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
+import type { IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
+import type { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 
 /**
  * Worktree setup: what runs in a new worktree before an agent works there. A project describes it
- * in one of three files, read from the new worktree first (its branch may change it), then from
- * the project checkout:
+ * in one of three files, read from the project checkout only, never from the new worktree (a
+ * sandboxed agent could commit a setup file to a branch and have it run outside the sandbox):
  *
  * - `t3.json` (T3 Code's project file; Volt also reads the same shape as `volt.json`):
  *   `{ "worktreeSubmodules": "recursive" | "top-level" | "none", "scripts": [{ "name", "command",
@@ -273,6 +275,12 @@ export interface IWorktreeSetupStatus {
 	readonly startedAt: number;
 	readonly endedAt?: number;
 	readonly error?: string;
+	/**
+	 * Files that run code (package scripts, git hooks, setup files) changed since a sandboxed agent
+	 * worked in `reviewRoots` (I.6): the setup waits until the user reviews them.
+	 */
+	readonly review?: readonly IBuildEntryChange[];
+	readonly reviewRoots?: readonly string[];
 }
 
 export interface IWorktreeSetupRequest {
@@ -281,6 +289,12 @@ export interface IWorktreeSetupRequest {
 	readonly branch: string;
 	/** Asked between steps: the run that needs the worktree was stopped. */
 	readonly isCancelled?: () => boolean;
+	/**
+	 * The chat's sandbox settings. Setup runs the branch's own install scripts, which a sandboxed
+	 * agent may have written, so for a sandboxed chat it runs inside the chat's sandbox with the
+	 * chat's rules (the worktree and its repository's `.git` as the workspace), or not at all.
+	 */
+	readonly sandbox: IVoltSandboxSettings | undefined;
 }
 
 export const IAgentWorktreeSetupService = createDecorator<IAgentWorktreeSetupService>('agentWorktreeSetupService');

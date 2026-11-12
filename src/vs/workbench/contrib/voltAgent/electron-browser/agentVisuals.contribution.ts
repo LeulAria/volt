@@ -145,7 +145,7 @@ CommandsRegistry.registerCommand(OPEN_CANVAS_COMMAND_ID, async (accessor, canvas
 	} else {
 		await editorService.openEditor(input, { pinned: true });
 	}
-});
+}, 'internal');
 
 /**
  * The right panel's + menu: chat `sessionId`'s newest design canvas, else an empty one made for it,
@@ -169,4 +169,4 @@ CommandsRegistry.registerCommand(OPEN_CANVAS_IN_TOOLS_COMMAND_ID, async (accesso
 	} else {
 		await editorService.openEditor(input, { pinned: true });
 	}
-});
+}, 'internal');

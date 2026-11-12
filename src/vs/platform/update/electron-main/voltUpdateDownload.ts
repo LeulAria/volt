@@ -10,6 +10,11 @@ import { IRequestService } from '../../request/common/request.js';
 
 export interface IVoltDownloadOptions {
 	readonly sha256hash?: string;
+	/**
+	 * Refuse a download without `sha256hash`. Set when the feed is signature-checked: the hash then
+	 * comes from the signed entry, so it binds the bytes to the channel key.
+	 */
+	readonly requireSha256?: boolean;
 	/** Expected size, for progress when the response has no content-length. */
 	readonly size?: number;
 	/** Called about every 2% with a fraction between 0 and 1. */
@@ -22,6 +27,12 @@ export interface IVoltDownloadOptions {
  * `data` listener joining after the stream started flowing would miss the first chunks.
  */
 export async function downloadVoltUpdate(requestService: IRequestService, url: string, path: string, options: IVoltDownloadOptions = {}): Promise<void> {
+	if (!/^https:\/\//.test(url)) {
+		throw new Error('Updates download only over https');
+	}
+	if (options.requireSha256 && !options.sha256hash) {
+		throw new Error('The signed update feed has no checksum for this download');
+	}
 	const context = await requestService.request({ url }, CancellationToken.None);
 	const status = context.res.statusCode;
 	if (status && (status < 200 || status >= 300)) {

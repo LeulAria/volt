@@ -696,6 +696,7 @@
 
 .volt-ares-server-state.ok { color: var(--vscode-foreground); }
 .volt-ares-server-state.error { color: var(--vscode-editorError-foreground, #e5534b); }
+.volt-ares-server-state.warning { color: var(--vscode-editorWarning-foreground, #e5a33a); }
 
 /* Overview: Customize's Discover cards. */
 

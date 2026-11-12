@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,108 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.cursor",
+			"label": "Cursor",
+			"description": "Cursor's agent over ACP.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 30
+		},
+		"voltAgents": [
+			{
+				"id": "cursor",
+				"provider": "cursor-acp",
+				"label": "Cursor",
+				"order": 30,
+				"binary": "cursor-agent",
+				"fallbackBinaries": [
+					"agent"
+				],
+				"versionArgs": [
+					"--version"
+				],
+				"args": [
+					"acp"
+				],
+				"earlyAccess": true,
+				"login": [
+					"cursor-agent",
+					"login"
+				],
+				"apiHosts": [
+					"cursor.com",
+					"*.cursor.com",
+					"cursor.sh",
+					"*.cursor.sh",
+					"cursorapi.com",
+					"*.cursorapi.com"
+				],
+				"state": {
+					"configOverlay": "CURSOR_CONFIG_DIR",
+					"configHome": ".cursor",
+					"link": [
+						"mcp.json",
+						"hooks.json",
+						"hooks",
+						"rules",
+						"skills",
+						"skills-cursor",
+						"agents",
+						"plugins",
+						"extensions",
+						"permissions.json",
+						"sandbox-policies"
+					],
+					"seed": [
+						{
+							"name": "cli-config.json",
+							"from": "config:cli-config.json",
+							"mergeBack": [
+								"model",
+								"selectedModel",
+								"hasChangedDefaultModel",
+								"modelParameters",
+								"modelSelectionHistory",
+								"maxMode"
+							]
+						}
+					],
+					"setEnv": {
+						"CURSOR_DATA_DIR": "${config}"
+					},
+					"writable": [
+						"Library/Application Support/Cursor/User/globalStorage"
+					],
+					"writableFiles": [
+						".cursor/auth.json",
+						".config/cursor/auth.json"
+					],
+					"readable": [
+						".local/share/cursor-agent"
+					],
+					"credentials": [
+						".cursor/auth.json",
+						".config/cursor/auth.json"
+					],
+					"envKeys": [
+						"CURSOR_API_KEY"
+					]
+				},
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:cursor",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

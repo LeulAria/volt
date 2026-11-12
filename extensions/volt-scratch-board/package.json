@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,52 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "scratch",
+			"label": "Scratch board",
+			"description": "The whiteboard before a new chat, and the tools agents draw on it with.",
+			"category": "tools",
+			"icon": "edit",
+			"order": 40,
+			"commands": [
+				"workbench.action.voltScratchBoard.open",
+				"workbench.action.voltScratchBoard.openFresh",
+				"workbench.action.voltScratchBoard.openInTools"
+			],
+			"settings": [
+				"volt.scratch."
+			]
+		},
+		"voltTools": [
+			{
+				"name": "scratch_read",
+				"class": "safe"
+			},
+			{
+				"name": "scratch_draw",
+				"class": "safe"
+			}
+		],
+		"voltSurfaces": [
+			{
+				"id": "scratch",
+				"label": "Scratch"
+			}
+		],
+		"voltDock": [
+			{
+				"id": "scratch",
+				"label": "Scratch"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				}
+			]
+		}
+	}
 }

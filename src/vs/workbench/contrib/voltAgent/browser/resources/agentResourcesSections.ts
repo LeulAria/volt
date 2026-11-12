@@ -22,6 +22,10 @@ import { INotificationService } from '../../../../../platform/notification/commo
 import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IAgentRuntimeService, IVoltMcpServerStatus } from '../../../../services/voltRuntime/common/runtime.js';
+import { IVoltMcpApprovalRecord } from '../../../../services/voltRuntime/common/harness/mcpApprovals.js';
+import { Button } from '../../../../../base/browser/ui/button/button.js';
+import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { createVoltButton } from '../chrome/voltButton.js';
 import { AGENT_RESOURCE_ECOSYSTEM_LABELS, AGENT_RESOURCE_SCOPE_KIND_DESCRIPTIONS, AGENT_RESOURCE_SCOPE_KIND_LABELS, AgentResourceEcosystem, AgentResourceGroupId, AgentResourceScopeKind, agentResourceScopeKind } from '../../common/agentResources.js';
 import { agentResourceReaders, IAgentMcpServerEntry, IInstructionChain, IInstructionCreate, instructionChains } from '../../common/agentResourcesModel.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
@@ -100,6 +104,15 @@ interface IServerRow {
 
 const SERVER_ROW_HEIGHT = 48;
 
+class ApprovalDelegate implements IListVirtualDelegate<IVoltMcpApprovalRecord> {
+	getHeight(): number {
+		return SERVER_ROW_HEIGHT;
+	}
+	getTemplateId(): string {
+		return ApprovalRenderer.ID;
+	}
+}
+
 class ServerDelegate implements IListVirtualDelegate<IServerRow> {
 	getHeight(): number {
 		return SERVER_ROW_HEIGHT;
@@ -165,6 +178,14 @@ class ServerRenderer implements IListRenderer<IServerRow, IServerTemplate> {
 		} else if (!row.voltLoads) {
 			state = localize('agentResources.server.notVolt', "Not in Volt");
 			tone = 'muted';
+		} else if (row.status?.approval && row.status.approval !== 'approved') {
+			// A project's own server: it starts only once approved in a trusted folder.
+			switch (row.status.approval) {
+				case 'denied': state = localize('agentResources.server.denied', "Not allowed"); tone = 'muted'; break;
+				case 'changed': state = localize('agentResources.server.changed', "Changed, needs approval"); tone = 'warning'; break;
+				case 'untrusted': state = localize('agentResources.server.untrusted', "Folder not trusted"); tone = 'warning'; break;
+				default: state = localize('agentResources.server.needsApproval', "Needs approval"); tone = 'warning';
+			}
 		} else {
 			switch (row.status?.state) {
 				case 'ready': state = localize('agentResources.server.ready', "Connected"); tone = 'ok'; break;
@@ -180,6 +201,60 @@ class ServerRenderer implements IListRenderer<IServerRow, IServerTemplate> {
 	}
 
 	disposeTemplate(): void { }
+}
+
+interface IApprovalTemplate {
+	readonly name: HTMLElement;
+	readonly folder: HTMLElement;
+	readonly detail: HTMLElement;
+	readonly state: HTMLElement;
+	readonly revoke: Button;
+	readonly elementStore: DisposableStore;
+	readonly store: DisposableStore;
+}
+
+/** A decision on a project's own MCP server: what it runs, where, and Revoke to forget it. */
+class ApprovalRenderer implements IListRenderer<IVoltMcpApprovalRecord, IApprovalTemplate> {
+	static readonly ID = 'voltAgentResourceMcpApproval';
+	readonly templateId = ApprovalRenderer.ID;
+
+	constructor(private readonly onRevoke: (record: IVoltMcpApprovalRecord) => void) { }
+
+	renderTemplate(container: HTMLElement): IApprovalTemplate {
+		const store = new DisposableStore();
+		const row = append(container, $('.volt-ares-row.server'));
+		append(row, $('span.volt-ares-tile')).appendChild(renderIcon(Codicon.server));
+		const main = append(row, $('.volt-ares-row-main'));
+		const first = append(main, $('.volt-ares-row-line'));
+		const name = append(first, $('span.volt-ares-row-name'));
+		const folder = append(first, $('span.volt-ares-row-path'));
+		const detail = append(main, $('.volt-ares-row-detail'));
+		const state = append(row, $('span.volt-ares-row-source.volt-ares-server-state'));
+		const revoke = store.add(createVoltButton(row, 'ghost'));
+		revoke.label = localize('agentResources.approval.revoke', "Revoke");
+		return { name, folder, detail, state, revoke, elementStore: store.add(new DisposableStore()), store };
+	}
+
+	renderElement(record: IVoltMcpApprovalRecord, _index: number, template: IApprovalTemplate): void {
+		template.elementStore.clear();
+		template.name.textContent = record.name;
+		template.folder.textContent = record.root;
+		const spec = record.spec;
+		// Names only for the environment: the values may be secrets.
+		template.detail.textContent = spec.kind === 'http'
+			? spec.url
+			: [[spec.binary ?? spec.command, ...spec.args].join(' '), spec.envNames.length ? localize('agentResources.envRefs', "uses {0}", spec.envNames.join(', ')) : undefined].filter(Boolean).join(' · ');
+		setAgentTooltip(template.detail, template.detail.textContent);
+		const allowed = record.decision === 'allow';
+		template.state.textContent = allowed ? localize('agentResources.approval.allowed', "Approved") : localize('agentResources.approval.denied', "Not allowed");
+		template.state.className = `volt-ares-row-source volt-ares-server-state ${allowed ? 'ok' : 'muted'}`;
+		template.revoke.element.setAttribute('aria-label', localize('agentResources.approval.revokeAria', "Revoke the decision on {0} in {1}", record.name, record.root));
+		template.elementStore.add(template.revoke.onDidClick(() => this.onRevoke(record)));
+	}
+
+	disposeTemplate(template: IApprovalTemplate): void {
+		template.store.dispose();
+	}
 }
 
 /**
@@ -615,6 +690,7 @@ export class AgentResourcesSections {
 		} else {
 			this.empty(servers.body, localize('agentResources.noServers', "No MCP servers. Add one to give agents a new tool."));
 		}
+		this.renderMcpApprovals(container);
 		const files = this.block(container, localize('agentResources.configFiles', "Configuration files"), localize('agentResources.configFilesLead', "Where the servers above are defined. Files Claude Code or Cursor rewrite are read-only here."), configs.length);
 		this.scopedLists(files.body, configs, {
 			detail: item => item.servers ? (item.servers.length ? item.servers.map(server => server.name).join(', ') : localize('agentResources.noServersInFile', "No servers")) : item.description || item.kind,
@@ -622,6 +698,43 @@ export class AgentResourcesSections {
 		const external = this.block(container, localize('agentResources.pluginsExtensions', "Plugins & extensions"), localize('agentResources.pluginsLead', "Bundles installed through Volt, Claude Code, Cursor or Gemini CLI. Their manager owns them."), plugins.length);
 		this.button(external.actions, localize('agentResources.browse', "Browse"), () => this.ctx.navigate('marketplace'), 'ghost', createHomeSearchIcon);
 		this.scopedLists(external.body, plugins, { name: item => item.source ? `${item.source} · ${agentResourceName(item)}` : agentResourceName(item) }, localize('agentResources.noPlugins', "No plugins or extensions installed."));
+	}
+
+	/** Decisions on projects' own MCP servers (the composer's approval card), every folder, with Revoke. */
+	private renderMcpApprovals(container: HTMLElement): void {
+		const block = this.block(container, localize('agentResources.approvals', "Project server approvals"), localize('agentResources.approvalsLead', "A project's own MCP servers start only in a trusted folder, once you approve exactly what they run. Revoke to be asked again."));
+		const host = append(block.body, $('.volt-ares-list.volt-ares-card'));
+		const store = this.ctx.store;
+		const list = store.add(this.instantiationService.createInstance(WorkbenchList<IVoltMcpApprovalRecord>, 'VoltAgentResourceMcpApprovals', host, new ApprovalDelegate(), [new ApprovalRenderer(record => {
+			void this.runtime.revokeMcpApproval(record.root, record.name).then(() => load(), err => this.notificationService.warn(err instanceof Error ? err.message : String(err)));
+		})], {
+			identityProvider: { getId: (record: IVoltMcpApprovalRecord) => `${record.root}#${record.name}` },
+			multipleSelectionSupport: false,
+			horizontalScrolling: false,
+			alwaysConsumeMouseWheel: false,
+			accessibilityProvider: {
+				getWidgetAriaLabel: () => localize('agentResources.approvalsAria', "Project MCP server approvals"),
+				getAriaLabel: (record: IVoltMcpApprovalRecord) => `${record.name}, ${record.root}, ${record.decision === 'allow' ? localize('agentResources.approval.allowed', "Approved") : localize('agentResources.approval.denied', "Not allowed")}`,
+			},
+		}));
+		const empty = append(block.body, $('.volt-ares-empty'));
+		empty.textContent = localize('agentResources.noApprovals', "No decisions yet. A project's server asks above the composer the first time it would start.");
+		const load = () => {
+			void this.runtime.listMcpApprovals().then(records => {
+				if (store.isDisposed) {
+					return;
+				}
+				const sorted = [...records].sort((a, b) => a.root.localeCompare(b.root) || a.name.localeCompare(b.name));
+				host.style.display = sorted.length ? '' : 'none';
+				empty.style.display = sorted.length ? 'none' : '';
+				const height = sorted.length * SERVER_ROW_HEIGHT;
+				host.style.height = `${height}px`;
+				list.layout(height);
+				list.splice(0, list.length, sorted);
+			}, () => undefined);
+		};
+		host.style.display = 'none';
+		load();
 	}
 
 	private mcpCreatables(): ICreatable[] {

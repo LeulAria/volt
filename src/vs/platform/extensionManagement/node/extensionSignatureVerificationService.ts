@@ -3,13 +3,18 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import * as fs from 'fs';
 import { getErrorMessage } from '../../../base/common/errors.js';
 import { isDefined } from '../../../base/common/types.js';
+import { verifyEd25519 } from '../../../base/node/voltEd25519.js';
+import { buffer, ExtractError } from '../../../base/node/zip.js';
 import { TargetPlatform } from '../../extensions/common/extensions.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
 import { ILogService, LogLevel } from '../../log/common/log.js';
+import { IProductService } from '../../product/common/productService.js';
 import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { ExtensionSignatureVerificationCode } from '../common/extensionManagement.js';
+import { voltRegistryPublicKeys } from '../common/voltExtensionSigning.js';
 
 export const IExtensionSignatureVerificationService = createDecorator<IExtensionSignatureVerificationService>('IExtensionSignatureVerificationService');
 
@@ -48,6 +53,48 @@ export interface ExtensionSignatureVerificationResult {
 	readonly output?: string;
 }
 
+/**
+ * Volt: verifies an Open VSX signature archive against the pinned registry keys.
+ *
+ * The format, from eclipse/openvsx's signing (published as `node-ovsx-sign`,
+ * https://github.com/filiptronicek/node-ovsx-sign, src/utils/commands.ts `sign`/`verify`,
+ * src/utils/sign.ts, src/utils/constants.ts):
+ * - the `.sigzip` holds `.signature.sig`, `.signature.manifest` and an empty `.signature.p7s`
+ *   (kept only because VS Code's downloader looks for it);
+ * - `.signature.sig` is the raw 64-byte Ed25519 signature, `crypto.sign(null, <the whole .vsix>, key)`;
+ * - `.signature.manifest` is JSON with the size and base64 SHA-256 of the package and of every entry.
+ *   It is not itself signed, so it adds nothing once the whole package's signature checks out;
+ * - the registry key is an Ed25519 SPKI PEM served at `https://open-vsx.org/api/-/public-key/<id>`
+ *   (each version's `files.publicKey`). product.json pins its base64 body.
+ * Checked against open-vsx.org on 2026-11-08: the `.vsix` verifies, the manifest bytes don't.
+ */
+export async function verifyRegistrySignature(vsixFilePath: string, signatureArchiveFilePath: string, publicKeys: readonly string[]): Promise<ExtensionSignatureVerificationResult> {
+	let signature: Buffer;
+	try {
+		signature = await buffer(signatureArchiveFilePath, '.signature.sig');
+	} catch (error) {
+		const corrupt = error instanceof ExtractError && error.type === 'CorruptZip';
+		return {
+			code: corrupt ? ExtensionSignatureVerificationCode.SignatureArchiveIsInvalidZip : ExtensionSignatureVerificationCode.SignatureIsMissing,
+			didExecute: true,
+			output: getErrorMessage(error),
+		};
+	}
+	let vsix: Buffer;
+	try {
+		vsix = await fs.promises.readFile(vsixFilePath);
+	} catch (error) {
+		return { code: ExtensionSignatureVerificationCode.PackageIsUnreadable, didExecute: true, output: getErrorMessage(error) };
+	}
+	if (signature.byteLength !== 64) {
+		return { code: ExtensionSignatureVerificationCode.SignatureIsUnreadable, didExecute: true, output: `The signature is ${signature.byteLength} bytes, not an Ed25519 signature` };
+	}
+	if (publicKeys.some(key => verifyEd25519(vsix, signature, key))) {
+		return { code: ExtensionSignatureVerificationCode.Success, didExecute: true };
+	}
+	return { code: ExtensionSignatureVerificationCode.SignatureIsNotValid, didExecute: true, output: 'The package is not signed by a pinned registry key' };
+}
+
 export class ExtensionSignatureVerificationService implements IExtensionSignatureVerificationService {
 	declare readonly _serviceBrand: undefined;
 
@@ -56,6 +103,7 @@ export class ExtensionSignatureVerificationService implements IExtensionSignatur
 	constructor(
 		@ILogService private readonly logService: ILogService,
 		@ITelemetryService private readonly telemetryService: ITelemetryService,
+		@IProductService private readonly productService: IProductService,
 	) { }
 
 	private vsceSign(): Promise<typeof vsceSign> {
@@ -72,14 +120,19 @@ export class ExtensionSignatureVerificationService implements IExtensionSignatur
 	}
 
 	public async verify(extensionId: string, version: string, vsixFilePath: string, signatureArchiveFilePath: string, clientTargetPlatform?: TargetPlatform): Promise<IExtensionSignatureVerificationResult | undefined> {
-		let module: typeof vsceSign;
+		// Volt (INV-29): with registry keys pinned in product.json, Open VSX's Ed25519 `.sigzip` is
+		// verified here; @vscode/vsce-sign isn't shipped and can't parse that format anyway.
+		const registryKeys = voltRegistryPublicKeys(this.productService);
+		let module: typeof vsceSign | undefined;
 
-		try {
-			module = await this.vsceSign();
-		} catch (error) {
-			this.logService.error('Could not load vsce-sign module', getErrorMessage(error));
-			this.logService.info(`Extension signature verification is not done: ${extensionId}`);
-			return undefined;
+		if (!registryKeys.length) {
+			try {
+				module = await this.vsceSign();
+			} catch (error) {
+				this.logService.error('Could not load vsce-sign module', getErrorMessage(error));
+				this.logService.info(`Extension signature verification is not done: ${extensionId}`);
+				return undefined;
+			}
 		}
 
 		const startTime = new Date().getTime();
@@ -87,7 +140,9 @@ export class ExtensionSignatureVerificationService implements IExtensionSignatur
 
 		try {
 			this.logService.trace(`Verifying extension signature for ${extensionId}...`);
-			result = await module.verify(vsixFilePath, signatureArchiveFilePath, this.logService.getLevel() === LogLevel.Trace);
+			result = module
+				? await module.verify(vsixFilePath, signatureArchiveFilePath, this.logService.getLevel() === LogLevel.Trace)
+				: await verifyRegistrySignature(vsixFilePath, signatureArchiveFilePath, registryKeys);
 		} catch (e) {
 			result = {
 				code: ExtensionSignatureVerificationCode.UnknownError,

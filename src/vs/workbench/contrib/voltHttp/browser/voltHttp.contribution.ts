@@ -94,6 +94,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: NEW_REQUEST_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltHttp.new', "New HTTP Request"),
 			category: localize2('voltHttp.category', "HTTP Client"),
 			icon: Codicon.add,
@@ -108,7 +109,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: OPEN_HTTP_IN_TOOLS_COMMAND_ID, title: localize2('voltHttp.openInTools', "Open HTTP Client Beside Chat") });
+		super({ id: OPEN_HTTP_IN_TOOLS_COMMAND_ID, visibility: 'internal', title: localize2('voltHttp.openInTools', "Open HTTP Client Beside Chat") });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		// The newest request tab comes back; otherwise a new request.
@@ -119,7 +120,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: OPEN_HTTP_REQUEST_COMMAND_ID, title: localize2('voltHttp.open', "Open HTTP Request") });
+		super({ id: OPEN_HTTP_REQUEST_COMMAND_ID, visibility: 'internal', title: localize2('voltHttp.open', "Open HTTP Request") });
 	}
 	override async run(accessor: ServicesAccessor, uri?: unknown, line?: unknown): Promise<void> {
 		if (URI.isUri(uri) && typeof line === 'number') {
@@ -133,7 +134,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: SEND_AT_COMMAND_ID, title: localize2('voltHttp.sendAt', "Send HTTP Request") });
+		super({ id: SEND_AT_COMMAND_ID, visibility: 'internal', title: localize2('voltHttp.sendAt', "Send HTTP Request") });
 	}
 	override async run(accessor: ServicesAccessor, uri?: unknown, line?: unknown): Promise<void> {
 		if (URI.isUri(uri) && typeof line === 'number') {
@@ -148,7 +149,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: OPEN_HTTP_EXCHANGE_COMMAND_ID, title: localize2('voltHttp.openExchange', "Open HTTP History Entry") });
+		super({ id: OPEN_HTTP_EXCHANGE_COMMAND_ID, visibility: 'internal', title: localize2('voltHttp.openExchange', "Open HTTP History Entry") });
 	}
 	override async run(accessor: ServicesAccessor, id?: unknown, sessionId?: unknown): Promise<void> {
 		const http = accessor.get(IVoltHttpService);
@@ -167,6 +168,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: SELECT_ENV_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltHttp.selectEnv', "Select HTTP Environment"),
 			category: localize2('voltHttp.category', "HTTP Client"),
 			icon: Codicon.symbolVariable,
@@ -191,6 +193,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: REFRESH_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltHttp.refresh', "Refresh"),
 			icon: Codicon.refresh,
 			menu: [{ id: MenuId.ViewTitle, when: ContextKeyExpr.equals('view', VOLT_HTTP_REQUESTS_VIEW_ID), group: 'navigation', order: 3 }],

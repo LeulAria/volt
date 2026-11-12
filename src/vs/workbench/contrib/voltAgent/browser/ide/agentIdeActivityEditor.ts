@@ -257,7 +257,7 @@ async function openBeside(accessor: ServicesAccessor, input: EditorInput, reques
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: OPEN_IDE_ACTIVITY_TAB_COMMAND_ID, title: localize2('voltIde.openTab', "Open Agent IDE Tab") });
+		super({ id: OPEN_IDE_ACTIVITY_TAB_COMMAND_ID, visibility: 'internal', title: localize2('voltIde.openTab', "Open Agent IDE Tab") });
 	}
 
 	override async run(accessor: ServicesAccessor, request?: IOpenTabRequest): Promise<void> {

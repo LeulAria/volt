@@ -19,6 +19,7 @@ import { createDecorator } from '../../../../platform/instantiation/common/insta
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWebviewPortMapping } from '../../../../platform/webview/common/webviewPortMapping.js';
 import { Memento, MementoObject } from '../../../common/memento.js';
+import { areWebviewOwnerPoliciesEqual, IWebviewOwnerPolicy } from '../common/voltWebviewOwnership.js';
 
 /**
  * Set when the find widget in a webview in a webview is visible.
@@ -140,6 +141,12 @@ export interface WebviewContentOptions {
 	 * TODO: This is only supported by mainThreadWebviews and should be removed from here.
 	 */
 	readonly enableCommandUris?: boolean | readonly string[];
+
+	/**
+	 * Volt: what core enforces on an extension's webview (CSP floor, egress), set by core from the
+	 * extension it knows, never from the extension's options (spec I.10). Unset for core's own webviews.
+	 */
+	readonly ownerPolicy?: IWebviewOwnerPolicy;
 }
 
 /**
@@ -153,6 +160,7 @@ export function areWebviewContentOptionsEqual(a: WebviewContentOptions, b: Webvi
 		&& equals(a.localResourceRoots, b.localResourceRoots, isEqual)
 		&& equals(a.portMapping, b.portMapping, (a, b) => a.extensionHostPort === b.extensionHostPort && a.webviewPort === b.webviewPort)
 		&& areEnableCommandUrisEqual(a, b)
+		&& areWebviewOwnerPoliciesEqual(a.ownerPolicy, b.ownerPolicy)
 	);
 }
 

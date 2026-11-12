@@ -15,7 +15,12 @@ import { IEnvironmentMainService } from '../../environment/electron-main/environ
 import { ILifecycleMainService, LifecycleMainPhase } from '../../lifecycle/electron-main/lifecycleMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { IVoltSpeechEndpoint, IVoltSpeechEvent, IVoltSpeechService, IVoltSpeechStartOptions, transcriptionUrl, VoltSpeechEngine, VOLT_SPEECH_SAMPLE_RATE, wavFromPcm16 } from '../common/voltSpeech.js';
+import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
+import { HelperRefusedError, helperIntegrity } from '../../voltHelpers/node/helperIntegrity.js';
 import { VOLT_SPEECH_HELPER_INFO_PLIST, VOLT_SPEECH_HELPER_SOURCE } from './voltSpeechHelper.js';
+
+/** The speech helper's id in `out/volt-helpers-manifest.json`. */
+const SPEECH_HELPER_ID = 'speech';
 
 const ENDPOINT_TIMEOUT_MS = 120_000;
 /** The helper waits two minutes for an answer to the speech prompt. */
@@ -58,6 +63,7 @@ export class VoltSpeechMainService extends Disposable implements IVoltSpeechServ
 	private readonly probes = new Map<string, Promise<IHelperProbe>>();
 	private helper: Promise<string> | undefined;
 	private readonly voiceDir: string;
+	private readonly integrity = helperIntegrity();
 
 	constructor(
 		@IEnvironmentMainService environmentMainService: IEnvironmentMainService,
@@ -65,8 +71,9 @@ export class VoltSpeechMainService extends Disposable implements IVoltSpeechServ
 		@ILogService private readonly logService: ILogService,
 	) {
 		super();
-		// Shared by every profile and Volt build: macOS keeps the helper's speech permission per binary
-		// path, so a helper per profile would ask again in each one.
+		// Developer mode only (packaged builds run the bundled helper). Shared by every profile and dev
+		// build: macOS keeps a self-responsible helper's speech permission per binary, so a helper per
+		// profile would ask again in each one.
 		this.voiceDir = join(homedir(), '.volt', 'speech');
 		if (process.platform === 'darwin' && !environmentMainService.isExtensionDevelopment && !environmentMainService.args['enable-smoke-test-driver']) {
 			void lifecycleMainService.when(LifecycleMainPhase.Eventually).then(() => this.askForAccess());
@@ -81,12 +88,14 @@ export class VoltSpeechMainService extends Disposable implements IVoltSpeechServ
 			const helper = await this.ensureHelper();
 			const probe = await this.probe(helper, options.locale);
 			if (probe.onDevice) {
+				await this.integrity.assert(SPEECH_HELPER_ID, helper);
 				return this.startApple(options, helper, 'apple-on-device');
 			}
 			if (options.endpoint) {
 				return this.startEndpoint(options.sessionId, options.endpoint);
 			}
 			if (probe.available) {
+				await this.integrity.assert(SPEECH_HELPER_ID, helper);
 				return this.startApple(options, helper, 'apple');
 			}
 			throw new Error(`Speech recognition is not available for ${options.locale} on this Mac.`);
@@ -153,7 +162,7 @@ export class VoltSpeechMainService extends Disposable implements IVoltSpeechServ
 		if (engine === 'apple-on-device') {
 			args.push('--on-device');
 		}
-		const child = spawn(helper, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+		const child = spawn(helper, args, { stdio: ['pipe', 'pipe', 'pipe'], env: childEnvFromHost(process.env) });
 		const session: IAppleSession = { kind: 'apple', child, partial: '', ending: false, settled: false, stdout: '' };
 		this.sessions.set(options.sessionId, session);
 		child.stdout.setEncoding('utf8');
@@ -255,7 +264,7 @@ export class VoltSpeechMainService extends Disposable implements IVoltSpeechServ
 				this.logService.info(`[volt-speech] microphone access is ${microphone}, so speech recognition is not asked for`);
 				return;
 			}
-			if (!await hasDeveloperTools()) {
+			if (!await this.integrity.bundledPath(SPEECH_HELPER_ID) && !await hasDeveloperTools()) {
 				this.logService.info('[volt-speech] no Xcode command line tools to build the speech helper, so speech recognition is not asked for');
 				return;
 			}
@@ -267,9 +276,10 @@ export class VoltSpeechMainService extends Disposable implements IVoltSpeechServ
 	}
 
 	/** macOS shows its speech prompt for the helper when it has no answer yet; resolves with the answer. */
-	private authorize(helper: string): Promise<string> {
+	private async authorize(helper: string): Promise<string> {
+		await this.integrity.assert(SPEECH_HELPER_ID, helper);
 		return new Promise((resolve, reject) => {
-			execFile(helper, ['--authorize'], { timeout: AUTHORIZE_TIMEOUT_MS }, (error, stdout) => {
+			execFile(helper, ['--authorize'], { timeout: AUTHORIZE_TIMEOUT_MS, env: childEnvFromHost(process.env) }, (error, stdout) => {
 				if (error) {
 					reject(error);
 					return;
@@ -290,8 +300,8 @@ export class VoltSpeechMainService extends Disposable implements IVoltSpeechServ
 		if (cached) {
 			return cached;
 		}
-		const probe = new Promise<IHelperProbe>((resolve, reject) => {
-			execFile(helper, ['--probe', '--locale', locale], { timeout: 15_000 }, (error, stdout) => {
+		const probe = this.integrity.assert(SPEECH_HELPER_ID, helper).then(() => new Promise<IHelperProbe>((resolve, reject) => {
+			execFile(helper, ['--probe', '--locale', locale], { timeout: 15_000, env: childEnvFromHost(process.env) }, (error, stdout) => {
 				if (error) {
 					reject(error);
 					return;
@@ -304,18 +314,46 @@ export class VoltSpeechMainService extends Disposable implements IVoltSpeechServ
 					reject(err);
 				}
 			});
-		});
+		}));
 		this.probes.set(locale, probe);
 		probe.catch(() => this.probes.delete(locale));
 		return probe;
 	}
 
 	private ensureHelper(): Promise<string> {
-		this.helper ??= this.buildHelper().catch(err => {
+		this.helper ??= this.resolveHelper().catch(err => {
 			this.helper = undefined;
 			throw err;
 		});
 		return this.helper;
+	}
+
+	/**
+	 * The signed helper inside the app bundle, verified before each launch. Only a build from sources
+	 * (the unsigned helpers developer mode) compiles one on first use, into `~/.volt/speech`.
+	 *
+	 * Speech permission: started normally, Volt is the helper's responsible process and Volt's own
+	 * Speech Recognition approval covers it wherever the helper lives. Only a helper whose launcher
+	 * lacks the usage description re-launches itself as its own responsible process; macOS then keys
+	 * the approval to the helper's code identity. For a Developer ID signed helper that is its team
+	 * and identifier, which survive updates; for an ad-hoc or runtime-built one it is the binary
+	 * itself, which is why the developer build stays in one shared folder.
+	 */
+	private async resolveHelper(): Promise<string> {
+		const bundled = await this.integrity.bundledPath(SPEECH_HELPER_ID);
+		if (bundled) {
+			return bundled;
+		}
+		if (!this.integrity.developerMode) {
+			throw new HelperRefusedError(SPEECH_HELPER_ID, 'this build of Volt does not include it');
+		}
+		const binary = await this.buildHelper();
+		const trusted = await this.integrity.trustDeveloperHelper(SPEECH_HELPER_ID, binary);
+		if (!trusted.ok) {
+			throw new HelperRefusedError(SPEECH_HELPER_ID, trusted.reason ?? 'it failed verification');
+		}
+		this.logService.warn(`[volt-speech] unsigned helpers developer mode: running the speech helper built at ${binary}`);
+		return binary;
 	}
 
 	private async buildHelper(): Promise<string> {

@@ -5,14 +5,18 @@
 
 import { ChildProcess, execFile, spawn } from 'child_process';
 import { promises as fs } from 'fs';
-import { createServer as createHttpServer, IncomingMessage, request } from 'http';
-import { connect, createServer, Socket } from 'net';
-import { generateUuid } from '../../../base/common/uuid.js';
+import { IncomingMessage, request, type Server } from 'http';
+import { connect } from 'net';
 import { delimiter, join } from '../../../base/common/path.js';
 import { ILogService } from '../../log/common/log.js';
+import { createAuthenticatedServer, freeLoopbackPort, ListenerAuth, listenOn, loopbackHostNames, newListenerSecret, secretsEqual } from '../../voltListeners/node/listenerAuth.js';
+import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
+import { HelperIntegrity, helperIntegrity } from '../../voltHelpers/node/helperIntegrity.js';
+import { DEVICE_HUB_LOCKFILE, DEVICE_HUB_MANIFEST, DEVICE_HUB_PACKAGE, DEVICE_HUB_VERSION } from '../common/deviceHubPin.js';
 
-export const DEVICE_HUB_PACKAGE = 'expo-device-hub';
-export const DEVICE_HUB_VERSION = '0.19.1';
+export { DEVICE_HUB_PACKAGE, DEVICE_HUB_VERSION };
+/** What a finished install says in `.install-complete`: installs from before the pin are redone. */
+const INSTALL_SENTINEL = `pinned ${DEVICE_HUB_VERSION}`;
 const READY_TIMEOUT = 30_000;
 const INSTALL_TIMEOUT = 240_000;
 const ATTACH_TIMEOUT = 60_000;
@@ -21,12 +25,14 @@ const ATTACH_TIMEOUT = 60_000;
  * Expo's device hub (MIT, https://github.com/expo/expo-device-hub), run as a child on a loopback
  * port. Its serve-sim streams an iOS simulator's screens as H.264 (both displays of an iPhone Duo)
  * and takes touches, keys and hinge commands over a WebSocket, through the simulator's own HID, so
- * no AXe or idb is needed. Installed with npm into `toolsDir` on first use, like T3 Code does.
+ * no AXe or idb is needed. Installed with `npm ci` into `toolsDir` on first use from a lockfile
+ * pinned in Volt's code (every package's registry integrity, no install scripts); the whole tree
+ * is checked against a pinned digest before every launch (spec I.11, B-14).
  */
 export class DeviceHub {
 
 	private starting: Promise<{ hub: string; window: string }> | undefined;
-	private proxy: ReturnType<typeof createHttpServer> | undefined;
+	private proxy: Server | undefined;
 	/** The window's base URL. It outlives hub restarts: the proxy forwards to `hubPort`. */
 	private proxyBase: Promise<string> | undefined;
 	private hubPort = 0;
@@ -45,6 +51,7 @@ export class DeviceHub {
 		private readonly logService: ILogService,
 		/** Folders to put first on the hub's PATH: serve-emu runs `adb` by name, which the SDK does not put on PATH. */
 		private readonly extraPath: () => Promise<readonly string[]> = async () => [],
+		private readonly integrity: HelperIntegrity = helperIntegrity(),
 	) {
 		process.once('exit', () => this.dispose());
 	}
@@ -185,8 +192,8 @@ export class DeviceHub {
 
 	private async start(): Promise<{ hub: string; window: string }> {
 		const entry = await this.install();
-		const port = await freePort();
-		const env = await this.env();
+		const port = await freeLoopbackPort();
+		const env = childEnvFromHost(await this.env());
 		// The hub's native modules (serve-sim, node-datachannel) are built for Node, not Electron.
 		const node = await this.which('node');
 		const command = node ?? process.execPath;
@@ -243,13 +250,25 @@ export class DeviceHub {
 		throw new Error('The device hub did not answer within 30 seconds.');
 	}
 
-	/** Forwards `/<token>/...` (HTTP and WebSocket) to the current hub for Volt's window, adding CORS. */
+	/**
+	 * Forwards `/<secret>/...` (HTTP and WebSocket) to the current hub for Volt's window, adding
+	 * CORS. The path's first segment is a per-launch bearer (the window can't put a header on a
+	 * `<video>` or a WebSocket), checked by the listener library: Host must be loopback, sockets and
+	 * writes need the window's Origin.
+	 */
 	private async startProxy(): Promise<string> {
-		const prefix = `/${generateUuid()}`;
-		const allowed = (req: IncomingMessage) => {
-			const origin = req.headers.origin;
-			return (!origin || origin === 'vscode-file://vscode-app') && !!req.url?.startsWith(`${prefix}/`);
-		};
+		const secret = newListenerSecret();
+		const prefix = `/${secret}`;
+		let port = 0;
+		const auth = new ListenerAuth<true>({
+			hosts: () => ({ names: loopbackHostNames(port) }),
+			extract: req => {
+				const match = /^\/([A-Za-z0-9_-]{43})\//.exec(req.url ?? '');
+				return match ? { secret: match[1], via: 'path' } : undefined;
+			},
+			verify: candidate => secretsEqual(candidate, secret) || undefined,
+			browserOrigins: ['vscode-file://vscode-app'],
+		});
 		const cors = (req: IncomingMessage): Record<string, string> => req.headers.origin ? {
 			'access-control-allow-origin': req.headers.origin,
 			'access-control-allow-headers': 'content-type',
@@ -261,11 +280,7 @@ export class DeviceHub {
 			delete headers.referer;
 			return headers;
 		};
-		const proxy = createHttpServer((req, res) => {
-			if (!allowed(req)) {
-				res.writeHead(403).end();
-				return;
-			}
+		const proxy = createAuthenticatedServer(auth, (req, res) => {
 			if (req.method === 'OPTIONS') {
 				res.writeHead(204, cors(req)).end();
 				return;
@@ -277,12 +292,7 @@ export class DeviceHub {
 			upstream.on('error', () => res.headersSent ? res.destroy() : res.writeHead(502).end());
 			res.on('close', () => upstream.destroy());
 			req.pipe(upstream);
-		});
-		proxy.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
-			if (!allowed(req)) {
-				socket.destroy();
-				return;
-			}
+		}, (req, socket, head) => {
 			// Touches are tiny writes: send each at once instead of waiting to batch them.
 			socket.setNoDelay(true);
 			const upstream = connect(this.hubPort, '127.0.0.1', () => {
@@ -310,58 +320,57 @@ export class DeviceHub {
 			upstream.on('close', close);
 			socket.on('close', close);
 		});
-		const port = await new Promise<number>((resolve, reject) => {
-			proxy.once('error', reject);
-			proxy.listen(0, '127.0.0.1', () => {
-				const address = proxy.address();
-				resolve(typeof address === 'object' && address ? address.port : 0);
-			});
-		});
+		port = await listenOn(proxy, 0);
 		this.proxy = proxy;
 		return `http://127.0.0.1:${port}${prefix}`;
 	}
 
-	/** The hub's CLI entry, installing `expo-device-hub` with npm the first time. */
+	/**
+	 * The hub's CLI entry: installs the pinned tree the first time (or over an install from before
+	 * the pin), then checks the installed tree. A tree that does not match is refused, never run.
+	 */
 	private async install(): Promise<string> {
 		const dir = join(this.toolsDir, DEVICE_HUB_PACKAGE, DEVICE_HUB_VERSION);
 		const entry = join(dir, 'node_modules', DEVICE_HUB_PACKAGE, 'dist', 'server', 'cli.mjs');
 		const sentinel = join(dir, '.install-complete');
-		if (await fs.readFile(sentinel, 'utf8').then(text => text.trim() === DEVICE_HUB_VERSION, () => false)) {
-			return entry;
+		if (!await fs.readFile(sentinel, 'utf8').then(text => text.trim() === INSTALL_SENTINEL, () => false)) {
+			await this.installPinned(dir);
 		}
+		// Before every launch: a file changed since the install is refused.
+		await this.integrity.assert('device-hub', dir);
+		return entry;
+	}
+
+	private async installPinned(dir: string): Promise<void> {
 		const npm = await this.which('npm');
 		if (!npm) {
 			throw new Error('Live simulator streaming needs npm to install Expo\'s device hub once. Install Node.js (https://nodejs.org) and try again.');
 		}
-		this.logService.info(`[volt-devices] installing ${DEVICE_HUB_PACKAGE}@${DEVICE_HUB_VERSION} into ${dir}`);
+		this.logService.info(`[volt-devices] installing ${DEVICE_HUB_PACKAGE}@${DEVICE_HUB_VERSION} (pinned) into ${dir}`);
 		const staging = `${dir}.staging-${process.pid}`;
 		await fs.rm(staging, { recursive: true, force: true });
 		await fs.mkdir(staging, { recursive: true });
-		const env = await this.env();
-		await new Promise<void>((resolve, reject) => {
-			execFile(npm, ['install', '--prefix', staging, '--no-audit', '--no-fund', '--omit=dev', '--loglevel=error', `${DEVICE_HUB_PACKAGE}@${DEVICE_HUB_VERSION}`], { env: { ...env, ELECTRON_RUN_AS_NODE: undefined }, timeout: INSTALL_TIMEOUT, maxBuffer: 16 * 1024 * 1024 }, (error, _stdout, stderr) => {
-				if (error) {
-					reject(new Error(`Could not install Expo's device hub: ${String(stderr).trim().split('\n').pop() || error.message}`));
-				} else {
-					resolve();
-				}
+		try {
+			await fs.writeFile(join(staging, 'package.json'), JSON.stringify(DEVICE_HUB_MANIFEST, null, '\t'));
+			await fs.writeFile(join(staging, 'package-lock.json'), JSON.stringify(DEVICE_HUB_LOCKFILE, null, '\t'));
+			const env = childEnvFromHost(await this.env());
+			// `npm ci` installs exactly the lockfile and checks every tarball against its integrity
+			// hash; no package runs an install script.
+			await new Promise<void>((resolve, reject) => {
+				execFile(npm, ['ci', '--prefix', staging, '--ignore-scripts', '--no-audit', '--no-fund', '--omit=dev', '--loglevel=error'], { cwd: staging, env, timeout: INSTALL_TIMEOUT, maxBuffer: 16 * 1024 * 1024 }, (error, _stdout, stderr) => {
+					if (error) {
+						reject(new Error(`Could not install Expo's device hub: ${String(stderr).trim().split('\n').pop() || error.message}`));
+					} else {
+						resolve();
+					}
+				});
 			});
-		});
-		await fs.writeFile(join(staging, '.install-complete'), `${DEVICE_HUB_VERSION}\n`);
-		await fs.rm(dir, { recursive: true, force: true });
-		await fs.rename(staging, dir);
-		return entry;
+			await this.integrity.assert('device-hub', staging);
+			await fs.writeFile(join(staging, '.install-complete'), `${INSTALL_SENTINEL}\n`);
+			await fs.rm(dir, { recursive: true, force: true });
+			await fs.rename(staging, dir);
+		} finally {
+			await fs.rm(staging, { recursive: true, force: true });
+		}
 	}
-}
-
-function freePort(): Promise<number> {
-	return new Promise((resolve, reject) => {
-		const server = createServer();
-		server.once('error', reject);
-		server.listen(0, '127.0.0.1', () => {
-			const address = server.address();
-			const port = typeof address === 'object' && address ? address.port : 0;
-			server.close(() => port ? resolve(port) : reject(new Error('No free port for the device hub')));
-		});
-	});
 }

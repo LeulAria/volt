@@ -16,7 +16,7 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IVoltUsageService } from '../../../../../platform/voltUsage/common/voltUsage.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { attenuateSandbox, chatSandboxRequest, IVoltSandboxSettings, sandboxWorkspaceRoots, strongerSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IVoltSandboxSettings, sandboxWorkspaceRoots, strongerSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { stripAnsi } from '../../common/ide/testReports.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { ILifecycleService } from '../../../lifecycle/common/lifecycle.js';
@@ -45,6 +45,8 @@ import { DurableClaims } from '../jobs/durableClaims.js';
 import { BEACON_TTL_MS, WorkbenchBeacons } from '../jobs/workbenchBeacons.js';
 import { OrchestratorStore } from './orchestratorStore.js';
 import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../common/orchestration/orchestratorQueries.js';
+import { confineChatSandbox, handoffSandboxRefusal } from '../../common/access/chatSandbox.js';
+import { chatExec } from '../../common/execContext.js';
 
 /** Models one delegate_task call may run the same brief on. */
 const MAX_FAN_OUT = 4;
@@ -1034,7 +1036,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				outcome = 'skipped';
 				lines.push('No checkout to run them in.');
 			} else {
-				const sandbox = task.childId ? chatSandboxRequest(this.runtime.getSandboxSettings(task.childId), sandboxWorkspaceRoots(cwd, project, !!task.worktreePath)) : undefined;
+				const exec = chatExec(task.childId, task.childId ? this.runtime.getSandboxSettings(task.childId) : undefined, sandboxWorkspaceRoots(cwd, project, !!task.worktreePath), 'post-turn-check');
 				for (const command of task.verify) {
 					if (!current()) {
 						return;
@@ -1042,7 +1044,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 					const id = `volt-verify-${generateUuid()}`;
 					run.execIds.add(id);
 					const started = Date.now();
-					const result = await this.stdio.exec({ id, command, cwd, timeoutMs: VERIFY_COMMAND_MS, inlineChars: 16_000, ...(sandbox ? { sandbox } : {}) }).finally(() => run.execIds.delete(id));
+					const result = await this.stdio.exec({ id, command, cwd, timeoutMs: VERIFY_COMMAND_MS, inlineChars: 16_000, ...exec }).finally(() => run.execIds.delete(id));
 					const took = `${((Date.now() - started) / 1000).toFixed(1)}s`;
 					if (result.exitCode === 0 && !result.timedOut) {
 						lines.push(`- passed: \`${command}\` (${took})`);
@@ -1087,25 +1089,17 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	/**
-	 * A subagent is never sandboxed less than the chat that started it (`attenuateSandbox`), and with
-	 * `confine` at least to its checkout. Set before its first turn starts the agent process, whose
-	 * OS sandbox is fixed at launch. A failure to set it fails the start rather than run unconfined.
+	 * With `confine`, a subagent runs at least in its checkout's sandbox (read-only for research and
+	 * review), on top of its parent's (`confineChatSandbox`, every turn). Set before its first turn
+	 * starts the agent process, whose OS sandbox is fixed at launch.
 	 */
-	private async inheritSandbox(childId: string, parentId: string, role: AgentTaskRole | undefined): Promise<void> {
-		let parent: IVoltSandboxSettings;
-		let child: IVoltSandboxSettings;
-		try {
-			parent = this.runtime.getSandboxSettings(parentId);
-			child = this.runtime.getSandboxSettings(childId);
-		} catch (err) {
-			this.logService.warn('[volt orchestrator] could not read sandbox settings', err);
+	private async confineSubagent(childId: string, parentId: string, role: AgentTaskRole | undefined): Promise<void> {
+		if (this.configurationService.getValue<string>(ORCH_SUBAGENT_SANDBOX_SETTING) !== 'confine') {
 			return;
 		}
-		let next = attenuateSandbox(child, parent);
-		if (this.configurationService.getValue<string>(ORCH_SUBAGENT_SANDBOX_SETTING) === 'confine') {
-			next = { ...next, level: strongerSandboxLevel(next.level, role === 'research' || role === 'review' ? 'read-only' : 'workspace-write') };
-		}
-		if (JSON.stringify(next) !== JSON.stringify(child)) {
+		const child = this.runtime.getSandboxSettings(childId);
+		const next: IVoltSandboxSettings = { ...child, level: strongerSandboxLevel(child.level, role === 'research' || role === 'review' ? 'read-only' : 'workspace-write') };
+		if (next.level !== child.level) {
 			await this.runtime.setSandboxSettings(childId, next);
 			this.logService.info(`[volt orchestrator] ${childId}: sandbox ${next.level}${next.network ? '' : ', network off'} (from ${parentId})`);
 		}
@@ -1175,8 +1169,12 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 			}
 			const thread = this.state.threads[threadId];
+			if (thread?.parentId) {
+				// A subagent is never confined less than the chat that delegated to it (every turn: the parent's may have tightened).
+				await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(thread.parentId));
+			}
 			if (thread?.taskId && thread.parentId && turn.kind === 'brief') {
-				await this.inheritSandbox(threadId, thread.parentId, this.state.tasks[thread.taskId]?.role);
+				await this.confineSubagent(threadId, thread.parentId, this.state.tasks[thread.taskId]?.role);
 				await host.prepareChild?.(threadId, thread.parentId);
 			}
 			const runId = await host.startTurn({ threadId, turn, thread: this.state.threads[threadId] ?? thread, isCurrent: () => this.isTurnCurrent(threadId, turn.id) });
@@ -1304,6 +1302,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				worktreePath: created.path,
 				branch: created.branch,
 				isCancelled: () => isTerminalTaskState(this.state.tasks[taskId]?.state ?? 'cancelled'),
+				sandbox: this.runtime.getSandboxSettings(task.childId),
 			});
 			this.apply({ type: 'task.worktree', taskId, path: created.path, branch: created.branch });
 		} catch (err) {
@@ -1840,7 +1839,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return lines.length ? ['Models Volt can run a task on (pass the `model` value):', ...lines].join('\n') : 'No models are connected.';
 	}
 
-	private resolveModel(value: unknown): { readonly ref: string; readonly label: string } | undefined {
+	private resolveModel(value: unknown): { readonly ref: string; readonly label: string; readonly providerId: string } | undefined {
 		if (typeof value !== 'string' || !value.trim()) {
 			return undefined;
 		}
@@ -1854,7 +1853,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		if (!match) {
 			throw new Error(`No connected model matches "${value}". Call list_models for the exact values.`);
 		}
-		return { ref: match.ref, label: match.label };
+		return { ref: match.ref, label: match.label, providerId: match.providerId };
 	}
 
 	/**
@@ -2406,10 +2405,19 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return { text: `Sent the follow-up to ${taskId}.\n${describeTask(current, Date.now(), { includeResult: true })}` };
 	}
 
+	private providerOfRef(ref: string | undefined): string | undefined {
+		return ref ? this.runtime.listCatalog().find(item => item.ref === ref)?.providerId : undefined;
+	}
+
 	private handoff(threadId: string, args: Record<string, unknown>): IVoltHostToolResult {
 		const model = this.resolveModel(args.model);
 		if (!model) {
 			return { error: 'handoff needs a `model` from list_models.' };
+		}
+		// The chat keeps its sandbox; the agent it moves to may not be sandboxed more weakly (B-10, INV-11).
+		const refusal = handoffSandboxRefusal(this.runtime.getSandboxSettings(threadId), this.providerOfRef(this.state.threads[threadId]?.modelRef ?? this.runtime.getOrCreateSession(threadId).providerRef), model.providerId, model.label);
+		if (refusal) {
+			return { error: refusal };
 		}
 		const brief = typeof args.brief === 'string' ? args.brief.trim() : '';
 		const step = this.apply({ type: 'thread.handoff', threadId, to: model.ref, toLabel: model.label, by: 'agent', ...(brief ? { brief } : {}), ...(typeof args.reason === 'string' && args.reason.trim() ? { reason: args.reason.trim() } : {}) });

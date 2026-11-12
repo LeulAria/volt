@@ -8,6 +8,7 @@
 // (<channel>/<platform>.json, plus <platform>.squirrel.json for Squirrel.Mac) to the
 // `volt-update-feed` branch, served from raw.githubusercontent.com.
 // env: GH_TOKEN, CHANNEL, VERSION, TAG, PRERELEASE, REPOSITORY, COMMIT, ASSETS_DIR
+// optional: VOLT_FEED_SIGNING_KEY[_<CHANNEL>] signs the feed (feedSigning.mjs), VOLT_FEED_EXPIRY_DAYS
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -15,8 +16,10 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { feedEntries, parseAssetName } from './releaseNaming.mjs';
+import { feedSigningKeyFromEnv, publicKeyBase64, signFeedEntry } from './feedSigning.mjs';
 
 const FEED_BRANCH = 'volt-update-feed';
+const product = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', '..', '..', 'product.json'), 'utf8'));
 const { CHANNEL: channel, VERSION: version, TAG: tag, PRERELEASE, REPOSITORY: repo, COMMIT: commit } = process.env;
 const assetsDir = path.resolve(process.env.ASSETS_DIR ?? 'assets');
 const prerelease = PRERELEASE === 'true';
@@ -61,10 +64,33 @@ const assets = release.assets
 		return { name: a.name, url: a.browser_download_url, size: a.size, sha256: createHash('sha256').update(data).digest('hex') };
 	});
 const timestamp = Date.parse(release.published_at ?? release.created_at);
-const feed = feedEntries(assets, { channel, version, commit, timestamp, releaseUrl: release.html_url, notes: (release.body ?? '').slice(0, 20000) });
+const feed = signFeed(feedEntries(assets, { channel, version, commit, timestamp, releaseUrl: release.html_url, notes: (release.body ?? '').slice(0, 20000) }));
 console.log(`Feed entries: ${Object.keys(feed).join(', ')}`);
 
 writeFeed(feed, assets, release);
+
+/**
+ * Signs every entry with the channel's key when VOLT_FEED_SIGNING_KEY[_<CHANNEL>] is set (see
+ * feedSigning.mjs). Without a key the feed is written unsigned, as before; builds that pin feed keys
+ * in product.json refuse it.
+ */
+function signFeed(entries) {
+	const key = feedSigningKeyFromEnv(channel);
+	if (!key) {
+		console.log('No VOLT_FEED_SIGNING_KEY: the update feed is not signed');
+		return entries;
+	}
+	const publicKey = publicKeyBase64(key);
+	const pinned = product.voltRelease?.feedPublicKeys?.[channel];
+	if (pinned && ![pinned].flat().includes(publicKey)) {
+		throw new Error(`The feed signing key is not the ${channel} key pinned in product.json (${publicKey})`);
+	}
+	const expiryDays = Number(process.env.VOLT_FEED_EXPIRY_DAYS) || undefined;
+	const now = Date.now();
+	const signed = Object.fromEntries(Object.entries(entries).map(([platform, entry]) => [platform, signFeedEntry(entry, { channel, platform, key, now, expiryDays })]));
+	console.log(`Feed signed for ${channel} with ${publicKey}`);
+	return signed;
+}
 
 function releaseNotesHeader() {
 	// "Volt 0.0.6 | Nov 4, 2026 | `abcdef12`": Volt's release notes page reads the commit from this line (voltReleaseNotes.ts).

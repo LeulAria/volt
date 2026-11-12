@@ -11,7 +11,13 @@ import { FileAccess } from '../../../base/common/network.js';
 import { join } from '../../../base/common/path.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILogService } from '../../log/common/log.js';
+import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
+import { HelperRefusedError, helperIntegrity } from '../../voltHelpers/node/helperIntegrity.js';
 import { IVoltDesktopActResult, IVoltDesktopApp, IVoltDesktopCapture, IVoltDesktopService, IVoltDesktopSettle, IVoltDesktopStatus, IVoltDesktopTree, VoltDesktopAction } from '../common/voltDesktop.js';
+
+/** Ids in `out/volt-helpers-manifest.json`: the native helper (macOS binary, Windows DLL) and the script that runs it (Windows, Linux). */
+const DESKTOP_HELPER_ID = 'desktop';
+const DESKTOP_SCRIPT_ID = 'desktop-script';
 
 interface IPending {
 	readonly resolve: (value: unknown) => void;
@@ -32,11 +38,12 @@ const UNSUPPORTED = 'Desktop control works on macOS, Windows and Linux.';
 
 /**
  * Runs the desktop helper for this OS and sends it one JSON request per line; every helper speaks
- * the same protocol (see `VoltDesktop.swift`). On macOS that is `VoltDesktop.swift`, compiled on
- * first use with the system's Swift compiler and cached by the source's hash in Volt's data folder;
- * on Windows `VoltDesktop.windows.ps1`, which compiles `VoltDesktop.windows.cs` the same way; on
- * Linux `volt_desktop_linux.py`. A request that does not answer in time restarts the helper, so one
- * stuck app never blocks the next call.
+ * the same protocol (see `VoltDesktop.swift`). On macOS that is `VoltDesktop.swift`, built with the
+ * app and signed inside its bundle; on Windows `VoltDesktop.windows.ps1`, which loads
+ * `VoltDesktop.windows.cs` built the same way; on Linux `volt_desktop_linux.py`. Each is verified
+ * before every launch (see `helperIntegrity.ts`); a build from sources compiles the macOS and
+ * Windows helpers on first use, cached by the source's hash in Volt's data folder. A request that
+ * does not answer in time restarts the helper, so one stuck app never blocks the next call.
  */
 export class VoltDesktopMainService extends Disposable implements IVoltDesktopService {
 
@@ -47,6 +54,7 @@ export class VoltDesktopMainService extends Disposable implements IVoltDesktopSe
 	private buffer = '';
 	private nextId = 1;
 	private readonly pending = new Map<number, IPending>();
+	private readonly integrity = helperIntegrity();
 
 	constructor(
 		@IEnvironmentMainService private readonly environmentService: IEnvironmentMainService,
@@ -138,7 +146,7 @@ export class VoltDesktopMainService extends Disposable implements IVoltDesktopSe
 
 	private async launch(): Promise<ChildProcess> {
 		const [command, args] = await this.helperCommand(this.backend!);
-		const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+		const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: childEnvFromHost(process.env) });
 		child.stdout?.setEncoding('utf8');
 		// What the helper says before it is up (a missing Python module, say) explains a failed start.
 		let stderr = '';
@@ -199,23 +207,71 @@ export class VoltDesktopMainService extends Disposable implements IVoltDesktopSe
 		return FileAccess.asFileUri(`vs/platform/voltDesktop/node/helper/${name}`).fsPath;
 	}
 
-	/** How to start this OS's helper. */
+	/**
+	 * How to start this OS's helper, each file it runs checked right before the launch (B-14): the
+	 * signed binary in the app bundle on macOS, the bundled script and its prebuilt DLL on Windows,
+	 * the bundled script on Linux. Only a build from sources (the unsigned helpers developer mode)
+	 * compiles a helper at runtime into Volt's data folder.
+	 */
 	private async helperCommand(backend: Backend): Promise<[string, string[]]> {
 		const folder = join(this.environmentService.userDataPath, 'volt-desktop');
 		switch (backend) {
-			case 'mac':
-				return [await this.helperBinary(), []];
-			case 'windows':
-				// The script compiles the C# into this folder once per version of the source.
+			case 'mac': {
+				const binary = await this.helperBinary();
+				await this.integrity.assert(DESKTOP_HELPER_ID, binary);
+				return [binary, []];
+			}
+			case 'windows': {
+				const script = await this.helperScript('VoltDesktop.windows.ps1');
+				const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+				const dll = await this.integrity.bundledPath(DESKTOP_HELPER_ID);
+				if (dll) {
+					await this.integrity.assert(DESKTOP_HELPER_ID, dll);
+					return [powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, folder, String(process.pid), dll]];
+				}
+				if (!this.integrity.developerMode) {
+					throw new HelperRefusedError(DESKTOP_HELPER_ID, 'this build of Volt does not include it');
+				}
+				// Developer mode: the script compiles the C# into this folder once per version of the source.
 				await fs.mkdir(folder, { recursive: true });
-				return [join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', this.helperSource('VoltDesktop.windows.ps1'), folder, String(process.pid)]];
+				return [powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, folder, String(process.pid)]];
+			}
 			case 'linux':
-				return ['python3', [this.helperSource('volt_desktop_linux.py')]];
+				return ['python3', [await this.helperScript('volt_desktop_linux.py')]];
 		}
 	}
 
-	/** The compiled helper for the current source, building it when the source changed. */
+	/** A helper script from Volt's own files, checked against the build's manifest (pinned for the session in developer mode). */
+	private async helperScript(name: string): Promise<string> {
+		const script = this.helperSource(name);
+		if (this.integrity.developerMode && !await this.integrity.bundledPath(DESKTOP_SCRIPT_ID)) {
+			const trusted = await this.integrity.trustDeveloperHelper(DESKTOP_SCRIPT_ID, script);
+			if (!trusted.ok) {
+				throw new HelperRefusedError(DESKTOP_SCRIPT_ID, trusted.reason ?? 'it failed verification');
+			}
+		}
+		await this.integrity.assert(DESKTOP_SCRIPT_ID, script);
+		return script;
+	}
+
+	/** The bundled helper, or in developer mode the one compiled for the current source (built when the source changed). */
 	private async helperBinary(): Promise<string> {
+		const bundled = await this.integrity.bundledPath(DESKTOP_HELPER_ID);
+		if (bundled) {
+			return bundled;
+		}
+		if (!this.integrity.developerMode) {
+			throw new HelperRefusedError(DESKTOP_HELPER_ID, 'this build of Volt does not include it');
+		}
+		const binary = await this.compileHelper();
+		const trusted = await this.integrity.trustDeveloperHelper(DESKTOP_HELPER_ID, binary);
+		if (!trusted.ok) {
+			throw new HelperRefusedError(DESKTOP_HELPER_ID, trusted.reason ?? 'it failed verification');
+		}
+		return binary;
+	}
+
+	private async compileHelper(): Promise<string> {
 		const source = this.helperSource('VoltDesktop.swift');
 		const code = await fs.readFile(source);
 		const hash = createHash('sha256').update(code).digest('hex').slice(0, 16);

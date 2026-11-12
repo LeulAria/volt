@@ -123,6 +123,8 @@ export function formatSymbols(symbols: readonly IVoltCodeSymbol[], limitHit: boo
 export const INSTANT_GREP_TOOL_NAME = 'instant_grep';
 export const FIND_SYMBOL_TOOL_NAME = 'find_symbol';
 export const FIND_FILES_TOOL_NAME = 'find_files';
+/** The editor's language servers over MCP, served by the same module (schemas in codeTools.ts). */
+export const LANGUAGE_SERVER_TOOL_NAMES: readonly string[] = ['code_nav', 'diagnostics', 'code_action'];
 
 export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 	{

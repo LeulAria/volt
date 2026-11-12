@@ -45,6 +45,11 @@ export function fffAsset(platform: string, arch: string, musl = false): IFffAsse
 	return name && sha256 ? { name, sha256, url: `https://github.com/dmtrKovalenko/fff/releases/download/v${FFF_VERSION}/${name}` } : undefined;
 }
 
+/** The SHA-256 of every release binary that may run on this platform (glibc and musl on Linux). */
+export function fffPinnedDigests(platform: string, arch: string): string[] {
+	return [fffAsset(platform, arch, false), fffAsset(platform, arch, true)].filter((asset): asset is IFffAsset => !!asset).map(asset => asset.sha256);
+}
+
 /** `fff-mcp 0.11.0 (95fd777c...)` -> `0.11.0`. */
 export function parseFffVersion(output: string): string | undefined {
 	return /fff-mcp\s+v?(\d+\.\d+\.\d+[\w.-]*)/.exec(output)?.[1];

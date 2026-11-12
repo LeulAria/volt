@@ -1,0 +1,147 @@
+name: Sandbox (Windows MXC)
+
+# Verifies Volt's Windows sandbox backend (MXC ProcessContainer through wxc-exec) on GitHub's
+# hosted windows-11-arm runner, the only hosted image with ProcessContainer (Windows Server
+# images report "PSEC is not enabled"). Covers arm64 only; x64 needs a self-hosted Windows 11 VM.
+#
+#   helper:   builds volt-mxc-helper.exe with zig and checks it reproduces the digests pinned in
+#             src/vs/platform/voltSandbox/common/mxc.ts.
+#   windows:  fetches the pinned wxc-exec.exe, runs the WIN-* suite with VOLT_SANDBOX_REQUIRED=1
+#             at Medium integrity (as users run Volt), after the Git Bash experiment (WIN-MSYS-2) that
+#             prepares the patched MSYS2 runtime copy the suite's WIN-MSYS-2 case runs.
+# Release workflows are unchanged: packaging the binaries is a separate step.
+
+on:
+  push:
+    branches:
+      - 'volt-sbx/**'
+      - main
+    paths:
+      - 'src/vs/platform/voltSandbox/**'
+      - 'src/vs/platform/voltHelpers/**'
+      - 'build/volt/mxc/**'
+      - 'scripts/volt-sandbox-windows-*'
+      - '.github/workflows/volt-sandbox-windows.yml'
+  pull_request:
+    paths:
+      - 'src/vs/platform/voltSandbox/**'
+      - 'src/vs/platform/voltHelpers/**'
+      - 'build/volt/mxc/**'
+      - 'scripts/volt-sandbox-windows-*'
+      - '.github/workflows/volt-sandbox-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  helper:
+    name: Build volt-mxc-helper (reproducible)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # zig 0.16.0's aarch64-windows build crashes on the arm64 runner; Linux cross-compiles the
+      # same bytes (the macOS build matches too).
+      - name: Install zig 0.16.0
+        run: |
+          curl -sSLo "$RUNNER_TEMP/zig.tar.xz" https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz
+          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "ZIG=$RUNNER_TEMP/zig-x86_64-linux-0.16.0/zig" >> "$GITHUB_ENV"
+
+      - name: Build and check the pinned digests
+        run: |
+          node build/volt/mxc/buildHelper.mjs --out "$RUNNER_TEMP/mxc" --check-pinned
+          # Test-only launcher that drops to Medium integrity (never shipped).
+          "$ZIG" cc -target aarch64-windows-gnu -municode -O2 -s -o "$RUNNER_TEMP/mxc/run-medium.exe" build/volt/mxc/test/runMedium.c -ladvapi32
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: mxc-helper
+          path: ${{ runner.temp }}/mxc
+
+  windows:
+    name: WIN-* suite (windows-11-arm)
+    needs: helper
+    runs-on: windows-11-arm
+    timeout-minutes: 45
+    env:
+      VOLT_SANDBOX_REQUIRED: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Electron 37's Node line, so the backend runs on the Node it ships with.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.19.0
+          architecture: arm64
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: mxc-helper
+          path: ${{ runner.temp }}/mxc
+
+      - name: Fetch the pinned wxc-exec
+        shell: pwsh
+        run: |
+          node build/volt/mxc/fetchWxcExec.mjs --out "$env:RUNNER_TEMP\mxc"
+          $exe = "$env:RUNNER_TEMP\mxc\arm64\wxc-exec.exe"
+          $sig = Get-AuthenticodeSignature $exe
+          "wxc-exec Authenticode: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'CN=Microsoft Corporation') { throw 'wxc-exec is not signed by Microsoft' }
+          "VOLT_MXC_DIR=$env:RUNNER_TEMP\mxc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VOLT_WXC_EXEC=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Host facts
+        shell: pwsh
+        run: |
+          $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+          $line = "Runner: $($cv.EditionID) $($cv.DisplayVersion) build $($cv.CurrentBuild).$($cv.UBR) $env:PROCESSOR_ARCHITECTURE, InstallationType $($cv.InstallationType)"
+          $line
+          "- $line" | Add-Content $env:GITHUB_STEP_SUMMARY
+          & $env:VOLT_WXC_EXEC --probe
+
+      - name: Install test tools
+        shell: pwsh
+        run: |
+          $tools = "$env:RUNNER_TEMP\tools"
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          Set-Content -Path "$tools\package.json" -Value '{"private":true}'
+          npm install --prefix $tools --no-audit --no-fund esbuild@0.25.12 mocha@11.8.0
+          "VOLT_TEST_TOOLS=$tools" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: MXC translation unit tests
+        shell: pwsh
+        run: node scripts/volt-sandbox-windows-test.mjs src/vs/platform/voltSandbox/test/common/mxc.test.ts
+
+      - name: Medium-integrity launcher check
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\mxc\run-medium.exe" "$env:SystemRoot\System32\whoami.exe" /groups /fo list | Select-String -Pattern 'Mandatory Label|Administrators' -Context 0,3
+          & "$env:RUNNER_TEMP\mxc\run-medium.exe" node -e "const cp = require('child_process'); try { console.log('child:', cp.execFileSync(process.env.SystemRoot + '\\System32\\cmd.exe', ['/d', '/c', 'ver']).toString().trim()); } catch (e) { console.log('child failed:', e.message); process.exit(1); }"
+          if ($LASTEXITCODE -ne 0) { throw "a Medium-integrity process cannot start children ($LASTEXITCODE)" }
+
+      # Records stock Git Bash's MXC#1061 failure and prepares the patched runtime copy that the
+      # suite's WIN-MSYS-2 case runs through Volt's backend (VOLT_MSYS_RUNTIME_ROOT).
+      - name: Git Bash experiment (WIN-MSYS-2)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/volt-sandbox-windows-gitbash.ps1
+
+      - name: WIN-* adversarial suite (Medium integrity)
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\mxc\run-medium.exe" node scripts/volt-sandbox-windows-test.mjs src/vs/platform/voltSandbox/test/node/mxcSecurity.test.ts
+          if ($LASTEXITCODE -ne 0) { throw "WIN-* suite failed ($LASTEXITCODE)" }
+

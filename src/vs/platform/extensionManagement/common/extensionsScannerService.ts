@@ -14,7 +14,7 @@ import { Disposable } from '../../../base/common/lifecycle.js';
 import { FileAccess, Schemas } from '../../../base/common/network.js';
 import * as path from '../../../base/common/path.js';
 import * as platform from '../../../base/common/platform.js';
-import { basename, isEqual, joinPath } from '../../../base/common/resources.js';
+import { basename, dirname, isEqual, joinPath } from '../../../base/common/resources.js';
 import * as semver from '../../../base/common/semver/semver.js';
 import Severity from '../../../base/common/severity.js';
 import { URI } from '../../../base/common/uri.js';
@@ -34,6 +34,7 @@ import { ExtensionsProfileScanningError, ExtensionsProfileScanningErrorCode, IEx
 import { IUserDataProfile, IUserDataProfilesService } from '../../userDataProfile/common/userDataProfile.js';
 import { IUriIdentityService } from '../../uriIdentity/common/uriIdentity.js';
 import { localizeManifest } from './extensionNls.js';
+import { VoltBuiltinIntegrity } from './voltBuiltinIntegrity.js';
 
 export type ManifestMetadata = Partial<{
 	targetPlatform: TargetPlatform;
@@ -418,8 +419,28 @@ export abstract class AbstractExtensionsScannerService extends Disposable implem
 		const extensionsScannerInput = await this.createExtensionScannerInput(this.systemExtensionsLocation, false, ExtensionType.System, language, true, undefined, this.getProductVersion());
 		const extensionsScanner = extensionsScannerInput.devMode ? this.extensionsScanner : this.systemExtensionsCachedScanner;
 		const result = await extensionsScanner.scanExtensions(extensionsScannerInput);
+		await this.checkBuiltinIntegrity(result);
 		this.logService.trace('Scanned system extensions:', result.length);
 		return result;
+	}
+
+	private _voltBuiltinIntegrity: VoltBuiltinIntegrity | undefined;
+
+	/** Volt (H.10): a `volt-*` built-in whose files differ from builtin-manifest.json is invalid, so it isn't loaded. */
+	private async checkBuiltinIntegrity(extensions: IRelaxedScannedExtension[]): Promise<void> {
+		this._voltBuiltinIntegrity ??= new VoltBuiltinIntegrity({
+			appRoot: dirname(this.systemExtensionsLocation),
+			isBuilt: this.environmentService.isBuilt,
+			manifestSha256: this.productService.voltBuiltinManifestSha256,
+		}, this.fileService, this.logService);
+		const failures = await this._voltBuiltinIntegrity.checkExtensions(extensions.map(extension => extension.location));
+		for (const extension of extensions) {
+			const why = failures.get(extension.location.toString());
+			if (why) {
+				extension.isValid = false;
+				extension.validations = [...extension.validations, [Severity.Error, localize('voltBuiltinTampered', "This built-in extension was changed after Volt was built ({0}).", why)]];
+			}
+		}
 	}
 
 	private async scanDevSystemExtensions(language: string | undefined, checkControlFile: boolean): Promise<IRelaxedScannedExtension[]> {

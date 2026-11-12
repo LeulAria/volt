@@ -104,17 +104,26 @@ class FakeAgent implements IAgentProvider {
 /** Shell: answers the project's test command from a script; everything else is "not found". */
 class FakeStdio {
 	readonly execs: IVoltExecRequest[] = [];
+	readonly spawns: string[] = [];
 	readonly checkOutputs: { output: string; exitCode: number }[] = [];
+	/** Every command is refused, as the stdio service refuses one whose sandbox cannot be set up. */
+	refuse = false;
 	asService(): IVoltStdioService {
 		return {
 			onData: Event.None,
 			onExit: Event.None,
-			spawn: async () => { throw new Error('no spawn in tests'); },
+			spawn: async (options: { command: string }) => {
+				this.spawns.push(options.command);
+				throw new Error('no spawn in tests');
+			},
 			write: async () => { },
 			kill: async () => { },
 			which: async () => undefined,
 			exec: async (request: IVoltExecRequest): Promise<IVoltExecResult> => {
 				this.execs.push(request);
+				if (this.refuse) {
+					return { id: request.id, exitCode: null, stdout: '', stderr: 'Not run', combined: 'Not run', truncated: false, durationMs: 0, timedOut: false, cancelled: false, running: false, refused: { kind: 'sandbox', reason: 'No OS sandbox available' } };
+				}
 				const scripted = request.command === 'npm test' ? this.checkOutputs.shift() : undefined;
 				const output = scripted?.output ?? '';
 				return { id: request.id, exitCode: scripted?.exitCode ?? 127, stdout: output, stderr: '', combined: output, truncated: false, durationMs: 5, timedOut: false, cancelled: false, running: false };
@@ -204,6 +213,7 @@ suite('Agent runtime orchestration', () => {
 		const agent = new FakeAgent();
 		const history = new FakeHistory();
 		const stub = <T>(value: object) => value as unknown as T;
+		const revokedMcpSessions: string[] = [];
 		const service = disposables.add(new AgentRuntimeService(
 			disposables.add(new InMemoryStorageService()),
 			stub({ get: async () => undefined, set: async () => { }, delete: async () => { }, onDidChangeSecret: Event.None }),
@@ -212,7 +222,7 @@ suite('Agent runtime orchestration', () => {
 			fileService as IFileService,
 			new NullLogService(),
 			stdio.asService(),
-			stub({ setQuestionHandler: () => { }, setApprover: () => { }, setSessionResolver: () => { }, onDidInvokeTool: Event.None, onDidChangeMcp: Event.None, getMcpServers: () => [], listTools: () => [], invokeTool: async () => ({}) }),
+			stub({ setQuestionHandler: () => { }, setApprover: () => { }, setSessionResolver: () => { }, onDidInvokeTool: Event.None, onDidChangeMcp: Event.None, getMcpServers: () => [], listTools: () => [], invokeTool: async () => ({}), revokeMcpSession: (id: string) => revokedMcpSessions.push(id) }),
 			stub({ context: async () => undefined }),
 			stub({}),
 			stub({ rootFor: () => undefined }),
@@ -227,7 +237,7 @@ suite('Agent runtime orchestration', () => {
 			stub({}),
 			stub({ userRoamingDataHome: URI.file('/user') }),
 			// No language servers: the error gate does not wait for markers on the files an agent changed.
-			stub({ getValue: (key: string) => key === LSP_ENABLED_SETTING ? false : undefined }),
+			stub({ getValue: (key: string) => key === LSP_ENABLED_SETTING ? false : undefined, onDidChangeConfiguration: Event.None }),
 			// No hooks: every tool runs as it is.
 			stub({ run: async () => ({ context: [] }), wrapTool: (tool: unknown) => tool, definitions: async () => [] }),
 			// No code index: searches use ripgrep.
@@ -235,6 +245,8 @@ suite('Agent runtime orchestration', () => {
 			stub({ executeCommand: async () => undefined }),
 			// The Trajectory panel's recorder, off.
 			stub({ begin: () => undefined, changed: () => { } }),
+			// No folder is trusted: a project's own MCP servers never start.
+			stub({ getUriTrustInfo: async (uri: URI) => ({ uri, trusted: false }), isWorkspaceTrusted: () => false }),
 		));
 		await service.refreshProviders();
 		const internals = service as unknown as IRuntimeInternals;
@@ -254,7 +266,7 @@ suite('Agent runtime orchestration', () => {
 			await waitFor(() => !!ended(runId), `run ${runId} to end`);
 			return ended(runId)!.event as Extract<IVoltEvent, { type: 'run.end' }>;
 		};
-		return { service, internals, model, agent, stdio, history, events, ref, waitEnd, ended, fileService };
+		return { service, internals, model, agent, stdio, history, events, ref, waitEnd, ended, fileService, revokedMcpSessions };
 	}
 
 	test('a native run streams, ends done, keeps the reply and records its timings', async () => {
@@ -266,6 +278,17 @@ suite('Agent runtime orchestration', () => {
 		assert.strictEqual(metrics.engine, 'native');
 		assert.strictEqual(metrics.outcome, 'done');
 		assert.ok(metrics.firstTextMs !== undefined && metrics.totalMs !== undefined && metrics.firstTextMs <= metrics.totalMs);
+	});
+
+	test('REPO-1: composer focus and a send with a native model start no MCP server from an untrusted repository', async () => {
+		const { service, stdio, ref, waitEnd } = await setup('model', { '.mcp.json': JSON.stringify({ mcpServers: { pwn: { command: 'touch', args: ['/tmp/volt-repo-1-marker'] } } }) });
+		service.prewarmAgent('chat', ref, 'agent');
+		await timeout(50);
+		assert.deepStrictEqual(stdio.spawns, []);
+		const [request] = await service.listMcpApprovalRequests('chat', ref, 'agent');
+		assert.deepStrictEqual(request.spec.kind === 'stdio' && [request.name, request.spec.command, request.spec.args], ['pwn', 'touch', ['/tmp/volt-repo-1-marker']]);
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'hi', mode: 'agent', providerRef: ref }))).reason, 'done');
+		assert.deepStrictEqual(stdio.spawns, []);
 	});
 
 	test('a model on this machine names the chat after the run, so the title call waits behind no step', async () => {
@@ -447,6 +470,66 @@ suite('Agent runtime orchestration', () => {
 		const context = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) });
 		await checkedChanges(context, BEFORE, BEFORE);
 		assert.ok(!context.events.some(envelope => envelope.event.type === 'notice' && envelope.event.severity === 'warning'));
+	});
+
+	test('B-04 / LIFE-PATH-8: a sandboxed chat\'s post-turn check runs in the chat\'s sandbox, with its rules', async () => {
+		const context = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'touch $HOME/pwned' } }) });
+		await context.service.setSandboxSettings('chat', { level: 'workspace-write', network: true, allowedDomains: ['registry.example'] });
+		await checkedChanges(context, BEFORE, BEFORE);
+		const checks = context.stdio.execs.filter(exec => exec.command === 'npm test');
+		assert.strictEqual(checks.length, 2);
+		for (const check of checks) {
+			assert.deepStrictEqual(check.context, { principal: 'chat:chat', reason: 'post-turn-check', sandboxed: true });
+			assert.deepStrictEqual(check.sandbox, { level: 'workspace-write', network: true, providerId: '', workspaceRoots: [ROOT.fsPath], allowedDomains: ['registry.example'] }, 'the chat\'s own rules, not forced network-off');
+		}
+	});
+
+	test('a check whose sandbox cannot be set up does not run and reports nothing', async () => {
+		const context = await setup('agent', { 'package.json': JSON.stringify({ scripts: { test: 'node --test' } }) });
+		await context.service.setSandboxSettings('chat', { level: 'read-only', network: false });
+		context.stdio.refuse = true;
+		await checkedChanges(context, BEFORE, REGRESSED);
+		assert.ok(!context.events.some(envelope => envelope.event.type === 'notice' && envelope.event.severity === 'warning'), 'a refused check is no regression');
+	});
+
+	test('LIFE-PATH-2: a sandboxed chat\'s native shell commands run in its sandbox', async () => {
+		const { service, stdio, ref, waitEnd, fileService } = await setup('model');
+		await service.setAccessMode('full-access');
+		await service.setSandboxSettings('chat', { level: 'workspace-write', network: false });
+		await crashedChat(service, fileService, 'chat', {
+			messages: [
+				{ role: 'user', content: 'run it', turn: true },
+				{ role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'shell', args: { command: 'touch $HOME/pwned' } }] },
+			],
+			pending: ['c1'],
+		}, 'run it');
+		await waitEnd(await service.send('chat', { text: '[Volt] Volt restarted while you were working. Continue where you left off.', mode: 'agent', providerRef: ref }));
+		const shell = stdio.execs.find(exec => exec.command === 'touch $HOME/pwned' || Object.values(exec.env ?? {}).includes('touch $HOME/pwned'));
+		assert.ok(shell, 'the shell call ran');
+		assert.deepStrictEqual(shell.context, { principal: 'chat:chat', reason: 'agent-shell', sandboxed: true });
+		assert.deepStrictEqual(shell.sandbox, { level: 'workspace-write', network: false, providerId: '', workspaceRoots: [ROOT.fsPath] });
+	});
+
+	test('LIFE-PATH-7: a sandboxed chat\'s title, written by its agent CLI, runs in the chat\'s sandbox; text for no chat is Volt\'s', async () => {
+		const { service, internals, stdio } = await setup('agent');
+		// A CLI that answers in print mode (titleCommandFor): the title is a command Volt runs.
+		internals.profiles = internals.profiles.map(profile => ({ ...profile, providerId: 'claude-code' }));
+		service.getOrCreateSession('chat');
+		await service.setSandboxSettings('chat', { level: 'workspace-write', network: true });
+		await service.generateText('Name this chat', { sessionId: 'chat' });
+		await service.generateText('Write a commit message');
+		const titles = stdio.execs.filter(exec => exec.id.startsWith('title-'));
+		assert.ok(titles.length >= 2, 'both ran as commands');
+		const forChat = titles.filter(exec => exec.command.includes('Name this chat'));
+		assert.ok(forChat.length >= 1);
+		for (const exec of forChat) {
+			assert.deepStrictEqual(exec.context, { principal: 'chat:chat', reason: 'title', sandboxed: true });
+			assert.deepStrictEqual(exec.sandbox, { level: 'workspace-write', network: true, providerId: 'claude-code', workspaceRoots: [ROOT.fsPath] }, 'the chat\'s rules, with the CLI\'s own footprint');
+		}
+		for (const exec of titles.filter(exec => exec.command.includes('Write a commit message'))) {
+			assert.deepStrictEqual(exec.context, { principal: 'volt', reason: 'title', sandboxed: false });
+			assert.strictEqual(exec.sandbox, undefined);
+		}
 	});
 
 	test('Ask mode and supervised access never run project checks', async () => {
@@ -653,13 +736,14 @@ suite('Agent runtime orchestration', () => {
 		assert.deepStrictEqual(session.messages.map(message => message.content), ['one', 'also this', 'ok']);
 	});
 	test('a native transcript let go to disk comes back for the next run, with an edit made meanwhile applied', async () => {
-		const { service, internals, model, ref, waitEnd } = await setup('model');
+		const { service, internals, model, ref, waitEnd, revokedMcpSessions } = await setup('model');
 		await waitEnd(await service.send('chat', { text: 'one', mode: 'agent', providerRef: ref }));
 		await waitEnd(await service.send('chat', { text: 'two', mode: 'agent', providerRef: ref }));
 		// The run's end writes the journal; give the write a moment to land.
 		await new Promise(resolve => setTimeout(resolve, 50));
 		service.releaseSession('chat');
 		assert.strictEqual(internals.sessions.get('chat')?.deepseek, undefined, 'the idle transcript left memory');
+		assert.deepStrictEqual(revokedMcpSessions, ['chat'], 'the released chat\'s host MCP tokens are revoked');
 		// Edit the second prompt away while the transcript is on disk only, then send.
 		service.truncateSession('chat', 1);
 		await waitEnd(await service.send('chat', { text: 'three', mode: 'agent', providerRef: ref }));

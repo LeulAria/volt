@@ -18,7 +18,7 @@ import {
 } from './usageAccounts.js';
 import {
 	accountKey, fetchMachineReport, IMachineAnswer, IStoredMachine, LimitHolder, localMachineId, localMachineName, MachineStore, mergeLimits, mergeUsage, pairWithMachine,
-	parsePairingUrl, redeemOnMachine
+	parsePairingUrl, redeemOnMachine, refreshMachineToken
 } from './usageMachines.js';
 import { applyModelPrices, modelPriceFor, UsagePricing, validModelPrice } from './usagePricing.js';
 import { readGrokLimits, readOpenCodeGoLimits } from './usageSubscriptions.js';
@@ -179,8 +179,10 @@ export class VoltUsageService implements IVoltUsageService {
 		if (!parsed) {
 			throw new Error('That is not a Volt pairing link. On the other computer, make a pairing code and copy its link, like http://192.168.1.20:7791/pair#code=ABCD-EFGH');
 		}
-		const token = parsed.token ?? (await pairWithMachine(parsed.url, parsed.code!)).token;
-		const probe: IStoredMachine = { id: '', name: name?.trim() || parsed.url, url: parsed.url, token };
+		const paired = parsed.token ? undefined : await pairWithMachine(parsed.url, parsed.code!, parsed.pin);
+		const token = parsed.token ?? paired!.token;
+		const keyed = { token, ...(paired?.expiresAt ? { tokenExpiresAt: paired.expiresAt } : {}), ...(parsed.pin ? { pin: parsed.pin } : {}) };
+		const probe: IStoredMachine = { id: '', name: name?.trim() || parsed.url, url: parsed.url, ...keyed };
 		const answer = await fetchMachineReport(probe, false);
 		if (answer.status.state === 'unauthorized') {
 			throw new Error('That machine refused the key. Make a new pairing code there and try again.');
@@ -193,7 +195,7 @@ export class VoltUsageService implements IVoltUsageService {
 				? `Volt could not reach ${parsed.url}. Check the other machine is awake, on the same network, and shares Volt on it.`
 				: `${parsed.url} answered, but not with Volt usage. Update Volt on that machine.`);
 		}
-		const stored = await this.machineStore.put({ name: name?.trim() || answer.report.machineName, url: parsed.url, token });
+		const stored = await this.machineStore.put({ name: name?.trim() || answer.report.machineName, url: parsed.url, ...keyed });
 		this.machineAnswers.set(stored.id, { at: Date.now(), answer: Promise.resolve({ status: { ...answer.status, id: stored.id, name: stored.name }, report: answer.report }) });
 		return { id: stored.id, name: stored.name, url: stored.url, state: 'ok', checkedAt: Date.now() };
 	}
@@ -210,7 +212,14 @@ export class VoltUsageService implements IVoltUsageService {
 			if (cached && !force && Date.now() - cached.at < MACHINE_TTL_MS) {
 				return cached.answer;
 			}
-			const answer = fetchMachineReport(machine, force);
+			// Keys expire: one past half its life is traded for the next (and saved) first.
+			const answer = refreshMachineToken(machine).then(async fresh => {
+				if (fresh !== machine) {
+					const { id: _id, ...rest } = fresh;
+					await this.machineStore.put(rest).catch(() => undefined);
+				}
+				return fetchMachineReport(fresh, force);
+			});
 			this.machineAnswers.set(machine.id, { at: Date.now(), answer });
 			return answer;
 		}));

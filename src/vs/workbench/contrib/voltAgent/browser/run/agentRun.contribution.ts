@@ -46,7 +46,7 @@ function target(accessor: ServicesAccessor) {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: AGENT_RUN_START_COMMAND_ID, title: localize2('agentRun.start', "Run Project"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: AGENT_RUN_START_COMMAND_ID, visibility: 'internal', title: localize2('agentRun.start', "Run Project"), category: localize2('volt', "Volt"), f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<void> | void {
 		const { runService, target: runTarget } = target(accessor);
@@ -56,7 +56,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agent.run.pick', title: localize2('agentRun.pick', "Select How to Run the Project"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agent.run.pick', visibility: 'internal', title: localize2('agentRun.pick', "Select How to Run the Project"), category: localize2('volt', "Volt"), f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<void> | void {
 		const { runService, target: runTarget } = target(accessor);
@@ -66,7 +66,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agent.run.pickDevice', title: localize2('agentRun.pickDeviceCommand', "Select a Device to Run On"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agent.run.pickDevice', visibility: 'internal', title: localize2('agentRun.pickDeviceCommand', "Select a Device to Run On"), category: localize2('volt', "Volt"), f1: true });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const { runService, target: runTarget } = target(accessor);
@@ -78,7 +78,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agent.run.askAgent', title: localize2('agentRun.askAgentCommand', "Let Agent Debug and Run the App"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agent.run.askAgent', visibility: 'internal', title: localize2('agentRun.askAgentCommand', "Let Agent Debug and Run the App"), category: localize2('volt', "Volt"), f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<void> | void {
 		const { runService, target: runTarget } = target(accessor);

@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,37 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.local",
+			"label": "Local models",
+			"description": "Ollama, LM Studio and any OpenAI-compatible server on your machine.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 110
+		},
+		"voltAgents": [
+			{
+				"id": "local",
+				"label": "Local models",
+				"models": {
+					"source": "api"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "net.loopback.connect:11434",
+					"class": "high",
+					"reason": "Ollama."
+				},
+				{
+					"id": "net.loopback.connect:1234",
+					"class": "high",
+					"reason": "LM Studio."
+				}
+			]
+		}
+	}
 }

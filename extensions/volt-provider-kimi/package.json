@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,63 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.kimi",
+			"label": "Kimi",
+			"description": "Kimi models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 80
+		},
+		"voltAgents": [
+			{
+				"id": "kimi",
+				"label": "Kimi Code",
+				"order": 80,
+				"binary": "kimi",
+				"versionArgs": [
+					"--version"
+				],
+				"args": [
+					"acp"
+				],
+				"authProbe": "kimi",
+				"apiHosts": [
+					"*.moonshot.ai",
+					"*.moonshot.cn",
+					"kimi.com",
+					"*.kimi.com"
+				],
+				"state": {
+					"writable": [
+						".kimi/sessions",
+						".kimi/logs",
+						".kimi-code/sessions",
+						".kimi-code/logs"
+					],
+					"readable": [
+						".kimi",
+						".kimi-code"
+					],
+					"envKeys": [
+						"MOONSHOT_API_KEY",
+						"KIMI_API_KEY"
+					]
+				},
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:kimi",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

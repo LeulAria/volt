@@ -5,7 +5,7 @@
 
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { IVoltPlayground, parsePlaygroundFiles, parsePlaygroundMocks } from '../../../../platform/voltBrowser/common/browserAgent.js';
+import { IVoltPlayground, parsePlaygroundFiles, parsePlaygroundMocks, playgroundPageUrl } from '../../../../platform/voltBrowser/common/browserAgent.js';
 import { IVoltBrowserService } from '../../../../platform/voltBrowser/common/voltBrowser.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { AUTOMATE_BROWSER_COMMAND_ID, IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
@@ -58,8 +58,8 @@ class AgentPlaygroundContribution extends Disposable implements IWorkbenchContri
 					return { text: lines.join('\n') };
 				}
 				const result = Array.isArray(args.steps) && args.steps.length
-					? await this.test(sessionId, `${playground.url}${entry}`, args, call, lines)
-					: await this.open(sessionId, `${playground.url}${entry}`, args, call, lines);
+					? await this.test(sessionId, playgroundPageUrl(playground, entry), args, call, lines)
+					: await this.open(sessionId, playgroundPageUrl(playground, entry), args, call, lines);
 				if (!keep) {
 					const removed = await this.browser.deletePlaygrounds({ id: playground.id });
 					return { ...result, text: `${result.text ?? ''}\n\n- keep: false: playground ${playground.id} ${removed.length ? 'deleted (server stopped, folder removed; nothing was written to the project)' : 'was already gone'}.` };

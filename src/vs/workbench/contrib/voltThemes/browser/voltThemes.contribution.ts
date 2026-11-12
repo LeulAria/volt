@@ -60,6 +60,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: VOLT_PICK_THEME_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltThemes.pick', "Choose Theme…"),
 			category: voltCategory,
 			f1: true,
@@ -74,6 +75,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: VOLT_IMPORT_THEMES_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltThemes.importCommand', "Import Themes from VS Code and Cursor…"),
 			category: voltCategory,
 			f1: true,
@@ -91,7 +93,7 @@ function stepContrast(accessor: ServicesAccessor, delta: number | undefined): Pr
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VOLT_CONTRAST_UP_COMMAND_ID, title: localize2('voltThemes.contrastUp', "Increase Theme Contrast"), category: voltCategory, f1: true });
+		super({ id: VOLT_CONTRAST_UP_COMMAND_ID, visibility: 'public', title: localize2('voltThemes.contrastUp', "Increase Theme Contrast"), category: voltCategory, f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<void> {
 		return stepContrast(accessor, VOLT_THEME_CONTRAST_STEP);
@@ -100,7 +102,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VOLT_CONTRAST_DOWN_COMMAND_ID, title: localize2('voltThemes.contrastDown', "Decrease Theme Contrast"), category: voltCategory, f1: true });
+		super({ id: VOLT_CONTRAST_DOWN_COMMAND_ID, visibility: 'public', title: localize2('voltThemes.contrastDown', "Decrease Theme Contrast"), category: voltCategory, f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<void> {
 		return stepContrast(accessor, -VOLT_THEME_CONTRAST_STEP);
@@ -109,7 +111,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VOLT_CONTRAST_RESET_COMMAND_ID, title: localize2('voltThemes.contrastReset', "Reset Theme Contrast"), category: voltCategory, f1: true });
+		super({ id: VOLT_CONTRAST_RESET_COMMAND_ID, visibility: 'public', title: localize2('voltThemes.contrastReset', "Reset Theme Contrast"), category: voltCategory, f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<void> {
 		return stepContrast(accessor, undefined);

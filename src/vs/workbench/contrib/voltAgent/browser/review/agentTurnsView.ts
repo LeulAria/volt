@@ -674,6 +674,7 @@ registerAction2(class RedoAgentTurnAction extends Action2 {
 	constructor() {
 		super({
 			id: 'voltAgent.turns.redo',
+			visibility: 'internal',
 			title: localize2('voltAgent.turns.redo', "Redo Undone Turns"),
 			icon: Codicon.redo,
 			menu: {

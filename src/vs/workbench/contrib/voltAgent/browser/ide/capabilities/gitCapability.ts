@@ -18,7 +18,7 @@ export class GitCapability implements IIdeCapability {
 	constructor(private readonly fileService: IFileService) { }
 
 	async invoke(op: string, args: Readonly<Record<string, unknown>>, ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
-		const git = (gitArgs: string[], timeoutMs = 30_000) => ctx.cli.run('git', gitArgs, { timeoutMs });
+		const git = (gitArgs: string[], timeoutMs = 30_000) => ctx.cli.git(gitArgs, { timeoutMs });
 		const paths = list(args, 'paths').map(path => resolvePath(ctx.root, path)).filter(uri => !!uri).map(uri => display(ctx.root, uri!));
 		switch (op) {
 			case 'branches': {
@@ -98,13 +98,13 @@ export class GitCapability implements IIdeCapability {
 	}
 
 	private async status(ctx: IIdeCapabilityContext, done: string): Promise<IIdeCapabilityResult> {
-		const status = await ctx.cli.run('git', ['status', '--short', '--branch'], { timeoutMs: 15_000 });
+		const status = await ctx.cli.git(['status', '--short', '--branch'], { timeoutMs: 15_000 });
 		return ok(`${done}\n${status.stdout.trim()}`);
 	}
 
 	/** Conflicted files and their regions, read from the markers in the working tree. */
 	private async conflicts(ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
-		const result = await ctx.cli.run('git', ['diff', '--name-only', '--diff-filter=U'], { timeoutMs: 15_000 });
+		const result = await ctx.cli.git(['diff', '--name-only', '--diff-filter=U'], { timeoutMs: 15_000 });
 		if (result.code !== 0) {
 			return cliText(result, 'git');
 		}

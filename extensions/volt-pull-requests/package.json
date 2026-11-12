@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,99 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "pullRequests",
+			"label": "Pull requests",
+			"description": "Pull request links, watching, stacks and the Pull Requests page.",
+			"category": "workspace",
+			"icon": "git-pull-request",
+			"order": 60,
+			"commands": [
+				"volt.pullRequest.openPage",
+				"volt.pullRequest.showList"
+			],
+			"settings": [
+				"volt.pullRequests.",
+				"volt.sourceControl.hosts"
+			]
+		},
+		"voltTools": [
+			{
+				"name": "link_pull_request",
+				"class": "safe"
+			},
+			{
+				"name": "unlink_pull_request",
+				"class": "safe"
+			},
+			{
+				"name": "list_thread_pull_requests",
+				"class": "safe"
+			},
+			{
+				"name": "watch_pull_request",
+				"class": "safe"
+			},
+			{
+				"name": "unwatch_pull_request",
+				"class": "safe"
+			},
+			{
+				"name": "stack_status",
+				"class": "safe"
+			},
+			{
+				"name": "stack_branch",
+				"class": "escapes"
+			},
+			{
+				"name": "restack_stack",
+				"class": "escapes"
+			}
+		],
+		"voltSlotItems": [
+			{
+				"id": "volt.pullRequestsPage",
+				"label": "Pull Requests page"
+			},
+			{
+				"id": "volt.pullRequests",
+				"label": "Pull Requests"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "git.read",
+					"class": "medium"
+				},
+				{
+					"id": "hosting.read",
+					"class": "medium"
+				},
+				{
+					"id": "hosting.write",
+					"class": "high"
+				},
+				{
+					"id": "git.write",
+					"class": "high"
+				},
+				{
+					"id": "git.push",
+					"class": "high"
+				},
+				{
+					"id": "spawn.unsandboxed",
+					"class": "critical",
+					"reason": "stack_branch and restack_stack run git checkout, rebase and push on the host."
+				}
+			]
+		}
+	}
 }

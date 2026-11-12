@@ -10,7 +10,7 @@ import { LinkedList } from '../../../base/common/linkedList.js';
 import { ThemeIcon } from '../../../base/common/themables.js';
 import { ICommandAction, ICommandActionTitle, Icon, ILocalizedString } from '../../action/common/action.js';
 import { Categories } from '../../action/common/actionCommonCategories.js';
-import { CommandsRegistry, ICommandService } from '../../commands/common/commands.js';
+import { CommandsRegistry, CommandVisibility, ICommandService } from '../../commands/common/commands.js';
 import { ContextKeyExpr, ContextKeyExpression, IContextKeyService } from '../../contextkey/common/contextkey.js';
 import { createDecorator, ServicesAccessor } from '../../instantiation/common/instantiation.js';
 import { IKeybindingRule, KeybindingsRegistry } from '../../keybinding/common/keybindingsRegistry.js';
@@ -572,6 +572,11 @@ interface IAction2CommonOptions extends ICommandAction {
 	 * One keybinding.
 	 */
 	keybinding?: OneOrN<Omit<IKeybindingRule, 'id'>>;
+
+	/**
+	 * Who may run the command; see {@link CommandVisibility}. Volt's commands must say.
+	 */
+	visibility?: CommandVisibility;
 }
 
 interface IBaseAction2Options extends IAction2CommonOptions {
@@ -623,7 +628,7 @@ export function registerAction2(ctor: { new(): Action2 }): IDisposable {
 	const disposables: IDisposable[] = []; // not using `DisposableStore` to reduce startup perf cost
 	const action = new ctor();
 
-	const { f1, menu, keybinding, ...command } = action.desc;
+	const { f1, menu, keybinding, visibility, ...command } = action.desc;
 
 	if (CommandsRegistry.getCommand(command.id)) {
 		throw new Error(`Cannot register two commands with the same id: ${command.id}`);
@@ -633,7 +638,8 @@ export function registerAction2(ctor: { new(): Action2 }): IDisposable {
 	disposables.push(CommandsRegistry.registerCommand({
 		id: command.id,
 		handler: (accessor, ...args) => action.run(accessor, ...args),
-		metadata: command.metadata ?? { description: action.desc.title }
+		metadata: command.metadata ?? { description: action.desc.title },
+		...(visibility ? { visibility } : {})
 	}));
 
 	// menu

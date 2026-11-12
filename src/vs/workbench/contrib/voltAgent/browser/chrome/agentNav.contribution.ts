@@ -255,6 +255,7 @@ registerAction2(class AgentNavBackAction extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_NAV_BACK_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.goBack', "Go Back"),
 			f1: true,
 			keybinding: {
@@ -275,6 +276,7 @@ registerAction2(class AgentNavForwardAction extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_NAV_FORWARD_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.goForward', "Go Forward"),
 			f1: true,
 			keybinding: {

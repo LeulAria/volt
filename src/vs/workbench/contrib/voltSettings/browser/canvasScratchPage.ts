@@ -19,7 +19,7 @@ import { readScratchStyle, writeScratchStyle } from '../../voltAgent/browser/scr
 import { NEW_SCRATCH_BOARD_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID } from '../../voltAgent/browser/scratchBoard/scratchBoardInput.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { IVoltDropdownOption } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
-import { ISettingsPageKit } from './codeIntelligencePage.js';
+import { IVoltSettingsPageKit as ISettingsPageKit } from '../../voltCustomize/browser/voltFeatureModules.js';
 
 /** The settings editor's blocks, plus the Volt dropdown and a section hint. */
 export interface ICanvasScratchPageKit extends ISettingsPageKit {

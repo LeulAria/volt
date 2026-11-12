@@ -23,6 +23,7 @@ import {
 	UNWATCH_JOB_TOOL_NAME, WATCH_JOB_TOOL_NAME,
 } from '../../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { chatExec, IChatExec } from '../../../../services/voltRuntime/common/execContext.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IAgentTerminalInfo, IAgentTerminalsService } from '../terminals/agentTerminals.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
@@ -335,7 +336,7 @@ export class AgentJobWaitsService extends Disposable implements IAgentJobWaitsSe
 		const cwd = resolveCwd(spec.cwd, call?.cwd);
 		// Unique across windows and reloads: the id also keys the wake, which is never sent twice.
 		const id = `job-${generateUuid().slice(0, 6)}`;
-		const first = await this.check(spec, cwd, `${id}-1`);
+		const first = await this.check(chatId, spec, cwd, `${id}-1`);
 		const outcome = first.outcome;
 		if (outcome.state === 'broken') {
 			return { error: `The check did not work: ${outcome.reason}. Fix it (it runs in ${cwd ?? 'the project'}) and call ${WATCH_JOB_TOOL_NAME} again.` };
@@ -441,7 +442,7 @@ export class AgentJobWaitsService extends Disposable implements IAgentJobWaitsSe
 			return;
 		}
 		watch.checks++;
-		const { outcome, output } = await this.check(watch.spec, watch.cwd, `${watch.id}-${watch.checks}`);
+		const { outcome, output } = await this.check(watch.chatId, watch.spec, watch.cwd, `${watch.id}-${watch.checks}`);
 		if (watch.state !== 'running') {
 			return;
 		}
@@ -477,13 +478,17 @@ export class AgentJobWaitsService extends Disposable implements IAgentJobWaitsSe
 		this._onDidChange.fire(watch.chatId);
 	}
 
-	/** Runs the check (and the pid probe) once. A check that throws counts as one that did not work. */
-	private async check(spec: IJobWatchSpec, cwd: string | undefined, runId: string): Promise<{ readonly outcome: IJobCheckOutcome; readonly output: string }> {
+	/**
+	 * Runs the check (and the pid probe) once. A check that throws counts as one that did not work.
+	 * The agent wrote the check, so it runs as the chat, in the chat's sandbox when it has one.
+	 */
+	private async check(chatId: string, spec: IJobWatchSpec, cwd: string | undefined, runId: string): Promise<{ readonly outcome: IJobCheckOutcome; readonly output: string }> {
 		let run: IJobCheckRun;
 		try {
-			const alive = spec.pid !== undefined ? await this.isAlive(spec.pid, `${runId}-pid`) : undefined;
+			const exec = chatExec(chatId, this.runtime.getSandboxSettings(chatId), cwd ? [cwd] : [], 'terminal');
+			const alive = spec.pid !== undefined ? await this.isAlive(spec.pid, `${runId}-pid`, exec) : undefined;
 			if (spec.check) {
-				const result = await this.stdio.exec({ id: runId, command: spec.check, cwd, timeoutMs: CHECK_TIMEOUT_MS, inlineChars: TAIL_CHARS });
+				const result = await this.stdio.exec({ id: runId, command: spec.check, cwd, timeoutMs: CHECK_TIMEOUT_MS, inlineChars: TAIL_CHARS, ...exec });
 				run = { exitCode: result.exitCode, output: result.combined, timedOut: result.timedOut, ...(alive !== undefined ? { alive } : {}) };
 			} else {
 				run = { exitCode: 0, output: '', timedOut: false, ...(alive !== undefined ? { alive } : {}) };
@@ -494,9 +499,9 @@ export class AgentJobWaitsService extends Disposable implements IAgentJobWaitsSe
 		return { outcome: judgeJobCheck(spec, run), output: run.output };
 	}
 
-	private async isAlive(pid: number, runId: string): Promise<boolean> {
+	private async isAlive(pid: number, runId: string, exec: IChatExec): Promise<boolean> {
 		const command = isWindows ? `tasklist /FI "PID eq ${pid}" /NH` : `kill -0 ${pid} 2>/dev/null && echo alive || echo gone`;
-		const result = await this.stdio.exec({ id: runId, command, timeoutMs: CHECK_TIMEOUT_MS, inlineChars: 2_000 });
+		const result = await this.stdio.exec({ id: runId, command, timeoutMs: CHECK_TIMEOUT_MS, inlineChars: 2_000, ...exec });
 		return isWindows ? new RegExp(`\\b${pid}\\b`).test(result.stdout) : result.stdout.trim() === 'alive';
 	}
 

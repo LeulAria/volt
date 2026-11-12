@@ -106,6 +106,30 @@ jobs:
           BASE: ${{ needs.changes.outputs.base }}
         run: node build/volt/ci/lintDiff.mjs --base "$BASE" --head HEAD
 
+      # Every network listener goes through src/vs/platform/voltListeners (INV-07); reviewed exceptions
+      # are in build/volt/ci/listener-allowlist.json.
+      - name: Listener lint
+        run: node build/volt/ci/listenerLint.mjs
+
+      # Every process-starting call site is listed with an owner and a reason (sandbox spec K.4).
+      - name: Spawn audit
+        run: node build/volt/ci/spawnAudit.mjs
+
+      # Permission decisions are made by the Policy Authority's `evaluate` only (sandbox spec C2);
+      # reviewed exceptions are in build/volt/ci/authority-allowlist.json.
+      - name: Policy Authority gate
+        run: node build/volt/ci/authorityGate.mjs
+
+      # Every extensions/volt-* built-in declares only what its first-party ceiling (compiled into
+      # src/vs/platform/voltPlugins/common/firstPartyCeilings.ts) holds (plugin platform spec M5, G.10).
+      - name: Built-in manifests within their ceilings
+        run: node build/volt/ci/manifestCeiling.mjs
+
+      # A feature in its own folder (voltModule.entry) is reached only through its contract, and
+      # reaches core only through the volt facade or its reviewed list (sandbox spec H.11, M3).
+      - name: Feature import lint
+        run: node build/volt/ci/featureImportLint.mjs
+
   typecheck:
     name: Typecheck
     needs: changes
@@ -131,6 +155,16 @@ jobs:
       - name: Class field initialization order
         if: ${{ !cancelled() }}
         run: npm run define-class-fields-check
+
+      # Every Volt command says who may run it (internal, exported:<capability>, public); see
+      # build/volt/ci/commandVisibility.mjs.
+      - name: Volt command visibility
+        if: ${{ !cancelled() }}
+        run: npm run volt-command-visibility-check
+
+      - name: Git spawns go through HostGit (K.4)
+        if: ${{ !cancelled() }}
+        run: node build/volt/ci/gitSpawnLint.mjs
 
   # Volt's test/common suites straight from src/*.ts with Bun: no compile, about ten seconds.
   test-volt:
@@ -236,6 +270,102 @@ jobs:
           path: .build/crashes
           if-no-files-found: ignore
           retention-days: 7
+
+  # The OS sandbox, attacked for real: escape attempts on Linux (bubblewrap + seccomp) and macOS
+  # (Seatbelt), each checked against the host's state (docs/security/sandbox). A missing backend
+  # FAILS here (VOLT_SANDBOX_REQUIRED); it never skips. Runs on Node like the shipped app does.
+  sandbox:
+    name: Sandbox Security (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.src == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      # Pure-JS dependencies only (mocha, glob, esbuild): no native modules, no Electron. The gulp
+      # transpile task also loads build/'s own dependencies, which the root postinstall would add.
+      - name: Install dependencies without scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: |
+          set -e
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund --prefix build
+
+      # Volt runs only /usr/bin/bwrap, and refuses one that fails its CVE-2026-87766 trial (Ubuntu
+      # 24.04's own 0.9.0 does), so the runner gets the pinned 0.13.1 release built from source, as
+      # the Linux rig does (build/volt-sandbox/Dockerfile.linux-test).
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor; bubblewrap needs them.
+      # Volt's probe reports this exact setting to users who hit it.
+      - name: Build bubblewrap 0.13.1, install socat and prlimit (Linux)
+        if: runner.os == 'Linux'
+        env:
+          BWRAP_VERSION: 0.13.1
+          BWRAP_SHA256: 0e85c8702248b8dd64144f594147553650cdd0e4c951690345faace79c217c4d
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends socat util-linux gcc libc6-dev libcap-dev meson ninja-build pkg-config
+          curl -fsSL -o "$RUNNER_TEMP/bwrap.tar.xz" "https://github.com/containers/bubblewrap/releases/download/v${BWRAP_VERSION}/bubblewrap-${BWRAP_VERSION}.tar.xz"
+          echo "${BWRAP_SHA256}  $RUNNER_TEMP/bwrap.tar.xz" | sha256sum -c -
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/bwrap.tar.xz"
+          cd "$RUNNER_TEMP/bubblewrap-${BWRAP_VERSION}"
+          meson setup _build --prefix=/usr -Dman=disabled -Dselinux=disabled -Dtests=false -Dbash_completion=disabled -Dzsh_completion=disabled
+          ninja -C _build
+          sudo ninja -C _build install
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          /usr/bin/bwrap --version | grep -qx "bubblewrap ${BWRAP_VERSION}"
+
+      - name: Transpile src/
+        run: npm run gulp transpile-client-esbuild
+
+      # The Seatbelt backend spawns through its helper (TCC disclaim, attestation from outside);
+      # tests run without VSCODE_DEV, so it goes into out/ and the helper manifest as in a package.
+      - name: Build the sandbox helper (macOS)
+        if: runner.os == 'macOS'
+        run: node build/volt/sandbox-helper/build.mjs --force --install out
+
+      # The LIFE-PATH terminal tests start real PTYs; the install above skipped native builds.
+      - name: Build node-pty for Node
+        run: cd node_modules/node-pty && npx --yes node-gyp@11 rebuild
+
+      - name: Policy, composition, capability and profile tests
+        run: >-
+          npm run test-node --
+          --run src/vs/platform/voltSandbox/test/common/sandboxCore.test.ts
+          --run src/vs/platform/voltSandbox/test/common/sandboxPolicy.test.ts
+          --run src/vs/platform/voltSandbox/test/common/sandboxInheritance.test.ts
+          --run src/vs/platform/voltSandbox/test/common/seccomp.test.ts
+          --run src/vs/platform/voltSandbox/test/common/bwrap.test.ts
+          --run src/vs/platform/voltSandbox/test/node/sandboxProxy.test.ts
+
+      # Every suite that runs real sandboxes, required here: the generic test jobs only skip them
+      # when their runner's backend cannot run them (no socat, a refused bubblewrap).
+      - name: Adversarial sandbox suites
+        env:
+          VOLT_SANDBOX_REQUIRED: '1'
+        run: >-
+          npm run test-node --
+          --run src/vs/platform/voltSandbox/test/node/sandboxSecurity.test.ts
+          --run src/vs/platform/voltSandbox/test/node/sandboxAttestation.test.ts
+          --run src/vs/platform/voltSandbox/test/node/sandboxPty.test.ts
+          --run src/vs/platform/voltStdio/test/node/voltStdioSandbox.test.ts
+
+      # The seccomp filter's syscall numbers must match the kernel headers of the runner's architecture.
+      - name: Seccomp syscall numbers against kernel headers (Linux)
+        if: runner.os == 'Linux'
+        run: node scripts/volt-sandbox-check-syscalls.mjs
 
   extensions:
     name: Extensions
@@ -512,7 +642,7 @@ jobs:
   check:
     name: Check
     if: always()
-    needs: [changes, lint, typecheck, test-volt, test-node, test-electron, extensions, cli, docs, mobile, relay, govern, workflows, dependencies]
+    needs: [changes, lint, typecheck, test-volt, test-node, test-electron, sandbox, extensions, cli, docs, mobile, relay, govern, workflows, dependencies]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -523,7 +653,7 @@ jobs:
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           echo "$RESULTS" | jq -e --arg event "$EVENT" '
-            {typecheck: "src", "test-volt": "src", "test-node": "src", "test-electron": "src",
+            {typecheck: "src", "test-volt": "src", "test-node": "src", "test-electron": "src", sandbox: "src",
              extensions: "extensions", cli: "cli", docs: "docs", mobile: "mobile",
              relay: "relay", govern: "govern", workflows: "workflows"} as $gate
             | .changes.outputs as $areas

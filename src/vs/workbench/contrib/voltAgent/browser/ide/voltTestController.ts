@@ -32,6 +32,7 @@ import { QueryBuilder } from '../../../../services/search/common/queryBuilder.js
 import { ISearchService } from '../../../../services/search/common/search.js';
 import { buildTestCommand, detectJsFramework, familyOf, isJsTestPath, IStaticTest, ITestSelection, parseTests, PROJECT_MARKERS, rustModulePath, TEST_EXCLUDE_GLOB, TEST_FILE_GLOBS, TEST_FRAMEWORK_LABELS, TestFamily, TestFramework } from '../../../../services/voltRuntime/common/ide/testFrameworks.js';
 import { ITestOutcome, ITestReport, parseTestReport, stripAnsi } from '../../../../services/voltRuntime/common/ide/testReports.js';
+import { userExec } from '../../../../services/voltRuntime/common/execContext.js';
 import { IConfig, IDebugService } from '../../../debug/common/debug.js';
 import { ITestProfileService } from '../../../testing/common/testProfileService.js';
 import { LiveTestResult } from '../../../testing/common/testResult.js';
@@ -672,7 +673,7 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 			}
 		};
 		try {
-			const started = await this.stdio.exec({ id, command, cwd: cwd.fsPath, timeoutMs: RUN_TIMEOUT_MS, background: true, backgroundWaitMs: 300 });
+			const started = await this.stdio.exec({ id, command, cwd: cwd.fsPath, timeoutMs: RUN_TIMEOUT_MS, background: true, backgroundWaitMs: 300, ...userExec() });
 			take(started.combined);
 			if (!started.running) {
 				return { code: started.exitCode, tail };

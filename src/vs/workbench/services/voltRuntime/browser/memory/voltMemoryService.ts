@@ -14,6 +14,9 @@ import { ILogService } from '../../../../../platform/log/common/log.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IPathService } from '../../../path/common/pathService.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { IVoltPluginAvailability, IVoltPluginFolders, MEMORY_PLUGIN_ID, PLUGIN_SANDBOXED_HOSTS_SETTING, PLUGIN_UNSANDBOXED_FALLBACK_SETTING, readUnsandboxedFallback } from '../../../../../platform/voltPlugins/common/pluginHosts.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { IVoltSessionContextService } from '../../common/sessionContext.js';
 import { importedMemoryDraft, IVoltMemory, IVoltMemoryDraft, IVoltMemoryService, memoryFileName, memorySlug, MEMORY_TYPES, parseMemoryFile, renderMemoryContext, renderMemoryForTool, renderMemoryIndex, serializeMemory, serializeSkill, skillSlug, validateMemoryDraft, VOLT_MEMORY_TOOLS, VoltMemoryImport, VoltMemoryScope, VoltMemoryType } from '../../common/memory/voltMemory.js';
@@ -25,6 +28,51 @@ const MAX_NOTES_PER_SCOPE = 500;
  * The age limit only catches edits made outside Volt to the user folder, which nothing watches.
  */
 const NOTES_TTL_MS = 60_000;
+
+/**
+ * Where Memory's agent-facing half runs (spec F.13, roadmap P1's dual binding):
+ * - `sandboxed`: the T2 plugin (`memoryPlugin.ts`) in a sandboxed plugin host of the execution host
+ *   (the main process for this window, the agent server for web and phone);
+ * - `inProcess`: this service, as before, labelled with why: the rollback setting, the degraded
+ *   mode the user allowed on an OS that can't sandbox, or no execution host at all (a browser);
+ * - `refused`: the host can't run here and nothing else may (degraded mode not allowed, the
+ *   supervisor off): the tools say so; nothing runs unsandboxed instead.
+ *
+ * The user's own actions (the Memory page, imports) and core's (the experience reflector, the
+ * extension API) stay in this service either way: they are the user and core, not the plugin.
+ */
+export type VoltMemoryBinding =
+	| { readonly kind: 'sandboxed' }
+	| { readonly kind: 'inProcess'; readonly label: 'setting' | 'os-unsupported' | 'no-host' }
+	| { readonly kind: 'refused'; readonly reason: string };
+
+/** The binding for these facts. Pure: the dual binding's decision table. */
+export function memoryBinding(sandboxedHostsSetting: unknown, fallbackSetting: unknown, availability: IVoltPluginAvailability | undefined): VoltMemoryBinding {
+	if (sandboxedHostsSetting === false) {
+		return { kind: 'inProcess', label: 'setting' };
+	}
+	if (!availability) {
+		return { kind: 'inProcess', label: 'no-host' };
+	}
+	if (availability.sandboxed) {
+		return { kind: 'sandboxed' };
+	}
+	if (availability.unsupported !== undefined) {
+		// Degraded mode (D-06): only for a static fact of this machine, and only when the user allowed it.
+		const fallback = readUnsandboxedFallback(fallbackSetting);
+		if (fallback === 'allow') {
+			return { kind: 'inProcess', label: 'os-unsupported' };
+		}
+		return {
+			kind: 'refused', reason: fallback === 'deny'
+				? `Memory is off: Volt can't sandbox its own plugins on this system (${availability.unsupported}), and running them unsandboxed is turned off (${PLUGIN_UNSANDBOXED_FALLBACK_SETTING}).`
+				: `Memory is waiting for a choice: Volt can't sandbox its own plugins on this system (${availability.unsupported}). Allow running them without a sandbox, as before, with the setting ${PLUGIN_UNSANDBOXED_FALLBACK_SETTING}.`
+		};
+	}
+	return { kind: 'refused', reason: `Memory can't start its sandboxed host: ${availability.refused ?? 'the plugin host is unavailable'}` };
+}
+
+const MUTATING_TOOLS = new Set(['memory_write', 'memory_delete', 'skill_write']);
 
 interface INote {
 	readonly memory: IVoltMemory;
@@ -67,12 +115,15 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 		@ILogService private readonly logService: ILogService,
 		@IPathService private readonly pathService: IPathService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
+		@IVoltStdioService private readonly stdio: IVoltStdioService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 	) {
 		super();
 		this.userDir = joinPath(environmentService.userRoamingDataHome, 'voltMemory');
+		// The tool list is complete before anything starts (H.2); the plugin's host starts on the first call.
 		this._register(hostTools.registerToolProvider({
 			tools: VOLT_MEMORY_TOOLS,
-			invoke: (name, args, call) => this.invokeTool(name, args, call),
+			invoke: (name, args, call) => this.routeTool(name, args, call),
 		}));
 		this._register(fileService.onDidFilesChange(e => {
 			for (const [scope, entry] of [...this.cache]) {
@@ -140,7 +191,54 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 	}
 
 	async context(): Promise<string | undefined> {
+		const binding = await this.binding();
+		if (binding.kind === 'sandboxed') {
+			return this.stdio.pluginContext!(MEMORY_PLUGIN_ID, this.folders(undefined));
+		}
+		if (binding.kind === 'refused') {
+			this.logService.warn(`[volt-memory] ${binding.reason}`);
+			return undefined;
+		}
 		return renderMemoryContext(await this.list('all'));
+	}
+
+	private availability: Promise<IVoltPluginAvailability | undefined> | undefined;
+
+	/** Decided per call from the settings, over this machine's static facts (read once). */
+	async binding(): Promise<VoltMemoryBinding> {
+		if (this.configurationService.getValue(PLUGIN_SANDBOXED_HOSTS_SETTING) === false) {
+			return { kind: 'inProcess', label: 'setting' };
+		}
+		this.availability ??= this.stdio.pluginAvailability
+			? this.stdio.pluginAvailability().catch(err => ({ sandboxed: false, refused: err instanceof Error ? err.message : String(err) }))
+			: Promise.resolve(undefined);
+		return memoryBinding(true, this.configurationService.getValue(PLUGIN_UNSANDBOXED_FALLBACK_SETTING), await this.availability);
+	}
+
+	/** Core's record of the call's folders: the window's first folder, and the chat's own (its cwd, else its session's root). */
+	private folders(call: IVoltHostToolCall | undefined): IVoltPluginFolders {
+		const first = this.workspace.getWorkspace().folders[0]?.uri;
+		const workspace = first?.scheme === 'file' ? first.fsPath : undefined;
+		const session = call?.sessionId ? this.sessionContext.rootFor(call.sessionId) : undefined;
+		const project = call?.cwd ?? (session?.scheme === 'file' ? session.fsPath : undefined) ?? workspace;
+		return { ...(workspace ? { workspace } : {}), ...(project ? { project } : {}) };
+	}
+
+	private async routeTool(name: string, args: Record<string, unknown>, call?: IVoltHostToolCall): Promise<IVoltHostToolResult> {
+		const binding = await this.binding();
+		if (binding.kind === 'refused') {
+			return { error: binding.reason };
+		}
+		if (binding.kind === 'inProcess') {
+			return this.invokeTool(name, args, call);
+		}
+		const result = await this.stdio.invokePluginTool!({ plugin: MEMORY_PLUGIN_ID, tool: name, args, folders: this.folders(call) });
+		if (result.error === undefined && MUTATING_TOOLS.has(name)) {
+			// The plugin changed notes outside this process: the lists here read them again.
+			this.cache.clear();
+			this._onDidChange.fire();
+		}
+		return result.error !== undefined ? { error: result.error } : { text: result.text ?? '' };
 	}
 
 	private dirFor(scope: VoltMemoryScope): URI | undefined {

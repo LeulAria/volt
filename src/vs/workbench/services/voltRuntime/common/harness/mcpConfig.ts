@@ -10,7 +10,11 @@
  */
 
 export type McpServerConfig =
-	| { readonly name: string; readonly kind: 'stdio'; readonly command: string; readonly args: readonly string[]; readonly env: Record<string, string>; readonly cwd?: string }
+	/**
+	 * `allowedHosts` (Volt's own key): the hosts the server may reach when it runs in a sandboxed
+	 * chat's sandbox (C6); without it, no network there. Part of what a project approval pins.
+	 */
+	| { readonly name: string; readonly kind: 'stdio'; readonly command: string; readonly args: readonly string[]; readonly env: Record<string, string>; readonly cwd?: string; readonly allowedHosts?: readonly string[] }
 	| { readonly name: string; readonly kind: 'http'; readonly url: string; readonly headers: Record<string, string> };
 
 export interface IMcpToolInfo {
@@ -54,10 +58,26 @@ export function parseMcpConfig(text: string, variables: Record<string, string>):
 				args: Array.isArray(entry.args) ? entry.args.filter((arg): arg is string => typeof arg === 'string').map(arg => substitute(arg, variables)) : [],
 				env: stringMap(entry.env, variables),
 				...(typeof entry.cwd === 'string' ? { cwd: substitute(entry.cwd, variables) } : {}),
+				...(Array.isArray(entry.allowedHosts) ? { allowedHosts: entry.allowedHosts.filter((host): host is string => typeof host === 'string').map(host => host.trim().toLowerCase()).filter(Boolean) } : {}),
 			});
 		}
 	}
 	return out;
+}
+
+/**
+ * One server per name, the first file's first. The user's own files come before the project's
+ * whatever order they were read in: a repository can never replace a server the user set up with
+ * its own command under the same name (B-02). Volt's own host server is already a native tool.
+ */
+export function mergeMcpServerEntries<T extends { readonly config: McpServerConfig; readonly scope: 'project' | 'user' }>(entries: readonly T[]): T[] {
+	const byName = new Map<string, T>();
+	for (const entry of [...entries.filter(entry => entry.scope === 'user'), ...entries.filter(entry => entry.scope === 'project')]) {
+		if (!byName.has(entry.config.name) && entry.config.name !== 'volt') {
+			byName.set(entry.config.name, entry);
+		}
+	}
+	return [...byName.values()];
 }
 
 /** `mcp__server__tool`, limited to what every provider accepts as a function name. */

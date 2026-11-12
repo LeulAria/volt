@@ -56,13 +56,20 @@ suite('Agent server tunnels', () => {
 			await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
 			const port = (server.address() as AddressInfo).port;
 			ctx = { ...ctx, port };
-			const response = await fetch(`http://127.0.0.1:${port}${VOLT_LOCAL_SESSION_PATH}`, { method: 'POST' });
-			await response.arrayBuffer();
-			return response.status;
+			// The page Volt opened, with the one-time nonce from its URL (B-01): the only way in.
+			const body = JSON.stringify({ nonce: pairing.createLocalNonce().nonce });
+			return new Promise<number>((resolve, reject) => {
+				const req = http.request(`http://127.0.0.1:${port}${VOLT_LOCAL_SESSION_PATH}`, { method: 'POST', headers: { Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)) } }, res => {
+					res.resume();
+					res.on('end', () => resolve(res.statusCode ?? 0));
+				});
+				req.on('error', reject);
+				req.end(body);
+			});
 		};
 		try {
 			assert.strictEqual(await post(false), 200, 'the browser on this computer signs in');
-			assert.strictEqual(await post(true), 403, 'a request through a tunnel does not');
+			assert.strictEqual(await post(true), 403, 'a request through a tunnel does not, even with a valid nonce');
 		} finally {
 			await Promise.all(servers.map(server => new Promise(resolve => server.close(resolve))));
 			pairing.dispose();
