@@ -1,0 +1,9 @@
+{"at":14498,"m":{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/private/tmp/vcmp/w/t0","session_id":"17ddbbb8-5fb6-4a9b-9f4d-406e8bcc53f8","model":"Grok 4.7 256K Medium","permissionMode":"default"}}
+{"at":14498,"m":{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly: OK"}]},"session_id":"17ddbbb8-5fb6-4a9b-9f4d-406e8bcc53f8"}}
+{"at":17606,"m":{"type":"thinking","subtype":"delta","text":"The","session_id":"17ddbbb8-5fb6-4a9b-9f4d-406e8bcc53f8","timestamp_ms":1794504106323}}
+{"at":17607,"m":{"type":"thinking","subtype":"delta","text":" user wants","session_id":"17ddbbb8-5fb6-4a9b-9f4d-406e8bcc53f8","timestamp_ms":1794504106324}}
+{"at":18351,"m":{"type":"thinking","subtype":"delta","text":" me to reply with exactly \"OK\".","session_id":"17ddbbb8-5fb6-4a9b-9f4d-406e8bcc53f8","timestamp_ms":1794504107066}}
+{"at":18351,"m":{"type":"thinking","subtype":"completed","session_id":"17ddbbb8-5fb6-4a9b-9f4d-406e8bcc53f8","timestamp_ms":1794504107067}}
+{"at":18351,"m":{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"session_id":"17ddbbb8-5fb6-4a9b-9f4d-406e8bcc53f8","timestamp_ms":1794504107068}}
+{"at":19305,"m":{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"session_id":"17ddbbb8-5fb6-4a9b-9f4d-406e8bcc53f8"}}
+{"at":19305,"m":{"type":"result","subtype":"success","duration_ms":4808,"duration_api_ms":4808,"is_error":false,"result":"OK","session_id":"17ddbbb8-5fb6-4a9b-9f4d-406e8bcc53f8","request_id":"0728eb84-4eba-49d5-a031-2565a3faefe1","usage":{"inputTokens":11393,"outputTokens":36,"cacheReadTokens":6144,"cacheWriteTokens":0,"reasoningTokens":35}}}
