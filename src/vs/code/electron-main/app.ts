@@ -131,6 +131,8 @@ import { IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME } from '../../platf
 import { VoltCodeIndexMainService } from '../../platform/voltCodeIndex/electron-main/voltCodeIndexMainService.js';
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestMainService } from '../../platform/voltPullRequests/electron-main/voltPullRequestMainService.js';
+import { VOLT_HTTP_TRANSPORT_CHANNEL_NAME } from '../../platform/voltHttp/common/voltHttpTransport.js';
+import { VoltHttpTransportMainService } from '../../platform/voltHttp/electron-main/voltHttpTransportMainService.js';
 import { IVoltRelayService, VOLT_RELAY_CHANNEL_NAME } from '../../platform/voltRelay/common/voltRelay.js';
 import { VoltRelayMainService } from '../../platform/voltRelay/electron-main/voltRelayMainService.js';
 import { IVoltUsageService, VOLT_USAGE_CHANNEL_NAME } from '../../platform/voltUsage/common/voltUsage.js';
@@ -1365,6 +1367,7 @@ export class CodeApplication extends Disposable {
 		mainProcessElectronServer.registerChannel(VOLT_GIT_CHANNEL_NAME, voltGitChannel);
 		const voltPullRequestChannel = ProxyChannel.fromService(accessor.get(IVoltPullRequestService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_PULL_REQUEST_CHANNEL_NAME, voltPullRequestChannel);
+		mainProcessElectronServer.registerChannel(VOLT_HTTP_TRANSPORT_CHANNEL_NAME, ProxyChannel.fromService(new VoltHttpTransportMainService(), disposables));
 
 		// Volt code index (instant grep) and the language server budget
 		mainProcessElectronServer.registerChannel(VOLT_CODE_INDEX_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltCodeIndexService), disposables));
