@@ -101,3 +101,52 @@ Claude plugin worked fully non-interactively.
   the delay before the parent sees the reports. Everything else is "model + tools" (model requests,
   file reads, tests). Harness overhead of the other arms cannot be split out the same way (no
   equivalent traces), so only end-to-end numbers are compared across harnesses.
+
+## Bugs found and not fixed
+
+- **Volt's reported Claude cost is 35-130x too high on Haiku 5.5** with the pinned adapter
+  (`claude-agent-acp` 0.81.2): its bundled Agent SDK (0.3.280) does not know `claude-haiku-5-5`.
+  Same "Reply OK" prompt (`scripts/cmp/acpcost.mjs`, `acpmeta.mjs`, `data/cmp/acp-cost.jsonl`):
+  0.81.2 reported $0.049-0.178, 0.106.0 reports $0.0014-0.0028. Over the bench, Volt's reported
+  cost was $0.57-0.92 per t1-t3 run against $0.016-0.027 at list. See "Adapter bump" below for
+  what was done.
+- **A settings change does not reach the agent server's runtime in time.** `runvolt.mjs` flipped
+  `volt.agent.multitask.warmSubagents` to false 0.8 s before each `volt-after-cold` send; the agent
+  server still warmed spares for the next delegate_task call (spawns 4-8 s before the tasks
+  existed, `agent-server.log` 19:46:06-10Z). Its ConfigurationService watches `settings.json`
+  through the server's own file service; either the watch does not fire for this path or it is
+  slower than 20 s. Not chased further; the A/B was replaced as described in Results.
+- **Volt restarts a stuck subagent from the top.** After the hung Cursor subagent processes were
+  stopped, Volt said "Agent process died. Restarting and retrying." and ran each task again from
+  the start, edits included, 12 minutes after the rig had timed the run out and moved on. Its
+  edits landed in the next run's fixture (`t3-t2-2`, excluded). A task whose parent turn already
+  ended, or whose last tool call never returned, should not silently redo its side effects.
+- **Cursor-on-Volt shows sandbox denials of Cursor's own housekeeping as "Blocked by the sandbox"
+  cards** on every turn: `~/.cursor/agent-cli-state.json` (read and write),
+  `~/.local/share/cursor-agent/versions/<v>/.running/<pid>`, `~/.cursor/skills-cursor/.sync-manifest*.tmp`,
+  and reads of other agents' skill folders (`~/.claude/skills/*`, `~/.codex/skills`, `~/.agents/skills`).
+  Claude has an `AGENT_HOUSEKEEPING` list that hides its own; Cursor has none. Left to the sandbox
+  owner, who decides what is housekeeping and what a real denial.
+- **Volt-on-Cursor records no token usage** (Cursor's ACP agent sends none), so those chats show 0
+  tokens and $0; the same CLI's `--print` result carries usage (cursor-sonnet t1: 111k tokens).
+
+## Published benchmarks of the other harnesses
+
+None of them publishes harness overhead or orchestration latency. What exists measures task
+success of model + harness, or app memory:
+
+- **Hermes Agent**: the Hermes Index (Nous Research, Oct 2026) scores models inside Hermes on Hermes
+  Bench (150 tasks, 25 categories), Terminal-Bench 4, Terminal-Bench Science and SkillsBench:
+  Claude Opus 5.5 63.31 at $4.99/task, GPT 6.1 Sol 57.09 at $1.19/task, GPT 6 Astra 56.25 at
+  $11.61/task. No timing. <https://portal.nousresearch.com/bench>
+- **Cursor**: the Composer 2 post: CursorBench 61.3, Terminal-Bench 2.0 61.7, SWE-bench
+  Multilingual 73.7; $0.50/M input, $2.50/M output (fast variant $1.50/$7.50). It mentions a
+  tokens-per-second snapshot without numbers. <https://cursor.com/blog/composer-2>
+- **Claude Code subagents**: Anthropic's multi-agent research write-up: an Opus 4 lead with Sonnet 4
+  subagents beat single-agent Opus 4 by 90.2% on their research eval; agents use about 4x the tokens
+  of chat, multi-agent systems about 15x; parallel tool calls cut research time by up to 90%.
+  <https://www.anthropic.com/engineering/multi-agent-research-system>
+- **T3 Code**: no benchmark page. Theo on X: T3 Code 350.9 MB vs the Claude Code CLI 635.5 MB of
+  RAM <https://x.com/theo/status/2035531539581485151>. Issue #695 (closed 2026-10-21): T3 20+ min
+  vs Codex about 3.5 min on one task, traced to per-token event streaming and auto-approve, fixed in
+  #11678 <https://github.com/pingdotgg/t3code/issues/695>.
