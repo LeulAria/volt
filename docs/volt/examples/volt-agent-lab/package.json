@@ -1,0 +1,133 @@
+{
+	"name": "volt-agent-lab",
+	"displayName": "Agent Lab",
+	"description": "An example Volt extension that uses many things at once: Volt's model picker and a chat, an HTTP API, workspace files, secrets, a terminal and a process, settings, a webview and an agent tool. It also has a TEST ONLY mode with mock attacks, to check Volt's sandbox.",
+	"version": "0.0.1",
+	"publisher": "volt-examples",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/LeulAria/volt"
+	},
+	"engines": {
+		"vscode": "^1.105.0",
+		"volt": "^1.0.0"
+	},
+	"main": "./out/extension.js",
+	"extensionKind": [
+		"workspace"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"enabledApiProposals": [
+		"volt"
+	],
+	"contributes": {
+		"commands": [
+			{
+				"command": "voltAgentLab.open",
+				"title": "Agent Lab: Open"
+			},
+			{
+				"command": "voltAgentLab.runAgent",
+				"title": "Agent Lab: Pick a Model and Run a Task"
+			},
+			{
+				"command": "voltAgentLab.selfTest",
+				"title": "Agent Lab: Run Self Test"
+			},
+			{
+				"command": "voltAgentLab.mockAttacks",
+				"title": "Agent Lab (TEST ONLY): Run Mock Attacks"
+			}
+		],
+		"configuration": {
+			"title": "Agent Lab",
+			"properties": {
+				"voltAgentLab.task": {
+					"type": "string",
+					"default": "List three things worth testing in this project, one line each.",
+					"description": "What Run a Task asks the agent."
+				},
+				"voltAgentLab.testOnly.mockAttacks": {
+					"type": "boolean",
+					"default": false,
+					"markdownDescription": "**TEST ONLY.** Runs mock attacks (reading a canary key, sending data to a host nobody allowed, starting `curl` and `sh`, writing git hooks and tasks, reading secret environment variables, reaching the Docker socket) once at start and again, delayed, after `#voltAgentLab.testOnly.delayMs#`. For checking Volt's sandbox; never turn it on outside a test profile."
+				},
+				"voltAgentLab.testOnly.delayMs": {
+					"type": "number",
+					"default": 20000,
+					"description": "TEST ONLY. How long after start the delayed attack runs."
+				},
+				"voltAgentLab.testOnly.canaryHome": {
+					"type": "string",
+					"default": "",
+					"description": "TEST ONLY. A fake home folder holding canary .ssh and .aws files the mock attacks try to read. Empty: ~/.volt-e2e-canary-home."
+				}
+			}
+		},
+		"voltTools": [
+			{
+				"name": "lab_status",
+				"class": "safe",
+				"title": "Checked Agent Lab",
+				"description": "Says what Agent Lab last did: its self test and the mock attacks, if any ran.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {}
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "net.connect",
+					"class": "low",
+					"targets": [
+						"www.githubstatus.com",
+						"api.github.com"
+					],
+					"reason": "Reads GitHub's status for the self test."
+				},
+				{
+					"id": "files.read:workspace",
+					"class": "low"
+				},
+				{
+					"id": "agents.read:current",
+					"class": "low"
+				}
+			],
+			"optional": [
+				{
+					"id": "files.write",
+					"class": "medium",
+					"reason": "Writes lab-notes.md in your workspace."
+				},
+				{
+					"id": "agents.read:any",
+					"class": "medium",
+					"reason": "Lists your recent chats in the lab panel."
+				},
+				{
+					"id": "agents.create",
+					"class": "high",
+					"reason": "Starts a chat on the model you pick."
+				}
+			]
+		}
+	},
+	"scripts": {
+		"compile": "tsc -p .",
+		"package": "vsce package --skip-license --allow-missing-repository"
+	},
+	"devDependencies": {
+		"typescript": "^5.9.0",
+		"@vscode/vsce": "^3.6.0"
+	}
+}
