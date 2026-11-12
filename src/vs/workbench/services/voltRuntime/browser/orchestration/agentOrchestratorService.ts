@@ -1177,7 +1177,14 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				await this.confineSubagent(threadId, thread.parentId, this.state.tasks[thread.taskId]?.role);
 				await host.prepareChild?.(threadId, thread.parentId);
 			}
-			const runId = await host.startTurn({ threadId, turn, thread: this.state.threads[threadId] ?? thread, isCurrent: () => this.isTurnCurrent(threadId, turn.id) });
+			const delegated = thread?.taskId ? this.state.tasks[thread.taskId] : undefined;
+			const runId = await host.startTurn({
+				threadId,
+				turn,
+				thread: this.state.threads[threadId] ?? thread,
+				...(delegated && delegated.origin !== 'user' ? { subagent: true } : {}),
+				isCurrent: () => this.isTurnCurrent(threadId, turn.id),
+			});
 			if (runId) {
 				this.apply({ type: 'run.started', threadId, runId, turnId: turn.id, steerable: this.runtime.canSteer(threadId) });
 				this.stopStrayRun(threadId, runId);

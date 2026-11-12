@@ -129,6 +129,12 @@ export interface IAgentStartRequest {
 	 * no tools, hooks or saved transcript, and the least thinking.
 	 */
 	textOnly?: { readonly systemPrompt: string };
+	/**
+	 * The session serves a Volt subagent (a delegated task): its brief carries what it needs, so
+	 * agents that allow it start without the user's memory index, long skill descriptions and their
+	 * own subagent tool (Volt's delegate_task nests instead). See `claudeWorkRulesMeta`.
+	 */
+	subagent?: boolean;
 }
 
 /** What an agent provider needs to start its process in the OS sandbox. */

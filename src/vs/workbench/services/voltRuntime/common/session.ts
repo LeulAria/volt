@@ -81,4 +81,6 @@ export interface IVoltSendRequest {
 	runOn?: AgentRunOn;
 	/** With `runOn: 'worktree'`: the branch the new checkout uses. */
 	worktreeTarget?: AgentWorktreeTarget;
+	/** The chat is a Volt subagent's (a delegated task): its agent starts lean (see `IAgentStartRequest.subagent`). */
+	subagent?: boolean;
 }

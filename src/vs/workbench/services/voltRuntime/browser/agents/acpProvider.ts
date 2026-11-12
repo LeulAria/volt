@@ -733,6 +733,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			Object.entries(req.options ?? {}).sort(([x], [y]) => x.localeCompare(y)),
 			req.textOnly ? req.textOnly.systemPrompt : this.hostTools?.getMcpServers(req.sessionId) ?? [],
 			sandboxLaunchKey(req.sandbox?.settings),
+			req.subagent === true,
 		]);
 	}
 
@@ -777,7 +778,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (req.textOnly) {
 			return this.textOnlyMeta(req);
 		}
-		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req)) : undefined;
+		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req), { subagent: req.subagent === true }) : undefined;
 	}
 
 	/**

@@ -339,6 +339,8 @@ interface ISessionState extends IVoltSession {
 	agentJoinedLate?: IAgentSessionHandle;
 	/** The user restarted the agent while a turn held it: the next prompt starts a fresh one. */
 	restartPending?: boolean;
+	/** A Volt subagent's chat (a delegated task): its agent starts lean (see `IAgentStartRequest.subagent`). */
+	subagent?: boolean;
 	/** Files the context retriever already showed this chat's agent with their code. */
 	retrievalSeen?: Set<string>;
 	/** Catalog ref the live agent session was started for. */
@@ -1140,6 +1142,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
 		session.mode = request.mode;
 		session.providerRef = request.providerRef ?? session.providerRef ?? this.defaultRef(request.mode);
+		if (request.subagent) {
+			session.subagent = true;
+		}
 		// A native run reads follow-ups between steps; there is nothing to restart.
 		if (session.run && this.steer(sessionId, request.text)) {
 			return session.run.runId;
@@ -1423,7 +1428,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// A new agent's first prompt says whether the project is indexed: ask now, not on the send.
 		void this.largeIndexedProject(this.executionRoot(session));
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
-		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox);
+		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox, session.subagent === true);
 		if (this.agentPool.has(spare.key)) {
 			return;
 		}
@@ -1461,7 +1466,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		void this.apiKey(profile).catch(() => undefined);
 	}
 
-	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart): IAgentStartRequest {
+	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart, subagent = (this.sessions.get(sessionId) as ISessionState | undefined)?.subagent === true): IAgentStartRequest {
 		return {
 			sessionId,
 			mode,
@@ -1470,6 +1475,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			modelId: item.id === profile.providerId ? undefined : item.id,
 			options: this.resolvedOptions(item, options),
 			...(sandbox ? { sandbox } : {}),
+			...(subagent ? { subagent: true } : {}),
 		};
 	}
 
@@ -1494,18 +1500,19 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** Pool key: an agent can serve a chat when all of these match. */
-	private poolKey(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined): string {
+	private poolKey(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined, subagent: boolean): string {
 		const resolved = this.resolvedOptions(item, options);
 		const sorted = Object.keys(resolved).sort().map(key => [key, resolved[key]]);
-		return JSON.stringify([provider.id, profile.id, item.ref, cwd ?? '', sorted, sandboxLaunchKey(sandbox?.settings)]);
+		return JSON.stringify([provider.id, profile.id, item.ref, cwd ?? '', sorted, sandboxLaunchKey(sandbox?.settings), ...(subagent ? ['subagent'] : [])]);
 	}
 
-	private spareRequest(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined): ISpareRequest {
+	/** A spare for a subagent's chat starts lean like the chat's own agent would, and only subagents adopt it. */
+	private spareRequest(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined, subagent: boolean): ISpareRequest {
 		return {
-			key: this.poolKey(provider, profile, item, cwd, options, sandbox),
+			key: this.poolKey(provider, profile, item, cwd, options, sandbox, subagent),
 			providerId: provider.id,
 			start: async alias => {
-				const handle = await provider.start(this.agentStartRequest(alias, profile, item, cwd, options, 'agent', sandbox));
+				const handle = await provider.start(this.agentStartRequest(alias, profile, item, cwd, options, 'agent', sandbox, subagent));
 				try {
 					await provider.applyAccessPolicy?.(handle, this.policyFor(undefined));
 				} catch (err) {
@@ -5295,7 +5302,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private async acquireAgent(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, request: IVoltSendRequest, intent: IIntent, restart: boolean): Promise<void> {
 		const cwd = this.executionRoot(session)?.fsPath;
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
-		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options, sandbox);
+		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options, sandbox, session.subagent === true);
 		run.spare = spareRequest;
 		// A spare's browser tools reach this chat only when the host tool service maps its alias.
 		const usePool = this.aliasHost() || !(intent.wantsPreview || intent.matchesDesign);

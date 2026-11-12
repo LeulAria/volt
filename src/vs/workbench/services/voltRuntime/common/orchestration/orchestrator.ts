@@ -851,6 +851,8 @@ export interface IOrchStartTurnRequest {
 	readonly threadId: string;
 	readonly turn: IOrchTurn;
 	readonly thread: IOrchThread;
+	/** The chat runs a task another agent delegated (not a Multitask chat the user follows up on): its agent starts lean. */
+	readonly subagent?: boolean;
 	/** False once the turn was stopped or replaced: the host must not send it. */
 	isCurrent(): boolean;
 }

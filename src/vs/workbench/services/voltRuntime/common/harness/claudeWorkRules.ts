@@ -62,18 +62,50 @@ export function subagentStartHookCommand(context: string = CLAUDE_SUBAGENT_RULES
 }
 
 /**
+ * Settings that make a Volt subagent's Claude Code session lean. Its brief and contract carry what
+ * it needs, so it skips what only the user's own chats use:
+ * - `autoMemoryEnabled: false`: the user's memory index (15 KB for a long-used project) is not
+ *   loaded; Claude Code's own subagents do not get it either;
+ * - `skillListingMaxDescChars`: skills stay listed and callable by name, with short descriptions;
+ * - no `Agent` tool: a subagent splits work with Volt's delegate_task, which is depth-limited,
+ *   budgeted and shown in Volt, so its own subagent listing is dropped from the prompt.
+ *
+ * Measured 2026-11-12 (Claude Code 2.1.280, Haiku 5.5, one-file read in the Volt checkout): the
+ * first request went from 39.4k to 22.4k prompt tokens, $0.33 to $0.19.
+ */
+export const CLAUDE_SUBAGENT_SESSION_SETTINGS = {
+	autoMemoryEnabled: false,
+	skillListingMaxDescChars: 160,
+} as const;
+
+export const CLAUDE_SUBAGENT_DISALLOWED_TOOLS: readonly string[] = ['Agent'];
+
+/**
+ * Plan mode's workflow for a read-only subagent (research, review, or any task of an Ask chat). Claude
+ * Code's default asks for a plan file and ExitPlanMode, which a report never needs; this is also
+ * ~1.2k tokens shorter (measured 2026-11-12, same answer).
+ */
+export const CLAUDE_SUBAGENT_PLAN_MODE = 'This is a read-only task another agent delegated to you. Read and search what you need (batch independent reads), then give your answer as your final message. Do not write a plan file and do not call ExitPlanMode: your final message is the report.';
+
+/** A subagent's chat is named after its task by Volt, so Claude Code's own title request is skipped. */
+export const CLAUDE_SUBAGENT_SESSION_TITLE = 'Volt subagent';
+
+/**
  * `session/new` (and `session/resume`) `_meta` for a Claude Code session: the main agent's rules
  * appended to Claude Code's prompt, and a SubagentStart hook that hands every subagent its rules.
+ * A Volt subagent's session (`subagent`) also starts lean (see {@link CLAUDE_SUBAGENT_SESSION_SETTINGS}).
  * Kept identical across sessions so a resumed session is not rebuilt for a changed fingerprint.
  */
-export function claudeWorkRulesMeta(model?: string): Record<string, unknown> {
+export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?: boolean }): Record<string, unknown> {
 	return {
 		systemPrompt: { type: 'preset', preset: 'claude_code', append: CLAUDE_MAIN_RULES },
 		claudeCode: {
 			options: {
 				// The exact model: the adapter's picker takes only its aliases (default, sonnet, haiku, ...).
 				...(model ? { model } : {}),
+				...(opts?.subagent ? { disallowedTools: [...CLAUDE_SUBAGENT_DISALLOWED_TOOLS], planModeInstructions: CLAUDE_SUBAGENT_PLAN_MODE, title: CLAUDE_SUBAGENT_SESSION_TITLE } : {}),
 				settings: {
+					...(opts?.subagent ? CLAUDE_SUBAGENT_SESSION_SETTINGS : {}),
 					hooks: {
 						SubagentStart: [{ hooks: [{ type: 'command', command: subagentStartHookCommand(), timeout: 10 }] }],
 						Stop: [{ hooks: [{ type: 'command', command: stopHookCommand(), timeout: 10 }] }],

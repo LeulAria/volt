@@ -207,6 +207,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			...(host.worktreeTarget ? { worktreeTarget: host.worktreeTarget } : {}),
 			...(images.length ? { images } : {}),
 			...(resources.length ? { resources } : {}),
+			...(request.subagent ? { subagent: true } : {}),
 		};
 		try {
 			const runId = await this.runtime.send(threadId, send);
