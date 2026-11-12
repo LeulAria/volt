@@ -1,0 +1,12 @@
+{"at":9038,"m":{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/private/tmp/vcmp/w/t0","session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279","model":"Grok 4.7 256K Medium","permissionMode":"default"}}
+{"at":9038,"m":{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly: OK"}]},"session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279"}}
+{"at":12474,"m":{"type":"thinking","subtype":"delta","text":"The","session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279","timestamp_ms":1794501039614}}
+{"at":12474,"m":{"type":"thinking","subtype":"delta","text":" user","session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279","timestamp_ms":1794501039616}}
+{"at":12474,"m":{"type":"thinking","subtype":"delta","text":" wants","session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279","timestamp_ms":1794501039616}}
+{"at":12514,"m":{"type":"thinking","subtype":"delta","text":" me","session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279","timestamp_ms":1794501039643}}
+{"at":12545,"m":{"type":"thinking","subtype":"delta","text":" to","session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279","timestamp_ms":1794501039687}}
+{"at":12807,"m":{"type":"thinking","subtype":"delta","text":" reply with exactly \"OK\".","session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279","timestamp_ms":1794501039950}}
+{"at":12807,"m":{"type":"thinking","subtype":"completed","session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279","timestamp_ms":1794501039950}}
+{"at":12807,"m":{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279","timestamp_ms":1794501039950}}
+{"at":13639,"m":{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279"}}
+{"at":13639,"m":{"type":"result","subtype":"success","duration_ms":4602,"duration_api_ms":4602,"is_error":false,"result":"OK","session_id":"700ba641-9fe3-4908-bd03-4fa20b2b3279","request_id":"e6062882-fec8-447d-b440-b3722af3eaff","usage":{"inputTokens":107,"outputTokens":29,"cacheReadTokens":17408,"cacheWriteTokens":0}}}

@@ -47,7 +47,7 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 				args: [],
 				acpAdapter: {
 					command: 'claude-agent-acp',
-					package: '@agentclientprotocol/claude-agent-acp@0.81.2',
+					package: '@agentclientprotocol/claude-agent-acp@0.106.0',
 				},
 				env: {
 					CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
@@ -154,7 +154,7 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 					setEnv: {
 						CURSOR_DATA_DIR: '${config}',
 					},
-					writable: ['Library/Application Support/Cursor/User/globalStorage'],
+					writable: ['Library/Application Support/Cursor/User/globalStorage', '.cursor/ai-tracking'],
 					writableFiles: ['.cursor/auth.json', '.config/cursor/auth.json'],
 					readable: ['.local/share/cursor-agent'],
 					credentials: ['.cursor/auth.json', '.config/cursor/auth.json'],

@@ -1,0 +1,4 @@
+{"at":818,"m":{"type":"system","subtype":"init","model":"","session_id":"","timestamp":1794502486291}}
+{"at":3102,"m":{"type":"text","text":"O","timestamp":1794502488575}}
+{"at":3302,"m":{"type":"text","text":"K","timestamp":1794502488776}}
+{"at":3401,"m":{"type":"result","session_id":"local-1774fed5f07c3c0fe5fd701256e0f93e2914e458ba8b9e1bd4b0ae2bc014ac0b","exit_code":0,"text":"OK","tokens":{"input":16961,"output":4,"total":16965,"cache_read":16623,"cache_write":0},"duration_ms":2583,"timestamp":1794502488875}}

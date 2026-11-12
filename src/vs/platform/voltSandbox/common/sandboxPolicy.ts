@@ -264,7 +264,9 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		envKeys: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_HOME'],
 	},
 	'cursor-acp': {
-		writable: ['Library/Application Support/Cursor/User/globalStorage'],
+		// `.cursor/ai-tracking` (2026.11.11): every file edit records itself in ai-code-tracking.db (SQLite,
+		// outside CURSOR_CONFIG_DIR); denied, the Edit tool never returned and subagents hung for 10 min.
+		writable: ['Library/Application Support/Cursor/User/globalStorage', '.cursor/ai-tracking'],
 		// It refreshes its login in place (`auth.json`, or the keychain).
 		writableFiles: ['.cursor/auth.json', '.config/cursor/auth.json'],
 		readable: ['.local/share/cursor-agent'],

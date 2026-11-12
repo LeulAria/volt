@@ -36,6 +36,9 @@ suite('Volt sandbox policy', () => {
 		assert.ok(planAllowsWrite(plan, `${MAC.home}/.volt/sandbox/agent-state/chat/cursor-acp/config/cli-config.json`), 'choosing a model rewrites the overlay copy');
 		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/hooks.json`));
 		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/mcp.json`));
+		// Its edit tool waits on this SQLite database: denied, an edit never returned.
+		assert.ok(planAllowsWrite(plan, `${MAC.home}/.cursor/ai-tracking/ai-code-tracking.db`));
+		assert.ok(planAllowsWrite(plan, `${MAC.home}/.cursor/ai-tracking/ai-code-tracking.db-wal`));
 	});
 
 	test('workspace-write: workspace, temp and the agent state are writable; nothing else', () => {

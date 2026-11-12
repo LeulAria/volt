@@ -623,6 +623,8 @@ export const ORCH_ROLE_MODELS_SETTING = 'volt.agent.multitask.roleModels';
  * that, and at least their checkout (research and review read-only) even when the parent runs free.
  */
 export const ORCH_SUBAGENT_SANDBOX_SETTING = 'volt.agent.multitask.sandbox';
+/** Start agents for a chat's subagents as soon as it is about to call delegate_task (`warmSubagents`). */
+export const ORCH_WARM_SUBAGENTS_SETTING = 'volt.agent.multitask.warmSubagents';
 /** Team members one request may start (`maxTeamAgents`). */
 export const ORCH_MAX_TEAM_AGENTS_SETTING = 'volt.orchestra.maxAgentsPerRequest';
 

@@ -141,6 +141,8 @@ export class RunMetrics {
 	private readonly callPaths = new Map<string, string>();
 	private requests = 0;
 	private maxRequestInput = 0;
+	/** The context size an agent last reported (`used`), when it reports one; see 'usage' below. */
+	private lastUsed: number | undefined;
 	private retrieval: { ms: number; tokens: number; files: readonly string[]; partial: boolean } | undefined;
 	private readonly usedFiles = new Set<string>();
 	private evidence: IRunEvidence | undefined;
@@ -261,8 +263,19 @@ export class RunMetrics {
 				}
 				break;
 			case 'usage':
-				this.requests++;
-				this.maxRequestInput = Math.max(this.maxRequestInput, event.used ?? event.input + (event.cache ?? 0));
+				// ACP agents report the context (`used`) several times per request, then one turn total
+				// without it whose input and cache add up every request of the turn: that total is neither
+				// a request nor a request's input (it read as a 188k "max input" for a 47k context).
+				if (event.used !== undefined) {
+					if (event.used !== this.lastUsed) {
+						this.requests++;
+						this.maxRequestInput = Math.max(this.maxRequestInput, event.used);
+					}
+					this.lastUsed = event.used;
+				} else if (this.lastUsed === undefined) {
+					this.requests++;
+					this.maxRequestInput = Math.max(this.maxRequestInput, event.input + (event.cache ?? 0));
+				}
 				this.tokens.input += event.input;
 				this.tokens.output += event.output;
 				this.tokens.cache += event.cache ?? 0;

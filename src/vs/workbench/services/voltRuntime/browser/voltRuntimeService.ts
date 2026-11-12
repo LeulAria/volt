@@ -40,6 +40,7 @@ import { DEFAULT_MODEL_CAPABILITIES } from '../common/capabilities.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, pickGenerationParams, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
+import { ORCH_WARM_SUBAGENTS_SETTING } from '../common/orchestration/orchestrator.js';
 import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, subagentProfile, VoltProviderState, VoltSubagentProfile } from '../common/providers.js';
@@ -192,6 +193,16 @@ const NATIVE_IDLE_TTL_MS = 15 * 60_000;
 /** Warm spare agents for new chats (see AgentPool), across all models and folders. */
 const MAX_SPARE_AGENTS = 2;
 const SPARE_AGENT_TTL_MS = 10 * 60_000;
+/**
+ * Subagent spares started when a chat is about to call delegate_task (see prewarmSubagents), on
+ * top of MAX_SPARE_AGENTS. Three Claude subagents starting together cold took 8-21 s before their
+ * first request (harness bench, 2026-11-12), all of it on the run's critical path.
+ */
+const SUBAGENT_SPARES = 3;
+/** Unused subagent spares stop sooner: they were started for one delegate_task call. */
+const SUBAGENT_SPARE_TTL_MS = 90_000;
+/** Claude Code's name for Volt's delegate_task (`mcp__<server>__delegate_task`), or the bare name. */
+const DELEGATE_TOOL_NAME = /(^|__)delegate_task$/;
 /** How long a new run waits for a cancelled one to let go of its agent session. */
 const SETTLE_WAIT_AGENT_MS = 3_000;
 const SETTLE_WAIT_NATIVE_MS = 1_500;
@@ -663,6 +674,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly postRunChecks = new Map<string, string>();
 	/** Title generation waiting for the chat's first reply text, or for the end of its run (see send). */
 	private readonly deferredTitles = new Map<string, { readonly start: () => void; readonly until: 'reply' | 'end' }>();
+	/** Tool searches in flight (`<chat>\0<call id>`): one that loads delegate_task means subagents soon. */
+	private readonly toolSearches = new Set<string>();
+	/** When each chat last warmed spares for its subagents (prewarmSubagents). */
+	private readonly subagentsWarmedAt = new Map<string, number>();
 
 	private readonly _onDidChangeCatalog = this._register(new Emitter<void>());
 	readonly onDidChangeCatalog: Event<void> = this._onDidChangeCatalog.event;
@@ -739,6 +754,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.appState = new AgentAppStateStore(joinPath(environmentService.userRoamingDataHome, 'voltState'), fileService, logService);
 		this.agentPool = this._register(new AgentPool({
 			maxSpares: MAX_SPARE_AGENTS,
+			maxBurst: SUBAGENT_SPARES,
 			ttlMs: SPARE_AGENT_TTL_MS,
 			newAlias: () => `volt-pool-${generateUuid()}`,
 			onError: err => this.logService.trace('[volt] spare agent failed', err),
@@ -5442,6 +5458,58 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 	}
 
+	/**
+	 * Spots a chat about to delegate: its delegate_task call has started streaming, or a tool search
+	 * just loaded delegate_task (the first call in a Claude Code session; about 5 s before the tasks
+	 * exist). Either way the subagents are seconds away, so their spares start now.
+	 */
+	private noteDelegation(session: ISessionState, event: Extract<IVoltEvent, { type: 'tool.start' | 'tool.end' }>): void {
+		const key = `${session.sessionId}\0${event.callId}`;
+		if (event.type === 'tool.start') {
+			if (event.name === 'ToolSearch') {
+				if (this.toolSearches.size > 100) {
+					this.toolSearches.clear();
+				}
+				this.toolSearches.add(key);
+			} else if (DELEGATE_TOOL_NAME.test(event.name)) {
+				this.prewarmSubagents(session);
+			}
+			return;
+		}
+		if (this.toolSearches.delete(key) && /delegate_task/.test(JSON.stringify(event.result ?? event.output ?? ''))) {
+			this.prewarmSubagents(session);
+		}
+	}
+
+	/**
+	 * Starts spares for the subagents `session` is about to start: the chat's own model, options,
+	 * folder and sandbox (a subagent inherits them unless the call names others), so one
+	 * delegate_task call with several tasks finds them warm instead of starting each cold. Spares a
+	 * call does not use stop after SUBAGENT_SPARE_TTL_MS.
+	 */
+	private prewarmSubagents(session: ISessionState): void {
+		const now = Date.now();
+		// A subagent rarely delegates (depth-limited), and one call's spares serve the whole call.
+		if (session.subagent || now - (this.subagentsWarmedAt.get(session.sessionId) ?? 0) < 30_000 || this.configurationService.getValue<boolean>(ORCH_WARM_SUBAGENTS_SETTING) === false) {
+			return;
+		}
+		const item = session.agentRef ? this.catalog.find(candidate => candidate.ref === session.agentRef && candidate.enabled) : undefined;
+		const profile = item ? this.profiles.find(candidate => candidate.id === item.profileId) : undefined;
+		const provider = profile ? this.agentProviders.get(profile.providerId) : undefined;
+		if (!item || item.kind !== 'agent' || !profile || !provider) {
+			return;
+		}
+		this.subagentsWarmedAt.set(session.sessionId, now);
+		const cwd = this.executionRoot(session)?.fsPath;
+		const settings = this.getSandboxSettings(session.sessionId);
+		const sandbox: IAgentSandboxStart | undefined = settings.level === 'off' ? undefined : { settings, workspaceRoots: sandboxWorkspaceRoots(cwd, this.projectRoot(session)?.fsPath, !!session.worktreePath) };
+		// The call's roles are still streaming: an Ask or Plan chat's subagents are all read-only (see
+		// `subagentProfileForTask`); elsewhere the default role (general) works on the files.
+		const kind: VoltSubagentProfile = modePolicy(session.mode).allowWrites ? 'work' : 'readonly';
+		const spare = this.spareRequest(provider, profile, item, cwd, this.getModelOptions(item.ref), sandbox, kind);
+		this.agentPool.ensure(spare, { count: SUBAGENT_SPARES, ttlMs: SUBAGENT_SPARE_TTL_MS });
+	}
+
 	private emit(session: ISessionState, runId: string, event: IVoltEvent): void {
 		const envelope: IVoltEventEnvelope = {
 			seq: ++session.seq,
@@ -5458,6 +5526,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			listener(envelope);
 		}
 		this._onDidEmit.fire(envelope);
+		if (event.type === 'tool.start' || event.type === 'tool.end') {
+			this.noteDelegation(session, event);
+		}
 		if (this.deferredTitles.size && (event.type === 'text.delta' || event.type === 'run.end')) {
 			const deferred = this.deferredTitles.get(session.sessionId);
 			if (deferred && (event.type === 'run.end' || deferred.until === 'reply')) {

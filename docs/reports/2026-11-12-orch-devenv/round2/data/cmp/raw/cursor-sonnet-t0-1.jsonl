@@ -1,0 +1,5 @@
+{"at":11963,"m":{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/private/tmp/vcmp/w/t0","session_id":"b0b48541-319e-4d24-a165-1e61c149761a","model":"Claude Sonnet 5 300K High","permissionMode":"default"}}
+{"at":11963,"m":{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly: OK"}]},"session_id":"b0b48541-319e-4d24-a165-1e61c149761a"}}
+{"at":14652,"m":{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"session_id":"b0b48541-319e-4d24-a165-1e61c149761a","timestamp_ms":1794501025359}}
+{"at":16060,"m":{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"session_id":"b0b48541-319e-4d24-a165-1e61c149761a"}}
+{"at":16060,"m":{"type":"result","subtype":"success","duration_ms":4098,"duration_api_ms":4098,"is_error":false,"result":"OK","session_id":"b0b48541-319e-4d24-a165-1e61c149761a","request_id":"222ea641-c9cb-4903-9911-d8599d4beca2","usage":{"inputTokens":2,"outputTokens":4,"cacheReadTokens":8364,"cacheWriteTokens":15922}}}

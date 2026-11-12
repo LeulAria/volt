@@ -87,7 +87,7 @@ suite('runCli', () => {
 	test('Claude launches the ACP adapter, never `claude acp`', () => {
 		const claude = cliAgentDefinition('claude-code');
 		assert.deepStrictEqual(acpLaunchFor(claude, 'claude', ['acp'], true), { command: 'claude-agent-acp', args: [] });
-		assertNpxLaunch(acpLaunchFor(claude, 'claude', [], false), 'claude-agent-acp', '@agentclientprotocol/claude-agent-acp@0.81.2');
+		assertNpxLaunch(acpLaunchFor(claude, 'claude', [], false), 'claude-agent-acp', '@agentclientprotocol/claude-agent-acp@0.106.0');
 	});
 
 	test('Codex launches the ACP adapter, never `codex acp`', () => {
