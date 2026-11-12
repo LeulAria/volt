@@ -10,6 +10,7 @@ import { IProductService } from '../../product/common/productService.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILogService } from '../../log/common/log.js';
 import { IVoltAgentServerEndpoint, IVoltAgentServerMainService } from '../common/agentServerService.js';
+import type { ISandboxWorkloadInfo } from '../../voltSandbox/common/sandboxWorkloads.js';
 import type { IVoltExtensionHostTicket } from '../common/protocol.js';
 import { AgentServerLauncher } from '../node/agentServerLauncher.js';
 
@@ -69,5 +70,13 @@ export class VoltAgentServerMainService extends Disposable implements IVoltAgent
 	createExtensionHostTicket(): Promise<IVoltExtensionHostTicket & { readonly port: number }> {
 		this.wanted = true;
 		return this.launcher.createExtensionHostTicket();
+	}
+
+	sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> {
+		return this.launcher.sandboxWorkloads();
+	}
+
+	stopSandboxWorkload(id: string): Promise<boolean> {
+		return this.launcher.stopSandboxWorkload(id);
 	}
 }

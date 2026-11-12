@@ -10,13 +10,13 @@ import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import type { Socket } from 'net';
 import { Emitter, Event } from '../../../base/common/event.js';
-import { Disposable } from '../../../base/common/lifecycle.js';
+import { Disposable, IDisposable } from '../../../base/common/lifecycle.js';
 import { basename, dirname, join } from '../../../base/common/path.js';
 import { IPrincipal, SubjectKey } from '../common/principals.js';
 import { composeSandboxPolicy } from '../common/sandboxComposition.js';
-import { IAttestation, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { IAttestation, ISandboxRunDenial, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer, SandboxDimension } from '../common/sandboxSchema.js';
-import { isLiveWorkloadState, ISandboxResourceSample, ISandboxWorkloadInfo, SandboxExitReason, SandboxWorkloadState, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
+import { isLiveWorkloadState, ISandboxResourceSample, ISandboxWorkloadDenial, ISandboxWorkloadInfo, isUserFacingDenial, MAX_WORKLOAD_DENIALS, SandboxExitReason, SandboxWorkloadState, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
 import type { INetworkPrincipalView, NetworkRoute } from './networkBroker.js';
 import { PrincipalRegistry } from './principalRegistry.js';
 import { IPreparedSandbox, ISandboxLogger, processAlive, RUN_LEDGER_NAME, SandboxManager } from './sandboxManager.js';
@@ -201,6 +201,8 @@ const STDERR_TAIL_BYTES = 64 * 1024;
 export const HOST_CHANNEL_FD_ENV = 'VOLT_HOST_CHANNEL_FD';
 /** How long a stopping host may take before its exit counts as done anyway. */
 const STOP_TIMEOUT_MS = 5_000;
+/** How long a host's denials gather before the window hears of them. */
+const DENIAL_COALESCE_MS = 250;
 const LEDGER_VERSION = 1;
 
 /** One host's record in its run folder, read back by the next start of Volt (F.11). */
@@ -508,6 +510,12 @@ class SandboxHost implements ISandboxedHost {
 	private _restarts = 0;
 	private _lastResources: ISandboxResourceSample | undefined;
 	private detail: string | undefined;
+	/** What the sandbox refused it (user-facing only), by kind and target, least recent first. */
+	private readonly denials = new Map<string, ISandboxWorkloadDenial>();
+	private deniedCount = 0;
+	private denialListener: IDisposable | undefined;
+	/** A burst of denials is one change for the window, not one per refusal. */
+	private denialTimer: ReturnType<typeof setTimeout> | undefined;
 	private disposed = false;
 	readonly startedAt = Date.now();
 	lastActivity = Date.now();
@@ -585,7 +593,36 @@ class SandboxHost implements ISandboxedHost {
 			restarts: this._restarts,
 			...(this._lastResources ? { resources: this._lastResources } : {}),
 			...(this.detail ? { detail: this.detail } : {}),
+			...(this.deniedCount ? { denials: [...this.denials.values()], deniedCount: this.deniedCount } : {}),
 		};
+	}
+
+	/**
+	 * A refusal of this host's (kernel or network broker): kept for the window, which warns the user
+	 * at runtime (the Security page lists it too). Noise the runtime itself causes is left out.
+	 */
+	private recordDenial(denial: ISandboxRunDenial, home: string | undefined): void {
+		if (this.disposed || !isUserFacingDenial(denial)) {
+			return;
+		}
+		const target = home ? redactSandboxText(denial.target, home) : denial.target;
+		const key = `${denial.kind}\u0000${target}`;
+		const previous = this.denials.get(key);
+		this.denials.delete(key);
+		this.denials.set(key, { kind: denial.kind, target, at: Date.now(), count: (previous?.count ?? 0) + 1 });
+		if (this.denials.size > MAX_WORKLOAD_DENIALS) {
+			this.denials.delete(this.denials.keys().next().value!);
+		}
+		this.deniedCount++;
+		if (!previous) {
+			this.logger.warn(`[volt-sandbox] host ${this.label} was denied ${denial.kind} ${target}`);
+		}
+		this.denialTimer ??= setTimeout(() => {
+			this.denialTimer = undefined;
+			if (!this.disposed) {
+				this.supervisor.changed(this);
+			}
+		}, DENIAL_COALESCE_MS);
 	}
 
 	private setState(state: SandboxWorkloadState): void {
@@ -645,6 +682,8 @@ class SandboxHost implements ISandboxedHost {
 		}
 		this.prepared = prepared;
 		this.tag = prepared.tag;
+		this.denialListener?.dispose();
+		this.denialListener = prepared.onDenial(denial => this.recordDenial(denial, prepared.policy.home));
 		this._backend = prepared.backend;
 		const piped = request.stdio === 'pipe';
 		let child: ChildProcess;
@@ -1007,6 +1046,8 @@ class SandboxHost implements ISandboxedHost {
 		this.disposed = true;
 		clearTimeout(this.idleTimer);
 		clearTimeout(this.backoffTimer);
+		clearTimeout(this.denialTimer);
+		this.denialListener?.dispose();
 		for (const emitter of [this._onDidChangeState, this._onExit, this._onResource, this._onMessage, this._onStdout] as Emitter<unknown>[]) {
 			emitter.dispose();
 		}

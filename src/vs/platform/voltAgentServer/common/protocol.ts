@@ -174,6 +174,13 @@ export const VOLT_LOCAL_LINK_PATH = '/api/auth/link';
  * for the desktop's sandboxed extension hosts (P6), which connect to the workbench server here.
  */
 export const VOLT_EXTHOST_TICKET_PATH = '/api/workbench/exthost-ticket';
+/**
+ * `GET` with the server's own token as a bearer, loopback only: the sandboxed hosts the server runs
+ * (`{ workloads: ISandboxWorkloadInfo[] }`), its sandboxed extension hosts among them, with what
+ * their sandbox refused them. `POST <path>/stop?id=<id>` stops one. The desktop's own supervisor
+ * runs in its main process; these run in the server (P6), so the window asks for both.
+ */
+export const VOLT_SANDBOX_WORKLOADS_PATH = '/api/workbench/sandbox-workloads';
 /** The query parameter a desktop extension host connection carries its ticket in (single use, a minute). */
 export const VOLT_EXTHOST_TICKET_QUERY = 'voltExtHostTicket';
 

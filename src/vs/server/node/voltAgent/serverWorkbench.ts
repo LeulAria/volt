@@ -22,6 +22,7 @@ import product from '../../../platform/product/common/product.js';
 import { RemoteAgentConnectionContext } from '../../../platform/remote/common/remoteAgentEnvironment.js';
 import { IAgentServerAuth } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { IVoltExtensionHostTicket, VOLT_EXTHOST_TICKET_QUERY } from '../../../platform/voltAgentServer/common/protocol.js';
+import type { ISandboxWorkloadInfo } from '../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import { VOLT_FS_BROWSE_CHANNEL_NAME } from '../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../../platform/voltGit/common/voltGit.js';
@@ -202,6 +203,15 @@ export class ServerWorkbench extends Disposable {
 	}
 
 	private readonly tickets = new Map<string, number>();
+
+	/** The sandboxed hosts the workbench windows started here (P6: the desktop's sandboxed extensions). None before any. */
+	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> {
+		return this._stdio ? this._stdio.sandboxWorkloads() : [];
+	}
+
+	async stopSandboxWorkload(id: string): Promise<boolean> {
+		return !!id && !!this._stdio && this._stdio.stopSandboxWorkload(id);
+	}
 
 	private consumeTicket(ticket: string): boolean {
 		const expiresAt = this.tickets.get(ticket);
