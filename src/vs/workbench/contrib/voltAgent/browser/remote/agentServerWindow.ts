@@ -154,7 +154,7 @@ export class AgentServerWindow extends Disposable {
 		const sendFolders = () => client.call('codeIntel.setFolders', workspace.getWorkspace().folders.map(folder => files.toServer(folder.uri)?.fsPath).filter((path): path is string => !!path))
 			.catch(err => logService.trace('[volt agent server] could not send this window\'s folders', err));
 		this._register(workspace.onDidChangeWorkspaceFolders(() => void sendFolders()));
-		this._register(client.onDidResync(() => void sendFolders()));
+		this._register(client.onDidConnect(() => void sendFolders()));
 		if (client.isReady) {
 			void sendFolders();
 		}
@@ -263,7 +263,8 @@ export class AgentServerWindow extends Disposable {
 		const soon = this._register(new RunOnceScheduler(() => send(false), 300));
 		this._register(workingCopies.onDidChangeDirty(() => soon.schedule()));
 		this._register(workingCopies.onDidChangeContent(() => soon.schedule()));
-		this._register(client.onDidResync(() => {
+		// The server forgets a connection's documents with its socket, resumed or not.
+		this._register(client.onDidConnect(() => {
 			sent.clear();
 			send(true);
 		}));

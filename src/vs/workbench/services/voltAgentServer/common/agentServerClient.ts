@@ -53,6 +53,14 @@ export interface IAgentServerClientService {
 	readonly onDidChangeState: Event<AgentServerConnectionState>;
 	/** The mirror was replaced by a snapshot: views reload (open chats reopen). */
 	readonly onDidResync: Event<IAgentServerResync>;
+	/**
+	 * A connection was welcomed, resumed or not (after onDidResync when it brought a snapshot). The
+	 * server keeps what a window told it per connection (its tools, folders, unsaved documents,
+	 * terminal viewers, the chats it shows) and forgets it when that socket closes; a resumed
+	 * connection replays the events it missed but brings no snapshot, so onDidResync does not fire.
+	 * Send such state again on this.
+	 */
+	readonly onDidConnect: Event<void>;
 	readonly onDidChangeCollection: Event<{ readonly col: string; readonly keys: readonly string[]; readonly reset: boolean }>;
 	readonly onSessionEvent: Event<SessionTopicData>;
 	readonly onRuntimeEvent: Event<IVoltEventEnvelope>;
@@ -79,6 +87,8 @@ export class AgentServerClient extends Disposable implements IAgentServerClientS
 
 	private readonly _onDidResync = this._register(new Emitter<IAgentServerResync>());
 	readonly onDidResync = this._onDidResync.event;
+	private readonly _onDidConnect = this._register(new Emitter<void>());
+	readonly onDidConnect = this._onDidConnect.event;
 	private readonly _onSessionEvent = this._register(new Emitter<SessionTopicData>());
 	readonly onSessionEvent = this._onSessionEvent.event;
 	private readonly _onRuntimeEvent = this._register(new Emitter<IVoltEventEnvelope>());
@@ -108,6 +118,9 @@ export class AgentServerClient extends Disposable implements IAgentServerClientS
 				this._isReady = true;
 				ready();
 				this._onDidResync.fire({ newEpoch: welcome.newEpoch });
+			}
+			if (this._isReady) {
+				this._onDidConnect.fire();
 			}
 		}));
 		this._register(this.connection.onEvent(event => {
