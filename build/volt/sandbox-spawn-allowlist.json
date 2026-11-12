@@ -608,6 +608,14 @@
 			"why": "Tunnels (cloudflared, ssh, tailscale) the user set up in Add Device."
 		},
 		{
+			"file": "src/vs/server/node/voltAgent/serverWorkbench.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "agent-server",
+			"reason": "supervisor",
+			"why": "Reads the computer name (/usr/sbin/scutil --get ComputerName, fixed arguments) for the browser workbench's page config."
+		},
+		{
 			"file": "src/vs/workbench/api/node/extHostTunnelService.ts",
 			"kind": "child_process",
 			"count": 2,

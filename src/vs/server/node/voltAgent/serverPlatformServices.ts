@@ -427,9 +427,13 @@ const WINDOW_COMMAND_TIMEOUT_MS: ReadonlyMap<string, number> = new Map([
 	[BROWSER_PAGE_URL_COMMAND_ID, 10_000],
 ]);
 
+/** Window commands any Volt window answers (the browser workbench too); the rest need the in-app browser. */
+const SURFACE_COMMANDS: ReadonlySet<string> = new Set([WORKSPACE_SNAPSHOT_COMMAND_ID]);
+
 /**
  * Runs commands from the CommandsRegistry (the checkpoint service registers its own). Commands
- * that need a window are run by a connected Volt window that has the in-app browser.
+ * that need a window are run by a connected Volt window: one with the in-app browser, or for what
+ * the user has open, any window.
  */
 export class ServerCommandService implements ICommandService {
 	declare readonly _serviceBrand: undefined;
@@ -455,7 +459,7 @@ export class ServerCommandService implements ICommandService {
 				// These all name the chat first: its browser tab is in the window that has it open.
 				const sessionId = typeof args[0] === 'string' ? args[0] : undefined;
 				const holders = sessionId ? this.clients.holders(sessionId) : undefined;
-				const answer = this.clients.callWith<unknown>('browser', {
+				const answer = this.clients.callWith<unknown>(SURFACE_COMMANDS.has(id) ? 'surface' : 'browser', {
 					prefer: holders?.size ? connectionId => holders.has(connectionId) : undefined,
 					timeoutMs: WINDOW_COMMAND_TIMEOUT_MS.get(id),
 				}, 'command.execute', id, ...args.map(arg => CancellationToken.isCancellationToken(arg) ? undefined : toWire(arg)));
