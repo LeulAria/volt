@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import * as http from 'http';
 import { homedir, networkInterfaces } from 'os';
 import { dirname, join, sep } from '../../../base/common/path.js';
-import { IAgentServerRuntimeInfo, IVoltExtensionHostTicket, IVoltLocalLink, VOLT_EXTHOST_TICKET_PATH, VOLT_LOCAL_LINK_PATH, VOLT_SANDBOX_WORKLOADS_PATH } from '../common/protocol.js';
+import { IAgentServerRuntimeInfo, IVoltExtensionHostTicket, IVoltLocalLink, VOLT_DESKTOP_EXTENSIONS_DIR_ENV, VOLT_EXTHOST_TICKET_PATH, VOLT_LOCAL_LINK_PATH, VOLT_SANDBOX_WORKLOADS_PATH } from '../common/protocol.js';
 import type { ISandboxWorkloadInfo } from '../../voltSandbox/common/sandboxWorkloads.js';
 import { IVoltAgentServerEndpoint } from '../common/agentServerService.js';
 import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
@@ -56,6 +56,11 @@ export interface IAgentServerLauncherOptions {
 	readonly electronPath: string;
 	/** The build's commit (packaged builds): a server from another build is replaced. */
 	readonly commit?: string;
+	/**
+	 * The desktop's extensions folder (`--extensions-dir`): the server finds the extensions it runs
+	 * in sandboxed hosts (P6) and serves the browser there, so both see the same installs.
+	 */
+	readonly extensionsDir?: string;
 	readonly log: (message: string) => void;
 }
 
@@ -183,6 +188,9 @@ export class AgentServerLauncher {
 		if (process.env['VSCODE_DEV']) {
 			env['VSCODE_DEV'] = '1';
 			env['NODE_ENV'] = 'development';
+		}
+		if (this.options.extensionsDir) {
+			env[VOLT_DESKTOP_EXTENSIONS_DIR_ENV] = this.options.extensionsDir;
 		}
 		if (process.env['VOLT_AGENT_SERVER_LOG']) {
 			env['VOLT_AGENT_SERVER_LOG'] = process.env['VOLT_AGENT_SERVER_LOG'];

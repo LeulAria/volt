@@ -34,6 +34,7 @@ export class VoltAgentServerMainService extends Disposable implements IVoltAgent
 			appRoot: FileAccess.asFileUri('').fsPath.replace(/[\\/]out[\\/]?$/, ''),
 			electronPath: process.execPath,
 			commit: productService.commit,
+			extensionsDir: environmentMainService.extensionsPath,
 			log: message => logService.info(message),
 		});
 		const onResume = () => {

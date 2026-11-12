@@ -30,6 +30,7 @@ import Severity from '../../../../base/common/severity.js';
 import { IUserDataSyncEnablementService, SyncResource } from '../../../../platform/userDataSync/common/userDataSync.js';
 import { Promises } from '../../../../base/common/async.js';
 import { IWorkspaceTrustRequestService, WorkspaceTrustRequestButton } from '../../../../platform/workspace/common/workspaceTrust.js';
+import { voltReviewInstall } from './voltInstallReview.js';
 import { IExtensionManifestPropertiesService } from '../../extensions/common/extensionManifestPropertiesService.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
@@ -318,6 +319,7 @@ export class ExtensionManagementService extends CommontExtensionManagementServic
 		const serversToInstall = this.getServersToInstall(manifest);
 		if (serversToInstall?.length) {
 			await this.checkForWorkspaceTrust(manifest, false);
+			await voltReviewInstall(manifest);
 			const [local] = await Promises.settled(serversToInstall.map(server => this.installVSIXInServer(vsix, server, options)));
 			return local;
 		}
@@ -468,6 +470,7 @@ export class ExtensionManagementService extends CommontExtensionManagementServic
 
 				if (options?.context?.[EXTENSION_INSTALL_SOURCE_CONTEXT] !== ExtensionInstallSource.SETTINGS_SYNC) {
 					await this.checkForWorkspaceTrust(manifest, false);
+					await voltReviewInstall(manifest);
 
 					if (!options?.donotIncludePackAndDependencies) {
 						await this.checkInstallingExtensionOnWeb(extension, manifest);
@@ -522,6 +525,7 @@ export class ExtensionManagementService extends CommontExtensionManagementServic
 		if (installOptions?.context?.[EXTENSION_INSTALL_SOURCE_CONTEXT] !== ExtensionInstallSource.SETTINGS_SYNC) {
 
 			await this.checkForWorkspaceTrust(manifest, false);
+			await voltReviewInstall(manifest);
 
 			if (!installOptions?.donotIncludePackAndDependencies) {
 				await this.checkInstallingExtensionOnWeb(gallery, manifest);

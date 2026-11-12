@@ -135,13 +135,47 @@
 	font-weight: 600;
 }
 
-.volt-install-sheet-group .outcome,
-.volt-install-sheet-capability .detail {
+.volt-install-sheet-group .outcome {
 	font-size: 12px;
 	color: var(--vscode-descriptionForeground);
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+/* Two lines: the extension's own reason must be readable; the row's hover has all of it. */
+.volt-install-sheet-capability .detail {
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--vscode-descriptionForeground);
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	overflow: hidden;
+	white-space: normal;
+}
+
+/* The install review: where the extension's code runs, above what it declares. */
+.volt-install-sheet-where {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-bottom: 14px;
+}
+
+.volt-install-sheet-where .title {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-install-sheet-where .detail {
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-install-sheet-where .volt-install-sheet-place {
+	align-self: flex-start;
 }
 
 .volt-install-sheet-capability .title {

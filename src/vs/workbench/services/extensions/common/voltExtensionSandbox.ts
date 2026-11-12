@@ -94,8 +94,12 @@ export interface IVoltExtensionSandboxService {
 	state(extensionId: string): VoltExtensionSandboxState;
 	/** In scope for the sandbox: opted in, or every third-party extension when the mode is `required` (P8). */
 	isOptedIn(extensionId: string): boolean;
-	/** Opts it in or out (per profile; a window reload moves it). Under `required`, out means "Run Without Sandbox" (asks first). */
-	setOptedIn(extensionId: string, sandboxed: boolean): Promise<void>;
+	/**
+	 * Opts it in or out (per profile; a window reload moves it). Under `required`, out means "Run
+	 * Without Sandbox" (asks first). `beforeInstall`: the install review's choice, for an extension
+	 * not installed yet, so nothing needs a reload.
+	 */
+	setOptedIn(extensionId: string, sandboxed: boolean, options?: { readonly beforeInstall?: boolean }): Promise<void>;
 	/** P8's kill switch: on moves the tier to `ask` (asks to confirm); off returns to sandboxing. */
 	setKillSwitch(on: boolean): Promise<boolean>;
 	/** P8: after a refusal, the user's explicit choice to run it without the sandbox (asks first). */

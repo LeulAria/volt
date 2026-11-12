@@ -21,7 +21,8 @@ import './voltPluginHosts.js';
 
 registerWorkbenchContribution2(FlowGrantSync.ID, FlowGrantSync, WorkbenchPhase.AfterRestored);
 // The install sheet: a third-party extension's declared Volt capabilities, by class, at first activation.
-registerWorkbenchContribution2(InstallSheetContribution.ID, InstallSheetContribution, WorkbenchPhase.Eventually);
+// Early: it also reviews installs from Volt's UI before they happen.
+registerWorkbenchContribution2(InstallSheetContribution.ID, InstallSheetContribution, WorkbenchPhase.AfterRestored);
 // What the sandbox refuses a sandboxed extension or plugin host, told to the user as it happens.
 registerWorkbenchContribution2(SandboxDenialNotifier.ID, SandboxDenialNotifier, WorkbenchPhase.AfterRestored);
 

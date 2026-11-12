@@ -181,6 +181,11 @@ export const VOLT_EXTHOST_TICKET_PATH = '/api/workbench/exthost-ticket';
  * runs in its main process; these run in the server (P6), so the window asks for both.
  */
 export const VOLT_SANDBOX_WORKLOADS_PATH = '/api/workbench/sandbox-workloads';
+/**
+ * The desktop's extensions folder, set by the app that starts the server: a profile started with
+ * `--extensions-dir` installs there, and its sandboxed extensions must be found there (P6).
+ */
+export const VOLT_DESKTOP_EXTENSIONS_DIR_ENV = 'VOLT_DESKTOP_EXTENSIONS_DIR';
 /** The query parameter a desktop extension host connection carries its ticket in (single use, a minute). */
 export const VOLT_EXTHOST_TICKET_QUERY = 'voltExtHostTicket';
 
