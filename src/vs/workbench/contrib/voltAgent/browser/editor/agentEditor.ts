@@ -1818,6 +1818,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			return;
 		}
 		this.contextUsageTimer = disposableTimeout(() => {
+			this.contextUsageTimer?.dispose();
 			this.contextUsageTimer = undefined;
 			this.refreshContextUsageNow();
 		}, wait);
@@ -5290,6 +5291,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const wait = Math.max(32, STATUS_ROTATE_MS - elapsed + 24);
 		this.statusRotateTimer?.dispose();
 		this.statusRotateTimer = disposableTimeout(() => {
+			this.statusRotateTimer?.dispose();
 			this.statusRotateTimer = undefined;
 			if (this.isStreaming()) {
 				this.scheduleThreadRender();
@@ -9086,6 +9088,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private schedulePrewarm(delay = PREWARM_ON_OPEN_MS): void {
 		this.prewarmTimer?.dispose();
 		this.prewarmTimer = disposableTimeout(() => {
+			this.prewarmTimer?.dispose();
 			this.prewarmTimer = undefined;
 			if (this.isVisible() && !this.isStreaming() && this.composerCanSend()) {
 				this.prewarmAgent();

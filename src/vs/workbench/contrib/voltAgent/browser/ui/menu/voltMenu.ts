@@ -364,6 +364,7 @@ class VoltMenuWidget<T> extends Disposable {
 		this.root.setAttribute('role', 'dialog');
 		this.root.setAttribute('aria-label', context.ariaLabel);
 		this._register(toDisposable(() => {
+			this.footerRows.forEach(row => disposeRowLabel(row.element));
 			if (this.flyoutTimer) {
 				clearTimeout(this.flyoutTimer);
 			}
@@ -698,6 +699,7 @@ class VoltMenuWidget<T> extends Disposable {
 	}
 
 	private renderFooter(): void {
+		this.footerRows.forEach(row => disposeRowLabel(row.element));
 		clearNode(this.footerHost);
 		this.footerRows.length = 0;
 		const footer = this.options.footer ?? [];
@@ -1163,7 +1165,17 @@ class ItemRenderer<T> implements IListRenderer<Row<T>, HTMLElement> {
 		renderItem(element, row.item, row.matches);
 	}
 
-	disposeTemplate(): void { }
+	disposeTemplate(element: HTMLElement): void {
+		disposeRowLabel(element);
+	}
+}
+
+/** Each row's label (a disposable widget): replaced when the row is drawn again, disposed with the row. */
+const rowLabels = new WeakMap<HTMLElement, IDisposable>();
+
+function disposeRowLabel(host: HTMLElement): void {
+	rowLabels.get(host)?.dispose();
+	rowLabels.delete(host);
 }
 
 function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatch[] | undefined): void {
@@ -1181,7 +1193,9 @@ function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatc
 	// Two-line rows stack the label line over the subtitle; one-line rows lay it out in the row.
 	const text = item.subtitle ? append(host, $('span.volt-menu-text')) : undefined;
 	const line = text ? append(text, $('span.volt-menu-line')) : host;
+	disposeRowLabel(host);
 	const label = new HighlightedLabel(append(line, $('span.volt-menu-label')));
+	rowLabels.set(host, label);
 	label.set(item.label, matches);
 	if (item.description) {
 		// Marked left-to-right so a path keeps its slashes in place while it ellipsizes on the left.
@@ -1293,7 +1307,9 @@ class DestinationRenderer<T> implements IListRenderer<Row<T>, HTMLElement> {
 		}, undefined);
 	}
 
-	disposeTemplate(): void { }
+	disposeTemplate(element: HTMLElement): void {
+		disposeRowLabel(element);
+	}
 }
 
 class MessageRenderer<T> implements IListRenderer<Row<T>, HTMLElement> {
