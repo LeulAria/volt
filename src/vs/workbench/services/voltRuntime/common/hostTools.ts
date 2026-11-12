@@ -18,6 +18,7 @@ import { DESKTOP_TOOL_NAMES } from './desktopTools.js';
 import { isIdeToolName } from './ide/ideTools.js';
 import { isJobWatchToolName } from './jobs/jobWatch.js';
 import { isMemoryToolName } from './memory/voltMemory.js';
+import { isOrchestraTool } from './orchestration/orchestra.js';
 import { PLAYGROUND_TOOL_NAMES } from './playgroundTools.js';
 import type { VoltMode } from './modes.js';
 import type { AgentQuestionDraft, IAgentQuestionResponse } from './questions.js';
@@ -906,7 +907,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id) || id === WORKSPACE_STATUS_TOOL_NAME || isJobWatchToolName(id) || isIdeToolName(id)) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id) || id === WORKSPACE_STATUS_TOOL_NAME || isJobWatchToolName(id) || isIdeToolName(id) || isOrchestraTool(id)) {
 				return canonicalHostToolName(id);
 			}
 		}
@@ -1148,4 +1149,23 @@ export interface IVoltHostToolService {
 export interface IVoltFlowGrantStore {
 	persist(grant: IGrant): Promise<void>;
 	revoke(ids: readonly string[]): Promise<void>;
+}
+
+/**
+ * A call whose only argument holds the whole call as JSON text, e.g. council `{"question": "{\"question\": …,
+ * \"participants\": […]}"}` (seen from Haiku 5.5, 2026-11-12): the arguments inside, so the tool does not run
+ * with defaults in place of what the agent asked for. Anything else is returned as it came.
+ */
+export function unwrapStuffedArgs(args: Record<string, unknown>): Record<string, unknown> {
+	const keys = Object.keys(args);
+	const value = keys.length === 1 ? args[keys[0]] : undefined;
+	if (typeof value !== 'string' || !/^\s*\{[\s\S]*\}\s*$/.test(value)) {
+		return args;
+	}
+	try {
+		const inner: unknown = JSON.parse(value);
+		return inner && typeof inner === 'object' && !Array.isArray(inner) && Object.prototype.hasOwnProperty.call(inner, keys[0]) ? inner as Record<string, unknown> : args;
+	} catch {
+		return args;
+	}
 }

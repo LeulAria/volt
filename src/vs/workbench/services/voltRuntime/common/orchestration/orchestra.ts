@@ -379,6 +379,7 @@ export function buildMemberBrief(spec: IMemberBriefSpec): string {
 		'- Share what others need (a finding, a decision, an interface you defined) with team_board {"op":"note"}, and read the board before asking anyone. Message with team_send only for a question only that teammate or the lead can answer, or a blocker. No status chatter.',
 		'- Change only what your item needs; another member may be editing the files next to yours. Never undo a teammate\'s change: note the conflict instead.',
 		'- Finish with a short report: what you did per item, files changed, checks run and their results, and anything left open.',
+		'- team_board and team_send change only the team\'s state in Volt, never files: use them in a read-only (Ask or Plan) chat too.',
 	);
 	return lines.join('\n');
 }

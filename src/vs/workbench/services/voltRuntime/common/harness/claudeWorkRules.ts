@@ -85,7 +85,7 @@ export const CLAUDE_SUBAGENT_DISALLOWED_TOOLS: readonly string[] = ['Agent'];
  * Code's default asks for a plan file and ExitPlanMode, which a report never needs; this is also
  * ~1.2k tokens shorter (measured 2026-11-12, same answer).
  */
-export const CLAUDE_SUBAGENT_PLAN_MODE = 'This is a read-only task another agent delegated to you. Read and search what you need (batch independent reads), then give your answer as your final message. Do not write a plan file and do not call ExitPlanMode: your final message is the report.';
+export const CLAUDE_SUBAGENT_PLAN_MODE = 'This is a read-only task another agent delegated to you. Read and search what you need (batch independent reads), then give your answer as your final message. Do not write a plan file and do not call ExitPlanMode: your final message is the report. Volt\'s coordination tools (team_board, team_send, task_status, wait_tasks, delegate_task) change no files, so use them when your brief asks.';
 
 /** A subagent's chat is named after its task by Volt, so Claude Code's own title request is skipped. */
 export const CLAUDE_SUBAGENT_SESSION_TITLE = 'Volt subagent';

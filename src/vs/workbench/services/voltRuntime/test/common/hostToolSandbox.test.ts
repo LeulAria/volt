@@ -14,6 +14,7 @@ import { AUTOMATION_TOOL_NAMES, canonicalHostToolName, COMMIT_PLAN_TOOL_NAMES, P
 import { HOST_TOOL_SANDBOX_CLASSES, hostToolSandboxUse, ISandboxPathContext, sandboxBrowserUrlRefusal, sandboxCovers, sandboxReadRefusal, sandboxRefusalMessage, sandboxWriteRefusal } from '../../common/hostToolSandbox.js';
 import { MEMORY_TOOL_NAMES } from '../../common/memory/voltMemory.js';
 import { AGENT_TASK_TOOL_NAMES } from '../../common/orchestration/agentTasks.js';
+import { ORCHESTRA_TOOL_NAMES } from '../../common/orchestration/orchestra.js';
 import { PLAYGROUND_TOOL_NAMES } from '../../common/playgroundTools.js';
 import { WATCHED_TASK_TOOL_NAMES } from '../../common/terminals/watchedTasks.js';
 import { TERMINAL_TOOL_NAMES } from '../../common/terminalTools.js';
@@ -27,7 +28,7 @@ const SERVED_TOOLS = new Set<string>([
 	...VOLT_HOST_TOOLS.map(tool => tool.name),
 	...THREAD_TOOL_NAMES, ...PULL_REQUEST_TOOL_NAMES, ...COMMIT_PLAN_TOOL_NAMES, ...AUTOMATION_TOOL_NAMES,
 	...VISUAL_TOOL_NAMES.map(canonicalHostToolName), ...DEVICE_TOOL_NAMES, ...CAPTURE_TOOL_NAMES, ...DESKTOP_TOOL_NAMES,
-	...PLAYGROUND_TOOL_NAMES, ...MEMORY_TOOL_NAMES, ...TERMINAL_TOOL_NAMES, ...AGENT_TASK_TOOL_NAMES, ...WATCHED_TASK_TOOL_NAMES,
+	...PLAYGROUND_TOOL_NAMES, ...MEMORY_TOOL_NAMES, ...TERMINAL_TOOL_NAMES, ...AGENT_TASK_TOOL_NAMES, ...ORCHESTRA_TOOL_NAMES, ...WATCHED_TASK_TOOL_NAMES,
 	INSTANT_GREP_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, FIND_FILES_TOOL_NAME, ...LANGUAGE_SERVER_TOOL_NAMES, WORKSPACE_STATUS_TOOL_NAME, 'scratch_draw', 'scratch_read',
 ]);
 
@@ -42,6 +43,18 @@ suite('Volt host tool sandbox classes', () => {
 		assert.deepStrictEqual(unknown, [], 'no stale or misspelled names');
 		assert.strictEqual(hostToolSandboxUse('brand_new_tool', {}), undefined);
 		assert.strictEqual(hostToolSandboxUse('render_html', {}), undefined, 'the gate sees canonical names only');
+	});
+
+	test('teams and councils run from a sandboxed chat like delegate_task; a worktree team and machine_run do not', () => {
+		const kind = (name: string, args: Record<string, unknown> = {}) => hostToolSandboxUse(name, args)?.kind;
+		assert.strictEqual(kind('spawn_team', { members: [{ model: 'haiku', count: 3 }] }), 'safe');
+		assert.strictEqual(kind('spawn_team', { isolation: 'worktree' }), 'escapes');
+		assert.strictEqual(kind('spawn_team', { members: [{ model: 'haiku', isolation: 'worktree' }] }), 'escapes');
+		assert.strictEqual(kind('council', { question: 'q' }), 'safe');
+		assert.strictEqual(kind('team_send', { to: 'all', message: 'm' }), 'safe');
+		assert.strictEqual(kind('team_board', { op: 'claim' }), 'safe');
+		assert.strictEqual(kind('orchestra_status'), 'safe');
+		assert.strictEqual(kind('machine_run', { op: 'run' }), 'escapes');
 	});
 
 	test('the escape routes are classified as such', () => {

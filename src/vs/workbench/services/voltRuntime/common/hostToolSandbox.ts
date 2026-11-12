@@ -220,6 +220,16 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	worktree_status: 'safe',
 	worktree_list: 'safe',
 	worktree_handoff: 'escapes',
+
+	// The orchestra: teams and councils are delegated tasks (they inherit this chat's sandbox), team
+	// messages reach this request's own members, and the board is Volt's state. machine_run runs the
+	// work on another machine and applies its branch here.
+	orchestra_status: 'safe',
+	spawn_team: 'spawns',
+	council: 'spawns',
+	team_send: 'spawns',
+	team_board: 'safe',
+	machine_run: 'escapes',
 };
 
 /** What one call would do outside the sandbox. */
@@ -312,6 +322,10 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 			return { kind: spawnKind(args.workspace === 'worktree' || (isRecord(args.workspace) && args.workspace.type === 'worktree')) };
 		case 'thread_fork':
 			return { kind: spawnKind(args.workspace === 'worktree' || (isRecord(args.workspace) && args.workspace.type === 'worktree')) };
+		case 'spawn_team':
+			return { kind: spawnKind(args.isolation === 'worktree' || asList(args.members).some(member => member.isolation === 'worktree')) };
+		case 'council':
+		case 'team_send':
 		case 'message_task':
 			return { kind: spawnKind(false) };
 		case 'thread_send':
@@ -660,6 +674,8 @@ const INSTEAD: Readonly<Record<string, string>> = {
 	manage_automations: 'Ask the user to create, change or run the automation.',
 	automation: 'Ask the user to do it.',
 	delegate_task: 'Do the work in this chat instead.',
+	spawn_team: 'Run the team with isolation "shared", or do the work in this chat.',
+	machine_run: 'Ask the user to run it on that machine.',
 	thread_launch: 'Do the work in this chat, or ask the user to start the chat.',
 	thread_fork: 'Do the work in this chat, or ask the user to fork it.',
 };
