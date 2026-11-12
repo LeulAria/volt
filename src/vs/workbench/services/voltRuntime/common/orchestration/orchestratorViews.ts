@@ -199,16 +199,22 @@ function rowDetail(task: IOrchTask): string | undefined {
 
 /** A heading alone on its line ("## Outcome", "**Outcome:**"): a report's section name, not what happened. */
 const HEADING_LINE = /^(#{1,6}\s+\S.*|\*\*[^*]+\*\*:?|__[^_]+__:?)$/;
+/** The report's "Outcome" section heading, in any of the forms HEADING_LINE takes. */
+const OUTCOME_HEADING = /^(#{1,6}\s+|\*\*|__)outcome\b/i;
 
 /**
  * The line a row shows for a report or an error: its first line with words in it, as plain text.
  * A subagent's report starts with the "## Outcome" heading (agentTasks.ts asks for it), so section
  * headings are passed over for the sentence under them; only a report of headings alone shows one.
+ * Models often say what they are about to do first ("Running the ping command now; ...") and then
+ * write the report: the sentence under "Outcome" wins over that preamble.
  * Markdown marks go; underscores inside names (`math_utils.ts`) stay.
  */
 export function orchHeadline(text: string | undefined): string | undefined {
 	const lines = text?.split('\n').map(part => part.trim()).filter(Boolean) ?? [];
-	const line = lines.find(candidate => !HEADING_LINE.test(candidate)) ?? lines[0];
+	const outcome = lines.findIndex(candidate => HEADING_LINE.test(candidate) && OUTCOME_HEADING.test(candidate));
+	const line = (outcome > 0 ? lines.slice(outcome).find(candidate => !HEADING_LINE.test(candidate)) : undefined)
+		?? lines.find(candidate => !HEADING_LINE.test(candidate)) ?? lines[0];
 	if (!line) {
 		return undefined;
 	}

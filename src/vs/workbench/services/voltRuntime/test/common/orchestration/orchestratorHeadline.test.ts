@@ -15,6 +15,16 @@ suite('Orchestrator row headline', () => {
 		assert.strictEqual(orchHeadline('**Outcome:**\nPartly done.'), 'Partly done.');
 	});
 
+	test('a preamble before the report gives way to the sentence under "Outcome"', () => {
+		// Reports seen live from Haiku 5.5 subagents: what it was about to do, then the report.
+		assert.strictEqual(orchHeadline('Running the ping command now; it only sends packets to localhost and changes no files.\n\n## Outcome\nDone. `ping -c 20 127.0.0.1 | tail -1` printed the summary line.\n\n## Findings\n- x'), 'Done. ping -c 20 127.0.0.1 | tail -1 printed the summary line.');
+		assert.strictEqual(orchHeadline('I will check.\n**Outcome:**\nPartly done.'), 'Partly done.');
+		// No Outcome section: the first sentence still leads.
+		assert.strictEqual(orchHeadline('All good.\n\n## Evidence\n- ls'), 'All good.');
+		// An Outcome heading with nothing under it: the preamble is better than the heading.
+		assert.strictEqual(orchHeadline('Checked the files.\n## Outcome'), 'Checked the files.');
+	});
+
 	test('a report of headings alone still shows something', () => {
 		assert.strictEqual(orchHeadline('## Outcome'), 'Outcome');
 	});
