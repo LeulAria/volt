@@ -5244,6 +5244,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			}
 			if (role === 'out') {
 				motionEl.setAttribute('aria-hidden', 'true');
+				// Gone once it has slid out: left in the grid, a longer old phrase kept the line as wide
+				// as itself and pushed the timer away ("Thinking        · 5s") until the next redraw.
+				motionEl.addEventListener('animationend', e => {
+					if (e.target === motionEl) {
+						motionEl.remove();
+					}
+				}, { once: true });
 			}
 			const status = append(motionEl, $('span.volt-agent-activity-progress.shimmer'));
 			status.style.animationDelay = `${-((now - shimmerAnchor) % 900)}ms`;
