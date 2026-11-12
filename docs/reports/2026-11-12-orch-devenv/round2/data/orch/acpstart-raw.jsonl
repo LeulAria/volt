@@ -1,0 +1,2 @@
+{"what":"raw claude-agent-acp 0.81.2 start outside Volt, 3 at once, no MCP servers, no sandbox (/tmp/voltbench/acpstart.mjs 3)","load":"40.48 42.59 31.97","runs":[{"initMs":478,"sessionMs":2460,"totalMs":2937},{"initMs":499,"sessionMs":2425,"totalMs":2923},{"initMs":473,"sessionMs":2456,"totalMs":2929}]}
+{"what":"same, second sample","load":"39.81 42.42 31.97","runs":[{"initMs":678,"sessionMs":2789,"totalMs":3466},{"initMs":689,"sessionMs":2879,"totalMs":3569},{"initMs":774,"sessionMs":2737,"totalMs":3512}]}

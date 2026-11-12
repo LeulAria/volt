@@ -16,7 +16,7 @@ import { IVoltSandboxEvent, IVoltSandboxFileResult, IVoltStdioService } from '..
 import { isSandboxUnavailableError, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IAccessDecision } from '../../common/access/accessTypes.js';
-import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent } from '../../browser/agents/acpProvider.js';
+import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent, isVoltHostToolPermission } from '../../browser/agents/acpProvider.js';
 import { IVoltEvent } from '../../common/events.js';
 import { ACP_IDLE_TIMINGS } from '../../common/harness/acpStall.js';
 import { isAcpTurnRestartable } from '../../common/harness/sessionRetry.js';
@@ -262,6 +262,32 @@ suite('ACP provider supervision', () => {
 		const created = env.agent.written.find(entry => entry.msg.method === 'session/new')!;
 		assert.deepStrictEqual(created.msg.params?._meta, claudeWorkRulesMeta('grok-4.7'));
 		await finish(env, handle);
+	});
+
+	test('a Volt subagent\'s session gets only its profile\'s host tool groups and the lean Claude meta', async () => {
+		const env = setup({
+			getMcpServers: (sessionId?: string, options?: { groups?: readonly string[] }) =>
+				[{ type: 'http', name: 'volt', url: `http://127.0.0.1:4000/mcp/${sessionId}${options?.groups ? `?groups=${options.groups.join(',')}` : ''}`, headers: [] }],
+		} as unknown as IVoltHostToolService, 'claude-code');
+		const sent = () => env.agent.written.filter(entry => entry.msg.method === 'session/new').slice(-1)[0].msg.params;
+		const url = () => (sent()?.mcpServers as { url: string }[])[0].url;
+
+		const readonly = await env.provider.start(request({ sessionId: 's1', subagent: 'readonly' }));
+		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s1?groups=core,tasks,image');
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { subagent: 'readonly' }));
+		// isLive asks for the same groups, so the subagent's session stays live.
+		assert.strictEqual(env.provider.isLive(readonly), true);
+		await finish(env, readonly);
+
+		const work = await env.provider.start(request({ sessionId: 's2', subagent: 'work' }));
+		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s2?groups=core,tasks,image,terminal,ide,browser');
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { subagent: 'work' }));
+		await finish(env, work);
+
+		const main = await env.provider.start(request({ sessionId: 's3' }));
+		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s3', 'the user\'s own chat gets every tool');
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7'));
+		await finish(env, main);
 	});
 
 	test('a Claude Code session starts on the exact model picked, not the adapter\'s alias or default', async () => {
@@ -779,5 +805,17 @@ suite('ACP provider sandbox', () => {
 		const env = setup();
 		await assert.rejects(env.provider.start(request(SANDBOXED)), (err: unknown) => isSandboxUnavailableError(err) && /Windows/.test((err as Error).message));
 		assert.strictEqual(env.agent.spawned.length, 0);
+	});
+
+	test('a permission prompt for one of the volt server\'s code tools is Volt\'s own, whatever the agent prefixes it with', () => {
+		const prompt = (title: string, rawInput?: unknown) => ({ toolCall: { title, rawInput }, options: [{ optionId: 'allow', kind: 'allow_once' }] });
+		// Grok wraps MCP calls in use_tool and titles the prompt with the server-prefixed name.
+		assert.ok(isVoltHostToolPermission(prompt('volt__find_symbol', { tool_name: 'volt__find_symbol', tool_input: { name: 'applyDiscount' } })));
+		assert.ok(isVoltHostToolPermission(prompt('mcp__volt__code_nav')));
+		assert.ok(isVoltHostToolPermission(prompt('x', { providerIdentifier: 'volt', toolName: 'instant_grep' })));
+		assert.ok(isVoltHostToolPermission(prompt('volt__browser_click')), 'the other host tools still are');
+		assert.ok(!isVoltHostToolPermission(prompt('find_symbol')), 'not without the volt server prefix');
+		assert.ok(!isVoltHostToolPermission(prompt('other__find_symbol')));
+		assert.ok(!isVoltHostToolPermission(prompt('volt__rm_rf')));
 	});
 });

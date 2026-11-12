@@ -1,0 +1,37 @@
+# Volt subagent (B1 "pricing bug", role research), first request, branch base 81563ca39e4, captured
+# through capproxy.mjs (run cap2, sandbox off, ENABLE_TOOL_SEARCH=true), breakdown.mjs output.
+# (The raw request was deleted with the capture folder before the "after" capture; this is the
+# printed breakdown.)
+0097-1794501404486.req.json
+model claude-haiku-5-5  billed prompt 27990 tokens  78157 chars  (2.79 chars/token)  tools 15
+  system                              3 parts    5512 tok
+  tools: built-in                    11 parts   13481 tok
+  tools (deferred stub)               4 parts     667 tok
+  messages[0] user                    3 parts    2105 tok
+  session context                     7 parts    6101 tok
+  tools: loaded                       3 parts     125 tok
+  largest parts:
+      5452 tok  system :: system[2]  You are an agent working with the user toward their goals,
+      4238 tok  tools: built-in :: Bash
+      2848 tok  session context :: skill listing
+      1918 tok  tools: built-in :: Workflow
+      1658 tok  tools: built-in :: ScheduleWakeup
+      1595 tok  messages[0] user :: user text   (Volt framing: lane note, visuals note, code-intel note, mode, workspace block, subagent brief)
+      1486 tok  session context :: deferred tool names   (138 mcp__volt__ names + Claude Code's deferred built-ins + claude.ai Docs)
+      1412 tok  tools: built-in :: AskUserQuestion
+       926 tok  tools: built-in :: Read
+       780 tok  tools: built-in :: ReportFindings
+       741 tok  session context :: MCP instructions: volt
+       678 tok  session context :: MCP instructions: claude.ai Claude Docs
+       646 tok  tools: built-in :: Skill
+       610 tok  tools: built-in :: Edit
+       516 tok  tools: built-in :: ToolSearch
+       412 tok  tools: built-in :: ListAgents
+       366 tok  tools: built-in :: Write
+       303 tok  messages[0] user :: reminder: context (git/date/email)
+       260 tok  tools (deferred stub) :: mcp__claude_ai_Claude_Docs__update
+       207 tok  messages[0] user :: reminder: CLAUDE.md / memory
+       194 tok  session context :: MCP servers needing auth   (claude.ai Gmail, Calendar, Drive)
+       186 tok  tools (deferred stub) :: mcp__claude_ai_Claude_Docs__guide
+       148 tok  tools (deferred stub) :: mcp__claude_ai_Claude_Docs__batch
+        95 tok  session context :: env + model

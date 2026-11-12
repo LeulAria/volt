@@ -9,6 +9,7 @@ import type { CancellationToken } from '../../../../../base/common/cancellation.
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import type { IVoltModelOptions } from '../models/modelOptions.js';
 import type { AgentTaskDelivery, AgentTaskIsolation, AgentTaskOrigin, AgentTaskRole, ITaskContract } from './agentTasks.js';
+import type { VoltSubagentProfile } from '../providers.js';
 import type { IWorkspaceMoveSpec } from '../git/workspaceMove.js';
 import { ORCH_MACHINE_CAPACITY_SETTING, parseMachineCapacity } from './machineCapacity.js';
 
@@ -858,8 +859,8 @@ export interface IOrchStartTurnRequest {
 	readonly threadId: string;
 	readonly turn: IOrchTurn;
 	readonly thread: IOrchThread;
-	/** The chat runs a task another agent delegated (not a Multitask chat the user follows up on): its agent starts lean. */
-	readonly subagent?: boolean;
+	/** The chat runs a task another agent delegated (not a Multitask chat the user follows up on): its agent starts lean, read-only or not (see `subagentProfileForTask`). */
+	readonly subagent?: VoltSubagentProfile;
 	/** False once the turn was stopped or replaced: the host must not send it. */
 	isCurrent(): boolean;
 }

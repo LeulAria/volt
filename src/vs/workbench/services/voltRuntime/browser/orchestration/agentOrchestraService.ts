@@ -24,9 +24,9 @@ import { blindLabel, blindOrder, describeSpend, formatUsd, isLiveTaskState, isTe
 import { clip, describeModelCatalog, matchCatalogModel } from '../../common/orchestration/agentThreadTools.js';
 import { describeMachine, IMachineCapacity, ORCH_MACHINE_CAPACITY_SETTING, parseMachineCapacity, parseParallelAnswer, planParallel } from '../../common/orchestration/machineCapacity.js';
 import {
-	buildMemberBrief, COUNCIL_MAX_ROUNDS, COUNCIL_MAX_SEATS, COUNCIL_TOOL_NAME, councilAnswerBrief, councilReviewBrief, councilVerdictBrief, describeMachineRow, fillTemplate, IOrchestraMachine,
+	buildMemberBrief, COUNCIL_MAX_ROUNDS, COUNCIL_MAX_SEATS, COUNCIL_TOOL_NAME, councilAnswerBrief, councilReviewBrief, councilSeatHealth, councilVerdictBrief, describeMachineRow, fillTemplate, IOrchestraMachine,
 	localMachine, MACHINE_RUN_TOOL_NAME, MAX_UPSTREAM, memberBase, memberNames, ORCHESTRA_COUNCIL_MODERATOR_SETTING, ORCHESTRA_COUNCIL_PARTICIPANTS_SETTING, ORCHESTRA_STATUS_TOOL_NAME,
-	ORCHESTRA_TOOLS, parseRanking, resolveMachine, rosterSizes, runnerMachine, SPAWN_TEAM_TOOL_NAME, splitItems, tallyRankings, TEAM_BOARD_TOOL_NAME, TEAM_SEND_TOOL_NAME,
+	ORCHESTRA_TOOLS, parseRanking, pickCouncilSeats, resolveMachine, rosterSizes, runnerMachine, SPAWN_TEAM_TOOL_NAME, splitItems, tallyRankings, TEAM_BOARD_TOOL_NAME, TEAM_SEND_TOOL_NAME, TWO_SEAT_COUNCIL_NOTE,
 } from '../../common/orchestration/orchestra.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchSpawnOutcome, IOrchTask, IOrchThread, readOrchLimits } from '../../common/orchestration/orchestrator.js';
 import { applyBoardOp, BoardOp, boardCounts, describeBoard, describeBoardCounts, ITeamBoard, ITeamMemberRecord, newTeamBoard, normalizeNoteKind, parseBoardItems, parseTeamBoard } from '../../common/orchestration/teamBoard.js';
@@ -883,7 +883,7 @@ export class AgentOrchestraService extends Disposable implements IAgentOrchestra
 
 	//#region council
 
-	private councilSeats(args: Record<string, unknown>): IVoltCatalogItem[] {
+	private councilSeats(args: Record<string, unknown>, callerId: string): IVoltCatalogItem[] {
 		const named = stringListArg(args.participants, COUNCIL_MAX_SEATS + 1, 200);
 		const configured = named.length ? named : stringListArg(this.configurationService.getValue<unknown>(ORCHESTRA_COUNCIL_PARTICIPANTS_SETTING), COUNCIL_MAX_SEATS + 1, 200);
 		if (configured.length) {
@@ -896,15 +896,15 @@ export class AgentOrchestraService extends Disposable implements IAgentOrchestra
 			}
 			return seats;
 		}
-		// One model per provider, harnesses first (they can read the code), at most four.
-		const byProvider = new Map<string, IVoltCatalogItem>();
-		for (const item of [...this.catalog()].sort((a, b) => (a.kind === 'agent' ? 0 : 1) - (b.kind === 'agent' ? 0 : 1))) {
-			const family = providerFamily(item.providerId);
-			if (!byProvider.has(family)) {
-				byProvider.set(family, item);
-			}
-		}
-		return [...byProvider.values()].slice(0, 4);
+		// One model per provider that can run here (quota, this chat's sandbox), recent ones first (pickCouncilSeats).
+		const catalog = this.catalog();
+		const sandboxed = (chatId: string) => this.runtime.getSandboxSettings(chatId).level !== 'off';
+		const health = councilSeatHealth(this.orchestrator.getState(), ref => catalog.find(item => item.ref === ref)?.providerId, sandboxed, sandboxed(callerId), Date.now());
+		const unverified = new Set(this.runtime.listProviderStatuses().filter(status => status.state === 'available').map(status => status.providerId));
+		return pickCouncilSeats(catalog, providerFamily, item => {
+			const seen = health(item.providerId);
+			return unverified.has(item.providerId) ? { ...seen, unverified: true } : seen;
+		});
 	}
 
 	private async council(caller: ICaller, args: Record<string, unknown>, token: CancellationToken): Promise<IVoltHostToolResult> {
@@ -917,7 +917,7 @@ export class AgentOrchestraService extends Disposable implements IAgentOrchestra
 		if (existing) {
 			return { text: [`This council is already running (same client_request_id).`, this.describeTeam(existing, false)].join('\n') };
 		}
-		const seats = this.councilSeats(args);
+		const seats = this.councilSeats(args, caller.threadId);
 		if (seats.length < 2) {
 			return { error: `A council needs at least two models; ${seats.length ? `only ${seats[0].label} is` : 'none is'} available. Connect another provider, or name participants (orchestra_status lists the models).` };
 		}
@@ -989,7 +989,7 @@ export class AgentOrchestraService extends Disposable implements IAgentOrchestra
 			const earlier = reviewIds;
 			const reviews = await spawn(seats.map((seat, index) => ({
 				...common,
-				task: councilReviewBrief(question, round, rounds),
+				task: councilReviewBrief(question, round, rounds, seats.length),
 				title: `${title} · ${round === 1 ? 'review' : `round ${round}`} · ${seat.label}`,
 				model: seat.ref,
 				after: [...answerIds.filter((_, other) => other !== index), ...earlier.filter((_, other) => other !== index)],
@@ -1024,6 +1024,7 @@ export class AgentOrchestraService extends Disposable implements IAgentOrchestra
 		return {
 			text: [
 				`Convened council "${title}" (team_id: ${teamId}): ${seats.map(seat => seat.label).join(', ')}; ${moderator?.label ?? 'this chat\'s model'} moderates. ${total} agents in ${rounds + 2} stages: answers now, then ${rounds === 1 ? 'anonymous reviews' : `${rounds} rounds of anonymous reviews`}, then the verdict.`,
+				...(seats.length === 2 ? [TWO_SEAT_COUNCIL_NOTE] : []),
 				`The verdict (${verdict.taskId}) is delivered to this chat as its report when it is done; the answers and reviews are read by the later stages and do not wake this chat. task_status reads any of them; orchestra_status shows the ranking as reviews come in.`,
 				'End your turn unless you have other work.',
 			].join('\n'),

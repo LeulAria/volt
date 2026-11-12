@@ -1,0 +1,1 @@
+Ask a subagent (delegate_task, model claude-code:claude-haiku-5-5) to read /tmp/voltbench/fx/src/pricing.ts and name the function with the bug in one line. Wait for it, then reply with its answer only. Run tag {TAG}.

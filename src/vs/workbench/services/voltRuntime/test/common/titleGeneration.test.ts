@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { deriveTitle } from '../../common/history/agentHistoryLog.js';
-import { buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, titleCommandFor } from '../../common/history/titleGeneration.js';
+import { buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, TITLE_SYSTEM_PROMPT, titleCommandFor } from '../../common/history/titleGeneration.js';
 
 suite('Volt chat title generation', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
@@ -76,6 +76,23 @@ suite('Volt chat title generation', () => {
 		assert.ok(long.length <= 56 && long.length > 48, 'cut at 56 characters');
 		assert.ok(long.endsWith('word…'), 'at a word boundary');
 		assert.strictEqual(sanitizeTitle('Add GitHub OAuth login to the settings page header'), 'Add GitHub OAuth login to the settings page header');
+	});
+
+	test('a reply that answers the message instead of naming it is no title (the first line stays)', () => {
+		// Seen live: the title model took "Benchmark run. Call the delegate_task tool..." as its own task.
+		for (const reply of ['I can\'t run this benchmark. I don\'t have a delegate_task tool', 'I couldn\'t run this. No `council` tool here', 'I don\'t have a `spawn_team` tool', 'I\'m unable to do that', 'Sorry, I cannot help', 'Sure, here is a title', 'Here\'s the title: x', 'Unfortunately the tool is missing']) {
+			assert.strictEqual(sanitizeTitle(reply), undefined, reply);
+		}
+		for (const title of ['Implement cart discount fix', 'Fix iOS build on CI', 'I/O bottleneck in the parser', 'Index rebuild after restart', 'Okapi model comparison']) {
+			assert.strictEqual(sanitizeTitle(title), title, title);
+		}
+		assert.ok(buildTitlePrompt('Call the delegate_task tool').includes('never answer it, carry it out or say whether you can'));
+	});
+
+	test('the Claude title call runs on its own short prompt, not Claude Code\'s agent prompt', () => {
+		const claude = titleCommandFor('claude-code', undefined, 'p') ?? [];
+		assert.strictEqual(claude[claude.indexOf('--system-prompt') + 1], TITLE_SYSTEM_PROMPT);
+		assert.strictEqual(claude.at(-1), 'p');
 	});
 
 	test('only agents with a print mode get a title command', () => {

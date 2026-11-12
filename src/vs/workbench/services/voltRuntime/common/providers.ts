@@ -132,9 +132,22 @@ export interface IAgentStartRequest {
 	/**
 	 * The session serves a Volt subagent (a delegated task): its brief carries what it needs, so
 	 * agents that allow it start without the user's memory index, long skill descriptions and their
-	 * own subagent tool (Volt's delegate_task nests instead). See `claudeWorkRulesMeta`.
+	 * own subagent tool (Volt's delegate_task nests instead), and every agent gets only the host
+	 * tool groups the profile needs. See `claudeWorkRulesMeta` and `SUBAGENT_HOST_TOOL_GROUPS`.
 	 */
-	subagent?: boolean;
+	subagent?: boolean | VoltSubagentProfile;
+}
+
+/**
+ * What a Volt subagent's agent needs: `readonly` for research and review (and any task of an Ask or
+ * Plan chat), `work` for the rest. Read-only subagents start from a short prompt of their own and
+ * without file-changing tools; both get only the host tool groups their role uses.
+ */
+export type VoltSubagentProfile = 'readonly' | 'work';
+
+/** `true` (saved by older builds, or a caller that does not know the role) reads as `work`. */
+export function subagentProfile(value: boolean | VoltSubagentProfile | undefined): VoltSubagentProfile | undefined {
+	return value === 'readonly' || value === 'work' ? value : value === true ? 'work' : undefined;
 }
 
 /** What an agent provider needs to start its process in the OS sandbox. */

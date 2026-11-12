@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { VoltMode } from '../modes.js';
+import type { VoltSubagentProfile } from '../providers.js';
 import type { IOrchSpend, IOrchTask, IOrchTaskUsage, OrchTaskState } from './orchestrator.js';
 
 /**
@@ -346,6 +347,29 @@ export function modeForTaskRole(role: AgentTaskRole, requested: VoltMode | undef
 		return 'ask';
 	}
 	return requested === 'plan' || requested === 'ask' || requested === 'debug' ? requested : 'agent';
+}
+
+/** How a delegated task's agent starts (`VoltSubagentProfile`): read-only for research, review and tasks in Ask or Plan mode. */
+export function subagentProfileForTask(task: Pick<IOrchTask, 'role' | 'mode'>): VoltSubagentProfile {
+	return task.role === 'research' || task.role === 'review' || task.mode === 'ask' || task.mode === 'plan' ? 'readonly' : 'work';
+}
+
+/**
+ * The refusal of a `delegate_task` call without a brief. Claude Code defers MCP tools behind Tool
+ * Search, so its first call may come before it loaded the schema, with no arguments at all (5.9 s
+ * and a ToolSearch round trip in a measured run). Naming the arguments lets the next call be right
+ * without loading the schema first.
+ */
+export function delegateTaskMissingBrief(args: Record<string, unknown>): string {
+	if (Object.values(args).some(value => value !== undefined)) {
+		return 'delegate_task needs a `task`: the complete brief for the subagent (or `tasks`, one entry per part).';
+	}
+	return [
+		'delegate_task was called without arguments: its parameters were probably not loaded yet. Call it again now with them (no ToolSearch needed):',
+		'- one subagent: {"task": "<the complete brief>", "title": "<3-6 words>"}',
+		'- several at once: {"tasks": [{"task": "...", "title": "..."}, {"task": "...", "after": ["1"]}]} (`after`: 1-based positions of parts that must finish first; their reports join the brief)',
+		'Optional on the call or on each part: `model` (a name from list_models, e.g. "claude-code:claude-haiku-5-5"), `role` (research and review are read-only; implementation, test, design, general), `context` ("brief" | "full" | "none"), `done_when` (checks), `files`, `scope`, `fallback_models`, `isolation` ("shared" | "worktree"), and on the call `client_request_id` and `wait`.',
+	].join('\n');
 }
 
 export function normalizeTaskRole(value: unknown): AgentTaskRole {

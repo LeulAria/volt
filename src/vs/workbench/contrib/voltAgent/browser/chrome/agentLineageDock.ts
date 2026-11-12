@@ -345,7 +345,10 @@ export class AgentLineageDock extends Disposable {
 				return;
 			}
 			const rootId = orchestrator.getThread(this.sessionId)?.rootId;
-			if (change.threads.some(id => id === this.sessionId || orchestrator.getThread(id)?.rootId === rootId)) {
+			// Task changes too: a subagent's task ends before its chat's thread settles, and the
+			// "N running" heading kept a finished subagent for up to 2 s after the transcript showed it done.
+			if (change.threads.some(id => id === this.sessionId || orchestrator.getThread(id)?.rootId === rootId)
+				|| (rootId !== undefined && change.tasks.some(taskId => orchestrator.getTask(taskId)?.rootId === rootId))) {
 				this.render(false);
 			}
 		}));

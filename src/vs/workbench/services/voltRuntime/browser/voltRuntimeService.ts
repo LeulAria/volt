@@ -42,7 +42,7 @@ import { IVoltModelOptions, MODEL_OPTION_REASONING, pickGenerationParams, resolv
 import { modePolicy, VoltMode } from '../common/modes.js';
 import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
-import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
+import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, subagentProfile, VoltProviderState, VoltSubagentProfile } from '../common/providers.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, newChatSandboxDefaults, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isSandboxUnavailableError, sandboxRefusedMessage } from '../common/access/sandboxRefusal.js';
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
@@ -62,7 +62,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import './git/agentWorktreeSetupService.js';
 import { withPlanModeInstruction } from '../common/plans.js';
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostFlowApproval, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, VISUAL_TOOL_NAMES } from '../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostFlowApproval, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, SUBAGENT_HOST_TOOL_GROUPS, VISUAL_TOOL_NAMES, VoltHostToolGroup } from '../common/hostTools.js';
 import { POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../common/hostToolAuthority.js';
 import { IVoltMemoryService } from '../common/memory/voltMemory.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
@@ -340,7 +340,7 @@ interface ISessionState extends IVoltSession {
 	/** The user restarted the agent while a turn held it: the next prompt starts a fresh one. */
 	restartPending?: boolean;
 	/** A Volt subagent's chat (a delegated task): its agent starts lean (see `IAgentStartRequest.subagent`). */
-	subagent?: boolean;
+	subagent?: VoltSubagentProfile;
 	/** Files the context retriever already showed this chat's agent with their code. */
 	retrievalSeen?: Set<string>;
 	/** Catalog ref the live agent session was started for. */
@@ -1143,7 +1143,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.mode = request.mode;
 		session.providerRef = request.providerRef ?? session.providerRef ?? this.defaultRef(request.mode);
 		if (request.subagent) {
-			session.subagent = true;
+			session.subagent = subagentProfile(request.subagent);
 		}
 		// A native run reads follow-ups between steps; there is nothing to restart.
 		if (session.run && this.steer(sessionId, request.text)) {
@@ -1432,7 +1432,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// A new agent's first prompt says whether the project is indexed: ask now, not on the send.
 		void this.largeIndexedProject(this.executionRoot(session));
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
-		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox, session.subagent === true);
+		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox, session.subagent);
 		if (this.agentPool.has(spare.key)) {
 			return;
 		}
@@ -1470,7 +1470,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		void this.apiKey(profile).catch(() => undefined);
 	}
 
-	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart, subagent = (this.sessions.get(sessionId) as ISessionState | undefined)?.subagent === true): IAgentStartRequest {
+	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart, subagent = (this.sessions.get(sessionId) as ISessionState | undefined)?.subagent): IAgentStartRequest {
 		return {
 			sessionId,
 			mode,
@@ -1479,7 +1479,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			modelId: item.id === profile.providerId ? undefined : item.id,
 			options: this.resolvedOptions(item, options),
 			...(sandbox ? { sandbox } : {}),
-			...(subagent ? { subagent: true } : {}),
+			...(subagent ? { subagent } : {}),
 		};
 	}
 
@@ -1504,14 +1504,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** Pool key: an agent can serve a chat when all of these match. */
-	private poolKey(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined, subagent: boolean): string {
+	private poolKey(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined, subagent: VoltSubagentProfile | undefined): string {
 		const resolved = this.resolvedOptions(item, options);
 		const sorted = Object.keys(resolved).sort().map(key => [key, resolved[key]]);
-		return JSON.stringify([provider.id, profile.id, item.ref, cwd ?? '', sorted, sandboxLaunchKey(sandbox?.settings), ...(subagent ? ['subagent'] : [])]);
+		return JSON.stringify([provider.id, profile.id, item.ref, cwd ?? '', sorted, sandboxLaunchKey(sandbox?.settings), ...(subagent ? [`subagent:${subagent}`] : [])]);
 	}
 
 	/** A spare for a subagent's chat starts lean like the chat's own agent would, and only subagents adopt it. */
-	private spareRequest(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined, subagent: boolean): ISpareRequest {
+	private spareRequest(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined, subagent: VoltSubagentProfile | undefined): ISpareRequest {
 		return {
 			key: this.poolKey(provider, profile, item, cwd, options, sandbox, subagent),
 			providerId: provider.id,
@@ -4778,6 +4778,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * window answers within a bounded time or the turn goes without.
 	 */
 	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle): Promise<string | undefined> {
+		// A subagent reports to another agent, not to the user looking at the window (and the window's
+		// answer is a round trip on its first prompt's path).
+		if (session.subagent) {
+			return undefined;
+		}
 		// A busy window answers late: this turn goes without, and the next one sends it (nothing was marked sent).
 		const snapshot = await raceTimeout(this.commandService.executeCommand<IWorkspaceSnapshot | undefined>(WORKSPACE_SNAPSHOT_COMMAND_ID, session.sessionId).catch(() => undefined), WORKSPACE_LEAD_WAIT_MS);
 		if (!snapshot) {
@@ -4794,6 +4799,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	/** What `buildAcpLead` reads, and nothing else: the lead is built on every turn's critical path. */
 	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent, withMemory: boolean, indexed: Promise<boolean>): Promise<IContextPackInput> {
 		const root = this.executionRoot(session);
+		// A subagent's agent has only its profile's host tool groups: its notes name only those tools.
+		const groups = session.subagent ? SUBAGENT_HOST_TOOL_GROUPS[session.subagent] : undefined;
+		const has = (group: VoltHostToolGroup) => !groups || groups.includes(group);
 		return {
 			...(withMemory ? { memory: await raceTimeout(this.memory.context().catch(() => undefined), MEMORY_WAIT_MS) } : {}),
 			mode,
@@ -4802,11 +4810,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			environment: this.environmentFacts(root),
 			...(intent.shape ? { shape: intent.shape } : {}),
 			...(mode === 'multitask' ? { taskModels: [...new Set(this.listCatalog().filter(item => item.enabled).map(item => item.label))] } : {}),
-			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
+			visuals: has('visuals') && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
 			...(withMemory && await indexed ? { codeIndexed: true } : {}),
-			...(this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'code_nav') ? { ideTools: true, ...(this.getSandboxSettings(session.sessionId).level !== 'off' ? { sandboxed: true } : {}) } : {}),
-			browserTools: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run'),
-			...(intent.wantsGit && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'propose_commits') ? { commitReview: true } : {}),
+			...(this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'code_nav') ? { ideTools: true, ...(!has('ide') || this.getSandboxSettings(session.sessionId).level !== 'off' ? { sandboxed: true } : {}) } : {}),
+			browserTools: has('browser') && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run'),
+			...(intent.wantsGit && has('pullRequests') && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'propose_commits') ? { commitReview: true } : {}),
 		};
 	}
 
@@ -5306,7 +5314,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private async acquireAgent(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, request: IVoltSendRequest, intent: IIntent, restart: boolean): Promise<void> {
 		const cwd = this.executionRoot(session)?.fsPath;
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
-		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options, sandbox, session.subagent === true);
+		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options, sandbox, session.subagent);
 		run.spare = spareRequest;
 		// A spare's browser tools reach this chat only when the host tool service maps its alias.
 		const usePool = this.aliasHost() || !(intent.wantsPreview || intent.matchesDesign);

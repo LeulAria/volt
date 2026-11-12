@@ -273,6 +273,17 @@ suite('Volt sandbox denials', () => {
 			assert.ok(!quiet('write', target), target);
 		}
 		assert.ok(!quiet('read', '/Users/me/notes'), 'a folder below the home folder');
+		// What every Claude subagent's first turn logged in a sandboxed chat (2026-11-12): plugin sync,
+		// its state folder, XDG and temp path walks, and the Bash tool's zsh reading the user's rc files.
+		for (const target of ['/Users/me/.claude/plugins/synced/a_b/.last-complete-round', '/Users/me/.claude/plugins/known_marketplaces_claudeai.json.lock']) {
+			assert.ok(quiet('write', target), target);
+		}
+		for (const target of ['/Users/me/.claude/state', '/Users/me/.config', '/private/var', '/Users/me/.zshrc', '/Users/me/.zshenv']) {
+			assert.ok(quiet('read', target), target);
+		}
+		assert.ok(!quiet('read', '/Users/me/.config/gh/hosts.yml'), 'below ~/.config still shows');
+		assert.ok(!quiet('read', '/private/var/root'), 'below the path-walk folders still shows');
+		assert.ok(!quiet('read', '/Users/me/notes/.zshrc'), 'an rc file outside the home folder still shows');
 		assert.ok(!quiet('read', '/Users/me/.ssh/id_ed25519'));
 		assert.ok(!quiet('write', '/Users/me/.claude/skills/synced/x', {}, 'codex'), 'another CLI has its own footprint');
 		assert.ok(!quiet('network', 'api.anthropic.com') && !quiet('launch', '/Users/me/.claude/sessions'));
