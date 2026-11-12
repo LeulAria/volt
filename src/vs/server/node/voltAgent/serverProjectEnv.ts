@@ -15,7 +15,8 @@ import { IVoltSessionContextService, uriFromStoredRoot } from '../../../workbenc
 /**
  * Project Settings > Environment for what the server runs: agent CLIs, the agents' commands and
  * terminals. The settings live with the windows (Project Settings is a window page); each window
- * sends its copy whenever it changes, and the server keeps the last one it got.
+ * sends its copy whenever it changes, and the server keeps the last one it got and tells the other
+ * windows (the desktop's and the browser workbench's), so a change made in one shows in all.
  */
 export class ServerProjectEnv extends Disposable {
 
@@ -44,9 +45,22 @@ export class ServerProjectEnv extends Disposable {
 			} catch {
 				return false;
 			}
+			const next = JSON.stringify(parsed);
+			const changed = next !== JSON.stringify(this.map);
 			this.map = parsed;
-			this.storage.store(PROJECT_SETTINGS_STORAGE_KEY, JSON.stringify(parsed), StorageScope.APPLICATION, StorageTarget.USER);
+			this.storage.store(PROJECT_SETTINGS_STORAGE_KEY, next, StorageScope.APPLICATION, StorageTarget.USER);
+			if (changed) {
+				// Every client hears the server topic (phones too): the notice carries no values; windows read them with `get`.
+				protocol.publish('server', { kind: 'projectSettings' });
+			}
 			return true;
+		}));
+		// The browser workbench keeps its settings in the browser: it starts from the server's copy.
+		this._register(protocol.registerMethod('projectSettings.get', ctx => {
+			if (ctx.client.role !== 'owner') {
+				throw Object.assign(new Error('Only Volt on this computer can read project settings.'), { code: 'Forbidden' });
+			}
+			return JSON.stringify(this.map);
 		}));
 	}
 
