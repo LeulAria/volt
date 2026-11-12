@@ -1341,6 +1341,13 @@ export class RootIndex {
 		};
 	}
 
+	/** One file, with globs matched against its name (as they are against paths below a folder). */
+	private fileFilter(file: string, includes: readonly string[] | undefined, excludes: readonly string[] | undefined): (path: string) => boolean {
+		const slash = file.lastIndexOf('/');
+		const inFolder = this.pathFilter(slash < 0 ? '' : file.slice(0, slash), includes, excludes);
+		return path => path === file && inFolder(path);
+	}
+
 	private hasFilesUnder(folder: string): boolean {
 		if (!folder) {
 			return this.listed.size > 0;
@@ -1386,7 +1393,9 @@ export class RootIndex {
 			return { kind: 'fallback', reason: notReady };
 		}
 		const folder = this.folderOf(request.folder);
-		if (folder === undefined || !this.hasFilesUnder(folder)) {
+		// `instant_grep` with `path` set to one file: a sandboxed chat (no ripgrep) refused it as "not indexed".
+		const file = folder && this.listed.has(folder) ? folder : undefined;
+		if (folder === undefined || (!file && !this.hasFilesUnder(folder))) {
 			return { kind: 'fallback', reason: 'not indexed' };
 		}
 		const caseInsensitive = !request.caseSensitive;
@@ -1396,7 +1405,7 @@ export class RootIndex {
 		if (query.op === 'all' && !filtered && !matcher) {
 			return { kind: 'fallback', reason: 'unselective' }; // nothing to look up: ripgrep's full scan is faster
 		}
-		const keep = this.pathFilter(folder, request.includes, request.excludes);
+		const keep = file ? this.fileFilter(file, request.includes, request.excludes) : this.pathFilter(folder, request.includes, request.excludes);
 
 		const candidates: string[] = [];
 		if (query.op === 'all') {
