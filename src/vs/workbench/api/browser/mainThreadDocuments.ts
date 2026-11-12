@@ -229,7 +229,13 @@ export class MainThreadDocuments extends Disposable implements MainThreadDocumen
 
 	// --- from extension host process
 
+	/** Volt: set for a host that may run a sandboxed extension; its saves may not write what the sandbox keeps read-only. */
+	voltEditGuard: { allows(resources: readonly URI[]): boolean } | undefined;
+
 	async $trySaveDocument(uri: UriComponents): Promise<boolean> {
+		if (this.voltEditGuard && !this.voltEditGuard.allows([URI.revive(uri)])) {
+			return false;
+		}
 		const target = await this._textFileService.save(URI.revive(uri));
 		return Boolean(target);
 	}

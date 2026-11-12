@@ -112,6 +112,37 @@ function escapeRegex(value: string): string {
 }
 
 /** Every protection, as `protect` entries relative to one writable root token. */
+/** Root names that are also ordinary folders in projects (`refs/`, `objects/`): only bare-repo concerns, not an edit's. */
+const BARE_REPO_NAMES: ReadonlySet<string> = new Set(['HEAD', 'objects', 'refs']);
+const GIT_DIR_PROTECTED = ['config', 'config.worktree', 'hooks', 'modules', 'commondir', 'gitdir', 'info', 'objects/info/alternates', 'objects/info/http-alternates'];
+
+/**
+ * Whether a file an extension edits or creates through Volt's window (a WorkspaceEdit, an editor
+ * edit, a save) is one the host runs or trusts later, the set the sandbox keeps read-only for
+ * sandboxed processes: git config and hooks at any depth, editor tasks and settings, hook managers,
+ * agent configs, shell startup files. A sandboxed extension's own writes are refused by the OS; its
+ * edits go through the window, which must refuse these the same way. Returns the matched name.
+ * `path` is absolute, `/`-separated.
+ */
+export function protectedEditTarget(path: string): string | undefined {
+	const parts = path.split('/').filter(Boolean);
+	for (let i = 0; i < parts.length; i++) {
+		if (parts[i] === '.git') {
+			const rest = parts.slice(i + 1).join('/');
+			const hit = GIT_DIR_PROTECTED.find(name => rest === name || rest.startsWith(`${name}/`));
+			if (hit) {
+				return `.git/${hit}`;
+			}
+		}
+		const tail = parts.slice(i).join('/');
+		const root = PROTECTED_ROOT_NAMES.find(name => !BARE_REPO_NAMES.has(name) && (tail === name || tail.startsWith(`${name}/`)));
+		if (root) {
+			return root;
+		}
+	}
+	return undefined;
+}
+
 export function protectedEntries(root: '${workspace}'): string[] {
 	return [...PROTECTED_ROOT_NAMES.map(name => `${root}/${name}`), ...PROTECTED_GIT_PATTERNS];
 }

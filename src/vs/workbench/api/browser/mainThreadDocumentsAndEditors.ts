@@ -33,6 +33,8 @@ import { IPaneCompositePartService } from '../../services/panecomposite/browser/
 import { ViewContainerLocation } from '../../common/views.js';
 import { IConfigurationService } from '../../../platform/configuration/common/configuration.js';
 import { IQuickDiffModelService } from '../../contrib/scm/browser/quickDiffModel.js';
+import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
+import { VoltSandboxedEditGuard } from './voltSandboxedEditGuard.js';
 
 
 class TextEditorSnapshot {
@@ -298,7 +300,8 @@ export class MainThreadDocumentsAndEditors {
 		@IClipboardService private readonly _clipboardService: IClipboardService,
 		@IPathService pathService: IPathService,
 		@IConfigurationService configurationService: IConfigurationService,
-		@IQuickDiffModelService quickDiffModelService: IQuickDiffModelService
+		@IQuickDiffModelService quickDiffModelService: IQuickDiffModelService,
+		@IInstantiationService instantiationService: IInstantiationService,
 	) {
 		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostDocumentsAndEditors);
 
@@ -307,6 +310,12 @@ export class MainThreadDocumentsAndEditors {
 
 		this._mainThreadEditors = this._toDispose.add(new MainThreadTextEditors(this, extHostContext, codeEditorService, this._editorService, this._editorGroupService, configurationService, quickDiffModelService, uriIdentityService));
 		extHostContext.set(MainContext.MainThreadTextEditors, this._mainThreadEditors);
+		if (instantiationService) { // absent only in tests that build this by hand
+			// Volt: a sandboxed host's edits and saves may not change what the sandbox keeps read-only.
+			const guard = instantiationService.createInstance(VoltSandboxedEditGuard, extHostContext);
+			this._mainThreadDocuments.voltEditGuard = guard;
+			this._mainThreadEditors.voltEditGuard = guard;
+		}
 
 		// It is expected that the ctor of the state computer calls our `_onDelta`.
 		this._toDispose.add(new MainThreadDocumentAndEditorStateComputer(delta => this._onDelta(delta), _modelService, codeEditorService, this._editorService, paneCompositeService));

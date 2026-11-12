@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IAttestation, ISandboxRunDenial, redactSandboxText, SandboxBackendId } from './sandboxBackend.js';
+import { isNoiseDenial } from './sandboxDenials.js';
 import { IResolvedSandboxPolicy } from './sandboxResolved.js';
 import { SandboxDimension } from './sandboxSchema.js';
 
@@ -135,11 +136,11 @@ export function isUserFacingDenial(denial: Pick<ISandboxRunDenial, 'kind' | 'tar
 	}
 	if (denial.kind === 'read' || denial.kind === 'write') {
 		const target = denial.target;
-		return !(/\/volt-sbx-[^/]+\/canary$/.test(target)
-			|| /\/Library\/Preferences\//.test(target)
-			|| target.endsWith('/.CFUserTextEncoding')
-			|| target.startsWith('/private/var/db/')
-			|| target === '/dev/dtracehelper');
+		// The transcript's noise list, except temp folders: another run's temp is worth a warning here.
+		const noise = isNoiseDenial({ kind: denial.kind, target, source: 'os' }) && !/^\/(private\/)?var\/folders\//.test(target);
+		return !(noise
+			|| /\/volt-sbx-[^/]+\/canary$/.test(target)
+			|| target.endsWith('/.CFUserTextEncoding'));
 	}
 	return true;
 }

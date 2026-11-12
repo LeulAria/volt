@@ -136,7 +136,8 @@ suite('MainThreadDocumentsAndEditors', () => {
 				override createQuickDiffModelReference() {
 					return undefined;
 				}
-			}
+			},
+			undefined!,
 		);
 	});
 
