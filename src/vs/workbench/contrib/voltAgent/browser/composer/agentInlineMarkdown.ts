@@ -15,8 +15,9 @@ export interface IInlineMarkdownSpan {
 }
 
 // Leftmost match wins; at one position the earlier alternative does (code, then *** before ** before *).
-// `_` only counts at word edges so snake_case names stay as typed. Nothing spans a line break.
-const INLINE = /(`+)([^`\n]+?)\1|(\*\*\*|___)(?=[^\s*_])([^\n]+?)(?<=[^\s*_])\3|(\*\*|__)(?=[^\s*_])([^\n]+?)(?<=[^\s*_])\5|~~(?=\S)([^\n]+?)(?<=\S)~~|\*(?=[^\s*])([^\n]+?)(?<=[^\s*])\*|(?<![\p{L}\p{N}_])_(?=[^\s_])([^\n]+?)(?<=[^\s_])_(?![\p{L}\p{N}_])/gu;
+// `_`, `__` and `___` only count at word edges, as in CommonMark, so snake_case names and names with
+// double underscores inside (`mcp__volt__memory_list`) stay as typed. Nothing spans a line break.
+const INLINE = /(`+)([^`\n]+?)\1|(\*\*\*)(?=[^\s*_])([^\n]+?)(?<=[^\s*_])\*\*\*|(?<![\p{L}\p{N}_])(___)(?=[^\s*_])([^\n]+?)(?<=[^\s*_])___(?![\p{L}\p{N}_])|(\*\*)(?=[^\s*_])([^\n]+?)(?<=[^\s*_])\*\*|(?<![\p{L}\p{N}_])(__)(?=[^\s*_])([^\n]+?)(?<=[^\s*_])__(?![\p{L}\p{N}_])|~~(?=\S)([^\n]+?)(?<=\S)~~|\*(?=[^\s*])([^\n]+?)(?<=[^\s*])\*|(?<![\p{L}\p{N}_])_(?=[^\s_])([^\n]+?)(?<=[^\s_])_(?![\p{L}\p{N}_])/gu;
 const HEADING = /^(#{1,6} +)(?=\S)/gm;
 const MAX_DEPTH = 3;
 
@@ -45,22 +46,22 @@ function parseRange(text: string, from: number, to: number, depth: number, spans
 		if (match[1] !== undefined) {
 			styles = ['code'];
 			marker = match[1].length;
-		} else if (match[3] !== undefined) {
+		} else if (match[3] !== undefined || match[5] !== undefined) {
 			styles = ['bold', 'italic'];
 			marker = 3;
-			inner = match[4];
-		} else if (match[5] !== undefined) {
+			inner = match[4] ?? match[6];
+		} else if (match[7] !== undefined || match[9] !== undefined) {
 			styles = ['bold'];
 			marker = 2;
-			inner = match[6];
-		} else if (match[7] !== undefined) {
+			inner = match[8] ?? match[10];
+		} else if (match[11] !== undefined) {
 			styles = ['strike'];
 			marker = 2;
-			inner = match[7];
+			inner = match[11];
 		} else {
 			styles = ['italic'];
 			marker = 1;
-			inner = match[8] ?? match[9];
+			inner = match[12] ?? match[13];
 		}
 		spans.push({ styles, start, end, open: marker, close: marker });
 		if (inner !== undefined && depth < MAX_DEPTH) {
