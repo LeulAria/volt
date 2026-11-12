@@ -22,6 +22,7 @@ import { WorkbenchList } from '../../../../platform/list/browser/listService.js'
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { capabilityClass, VoltCapabilityClass, versionedCapability } from '../../../../platform/voltPlugins/common/capabilityCatalog.js';
+import { isExfilHost } from '../../../../platform/voltSandbox/common/networkRules.js';
 import { firstPartyCeiling } from '../../../../platform/voltPlugins/common/firstPartyCeilings.js';
 import { IUserGestureToken, SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
 import { TrustGrantDraft } from '../../../../platform/voltSandbox/common/trust.js';
@@ -45,6 +46,8 @@ export interface IInstallSheetCapability {
 	readonly targets?: readonly string[];
 	/** The extension's own words: shown as its claim. */
 	readonly reason?: string;
+	/** `net.connect` to hosts that take data from anyone: high, whatever the catalog's class. */
+	readonly exfil?: true;
 }
 
 export interface IInstallSheetGroup {
@@ -78,7 +81,18 @@ export function installSheetGroups(extension: Pick<IExtensionDescription, 'contr
 		...(declared?.optional ?? []).map(entry => ({ entry, required: false })),
 	].flatMap(({ entry, required }) => {
 		const cls = capabilityClass(entry.id);
-		return cls && cls !== 'none' ? [{ id: entry.id, class: cls, required, ...(entry.targets?.length ? { targets: entry.targets } : {}), ...(entry.reason ? { reason: entry.reason } : {}) }] : [];
+		if (!cls || cls === 'none') {
+			return [];
+		}
+		const row = (rowClass: VoltCapabilityClass, targets: readonly string[] | undefined, exfil?: true): IInstallSheetCapability => ({ id: entry.id, class: rowClass, required, ...(targets?.length ? { targets } : {}), ...(entry.reason ? { reason: entry.reason } : {}), ...(exfil ? { exfil } : {}) });
+		if (capabilityClass(entry.id) === 'low' && entry.id.split('@')[0] === 'net.connect' && entry.targets?.length) {
+			// I.4 (as the broker judges it): a host that takes data from anyone (code hosts, paste and
+			// file sites, object stores) is high, never an install-time grant. Say so here.
+			const exfil = entry.targets.filter(target => isExfilHost(target.toLowerCase().replace(/:\d+$/, '')));
+			const plain = entry.targets.filter(target => !exfil.includes(target));
+			return [...(plain.length ? [row('low', plain)] : []), ...(exfil.length ? [row('high', exfil, true)] : [])];
+		}
+		return [row(cls, entry.targets)];
 	});
 	return CLASS_ORDER.map(cls => ({ class: cls, outcome: outcomeOf(cls, atInstall), capabilities: entries.filter(entry => entry.class === cls) })).filter(group => group.capabilities.length > 0);
 }
@@ -158,7 +172,9 @@ class CapabilityRenderer implements IListRenderer<SheetRow, { readonly title: HT
 		if (row.kind !== 'capability') {
 			return;
 		}
-		const copy = voltCapabilityCopy(row.capability.id);
+		const copy = row.capability.exfil
+			? { title: localize('voltSheet.exfilTitle', "Send data to hosts anyone can read"), detail: localize('voltSheet.exfilDetail', "These hosts take data from anyone (code hosts, paste and file sites). In a sandbox Volt refuses them to the extension's own code.") }
+			: voltCapabilityCopy(row.capability.id);
 		const targets = row.capability.targets?.length ? ` (${row.capability.targets.join(', ')})` : '';
 		template.title.textContent = `${copy.title}${targets}${row.capability.required ? '' : localize('voltSheet.optional', ", optional")}`;
 		template.detail.textContent = row.capability.reason ? localize('voltSheet.claim', "{0} The extension says: \"{1}\"", copy.detail, row.capability.reason) : copy.detail;

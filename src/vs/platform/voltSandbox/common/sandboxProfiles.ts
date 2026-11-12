@@ -302,6 +302,9 @@ export function systemReadPaths(platform: string, env: Readonly<Record<string, s
 			'/usr', '/bin', '/sbin', '/System', '/Library/Apple', '/Library/Frameworks', '/Library/Developer/CommandLineTools',
 			'/Library/Preferences/SystemConfiguration', '/private/etc', '/private/var/db/timezone', '/private/var/select',
 			'/Applications/Xcode.app/Contents/Developer', '/opt/homebrew', '/usr/local', '/dev',
+			// Whether the Xcode license was accepted (root's, the same for every user): without it
+			// every `/usr/bin` developer shim (git, clang, make) refuses to run in a sandbox.
+			'/Library/Preferences/com.apple.dt.Xcode.plist',
 		];
 	}
 	if (platform === 'win32') {

@@ -292,7 +292,9 @@ suite('Volt permission UX in the window (P4)', () => {
 		assert.match(sheet().querySelector('h2')?.textContent ?? '', /^Install Agent Lab\?$/);
 		assert.match(sheet().querySelector('.volt-install-sheet-where')?.textContent ?? '', /Where its code runs.*In a sandbox \(recommended\).*reaches only the hosts it names/);
 		assert.match(sheet().textContent ?? '', /Add tools for agents/, 'low capabilities in Volt\'s words, not their ids');
-		assert.match(sheet().textContent ?? '', /Connect to the internet \(api\.github\.com\)/);
+		assert.match(sheet().textContent ?? '', /Send data to hosts anyone can read \(api\.github\.com\)/, 'a host that takes data from anyone is high, as the broker judges it');
+		const split = installSheetGroups({ contributes: { voltCapabilities: { required: [{ id: 'net.connect', targets: ['www.githubstatus.com', 'gist.github.com'] }] } } as unknown as IExtensionDescription['contributes'] }, true);
+		assert.deepStrictEqual(split.map(group => [group.class, group.capabilities.map(entry => entry.targets)]), [['low', [['www.githubstatus.com']]], ['high', [['gist.github.com']]]]);
 		assert.deepStrictEqual([...sheet().querySelectorAll('.volt-add-footer .monaco-button')].map(button => button.textContent), ['Cancel', 'Install']);
 		sheet().querySelector<HTMLElement>('.allow')!.click();
 		assert.deepStrictEqual(answers, [[true, false, 'sandbox']], 'Install keeps the recommended place and needs no gesture: it grants nothing');
