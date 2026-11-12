@@ -76,6 +76,15 @@ suite('Volt extension code scan (EXT-SCAN)', () => {
 		assert.deepStrictEqual(rules(`fetch('http://10.0.0.5/x');`, { declaredHosts: ['10.0.0.5'] }), []);
 	});
 
+	test('EXT-SCAN-6b: a bare `*` declares no host, and a drop host is excused only when named exactly', () => {
+		// The network broker drops a third party's `*` too (H.7): it must not hide what the code reaches.
+		assert.deepStrictEqual(rules(`post('http://127.0.0.1:47913/collect'); fetch('https://webhook.site/abc');`, { declaredHosts: ['*'] }), ['high raw-host: https://webhook.site', 'medium raw-host: http://127.0.0.1']);
+		assert.deepStrictEqual(rules(`fetch('https://webhook.site/abc');`, { declaredHosts: ['*.site', '*webhook*'] }), ['high raw-host: https://webhook.site']);
+		assert.deepStrictEqual(rules(`fetch('https://webhook.site/abc');`, { declaredHosts: ['webhook.site'] }), []);
+		// An ordinary wildcard still names its hosts.
+		assert.deepStrictEqual(rules(`fetch('http://10.0.0.5/x');`, { declaredHosts: ['10.0.0.*'] }), []);
+	});
+
 	test('EXT-SCAN-7: child_process, computed require, the whole environment, native bindings', () => {
 		assert.deepStrictEqual(rules(`const cp = require('child_process'); import('node:child_process');`), ['medium process-spawn: child_process', 'medium process-spawn: node:child_process']);
 		assert.deepStrictEqual(rules(`const m = require(name); const n = process.getBuiltinModule(x); require('./literal');`), ['medium computed-require: require(<computed>)', 'medium computed-require: process.getBuiltinModule(<computed>)']);
