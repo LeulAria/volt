@@ -796,7 +796,12 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	/** Spawns the agent and opens a session; with `resume`, continues that session (in `req.cwd`) instead of a new one. */
 	private async createSession(req: IAgentStartRequest, resume?: string): Promise<IAcpSession> {
+		// Where a cold start's time goes (launch command, spawn with the sandbox, initialize, session/new, setup), for the log line below.
+		const started = Date.now();
+		const steps: number[] = [];
+		const step = () => steps.push(Date.now());
 		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
+		step();
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 		const env = cliAgentDefinition(this.id)?.acpEnv;
 		const settings = req.sandbox?.settings;
@@ -815,6 +820,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		} finally {
 			this.spawning--;
 		}
+		step();
 		// Ours now: its events wait here through initialize and session/new.
 		if (!this.earlySandboxEvents.has(processId)) {
 			this.earlySandboxEvents.set(processId, []);
@@ -856,6 +862,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				clientCapabilities: ACP_CLIENT_CAPABILITIES,
 				clientInfo: { name: 'volt', title: 'Volt', version: '0.1.0' },
 			}, ACP_INITIALIZE_TIMEOUT_MS);
+			step();
 			const capabilities = initialized.agentCapabilities?.mcpCapabilities;
 			// A text-only session never calls Volt's tools: no server, and nothing to go stale.
 			const mcpServers = req.textOnly ? [] : this.hostMcpServers(req.sessionId, capabilities);
@@ -871,6 +878,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				const meta = this.sessionMeta(req);
 				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 			}
+			step();
 		} catch (err) {
 			client.dispose();
 			this.forgetProcess(processId);
@@ -923,7 +931,10 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		// What the agent actually runs, for model-variant parity checks against its own CLI.
 		const config = (live.configOptions ?? []).filter(option => option.id !== 'mode').map(option => `${option.id}=${String(option.currentValue ?? '')}`).join(' ');
-		this.logService.info(`[ACP] ${this.id} session ${handle.id}: ${command} ${args.join(' ')} | ${config}`);
+		step();
+		const [launched, spawned, initDone, sessionDone, ready] = steps.map(at => at - started);
+		const timing = `launch ${launched}ms, spawn ${spawned - launched}ms, initialize ${initDone - spawned}ms, ${resume ? 'session/resume' : 'session/new'} ${sessionDone - initDone}ms, setup ${ready - sessionDone}ms`;
+		this.logService.info(`[ACP] ${this.id} session ${handle.id}: ${command} ${args.join(' ')} | ${config} | ${timing}`);
 		return live;
 	}
 

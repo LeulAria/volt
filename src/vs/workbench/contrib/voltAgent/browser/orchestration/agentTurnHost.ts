@@ -12,7 +12,7 @@ import { localize } from '../../../../../nls.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { resolveRunModelRef } from '../../../../services/voltRuntime/common/models/modelAccess.js';
-import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
+import { modePolicy, normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchStartTurnRequest } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import '../../../../services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
@@ -182,7 +182,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			controller.endUnstartedTurn(turn.id, localize('agentTurnHost.noModel', "No model is set for this run. Pick a model for the chat, then send again."));
 			return undefined;
 		}
-		await this.beginCheckpoint(threadId, turn.id, ref);
+		await this.beginCheckpoint(threadId, turn.id, ref, normalizeVoltMode(mode));
 		if (!request.isCurrent()) {
 			controller.endUnstartedTurn(turn.id, undefined);
 			return undefined;
@@ -276,11 +276,14 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 	 * Snapshots the files before a turn runs. Where every change the turn makes waits on the
 	 * chat's write gate, the snapshot becomes that gate and the prompt goes out at once; otherwise
 	 * the send waits for it (bounded by the checkpoint service to about 2 s). Nothing is waited on
-	 * when the last turn's after-snapshot still matches the project.
+	 * when the last turn's after-snapshot still matches the project. A read-only turn (Ask, Plan:
+	 * research and review subagents) changes no file, so its prompt does not wait either; three
+	 * subagents starting at once waited 1.5-2.4 s each here.
 	 */
-	private async beginCheckpoint(sessionId: string, turnId: string, ref: string | undefined): Promise<void> {
+	private async beginCheckpoint(sessionId: string, turnId: string, ref: string | undefined, mode: VoltMode): Promise<void> {
 		try {
-			await this.checkpoints.beginTurn(sessionId, turnId, { writesGated: this.writesWaitForGate(sessionId, ref) });
+			const writesGated = !modePolicy(mode).allowWrites || this.writesWaitForGate(sessionId, ref);
+			await this.checkpoints.beginTurn(sessionId, turnId, { writesGated });
 		} catch (err) {
 			// A missed snapshot only disables Restore for this turn; the run goes ahead.
 			this.logService.warn('[volt orchestrator] checkpoint before turn failed', err);
