@@ -32,4 +32,43 @@ Measurement sources:
   Prompt per subagent = the `used` of its first `usage` event (its first request's context).
 - **CLI probes**: `scripts/orch/cliprobe.sh` runs the bundled CLI headless through the proxy, one setting at a time.
 
+The round-2 agent's session ended part way ("Sign in to continue"). Its last four B1 rows were
+Claude refusing every turn ("Your organization has disabled Claude subscription access for Claude
+Code", no turn ran); they are kept apart in `data/orch/b1ab-aborted.jsonl` with two earlier rows
+cut short by a window reload. The restart re-ran the missing pairs; Claude worked again by then.
+
+## Results
+
+### 1. A subagent's first request (item 1)
+
+The first request a Volt research subagent sends, by part (B1 "pricing bug", Haiku 5.5, captured
+through `capproxy.mjs`; tokens are characters scaled to the billed prompt):
+
+| Part | Before (`81563ca39e4`) | After (this branch, `readonly` profile) | Claude Code's own Explore subagent (CLI 2.1.322) |
+|---|---|---|---|
+| System prompt | 5,512 | 704 (Volt's own read-only prompt) | 1,362 |
+| Built-in tool schemas | 13,481 (11 tools: Bash 4.2k, Workflow 1.9k, ScheduleWakeup 1.7k, AskUserQuestion 1.4k, Read, ReportFindings, Skill, Edit, ToolSearch, ListAgents, Write) | 4,095 (Bash, Read, Skill, ToolSearch) | 3,187 (Bash, Read, Skill, ToolSearch) |
+| Deferred stubs / loaded MCP tools | 792 | 74 | 736 (claude.ai Docs connectors) |
+| Session context: skill listing | 2,848 | 2,335 | **8,664** |
+| Session context: deferred tool names | 1,486 (138 Volt tools + claude.ai) | 348 (26 Volt tools) | 180 |
+| Session context: MCP instructions | 1,419 (volt 741, claude.ai Docs 678) | 346 (volt, tasks/core groups only) | 0 |
+| Session context: other | 290 | 96 | 373 |
+| First user message (Volt framing + brief) | 2,105 | 1,221 | 259 |
+| **Billed prompt** | **27,990** | **9,218 (-67%)** | **14,762** |
+
+- **Item 1 target met for read-only subagents**: 28.0k to 9.2k tokens, below Claude Code's own
+  Explore subagent on this machine (14.8k). The comparison is honest only with a caveat: most of
+  Explore's size is the user's skill listing (8.7k; CLI 2.1.322 lists every skill in full). With
+  Volt's 160-character cap on skill descriptions Explore would be about 8.4k, so Volt is level with
+  it, not far ahead. What Volt still carries that Explore does not: a longer Bash description
+  (sandbox notes, +0.6k) and the brief's framing (+0.8k).
+- Live, over every research subagent of the B1 runs (Volt's own `usage` events, sandbox on), the
+  first request is in the table below (B1, section 2).
+- A subagent that changes files (`work` profile: implementation, test) keeps Claude Code's prompt,
+  file tools and 72 of 138 Volt tools. Its first request is measured in the challenge runs (section 5).
+- CLI probes (`data/orch/cliprobes.jsonl`, Claude Code 2.1.280 headless, one-file read) show what
+  each setting is worth: round-1 lean session 21.7k; no claude.ai connectors or skill/plugin sync
+  19.4k; without the never-used tools 14.4k; no git instructions 11.8k; a short custom system
+  prompt with no file-editing tools 6.5k.
+
 <!-- RESULTS -->
