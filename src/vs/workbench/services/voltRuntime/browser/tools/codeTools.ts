@@ -279,6 +279,47 @@ interface IResolvedPosition {
 	readonly column?: number;
 	/** The identifier there, for index fallbacks. */
 	readonly name?: string;
+	/** The line the caller gave, when the symbol was found on another one. */
+	readonly movedFrom?: number;
+}
+
+/** Lines tried around a given line that misses the symbol, nearest first. */
+const NEARBY_LINES = [-1, 1, -2, 2];
+
+/**
+ * Where `symbol` is when the given line misses it: agents pass a line one or two off (53 for a
+ * class on 54), or a guess (1 for a method on 386), and every such call failed. Nearby lines
+ * first, then the file's declaration of that name nearest the given line, then its nearest
+ * whole-word use.
+ */
+async function findSymbolLine(host: ICodeIntelHost, uri: URI, line: number, symbol: string): Promise<{ line: number; column: number } | undefined> {
+	const columnAt = async (candidate: number) => candidate >= 1 ? await host.columnOf(uri, candidate, symbol).catch(() => undefined) : undefined;
+	for (const delta of NEARBY_LINES) {
+		const column = await columnAt(line + delta);
+		if (column) {
+			return { line: line + delta, column };
+		}
+	}
+	const declared = (await host.symbols(uri).catch(() => [])).filter(item => item.name === symbol).sort((a, b) => Math.abs(a.line - line) - Math.abs(b.line - line));
+	for (const declaration of declared) {
+		const column = await columnAt(declaration.line);
+		if (column) {
+			return { line: declaration.line, column };
+		}
+	}
+	const content = await host.fileText?.(uri).catch(() => undefined);
+	if (!content) {
+		return undefined;
+	}
+	const word = new RegExp(`(?<![\\w$])${symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w$])`);
+	let best: { line: number; column: number } | undefined;
+	content.split('\n').forEach((text, index) => {
+		const found = word.exec(text);
+		if (found && (!best || Math.abs(index + 1 - line) < Math.abs(best.line - line))) {
+			best = { line: index + 1, column: found.index + 1 };
+		}
+	});
+	return best;
 }
 
 async function resolvePosition(host: ICodeIntelHost, root: URI, uri: URI, args: unknown, lsp: boolean): Promise<IResolvedPosition | string> {
@@ -291,7 +332,11 @@ async function resolvePosition(host: ICodeIntelHost, root: URI, uri: URI, args: 
 	const name = symbol ?? (givenColumn ? await host.wordAt(uri, line, givenColumn) : undefined);
 	const column = lsp ? givenColumn ?? (symbol ? await host.columnOf(uri, line, symbol) : undefined) : undefined;
 	if (lsp && symbol && !column && !givenColumn) {
-		return `"${symbol}" does not appear on line ${line} of ${displayPath(root, uri)}.`;
+		const found = await findSymbolLine(host, uri, line, symbol);
+		if (!found) {
+			return `"${symbol}" does not appear on line ${line} of ${displayPath(root, uri)} or anywhere else in it.`;
+		}
+		return { uri, line: found.line, column: found.column, name: symbol, movedFrom: line };
 	}
 	if (!column && !name) {
 		return 'Pass column or symbol.';
@@ -326,40 +371,48 @@ export async function runCodeNav(host: ICodeIntelHost, root: URI | undefined, ar
 		if (typeof position === 'string') {
 			return fail('code_nav', position);
 		}
-		switch (op) {
-			case 'definition':
-			case 'references':
-				return navigate(host, root, op, position, nav, lsp);
-			case 'implementations':
-			case 'type_definition': {
-				const ask = op === 'implementations' ? host.implementations : host.typeDefinitions;
-				const found = position.column && ask ? await ask.call(host, uri, position.line, position.column) : [];
-				if (found.length) {
-					return locations(root, op === 'implementations' ? 'implementation' : 'type definition', found, '');
-				}
-				// The language server only looks in the projects it loaded: an interface in a shared
-				// package had "no implementations" while nine classes in the app implement it.
-				const named = op === 'implementations' && position.name && nav?.implementations ? await nav.implementations(root, position.name) : undefined;
-				if (named?.length) {
-					return locations(root, 'implementation', named, FROM_INDEX);
-				}
-				return text(`No ${op === 'implementations' ? 'implementations' : 'type definition'} reported for ${where(root, position)}${noLspNote(lsp)}.`);
-			}
-			case 'hover': {
-				const hover = position.column && host.hover ? await host.hover(uri, position.line, position.column) : undefined;
-				return text(hover ? `${where(root, position)}:\n${hover}` : `No type information at ${where(root, position)}${noLspNote(lsp)}.`);
-			}
-			case 'inspect':
-				return inspect(host, root, position, nav, lsp);
-			case 'callers':
-			case 'callees':
-				return callHierarchy(host, root, position, op, lsp);
-			case 'supertypes':
-			case 'subtypes':
-				return typeHierarchy(host, root, position, op, lsp);
-		}
+		const answer = await positional(host, root, op, position, nav, lsp);
+		return position.movedFrom === undefined ? answer : { ...answer, text: `"${position.name}" is on line ${position.line}, not ${position.movedFrom}.\n${answer.text}` };
 	} catch (err) {
 		return fail('code_nav', errorText(err));
+	}
+}
+
+async function positional(host: ICodeIntelHost, root: URI, op: CodeNavOp, position: IResolvedPosition, nav: ICodeNavIndex | undefined, lsp: boolean): Promise<IToolResult> {
+	const uri = position.uri;
+	switch (op) {
+		case 'definition':
+		case 'references':
+			return navigate(host, root, op, position, nav, lsp);
+		case 'implementations':
+		case 'type_definition': {
+			const ask = op === 'implementations' ? host.implementations : host.typeDefinitions;
+			const found = position.column && ask ? await ask.call(host, uri, position.line, position.column) : [];
+			if (found.length) {
+				return locations(root, op === 'implementations' ? 'implementation' : 'type definition', found, '');
+			}
+			// The language server only looks in the projects it loaded: an interface in a shared
+			// package had "no implementations" while nine classes in the app implement it.
+			const named = op === 'implementations' && position.name && nav?.implementations ? await nav.implementations(root, position.name) : undefined;
+			if (named?.length) {
+				return locations(root, 'implementation', named, FROM_INDEX);
+			}
+			return text(`No ${op === 'implementations' ? 'implementations' : 'type definition'} reported for ${where(root, position)}${noLspNote(lsp)}.`);
+		}
+		case 'hover': {
+			const hover = position.column && host.hover ? await host.hover(uri, position.line, position.column) : undefined;
+			return text(hover ? `${where(root, position)}:\n${hover}` : `No type information at ${where(root, position)}${noLspNote(lsp)}.`);
+		}
+		case 'inspect':
+			return inspect(host, root, position, nav, lsp);
+		case 'callers':
+		case 'callees':
+			return callHierarchy(host, root, position, op, lsp);
+		case 'supertypes':
+		case 'subtypes':
+			return typeHierarchy(host, root, position, op, lsp);
+		default:
+			return fail('code_nav', `Unknown op ${op}.`);
 	}
 }
 

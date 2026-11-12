@@ -62,4 +62,52 @@ suite('code_nav answers', () => {
 		const result = await runCodeNav(lsp, root, { op: 'implementations', path: 'packages/shared/payment-gateway.interface.ts', line: 66, symbol: 'PaymentGateway' }, nav);
 		assert.strictEqual(result.text, '2 implementations in 2 files (from the code index: matched by name, not type-checked):\napps/api/stripe-gateway.ts:31  export class StripeGateway implements PaymentGateway {\napps/api/mock-gateway.ts:10  export class MockGateway implements PaymentGateway {');
 	});
+
+	suite('a line that misses the symbol', () => {
+
+		// In the benchmark agents passed `line: 53` for a class on 54, `21` for one on 51, `1` for a method on 386.
+		const lines = ['import { X } from "x";', '', '@Module({})', 'export class ReservationModule {}', '', 'export class Other {', '  cancelled = true;', '  async cancel(id: string) {', '    return id;', '  }', '}'];
+		function fileHost(asked: { line: number; column: number }[]): ICodeIntelHost {
+			return {
+				...host([]),
+				columnOf: async (_uri, line, symbol) => {
+					const found = new RegExp(`\\b${symbol}\\b`).exec(lines[line - 1] ?? '');
+					return found ? found.index + 1 : undefined;
+				},
+				fileText: async () => lines.join('\n'),
+				definitions: async (uri, line, column) => {
+					asked.push({ line, column });
+					return [{ uri, line, column, preview: lines[line - 1].trim() }];
+				},
+			};
+		}
+
+		test('one or two lines off: the nearby line is used, and the answer says so', async () => {
+			const asked: { line: number; column: number }[] = [];
+			const result = await runCodeNav(fileHost(asked), root, { op: 'definition', path: 'a.ts', line: 3, symbol: 'ReservationModule' }, undefined);
+			assert.deepStrictEqual(asked, [{ line: 4, column: 14 }]);
+			assert.ok(!result.isError, result.text);
+			assert.ok(result.text.startsWith('"ReservationModule" is on line 4, not 3.\n'), result.text);
+		});
+
+		test('further off: the file is searched by name, nearest whole-word use first', async () => {
+			const asked: { line: number; column: number }[] = [];
+			const result = await runCodeNav(fileHost(asked), root, { op: 'definition', path: 'a.ts', line: 1, symbol: 'cancel' }, undefined);
+			assert.deepStrictEqual(asked, [{ line: 8, column: 9 }], 'not `cancelled` on line 7');
+			assert.ok(result.text.startsWith('"cancel" is on line 8, not 1.\n'), result.text);
+		});
+
+		test('a name that is not in the file still fails', async () => {
+			const result = await runCodeNav(fileHost([]), root, { op: 'definition', path: 'a.ts', line: 4, symbol: 'Missing' }, undefined);
+			assert.strictEqual(result.isError, true);
+			assert.strictEqual(result.text, '"Missing" does not appear on line 4 of a.ts or anywhere else in it.');
+		});
+
+		test('the given line wins when the symbol is on it', async () => {
+			const asked: { line: number; column: number }[] = [];
+			const result = await runCodeNav(fileHost(asked), root, { op: 'definition', path: 'a.ts', line: 7, symbol: 'cancelled' }, undefined);
+			assert.deepStrictEqual(asked, [{ line: 7, column: 3 }]);
+			assert.ok(!result.text.includes('not 7'), result.text);
+		});
+	});
 });
