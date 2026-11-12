@@ -152,7 +152,7 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 					setEnv: {
 						CURSOR_DATA_DIR: '${config}',
 					},
-					writable: ['Library/Application Support/Cursor/User/globalStorage'],
+					writable: ['Library/Application Support/Cursor/User/globalStorage', '.cursor/ai-tracking'],
 					writableFiles: ['.cursor/auth.json', '.config/cursor/auth.json'],
 					readable: ['.local/share/cursor-agent'],
 					credentials: ['.cursor/auth.json', '.config/cursor/auth.json'],

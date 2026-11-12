@@ -1118,7 +1118,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						setEnv: {
 							CURSOR_DATA_DIR: '${config}',
 						},
-						writable: ['Library/Application Support/Cursor/User/globalStorage'],
+						writable: ['Library/Application Support/Cursor/User/globalStorage', '.cursor/ai-tracking'],
 						writableFiles: ['.cursor/auth.json', '.config/cursor/auth.json'],
 						readable: ['.local/share/cursor-agent'],
 						credentials: ['.cursor/auth.json', '.config/cursor/auth.json'],
