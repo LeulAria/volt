@@ -5,7 +5,29 @@ Branch `e2e2/orch` (base `81563ca39e4`), 2026-11-12. Round 1 is in [`../01-orche
 
 ## Summary
 
-<!-- SUMMARY -->
+- **Subagent first request 28.0k → 9.2k tokens (-67%)** for research and review subagents
+  (captured request; live median 28.3k → 9.3k over 9 subagents per arm). Claude Code's own Explore
+  subagent on this machine sends 14.8k, mostly the user's skill listing; with the same skill cap it
+  would be ~8.4k, so Volt is level with the native harness here, not far ahead. Subagents that
+  change files: 15.3-15.5k (were 28k+).
+- **B1 (4 subagents, N=3 per arm, interleaved): end to end 46.2 s → 36.5 s (1.26x), critical path
+  34.2 → 26.3 s (1.30x), cost $0.650 → $0.460 (-29%), subagent cost -45%**, with the after arm at
+  the higher load (50-56 vs 26-47). About 29 of the 36.5 s is model time; Volt's remaining cost is
+  the cold agent start (7-12 s for three in parallel vs 2.9-3.6 s bare). Dispatch is 0.13 s
+  (was 1.55 s per subagent).
+- **Live job, team, council (N=3 each)**: the 6-step job with dependencies and an fx → Claude
+  fallback was right in 3 of 3 runs (fix, feature, new module, passing tests, no stray files),
+  114 s median; the parent woke 1.4 s after the last report. Team 49 s, 6 of 6 answers right in
+  3 of 3. Council 136 s, verdict in 3 of 3.
+- **Bugs found live and fixed**: Volt's own code tools (find_symbol, instant_grep, code_nav) were
+  refused in every read-only subagent and council seat (24 refusals; every Grok seat, 8 of 8,
+  came back cancelled); Claude's start-up denials were rows in every chat under Full access (12 per
+  B1 run → 0); the subagent chip and side panel lagged the transcript's counts (now agree at every
+  1 s sample).
+- **Verified**: titles no longer come from the agent's words (1 of 3 before, 0 of 19 after); the
+  empty first `delegate_task` call did not recur (0 of 9). **Not met**: default council seating on
+  a fresh session still seats providers that cannot run (1 of 4 seats answered, twice); it only
+  learns after a failure.
 
 ## Setup
 
@@ -17,7 +39,7 @@ Branch `e2e2/orch` (base `81563ca39e4`), 2026-11-12. Round 1 is in [`../01-orche
 | Access / sandbox | Full access (no approvals), sandbox at the user's default (Supervised: workspace-write, network on), as in round 1 |
 | Fixture | `/tmp/voltbench/fx` (4-file TypeScript shop with the planted discount bug); challenge copies in `fx/runs/<tag>` |
 | A/B | `scripts/orch/arm.sh base|new` swaps the 16 non-test source files this branch changes between `81563ca39e4` and HEAD in the same window (out/ rebuilt, agent server restarts, window reloads). `ab.sh` alternates base, new, base, new… so load drift hits both arms. |
-| Load | the machine ran four other agents' suites and instances: 1-minute load **28-130** during these runs; every row carries its load |
+| Load | the machine ran four other agents' suites and instances: 1-minute load **25-249** during these runs (most 25-75); every row carries its load |
 
 Measurement sources:
 
@@ -31,6 +53,9 @@ Measurement sources:
   `orchmetrics.mjs` reads Volt's own traces (`User/voltTraces`) and the saved tree (`User/voltOrchestrator/roots`).
   Prompt per subagent = the `used` of its first `usage` event (its first request's context).
 - **CLI probes**: `scripts/orch/cliprobe.sh` runs the bundled CLI headless through the proxy, one setting at a time.
+- **Restart runs**: `scripts/orch/live2.sh 3` (B1 pairs 2-3, three plain-words delegations, two
+  default councils, then `after.sh 3`), `verify.sh` (re-runs after the last fixes), `show.py` and
+  `summarize.py` print the rows; `countwatch.mjs` samples the three subagent counts once a second.
 
 The round-2 agent's session ended part way ("Sign in to continue"). Its last four B1 rows were
 Claude refusing every turn ("Your organization has disabled Claude subscription access for Claude
@@ -65,7 +90,7 @@ through `capproxy.mjs`; tokens are characters scaled to the billed prompt):
 - Live, over every research subagent of the B1 runs (Volt's own `usage` events, sandbox on), the
   first request is in the table below (B1, section 2).
 - A subagent that changes files (`work` profile: implementation, test) keeps Claude Code's prompt,
-  file tools and 72 of 138 Volt tools. Its first request is measured in the challenge runs (section 5).
+  file tools and 72 of 138 Volt tools. Its first request is measured in the challenge runs (section 6).
 - CLI probes (`data/orch/cliprobes.jsonl`, Claude Code 2.1.280 headless, one-file read) show what
   each setting is worth: round-1 lean session 21.7k; no claude.ai connectors or skill/plugin sync
   19.4k; without the never-used tools 14.4k; no git instructions 11.8k; a short custom system
@@ -169,7 +194,7 @@ answer instead of name (`sanitizeTitle`).
 | Arm | Runs | Titles that answer the request | Examples |
 |---|---|---|---|
 | Before (B1, interleaved) | 3 | **1** ("I can't run this benchmark. `delegate_task` and…", `img/orch/base-title-from-agent.png`) | "Run Orch bench B1 delegation", "Orch bench B1" |
-| After (B1, natural, councils, challenge, team) | 3 + 3 + 2 + 3 + 3 + 3 | **0** | "Orch bench B1 delegate and wait run", "Pricing function bug", "Volt council benchmark pricing", "Benchmark spawn_team call for fx-audit" |
+| After (B1, natural, default councils, challenge, team, councils, re-runs) | 3 + 3 + 2 + 3 + 3 + 3 + 2 = 19 | **0** | "Orch bench B1 delegate and wait run", "Pricing function bug", "Volt council benchmark pricing", "Benchmark spawn_team call for fx-audit" |
 
 The UI agent's own title change was reverted in favour of this one (as the brief says); no
 further change here.
@@ -237,4 +262,79 @@ N=2, load 29 and 38.
 - cdef-2 took 460 s: the local gemma4:26b took 252 s to answer and Cursor's `session/new` waited
   out its 120 s timeout.
 
-<!-- RESULTS -->
+### 7. Found live and fixed afterwards, then re-run (N=1 each, functional checks)
+
+**Volt's code tools were refused in every read-only subagent.** Research and review subagents
+(and council seats) run in Ask mode. When their agent asked permission for one of Volt's code
+tools (`mcp__volt__find_symbol` from Claude, `volt__code_nav` from Grok, `volt-instant_grep:
+instant_grep` from Cursor), Volt did not recognise it as its own host tool, judged it a shell
+command, and Ask mode refused it. Over this profile: 24 refusals in read-only subagents (Claude,
+Grok, Cursor), and Grok answers a refusal by ending its turn, so **every Grok council seat came back
+cancelled (8 of 8 Grok seats in 5 councils)**. Volt's own prompts tell these agents to use
+exactly these tools. Fix `3a12ad3a2a8`; re-run (`verify.sh`, load 69): 0 refusals, the Claude
+seats used `instant_grep` and `code_nav` in Ask mode; the Grok seats could not be checked live
+because Grok was rate limited by then (its 24 h cap).
+
+**Subagent counts disagreed** (`img/orch/subagent-counts-disagree.png`: card "3 working · 1
+queued", chip "2 subagents running", side panel "1 RUNNING" at the same moment). e5a733cb888 fixed
+the card. Sampled once a second during a B1 run after it (`countwatch.mjs`,
+`data/orch/counts-new2.jsonl`), the composer chip still ran one step behind (4 running with 3 live;
+1 running with all 4 done) and the side panel kept a finished subagent "running" for about 2 s.
+Fix `06dbd0a6135`; re-run (`data/orch/verify-counts.jsonl`): at every sample the card's live
+count, the chip and the side panel agree (3/3/3, 2/2/2, 1/1/1, then all cleared together).
+
+## Fixes made
+
+| Commit | Files | What | Why | Test |
+|---|---|---|---|---|
+| 023bc9a4f0a | `claudeWorkRules.ts`, `providers.ts`, `acpProvider.ts`, `voltRuntimeService.ts`, `agentOrchestratorService.ts`, `agentTasks.ts`, `hostTools.ts`, `voltHostMcp.ts`, `voltHostMcpService.ts`, `session.ts`, `orchestrator.ts`, `agentTurnHost.ts` | Delegated subagents start as `readonly` (research, review, Ask/Plan) or `work`: no claude.ai connectors or skill/plugin sync, no git workflow, no Workflow/ScheduleWakeup/AskUserQuestion/ReportFindings/ListAgents…; read-only ones on Volt's short system prompt with `strictMcpConfig` and no file-editing tools. Host tools by group (`?groups=`: 26 of 138 read-only, 72 work), server instructions follow the groups; the brief drops notes for groups it lacks | 28k-token first request (item 1) | `claudeWorkRules.test.ts`, `acpProvider.test.ts`, `agentOrchestratorService.test.ts`, `voltHostMcpMainService.test.ts`; live: section 1, 2 |
+| 023bc9a4f0a | `agentTasks.ts`, `agentOrchestratorService.ts` | An argument-less `delegate_task` is answered with the arguments to use | round 1's empty first call (item 2) | `agentOrchestratorService.test.ts`; live: did not occur (section 3) |
+| 023bc9a4f0a | `titleGeneration.ts` | Title call on its own system prompt; the message is data; answers dropped | titles from the agent's words (item 6) | `titleGeneration.test.ts`; live: section 5 |
+| 3894a2fa65b | `agentTurnHost.ts` | Read-only subagents do not wait for the git checkpoint before their prompt | 1.0-2.3 s per subagent, siblings queued on one index (item 4) | `agentTurnHost.test.ts`; live: 1.55 → 0.13 s |
+| 3894a2fa65b, e5a733cb888 | `orchestra.ts`, `agentOrchestraService.ts` | Default council seats leave out providers out of quota or unable to start in this sandbox, put working and signed-in ones first, fill a third seat with a second model; 2-seat councils review without a ranking | round 1: seating ignored whether providers can run (item 5) | `orchestra.test.ts`; live: partly (section 6) |
+| e5a733cb888 | `agentEditor.ts` | The parent's subagent card re-renders on its tasks' changes while it waits | card stuck at "3 working · 1 queued" | live: section 7 |
+| 921ce414445 | `sandboxPolicy.ts` | Claude's start-up looks (plugin sync, `~/.claude/state`, `~/.config`, `/private/var`) and shell rc reads are housekeeping: logged, not rows | 12 (9-24) denial rows per B1 run under Full access (item 3) | `sandboxPolicy.test.ts` HOUSEKEEPING-1; live: 0 rows |
+| 3a12ad3a2a8 | `acpProvider.ts` | Volt's code tools count as its own host tools in any agent's permission prompt | refused in every Ask-mode subagent; Grok seats cancelled | `acpProvider.test.ts` (new case); live: 0 refusals |
+| 06dbd0a6135 | `agentEditor.ts`, `agentLineageDock.ts` | The composer chip and the side panel follow task changes too | counts one step behind / 2 s late | live: `verify-counts.jsonl` |
+
+Tests on the final tree (after `transpile-client-oxc`): `claudeWorkRules` 7, `acpProvider` 33,
+`agentOrchestratorService` 19, `titleGeneration` 12, `agentTurnHost` 3, `orchestra` 31,
+`sandboxPolicy` 25, `voltHostMcpMainService` 10, all passing. `tsgo` 0 errors. CI lints pass
+(listener, spawn, manifest ceiling, feature imports, git spawn, command visibility, layers);
+`authorityGate` fails only on the known `extensionCodeScan.ts:361` line owned by the sandbox agent.
+
+## Bugs found and not fixed
+
+- **Review subagents cannot run tests.** Research and review run in Ask mode, which refuses
+  shell commands that Claude Code asks about (`node --test …` in challenge C6, 1 of 3 runs; `git
+  diff` passes because Claude Code does not ask for it). Volt's own read-only system prompt tells
+  them to run "a test or a type check when the brief asks". Either the prompt or the mode is wrong;
+  the recommended fix is a read-only mode that allows non-mutating commands under the sandbox's
+  read-only level, which needs the sandbox owner. Not changed here.
+- **Other agents' start-up denials are still rows**: Grok (reads of `~/.claude.json`,
+  `~/.claude/settings.json`, `~/.cursor/mcp.json`, skills folders; writes of
+  `~/.grok/experiments_remote_opt_out.*.tmp`, `~/.grok/bundled/.tmp*`), Cursor (skills folders,
+  `~/.cursor/agent-cli-state.json`) and Codex (plugin cache temp files): 22 rows per council with a
+  Grok seat. `AGENT_HOUSEKEEPING` has entries for Claude Code only and matches folders, not temp-file
+  name patterns. Passed to the sandbox area.
+- **A council review whose own seat already failed for quota or start-up runs anyway** and fails
+  again (Codex: quota; fx, Antigravity: sandbox), costing up to 29 s; a transient failure (Cursor's
+  `session/new` timeout) did recover in its review, so a blanket skip would be wrong. Not changed.
+
+## Open issues
+
+- **Default council seating on a fresh session** (item 5): Volt has no memory of provider health
+  across sessions and no static knowledge that fx and Antigravity cannot start in a sandboxed chat,
+  so the first council seats them (1 of 4 seats answered, twice). Recommended: persist seat health
+  (with quota reset times) in the orchestrator store, and seat a replacement when a seat fails to
+  start.
+- **Cold agent start is the largest Volt cost left** (item 4): 7-12 s for three parallel Claude
+  starts at load 50-55 against 2.9-3.6 s for a bare `claude-agent-acp` start at load 40. Hiding it
+  behind the parent's `delegate_task` call (1.5-2.7 s visible before the arguments arrive) needs
+  spares keyed before the subagent chat exists; the rest is the sandbox launch and `session/new`
+  with Volt's MCP server (sandbox area).
+- **Grok seat with the code-tool fix**: not seen live (Grok rate limited); unit-tested.
+- The read-only subagent still carries the full skill listing (2.3k of 9.2k tokens); dropping the
+  Skill tool for research would save ~2.9k but loses project skills a reviewer may need (for
+  example UI rules), so it was left on.
+
