@@ -93,6 +93,17 @@ export function sanitizeTitle(raw: string | undefined): string | undefined {
 	return truncateAtWord(line.charAt(0).toUpperCase() + line.slice(1), MAX_TITLE_LENGTH);
 }
 
+/**
+ * Whether a title the chat's agent sent (an ACP `session_info_update`) may name the chat. Volt
+ * names a chat itself whenever it has a model for titles (`voltTitles`); the agent's title then
+ * never replaces it, early or late: Claude's adapter titles a chat at the end of a turn from the
+ * last 1000 characters, often the start of its own reply ("I don't have a `council` or"). When
+ * Volt has no title model, the agent's title is better than the first line.
+ */
+export function acceptAgentTitle(titleState: 'pending' | 'done' | undefined, voltTitles: boolean): boolean {
+	return titleState !== 'done' && !voltTitles;
+}
+
 /** A message too short to say what the chat is about ("hi", "continue", "fix this" under an image). */
 export function isVagueMessage(message: string): boolean {
 	const words = message

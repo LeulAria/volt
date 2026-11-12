@@ -23,7 +23,7 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { IAgentWorktreeService } from '../common/git/agentWorktree.js';
 import { describeMoveResult, workspaceMoveNote } from '../common/git/workspaceMove.js';
 import { IAgentHistoryService } from '../common/history/agentHistory.js';
-import { buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
+import { acceptAgentTitle, buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
 import { PREDICTOR_SKILL, predictorRequest, PredictorTask } from '../common/prediction/predictorSkill.js';
 import { IPredictorLaunch, PredictorAgent } from './prediction/predictorAgent.js';
 import { normalizeCursorModelId } from '../common/harness/cursorQuota.js';
@@ -5469,7 +5469,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	/** An event the engine (model or agent) produced for `run`. Dropped once the run has ended, except real file changes. */
 	private emitEngine(session: ISessionState, run: IRunState, event: IVoltEvent): void {
-		if (event.type === 'title' && session.titleState === 'done') {
+		if (event.type === 'title' && !acceptAgentTitle(session.titleState, !!this.titleModel(this.catalog.find(item => item.ref === session.providerRef && item.enabled)))) {
 			return;
 		}
 		if (!this.isCurrent(session, run)) {
