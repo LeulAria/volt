@@ -19,7 +19,7 @@ export interface IAgentTooltipRow {
 	shortcut?: string;
 	/** Card rows only: leading icon; the detail sits under the label. */
 	icon?: AgentTooltipIcon;
-	/** Card rows only: quieter label (e.g. folder path under the chat title). */
+	/** Card rows only: quieter label (e.g. folder path under the chat title). Without an icon, a hint that wraps instead of being cut. */
 	muted?: boolean;
 	/** Card rows only, without an icon: a "label … value" line (e.g. "Effort  High"). */
 	value?: string;
@@ -352,6 +352,11 @@ export class AgentTooltip extends Disposable {
 			if (row.shortcut) {
 				append(line, this.renderShortcut(row.shortcut));
 			}
+			return;
+		}
+		if (!row.icon && row.muted) {
+			// A hint at the card's foot ("Click to watch its chat beside this one"): quiet, and whole.
+			append(this.domNode, $('.volt-agent-tooltip-card-note')).textContent = row.label;
 			return;
 		}
 		if (!row.icon) {

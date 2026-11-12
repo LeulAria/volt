@@ -260,6 +260,15 @@
 	white-space: nowrap;
 }
 
+/* A hint at the card's foot (what a click does): muted like a detail line, wrapped rather than cut. */
+.volt-agent-tooltip-card-note {
+	font-size: 12px;
+	line-height: 16px;
+	color: color-mix(in srgb, currentColor 55%, transparent);
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
 /* A block of text with its own line breaks (a commit message's body); the card scrolls past 450px. */
 .volt-agent-tooltip-card-body {
 	white-space: pre-wrap;
