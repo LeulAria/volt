@@ -11,6 +11,7 @@ import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IVoltCodeIndexOptions, IVoltCodeIndexService, IVoltCodeSymbol, VoltCodeSymbolKind, VoltFffMode } from '../../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { ISearchService, ITextSearchContext, QueryType, resultIsMatch } from '../../../search/common/search.js';
+import { confinedIndexOptions } from '../../common/codeIntelligence.js';
 import { SearchCache } from '../../common/search/searchCache.js';
 import { displayPath } from '../tools/workspacePath.js';
 
@@ -213,7 +214,7 @@ export class VoltSearch extends Disposable {
 		if (!indexed || !root) {
 			throw new Error(confinedDecline('the code index is off or this folder is not on disk'));
 		}
-		return { index: indexed, root, options: { ...indexed.options(), ignoreSymlinks: true, confined: true } };
+		return { index: indexed, root, options: confinedIndexOptions(indexed.options()) };
 	}
 
 	/** The paths (root-relative) the chat may read, by its rules on each one's real path. */

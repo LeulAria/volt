@@ -41,6 +41,11 @@ export function readCodeIndexOptions(configuration: IConfigurationService): IVol
 	};
 }
 
+/** A sandboxed chat's index of the same folder: symlinks never followed, kept apart from the window's. */
+export function confinedIndexOptions(options: IVoltCodeIndexOptions): IVoltCodeIndexOptions {
+	return { ...options, ignoreSymlinks: true, confined: true };
+}
+
 export function clampLspWorkspaces(value: unknown, fallback = 3): number {
 	const number = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback;
 	return Math.min(LSP_WORKSPACES_MAX, Math.max(LSP_WORKSPACES_MIN, number));
