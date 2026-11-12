@@ -1,7 +1,7 @@
 # Volt e2e review 02: code intelligence and IDE tooling
 
 Branch `e2e/ide` (from `feat/orch-and-devenv-revamp`), worktree `volt-e2e-ide`, 2026-11-12.
-Raw data: [`data/ide/`](data/ide/). Drivers and how to re-run them: [`scripts/volt-e2e/ide/`](../../scripts/volt-e2e/ide/README.md).
+Raw data: [`data/ide/`](data/ide/). Drivers and how to re-run them: [`scripts/volt-e2e/ide/`](../../../../scripts/volt-e2e/ide/README.md).
 
 ## Summary
 
