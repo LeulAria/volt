@@ -73,6 +73,31 @@ const CLAUDE_MERGE_BACK = [
 	'projects.*.projectOnboardingSeenCount',
 ];
 
+/**
+ * Claude Code's housekeeping in its global config: feature-flag and model caches, counters,
+ * "seen" and "shown" marks, its ids and timestamps. Never `mcpServers`, `allowedTools`,
+ * `hasTrustDialogAccepted`, `env`, `oauthAccount` or anything else a user would call a setting:
+ * a change there is still reported.
+ */
+const CLAUDE_QUIET = [
+	'cached*', '*Cache', '*CacheSlots', '*Cached', '*Count', '*Counts', '*Impressions', '*SeenAt', '*LastSeen*', '*LastFetched', '*LastChecked', '*AnsweredAt',
+	'last*', 'has*Seen*', 'hasSeen*', 'hasVisited*', 'hasUsed*', '*Dismissed', '*Noticed', 'seenNotifications', 'tipsHistory*', 'tipLifetimeShownCounts',
+	'skillUsage', 'pluginUsage', 'feedbackSurveyState', 'firstStartTime', 'claudeCodeFirstTokenDate', 'changelogLastFetched', 'passesLastSeenRemaining',
+	'userID', 'anonymousId', 'machineID', 'migrationVersion', '*MigrationComplete', 'officialMarketplaceAutoInstallAttempted', 'officialMarketplaceAutoInstalled',
+	'projects.*.last*', 'projects.*.exampleFiles*',
+];
+
+/**
+ * Per CLI and seeded file: the CLI's own bookkeeping (caches, counters, "seen" marks) that changes
+ * at every launch. Kept in the chat like any change, never reported as a config change the agent
+ * made. Dotted paths whose segments may hold `*` anywhere (`cached*`, `projects.*.last*`). Only
+ * the report: nothing here reaches the user's file. Core's own table, apart from `AGENT_OVERLAYS`
+ * (which the provider manifests mirror).
+ */
+export const AGENT_QUIET_KEYS: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = {
+	'claude-code': { '.claude.json': CLAUDE_QUIET },
+};
+
 export const AGENT_OVERLAYS: Readonly<Record<string, IAgentOverlaySpec>> = {
 	'claude-code': {
 		env: 'CLAUDE_CONFIG_DIR',
@@ -125,6 +150,8 @@ export interface IAgentStateSeed {
 	readonly from: string;
 	readonly snapshot: string;
 	readonly mergeBack: readonly string[];
+	/** Its bookkeeping keys (`AGENT_QUIET_KEYS`): changes there are not reported. */
+	readonly quiet?: readonly string[];
 }
 
 export interface IAgentStateCredential {
@@ -191,12 +218,17 @@ export function agentStatePlan(providerId: string, stateKey: string | undefined,
 		env[name] = value.replace(/\$\{config\}/g, configDir);
 	}
 	const links = spec.link.map(name => ({ path: joinPath(configDir, name), target: joinPath(realConfig, name) }));
-	const seeds = spec.seed.map(seed => ({
-		path: joinPath(configDir, seed.name),
-		from: seed.from.startsWith('config:') ? joinPath(realConfig, seed.from.slice('config:'.length)) : own && seed.from === 'home:.claude.json' ? joinPath(realConfig, '.claude.json') : joinPath(host.home, seed.from.slice('home:'.length)),
-		snapshot: joinPath(seedDir, seed.name),
-		mergeBack: seed.mergeBack,
-	}));
+	const quietKeys = Object.prototype.hasOwnProperty.call(AGENT_QUIET_KEYS, providerId) ? AGENT_QUIET_KEYS[providerId] : {};
+	const seeds = spec.seed.map(seed => {
+		const quiet = Object.prototype.hasOwnProperty.call(quietKeys, seed.name) ? quietKeys[seed.name] : undefined;
+		return {
+			path: joinPath(configDir, seed.name),
+			from: seed.from.startsWith('config:') ? joinPath(realConfig, seed.from.slice('config:'.length)) : own && seed.from === 'home:.claude.json' ? joinPath(realConfig, '.claude.json') : joinPath(host.home, seed.from.slice('home:'.length)),
+			snapshot: joinPath(seedDir, seed.name),
+			mergeBack: seed.mergeBack,
+			...(quiet ? { quiet } : {}),
+		};
+	});
 	const credentials: IAgentStateCredential[] = (spec.credentials ?? []).map(credential => ({
 		path: joinPath(configDir, credential.name),
 		real: joinPath(realConfig, credential.name),
@@ -300,6 +332,23 @@ export function keyPatternCovers(pattern: string, path: readonly string[]): bool
 	return parts.length <= path.length && parts.every((part, i) => part === '*' || part === path[i]);
 }
 
+/** {@link keyPatternCovers} where a segment's `*` may stand for any run of characters in one key (`cached*`). */
+export function quietPatternCovers(pattern: string, path: readonly string[]): boolean {
+	const parts = pattern.split('.');
+	return parts.length <= path.length && parts.every((part, i) => part === '*' || part === path[i] || (part.includes('*') && globSegment(part).test(path[i])));
+}
+
+const globSegments = new Map<string, RegExp>();
+
+function globSegment(part: string): RegExp {
+	let regex = globSegments.get(part);
+	if (!regex) {
+		regex = new RegExp(`^${part.split('*').map(text => text.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
+		globSegments.set(part, regex);
+	}
+	return regex;
+}
+
 /** Whether some path `pattern` names lies at or below `prefix`. */
 function patternReaches(pattern: string, prefix: readonly string[]): boolean {
 	const parts = pattern.split('.');
@@ -338,9 +387,10 @@ export interface IAgentStateMerge {
 /**
  * What a turn changed in an overlay file (`seed` is what it started with, `after` what it holds
  * now), applied to the user's current file `real` for the keys `allowed` names. Changes the user
- * made meanwhile to other keys stay.
+ * made meanwhile to other keys stay. Changes to `quiet` keys (the CLI's bookkeeping) stay in the
+ * chat without being reported.
  */
-export function mergeAgentState(seed: unknown, after: unknown, real: unknown, allowed: readonly string[]): IAgentStateMerge {
+export function mergeAgentState(seed: unknown, after: unknown, real: unknown, allowed: readonly string[], quiet: readonly string[] = []): IAgentStateMerge {
 	const applied: string[] = [];
 	const dropped: string[] = [];
 	if (!isRecord(after)) {
@@ -353,6 +403,9 @@ export function mergeAgentState(seed: unknown, after: unknown, real: unknown, al
 			&& !path.some(key => FORBIDDEN_KEYS.has(key))
 			&& allowed.some(pattern => keyPatternCovers(pattern, path))
 			&& (value === undefined || JSON.stringify(value).length <= MAX_MERGED_VALUE);
+		if (!ok && path.length > 0 && quiet.some(pattern => quietPatternCovers(pattern, path))) {
+			continue;
+		}
 		if (!ok) {
 			const label = droppedLabel(path, allowed);
 			if (!dropped.includes(label)) {

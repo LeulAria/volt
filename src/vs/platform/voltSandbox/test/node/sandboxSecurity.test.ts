@@ -267,6 +267,52 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		assert.ok(!await exists(join(f.ws, 'hl')));
 	});
 
+	test('ESC-LINK-1: no hard link to a readable file it may not write (a toolchain, the CLI\'s linked config, an rc file, git config) is made', async () => {
+		const toolchain = join(f.home, '.cargo', 'bin', 'cargo-canary');
+		const toolchainBefore = await sha(toolchain);
+		// Each is readable to at least one of these policies and writable to none: a link inside the
+		// workspace would make it writable under the workspace's name (and git config runs code later).
+		const targets = [toolchain, join(f.home, '.claude', 'settings.json'), join(f.home, '.zshrc'), join(f.outside, 'secret.txt'), join(f.ws, '.git', 'config')];
+		for (const policy of [workspace(), agent(false), agent(true)]) {
+			const result = await sh(policy, targets.map((target, i) => `ln '${target}' ${f.ws}/hl-${i} && echo LINKED-${i}; echo evil >> ${f.ws}/hl-${i}`).join('; '));
+			assert.ok(!/LINKED/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+			for (let i = 0; i < targets.length; i++) {
+				const made = await fs.stat(join(f.ws, `hl-${i}`)).catch(() => undefined);
+				assert.ok(!made || made.nlink === 1, `${policy.name}: hl-${i} is a link to ${targets[i]}`);
+				await fs.rm(join(f.ws, `hl-${i}`), { force: true });
+			}
+		}
+		assert.strictEqual(await sha(toolchain), toolchainBefore, 'the toolchain binary');
+		await assertHostUnchanged();
+	});
+
+	test('ESC-LINK-2: writes through symlinks planted in the workspace reach nothing outside: another folder, ~/.ssh, ~/.aws', async () => {
+		await fs.mkdir(join(f.outside, 'dir'), { recursive: true });
+		try {
+			for (const policy of [workspace(), agent(false), agent(true)]) {
+				const result = await sh(policy, [
+					`ln -s ${f.outside}/dir ${f.ws}/l-dir; echo x > ${f.ws}/l-dir/planted && echo WROTE-DIR`,
+					`ln -s ${f.home}/.ssh ${f.ws}/l-ssh; echo 'ssh-ed25519 AAAA evil' >> ${f.ws}/l-ssh/authorized_keys && echo WROTE-SSH`,
+					`ln -s ${f.home}/.aws ${f.ws}/l-aws; printf '[default]\\ncredential_process = touch ${f.outside}/pwned\\n' > ${f.ws}/l-aws/config && echo WROTE-AWS`,
+					// And straight at them (agent(true) can read ~/.ssh for git over SSH: never write it).
+					`echo 'ssh-ed25519 AAAA evil' >> ${f.home}/.ssh/authorized_keys && echo WROTE-SSH-DIRECT`,
+					`echo x > ${f.home}/.ssh/config && echo WROTE-SSH-CONFIG`,
+					`mkdir ${f.home}/.ssh/x && echo MKDIR-SSH`,
+				].join('; '));
+				assert.ok(!/WROTE|MKDIR/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+				for (const name of ['l-dir', 'l-ssh', 'l-aws']) {
+					await fs.rm(join(f.ws, name), { force: true });
+				}
+			}
+			assert.deepStrictEqual(await fs.readdir(join(f.outside, 'dir')), []);
+			assert.deepStrictEqual(await fs.readdir(join(f.home, '.ssh')), ['id_ed25519']);
+			assert.deepStrictEqual(await fs.readdir(join(f.home, '.aws')), ['credentials']);
+		} finally {
+			await fs.rm(join(f.outside, 'dir'), { recursive: true, force: true });
+		}
+		await assertHostUnchanged();
+	});
+
 	test('writes outside the workspace and into protected paths are denied; the host is unchanged', async () => {
 		const attempts = [
 			`echo x > ${f.outside}/created.txt`,
@@ -390,6 +436,14 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		}
 		const granted = await sh(agent(true, 'claude-code', { listenPorts: [port] }), listen(port));
 		assert.ok(granted.stdout.includes(`LISTENING-${port}`), `a granted port works: ${granted.stderr}`);
+		// Ports macOS reports as `*:<port>` at listen() (63000, 65351 on macOS 26.6) work when granted too, with the network on and off.
+		for (const fixed of [63000, 65351]) {
+			// Busy on this machine is fine (EADDRINUSE); refused by the sandbox (EPERM) is not.
+			for (const network of [true, false]) {
+				const result = await sh(agent(network, 'claude-code', { listenPorts: [fixed] }), listen(fixed));
+				assert.ok(result.stdout.includes(`LISTENING-${fixed}`) || /Address already in use/.test(result.stderr), `granted ${fixed}, network ${network}: ${result.stderr}`);
+			}
+		}
 	});
 
 	test('ENV-1: an agent gets only allow-listed variables; *_KEY, *_PAT and *_JWT never pass', async () => {
@@ -499,6 +553,48 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		await assertHostUnchanged();
 	});
 
+	test('ESC-GIT-1: .git and its hooks cannot be moved aside and replaced; config cannot be swapped in by rename or link', async () => {
+		const { repo } = await gitRepo('escgit');
+		const config = join(repo, '.git', 'config');
+		const before = await sha(config);
+		for (const policy of gitPolicies(repo)) {
+			const result = await sh(policy, [
+				`mv ${repo}/.git ${repo}/.git-old && echo MOVED-GIT`,
+				`mv ${repo}/.git/hooks ${repo}/.git/hooks-old && echo MOVED-HOOKS`,
+				`printf '[core]\\n\\tfsmonitor = touch ${f.outside}/pwned\\n' > ${repo}/evil-config; mv ${repo}/evil-config ${config} && echo SWAPPED`,
+				`ln -f ${repo}/a.txt ${config} && echo LINKED`,
+				`ln -s ${f.outside} ${repo}/.git/commondir && echo COMMONDIR`,
+			].join('; '), { workspaceRoots: [repo] });
+			assert.ok(!/SWAPPED|LINKED/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+			assert.strictEqual(await sha(config), before, `${policy.name}: config`);
+			if (isLinux) {
+				// bubblewrap binds the names that exist at launch: a folder moved aside takes its binds along and
+				// a new name is the protectNew residual (HostGit refuses what it plants on the host, GIT-1..4).
+				assert.ok(result.unenforced.includes('filesystem.protectNew'), `${policy.name}: the run reports the gap`);
+				if (await exists(join(repo, '.git-old'))) {
+					await fs.rm(join(repo, '.git'), { recursive: true, force: true });
+					await fs.rename(join(repo, '.git-old'), join(repo, '.git'));
+				}
+			} else {
+				assert.ok(!/MOVED|COMMONDIR/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+				assert.ok(await exists(join(repo, '.git', 'hooks')), `${policy.name}: hooks still in place`);
+				assert.ok(!await exists(join(repo, '.git-old')) && !await exists(join(repo, '.git', 'hooks-old')), policy.name);
+			}
+			await fs.rm(join(repo, 'evil-config'), { force: true });
+		}
+		assert.ok(!await exists(join(f.outside, 'pwned')));
+		await assertHostUnchanged();
+	});
+
+	// bubblewrap cannot guard paths that do not exist yet: filesystem.protectNew (documented).
+	macTest('ESC-GIT-2: a nested .git pointing outside cannot be planted as a symlink or a gitdir file (macOS)', async () => {
+		await sh(workspace(), `mkdir -p ${f.ws}/sub/inner; ln -s ${f.outside} ${f.ws}/sub/inner/.git; echo 'gitdir: ${f.outside}' > ${f.ws}/sub/inner/.Git`);
+		for (const name of ['.git', '.Git']) {
+			assert.ok(!await exists(join(f.ws, 'sub', 'inner', name)), name);
+		}
+		await fs.rm(join(f.ws, 'sub', 'inner'), { recursive: true, force: true });
+	});
+
 	// bubblewrap cannot guard paths that do not exist yet: filesystem.protectNew (documented).
 	macTest('a new git repository cannot be planted in the workspace (macOS)', async () => {
 		await sh(workspace(), `mkdir ${f.ws}/sub/.git; mkdir ${f.ws}/sub/.GIT; echo 'gitdir: ${f.outside}' > ${f.ws}/sub/x; mv ${f.ws}/sub/x ${f.ws}/sub/.git`);
@@ -558,6 +654,30 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 			assert.strictEqual(victim.exitCode, null);
 			assert.strictEqual(victim.signalCode, null, 'the host process is alive');
 			assert.ok(!result.stdout.includes('can-see'), result.stdout);
+		} finally {
+			victim.kill('SIGKILL');
+		}
+	});
+
+	test('ESC-PROC-1: agent profiles cannot signal, stop or list host processes, nor read their command lines', async () => {
+		// A host process with a secret on its command line (`mysql -pSECRET` style) and in its environment.
+		const secret = `CANARY-ARGV-${process.pid}`;
+		const victim = spawn(PERL, ['-e', 'sleep 300', secret], { stdio: 'ignore', env: { PATH: '/usr/bin:/bin', CANARY_ENV_SECRET: secret } });
+		try {
+			await new Promise(resolve => setTimeout(resolve, 200));
+			for (const policy of [agent(false), agent(true)]) {
+				const result = await sh(policy, [
+					`kill -STOP ${victim.pid} 2>/dev/null && echo STOPPED`,
+					`kill -TERM ${victim.pid} 2>/dev/null && echo SIGNALLED`,
+					`kill -0 ${victim.pid} 2>/dev/null && echo CAN-SEE`,
+					'ps -axww -o pid=,command= 2>/dev/null',
+					'ps -axwwE -o command= 2>/dev/null',
+				].join('; '));
+				assert.ok(!/STOPPED|SIGNALLED|CAN-SEE/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+				assert.ok(!result.stdout.includes(secret), `${policy.name}: another process's command line or environment through ps`);
+				assert.strictEqual(victim.exitCode, null);
+				assert.strictEqual(victim.signalCode, null, `${policy.name}: the host process is untouched`);
+			}
 		} finally {
 			victim.kill('SIGKILL');
 		}
@@ -755,6 +875,26 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 	});
 
 	// --- macOS escape hatches --------------------------------------------------------------------
+
+	macTest('ESC-MAC-1: launchd, LaunchServices and Apple Events run nothing outside for the workspace and network-off agent profiles either', async () => {
+		const label = `volt.sbx.esc.${process.pid}`;
+		for (const policy of [workspace(), agent(false)]) {
+			await sh(policy, [
+				`launchctl submit -l ${label} -- /usr/bin/touch ${f.outside}/canary-launchd 2>&1`,
+				`launchctl bootstrap gui/$(id -u) ${f.ws}/x.plist 2>&1`,
+				`open -a Terminal ${f.outside} 2>&1`,
+				`open -b com.apple.TextEdit ${f.outside}/secret.txt 2>&1`,
+				`osascript -e 'do shell script "touch ${f.outside}/canary-osascript"' 2>&1`,
+				`osascript -e 'tell application "Terminal" to do script "touch ${f.outside}/canary-terminal"' 2>&1`,
+			].join('; '));
+			try { execFileSync('/bin/launchctl', ['remove', label], { stdio: 'ignore' }); } catch { /* not there */ }
+		}
+		await new Promise(resolve => setTimeout(resolve, 1_500));
+		for (const name of ['canary-launchd', 'canary-osascript', 'canary-terminal']) {
+			assert.ok(!await exists(join(f.outside, name)), name);
+		}
+		await assertHostUnchanged();
+	});
 
 	macTest('macOS: Apple Events, LaunchServices, launchd jobs, preferences and the pasteboard are closed to agents', async () => {
 		const domain = `volt.sbx.test.${process.pid}`;

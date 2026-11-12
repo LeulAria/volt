@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { AGENT_OVERLAYS, agentStateKey, agentStatePlan, formatKeyPath, IAgentStateHost, keyPatternCovers, mergeAgentState, sameCredentialIdentity } from '../../common/agentState.js';
+import { AGENT_OVERLAYS, AGENT_QUIET_KEYS, agentStateKey, agentStatePlan, formatKeyPath, IAgentStateHost, keyPatternCovers, mergeAgentState, sameCredentialIdentity } from '../../common/agentState.js';
 import { agentHomeWrites, agentSandboxPolicy, footprintLintErrors, IAgentSandboxHost, IVoltSandboxRequest } from '../../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES, isSecretEnvName } from '../../common/sandboxProfiles.js';
 
@@ -135,6 +135,27 @@ suite('Volt agent state (B-05, INV-17)', () => {
 		assert.deepStrictEqual([...result.dropped].sort(), [
 			'mcpServers.evil', 'oauthAccount.accountUuid', 'projects["/other"].enableAllProjectMcpServers', 'projects["/r"].allowedTools', 'projects["/r"].hasTrustDialogAccepted', 'projects["/r"].mcpServers.x',
 		]);
+	});
+
+	test('QUIET-1: Claude Code\'s own bookkeeping (feature caches, counters, seen marks) is never reported; settings still are', () => {
+		const spec = { mergeBack: AGENT_OVERLAYS['claude-code'].seed[0].mergeBack, quiet: AGENT_QUIET_KEYS['claude-code']['.claude.json'] };
+		const seed = { numStartups: 3, cachedGrowthBookFeatures: { a: 1 }, cachedGrowthBookFeaturesAt: 1, mcpServers: {}, projects: { '/r': { lastSessionId: 'a', allowedTools: [] } } };
+		const after = {
+			numStartups: 4,
+			cachedGrowthBookFeatures: { a: 2, b: true }, cachedGrowthBookFeaturesAt: 2, cachedStatsigGates: { g: true }, modelAccessCache: { x: 1 }, clientDataCacheSlots: [1],
+			tipsHistory: { t: 3 }, ideHintShownCount: 2, lastOnboardingVersion: '2.1', lastReleaseNotesSeen: '2.1', hasSeenTasksHint: true, seenNotifications: { n: 1 },
+			fullscreenUpsellSeenCount: 1, opusProMigrationComplete: true, userID: 'u', skillUsage: { s: 1 }, changelogLastFetched: 5,
+			mcpServers: { evil: { command: 'sh' } }, env: { NODE_OPTIONS: '--require /tmp/x.js' }, oauthAccount: { accountUuid: 'other' }, hasCompletedOnboarding: true,
+			projects: { '/r': { lastSessionId: 'b', lastFpsAverage: 60, lastGracefulShutdown: true, allowedTools: ['Bash(*)'], hasTrustDialogAccepted: true } },
+		};
+		const result = mergeAgentState(seed, after, seed, spec.mergeBack, spec.quiet);
+		assert.deepStrictEqual([...result.applied].sort(), ['numStartups', 'projects["/r"].lastSessionId', 'tipsHistory.t'], 'the merge-back list goes first');
+		assert.deepStrictEqual([...result.dropped].sort(), ['env.NODE_OPTIONS', 'hasCompletedOnboarding', 'mcpServers.evil', 'oauthAccount.accountUuid', 'projects["/r"].allowedTools', 'projects["/r"].hasTrustDialogAccepted'], 'settings and logins are still reported');
+		assert.ok(!JSON.stringify(result.merged).includes('cachedStatsigGates'), 'bookkeeping stays in the chat, never reaches the user\'s file');
+		// The plan carries the list to the overlay's sync.
+		assert.deepStrictEqual(agentStatePlan('claude-code', 'chat-q', STATE_HOST, AGENT_CONFIG_NAMES)!.seeds[0].quiet, spec.quiet);
+		// Without the list (another CLI), every change outside the merge-back is reported as before.
+		assert.ok(mergeAgentState(seed, after, seed, spec.mergeBack).dropped.includes('cachedGrowthBookFeaturesAt'));
 	});
 
 	test('merge-back refuses prototype keys, oversized values and a file that is no longer an object', () => {

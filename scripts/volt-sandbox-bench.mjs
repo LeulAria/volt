@@ -9,17 +9,29 @@
 // docs/security/sandbox/04-performance.md with the machine they came from.
 //
 //   node scripts/volt-sandbox-bench.mjs [--runs 30]
+//   node scripts/volt-sandbox-bench.mjs ... --out <dir>   run another copy of out/ (A/B before and after a change)
+//   node scripts/volt-sandbox-bench.mjs --launcher [--runs 30]   the agent launcher path (VoltSandboxLauncher,
+//     stateKey set: Authority, compile, the chat's config overlay, the manager, spawn, attestation), in a fake HOME
 
 import { execFileSync, spawn } from 'child_process';
-import { promises as fs } from 'fs';
+import { promises as fs, mkdtempSync, realpathSync } from 'fs';
 import { cpus, tmpdir, totalmem } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
+if (process.argv.includes('--launcher')) {
+	// Before anything reads it: the launcher keeps its caches and per-chat overlays under the home folder.
+	// Not below a temp folder: agent profiles write there, and a writable parent of the home is refused.
+	const homes = process.platform === 'darwin' ? '/Users/Shared' : tmpdir();
+	process.env.HOME = realpathSync(mkdtempSync(join(homes, 'volt-sbx-bench-home-')));
+}
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 // As bootstrap-esm sets it: the macOS backend finds its helper (.build/volt-helpers) from the app root.
-globalThis._VSCODE_FILE_ROOT = join(root, 'out');
-const load = path => import(pathToFileURL(join(root, 'out', path)).href);
+// `--out <dir>`: another build's transpiled sources (an A/B against a copy of out/ from before a change).
+const outDir = process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : join(root, 'out');
+globalThis._VSCODE_FILE_ROOT = outDir;
+const load = path => import(pathToFileURL(join(outDir, path)).href);
 const { SandboxManager } = await load('vs/platform/voltSandbox/node/sandboxManager.js');
 const { builtinProfile } = await load('vs/platform/voltSandbox/common/sandboxProfiles.js');
 const { agentSandboxPolicy } = await load('vs/platform/voltSandbox/common/sandboxPolicy.js');
@@ -61,7 +73,74 @@ const sandboxed = async (policy, command, args) => {
 	return result;
 };
 
-const results = { machine: { cpu: cpus()[0]?.model, cores: cpus().length, memoryGB: Math.round(totalmem() / 2 ** 30), platform: process.platform, node: process.version, backend: capabilities.backend, details: capabilities.details }, runs };
+if (process.argv.includes('--launcher')) {
+	await launcherBench();
+	await manager.dispose();
+	await fs.rm(work, { recursive: true, force: true });
+	await fs.rm(process.env.HOME, { recursive: true, force: true });
+	process.exit(0);
+}
+
+/**
+ * The agent launcher path as a chat starts its CLI: `VoltSandboxLauncher.prepare` with a state key
+ * (principal, Authority, compile, the chat's config overlay, the manager's prepare), then spawn, the
+ * attested start and the run to its end. The fake HOME holds a Claude Code config of a realistic size.
+ */
+async function launcherBench() {
+	const { VoltSandboxLauncher } = await load('vs/platform/voltSandbox/node/sandboxLauncher.js');
+	const home = process.env.HOME;
+	await fs.mkdir(join(home, '.claude'), { recursive: true });
+	const projects = Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`/Users/someone/project-${i}`, { allowedTools: [], history: Array.from({ length: 4 }, (_, j) => ({ display: `prompt ${j} `.repeat(8) })), mcpServers: {} }]));
+	await fs.writeFile(join(home, '.claude.json'), JSON.stringify({ numStartups: 10, projects, mcpServers: {} }));
+	await fs.writeFile(join(home, '.claude', 'settings.json'), '{"model":"opus"}');
+	await fs.writeFile(join(home, '.claude', 'CLAUDE.md'), '# notes\n');
+	const userData = join(home, 'Library', 'Application Support', 'Volt');
+	await fs.mkdir(userData, { recursive: true });
+	const quiet = { info: () => undefined, warn: () => undefined };
+	const launcher = new VoltSandboxLauncher(userData, quiet);
+	const env = { PATH: process.env.PATH, HOME: home, LANG: 'C' };
+	const once = async (stateKey) => {
+		const request = { level: 'workspace-write', network: false, providerId: 'claude-code', workspaceRoots: [ws], ...(stateKey ? { stateKey } : {}) };
+		const t0 = performance.now();
+		const launch = await launcher.prepare('/usr/bin/true', [], request, { hostEnv: env });
+		const t1 = performance.now();
+		const child = spawn(launch.command, launch.args, { cwd: launch.cwd, env: launch.env, stdio: ['ignore', 'ignore', 'pipe', ...launch.extraStdio], detached: true });
+		const exited = new Promise(resolve => child.once('close', resolve));
+		const confirmed = await launch.confirm(child);
+		const t2 = performance.now();
+		if (!confirmed.ok) {
+			throw new Error(`not confirmed: ${confirmed.error}`);
+		}
+		await exited;
+		await launch.terminate(child);
+		const t3 = performance.now();
+		launch.dispose();
+		return { prepare: t1 - t0, start: t2 - t1, total: t3 - t0 };
+	};
+	// Warm-up: the probe, the helper, the host facts, the first overlay.
+	await once('bench-chat');
+	await once(undefined);
+	const out = { chat: [], noChat: [] };
+	for (let i = 0; i < runs; i++) {
+		// A few chats in rotation, as a busy window has: each its own overlay.
+		out.chat.push(await once(`bench-chat-${i % 4}`));
+		out.noChat.push(await once(undefined));
+	}
+	const pick = (rows, key) => stats(rows.map(row => row[key]));
+	const result = {
+		machine: { cpu: cpus()[0]?.model, cores: cpus().length, platform: process.platform, node: process.version, backend: capabilities.backend },
+		runs,
+		claudeJsonBytes: (await fs.stat(join(home, '.claude.json'))).size,
+		launcherWithStateKeyMs: { prepare: pick(out.chat, 'prepare'), start: pick(out.chat, 'start'), total: pick(out.chat, 'total') },
+		launcherNoStateKeyMs: { prepare: pick(out.noChat, 'prepare'), start: pick(out.noChat, 'start'), total: pick(out.noChat, 'total') },
+		compileCache: launcher.cacheStats,
+	};
+	await launcher.shutdown();
+	launcher.dispose();
+	console.log(JSON.stringify(result, null, 2));
+}
+
+const results = { machine:{ cpu: cpus()[0]?.model, cores: cpus().length, memoryGB: Math.round(totalmem() / 2 ** 30), platform: process.platform, node: process.version, backend: capabilities.backend, details: capabilities.details }, runs };
 
 // 1. Policy compilation: resolve + profile text, no process.
 const compile = [];

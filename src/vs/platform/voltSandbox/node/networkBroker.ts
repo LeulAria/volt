@@ -15,7 +15,7 @@ import { evaluate, IAccessRequest, IAdminPolicy, IChatView, IDecision, IManifest
 import { GrantKind, grantValid, IGrant } from '../common/grants.js';
 import { classifyAddress } from '../common/networkAddress.js';
 import { INormalizedHost, normalizeNetworkHost, parseNetworkRule, splitAuthority } from '../common/networkRules.js';
-import { ICallContext, IPrincipal, isChatSubject, PrincipalKind, SubjectKey, subjectChatId } from '../common/principals.js';
+import { ICallContext, IPrincipal, isChatSubject, isFirstPartySubject, PrincipalKind, SubjectKey, subjectChatId } from '../common/principals.js';
 import { GrantCommitResult, IGrantStoreChange, IGrantStoreChangeEvent } from './grantStore.js';
 
 /**
@@ -540,6 +540,9 @@ export class NetworkRoute {
 	 * metadata address are dropped: "Allow host" never allows a private address.
 	 */
 	async allowHosts(entries: readonly string[]): Promise<number> {
+		if (isFirstPartySubject(this.subject)) {
+			return this.broker.epoch; // a built-in reaches what its ceiling holds; nothing the user adds widens it (G.10)
+		}
 		const targets = normalizeEntries(entries).filter(entry => {
 			if (!isChatSubject(this.subject) && entry === '*') {
 				return false; // H.7: never public `*` for a plugin, extension or MCP server.
@@ -698,6 +701,12 @@ export class NetworkRoute {
 	 * a named host is an install-time grant (G.4); the user's "Allow host" names the rest.
 	 */
 	private routeManifest(manifest: IManifestView, grants: readonly IGrant[], now: number): IManifestView {
+		if (isFirstPartySubject(this.subject)) {
+			// A built-in (G.10): what it declares within its compiled first-party ceiling, no prompt and no
+			// grants. The ceiling caps an untargeted declaration (`volt.usage`'s provider endpoints), so it
+			// stays as declared; dropping it would refuse the built-in and offer the user an "Allow host".
+			return manifest;
+		}
 		const context = { asOf: now, epoch: this.broker.epoch, sessionIds: [this.principal.id] };
 		const named = (targets: readonly string[] | undefined) => (targets ?? []).filter(target => target.trim() !== '*');
 		const granted = grants.filter(grant => !grant.revoked && grant.capability.split('@')[0] === 'net.connect' && grantValid(grant, context)).flatMap(grant => named(grant.scope.targets));
@@ -842,7 +851,8 @@ export class NetworkRoute {
 				return record.denial;
 			}
 		}
-		const approvable = (verdict.reason === 'not-allowed' || verdict.reason === 'port') && !!verdict.target;
+		// A built-in's refusal is its ceiling's (G.10): refused, never prompted; no grant could widen it.
+		const approvable = (verdict.reason === 'not-allowed' || verdict.reason === 'port') && !!verdict.target && !isFirstPartySubject(this.subject);
 		const denial: INetworkDenial = {
 			denialId: randomBytes(12).toString('base64url'),
 			principal: this.principal.id,

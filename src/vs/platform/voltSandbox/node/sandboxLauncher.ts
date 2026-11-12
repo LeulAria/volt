@@ -9,7 +9,7 @@ import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
-import { join } from '../../../base/common/path.js';
+import { dirname, join } from '../../../base/common/path.js';
 import { chatLaunchView, evaluateLaunch, IAdminPolicy, ILaunchDecision, IWorkspaceRestriction, PolicyAuthorityMode, PolicySnapshot } from '../common/authority.js';
 import { ILaunchCompileInput, ILaunchCompileRecord, ISandboxCompositionNote, ISandboxLayer, LaunchPolicyCache, launchCompileRecord, launchPolicyBytes } from '../common/compile.js';
 import { chatSubject, corePrincipal, ICallContext, IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
@@ -18,7 +18,7 @@ import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
 import { IAttestation, ISandboxBackendCapabilities, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
 import { agentStatePlan } from '../common/agentState.js';
-import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, isAgentHousekeepingDenial, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
@@ -311,7 +311,10 @@ export class VoltSandboxLauncher extends Disposable {
 			});
 			sealed = this.registry.sealLaunchPolicy(principal, prepared.launchPolicyHash);
 			launched = true;
-			return this.launch(prepared, overlay, policy, sealed);
+			// The CLI's own housekeeping, the run's canary and looks at the home folder: logged, never a card (B-05).
+			const realConfig = statePlan?.links[0] ? dirname(statePlan.links[0].target) : undefined;
+			const housekeeping = (denial: ISandboxDenial) => isAgentHousekeepingDenial(request.providerId, host.home, denial, { sentinel: prepared.policy.sentinel, ...(realConfig ? { realConfig } : {}) });
+			return this.launch(prepared, overlay, policy, sealed, housekeeping);
 		} finally {
 			if (!launched) {
 				this.registry.retire(principal.id);
@@ -548,12 +551,21 @@ export class VoltSandboxLauncher extends Disposable {
 		return this.admin;
 	}
 
-	private launch(prepared: IPreparedSandbox, overlay: AgentStateOverlay | undefined, policy: IVoltSandboxPolicy, principal: IPrincipal): ISandboxLaunch {
+	private launch(prepared: IPreparedSandbox, overlay: AgentStateOverlay | undefined, policy: IVoltSandboxPolicy, principal: IPrincipal, housekeeping: (denial: ISandboxDenial) => boolean): ISandboxLaunch {
+		const quiet = new Set<string>();
 		const listener = prepared.onDenial(denial => {
 			if (denial.kind === 'process' || denial.kind === 'limit') {
 				return;
 			}
-			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}), ...(denial.denialId ? { denialId: denial.denialId } : {}), ...(denial.epoch !== undefined ? { epoch: denial.epoch } : {}) });
+			const shown: ISandboxDenial = { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}), ...(denial.denialId ? { denialId: denial.denialId } : {}), ...(denial.epoch !== undefined ? { epoch: denial.epoch } : {}) };
+			if (denial.source !== 'proxy' && housekeeping(shown)) {
+				if (!quiet.has(`${shown.kind}|${shown.target}`) && quiet.size < 200) {
+					quiet.add(`${shown.kind}|${shown.target}`);
+					this.logger.info(`[volt-sandbox] ${prepared.tag} housekeeping denial, not shown: ${shown.kind} ${shown.target}${shown.process ? ` (${shown.process})` : ''}`);
+				}
+				return;
+			}
+			this.report(prepared.tag, shown);
 		});
 		const warnings = prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`);
 		if (policy.network.listen) {

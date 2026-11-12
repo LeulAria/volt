@@ -129,6 +129,26 @@ export interface IAgentFootprint {
 	readonly env?: Readonly<Record<string, string>>;
 }
 
+/**
+ * Each CLI's own background state that stays out of reach on purpose (synced skills, plugin
+ * stores, session files and caches of its real config folder, its version locks), below the home
+ * folder: a denial there is housekeeping, logged and never shown as a "Blocked by the sandbox"
+ * card, whose "Allow Folder" would open a folder the user's own CLI later runs code from. Writes to
+ * its settings, instructions, hooks or a skill the agent edits on purpose are not listed and still
+ * show. Only the denial's presentation: no path here is made readable or writable.
+ */
+export const AGENT_HOUSEKEEPING: Readonly<Record<string, readonly string[]>> = {
+	'claude-code': [
+		'.claude.json', '.claude/skills/synced', '.claude/skills/.trash', '.claude/plugins/store', '.claude/plugins/cache', '.claude/plugins/repos',
+		'.claude/plugins/marketplaces', '.claude/plugins/known_marketplaces.json', '.claude/plugins/installed_plugins.json', '.claude/plugins/install-counts-cache.json',
+		'.claude/statsig', '.claude/todos', '.claude/shell-snapshots', '.claude/sessions', '.claude/session-env', '.claude/projects', '.claude/debug',
+		'.claude/telemetry', '.claude/stats-cache.json', '.claude/history.jsonl', '.claude/ide', '.claude/paste-cache', '.claude/backups', '.claude/cache',
+		'.claude/plans', '.claude/tasks', '.claude/transcripts', '.claude/file-history', '.claude/mcp-needs-auth-cache.json', '.claude/.last-cleanup',
+		// Its version locks (`<version>#<pid>.lock`) and updater staging: never opened (a planted or removed lock steers the user's own updater).
+		'.local/state/claude', '.cache/claude',
+	],
+};
+
 const NPM_DOMAINS = ['registry.npmjs.org'];
 
 /** Volt's own per-chat agent state (config overlays, see agentState.ts), below the home folder. */
@@ -261,6 +281,41 @@ function genericFootprint(providerId: string): IAgentFootprint {
 
 function footprintOf(providerId: string): IAgentFootprint {
 	return Object.prototype.hasOwnProperty.call(AGENT_FOOTPRINTS, providerId) ? AGENT_FOOTPRINTS[providerId] : genericFootprint(providerId);
+}
+
+/**
+ * Whether a file denial of an agent's run is not the agent's doing: the CLI's own background state
+ * ({@link AGENT_HOUSEKEEPING}), the run's own canary (the attestation's sentinel), or a look at
+ * the home folder itself (path walks pass through it). The launcher logs these and never offers
+ * them to the user: each "Allow" there would widen the sandbox to something the user's own CLI or
+ * the whole home folder depends on. `realConfig` is the CLI's config folder when the user moved it
+ * (`CLAUDE_CONFIG_DIR`): the footprint's entries below its default folder are read there too.
+ */
+export function isAgentHousekeepingDenial(providerId: string, home: string, denial: { readonly kind: string; readonly target: string }, own: { readonly sentinel?: string; readonly realConfig?: string } = {}): boolean {
+	if (denial.kind !== 'read' && denial.kind !== 'write') {
+		return false;
+	}
+	const target = normalizeSandboxPath(denial.target);
+	const root = normalizeSandboxPath(home);
+	// The home folder and its parent as folders (a listing), never anything below them.
+	const parent = root.slice(0, root.lastIndexOf('/')) || '/';
+	if ((own.sentinel && target === normalizeSandboxPath(own.sentinel)) || (denial.kind === 'read' && (target === root || target === parent))) {
+		return true;
+	}
+	const overlay = Object.prototype.hasOwnProperty.call(AGENT_OVERLAYS, providerId) ? AGENT_OVERLAYS[providerId] : undefined;
+	const configHome = overlay ? `${overlay.home}/` : undefined;
+	// Its real config folder as a folder: the overlay serves its contents, the CLI still looks at it.
+	if (denial.kind === 'read' && overlay && (target === `${root}/${overlay.home}` || (own.realConfig && target === normalizeSandboxPath(own.realConfig)))) {
+		return true;
+	}
+	const housekeeping = Object.prototype.hasOwnProperty.call(AGENT_HOUSEKEEPING, providerId) ? AGENT_HOUSEKEEPING[providerId] : [];
+	return housekeeping.some(entry => {
+		const paths = [`${root}/${entry}`];
+		if (own.realConfig && configHome && entry.startsWith(configHome)) {
+			paths.push(`${normalizeSandboxPath(own.realConfig)}/${entry.slice(configHome.length)}`);
+		}
+		return paths.some(path => isPathInside(target, path));
+	});
 }
 
 /**

@@ -12,13 +12,17 @@
 // Usage: npm run -s transpile-client-oxc && node scripts/volt-network-broker-bench.mjs [--json]
 //   VOLT_BENCH_CONNECTS (default 400), VOLT_BENCH_MB (default 512)
 
+import { promises as fs } from 'node:fs';
 import * as net from 'node:net';
+import { tmpdir } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as path from 'node:path';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const { NetworkBroker } = await import(pathToFileURL(path.join(ROOT, 'out/vs/platform/voltSandbox/node/networkBroker.js')).href);
+// `--out <dir>`: another copy of out/ (an A/B against the build from before a change).
+const OUT = process.argv.includes('--out') ? process.argv[process.argv.indexOf('--out') + 1] : path.join(ROOT, 'out');
+const { NetworkBroker, NetworkAuditLog } = await import(pathToFileURL(path.join(OUT, 'vs/platform/voltSandbox/node/networkBroker.js')).href);
 
 const CONNECTS = Number(process.env.VOLT_BENCH_CONNECTS) || 400;
 const MEGABYTES = Number(process.env.VOLT_BENCH_MB) || 512;
@@ -75,9 +79,12 @@ const relay = net.createServer(client => {
 await new Promise(resolve => relay.listen(0, '127.0.0.1', resolve));
 const relayPort = relay.address().port;
 
+// The audit log as production writes it (one line per connect and close), to a temp file.
+const auditDir = await fs.mkdtemp(path.join(tmpdir(), 'volt-broker-bench-'));
 const broker = new NetworkBroker({
 	lookup: async () => [{ address: '93.184.216.34', family: 4 }],
 	connect: () => net.connect({ host: '127.0.0.1', port: sinkPort }),
+	audit: new NetworkAuditLog(path.join(auditDir, 'network.log')).append,
 });
 const route = await broker.openRoute({
 	principal: { id: 'bench', subject: 'chat:bench', kind: 'agent', executionHost: 'local', launchPolicyHash: '', createdAt: 0 },
@@ -174,6 +181,7 @@ route.dispose();
 broker.dispose();
 relay.close();
 sink.close();
+await fs.rm(auditDir, { recursive: true, force: true });
 
 if (process.argv.includes('--json')) {
 	console.log(JSON.stringify(result, null, '\t'));

@@ -209,8 +209,33 @@ function mergeFilters(filters: readonly SeatbeltFilter[]): string[] {
 	return out.flatMap(item => typeof item === 'string' ? [item] : groupRegexes(item));
 }
 
+/**
+ * Merged groups by their inputs. The merge is a pure function of the suffix, the case rule and the
+ * set of prefixes, and most groups are the same in every launch (the credential denies under the
+ * home folder, the protections of one workspace, the git allow list): building their prefix trees
+ * again was most of the profile text's cost (about 10 ms of an agent launch). Bounded; the oldest
+ * entry goes first.
+ */
+const mergedGroups = new Map<string, readonly string[]>();
+const MAX_MERGED_GROUPS = 256;
+
 function groupRegexes(group: readonly IPathRegex[]): string[] {
 	const { suffix, caseInsensitive } = group[0];
+	// Paths never hold a NUL (the resolver refuses control characters), so it separates the key's parts.
+	const key = `${caseInsensitive ? 'i' : 's'}\u0000${suffix}\u0000${[...new Set(group.map(filter => filter.prefix))].sort().join('\u0000')}`;
+	const known = mergedGroups.get(key);
+	if (known) {
+		return [...known];
+	}
+	const merged = mergeGroup(group, suffix, caseInsensitive);
+	if (mergedGroups.size >= MAX_MERGED_GROUPS) {
+		mergedGroups.delete(mergedGroups.keys().next().value!);
+	}
+	mergedGroups.set(key, merged);
+	return [...merged];
+}
+
+function mergeGroup(group: readonly IPathRegex[], suffix: string, caseInsensitive: boolean): string[] {
 	const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 	const below = coversBelow(suffix);
 	// Shortest first, so a prefix is only dropped for one already kept.
@@ -287,9 +312,25 @@ function patternFilters(patterns: readonly IResolvedPattern[], caseInsensitive: 
 	return [...byRoot].map(([root, names]) => ({
 		prefix: root === '/' ? '' : root,
 		// Never empty, never optional as a whole: a plain concatenation or one group.
-		suffix: `/(.*/)?${literalAlternation([...names].map(name => literalChars(name, caseInsensitive)))}(/.*)?`,
+		suffix: `/(.*/)?${namesAlternation([...names], caseInsensitive)}(/.*)?`,
 		caseInsensitive,
 	}));
+}
+
+/** The same few name lists (`.env`-style files, git internals) recur under every root and launch. */
+const nameAlternations = new Map<string, string>();
+
+function namesAlternation(names: readonly string[], caseInsensitive: boolean): string {
+	const key = `${caseInsensitive ? 'i' : 's'}\u0000${names.join('\u0000')}`;
+	let text = nameAlternations.get(key);
+	if (text === undefined) {
+		text = literalAlternation(names.map(name => literalChars(name, caseInsensitive)));
+		if (nameAlternations.size >= MAX_MERGED_GROUPS) {
+			nameAlternations.delete(nameAlternations.keys().next().value!);
+		}
+		nameAlternations.set(key, text);
+	}
+	return text;
 }
 
 /**
@@ -449,7 +490,13 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		}
 		const listenPorts = [...new Set(policy.network.listenPorts ?? [])].filter(port => Number.isInteger(port) && port > 0 && port < 65536);
 		if (listenPorts.length) {
-			out.push('(allow system-socket)', `(allow network-bind network-inbound\n\t${listenPorts.map(port => `(local ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`);
+			// `listen()` is checked as network-inbound on the socket's local address, which macOS 26.6
+			// reports as `*:<port>` for some ports (measured: 63000 and 65351, not 64000 or 65535), so a
+			// `localhost:` filter alone refused a granted port by its number. The bind rule is what limits
+			// the address; the inbound rule names the port both ways.
+			out.push('(allow system-socket)',
+				`(allow network-bind\n\t${listenPorts.map(port => `(local ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`,
+				`(allow network-inbound\n\t${listenPorts.flatMap(port => [`(local ip ${sbplString(`localhost:${port}`)})`, `(local ip ${sbplString(`*:${port}`)})`]).join('\n\t')})`);
 		}
 	}
 

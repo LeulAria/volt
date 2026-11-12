@@ -33,7 +33,7 @@ export interface ISpecialRange {
 /** Cloud metadata endpoints: AWS/GCP/Azure/OpenStack, AWS's IPv6 one, Alibaba's. */
 export const METADATA_ADDRESSES: readonly string[] = ['169.254.169.254', 'fd00:ec2::254', '100.100.100.200'];
 
-/** I.4's table. IPv4 inside IPv6 (mapped, compatible, NAT64, 6to4) is not here: it is judged as the IPv4 address. */
+/** I.4's table. IPv4 inside IPv6 (mapped, SIIT translated, compatible, NAT64, 6to4) is not here: it is judged as the IPv4 address. */
 export const SPECIAL_RANGES: readonly ISpecialRange[] = [
 	{ cidr: '0.0.0.0/8', class: 'special', note: 'this network' },
 	{ cidr: '10.0.0.0/8', class: 'local', note: 'RFC 1918' },
@@ -230,13 +230,18 @@ const PARSED_METADATA = METADATA_ADDRESSES.map(address => (parseIPv4(address) ??
 
 /**
  * The IPv4 address(es) an IPv6 address stands for, if it embeds one: `::ffff:0:0/96` (mapped),
- * `::/96` (compatible, deprecated), `64:ff9b::/96` (NAT64), `2002::/16` (6to4) and `64:ff9b:1::/48`
+ * `::ffff:0:0:0/96` (SIIT translated), `::/96` (compatible, deprecated), `64:ff9b::/96` (NAT64), `2002::/16` (6to4) and `64:ff9b:1::/48`
  * (RFC 8215 local-use NAT64), where a network may put the IPv4 address at any RFC 6052 position, so
  * every reading counts.
  */
 function embeddedIPv4(bytes: Uint8Array): Uint8Array[] | undefined {
 	const zero = (from: number, to: number) => bytes.slice(from, to).every(b => b === 0);
 	if (zero(0, 10) && bytes[10] === 0xff && bytes[11] === 0xff) {
+		return [bytes.slice(12, 16)];
+	}
+	// SIIT's IPv4-translated form (`::ffff:0:0/96`, RFC 6145): a stateless translator on the path
+	// carries it to the IPv4 address, so `::ffff:0:127.0.0.1` is `127.0.0.1`, not a public IPv6 one.
+	if (zero(0, 8) && bytes[8] === 0xff && bytes[9] === 0xff && zero(10, 12)) {
 		return [bytes.slice(12, 16)];
 	}
 	if (zero(0, 12) && !(zero(12, 15) && bytes[15] <= 1)) {

@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { denialKindForOperation, denialsInOutput, describeDenial, folderToAllow, isNoiseDenial } from '../../common/sandboxDenials.js';
-import { agentApiDomains, codexSandboxValue, domainAllowed, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
+import { agentApiDomains, codexSandboxValue, domainAllowed, isAgentHousekeepingDenial, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
 import { parseSeatbeltLogLine, sbplRegex, sbplString } from '../../common/seatbelt.js';
 
 const MAC: ISandboxHostInfo = { platform: 'darwin', home: '/Users/me', tmpdir: '/private/var/folders/ab/xyz/T', darwinUserCacheDir: '/private/var/folders/ab/xyz/C', uid: 501 };
@@ -224,6 +224,30 @@ suite('Volt sandbox denials', () => {
 		assert.strictEqual(describeDenial({ kind: 'write', target: '/Users/me/notes.txt', source: 'os' }, '/Users/me'), 'Sandbox blocked a write to ~/notes.txt');
 		assert.strictEqual(folderToAllow('/Users/me/out/a.txt', false), '/Users/me/out');
 		assert.strictEqual(folderToAllow('/Users/me/out/', true), '/Users/me/out');
+	});
+
+	test('HOUSEKEEPING-1: the agent CLI\'s own background state, the run\'s canary and the home listing are never offered; real edits still are', () => {
+		const home = '/Users/me';
+		const quiet = (kind: 'read' | 'write' | 'network' | 'launch', target: string, own: { sentinel?: string; realConfig?: string } = {}, providerId = 'claude-code') => isAgentHousekeepingDenial(providerId, home, { kind, target }, own);
+		// What Claude Code writes on its own at start (seen as "Blocked by the sandbox" cards in a fresh chat).
+		for (const target of ['/Users/me/.claude/skills/synced/0b1c/manifest.json', '/Users/me/.claude/skills/.trash', '/Users/me/.claude/plugins/store', '/Users/me/.claude/sessions/123.key.tmp', '/Users/me/.claude.json', '/Users/me/.local/state/claude/locks', '/Users/me/.cache/claude/staging/x']) {
+			assert.ok(quiet('write', target), target);
+		}
+		assert.ok(quiet('read', '/Users/me/.local/state/claude/locks'));
+		assert.ok(quiet('read', '/Users/me'), 'a look at the home folder itself');
+		assert.ok(quiet('read', '/Users'), 'and at its parent');
+		assert.ok(quiet('read', '/Users/me/.claude'), 'its real config folder as a folder');
+		assert.ok(quiet('read', '/Users/me/.volt/sandbox/runs/volt-sbx-x/canary', { sentinel: '/Users/me/.volt/sandbox/runs/volt-sbx-x/canary' }), 'the attestation canary');
+		// A moved config folder (CLAUDE_CONFIG_DIR): its housekeeping there too.
+		assert.ok(quiet('write', '/opt/claude-cfg/skills/synced/a/manifest.json', { realConfig: '/opt/claude-cfg' }));
+		// Still shown: edits to settings, instructions and skills, anything else in the home folder, other agents, network.
+		for (const target of ['/Users/me/.claude/settings.json', '/Users/me/.claude/CLAUDE.md', '/Users/me/.claude/skills/my-skill/SKILL.md', '/Users/me/.claude/hooks/x.sh', '/Users/me/.zshrc', '/Users/me/notes/a.txt', '/Users/me/.claude.json.evil', '/Users/me/.claude-other/x']) {
+			assert.ok(!quiet('write', target), target);
+		}
+		assert.ok(!quiet('read', '/Users/me/notes'), 'a folder below the home folder');
+		assert.ok(!quiet('read', '/Users/me/.ssh/id_ed25519'));
+		assert.ok(!quiet('write', '/Users/me/.claude/skills/synced/x', {}, 'codex'), 'another CLI has its own footprint');
+		assert.ok(!quiet('network', 'api.anthropic.com') && !quiet('launch', '/Users/me/.claude/sessions'));
 	});
 
 	test('per-chat settings: folders and hosts are added once, and the launch key follows them', () => {
