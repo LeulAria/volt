@@ -1,0 +1,4 @@
+Use two subagents in sequence; the second starts only after the first has finished and gets its result:
+1. First subagent (read-only): read src/c.js and write a short spec of how paginate(), page() and pageCount() should behave with 1-based page numbers, including edge cases (empty list, last partial page).
+2. Second subagent: using that spec, fix src/c.js to match it and add tests for page() and pageCount() to test/c.test.js.
+Then run `npm test` once and tell me in two or three sentences what was fixed.

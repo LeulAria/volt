@@ -341,6 +341,48 @@ for (const fan of [5, 10, 20]) {
 	}, settings);
 }
 
+// Three parts that finish 25 ms apart (live runs finish seconds apart), the parent answering each
+// wake-up at once: how many turns does the parent spend on their reports? `oneCall` starts them
+// with one delegate_task `tasks` call, `separateCalls` with three calls (how every `tasks` call
+// behaved before its parts reported together).
+for (const mode of ['oneCall', 'separateCalls']) {
+	results[`staggered3_${mode}`] = await repeat(Math.max(5, Math.round(RUNS / 3)), async ctx => {
+		await parentRunning(ctx);
+		const tasks = Array.from({ length: 3 }, (_, i) => ({ task: `Part ${i + 1}: handler ${i + 1}.`, title: `Part ${i + 1}` }));
+		if (mode === 'oneCall') {
+			await ctx.tool('parent', 'delegate_task', { tasks });
+		} else {
+			for (const task of tasks) {
+				await ctx.tool('parent', 'delegate_task', task);
+			}
+		}
+		await ctx.host.waitFor(childStarts, 3);
+		ctx.runtime.finish('parent', 'Started the parts.');
+		await sleep(30);
+		const answered = new Set();
+		const answer = () => {
+			for (const entry of ctx.host.started.filter(item => parentWake(item.request) && !answered.has(item))) {
+				answered.add(entry);
+				ctx.runtime.finish('parent', 'Noted.');
+			}
+		};
+		let lastChildEnd = 0;
+		for (const task of ctx.service.tasksOf('parent')) {
+			lastChildEnd = now();
+			ctx.runtime.finish(task.childId, CHILD_REPORT);
+			await sleep(25);
+			answer();
+		}
+		const woken = await ctx.host.waitFor(parentWake, 1);
+		await sleep(50);
+		answer();
+		await sleep(50);
+		const wakes = ctx.host.started.filter(entry => parentWake(entry.request));
+		const lastWake = wakes.at(-1).at;
+		return { parentWakes: wakes.length, wakePromptCharsTotal: wakes.reduce((sum, entry) => sum + entry.request.turn.prompt.text.length, 0), lastChildDoneToLastWakeMs: Math.max(0, lastWake - lastChildEnd), firstWakeAfterLastChild: woken >= lastChildEnd ? 1 : 0 };
+	});
+}
+
 results.afterChain5 = await repeat(Math.max(5, Math.round(RUNS / 3)), async ctx => {
 	await parentRunning(ctx);
 	const tasks = Array.from({ length: 5 }, (_, i) => ({ task: `Step ${i + 1} of the migration.`, title: `Step ${i + 1}`, ...(i ? { after: [String(i)] } : {}) }));

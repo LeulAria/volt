@@ -28,17 +28,24 @@ const childStarts = [
 	...tree.tasks.filter(task => task.source === 'volt' && task.startedAt).map(task => task.startedAt),
 ];
 const childEnds = tree.tasks.map(task => task.endedAt).filter(Boolean);
-// Cost: Claude reports a cumulative session cost per run; the last report of each run is its total.
+// Cost: Claude's reported cost is cumulative per session, across runs (see taskSpend.ts): a run adds
+// its growth over the previous run's last report, or all of it when it shrank (a new session).
 let costUsd = 0;
 const billed = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const addRun = (traceEvents) => {
+	let sessionCost = 0;
 	for (const runId of new Set(traceEvents.map(line => line.runId))) {
 		const usage = traceEvents.filter(line => line.runId === runId && line.event.type === 'usage');
 		const cost = usage.map(line => line.event.costUsd).filter(value => typeof value === 'number');
 		if (cost.length) {
-			costUsd += cost.at(-1);
+			const last = cost.at(-1);
+			costUsd += last >= sessionCost ? last - sessionCost : last;
+			sessionCost = last;
 		}
-		const last = usage.filter(line => line.event.billed).at(-1)?.event.billed;
+		// `billed` (subagents included) when the run has it, else the turn total ACP reports last.
+		const total = usage.filter(line => line.event.used === undefined).at(-1)?.event;
+		const last = usage.filter(line => line.event.billed).at(-1)?.event.billed
+			?? (total ? { input: total.input, output: total.output, cacheRead: total.cache, cacheWrite: total.cacheWrite } : undefined);
 		if (last) {
 			for (const key of Object.keys(billed)) {
 				billed[key] += last[key] ?? 0;
