@@ -10,7 +10,7 @@ import { promisify } from 'util';
 import { basename, dirname, isAbsolute, join, resolve } from '../../../base/common/path.js';
 import { isWindowsPathInside } from '../common/mxc.js';
 import { SandboxUnavailableError } from '../common/sandboxBackend.js';
-import { isReservedEnvName, isSecretEnvName, systemReadPaths } from '../common/sandboxProfiles.js';
+import { isReservedEnvName, isSecretEnvName, systemReadPaths, XCRUN_CACHE } from '../common/sandboxProfiles.js';
 import { IResolvedGitDir, IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy } from '../common/sandboxSchema.js';
 
@@ -193,6 +193,16 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 		// `/usr/bin/git` and friends are shims that load frameworks from the selected Xcode.
 		systemDirs.push(dirname(host.developerDir));
 	}
+	if (host.platform === 'darwin') {
+		// The shims' cache of where each tool is (`xcrun_db` in the user's temp folder): without it
+		// every `/usr/bin/git` ran `xcodebuild -find git`, 2-9 s (measured 2026-11-12). Readable as
+		// the file itself, never writable (`xcrunCacheEntries`), and only a plain file: a symlink
+		// planted there must not make its target readable.
+		const cache = join(host.tmpRoot, XCRUN_CACHE);
+		if (await fs.lstat(cache).then(stat => stat.isFile(), () => false)) {
+			systemDirs.push(cache);
+		}
+	}
 
 	const expand = (entry: string): string[] => {
 		if (entry === '${system}') {
@@ -225,9 +235,14 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	const denyPaths = namedPaths(policy.filesystem.deny);
 	const protectPaths = namedPaths(policy.filesystem.protect);
 	const socketPaths = policy.host.unixSockets.flatMap(expand);
-	const [readAnswers, writeAnswers, denyAnswers, protectAnswers, socketAnswers] = await Promise.all([readPaths, writePaths, denyPaths, protectPaths, socketPaths].map(canonicalAll));
+	const listPaths = (policy.filesystem.list ?? []).flatMap(expand);
+	const chmodPaths = (policy.filesystem.chmod ?? []).flatMap(expand);
+	const [readAnswers, writeAnswers, denyAnswers, protectAnswers, socketAnswers, listAnswers, chmodAnswers] = await Promise.all([readPaths, writePaths, denyPaths, protectPaths, socketPaths, listPaths, chmodPaths].map(canonicalAll));
 
 	const read: string[] = readAnswers.filter(c => c.exists).map(c => c.path);
+	// Listing and mode changes are for folders: on a file, listing would read its contents.
+	const list: string[] = listAnswers.filter(c => c.exists && c.isDirectory).map(c => c.path);
+	const chmod: string[] = chmodAnswers.filter(c => c.exists && c.isDirectory && c.path !== home && !isInside(home, c.path)).map(c => c.path);
 
 	// Writes: folders, or single files. The run's own temp folder is private to it and always writable.
 	const write: string[] = [runTmp];
@@ -378,7 +393,7 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	}
 
 	// Paths reach a Seatbelt profile or bubblewrap arguments; one that cannot be expressed exactly is refused.
-	for (const path of [...read, ...write, ...writeFiles, ...deny, ...protect, ...unixSockets, cwd, ...denyPatterns.map(p => p.root), ...protectPatterns.map(p => p.root)]) {
+	for (const path of [...read, ...write, ...writeFiles, ...list, ...chmod, ...deny, ...protect, ...unixSockets, cwd, ...denyPatterns.map(p => p.root), ...protectPatterns.map(p => p.root)]) {
 		if (/["\u0000-\u001f\u007f]/.test(path)) {
 			refuse(`Paths with a double quote or a control character cannot be sandboxed: ${JSON.stringify(path)}`);
 		}
@@ -392,6 +407,8 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 			read: unique(read),
 			write: unique(write),
 			writeFiles: unique(writeFiles),
+			...(list.length ? { list: unique(list) } : {}),
+			...(chmod.length ? { chmod: unique(chmod) } : {}),
 			deny: finalDeny,
 			protect: finalProtect,
 			denyPatterns,

@@ -26,6 +26,8 @@ export const SANDBOX_EXEC_PATH = '/usr/bin/sandbox-exec';
 
 /** Every Volt denial carries this prefix plus the run's tag, so `log stream` can attribute it. */
 export const SEATBELT_TAG_PREFIX = 'VOLTSBX-';
+/** Appended to a run's tag on its refusals of connections to this machine's own addresses. */
+export const SEATBELT_LOCAL_SUFFIX = '-local';
 
 /**
  * Device files every process reads or writes (its controlling terminal as `/dev/tty`, /dev/null,
@@ -374,8 +376,10 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 			'(allow file-read* (literal "/"))',
 			'(allow file-read-metadata)',
 			'(allow sysctl-read)',
-			// User and group lookups (whoami, git, ssh), the system logger, power assertions.
-			'(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.logger") (global-name "com.apple.PowerManagement.control"))',
+			// User and group lookups (whoami, git, ssh), the system logger, power assertions, and where
+			// the user's temp folder is (`confstr(_CS_DARWIN_USER_TEMP_DIR)`): without it the `/usr/bin`
+			// developer shims cannot find xcrun's cache and run `xcodebuild -find` for every `git` (2-9 s).
+			'(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.logger") (global-name "com.apple.PowerManagement.control") (global-name "com.apple.bsd.dirhelper"))',
 			// Python's multiprocessing semaphores.
 			'(allow ipc-posix-sem)',
 			'(allow pseudo-tty)',
@@ -401,6 +405,12 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		if (read.length) {
 			out.push(rule('allow file-read*', read));
 		}
+		// Listing a folder's entries (`readdir` is `file-read-data` on the folder itself): its names
+		// only, nothing below it. The resolver keeps only folders here.
+		const list = (policy.list ?? []).map(path => `(literal ${sbplString(path)})`);
+		if (list.length) {
+			out.push(rule('allow file-read-data', list));
+		}
 	}
 
 	// Writes: everything else is denied (by default, or explicitly with system services on).
@@ -413,6 +423,11 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		...policy.writeFiles.flatMap((file): SeatbeltFilter[] => [`(literal ${sbplString(file)})`, { prefix: file, suffix: '\\.(lock|tmp|backup|bak|swp)[^/]*', caseInsensitive: false }]),
 	];
 	out.push(rule('allow file-read* file-write*', write));
+	// Permission bits only (`chmod`), on the folder itself: no write, rename or removal of it or below it.
+	const chmod = (policy.chmod ?? []).map(path => `(literal ${sbplString(path)})`);
+	if (chmod.length) {
+		out.push(rule('allow file-write-mode', chmod));
+	}
 
 	// `.git` as an allow list (B-03): read-only except what commits, merges, rebases and fetches
 	// write. Name patterns, so a `commondir`, hook or config created later is covered as well, and
@@ -468,6 +483,11 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		if (policy.systemServices) {
 			out.push(`(deny network* ${message})`);
 		}
+		// The kernel logs a refused connection as `remote:*:<port>`, without the address. A refusal to
+		// one of this machine's own addresses (Seatbelt's `localhost` matches loopback and every
+		// address of the machine, measured on macOS 26.6) carries its own message, so the warning can
+		// say "a port on this machine" (a local database, another app's server) instead of nothing.
+		out.push(`(deny network-outbound (with message ${sbplString(`${SEATBELT_TAG_PREFIX}${options.tag}${SEATBELT_LOCAL_SUFFIX}`)}) (remote ip "localhost:*"))`);
 		const ports = [...(options.proxyPort ? [options.proxyPort] : []), ...policy.network.loopbackPorts];
 		if (ports.length) {
 			out.push('(allow system-socket)', `(allow network-outbound\n\t${[...new Set(ports)].map(port => `(remote ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`);
@@ -531,7 +551,7 @@ export interface ISeatbeltViolation {
 	readonly pid: number;
 	/** `file-write-create`, `file-read-data`, `network-outbound`, ... */
 	readonly operation: string;
-	/** Path, or `ip:port` for network denials. */
+	/** Path, or `remote:*:<port>` for network denials (`localhost:<port>` when it was one of this machine's addresses). */
 	readonly target: string;
 }
 
@@ -557,12 +577,19 @@ export function parseSeatbeltLogLine(line: string): ISeatbeltViolation | undefin
 	if (!match) {
 		return undefined;
 	}
+	const local = match[5].endsWith(SEATBELT_LOCAL_SUFFIX);
+	let target = (match[4] ?? '').trim();
+	if (local) {
+		// `remote:*:5432`: the kernel leaves the address out; the rule that refused it says it was this machine.
+		const port = /:(\d+)$/.exec(target)?.[1];
+		target = port ? `localhost:${port}` : 'localhost';
+	}
 	return {
 		process: match[1],
 		pid: Number(match[2]),
 		operation: match[3],
-		target: (match[4] ?? '').trim(),
-		tag: match[5],
+		target,
+		tag: local ? match[5].slice(0, -SEATBELT_LOCAL_SUFFIX.length) : match[5],
 	};
 }
 

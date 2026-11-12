@@ -70,6 +70,18 @@ export interface ISandboxFilesystemPolicy {
 	 * from a trusted layer; an untrusted layer that sets it is refused.
 	 */
 	readonly unmask: readonly string[];
+	/**
+	 * Folders whose entries (names only) may be listed, with nothing below them readable unless
+	 * `read` says so: the home folder, for a CLI that lists it at start. Only honoured from a trusted
+	 * layer; a narrowing layer can only drop entries. Folders only (others are skipped at resolve).
+	 */
+	readonly list?: readonly string[];
+	/**
+	 * Folders whose permission bits may be changed (`chmod`), and nothing else about them: a CLI
+	 * that sets its state folder to 0700 at every start. Never a way to write, rename or remove them.
+	 * Trusted layers only, like `list`.
+	 */
+	readonly chmod?: readonly string[];
 }
 
 export interface ISandboxNetworkPolicy {
@@ -325,7 +337,7 @@ export type SandboxParseResult<T> =
 	| { readonly ok: false; readonly errors: readonly ISandboxPolicyError[] };
 
 const TOP_KEYS = ['schemaVersion', 'name', 'filesystem', 'network', 'process', 'env', 'host', 'bestEffort'];
-const FILESYSTEM_KEYS = ['read', 'write', 'deny', 'protect', 'unmask'];
+const FILESYSTEM_KEYS = ['read', 'write', 'deny', 'protect', 'unmask', 'list', 'chmod'];
 const NETWORK_KEYS = ['mode', 'allow', 'loopbackPorts', 'listen', 'listenPorts'];
 const PROCESS_KEYS = ['limits'];
 const LIMIT_KEYS = Object.keys(SANDBOX_LIMIT_BOUNDS);
@@ -435,6 +447,8 @@ function readLayer(input: unknown, reader: PolicyReader): IVoltSandboxPolicyLaye
 			if (fs.deny !== undefined) { out.deny = reader.paths(fs.deny, 'filesystem.deny', true); }
 			if (fs.protect !== undefined) { out.protect = reader.paths(fs.protect, 'filesystem.protect', true); }
 			if (fs.unmask !== undefined) { out.unmask = reader.paths(fs.unmask, 'filesystem.unmask', false); }
+			if (fs.list !== undefined) { out.list = reader.paths(fs.list, 'filesystem.list', false); }
+			if (fs.chmod !== undefined) { out.chmod = reader.paths(fs.chmod, 'filesystem.chmod', false); }
 			layer.filesystem = out;
 		}
 	}
@@ -578,6 +592,8 @@ export function completeSandboxPolicy(layer: IVoltSandboxPolicyLayer): IVoltSand
 			deny: layer.filesystem?.deny ?? [],
 			protect: layer.filesystem?.protect ?? [],
 			unmask: layer.filesystem?.unmask ?? [],
+			...(layer.filesystem?.list?.length ? { list: layer.filesystem.list } : {}),
+			...(layer.filesystem?.chmod?.length ? { chmod: layer.filesystem.chmod } : {}),
 		},
 		network: {
 			mode: layer.network?.mode ?? 'none',

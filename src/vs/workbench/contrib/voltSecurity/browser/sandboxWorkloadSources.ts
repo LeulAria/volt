@@ -52,7 +52,19 @@ export function describeSandboxDenial(denial: Pick<ISandboxWorkloadDenial, 'kind
 	switch (denial.kind) {
 		case 'read': return localize('voltDenial.read', "read {0}", denial.target);
 		case 'write': return localize('voltDenial.write', "write {0}", denial.target);
-		case 'network': return localize('voltDenial.network', "connect to {0}", denial.target);
+		case 'network': {
+			// The kernel's refusals carry no address: `localhost:<port>` (one of this machine's own
+			// addresses, see seatbelt.ts) or `remote:*:<port>` (anywhere else, around Volt's proxy).
+			const local = /^localhost:(\d+)$/.exec(denial.target);
+			if (local) {
+				return localize('voltDenial.networkLocal', "connect to port {0} on this machine", local[1]);
+			}
+			const direct = /^remote:\*:(\d+)$/.exec(denial.target);
+			if (direct) {
+				return localize('voltDenial.networkDirect', "connect directly to port {0}, around Volt's network filter", direct[1]);
+			}
+			return localize('voltDenial.network', "connect to {0}", denial.target);
+		}
 		case 'process': return localize('voltDenial.process', "start {0}", denial.target);
 		case 'limit': return localize('voltDenial.limit', "go over its limit ({0})", denial.target);
 		default: return denial.target;

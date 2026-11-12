@@ -31,6 +31,7 @@ import { AGENT_CONFIG_NAMES, builtinProfile } from '../../common/sandboxProfiles
 import { AgentStateOverlay } from '../../node/agentStateOverlay.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer } from '../../common/sandboxSchema.js';
 import { SandboxManager } from '../../node/sandboxManager.js';
+import { SandboxProxyLookup } from '../../node/sandboxProxy.js';
 import { ISandboxHostFacts, sandboxHostFacts } from '../../node/sandboxResolver.js';
 import { realSandboxAvailable } from './sandboxSuiteGate.js';
 
@@ -605,6 +606,25 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		assert.match(result.stdout, /^git version /);
 	});
 
+	macTest('GIT-SHIM-2: a shim finds xcrun\'s cache from a deny-default sandbox (no `xcodebuild -find` per call); agents may read the cache, never write it', async function () {
+		if (!await exists('/Library/Preferences/com.apple.dt.Xcode.plist') || !await exists('/usr/bin/git')) {
+			this.skip();
+		}
+		// Before: `com.apple.bsd.dirhelper` was refused, xcrun could not find the user's temp folder and
+		// every `git` in an extension host ran xcodebuild (3.7-9.6 s in round 1, 7-33 s at load 45).
+		const result = await sh(workspace(), '/usr/bin/git --version; /usr/bin/git --version');
+		assert.strictEqual(result.exitCode, 0, result.stderr);
+		assert.match(result.stdout, /^git version [^\n]+\ngit version /);
+		assert.ok(!result.denials.some(denial => denial.target === 'com.apple.bsd.dirhelper'), `the temp-folder lookup is allowed: ${JSON.stringify(result.denials.filter(d => d.kind === 'launch'))}`);
+		// The agent's temp folders are writable; xcrun's cache of which binary each shim runs is not.
+		const policy = agent(false);
+		assert.ok(policy.filesystem.protect.includes(`${f.agentTmp}/xcrun_db`) || !isMac);
+		const planted = await sh(policy, `echo 'git|evil' > ${f.agentTmp}/xcrun_db && echo PLANTED; echo ok > ${f.agentTmp}/xcrun_db-other && echo OTHER`);
+		assert.ok(!planted.stdout.includes('PLANTED'), planted.stdout);
+		assert.ok(planted.stdout.includes('OTHER'), `the rest of temp stays writable: ${planted.stderr}`);
+		assert.ok(!await exists(join(f.agentTmp, 'xcrun_db')));
+	});
+
 	macTest('a new git repository cannot be planted in the workspace (macOS)', async () => {
 		await sh(workspace(), `mkdir ${f.ws}/sub/.git; mkdir ${f.ws}/sub/.GIT; echo 'gitdir: ${f.outside}' > ${f.ws}/sub/x; mv ${f.ws}/sub/x ${f.ws}/sub/.git`);
 		assert.ok(!await exists(join(f.ws, 'sub', '.git')) && !await exists(join(f.ws, 'sub', '.GIT')));
@@ -748,6 +768,100 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		} finally {
 			await canary.close();
 		}
+	});
+
+	test('NET-AGENT-1: an agent with its network on reaches its API, the registries and the user\'s hosts; other hosts, raw and IPv6 addresses, rebinding names, loopback and other ports are refused and reported; clearing the proxy variables reaches nothing', async () => {
+		// Every allowed connection lands on `upstream` (the broker's connector is the test's); `canary` is a local service.
+		const upstream = await canaryListener();
+		const canary = await canaryListener();
+		const resolved: string[] = [];
+		const lookup: SandboxProxyLookup = async host => {
+			resolved.push(host);
+			switch (host) {
+				case 'registry.npmjs.org': case 'api.anthropic.com': case 'docs.example.com': case 'evil.example': return [{ address: '104.16.0.1', family: 4 }];
+				// DNS rebinding: a public answer next to loopback.
+				case 'rebind.example': return [{ address: '104.16.0.2', family: 4 }, { address: '127.0.0.1', family: 4 }];
+				default: throw new Error(`ENOTFOUND ${host}`);
+			}
+		};
+		const manager = new SandboxManager(undefined, { runRoot: f.runRoot, host: f.host, proxy: { lookup, connect: () => net.connect(upstream.port, '127.0.0.1') } });
+		const targets = [
+			'registry.npmjs.org:443', 'api.anthropic.com:443', 'docs.example.com:443',
+			'evil.example:443', 'rebind.example:443', '1.1.1.1:443', '[2606:4700:4700::1111]:443', `[::1]:${canary.port}`, `127.0.0.1:${canary.port}`, 'registry.npmjs.org:22',
+		];
+		const connectThroughProxy = `for t in ${targets.map(t => `'${t}'`).join(' ')}; do ${PERL} -MIO::Socket::INET -MMIME::Base64 -e '($a,$h)=$ENV{HTTPS_PROXY}=~m{//([^@]+)@([^/]+)}; $s=IO::Socket::INET->new(PeerAddr=>$h, Timeout=>3) or exit 1; print $s "CONNECT $ARGV[0] HTTP/1.1\\r\\nHost: $ARGV[0]\\r\\nProxy-Authorization: Basic ".encode_base64($a,"")."\\r\\n\\r\\n"; $l=<$s>; print "CONNECT $ARGV[0] $l"' "$t"; done`;
+		// The proxy variables cleared: direct connections to loopback, the internet and the resolver.
+		const direct = [
+			`env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY -u https_proxy -u http_proxy -u all_proxy ${PERL} -MIO::Socket::INET -e 'IO::Socket::INET->new(PeerAddr=>"127.0.0.1:${canary.port}", Timeout=>2) and print "DIRECT-LOOPBACK\\n"'`,
+			`env -u HTTPS_PROXY ${PERL} -MIO::Socket::INET -e 'IO::Socket::INET->new(PeerAddr=>"1.1.1.1:443", Timeout=>3) and print "DIRECT-INTERNET\\n"'`,
+			`env -u HTTPS_PROXY ${PERL} -e 'gethostbyname("volt-sbx-$$.example.com") and print "DIRECT-DNS\\n"'`,
+		].join('; ');
+		try {
+			const result = await manager.run({
+				command: '/bin/sh',
+				args: ['-c', `echo volt-sandbox-ran; ${connectThroughProxy}; ${direct}`],
+				policy: agent(true, 'claude-code', { allowedDomains: ['docs.example.com', 'rebind.example'] }),
+				context: { workspaceRoots: [f.ws], hostEnv: hostEnv() },
+			}, { timeoutMs: 60_000 });
+			assert.strictEqual(result.status, 'completed', `${result.error ?? ''} ${result.stderr}`);
+			const status = (target: string) => new RegExp(`^CONNECT ${target.replace(/[[\].]/g, '\\$&')} HTTP/1\\.1 (\\d{3})`, 'm').exec(result.stdout)?.[1];
+			for (const target of ['registry.npmjs.org:443', 'api.anthropic.com:443', 'docs.example.com:443']) {
+				assert.strictEqual(status(target), '200', `${target} passes: ${result.stdout}`);
+			}
+			for (const target of targets.slice(3)) {
+				assert.ok(/^4\d\d$/.test(status(target) ?? ''), `${target} is refused: ${result.stdout}`);
+			}
+			assert.ok(!/DIRECT-/.test(result.stdout), `around the proxy: ${result.stdout}`);
+			assert.strictEqual(canary.hits(), 0, 'the local service was never reached');
+			assert.strictEqual(upstream.hits(), 3, 'only the three allowed hosts were connected');
+			assert.ok(!resolved.includes('evil.example'), 'a host outside the rules is not even resolved');
+			const proxied = result.denials.filter(denial => denial.source === 'proxy').map(denial => denial.target);
+			assert.ok(proxied.some(target => target.startsWith('evil.example')), `the refusal names the host: ${proxied.join(', ')}`);
+			assert.ok(proxied.some(target => target.startsWith('rebind.example')), `the rebinding name is reported: ${proxied.join(', ')}`);
+			const evil = result.denials.find(denial => denial.source === 'proxy' && denial.target.startsWith('evil.example'));
+			assert.ok(evil?.denialId && evil.promptable !== false, 'a host outside the rules can be allowed from the warning');
+			if (isMac) {
+				// The kernel's refusal of the direct loopback connect names the port on this machine.
+				assert.ok(result.denials.some(denial => denial.source === 'os' && denial.kind === 'network' && denial.target === `localhost:${canary.port}`), `reported as a port on this machine: ${JSON.stringify(result.denials.filter(d => d.kind === 'network'))}`);
+			}
+		} finally {
+			await manager.dispose();
+			await upstream.close();
+			await canary.close();
+		}
+	});
+
+	test('FX-1: fx lists the home folder and sets ~/.fx\'s mode; it reads, writes, moves or re-modes nothing else', async function () {
+		if (!isMac) {
+			// bubblewrap's home is a folder of binds, listable as such; a mode change on a read-only bind fails (fx is macOS-only here).
+			this.skip();
+		}
+		await fs.mkdir(join(f.home, '.fx', 'sessions'), { recursive: true });
+		await fs.writeFile(join(f.home, '.fx', 'settings.json'), '{}');
+		const before = (await fs.stat(join(f.home, '.zshrc'))).mode;
+		const result = await sh(agent(true, 'fx'), [
+			`ls ${f.home} | sed 's/^/LIST:/'`,
+			`chmod 700 ${f.home}/.fx && echo CHMOD-FX`,
+			`cat ${f.home}/.zshrc`,
+			`cat ${f.home}/other-project/notes.md`,
+			`cat ${f.home}/.ssh/id_ed25519`,
+			`mv ${f.home}/.fx ${f.agentTmp}/stolen-fx && echo MOVED`,
+			`echo x > ${f.home}/.fx/planted && echo PLANTED`,
+			`chmod 777 ${f.home}/.zshrc && echo CHMOD-RC`,
+			`chmod 777 ${f.home}/other-project && echo CHMOD-OTHER`,
+			`ls ${f.home}/other-project | sed 's/^/INNER:/'`,
+		].join('; '));
+		assert.ok(result.stdout.includes('LIST:other-project'), `it lists the home folder: ${result.stderr}`);
+		assert.ok(result.stdout.includes('CHMOD-FX'), `it sets its folder's mode: ${result.stderr}`);
+		for (const leak of ['canary rc', 'CANARY-OTHER-PROJECT', 'CANARY-SSH', 'MOVED', 'PLANTED', 'CHMOD-RC', 'CHMOD-OTHER', 'INNER:notes.md']) {
+			assert.ok(!result.stdout.includes(leak), `${leak}: ${result.stdout}`);
+		}
+		assert.ok(await exists(join(f.home, '.fx', 'settings.json')) && !await exists(join(f.agentTmp, 'stolen-fx')));
+		assert.strictEqual((await fs.stat(join(f.home, '.zshrc'))).mode, before);
+		// Every other agent still cannot list it.
+		const other = await sh(agent(true, 'claude-code'), `ls ${f.home} | sed 's/^/LIST:/'`);
+		assert.ok(!other.stdout.includes('LIST:other-project'));
+		await assertHostUnchanged();
 	});
 
 	test('unix sockets are unreachable unless granted, even with an open network', async () => {

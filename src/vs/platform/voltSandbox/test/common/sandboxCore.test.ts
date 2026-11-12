@@ -8,7 +8,9 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/c
 import { allEnforcement, checkEnforcement, dimensionsUsed, ISandboxBackendCapabilities, redactSandboxText } from '../../common/sandboxBackend.js';
 import { describeCapabilities, evaluateCapabilities } from '../../common/sandboxCapabilities.js';
 import { allowCovers, composeSandboxPolicy, entryInside } from '../../common/sandboxComposition.js';
-import { agentSandboxPolicy, IAgentSandboxHost } from '../../common/sandboxPolicy.js';
+import { bubblewrapListenScope } from '../../common/bwrap.js';
+import { isExfilHost } from '../../common/networkRules.js';
+import { agentSandboxPolicy, agentSandboxRefusal, IAgentSandboxHost } from '../../common/sandboxPolicy.js';
 import { builtinProfile, gitDirWritable, isReservedEnvName, isSecretEnvName } from '../../common/sandboxProfiles.js';
 import { IResolvedSandboxPolicy, resolvedPolicyAllows } from '../../common/sandboxResolved.js';
 import { completeSandboxPolicy, networkEntryError, parseSandboxPolicy, parseSandboxPolicyLayer, parseSandboxPolicyText, pathEntryError, SANDBOX_POLICY_SCHEMA_VERSION } from '../../common/sandboxSchema.js';
@@ -258,7 +260,10 @@ suite('Volt sandbox Seatbelt profile', () => {
 		at('(global-name "com.apple.cfprefsd.agent")');
 		at('(deny job-creation');
 		assert.ok(!profile.includes('(allow default)'));
-		assert.ok(!profile.includes('localhost:*'), 'no blanket loopback');
+		// The only `localhost:*` is the deny that names refusals to this machine's own addresses (LOCAL-DENIAL-1).
+		assert.deepStrictEqual(profile.split('\n').filter(line => line.includes('localhost:*')), ['(deny network-outbound (with message "VOLTSBX-abc-local") (remote ip "localhost:*"))'], 'no blanket loopback');
+		const proxyAllow = at('(remote ip "localhost:5000")');
+		assert.ok(at('(with message "VOLTSBX-abc-local")') < proxyAllow, 'the granted ports are allowed after it (last match wins)');
 		assert.ok(!profile.includes('com.apple.dnssd.service'), 'no DNS without an open network');
 	});
 
@@ -427,7 +432,62 @@ suite('Volt sandbox agent profile', () => {
 		assert.ok(!policy.filesystem.deny.includes('/Users/me/.ssh'));
 		assert.ok(policy.filesystem.deny.includes('/Users/me/.ssh/id_ed25519'));
 		assert.deepStrictEqual(policy.host.unixSockets, ['/private/tmp/ssh-x/agent.1']);
-		assert.strictEqual(policy.network.mode, 'host');
+		assert.strictEqual(policy.network.mode, 'proxy', 'network on goes through the broker too');
+	});
+
+	test('NET-HOST-1: network on is hostname rules: its API, the package registries and the user\'s hosts; never any host, never loopback by name', () => {
+		const on = agentSandboxPolicy({ level: 'workspace-write', network: true, providerId: 'claude-code', workspaceRoots: ['/Users/me/repo'], allowedDomains: ['Docs.Example.com', 'localhost'], loopbackPorts: [4000], listenPorts: [3000] }, host);
+		const off = agentSandboxPolicy({ level: 'workspace-write', network: false, providerId: 'claude-code', workspaceRoots: ['/Users/me/repo'], allowedDomains: ['docs.example.com'], loopbackPorts: [4000], listenPorts: [3000] }, host);
+		assert.strictEqual(on.network.mode, 'proxy');
+		for (const name of ['api.anthropic.com', 'registry.npmjs.org', 'pypi.org', 'files.pythonhosted.org', 'crates.io', 'proxy.golang.org', 'rubygems.org', 'repo.maven.apache.org', 'docs.example.com']) {
+			assert.ok(on.network.allow.includes(name), `network on reaches ${name}`);
+		}
+		assert.ok(!on.network.allow.includes('*') && !on.network.allow.includes('localhost'), 'no wildcard, no loopback by name');
+		assert.ok(!on.network.allow.some(name => isExfilHost(name)), 'no paste, upload, object-store or gist host by default');
+		assert.ok(!on.network.allow.includes('github.com'), 'git hosts need the user\'s Allow');
+		// Network off: its API and the user's hosts, no registries beyond the npx adapter's.
+		assert.ok(off.network.allow.includes('api.anthropic.com') && off.network.allow.includes('docs.example.com') && off.network.allow.includes('registry.npmjs.org'));
+		assert.ok(!off.network.allow.includes('pypi.org'), 'the registries come with the network on');
+		// macOS shares the host's loopback: its own granted listen port is one it may connect to. Never listening at large.
+		for (const policy of [on, off]) {
+			assert.deepStrictEqual([...policy.network.loopbackPorts].sort(), [3000, 4000]);
+			assert.deepStrictEqual(policy.network.listenPorts, [3000]);
+			assert.strictEqual(policy.network.listen, false);
+		}
+		// Linux runs it in its own namespace: a bridged port would take the port its own server binds.
+		const linux = agentSandboxPolicy({ level: 'workspace-write', network: true, providerId: 'claude-code', workspaceRoots: ['/home/me/repo'], loopbackPorts: [4000], listenPorts: [3000] }, { ...host, platform: 'linux', home: '/home/me' });
+		assert.strictEqual(linux.network.mode, 'proxy');
+		assert.deepStrictEqual(linux.network.loopbackPorts, [4000]);
+		assert.strictEqual(linux.network.listen, false, 'no more "listen anywhere" with the network on');
+	});
+
+	test('LIST-HOME-1 / FX-1: fx may list the home folder and chmod ~/.fx, nothing more; other agents neither', () => {
+		const fx = agentSandboxPolicy({ level: 'workspace-write', network: true, providerId: 'fx', workspaceRoots: ['/Users/me/repo'] }, host);
+		assert.deepStrictEqual(fx.filesystem.list, ['/Users/me']);
+		assert.deepStrictEqual(fx.filesystem.chmod, ['/Users/me/.fx']);
+		assert.ok(!fx.filesystem.read.includes('/Users/me') && !fx.filesystem.write.some(path => path === '/Users/me/.fx' || path === '/Users/me'), 'listing and chmod grant no read or write');
+		assert.ok(fx.filesystem.deny.includes('/Users/me/.claude/.credentials.json'), 'other agents\' credentials stay denied');
+		for (const providerId of ['claude-code', 'codex', 'grok', 'antigravity', 'mystery-acp']) {
+			const policy = agentSandboxPolicy({ level: 'workspace-write', network: true, providerId, workspaceRoots: ['/Users/me/repo'] }, host);
+			assert.strictEqual(policy.filesystem.list, undefined, providerId);
+			assert.strictEqual(policy.filesystem.chmod, undefined, providerId);
+		}
+	});
+
+	test('AGY-1: an agent with a random listening port is refused a sandbox on macOS, allowed in a Linux namespace', () => {
+		assert.match(agentSandboxRefusal('antigravity', 'darwin', 'Antigravity') ?? '', /^Antigravity runs only with the sandbox off on macOS: its language server listens on a random port/);
+		assert.strictEqual(agentSandboxRefusal('antigravity', 'linux'), undefined);
+		for (const providerId of ['claude-code', 'codex', 'fx', 'mystery-acp']) {
+			assert.strictEqual(agentSandboxRefusal(providerId, 'darwin'), undefined, providerId);
+		}
+		// On Linux every agent launch has its own network namespace, network on or off: a random port stays inside it.
+		for (const network of [true, false]) {
+			const policy = agentSandboxPolicy({ level: 'workspace-write', network, providerId: 'antigravity', workspaceRoots: ['/home/me/repo'] }, { ...host, platform: 'linux', home: '/home/me' });
+			assert.strictEqual(bubblewrapListenScope(policy), 'namespace', `network ${network}`);
+		}
+		// The host's namespace is where seccomp must refuse listening (or, with ports granted, can't tell them apart).
+		assert.strictEqual(bubblewrapListenScope({ network: { mode: 'host', allow: [], loopbackPorts: [], listen: false } }), 'refused');
+		assert.strictEqual(bubblewrapListenScope({ network: { mode: 'host', allow: [], loopbackPorts: [], listen: false, listenPorts: [3000] } }), 'host');
 	});
 
 	test('read-only protects the workspace even inside temp; home and / are never roots', () => {

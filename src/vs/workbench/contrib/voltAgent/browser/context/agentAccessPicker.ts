@@ -145,7 +145,7 @@ export class AgentAccessPicker extends Disposable {
 				id: 'network',
 				label: localize('voltAgent.sandbox.networkAccess', "Network access"),
 				subtitle: settings.network
-					? localize('voltAgent.sandbox.network.on', "The agent can reach the internet")
+					? localize('voltAgent.sandbox.network.on', "Package registries, the agent's API and the hosts you allow")
 					: localize('voltAgent.sandbox.network.off', "Only the agent's own API and the hosts you allow"),
 				icon: () => createSandboxIcon('network'),
 				checked: settings.network,

@@ -77,10 +77,11 @@ suite('Volt sandbox launcher on the Policy Authority (C2 step 4)', () => {
 		cacheDirs.clear();
 	});
 
-	function launcher(): VoltSandboxLauncher {
+	function launcher(platform?: string): VoltSandboxLauncher {
 		const manager = new SandboxManager(undefined, { backend, runRoot: join(root, 'runs') });
 		return disposables.add(new VoltSandboxLauncher(join(root, 'user-data'), { info: () => undefined, warn: message => warnings.push(message) }, {
 			manager,
+			...(platform ? { platform } : {}),
 			mode: () => mode,
 			admin: async () => admin,
 			executionHost: 'test',
@@ -118,6 +119,19 @@ suite('Volt sandbox launcher on the Policy Authority (C2 step 4)', () => {
 		await assert.rejects(prepare(floor, request({ extraWritableRoots: [join(facts.home, '.ssh')] })), SandboxUnavailableError);
 		assert.strictEqual(floor.shadowDiffs[0].decision.deniedBy, 'floor');
 		assert.strictEqual(backend.launched.length, 0);
+	});
+
+	test('AGY-2: an agent with a random listening port is refused on macOS before anything is prepared, with the reason the chat shows', async () => {
+		const l = launcher('darwin');
+		await assert.rejects(prepare(l, request({ providerId: 'antigravity' })), (err: unknown) => err instanceof SandboxUnavailableError && err.status === 'unavailable'
+			&& /^Antigravity runs only with the sandbox off on macOS: its language server listens on a random port/.test(err.message));
+		assert.strictEqual(backend.probes, 0, 'the backend was not even probed');
+		assert.strictEqual(l.livePrincipals, 0, 'no principal was minted');
+		// Another agent on macOS, and Antigravity where its listener stays in the sandbox's own namespace, go on.
+		(await prepare(launcher('darwin'), request())).dispose();
+		const linux = await prepare(launcher('linux'), request({ providerId: 'antigravity' }));
+		linux.dispose();
+		assert.strictEqual(backend.launched.length, 2);
 	});
 
 	test('enforce: an allowed launch runs the compiled policy, the principal is sealed with the resolved hash', async () => {

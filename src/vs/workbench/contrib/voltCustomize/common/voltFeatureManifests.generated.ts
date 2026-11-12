@@ -923,6 +923,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						readable: ['.gemini', '.antigravity', '.config/antigravity'],
 						credentials: ['.gemini/oauth_creds.json', '.gemini/antigravity-cli/antigravity-oauth-token', '.gemini/jetski-standalone-oauth-token'],
 						envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT'],
+						ephemeralListen: 'its language server listens on a random port',
 					},
 					models: {
 						source: 'acp',
@@ -1173,6 +1174,8 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						readable: ['.fx'],
 						credentials: ['.fx/auth.json', '.fx/mcp-credentials'],
 						envKeys: ['AI_GATEWAY_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY'],
+						listHome: true,
+						chmodFolders: ['.fx'],
 					},
 					models: {
 						source: 'acp',
