@@ -39,6 +39,14 @@ export function turnNavPreview(markdown: string, max = 280): string {
 }
 
 /**
+ * Whether the rail has somewhere to go: a sent message off screen (or not drawn yet). With every
+ * message on screen its two or three ticks read as a stray glyph in the margin, so it rests unseen.
+ */
+export function turnNavHasOffscreen(inView: readonly boolean[], undrawn: number): boolean {
+	return undrawn > 0 || inView.some(shown => !shown);
+}
+
+/**
  * A tick per sent message down the transcript's left edge, as in T3 Code. Ticks for the
  * messages on screen are lit; hovering one shows the message (and, resting there, the start
  * of its reply); clicking scrolls to it; the arrows step to the previous or next message.
@@ -185,9 +193,12 @@ export class AgentTurnNav extends Disposable {
 		const skipped = this.undrawn?.count() ?? 0;
 		let above = skipped > 0;
 		let below = false;
+		const inView: boolean[] = [];
 		this.exchanges().forEach((exchange, index) => {
 			const rect = exchange.getBoundingClientRect();
-			this.ticks[index + skipped]?.classList.toggle('in-view', rect.bottom > viewport.top + 1 && rect.top < viewport.bottom - 1);
+			const shown = rect.bottom > viewport.top + 1 && rect.top < viewport.bottom - 1;
+			inView.push(shown);
+			this.ticks[index + skipped]?.classList.toggle('in-view', shown);
 			above ||= rect.top < landing - 2;
 			below ||= rect.top > landing + 2;
 		});
@@ -195,6 +206,11 @@ export class AgentTurnNav extends Disposable {
 		const dims = this.thread.scroll.getScrollDimensions();
 		this.up.disabled = !above;
 		this.down.disabled = !below || pos.scrollTop >= dims.scrollHeight - dims.height - 1;
+		const idle = !turnNavHasOffscreen(inView, skipped);
+		this.element.classList.toggle('idle', idle);
+		if (idle) {
+			this.hideCard();
+		}
 	}
 
 	/**

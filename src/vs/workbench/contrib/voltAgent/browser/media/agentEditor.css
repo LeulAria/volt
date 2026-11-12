@@ -233,6 +233,11 @@
 	display: none;
 }
 
+/* Every sent message is on screen: nothing to go to, so the ticks do not sit in the margin like a stray glyph. */
+.volt-agent-turn-nav.idle {
+	visibility: hidden;
+}
+
 .volt-agent-turn-nav .ticks {
 	display: flex;
 	flex-direction: column;
