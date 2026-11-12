@@ -375,7 +375,8 @@ async function navigate(host: ICodeIntelHost, root: URI, op: 'definition' | 'ref
 	if (position.column) {
 		const found = op === 'definition' ? await host.definitions(position.uri, position.line, position.column) : await host.references(position.uri, position.line, position.column);
 		if (found.length) {
-			return locations(root, op, found, '');
+			const result = locations(root, op, found, '');
+			return op === 'references' ? withUnseenUses(root, result, found, position, nav) : result;
 		}
 	}
 	if (nav && position.name) {
@@ -387,6 +388,42 @@ async function navigate(host: ICodeIntelHost, root: URI, op: 'definition' | 'ref
 	return text(lsp
 		? `No ${op} found (the language server returned nothing for ${where(root, position)}).`
 		: `No ${op} found for ${position.name ? JSON.stringify(position.name) : where(root, position)} (language servers are off for this checkout; pass symbol to look it up by name).`);
+}
+
+/** The language server's references stay in this many files or fewer: compare with the index. */
+const NARROW_REFERENCE_FILES = 1;
+const MAX_UNSEEN_FILES = 15;
+
+/**
+ * A language server only searches the projects it has loaded: in a monorepo whose packages are
+ * not built, or for a property of a mapped type (an ORM column, `roomTypes.maxOccupancy`), it
+ * reported 1 reference where 80 uses exist, and an agent took that as "safe to rename". When the
+ * server's answer stays in one file and the index sees the name in other files, those are listed
+ * too, marked as matched by name.
+ */
+async function withUnseenUses(root: URI, result: IToolResult, found: readonly ICodeLocation[], position: IResolvedPosition, nav: ICodeNavIndex | undefined): Promise<IToolResult> {
+	const files = new Set(found.map(location => location.uri.toString()));
+	if (!nav || !position.name || files.size > NARROW_REFERENCE_FILES) {
+		return result;
+	}
+	const indexed = await nav.references(root, position.name).catch(() => undefined);
+	const unseen = (indexed ?? []).filter(location => !files.has(location.uri.toString()));
+	if (!unseen.length) {
+		return result;
+	}
+	const byFile = groupByFile(root, unseen);
+	const lines = byFile.slice(0, MAX_UNSEEN_FILES).map(([file, refs]) => `${file}: ${refs.slice(0, 8).map(ref => ref.line).join(', ')}${refs.length > 8 ? ` (+${refs.length - 8})` : ''}`);
+	const more = byFile.length > MAX_UNSEEN_FILES ? `\n[${byFile.length - MAX_UNSEEN_FILES} more files]` : '';
+	return text(`${result.text}\n\nThe language server found uses in this file only, but "${position.name}" also appears in ${byFile.length} other file${byFile.length === 1 ? '' : 's'} (${unseen.length} whole-word match${unseen.length === 1 ? '' : 'es'}; by name, not type-checked; the server may not have loaded those projects):\n${lines.join('\n')}${more}`);
+}
+
+function groupByFile(root: URI, found: readonly ICodeLocation[]): [string, ICodeLocation[]][] {
+	const byFile = new Map<string, ICodeLocation[]>();
+	for (const location of found) {
+		const key = displayPath(root, location.uri);
+		byFile.set(key, [...(byFile.get(key) ?? []), location]);
+	}
+	return [...byFile];
 }
 
 /**
@@ -424,6 +461,15 @@ async function inspect(host: ICodeIntelHost, root: URI, position: IResolvedPosit
 		out.push(`${references.found.length} reference${references.found.length === 1 ? '' : 's'} in ${files.length} file${files.length === 1 ? '' : 's'}${references.note}:\n${lines.join('\n')}${files.length > 12 ? `\n  [${files.length - 12} more files]` : ''}`);
 	} else {
 		out.push('References: none found.');
+	}
+	// The language server may not see other projects (see withUnseenUses): say what the index sees.
+	const referenceFiles = new Set(references.found.map(ref => ref.uri.toString()));
+	if (!references.note && referenceFiles.size <= NARROW_REFERENCE_FILES && nav && name) {
+		const unseen = (await nav.references(root, name).catch(() => undefined) ?? []).filter(ref => !referenceFiles.has(ref.uri.toString()));
+		if (unseen.length) {
+			const byFile = groupByFile(root, unseen);
+			out.push(`Also by name (not type-checked) in ${byFile.length} other file${byFile.length === 1 ? '' : 's'}: ${byFile.slice(0, MAX_UNSEEN_FILES).map(([file, refs]) => `${file} \u00d7${refs.length}`).join(', ')}${byFile.length > MAX_UNSEEN_FILES ? ', \u2026' : ''}`);
+		}
 	}
 	if (implementations.length) {
 		out.push(`Implementations:\n${implementations.slice(0, 10).map(item => `  ${displayPath(root, item.uri)}:${item.line}${item.preview ? `  ${item.preview}` : ''}`).join('\n')}`);
@@ -583,11 +629,19 @@ function noLspNote(lsp: boolean): string {
 	return lsp ? '' : ' (language servers are off for this checkout)';
 }
 
+/**
+ * Locations grouped by file, like grep's output: the path once, then `line: text` per location.
+ * One `path:line:col` line per location repeated a 60-character path per reference.
+ */
 function locations(root: URI, label: string, found: readonly ICodeLocation[], note: string): IToolResult {
-	const lines = found.slice(0, MAX_LOCATIONS).map(location => `${displayPath(root, location.uri)}:${location.line}:${location.column}${location.preview ? `  ${location.preview}` : ''}`);
+	const shown = found.slice(0, MAX_LOCATIONS);
+	const groups = groupByFile(root, shown);
+	const lines = groups.length === shown.length
+		? shown.map(location => `${displayPath(root, location.uri)}:${location.line}${location.preview ? `  ${location.preview}` : ''}`)
+		: groups.flatMap(([file, refs]) => [`${file}:`, ...refs.map(location => `  ${location.line}${location.preview ? `: ${location.preview}` : ''}`)]);
 	const more = found.length > MAX_LOCATIONS ? `\n[${found.length - MAX_LOCATIONS} more]` : '';
 	const noun = label === 'references' ? 'reference' : label;
-	return text(`${found.length} ${noun}${found.length === 1 ? '' : 's'}${note}:\n${lines.join('\n')}${more}`);
+	return text(`${found.length} ${noun}${found.length === 1 ? '' : 's'}${groups.length > 1 ? ` in ${new Set(found.map(location => location.uri.toString())).size} files` : ''}${note}:\n${lines.join('\n')}${more}`);
 }
 
 function text(value: string, name = 'code_nav'): IToolResult {
