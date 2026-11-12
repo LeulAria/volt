@@ -391,9 +391,13 @@
 	margin-top: 8px;
 }
 
+/*
+ * Room under the last reply, at most 30% of the view: a fixed 200px left a short view (200% zoom,
+ * a small window) under 100px for the chat, so it opened with the last reply under the pinned prompt.
+ */
 .volt-agent-editor .volt-agent-thread-inner::after {
 	content: '';
-	flex: 0 0 200px;
+	flex: 0 0 min(200px, 30%);
 	pointer-events: none;
 }
 
