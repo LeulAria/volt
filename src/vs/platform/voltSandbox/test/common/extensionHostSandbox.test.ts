@@ -7,6 +7,8 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { effectiveExtensionSandboxMode, extensionListed, extensionSandboxPlan, extensionSandboxTier, IT3ExportsFacts, IT3ExtensionFacts, T3_REQUIRED_PLATFORMS, t3BrokenExports, t3ExtensionHostPolicy, t3ManifestView, t3Subject } from '../../common/extensionHostSandbox.js';
 import { parseSandboxPolicy } from '../../common/sandboxSchema.js';
+import { IResolvedSandboxPolicy } from '../../common/sandboxResolved.js';
+import { summarizeSandboxPolicy } from '../../common/sandboxWorkloads.js';
 
 /** H.7 / H.8 / F.13 for the T3 extension host, as pure decisions. */
 suite('Volt T3 extension host policy (H.7)', () => {
@@ -52,6 +54,13 @@ suite('Volt T3 extension host policy (H.7)', () => {
 		assert.deepStrictEqual(t3ManifestView('Pub.Ext'), { subject: 'plugin:pub.ext@local', network: 'broker', declared: [] });
 		assert.deepStrictEqual(t3ManifestView('pub.ext', ['api.x.test', '*']).declared, [{ id: 'net.connect', targets: ['api.x.test'] }]);
 		assert.strictEqual(t3Subject('pub.ext'), 'plugin:pub.ext@local');
+	});
+
+	test('T3-NET-2: the Security page counts the hosts the broker routes for it, not only the policy\'s own list', () => {
+		const resolved = { name: 'extension-host', home: '/Users/me', readAll: false, read: [], write: [], deny: [], denyPatterns: [], limits: {}, network: { mode: 'proxy', allow: [], loopbackPorts: [], listen: false } } as unknown as IResolvedSandboxPolicy;
+		assert.strictEqual(summarizeSandboxPolicy(resolved).allowedHosts, 0);
+		assert.strictEqual(summarizeSandboxPolicy(resolved, ['registry.npmjs.org']).allowedHosts, 1);
+		assert.strictEqual(summarizeSandboxPolicy({ ...resolved, network: { ...resolved.network, allow: ['registry.npmjs.org'] } }, ['registry.npmjs.org', 'api.x.test']).allowedHosts, 2, 'a host in both is counted once');
 	});
 
 	test('P8-TIER-1: opt-in is the default; required covers third-party code on macOS and Linux only; built-ins, code-less and "Run Without Sandbox" stay shared', () => {

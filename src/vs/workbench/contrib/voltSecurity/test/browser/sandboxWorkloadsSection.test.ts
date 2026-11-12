@@ -192,6 +192,7 @@ suite('Volt Security page: sandboxed processes (C5)', () => {
 		assert.match(detail, /Blocked: connect to evil\.example:443 \(1x/);
 		assert.match(detail, /Blocked: read ~\/\.ssh\/id_ed25519 \(2x/);
 		assert.ok(detail.indexOf('evil.example') < detail.indexOf('id_ed25519'), 'newest first');
+		assert.ok(detail.indexOf('Blocked: ') < detail.indexOf('Network: '), 'the refusals come before the policy, which runs to dozens of lines');
 		ext.querySelector<HTMLElement>('.monaco-button')!.click();
 		await until(() => rowsShown().length === 1);
 		assert.deepStrictEqual(stoppedOnServer, ['ext']);

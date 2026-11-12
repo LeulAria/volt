@@ -425,6 +425,8 @@ suite('Volt sandbox agent profile', () => {
 		assert.strictEqual(policy.network.listen, false, 'B-30: no listening by default');
 		assert.strictEqual(policy.env.set.npm_config_cache, '/Users/me/.volt/sandbox-cache/npm');
 		assert.strictEqual(policy.env.set.DISABLE_AUTOUPDATER, '1');
+		// Its Datadog log intake is not on the host list; told not to send, it never knocks there.
+		assert.strictEqual(policy.env.set.DISABLE_TELEMETRY, '1');
 	});
 
 	test('network on: ssh config readable, private keys denied, ssh-agent granted', () => {

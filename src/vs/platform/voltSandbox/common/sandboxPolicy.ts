@@ -241,7 +241,10 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		tmpDirs: uid => [`/private/tmp/claude-${uid ?? 0}`, `/tmp/claude-${uid ?? 0}`, '/private/tmp/cc-socks', '/tmp/cc-socks'],
 		domains: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
 		envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
-		env: { DISABLE_AUTOUPDATER: '1' },
+		// DISABLE_TELEMETRY: its usage logs go to a Datadog intake (http-intake.logs.us5.datadoghq.com),
+		// which takes logs for any account's key, so it stays unlisted; told not to send, it does not try
+		// (measured: CLI 2.1.322 opens no connection to it), and no chat shows a refusal for it.
+		env: { DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1' },
 	},
 	codex: {
 		writable: [],

@@ -78,6 +78,7 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 					tmpDirs: ['/private/tmp/claude-${uid}', '/tmp/claude-${uid}', '/private/tmp/cc-socks', '/tmp/cc-socks'],
 					env: {
 						DISABLE_AUTOUPDATER: '1',
+						DISABLE_TELEMETRY: '1',
 					},
 					envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
 				},

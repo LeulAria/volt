@@ -115,6 +115,9 @@ function detailText(row: ISandboxWorkloadInfo): string {
 		localize('voltSecurity.detail.principal', "Principal: {0}", row.subject ? `${row.subject} (${row.principalId})` : row.principalId),
 		...(row.onBehalfOf ? [localize('voltSecurity.detail.onBehalfOf', "Works for: {0}", row.onBehalfOf.label ? `${row.onBehalfOf.label} (${row.onBehalfOf.subject})` : row.onBehalfOf.subject)] : []),
 		localize('voltSecurity.detail.started', "Started: {0}", new Date(row.startedAt).toLocaleString()),
+		// What it was refused, newest first, before the attestation and the policy: those run to dozens
+		// of lines (the read list), and the hover is taller than the window.
+		...[...row.denials ?? []].reverse().map(denial => localize('voltSecurity.detail.denial', "Blocked: {0} ({1}x, {2})", describeSandboxDenial(denial), denial.count, new Date(denial.at).toLocaleTimeString())),
 	];
 	const attestation = row.attestation;
 	if (attestation) {
@@ -144,9 +147,6 @@ function detailText(row: ISandboxWorkloadInfo): string {
 	}
 	if (row.detail) {
 		lines.push(localize('voltSecurity.detail.last', "Last: {0}", row.detail));
-	}
-	for (const denial of [...row.denials ?? []].reverse()) {
-		lines.push(localize('voltSecurity.detail.denial', "Blocked: {0} ({1}x, {2})", describeSandboxDenial(denial), denial.count, new Date(denial.at).toLocaleTimeString()));
 	}
 	return lines.join('\n');
 }

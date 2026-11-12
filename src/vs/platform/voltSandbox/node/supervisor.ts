@@ -577,6 +577,12 @@ class SandboxHost implements ISandboxedHost {
 	info(): ISandboxWorkloadInfo {
 		const policy = this.prepared?.policy;
 		const unenforced = this.unenforced;
+		// The broker routes its declared and approved hosts; the policy itself lists none of them.
+		const view = this.request.networkView;
+		const routed = view && view.manifest.network === 'broker' ? [
+			...view.manifest.declared.filter(cap => cap.id === 'net.connect').flatMap(cap => cap.targets ?? []),
+			...(view.grants ?? []).filter(grant => grant.capability.startsWith('net.connect@')).flatMap(grant => grant.scope.targets ?? []),
+		] : [];
 		return {
 			id: this.id,
 			principalId: this._principal.id,
@@ -589,7 +595,7 @@ class SandboxHost implements ISandboxedHost {
 			status: unenforced.length ? 'partial' : 'sandboxed',
 			unenforced,
 			...(this._attestation ? { attestation: this._attestation } : {}),
-			policy: policy ? summarizeSandboxPolicy(policy) : { name: this.label, network: 'none', allowedHosts: 0, readsEverything: false, read: [], write: [], denied: 0, limits: {} },
+			policy: policy ? summarizeSandboxPolicy(policy, routed) : { name: this.label, network: 'none', allowedHosts: 0, readsEverything: false, read: [], write: [], denied: 0, limits: {} },
 			startedAt: this.startedAt,
 			restarts: this._restarts,
 			...(this._lastResources ? { resources: this._lastResources } : {}),
