@@ -126,6 +126,8 @@ export interface ICodeNavIndex {
 	definitions(root: URI, name: string): Promise<ICodeLocation[] | undefined>;
 	references(root: URI, name: string): Promise<ICodeLocation[] | undefined>;
 	outline(root: URI, uri: URI): Promise<ICodeSymbol[] | undefined>;
+	/** Classes and interfaces that name `name` after implements or extends. */
+	implementations?(root: URI, name: string): Promise<ICodeLocation[] | undefined>;
 }
 
 /** Writes a computed edit into the workspace like edit_file does (buffers, ledger, change set). */
@@ -335,6 +337,12 @@ export async function runCodeNav(host: ICodeIntelHost, root: URI | undefined, ar
 				if (found.length) {
 					return locations(root, op === 'implementations' ? 'implementation' : 'type definition', found, '');
 				}
+				// The language server only looks in the projects it loaded: an interface in a shared
+				// package had "no implementations" while nine classes in the app implement it.
+				const named = op === 'implementations' && position.name && nav?.implementations ? await nav.implementations(root, position.name) : undefined;
+				if (named?.length) {
+					return locations(root, 'implementation', named, FROM_INDEX);
+				}
 				return text(`No ${op === 'implementations' ? 'implementations' : 'type definition'} reported for ${where(root, position)}${noLspNote(lsp)}.`);
 			}
 			case 'hover': {
@@ -437,7 +445,7 @@ async function inspect(host: ICodeIntelHost, root: URI, position: IResolvedPosit
 		column && host.hover ? host.hover(uri, line, column).catch(() => undefined) : undefined,
 		(column ? host.definitions(uri, line, column).catch(() => []) : Promise.resolve([])).then(async found => found.length || !nav || !name ? { found, note: '' } : { found: await nav.definitions(root, name) ?? [], note: FROM_INDEX }),
 		(column ? host.references(uri, line, column).catch(() => []) : Promise.resolve([])).then(async found => found.length || !nav || !name ? { found, note: '' } : { found: await nav.references(root, name) ?? [], note: FROM_INDEX }),
-		column && host.implementations ? host.implementations(uri, line, column).catch(() => []) : [],
+		(column && host.implementations ? host.implementations(uri, line, column).catch(() => []) : Promise.resolve([])).then(async found => found.length || !nav?.implementations || !name ? found : await nav.implementations(root, name).catch(() => undefined) ?? []),
 	]);
 	const out: string[] = [`${name ? `\`${name}\` at ` : ''}${where(root, position)}${noLspNote(lsp)}`];
 	if (hover) {

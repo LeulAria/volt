@@ -52,4 +52,14 @@ suite('code_nav answers', () => {
 		assert.strictEqual(asked, false);
 		assert.strictEqual(result.text, '2 references in 2 files:\na.ts:1  f()\nb.ts:2  f()');
 	});
+
+	test('implementations the language server cannot see come from the index, marked as such', async () => {
+		const nav: ICodeNavIndex = {
+			definitions: async () => [], references: async () => [], outline: async () => [],
+			implementations: async (_root, name) => name === 'PaymentGateway' ? [at('apps/api/stripe-gateway.ts', 31, 'export class StripeGateway implements PaymentGateway {'), at('apps/api/mock-gateway.ts', 10, 'export class MockGateway implements PaymentGateway {')] : [],
+		};
+		const lsp = { ...host([]), implementations: async () => [] };
+		const result = await runCodeNav(lsp, root, { op: 'implementations', path: 'packages/shared/payment-gateway.interface.ts', line: 66, symbol: 'PaymentGateway' }, nav);
+		assert.strictEqual(result.text, '2 implementations in 2 files (from the code index: matched by name, not type-checked):\napps/api/stripe-gateway.ts:31  export class StripeGateway implements PaymentGateway {\napps/api/mock-gateway.ts:10  export class MockGateway implements PaymentGateway {');
+	});
 });

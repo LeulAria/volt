@@ -50,6 +50,31 @@ export function createCodeIndexNav(index: ISearchIndex): ICodeNavIndex {
 				preview: line.text.trim().slice(0, 160),
 			})));
 		},
+		implementations: async (root, name) => {
+			if (!usable(root) || !/^[\w$]+$/.test(name)) {
+				return undefined;
+			}
+			// `class X implements A, Name {`, `class Y extends Name<T>`, `interface Z extends Name`.
+			const escaped = name.replace(/\$/g, '\\$');
+			const result = await index.service.search({
+				root: root.fsPath,
+				pattern: `\\b(?:class|interface)\\s+[\\w$]+[^{;]*\\b(?:implements|extends)\\b[^{;]*\\b${escaped}\\b`,
+				isRegExp: true,
+				caseSensitive: true,
+				multiline: false,
+				maxMatches: MAX_DEFINITIONS * 5,
+				options: index.options(),
+			}).catch(() => undefined);
+			if (result?.kind !== 'results') {
+				return undefined;
+			}
+			return result.files.flatMap(file => file.lines.filter(line => line.match).map((line): ICodeLocation => ({
+				uri: joinPath(root, file.path),
+				line: line.line,
+				column: Math.max(1, line.text.search(/\b(?:class|interface)\b/) + 1),
+				preview: line.text.trim().slice(0, 160),
+			})));
+		},
 		outline: async (root, uri) => {
 			if (!usable(root)) {
 				return undefined;
