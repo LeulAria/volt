@@ -522,10 +522,10 @@
 		{
 			"file": "src/vs/platform/voltSandbox/node/seatbeltBackend.ts",
 			"kind": "child_process",
-			"count": 5,
+			"count": 6,
 			"owner": "sandbox",
 			"reason": "supervisor",
-			"why": "The macOS sandbox backend: sandbox-exec probe, the kernel log stream, the watchdog and the tree kill, and the verified volt-sandbox-helper (its probe, and the server that spawns workloads with TCC disclaimed and attests them from outside, H7)."
+			"why": "The macOS sandbox backend: sandbox-exec probe, the kernel log stream, the watchdog and the tree kill, the verified volt-sandbox-helper (its probe, and the server that spawns workloads with TCC disclaimed and attests them from outside, H7), and /usr/bin/logger with a fixed argument: the random flush marker a one-shot run waits for in the log stream (no user input, never in a sandbox)."
 		},
 		{
 			"file": "src/vs/platform/voltSpeech/electron-main/voltSpeechMainService.ts",

@@ -119,10 +119,11 @@
 }
 
 /* Long hints wrap inside the box's max-width; a long URL breaks anywhere. The shortcut keeps its line. */
+/* A hint written as lines (a sandboxed process's details, a run's log) keeps them. */
 .volt-agent-tooltip:not(.files):not(.pill):not(.card):not(.beside) .volt-agent-tooltip-row:not(.file) > .volt-agent-tooltip-label {
 	flex: 0 1 auto;
 	min-width: 0;
-	white-space: normal;
+	white-space: pre-line;
 	overflow-wrap: anywhere;
 }
 

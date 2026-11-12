@@ -356,9 +356,16 @@ function payloadKind(text: string): string | undefined {
 	return undefined;
 }
 
-function hostAllowed(host: string, declared: readonly string[]): boolean {
+/**
+ * Whether the manifest names `host` for `net.connect`, so a literal of it is no finding. A text
+ * match on the declaration, not a permission decision (nothing is granted by it; the Authority
+ * judges the calls at runtime). Like the network broker's route manifest, a bare `*` names no host;
+ * a drop host (`drop`) counts only when named exactly, never through a wildcard.
+ */
+function hostDeclared(host: string, declared: readonly string[], drop: boolean): boolean {
 	const lower = host.toLowerCase();
-	return declared.some(pattern => capabilityTargetMatches(pattern.toLowerCase(), lower));
+	const named = declared.map(pattern => pattern.trim().toLowerCase()).filter(pattern => pattern && pattern !== '*');
+	return drop ? named.includes(lower) : named.some(pattern => capabilityTargetMatches(pattern, lower));
 }
 
 function scanFile(file: ICodeScanFile, options: ICodeScanOptions): IRawFinding[] {
@@ -400,11 +407,12 @@ function scanFile(file: ICodeScanFile, options: ICodeScanOptions): IRawFinding[]
 		}
 		for (const url of value.matchAll(/\b(?:https?|wss?):\/\/([^\s/'"`:?#$\\{}]+)(\/api\/webhooks)?/gi)) {
 			const host = url[1].toLowerCase().replace(/^\[|\]$/g, '');
-			if (NAMESPACE_HOSTS.test(host) || hostAllowed(host, declaredHosts)) {
+			const drop = DROP_HOSTS.test(`${host}${url[2] ?? ''}`);
+			if (NAMESPACE_HOSTS.test(host) || hostDeclared(host, declaredHosts, drop)) {
 				continue;
 			}
 			const raw = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host) || host === 'localhost' || host.includes(':');
-			if (raw || DROP_HOSTS.test(`${host}${url[2] ?? ''}`)) {
+			if (raw || drop) {
 				add('raw-host', raw ? 'medium' : 'high', literal.start, short(url[0]));
 			}
 		}

@@ -145,12 +145,16 @@ export function isUserFacingDenial(denial: Pick<ISandboxRunDenial, 'kind' | 'tar
 	return true;
 }
 
-export function summarizeSandboxPolicy(policy: IResolvedSandboxPolicy): ISandboxPolicySummary {
+/**
+ * `routedHosts`: the hosts the network broker lets it reach that the policy does not list (an
+ * extension host's declared `net.connect` targets live in its manifest view, not in its policy).
+ */
+export function summarizeSandboxPolicy(policy: IResolvedSandboxPolicy, routedHosts: readonly string[] = []): ISandboxPolicySummary {
 	const redact = (path: string) => redactSandboxText(path, policy.home);
 	return {
 		name: policy.name,
 		network: policy.network.mode,
-		allowedHosts: policy.network.allow.length,
+		allowedHosts: new Set([...policy.network.allow, ...routedHosts]).size,
 		readsEverything: policy.readAll,
 		read: policy.readAll ? [] : policy.read.map(redact),
 		write: policy.write.map(redact),

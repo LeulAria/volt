@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcess, execFile, spawn } from 'child_process';
+import { randomBytes } from 'crypto';
 import { existsSync, promises as fs } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { promisify } from 'util';
@@ -19,6 +20,8 @@ import { ISandboxBackend, ISandboxEvidence, ISandboxLaunchOptions, ISandboxLaunc
 import { binaryDigest, osBuild, ProbeCache } from './sandboxProbeCache.js';
 
 const execFileAsync = promisify(execFile);
+/** A marker the log stream's predicate (`VOLTSBX-`) lets through, but no denial line ever carries. */
+const FLUSH_MARKER = `${SEATBELT_TAG_PREFIX}flush-`;
 
 /** The watchdog: when Volt's end of its stdin closes (Volt exited or crashed), it kills the run's process group. */
 const WATCHDOG = 'read _ ; kill -KILL -- "-$1" 2>/dev/null';
@@ -284,6 +287,7 @@ export class SeatbeltBackend implements ISandboxBackend {
 			extraStdio: ['pipe', 'pipe'],
 			extraStdioDirections: ['out', 'in'],
 			...(disclaim ? {} : { unenforced: ['platform.tcc'] satisfies SandboxDimension[] }),
+			...(listen ? { flushDenials: (timeoutMs: number) => this.flush(timeoutMs) } : {}),
 			confirm: async child => {
 				pgid = child.pid;
 				if (pgid) {
@@ -337,7 +341,10 @@ export class SeatbeltBackend implements ISandboxBackend {
 		if (this.monitor) {
 			return;
 		}
-		const child = spawn('/usr/bin/log', ['stream', '--style', 'ndjson', '--predicate', `eventMessage CONTAINS "${SEATBELT_TAG_PREFIX}"`], { stdio: ['ignore', 'pipe', 'ignore'] });
+		// Only the kernel's own lines (pid 0, Sandbox.kext): a sandboxed process knows its tag and may
+		// write to the log (`logger`), so a line it forged would otherwise become a "Blocked" card whose
+		// "Allow Folder" widens its own sandbox. Plus Volt's own flush markers, which are never denials.
+		const child = spawn('/usr/bin/log', ['stream', '--style', 'ndjson', '--predicate', `(processID == 0 AND eventMessage CONTAINS "${SEATBELT_TAG_PREFIX}") OR eventMessage CONTAINS "${FLUSH_MARKER}"`], { stdio: ['ignore', 'pipe', 'ignore'] });
 		this.monitor = child;
 		let buffer = '';
 		child.stdout?.setEncoding('utf8');
@@ -346,6 +353,15 @@ export class SeatbeltBackend implements ISandboxBackend {
 			const lines = buffer.split('\n');
 			buffer = lines.pop() ?? '';
 			for (const line of lines) {
+				if (line.includes(FLUSH_MARKER) && this.flushes.size) {
+					for (const [marker, resolve] of this.flushes) {
+						if (line.includes(marker)) {
+							this.flushes.delete(marker);
+							resolve();
+						}
+					}
+					continue;
+				}
 				const violation = parseSeatbeltLogLine(line);
 				const listener = violation && this.listeners.get(violation.tag);
 				const kind = violation && denialKindForOperation(violation.operation);
@@ -361,6 +377,33 @@ export class SeatbeltBackend implements ISandboxBackend {
 			}
 		});
 	}
+
+	/**
+	 * Every denial logged before now has been delivered (or `timeoutMs` passed): a marker goes into
+	 * the unified log through `logger`, and the stream hands lines over in order, so once the marker
+	 * is read the kernel's earlier refusals are too. Under load the stream lags the workload by
+	 * hundreds of milliseconds; a one-shot run that stopped listening at its exit lost its last
+	 * refusals (round 1: one attack in three blocked without being named).
+	 */
+	private flush(timeoutMs: number): Promise<void> {
+		if (!this.monitor) {
+			return Promise.resolve();
+		}
+		const marker = `${FLUSH_MARKER}${randomBytes(8).toString('hex')}`;
+		return new Promise<void>(resolve => {
+			const timer = setTimeout(() => {
+				this.flushes.delete(marker);
+				resolve();
+			}, timeoutMs);
+			this.flushes.set(marker, () => {
+				clearTimeout(timer);
+				resolve();
+			});
+			execFile('/usr/bin/logger', [marker], () => undefined);
+		});
+	}
+
+	private readonly flushes = new Map<string, () => void>();
 
 	private unlisten(tag: string): void {
 		this.listeners.delete(tag);

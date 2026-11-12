@@ -26,6 +26,7 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 					readable: ['.gemini', '.antigravity', '.config/antigravity'],
 					credentials: ['.gemini/oauth_creds.json', '.gemini/antigravity-cli/antigravity-oauth-token', '.gemini/jetski-standalone-oauth-token'],
 					envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT'],
+					ephemeralListen: 'its language server listens on a random port',
 				},
 				models: {
 					source: 'acp',
@@ -77,6 +78,7 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 					tmpDirs: ['/private/tmp/claude-${uid}', '/tmp/claude-${uid}', '/private/tmp/cc-socks', '/tmp/cc-socks'],
 					env: {
 						DISABLE_AUTOUPDATER: '1',
+						DISABLE_TELEMETRY: '1',
 					},
 					envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
 				},
@@ -184,6 +186,8 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 					readable: ['.fx'],
 					credentials: ['.fx/auth.json', '.fx/mcp-credentials'],
 					envKeys: ['AI_GATEWAY_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY'],
+					listHome: true,
+					chmodFolders: ['.fx'],
 				},
 				models: {
 					source: 'acp',

@@ -11,7 +11,7 @@ import { promisify } from 'util';
 import { FileAccess } from '../../../base/common/network.js';
 import { dirname, join } from '../../../base/common/path.js';
 import { helperIntegrity, verifyHelperBinary } from '../../voltHelpers/node/helperIntegrity.js';
-import { bridgeHolderArgs, BUBBLEWRAP_FDS, bubblewrapArgs, bubblewrapEnvArgs, bubblewrapRefusals, encodeBubblewrapArgs, hasRlimits, IBubblewrapPathMatch, IBubblewrapPatternMatches, ILandlockInvocation, isInsidePath, LANDLOCK_SCOPE_ABI, nsenterArgs, PrlimitResource } from '../common/bwrap.js';
+import { bridgeHolderArgs, BUBBLEWRAP_FDS, bubblewrapArgs, bubblewrapEnvArgs, bubblewrapListenScope, bubblewrapRefusals, encodeBubblewrapArgs, hasRlimits, IBubblewrapPathMatch, IBubblewrapPatternMatches, ILandlockInvocation, isInsidePath, LANDLOCK_SCOPE_ABI, nsenterArgs, PrlimitResource } from '../common/bwrap.js';
 import { allEnforcement, ISandboxBackendCapabilities, ISandboxLayerState, parseReadyLine, redactSandboxText, SANDBOX_GO, SANDBOX_WRONG_GO, SandboxEnforcement, SandboxSecondLayerId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { gitDirWritable } from '../common/sandboxProfiles.js';
 import { IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
@@ -559,9 +559,7 @@ export class BubblewrapBackend implements ISandboxBackend {
 			throw err;
 		}
 		const blockUnixSockets = policy.unixSockets.length === 0;
-		// The host's network namespace: no listening unless granted (B-30). Granted ports cannot be
-		// told apart by seccomp, so a grant there allows every port (the agent profile marks it best effort).
-		const blockListen = policy.network.mode === 'host' && !policy.network.listen && !policy.network.listenPorts?.length;
+		const blockListen = bubblewrapListenScope(policy) === 'refused';
 		const seccomp = buildSeccompFilter(state.arch, { blockUnixSockets, blockListen });
 		const envArgs = Buffer.from(encodeBubblewrapArgs(bubblewrapEnvArgs(policy.env)), 'utf8');
 

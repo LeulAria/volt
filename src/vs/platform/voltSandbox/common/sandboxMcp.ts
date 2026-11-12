@@ -97,7 +97,12 @@ export function mcpHostPolicy(input: IMcpHostPolicyInput): IMcpHostPolicy {
 		filesystem: { write: ['${tmp}', '${storage}'] },
 		bestEffort: ['limits.processes'],
 	};
+	// A chat with its network on reaches the package registries, its agent's API and the hosts the
+	// user allowed; the hosts the user approved for this server are among those. With the network
+	// off they are not: the narrowing below keeps only what the chat itself may reach.
+	const approved: IVoltSandboxPolicyLayer | undefined = input.request.network && hosts.length ? { schemaVersion: 1, network: { allow: hosts } } : undefined;
 	const composed = composeSandboxPolicy(input.chat, [
+		...(approved ? [{ source: 'user' as const, trusted: true, layer: approved }] : []),
 		{ source: 'execution', trusted: false, layer: narrowing },
 		{ source: 'execution', trusted: true, layer: execution },
 	]);

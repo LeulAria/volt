@@ -1,0 +1,48 @@
+23:32  up 1 day,  2:06, 2 users, load averages: 149.51 136.03 99.71
+== before (out-before), sandbox, network on
+{
+ "mode": "sbx",
+ "net": "on",
+ "initMs": 156,
+ "sessionMs": 0,
+ "init": {
+  "code": -32603,
+  "message": "Failed to load startup state"
+ },
+ "session": {
+  "code": -32600,
+  "message": "Not initialized. Call initialize first."
+ },
+ "stderr": ""
+}
+== after, sandbox, network on
+DENIAL +3619ms launch com.apple.CoreServices.coreservicesd osascript
+DENIAL +3779ms read /Library/Components osascript
+DENIAL +3779ms read /Library/Audio/Plug-Ins/Components osascript
+DENIAL +6662ms read /private fx
+DENIAL +6845ms network /private/var/run/mDNSResponder fx
+{
+ "mode": "sbx",
+ "net": "on",
+ "initMs": 3453,
+ "sessionMs": 7,
+ "init": "ok",
+ "session": "ok {\"sessionId\":\"vuyL7qqeO9WV\",\"configOptions\":[{\"id\":\"provider\",\"name\":\"Provider\",\"category\":\"model\",\"type\":\"select\",\"curr",
+ "stderr": ""
+}
+== after, sandbox, network off
+DENIAL +1925ms launch com.apple.CoreServices.coreservicesd osascript
+DENIAL +1926ms read /Library/Components osascript
+DENIAL +1926ms read /Library/Audio/Plug-Ins/Components osascript
+DENIAL +3828ms read /private fx
+DENIAL +3913ms network /private/var/run/mDNSResponder fx
+{
+ "mode": "sbx",
+ "net": "off",
+ "initMs": 2250,
+ "sessionMs": 36,
+ "init": "ok",
+ "session": "ok {\"sessionId\":\"PJX1vGVT9Bu2\",\"configOptions\":[{\"id\":\"provider\",\"name\":\"Provider\",\"category\":\"model\",\"type\":\"select\",\"curr",
+ "stderr": ""
+}
+23:34  up 1 day,  2:08, 2 users, load averages: 98.34 128.84 101.60

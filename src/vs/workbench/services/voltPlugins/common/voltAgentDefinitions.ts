@@ -127,6 +127,9 @@ export function agentFootprintFromContribution(agent: IVoltAgentContribution, ui
 	readonly domains: readonly string[];
 	readonly envKeys?: readonly string[];
 	readonly env?: Readonly<Record<string, string>>;
+	readonly listHome?: boolean;
+	readonly chmodFolders?: readonly string[];
+	readonly ephemeralListen?: string;
 } {
 	const state = agent.state ?? {};
 	return {
@@ -138,6 +141,9 @@ export function agentFootprintFromContribution(agent: IVoltAgentContribution, ui
 		domains: agent.apiHosts ?? [],
 		...(state.envKeys ? { envKeys: state.envKeys } : {}),
 		...(state.env ? { env: { ...state.env } } : {}),
+		...(state.listHome ? { listHome: true } : {}),
+		...(state.chmodFolders ? { chmodFolders: state.chmodFolders } : {}),
+		...(state.ephemeralListen ? { ephemeralListen: state.ephemeralListen } : {}),
 	};
 }
 

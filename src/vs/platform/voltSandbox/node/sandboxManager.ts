@@ -98,6 +98,8 @@ export interface IPreparedSandbox {
 	attestation(): IAttestation | undefined;
 	/** Kills the whole tree: the workload and everything it started. */
 	terminate(child: ChildProcess): Promise<void>;
+	/** Waits (bounded) until every refusal the kernel logged so far reached {@link onDenial}. */
+	flushDenials(timeoutMs: number): Promise<void>;
 	/** Who the run is: its route, grants and audit lines are about this principal. */
 	readonly principal: IPrincipal;
 	/** Hosts the proxy lets through from now on (network `proxy`): live, the next connection (F.9). */
@@ -148,6 +150,8 @@ export const RUN_LEDGER_NAME = 'ledger.json';
 const SENTINEL_NAME = 'canary';
 /** After the workload exits, how long its output may keep arriving before the run counts as done. */
 const EXIT_DRAIN_MS = 250;
+/** How long a one-shot run waits at most for the kernel log to deliver its last refusals. */
+const DENIAL_FLUSH_MS = 2_000;
 
 export class SandboxManager {
 
@@ -482,6 +486,7 @@ export class SandboxManager {
 					return confirmation;
 				},
 				terminate: async child => { await launched.terminate(child); },
+				flushDenials: async timeoutMs => { await launched.flushDenials?.(timeoutMs); },
 				principal,
 				allowDomains: entries => {
 					proxy?.allow(entries);
@@ -607,6 +612,8 @@ export class SandboxManager {
 		for (const stream of child.stdio) {
 			stream?.destroy();
 		}
+		// Its last refusals can still be on their way through the kernel log (under load, hundreds of ms).
+		await prepared.flushDenials(DENIAL_FLUSH_MS);
 		listener.dispose();
 		await prepared.dispose();
 		// Disposing reads the last accounting (a cgroup's OOM kill), so the listener goes after it.

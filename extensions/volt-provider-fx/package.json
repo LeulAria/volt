@@ -90,6 +90,10 @@
 						"AI_GATEWAY_API_KEY",
 						"OPENAI_API_KEY",
 						"XAI_API_KEY"
+					],
+					"listHome": true,
+					"chmodFolders": [
+						".fx"
 					]
 				},
 				"models": {

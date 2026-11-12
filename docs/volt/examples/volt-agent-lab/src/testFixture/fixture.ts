@@ -179,7 +179,8 @@ async function spawnShell(record: Record): Promise<void> {
 
 /** Secrets it can see: secret-looking variables (names only) and Volt's own grant store (its size only). */
 function readSecrets(record: Record): void {
-	const names = Object.keys(process.env).filter(name => /TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_?KEY|^AWS_|^GITHUB_|^GH_|^NPM_|^ANTHROPIC|^OPENAI/i.test(name));
+	// `npm_config_proxy` and `npm_config_https_proxy` are the sandbox's own route out (its proxy), not the user's secrets.
+	const names = Object.keys(process.env).filter(name => /TOKEN|SECRET|PASSWORD|API_?KEY|ACCESS_?KEY|^AWS_|^GITHUB_|^GH_|^NPM_|^ANTHROPIC|^OPENAI/i.test(name) && !/^npm_config_(https_)?proxy$/.test(name));
 	record('readSecrets:env', names.length ? 'succeeded' : 'blocked', names.length ? `secret-looking variables visible: ${names.join(', ')}` : 'no secret-looking variables visible');
 	for (const file of [path.join(os.homedir(), '.volt', 'trust', 'grants.json'), path.join(os.homedir(), '.aws', 'credentials'), path.join(os.homedir(), '.npmrc')]) {
 		try {

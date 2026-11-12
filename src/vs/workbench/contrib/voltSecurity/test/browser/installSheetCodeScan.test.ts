@@ -100,4 +100,27 @@ suite('Volt install sheet: Agent Lab and the code scan (UX-SHEET-LAB)', () => {
 		assert.ok(sandboxed.text('.monaco-list-row')[0].includes('It runs in Volt\'s sandbox'));
 		assert.deepStrictEqual(sandboxed.text('.volt-add-footer .monaco-button'), ['Don\'t Allow', 'Allow']);
 	});
+
+	test('UX-SHEET-LAB-4: reviewed and sandboxed before install, the findings alone are said once: no permission rows, only OK', () => {
+		const disposables = store.add(new DisposableStore());
+		const instantiation = workbenchInstantiationService(undefined, disposables);
+		const container = mainWindow.document.body.appendChild(mainWindow.document.createElement('div'));
+		disposables.add({ dispose: () => container.remove() });
+		const answers: boolean[] = [];
+		disposables.add(showInstallSheet({ activeContainer: container } as Partial<ILayoutService> as ILayoutService, instantiation, {
+			extensionName: 'Agent Lab',
+			publisher: 'volt-examples',
+			groups: [],
+			gesture: { registry: new GestureTokenRegistry(), principal: 'plugin:volt-examples.volt-agent-lab@local' },
+			findings: [{ severity: 'high', text: 'builds a sensitive name from pieces to hide it (eval, child_process)', where: 'out/testFixture/fixture.js:220' }],
+		}, allowed => answers.push(allowed)));
+		const text = (selector: string) => [...container.querySelectorAll<HTMLElement>(selector)].map(element => element.textContent ?? '');
+		assert.deepStrictEqual(text('h2'), ['What Volt found in Agent Lab\'s code']);
+		const rows = text('.monaco-list-row');
+		assert.strictEqual(rows.length, 2, rows.join(' | '));
+		assert.ok(rows[0].includes('It runs in Volt\'s sandbox'), rows[0]);
+		assert.deepStrictEqual(text('.volt-add-footer .monaco-button'), ['OK']);
+		container.querySelector<HTMLElement>('.volt-add-footer .deny')!.click();
+		assert.deepStrictEqual(answers, [false], 'OK grants nothing');
+	});
 });

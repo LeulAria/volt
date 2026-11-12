@@ -315,6 +315,14 @@ export function systemReadPaths(platform: string, env: Readonly<Record<string, s
 }
 
 /**
+ * xcrun's cache in the user's temp folder (macOS): which binary each `/usr/bin` developer shim
+ * (`git`, `clang`, `make`) runs. Read by every sandbox (a miss costs an `xcodebuild -find`, 2-9 s),
+ * written by none: an entry that pointed `git` elsewhere would run that program outside the sandbox
+ * the next time the user, or Volt, runs `git`.
+ */
+export const XCRUN_CACHE = 'xcrun_db';
+
+/**
  * System files an agent CLI needs on top of `${system}` (it reaches OS services the workload
  * profiles do not): the resolver configuration DNS clients read, and on macOS the keychain and
  * security databases `security` and TLS stacks open themselves.

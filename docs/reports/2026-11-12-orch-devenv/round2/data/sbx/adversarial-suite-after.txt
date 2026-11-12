@@ -1,0 +1,78 @@
+23:29  up 1 day,  2:03, 2 users, load averages: 155.13 88.85 75.48
+npm warn Unknown project config "disturl". This will stop working in the next major version of npm.
+npm warn Unknown project config "target". This will stop working in the next major version of npm.
+npm warn Unknown project config "ms_build_id". This will stop working in the next major version of npm.
+npm warn Unknown project config "runtime". This will stop working in the next major version of npm.
+npm warn Unknown project config "build_from_source". This will stop working in the next major version of npm.
+npm warn Unknown project config "timeout". This will stop working in the next major version of npm.
+npm warn Unknown project config "npm_config_node_gyp". This will stop working in the next major version of npm.
+
+> code-oss-dev@0.0.6 electron
+> node build/lib/electron
+
+Found --crash-reporter-directory argument. Setting crashDumps directory to be '/Users/leularia/Desktop/VOLT/volt-e2e-sbx/.build/crashes'
+[33252:1112/232944.594434:INFO:CONSOLE:2] "The vm module of Node.js is unsupported in Electron's renderer process due to incompatibilities with the Blink rendering engine. Crashes are likely and avoiding the module is highly recommended. This module may be removed in a future release.", source: node:electron/js2c/renderer_init (2)
+[33252:1112/232946.119159:INFO:CONSOLE:2] "Platform browser has already been set. Overwriting the platform with [object Object].", source: /Users/leularia/Desktop/VOLT/volt/node_modules/@vscode/vscode-languagedetection/dist/lib/index.js (2)
+(node:33963) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `VOLT Helper (Renderer) --trace-deprecation ...` to show where the warning was created)
+(node:33963) [DEP0025] DeprecationWarning: sys is deprecated. Use util instead.
+(node:33963) ExperimentalWarning: WASI is an experimental feature and might change at any time
+
+[0m[0m
+[0m  Tests are using suiteSetup and setup correctly[0m
+  [32m  ✔[0m[90m assertCleanState - check that registries are clean at the start of test running[0m
+
+[0m  Volt sandbox security (adversarial, real processes)[0m
+  [32m  ✔[0m[90m the sandbox is confirmed before it is reported, and a normal run completes[0m[31m (535ms)[0m
+  [32m  ✔[0m[90m reads outside the workspace, through ../ and through symlinks are denied[0m[31m (1439ms)[0m
+  [32m  ✔[0m[90m credential canaries are unreadable, even for the agent profile that reads everything else[0m[31m (7891ms)[0m
+  [32m  ✔[0m[90m hard links to credentials cannot be made or read[0m[31m (350ms)[0m
+  [32m  ✔[0m[90m ESC-LINK-1: no hard link to a readable file it may not write (a toolchain, the CLI's linked config, an rc file, git config) is made[0m[31m (1710ms)[0m
+  [32m  ✔[0m[90m ESC-LINK-2: writes through symlinks planted in the workspace reach nothing outside: another folder, ~/.ssh, ~/.aws[0m[31m (1411ms)[0m
+  [32m  ✔[0m[90m writes outside the workspace and into protected paths are denied; the host is unchanged[0m[31m (3546ms)[0m
+  [32m  ✔[0m[90m PERS-AGENT-claude: MCP servers, settings and CLAUDE.md cannot be changed in place; the overlay keeps them out[0m[31m (451ms)[0m
+  [32m  ✔[0m[90m PERS-AGENT-gemini: ~/.gemini/settings.json and the binaries it runs are never writable[0m[31m (852ms)[0m
+  [32m  ✔[0m[90m PERS-AGENT-generic: an unknown CLI gets no writable home state[0m[31m (581ms)[0m
+  [32m  ✔[0m[90m narrow reads (D-14): another project and shell startup files are unreadable; toolchains, the workspace and its own install are readable[0m[31m (1454ms)[0m
+  [32m  ✔[0m[90m NET-LISTEN-1: an agent listens only on the ports it was granted[0m[31m (3978ms)[0m
+  [32m  ✔[0m[90m ENV-1: an agent gets only allow-listed variables; *_KEY, *_PAT and *_JWT never pass[0m[31m (584ms)[0m
+  [32m  ✔[0m[90m PERS-1: a sandbox cannot plant .git/commondir (Linux: a residual until Landlock, and the run says so)[0m[31m (3159ms)[0m
+  [32m  ✔[0m[90m PERS-2: a sandbox cannot rewrite a linked worktree's commondir or gitdir[0m[31m (2182ms)[0m
+  [32m  ✔[0m[90m PERS-3: a sandbox cannot change .git/config, hooks, info or alternates, while commits keep working[0m[31m (2469ms)[0m
+  [32m  ✔[0m[90m ESC-GIT-1: .git and its hooks cannot be moved aside and replaced; config cannot be swapped in by rename or link[0m[31m (1819ms)[0m
+  [32m  ✔[0m[90m ESC-GIT-2: a nested .git pointing outside cannot be planted as a symlink or a gitdir file (macOS)[0m[31m (291ms)[0m
+  [32m  ✔[0m[90m GIT-SHIM-1: the /usr/bin developer shims run in a sandbox (they read whether the Xcode license was accepted)[0m[31m (2062ms)[0m
+  [32m  ✔[0m[90m GIT-SHIM-2: a shim finds xcrun's cache from a deny-default sandbox (no `xcodebuild -find` per call); agents may read the cache, never write it[0m[31m (2496ms)[0m
+  [32m  ✔[0m[90m LOG-FORGE-2: a workload cannot forge a refusal of its own run (a "Blocked" card whose Allow widens it); a real one is still reported[0m[31m (314ms)[0m
+  [32m  ✔[0m[90m DENIAL-FLUSH-1: a one-shot run reports its last refusal even when the workload swallows the error and exits at once[0m[31m (3265ms)[0m
+  [32m  ✔[0m[90m a new git repository cannot be planted in the workspace (macOS)[0m[31m (282ms)[0m
+  [32m  ✔[0m[90m restricted keeps the workspace and the shared /tmp out of reach[0m[31m (710ms)[0m
+  [36m  - /proc/self/root and /proc/1/root do not reach the host (Linux)[0m
+  [32m  ✔[0m[90m background processes, setsid daemons and double forks die with the run[0m[31m (2176ms)[0m
+  [32m  ✔[0m[90m a daemon that clears its environment and calls setsid[0m[31m (2023ms)[0m
+  [32m  ✔[0m[90m host processes cannot be signalled or listed[0m[31m (462ms)[0m
+  [32m  ✔[0m[90m ESC-PROC-1: agent profiles cannot signal, stop or list host processes, nor read their command lines[0m[31m (1575ms)[0m
+  [32m  ✔[0m[90m no inherited file descriptors beyond stdio[0m[31m (398ms)[0m
+  [32m  ✔[0m[90m wall clock and cancellation kill the whole tree[0m[31m (2518ms)[0m
+  [32m  ✔[0m[90m network none: no loopback service, no internet, no DNS[0m[31m (336ms)[0m
+  [32m  ✔[0m[90m proxy mode: only allowed hosts, never loopback, private ranges or metadata[0m[31m (653ms)[0m
+  [32m  ✔[0m[90m NET-AGENT-1: an agent with its network on reaches its API, the registries and the user's hosts; other hosts, raw and IPv6 addresses, rebinding names, loopback and other ports are refused and reported; clearing the proxy variables reaches nothing[0m[31m (2261ms)[0m
+  [32m  ✔[0m[90m FX-1: fx lists the home folder and sets ~/.fx's mode; it reads, writes, moves or re-modes nothing else[0m[31m (833ms)[0m
+  [32m  ✔[0m[90m unix sockets are unreachable unless granted, even with an open network[0m[31m (1235ms)[0m
+  [32m  ✔[0m[90m secrets and host IPC endpoints never reach the environment[0m[31m (3180ms)[0m
+  [32m  ✔[0m[90m a repository policy cannot widen the sandbox at run time[0m[31m (472ms)[0m
+  [32m  ✔[0m[90m hostile workspace names cannot inject into the profile or arguments[0m[31m (574ms)[0m
+  [32m  ✔[0m[90m a policy the backend cannot enforce is refused before anything runs[0m
+  [32m  ✔[0m[90m the home folder or / as a workspace is refused[0m
+  [32m  ✔[0m[90m CPU and file-size limits are applied by the kernel[0m[31m (3634ms)[0m
+  [36m  - a fork bomb is contained by the per-sandbox process limit (Linux)[0m
+  [32m  ✔[0m[90m concurrent sandboxes stay apart, and nothing leaks across many runs[0m[31m (3995ms)[0m
+  [32m  ✔[0m[90m shutting the manager down kills running sandboxes[0m[31m (1068ms)[0m
+  [32m  ✔[0m[90m ESC-MAC-1: launchd, LaunchServices and Apple Events run nothing outside for the workspace and network-off agent profiles either[0m[31m (13449ms)[0m
+  [32m  ✔[0m[90m macOS: Apple Events, LaunchServices, launchd jobs, preferences and the pasteboard are closed to agents[0m[31m (3611ms)[0m
+
+
+[92m [0m[32m 46 passing[0m[90m (2m)[0m
+[36m [0m[36m 2 pending[0m
+
+23:31  up 1 day,  2:05, 2 users, load averages: 241.66 145.22 99.66

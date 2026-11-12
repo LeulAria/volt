@@ -125,6 +125,8 @@ function widen(current: IVoltSandboxPolicy, layer: IVoltSandboxPolicyLayer): IVo
 			deny: union(current.filesystem.deny, fs.deny ?? []),
 			protect: union(current.filesystem.protect, fs.protect ?? []),
 			unmask: union(current.filesystem.unmask, fs.unmask ?? []),
+			...withList('list', union(current.filesystem.list ?? [], fs.list ?? [])),
+			...withList('chmod', union(current.filesystem.chmod ?? [], fs.chmod ?? [])),
 		},
 		network: {
 			mode: net.mode ?? current.network.mode,
@@ -144,6 +146,11 @@ function widen(current: IVoltSandboxPolicy, layer: IVoltSandboxPolicyLayer): IVo
 		},
 		bestEffort: union(current.bestEffort, layer.bestEffort ?? []),
 	};
+}
+
+/** `filesystem.list` / `filesystem.chmod` only when they name something, so policies without them keep their bytes. */
+function withList(field: 'list' | 'chmod', paths: readonly string[]): { readonly list?: readonly string[]; readonly chmod?: readonly string[] } {
+	return paths.length ? { [field]: paths } : {};
 }
 
 function withoutReserved(set: Readonly<Record<string, string>> | undefined): Record<string, string> {
@@ -317,6 +324,9 @@ function narrow(current: IVoltSandboxPolicy, entry: ISandboxLayer, ignored: ISan
 			deny: union(current.filesystem.deny, fs.deny ?? []),
 			protect: union(current.filesystem.protect, fs.protect ?? []),
 			unmask: current.filesystem.unmask,
+			// Listing and mode changes are a trusted layer's: a narrowing layer keeps only folders it names again.
+			...withList('list', fs.list ? (current.filesystem.list ?? []).filter(path => fs.list!.includes(path)) : current.filesystem.list ?? []),
+			...withList('chmod', fs.chmod ? (current.filesystem.chmod ?? []).filter(path => fs.chmod!.includes(path)) : current.filesystem.chmod ?? []),
 		},
 		network: { mode, allow, loopbackPorts, listen, ...(listenPorts.length ? { listenPorts: [...new Set(listenPorts)] } : {}) },
 		process: { limits },

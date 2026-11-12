@@ -18,7 +18,7 @@ import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
 import { IAttestation, ISandboxBackendCapabilities, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
 import { agentStatePlan } from '../common/agentState.js';
-import { AGENT_STATE_ROOT, agentSandboxPolicy, IAgentSandboxHost, isAgentHousekeepingDenial, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { AGENT_STATE_ROOT, agentSandboxPolicy, agentSandboxRefusal, IAgentSandboxHost, isAgentHousekeepingDenial, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
@@ -186,6 +186,8 @@ export class VoltSandboxLauncher extends Disposable {
 	private readonly cache = new LaunchPolicyCache();
 	private readonly mode: () => PolicyAuthorityMode;
 	private readonly now: () => number;
+	/** The platform the launches run on, when the caller names it (tests); else the host's. */
+	private readonly platform: string | undefined;
 	private readonly readAdmin: () => Promise<IAdminPolicy & { readonly source?: string; readonly problem?: string }>;
 	private admin: Promise<IAdminPolicy> | undefined;
 	private workspace: IWorkspaceRestriction | undefined;
@@ -204,6 +206,7 @@ export class VoltSandboxLauncher extends Disposable {
 		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
 		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}), ...(options.grants ? { grants: options.grants } : {}) });
 		this.now = options.now ?? Date.now;
+		this.platform = options.platform;
 		this.registry = new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now);
 		// Disposed at once (its disposal starts killing the hosts); the shutdown below waits for those kills.
 		// Its hosts' principals (and their restarts') are this registry's, so revoking a chat's anchor stops them.
@@ -272,6 +275,12 @@ export class VoltSandboxLauncher extends Disposable {
 	 */
 	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest, options: { cwd?: string; hostEnv: Readonly<Record<string, string | undefined>>; env?: Readonly<Record<string, string>>; terminal?: boolean; label?: string; kind?: PrincipalKind }): Promise<ISandboxLaunch> {
 		const host = await this.hostFacts();
+		// An agent this OS's sandbox cannot hold (a random listening port on macOS): refused before
+		// anything is prepared, with the reason the chat shows next to "Turn off sandbox for this chat".
+		const unsupported = agentSandboxRefusal(request.providerId, this.platform ?? host.platform, request.providerId.charAt(0).toUpperCase() + request.providerId.slice(1));
+		if (unsupported) {
+			throw new SandboxUnavailableError(`${unsupported}.`, 'unavailable');
+		}
 		const mode = this.mode();
 		const principal = this.registry.mint({ subject: launchSubject(request), kind: options.kind ?? 'agent', launchPolicyHash: '' });
 		let sealed = principal;

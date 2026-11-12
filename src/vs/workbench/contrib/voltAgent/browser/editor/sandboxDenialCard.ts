@@ -120,6 +120,10 @@ export function renderSandboxDenialCard(tray: HTMLElement, options: ISandboxDeni
 function whyText(denial: ISandboxDenial, offered: boolean): string {
 	switch (denial.kind) {
 		case 'network':
+			if (/^localhost:\d+$/.test(denial.target) && denial.source === 'os') {
+				// A port on this machine (a local database, another app's server): a port grant, not a host rule.
+				return localize('voltSandboxCard.whyLocalPort', "This chat's sandbox connects to no port on this machine except the dev-server ports it was granted. Port {0} was not one of them.", denial.target.slice('localhost:'.length));
+			}
 			if (denial.promptable === false) {
 				return localize('voltSandboxCard.whyBudget', "This chat's network only reaches the hosts it was allowed. Volt stopped offering more for now: it was refused twice or asked too often. Review it in Settings, Access.");
 			}

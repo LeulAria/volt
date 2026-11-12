@@ -11,6 +11,8 @@ import { parseSeatbeltLogLine, sbplRegex, sbplString } from '../../common/seatbe
 import { protectedEditTarget } from '../../common/sandboxProfiles.js';
 import { isUserFacingDenial } from '../../common/sandboxWorkloads.js';
 
+/** Who writes a real refusal to the unified log. */
+const KERNEL_SANDBOX = '/System/Library/Extensions/Sandbox.kext/Contents/MacOS/Sandbox';
 const MAC: ISandboxHostInfo = { platform: 'darwin', home: '/Users/me', tmpdir: '/private/var/folders/ab/xyz/T', darwinUserCacheDir: '/private/var/folders/ab/xyz/C', uid: 501 };
 
 function request(overrides: Partial<IVoltSandboxRequest> = {}): IVoltSandboxRequest {
@@ -124,7 +126,7 @@ suite('Volt sandbox policy', () => {
 		assert.ok(!planAllowsWrite(unknown, '/Users/me/.claude/x'), 'another agent\'s state is not shared');
 	});
 
-	test('network off: the agent API plus allowed hosts; on: no proxy', () => {
+	test('network off: the agent API plus allowed hosts; on: the same plus the package registries', () => {
 		const off = resolveSandboxPlan(request({ network: false, allowedDomains: ['Example.org'] }), MAC);
 		assert.strictEqual(off.network, 'proxy');
 		assert.ok(domainAllowed('api.anthropic.com', off.allowedDomains));
@@ -132,9 +134,12 @@ suite('Volt sandbox policy', () => {
 		assert.ok(domainAllowed('registry.npmjs.org', off.allowedDomains), 'the npx adapter');
 		assert.ok(!domainAllowed('evil.com', off.allowedDomains));
 		assert.ok(!domainAllowed('anthropic.com.evil.com', off.allowedDomains));
-		const on = resolveSandboxPlan(request(), MAC);
-		assert.strictEqual(on.network, 'all');
-		assert.deepStrictEqual(on.allowedDomains, []);
+		// Network on: hostname rules too (the broker), with the package registries added.
+		const on = resolveSandboxPlan(request({ allowedDomains: ['example.org'] }), MAC);
+		assert.strictEqual(on.network, 'proxy');
+		assert.ok(domainAllowed('api.anthropic.com', on.allowedDomains) && domainAllowed('pypi.org', on.allowedDomains) && domainAllowed('example.org', on.allowedDomains));
+		assert.ok(!domainAllowed('evil.com', on.allowedDomains));
+		assert.ok(!domainAllowed('pypi.org', off.allowedDomains), 'registries only with the network on');
 	});
 
 	test('domain patterns', () => {
@@ -183,12 +188,29 @@ suite('Volt sandbox Seatbelt helpers', () => {
 	});
 
 	test('kernel log lines are parsed and attributed by tag', () => {
-		const ndjson = JSON.stringify({ eventMessage: 'Sandbox: touch(49447) deny(1) file-write-create /Users/me/Desktop/x y.txt\nVOLTSBX-abc123' });
+		const ndjson = JSON.stringify({ eventMessage: 'Sandbox: touch(49447) deny(1) file-write-create /Users/me/Desktop/x y.txt\nVOLTSBX-abc123', processID: 0, senderImagePath: KERNEL_SANDBOX });
 		assert.deepStrictEqual(parseSeatbeltLogLine(ndjson), { process: 'touch', pid: 49447, operation: 'file-write-create', target: '/Users/me/Desktop/x y.txt', tag: 'abc123' });
 		assert.deepStrictEqual(parseSeatbeltLogLine('Sandbox: 2.1.291(50239) deny(1) network-outbound 1.2.3.4:443\nVOLTSBX-t9'), { process: '2.1.291', pid: 50239, operation: 'network-outbound', target: '1.2.3.4:443', tag: 't9' });
 		assert.strictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: 'Sandbox: x(1) deny(1) file-write-create /a' })), undefined, 'not ours');
 		assert.strictEqual(parseSeatbeltLogLine('Filtering the log data using ...'), undefined);
 		assert.strictEqual(parseSeatbeltLogLine('{broken'), undefined);
+	});
+
+	test('LOG-FORGE-1: a refusal counts only from the kernel\'s Sandbox.kext; a line any process writes with `logger` is ignored', () => {
+		// Measured on macOS 26.6: `logger "Sandbox: touch(1) deny(1) file-write-create ~/.ssh/x VOLTSBX-<tag>"` from
+		// inside a sandbox reaches a `log stream` whose predicate is only the tag, as processID 9xxxx, sender /usr/bin/logger.
+		const forged = 'Sandbox: touch(1) deny(1) file-write-create /Users/me/other-project VOLTSBX-abc123';
+		assert.strictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: forged, processID: 96619, senderImagePath: '/usr/bin/logger', processImagePath: '/usr/bin/logger' })), undefined);
+		assert.strictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: forged, processID: 0, senderImagePath: '/usr/bin/logger' })), undefined, 'pid 0 alone is not enough');
+		assert.strictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: forged })), undefined, 'no origin: not trusted');
+		assert.strictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: forged, processID: 0, senderImagePath: KERNEL_SANDBOX }))?.target, '/Users/me/other-project');
+	});
+
+	test('LOCAL-DENIAL-1: a refused connection to this machine names its port; elsewhere stays as the kernel said', () => {
+		// macOS 26.6 logs `remote:*:<port>` without the address; the `-local` rule says which it was.
+		assert.deepStrictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: 'Sandbox: curl(812) deny(1) network-outbound remote:*:5432\nVOLTSBX-abc123-local', processID: 0, senderImagePath: KERNEL_SANDBOX })), { process: 'curl', pid: 812, operation: 'network-outbound', target: 'localhost:5432', tag: 'abc123' });
+		assert.deepStrictEqual(parseSeatbeltLogLine('Sandbox: node(9) deny(1) network-outbound remote:*:443\nVOLTSBX-abc123'), { process: 'node', pid: 9, operation: 'network-outbound', target: 'remote:*:443', tag: 'abc123' });
+		assert.strictEqual(parseSeatbeltLogLine('Sandbox: node(9) deny(1) network-outbound remote:*:22\nVOLTSBX-abc123-local')?.tag, 'abc123', 'attributed to its run');
 	});
 });
 
@@ -223,6 +245,10 @@ suite('Volt sandbox denials', () => {
 		assert.ok(isNoiseDenial({ kind: 'read', target: '/private/var/run/utmpx', source: 'os' }));
 		assert.ok(isNoiseDenial({ kind: 'write', target: '/var/run/utmp', source: 'os' }));
 		assert.ok(!isNoiseDenial({ kind: 'write', target: '/private/var/run/notes.txt', source: 'os' }));
+		// Claude Code's start-up knock on other sessions' sockets: still refused, no card.
+		assert.ok(isNoiseDenial({ kind: 'network', target: '/private/tmp/cc-socks/68979.sock', source: 'os' }));
+		assert.ok(!isNoiseDenial({ kind: 'network', target: '/private/tmp/other/68979.sock', source: 'os' }));
+		assert.ok(!isNoiseDenial({ kind: 'write', target: '/private/tmp/cc-socks/68979.sock', source: 'os' }));
 		assert.strictEqual(describeDenial({ kind: 'write', target: '/Users/me/notes.txt', source: 'os' }, '/Users/me'), 'Sandbox blocked a write to ~/notes.txt');
 		assert.strictEqual(folderToAllow('/Users/me/out/a.txt', false), '/Users/me/out');
 		assert.strictEqual(folderToAllow('/Users/me/out/', true), '/Users/me/out');
