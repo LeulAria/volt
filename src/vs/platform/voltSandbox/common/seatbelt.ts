@@ -564,8 +564,12 @@ export function parseSeatbeltLogLine(line: string): ISeatbeltViolation | undefin
 	const trimmed = line.trim();
 	if (trimmed.startsWith('{')) {
 		try {
-			const parsed = JSON.parse(trimmed) as { eventMessage?: unknown };
+			const parsed = JSON.parse(trimmed) as { eventMessage?: unknown; processID?: unknown; senderImagePath?: unknown };
 			if (typeof parsed.eventMessage !== 'string') {
+				return undefined;
+			}
+			// Only the kernel's Sandbox.kext reports refusals; any process can write the same text with `logger`.
+			if (parsed.processID !== 0 || typeof parsed.senderImagePath !== 'string' || !/\/Sandbox$/.test(parsed.senderImagePath)) {
 				return undefined;
 			}
 			message = parsed.eventMessage;

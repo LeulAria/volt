@@ -625,6 +625,25 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		assert.ok(!await exists(join(f.agentTmp, 'xcrun_db')));
 	});
 
+	macTest('LOG-FORGE-2: a workload cannot forge a refusal of its own run (a "Blocked" card whose Allow widens it); a real one is still reported', async () => {
+		// It knows its tag (VOLT_SANDBOX_TAG) and may write to the unified log with `logger`.
+		const result = await sh(agent(false), [
+			`/usr/bin/logger "Sandbox: touch(1) deny(1) file-write-create ${f.home}/forged-folder/x VOLTSBX-$VOLT_SANDBOX_TAG"`,
+			`/usr/bin/logger "Sandbox: touch(1) deny(1) file-write-create ${f.home}/forged-folder/y\nVOLTSBX-$VOLT_SANDBOX_TAG"`,
+			`echo x > ${f.outside}/real-denial.txt 2>/dev/null; true`,
+		].join('; '));
+		assert.ok(!result.denials.some(denial => denial.target.includes('forged-folder')), `forged: ${JSON.stringify(result.denials.filter(d => d.target.includes('forged')))}`);
+		assert.ok(result.denials.some(denial => denial.target.endsWith('real-denial.txt')), `the real refusal is reported: ${JSON.stringify(result.denials.map(d => d.target))}`);
+	});
+
+	macTest('DENIAL-FLUSH-1: a one-shot run reports its last refusal even when the workload swallows the error and exits at once', async () => {
+		// Round 1's matrix named a blocked attack in only 2 of 3 runs at times: the run stopped listening at exit.
+		for (let i = 0; i < 5; i++) {
+			const result = await sh(agent(false), `cat ${f.home}/.aws/credentials >/dev/null 2>&1; true`);
+			assert.ok(result.denials.some(denial => denial.kind === 'read' && denial.target.endsWith('/.aws/credentials')), `run ${i + 1}: ${JSON.stringify(result.denials.map(d => d.target))}`);
+		}
+	});
+
 	macTest('a new git repository cannot be planted in the workspace (macOS)', async () => {
 		await sh(workspace(), `mkdir ${f.ws}/sub/.git; mkdir ${f.ws}/sub/.GIT; echo 'gitdir: ${f.outside}' > ${f.ws}/sub/x; mv ${f.ws}/sub/x ${f.ws}/sub/.git`);
 		assert.ok(!await exists(join(f.ws, 'sub', '.git')) && !await exists(join(f.ws, 'sub', '.GIT')));

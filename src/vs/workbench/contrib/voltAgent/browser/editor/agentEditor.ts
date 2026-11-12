@@ -1127,6 +1127,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				this.schedulePrewarm(PREWARM_ON_MODEL_MS);
 			},
 			multi: { unavailableReason: () => this.runGroupUnavailableReason() },
+			sandboxed: () => this.runtime.getSandboxSettings(this.sessionKey).level !== 'off',
 		}));
 		this._register(this.sessionContext.onDidChangeActiveProject(() => {
 			this.renderSuggestChips();
