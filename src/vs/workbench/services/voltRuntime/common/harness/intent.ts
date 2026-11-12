@@ -129,16 +129,20 @@ const PREVIEW_INTENT = /\b(?:preview|open|show|see|view|look at)\b[^.?!]{0,40}\b
  * Requests an IDE tool answers better than a shell command. Agents picked those tools 1 run in 13
  * (2026-11-12 test pass, round 1): they ran `npm test`, `curl` and `sqlite3`, and natural questions
  * ("why does the container keep restarting?") went to the chat lane, which got no IDE guide at all.
+ * A code question that only mentions tests or a database ("each non-test implementation ... passes
+ * it into runCommand", "renamed in the database schema") is not that work: the verbs are words, not
+ * prefixes, "non-test"/"test-only" are not tests, and a database's schema or columns are code.
  */
 const IDE_WORK: readonly (readonly [IdeWork, RegExp])[] = [
-	['tests', /\b(?:tests?|specs?|test suite|vitest|jest|pytest|mocha)\b[^.?!]{0,60}\b(?:fail\w*|break\w*|broken|red|pass\w*|run\w*)\b|\b(?:fail\w*|run|rerun)\b[^.?!]{0,40}\b(?:tests?|specs?|test suite)\b/i],
+	['tests', /(?<![-\w])(?:tests?|specs?|test suite|vitest|jest|pytest|mocha)\b(?!-)[^.?!]{0,60}\b(?:fail(?:s|ed|ing|ures?)?|break(?:s|ing)?|broken|red|pass(?:es|ed|ing)?|run(?:s|ning)?)\b|\b(?:fail(?:s|ed|ing)?|run|rerun)\b[^.?!]{0,40}(?<![-\w])(?:tests?|specs?|test suite)\b(?!-)/i],
 	['debug', /\b(?:debug(?:ger|ging)?|breakpoints?|step (?:through|into|over)|runtime values?|(?:inspect|watch) (?:the )?(?:values?|variables?|state|locals))\b/i],
 	['profile', /\b(?:slow(?:ness|er|est)?|too long|takes? (?:so |too |very )?long|profil(?:er|ing)|profile (?:it|this|that|the (?:script|app|code|function|server|query|build))|(?:cpu|heap|memory) profiles?|hot ?spots?|bottlenecks?|cpu (?:time|usage)|memory (?:leak|usage)|(?:speed|perf(?:ormance)?) (?:issue|problem)s?)\b/i],
 	['http', /\.(?:http|rest)\b|\bhttp (?:requests?|client)\b|\b(?:call|hit|request|query|send|log ?in to|test)\b[^.?!]{0,40}\b(?:endpoints?|(?:local |the )?api)\b/i],
 	['docker', /\b(?:docker|containers?|docker-compose|compose (?:file|service|stack))\b/i],
-	['db', /\.(?:db|sqlite3?|db3)\b|\b(?:sqlite|postgres(?:ql)?|mysql|database|sql quer(?:y|ies))\b/i],
+	['db', /\.(?:db|sqlite3?|db3)\b|\b(?:sqlite|postgres(?:ql)?|mysql|database|sql quer(?:y|ies))\b(?!\s+(?:schemas?|migrations?|columns?|models?|types?|layer|code|clients?|drivers?))/i],
 	['notebook', /\.ipynb\b|\b(?:jupyter|notebook)\b/i],
-	['rename', /\brename\b[^.?!]{0,60}\b(?:to|as|everywhere|across)\b/i],
+	// A path's dots ("in src/cart.ts to lineAmount") do not end the sentence.
+	['rename', /\brename\b(?:[^.?!]|\.(?=\w)){0,60}\b(?:to|as|everywhere|across)\b/i],
 ];
 
 const CODE_FENCE = /```/;
