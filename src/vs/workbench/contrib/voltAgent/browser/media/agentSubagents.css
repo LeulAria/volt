@@ -1440,3 +1440,9 @@ button.volt-agent-work-agent:hover .volt-agent-work-agent-title { color: var(--v
 	font-size: 11px;
 	line-height: 16px;
 }
+
+/* The agents chip's menu: a row's model and clock say what it is, so the title gives way first (the
+ * menu's detail shrinks before its label; a long title left its row with no model and no clock). */
+.volt-agent-agents-menu .volt-menu-detail {
+	flex: none;
+}
