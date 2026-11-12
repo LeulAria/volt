@@ -25,14 +25,14 @@ import { IVoltEvent } from '../../common/events.js';
 import { parseTokenUsage } from '../../common/tokenUsage.js';
 import { VoltMode } from '../../common/modes.js';
 import { IProviderProfile } from '../../common/profiles.js';
-import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo } from '../../common/providers.js';
+import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, subagentProfile } from '../../common/providers.js';
 import { sandboxPlatformUnavailable, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
 import { IVoltExecContext, IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { voltExec } from '../../common/execContext.js';
 import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey, sandboxStrategy, SandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
-import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer } from '../../common/hostTools.js';
+import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer, SUBAGENT_HOST_TOOL_GROUPS, VoltHostToolGroup } from '../../common/hostTools.js';
 import { AgentQuestionDraft, cursorAskQuestionResult, elicitationResult, elicitationToQuestions, IAgentQuestionResponse, parseQuestionDraft } from '../../common/questions.js';
 import { mapAcpToolKind } from '../../common/harness/workLog.js';
 import { ACP_IDLE_TIMINGS, ACP_STALL_NOTICE_TITLE, declaredToolWaitMs, IdleWatchdog, IIdleStageInfo, IIdleWatchdogTimings, IWatchdogClock, realWatchdogClock } from '../../common/harness/acpStall.js';
@@ -88,7 +88,7 @@ interface IAcpSession {
 	/** Pool key of the setup this session was started with (spares are matched on it). */
 	setupKey?: string;
 	/** The host MCP servers `session/new` connected (JSON), and what they were derived from. */
-	hostMcp?: { readonly sessionId?: string; readonly capabilities?: IAcpMcpCapabilities; readonly servers: string };
+	hostMcp?: { readonly sessionId?: string; readonly capabilities?: IAcpMcpCapabilities; readonly servers: string; readonly groups?: readonly VoltHostToolGroup[] };
 	/** The agent takes `_session/steering`: a message goes into the running turn without stopping it (Claude, Codex). */
 	steering?: boolean;
 	/** The agent takes `session/resume` (`sessionCapabilities.resume`): the conversation can continue in another folder. */
@@ -731,9 +731,9 @@ export class AcpAgentProvider implements IAgentProvider {
 			cwd,
 			req.modelId ?? '',
 			Object.entries(req.options ?? {}).sort(([x], [y]) => x.localeCompare(y)),
-			req.textOnly ? req.textOnly.systemPrompt : this.hostTools?.getMcpServers(req.sessionId) ?? [],
+			req.textOnly ? req.textOnly.systemPrompt : this.hostTools?.getMcpServers(req.sessionId, hostToolOptions(req)) ?? [],
 			sandboxLaunchKey(req.sandbox?.settings),
-			req.subagent === true,
+			subagentProfile(req.subagent) ?? false,
 		]);
 	}
 
@@ -778,7 +778,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (req.textOnly) {
 			return this.textOnlyMeta(req);
 		}
-		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req), { subagent: req.subagent === true }) : undefined;
+		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req), { subagent: subagentProfile(req.subagent) }) : undefined;
 	}
 
 	/**
@@ -858,8 +858,9 @@ export class AcpAgentProvider implements IAgentProvider {
 			}, ACP_INITIALIZE_TIMEOUT_MS);
 			const capabilities = initialized.agentCapabilities?.mcpCapabilities;
 			// A text-only session never calls Volt's tools: no server, and nothing to go stale.
-			const mcpServers = req.textOnly ? [] : this.hostMcpServers(req.sessionId, capabilities);
-			hostMcp = req.textOnly ? undefined : { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers) };
+			const groups = hostToolOptions(req)?.groups;
+			const mcpServers = req.textOnly ? [] : this.hostMcpServers(req.sessionId, capabilities, groups);
+			hostMcp = req.textOnly ? undefined : { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers), ...(groups ? { groups } : {}) };
 			if (resume) {
 				if (!initialized.agentCapabilities?.sessionCapabilities?.resume) {
 					throw new Error('the agent cannot resume sessions');
@@ -935,11 +936,11 @@ export class AcpAgentProvider implements IAgentProvider {
 	isLive(session: IAgentSessionHandle): boolean {
 		const live = this.sessions.get(session.id);
 		return !!live && !live.client.isDead
-			&& (!live.hostMcp || JSON.stringify(this.hostMcpServers(live.hostMcp.sessionId, live.hostMcp.capabilities)) === live.hostMcp.servers);
+			&& (!live.hostMcp || JSON.stringify(this.hostMcpServers(live.hostMcp.sessionId, live.hostMcp.capabilities, live.hostMcp.groups)) === live.hostMcp.servers);
 	}
 
-	private hostMcpServers(sessionId: string | undefined, capabilities: IAcpMcpCapabilities | undefined): IVoltMcpServer[] {
-		return acceptedMcpServers(this.hostTools?.getMcpServers(sessionId) ?? [], capabilities);
+	private hostMcpServers(sessionId: string | undefined, capabilities: IAcpMcpCapabilities | undefined, groups?: readonly VoltHostToolGroup[]): IVoltMcpServer[] {
+		return acceptedMcpServers(this.hostTools?.getMcpServers(sessionId, groups ? { groups } : undefined) ?? [], capabilities);
 	}
 
 	/** The OS wrapper for this agent process; undefined when the chat is unconfined or the agent sandboxes itself. */
@@ -957,7 +958,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			...(settings.extraWritableRoots?.length ? { extraWritableRoots: settings.extraWritableRoots } : {}),
 			...(settings.allowedDomains?.length ? { allowedDomains: settings.allowedDomains } : {}),
 			...(settings.listenPorts?.length ? { listenPorts: settings.listenPorts } : {}),
-			loopbackPorts: (this.hostTools?.getMcpServers(req.sessionId) ?? []).map(server => loopbackPort(server.url)).filter((port): port is number => port !== undefined),
+			loopbackPorts: (this.hostTools?.getMcpServers(req.sessionId, hostToolOptions(req)) ?? []).map(server => loopbackPort(server.url)).filter((port): port is number => port !== undefined),
 			// The chat's own copy of the CLI's config (B-05): what the agent changes there stays in this chat.
 			stateKey: req.sessionId ?? 'default',
 		};
@@ -2400,6 +2401,12 @@ export function planFromCursorTodos(params: unknown): Extract<IVoltEvent, { type
 			};
 		}),
 	};
+}
+
+/** A Volt subagent's agent gets only its profile's host tool groups (`SUBAGENT_HOST_TOOL_GROUPS`); everyone else all of them. */
+export function hostToolOptions(req: Pick<IAgentStartRequest, 'subagent' | 'textOnly'>): { readonly groups: readonly VoltHostToolGroup[] } | undefined {
+	const profile = req.textOnly ? undefined : subagentProfile(req.subagent);
+	return profile ? { groups: SUBAGENT_HOST_TOOL_GROUPS[profile] } : undefined;
 }
 
 /**

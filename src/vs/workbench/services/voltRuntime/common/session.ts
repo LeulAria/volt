@@ -7,6 +7,7 @@ import type { VoltLane } from './harness/lanes.js';
 import { AgentRunOn, AgentWorktreeTarget } from './git/agentWorktree.js';
 import { IVoltModelOptions } from './models/modelOptions.js';
 import { VoltMode } from './modes.js';
+import type { VoltSubagentProfile } from './providers.js';
 import type { IHandoffActivity } from './contextHandoff.js';
 import type { IVoltResourceAttachment } from './fileAttachments.js';
 
@@ -82,5 +83,5 @@ export interface IVoltSendRequest {
 	/** With `runOn: 'worktree'`: the branch the new checkout uses. */
 	worktreeTarget?: AgentWorktreeTarget;
 	/** The chat is a Volt subagent's (a delegated task): its agent starts lean (see `IAgentStartRequest.subagent`). */
-	subagent?: boolean;
+	subagent?: boolean | VoltSubagentProfile;
 }

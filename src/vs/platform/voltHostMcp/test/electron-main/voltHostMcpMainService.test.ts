@@ -8,7 +8,7 @@ import { createHash, createHmac, randomBytes } from 'crypto';
 import * as http from 'http';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { NullLogService } from '../../../log/common/log.js';
-import { IVoltHostMcpCall } from '../../common/voltHostMcp.js';
+import { hostMcpInstructions, IVoltHostMcpCall } from '../../common/voltHostMcp.js';
 import { HOST_MCP_TOKEN_TTL_MS, hmacSha256, hostMcpSessionMessage, hostMcpSessionToken, newHostMcpLease, parseHostMcpSessionToken, sha256 } from '../../common/voltHostMcpAuth.js';
 import { checkHostMcpRequest, VoltHostMcpMainService } from '../../electron-main/voltHostMcpMainService.js';
 
@@ -274,6 +274,16 @@ suite('Volt host MCP server', () => {
 			assert.deepStrictEqual((await list('')).map(tool => tool.name), ['ask_question', 'browser_snapshot']);
 			assert.deepStrictEqual((await list('?groups=core', ['core'])).map(tool => tool.name), ['ask_question']);
 			assert.ok((await list('')).every(tool => tool.group === undefined), 'groups stay internal');
+			// The server instructions follow the groups: a subagent handed core, tasks and image reads only about those.
+			const instructions = async (suffix: string, groups?: string[]) => (JSON.parse((await post(`${endpoint.url}/chat%201${suffix}`, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }, auth(groups))).body) as { result: { instructions: string } }).result.instructions;
+			const all = await instructions('');
+			assert.strictEqual(all, hostMcpInstructions());
+			assert.ok(all.includes('browser_act') && all.includes('render_chart') && all.includes('thread_launch'));
+			const lean = await instructions('?groups=core,tasks,image', ['core', 'tasks', 'image']);
+			assert.strictEqual(lean, hostMcpInstructions(new Set(['core', 'tasks', 'image'])));
+			assert.ok(lean.includes('find_symbol') && lean.includes('delegate_task') && lean.includes('image_inspect'));
+			assert.ok(!/browser_|render_chart|thread_launch|link_pull_request|desktop_|device_/.test(lean), lean);
+			assert.ok(lean.length < all.length / 4);
 
 			const called = await post(`${endpoint.url}/chat%201`, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'browser_snapshot', arguments: { interactive: true } } }, auth());
 			assert.strictEqual((JSON.parse(called.body) as IRpcReply).result.content[0].text, 'ran browser_snapshot');

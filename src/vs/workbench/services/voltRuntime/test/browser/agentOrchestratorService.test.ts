@@ -288,6 +288,34 @@ suite('Agent orchestrator service', () => {
 		assert.strictEqual(runtime.getAccessMode(task.childId!), 'supervised');
 	});
 
+	test('a delegate_task call without arguments (schema not loaded yet) is told the arguments, so the next call is right', async () => {
+		const { service, host, tool } = await setup();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		const refused = await tool('parent', 'delegate_task', {});
+		assert.match(refused, /called without arguments/);
+		assert.match(refused, /no ToolSearch needed/);
+		assert.match(refused, /"task": "<the complete brief>"/);
+		assert.match(refused, /"tasks": \[/);
+		assert.strictEqual(service.tasksOf('parent').length, 0);
+		// A call with other arguments but no brief gets the short refusal.
+		assert.match(await tool('parent', 'delegate_task', { title: 'x' }), /^delegate_task needs a `task`/);
+		// The retry the refusal describes starts the task at once.
+		assert.match(await tool('parent', 'delegate_task', { task: 'Read a.ts and report', title: 'Read a' }), /Started task t-/);
+		await settle();
+		assert.strictEqual(host.started.at(-1)?.turn.kind, 'brief');
+	});
+
+	test('a delegated task starts its agent lean: read-only for research and review, working for the rest', async () => {
+		const { service, host, tool } = await setup();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		await tool('parent', 'delegate_task', { tasks: [{ task: 'Research a.ts', role: 'research' }, { task: 'Review b.ts', role: 'review' }, { task: 'Fix c.ts', role: 'implementation' }, { task: 'Do d' }] });
+		await settle();
+		const profiles = service.tasksOf('parent').map(task => host.started.find(request => request.threadId === task.childId)?.subagent);
+		assert.deepStrictEqual(profiles, ['readonly', 'readonly', 'work', 'work']);
+	});
+
 	test('delegate_task takes the names agents use for a brief and a model, and a refusal lists the models', async () => {
 		const { service, tool } = await setup();
 		await service.submit('parent', { text: 'go' }, 'auto', 'p1');

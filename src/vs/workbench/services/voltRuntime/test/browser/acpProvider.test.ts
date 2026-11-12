@@ -264,6 +264,32 @@ suite('ACP provider supervision', () => {
 		await finish(env, handle);
 	});
 
+	test('a Volt subagent\'s session gets only its profile\'s host tool groups and the lean Claude meta', async () => {
+		const env = setup({
+			getMcpServers: (sessionId?: string, options?: { groups?: readonly string[] }) =>
+				[{ type: 'http', name: 'volt', url: `http://127.0.0.1:4000/mcp/${sessionId}${options?.groups ? `?groups=${options.groups.join(',')}` : ''}`, headers: [] }],
+		} as unknown as IVoltHostToolService, 'claude-code');
+		const sent = () => env.agent.written.filter(entry => entry.msg.method === 'session/new').slice(-1)[0].msg.params;
+		const url = () => (sent()?.mcpServers as { url: string }[])[0].url;
+
+		const readonly = await env.provider.start(request({ sessionId: 's1', subagent: 'readonly' }));
+		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s1?groups=core,tasks,image');
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { subagent: 'readonly' }));
+		// isLive asks for the same groups, so the subagent's session stays live.
+		assert.strictEqual(env.provider.isLive(readonly), true);
+		await finish(env, readonly);
+
+		const work = await env.provider.start(request({ sessionId: 's2', subagent: 'work' }));
+		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s2?groups=core,tasks,image,terminal,ide,browser');
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { subagent: 'work' }));
+		await finish(env, work);
+
+		const main = await env.provider.start(request({ sessionId: 's3' }));
+		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s3', 'the user\'s own chat gets every tool');
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7'));
+		await finish(env, main);
+	});
+
 	test('a Claude Code session starts on the exact model picked, not the adapter\'s alias or default', async () => {
 		// Claude's adapter lists only aliases: `claude-sonnet-5-5` written as a config option fails and the
 		// session would stay on the account's default (Opus); `claude-haiku-4-5` would become `haiku`.

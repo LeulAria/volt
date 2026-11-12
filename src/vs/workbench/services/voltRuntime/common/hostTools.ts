@@ -21,6 +21,7 @@ import { isMemoryToolName } from './memory/voltMemory.js';
 import { isOrchestraTool } from './orchestration/orchestra.js';
 import { PLAYGROUND_TOOL_NAMES } from './playgroundTools.js';
 import type { VoltMode } from './modes.js';
+import type { VoltSubagentProfile } from './providers.js';
 import type { AgentQuestionDraft, IAgentQuestionResponse } from './questions.js';
 import { PROPOSE_PLAN_TOOL_NAME } from './plans.js';
 import { parseActSteps } from './tools/pageModel.js';
@@ -158,6 +159,18 @@ export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
  * handed a subset (`getMcpServers(sessionId, { groups })`) to keep its tool list short.
  */
 export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'memory' | 'desktop' | 'terminal' | 'ide';
+
+/**
+ * The host tools a Volt subagent's agent gets (`getMcpServers(sessionId, { groups })`), by profile.
+ * A subagent reports to the agent that delegated to it, so it gets no chat, queue, pull request,
+ * visual, device, desktop or memory tools: of 138 tools a read-only one keeps 26 and one that changes
+ * files 72. Every profile keeps the coordination tools (`tasks`: delegate_task one level down, team
+ * boards and councils) and code intelligence and ask_question (`core`).
+ */
+export const SUBAGENT_HOST_TOOL_GROUPS: Readonly<Record<VoltSubagentProfile, readonly VoltHostToolGroup[]>> = {
+	readonly: ['core', 'tasks', 'image'],
+	work: ['core', 'tasks', 'image', 'terminal', 'ide', 'browser'],
+};
 
 export interface IVoltHostToolInfo {
 	readonly name: string;
