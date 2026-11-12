@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { isEqualOrParent } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { asRecord, pickNumber, pickString } from '../../common/tools/args.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
@@ -138,6 +139,10 @@ const MAX_LOCATIONS = 60;
 const MAX_SYMBOLS = 80;
 /** inspect shows a definition's body up to this many lines. */
 const MAX_BODY_LINES = 40;
+/** callers/callees with depth: levels, functions shown and time spent at most. */
+const MAX_CALL_DEPTH = 4;
+const MAX_CALL_TREE_NODES = 60;
+const CALL_TREE_DEADLINE_MS = 20_000;
 
 export const CODE_NAV_OPS = ['definition', 'references', 'implementations', 'type_definition', 'hover', 'inspect', 'symbols', 'workspace_symbols', 'callers', 'callees', 'supertypes', 'subtypes'] as const;
 export type CodeNavOp = typeof CODE_NAV_OPS[number];
@@ -148,21 +153,23 @@ export const CODE_ACTION_OPS = ['rename', 'format', 'organize_imports', 'fixes',
 const POSITIONAL: ReadonlySet<string> = new Set(['definition', 'references', 'implementations', 'type_definition', 'hover', 'inspect', 'callers', 'callees', 'supertypes', 'subtypes']);
 
 export const CODE_NAV_DESCRIPTION = [
-	'Precise navigation from the language servers the editor runs (live, unsaved buffers included), with Volt\'s code index as fallback.',
-	'Positional ops take path + line + symbol (the name as written on that line) or column:',
-	'definition, references, implementations, type_definition, hover (type, signature, docs),',
-	'inspect (hover + definition with its body + references by file + implementations, in one call: start here for an unfamiliar symbol),',
-	'callers / callees (call hierarchy), supertypes / subtypes (type hierarchy).',
-	'symbols: the outline of path. workspace_symbols: find symbols by name across the workspace (query).',
-	'Use grep for text and strings, find_symbol for a name you know, this for meaning (who calls X, what implements Y, what type is Z).',
+	'Type-checked answers from the language servers the editor runs (live buffers), with Volt\'s code index as fallback.',
+	'Use it for meaning, where grep returns look-alikes: who calls X (through other functions too), what implements interface Y, every use of method M of type T (not other methods with the same name), what type Z is.',
+	'Name the symbol with symbol, plus path and line where it is written; symbol alone finds its declaration (path narrows it).',
+	'Ops: references, implementations, definition, type_definition, hover (type, signature, docs),',
+	'inspect (hover + definition with body + references + implementations in one call),',
+	'callers / callees (call hierarchy; depth 2-4 follows callers of callers to the entry points and names the route handlers or procedures the calls are in), supertypes / subtypes,',
+	'symbols (outline of path), workspace_symbols (query: find declarations by name).',
+	'Use grep for text, strings, SQL and config.',
 ].join(' ');
 
 export const CODE_NAV_SCHEMA = objectSchema({
 	op: { type: 'string', enum: [...CODE_NAV_OPS] },
+	symbol: { type: 'string', description: 'The symbol\'s name. With line: the name on that line. Alone: found by its declaration (path narrows it)' },
 	path: { type: 'string' },
-	line: { type: 'integer', description: '1-based line' },
-	column: { type: 'integer', description: '1-based column' },
-	symbol: { type: 'string', description: 'Symbol name on that line, instead of a column' },
+	line: { type: 'integer', description: '1-based line where symbol is written' },
+	column: { type: 'integer', description: '1-based column, instead of symbol' },
+	depth: { type: 'integer', description: 'callers/callees: levels to follow (1-4, default 1)' },
 	query: { type: 'string', description: 'workspace_symbols: the name to look for' },
 }, ['op']);
 
@@ -323,14 +330,18 @@ async function findSymbolLine(host: ICodeIntelHost, uri: URI, line: number, symb
 }
 
 async function resolvePosition(host: ICodeIntelHost, root: URI, uri: URI, args: unknown, lsp: boolean): Promise<IResolvedPosition | string> {
-	const line = pickNumber(args, 'line');
+	const qualified = pickString(args, 'symbol', 'name');
+	// Without a line, the symbol's declaration in the file: agents named path and symbol, and every such call failed.
+	const line = pickNumber(args, 'line') ?? (qualified ? await declarationLine(host, uri, qualified) : undefined);
 	if (!line) {
-		return 'This op needs line (and column or symbol).';
+		return qualified ? `"${qualified}" is not declared in ${displayPath(root, uri)}. Pass the line where it is written, or leave out path to find it across the workspace.` : 'This op needs symbol (or line and column).';
 	}
-	const symbol = pickString(args, 'symbol', 'name');
 	const givenColumn = pickNumber(args, 'column', 'character');
-	const name = symbol ?? (givenColumn ? await host.wordAt(uri, line, givenColumn) : undefined);
+	// `Type.member` names a member; the line holds only the member's own name. A line alone (the
+	// agent read it in a listing) names what is declared there.
+	const symbol = qualified?.split('.').filter(Boolean).at(-1) ?? (givenColumn ? undefined : declaredNameOn(await host.fileText?.(uri).catch(() => undefined), line));
 	const column = lsp ? givenColumn ?? (symbol ? await host.columnOf(uri, line, symbol) : undefined) : undefined;
+	const name = symbol ?? (givenColumn ? await host.wordAt(uri, line, givenColumn) : undefined);
 	if (lsp && symbol && !column && !givenColumn) {
 		const found = await findSymbolLine(host, uri, line, symbol);
 		if (!found) {
@@ -344,6 +355,101 @@ async function resolvePosition(host: ICodeIntelHost, root: URI, uri: URI, args: 
 	return { uri, line, ...(column ? { column } : {}), ...(name ? { name } : {}) };
 }
 
+const DECLARATION_KEYWORDS = '(?:export\\s+)?(?:default\\s+)?(?:declare\\s+)?(?:abstract\\s+)?(?:async\\s+)?(?:function\\*?|class|interface|type|enum|const|let|var|namespace|module|def|func|fn|struct|trait|impl)';
+
+/**
+ * The line `symbol` is declared on in a file: a declaration keyword before it, else a member
+ * (`name(`, `name:`, `name =` at the start of a line), else its first whole-word use. For
+ * `Type.member`, the member is looked for after the type's declaration.
+ */
+export function declarationLineIn(text: string, qualified: string): number | undefined {
+	const parts = qualified.split('.').filter(Boolean);
+	const name = parts.at(-1);
+	if (!name) {
+		return undefined;
+	}
+	const lines = text.split('\n');
+	let from = 0;
+	if (parts.length > 1) {
+		const container = declarationLineIn(text, parts.slice(0, -1).join('.'));
+		if (container) {
+			from = container;
+		}
+	}
+	const word = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const patterns = [
+		new RegExp(`^\\s*${DECLARATION_KEYWORDS}\\s+${word}\\b`),
+		new RegExp(`^\\s*(?:(?:public|private|protected|static|readonly|override|async|get|set)\\s+)*\\*?${word}\\s*(?:\\?|!)?\\s*(?:[(<:=]|\\(.*\\)\\s*\\{)`),
+		new RegExp(`\\b${word}\\b`),
+	];
+	for (const pattern of patterns) {
+		for (let index = from > 0 ? from - 1 : 0; index < lines.length; index++) {
+			if (pattern.test(lines[index])) {
+				return index + 1;
+			}
+		}
+	}
+	return undefined;
+}
+
+/** The name declared on a line (`export interface StateReader {` -> StateReader, `  query(sql: string)` -> query). */
+export function declaredNameOn(text: string | undefined, line: number): string | undefined {
+	const source = text?.split('\n')[line - 1];
+	if (!source) {
+		return undefined;
+	}
+	const member = /^\s*(?:(?:public|private|protected|static|readonly|override|async|get|set)\s+)*\*?([\w$]+)\s*[?!]?\s*[(<:=]/.exec(source)?.[1];
+	return new RegExp(`^\\s*${DECLARATION_KEYWORDS}\\s+([\\w$]+)`).exec(source)?.[1]
+		?? (member && !/^(?:if|for|while|switch|return|catch|await|yield|throw|new|typeof)$/.test(member) ? member : undefined);
+}
+
+async function declarationLine(host: ICodeIntelHost, uri: URI, qualified: string): Promise<number | undefined> {
+	const text = await host.fileText?.(uri).catch(() => undefined);
+	return text === undefined ? undefined : declarationLineIn(text, qualified);
+}
+
+/**
+ * Where a symbol named without a path is declared: the language server's workspace symbols, an
+ * exact name (and container, for `Type.member`) first, else the code index. Several equally good
+ * candidates are listed back instead of picking one at random.
+ */
+async function locateDeclaration(host: ICodeIntelHost, root: URI, qualified: string, nav: ICodeNavIndex | undefined): Promise<{ uri: URI; line: number } | string> {
+	const parts = qualified.split('.').filter(Boolean);
+	const name = parts.at(-1) ?? qualified;
+	const container = parts.length > 1 ? parts.at(-2) : undefined;
+	const symbols = host.workspaceSymbols ? await host.workspaceSymbols(name, MAX_SYMBOLS).catch(() => []) : [];
+	const exact = symbols.filter(symbol => symbol.name === name && (!container || symbol.container === container || symbol.container?.endsWith(`.${container}`)));
+	// Declarations in tests and generated or vendored code lose to the real one.
+	const ranked = [...exact].sort((a, b) => noiseRank(displayPath(root, a.uri)) - noiseRank(displayPath(root, b.uri)));
+	if (ranked.length === 1 || (ranked.length > 1 && noiseRank(displayPath(root, ranked[0].uri)) < noiseRank(displayPath(root, ranked[1].uri)))) {
+		return { uri: ranked[0].uri, line: ranked[0].line };
+	}
+	if (ranked.length > 1) {
+		return `"${qualified}" is declared in ${ranked.length} places; pass path (and line) for the one you mean:\n${ranked.slice(0, 10).map(symbol => `${symbol.kind} ${symbol.container ? `${symbol.container}.` : ''}${symbol.name}  ${displayPath(root, symbol.uri)}:${symbol.line}`).join('\n')}`;
+	}
+	const indexed = nav && /^[\w$]+$/.test(name) ? declarationsOnly(await nav.definitions(root, name).catch(() => undefined)) : undefined;
+	if (indexed?.length === 1) {
+		return { uri: indexed[0].uri, line: indexed[0].line };
+	}
+	if (indexed?.length) {
+		return `"${qualified}" may be declared in ${indexed.length} places; pass path (and line) for the one you mean:\n${indexed.slice(0, 10).map(item => `${displayPath(root, item.uri)}:${item.line}${item.preview ? `  ${item.preview}` : ''}`).join('\n')}`;
+	}
+	return `No declaration of "${qualified}" found. Pass path and line, or search with grep.`;
+}
+
+/**
+ * The index's name-matched declarations without import specifiers: its extractor reads the
+ * `type StateReader,` line of a multi-line `import { ... }` as a type declaration, and
+ * workspace_symbols answered two imports and one interface for "StateReader".
+ */
+export function declarationsOnly(found: readonly ICodeLocation[] | undefined): ICodeLocation[] | undefined {
+	return found?.filter(location => !location.preview || !/^(?:import\b|type\s+[\w$]+(?:\s+as\s+[\w$]+)?,?$|[\w$]+\s+as\s+[\w$]+,?$)/.test(location.preview));
+}
+
+function noiseRank(path: string): number {
+	return /(^|\/)(node_modules|dist|build|out|vendor|generated)\//.test(path) || /\.d\.ts$/.test(path) ? 2 : /(^|\/)(tests?|__tests__|e2e)\/|\.(test|spec)\.\w+$/.test(path) ? 1 : 0;
+}
+
 export async function runCodeNav(host: ICodeIntelHost, root: URI | undefined, args: unknown, nav: ICodeNavIndex | undefined): Promise<IToolResult> {
 	const op = (pickString(args, 'op', 'operation') ?? '') as CodeNavOp;
 	if (!(CODE_NAV_OPS as readonly string[]).includes(op)) {
@@ -355,7 +461,18 @@ export async function runCodeNav(host: ICodeIntelHost, root: URI | undefined, ar
 	if (op === 'workspace_symbols') {
 		return workspaceSymbols(host, root, pickString(args, 'query', 'symbol', 'name'), nav);
 	}
-	const uri = resolveWorkspaceUri(root, pickString(args, 'path', 'file'));
+	const path = pickString(args, 'path', 'file');
+	let uri = resolveWorkspaceUri(root, path);
+	if (!uri && !path && POSITIONAL.has(op)) {
+		// A symbol without a path: its declaration, from the language server's workspace symbols or the index.
+		const qualified = pickString(args, 'symbol', 'name');
+		const found = qualified ? await locateDeclaration(host, root, qualified, nav) : 'This op needs symbol (or path, line and column).';
+		if (typeof found === 'string') {
+			return fail('code_nav', found);
+		}
+		uri = found.uri;
+		args = { ...asRecord(args), line: found.line };
+	}
 	if (!uri) {
 		return fail('code_nav', 'path is missing or outside the workspace.');
 	}
@@ -371,14 +488,14 @@ export async function runCodeNav(host: ICodeIntelHost, root: URI | undefined, ar
 		if (typeof position === 'string') {
 			return fail('code_nav', position);
 		}
-		const answer = await positional(host, root, op, position, nav, lsp);
+		const answer = await positional(host, root, op, position, nav, lsp, pickNumber(args, 'depth', 'levels'));
 		return position.movedFrom === undefined ? answer : { ...answer, text: `"${position.name}" is on line ${position.line}, not ${position.movedFrom}.\n${answer.text}` };
 	} catch (err) {
 		return fail('code_nav', errorText(err));
 	}
 }
 
-async function positional(host: ICodeIntelHost, root: URI, op: CodeNavOp, position: IResolvedPosition, nav: ICodeNavIndex | undefined, lsp: boolean): Promise<IToolResult> {
+async function positional(host: ICodeIntelHost, root: URI, op: CodeNavOp, position: IResolvedPosition, nav: ICodeNavIndex | undefined, lsp: boolean, depth: number | undefined): Promise<IToolResult> {
 	const uri = position.uri;
 	switch (op) {
 		case 'definition':
@@ -389,15 +506,20 @@ async function positional(host: ICodeIntelHost, root: URI, op: CodeNavOp, positi
 			const ask = op === 'implementations' ? host.implementations : host.typeDefinitions;
 			const found = position.column && ask ? await ask.call(host, uri, position.line, position.column) : [];
 			if (found.length) {
-				return locations(root, op === 'implementations' ? 'implementation' : 'type definition', found, '');
+				const unseen = op === 'implementations' ? await unseenImplementations(host, root, position, found, nav) : '';
+				return text(`${locations(root, op === 'implementations' ? 'implementation' : 'type definition', found, '').text}${unseen}`);
+			}
+			if (op !== 'implementations') {
+				return text(`No type definition reported for ${where(root, position)}${noLspNote(lsp)}.`);
 			}
 			// The language server only looks in the projects it loaded: an interface in a shared
 			// package had "no implementations" while nine classes in the app implement it.
-			const named = op === 'implementations' && position.name && nav?.implementations ? await nav.implementations(root, position.name) : undefined;
-			if (named?.length) {
-				return locations(root, 'implementation', named, FROM_INDEX);
+			const named = position.name && nav?.implementations ? await nav.implementations(root, position.name) ?? [] : [];
+			const unseen = await unseenImplementations(host, root, position, named, nav);
+			if (named.length) {
+				return text(`${locations(root, 'implementation', named, FROM_INDEX).text}${unseen}`);
 			}
-			return text(`No ${op === 'implementations' ? 'implementations' : 'type definition'} reported for ${where(root, position)}${noLspNote(lsp)}.`);
+			return text(`No implementations reported for ${where(root, position)}${noLspNote(lsp)}.${unseen}`);
 		}
 		case 'hover': {
 			const hover = position.column && host.hover ? await host.hover(uri, position.line, position.column) : undefined;
@@ -407,7 +529,7 @@ async function positional(host: ICodeIntelHost, root: URI, op: CodeNavOp, positi
 			return inspect(host, root, position, nav, lsp);
 		case 'callers':
 		case 'callees':
-			return callHierarchy(host, root, position, op, lsp);
+			return callHierarchy(host, root, position, op, lsp, depth);
 		case 'supertypes':
 		case 'subtypes':
 			return typeHierarchy(host, root, position, op, lsp);
@@ -419,8 +541,10 @@ async function positional(host: ICodeIntelHost, root: URI, op: CodeNavOp, positi
 async function outline(host: ICodeIntelHost, root: URI, uri: URI, lsp: boolean, nav: ICodeNavIndex | undefined): Promise<IToolResult> {
 	const symbols = lsp ? await host.symbols(uri) : [];
 	if (symbols.length) {
-		const lines = symbols.slice(0, 300).map(symbol => `${'  '.repeat(symbol.depth)}${symbol.kind} ${symbol.name} [${symbol.line}-${symbol.endLine}]${symbol.detail ? ` ${symbol.detail}` : ''}`);
-		return text(`${displayPath(root, uri)} outline:\n${lines.join('\n')}`);
+		const shown = outlineSymbols(symbols);
+		const lines = shown.slice(0, 300).map(symbol => `${'  '.repeat(symbol.depth)}${symbol.kind} ${symbol.name} [${symbol.line}-${symbol.endLine}]${symbol.detail ? ` ${symbol.detail}` : ''}`);
+		const hidden = symbols.length - shown.length;
+		return text(`${displayPath(root, uri)} outline${hidden ? ` (${hidden} locals and callbacks left out)` : ''}:\n${lines.join('\n')}`);
 	}
 	const indexed = await nav?.outline(root, uri);
 	if (indexed?.length) {
@@ -431,6 +555,74 @@ async function outline(host: ICodeIntelHost, root: URI, uri: URI, lsp: boolean, 
 }
 
 const FROM_INDEX = ' (from the code index: matched by name, not type-checked)';
+
+const VALUE_KINDS: ReadonlySet<string> = new Set(['variable', 'property', 'constant', 'field', 'key', 'string', 'number', 'boolean', 'array', 'object', 'null', 'enum member', 'type parameter']);
+
+/**
+ * The outline an agent reads: declarations, members and the members of an object (an oRPC
+ * router's procedures), without the locals and anonymous callbacks inside function bodies. A
+ * 2,000-line router's full outline was 9-10k characters, mostly `variable tenantContext` and
+ * `function execute() callback`; agents read four of them to map lines to procedures.
+ */
+export function outlineSymbols(symbols: readonly ICodeSymbol[]): ICodeSymbol[] {
+	const out: ICodeSymbol[] = [];
+	// Depth of the innermost function body we are in (its locals are skipped), by line range.
+	const bodies: ICodeSymbol[] = [];
+	for (const symbol of symbols) {
+		while (bodies.length && (bodies[bodies.length - 1].depth >= symbol.depth || bodies[bodies.length - 1].endLine < symbol.line)) {
+			bodies.pop();
+		}
+		const isCallback = / callback$/.test(symbol.name);
+		const inBody = bodies.length > 0;
+		if (!isCallback && !(inBody && VALUE_KINDS.has(symbol.kind))) {
+			out.push(symbol);
+		}
+		if (isCallback || symbol.kind === 'function' || symbol.kind === 'method' || symbol.kind === 'constructor') {
+			bodies.push(symbol);
+		}
+	}
+	return out;
+}
+
+/**
+ * The named declaration a line sits in: `quickServiceRouter.quickCheckout` for a call inside the
+ * handler callback of a router property. Callbacks and other anonymous functions are skipped.
+ */
+export function enclosingName(symbols: readonly ICodeSymbol[], line: number): string | undefined {
+	const chain = symbols.filter(symbol => symbol.line <= line && symbol.endLine >= line).sort((a, b) => a.depth - b.depth);
+	const names: string[] = [];
+	let inBody = false;
+	for (const symbol of chain) {
+		const callback = / callback$/.test(symbol.name);
+		// Inside a function body, variables and properties are locals (`const invoicing = ...`), not names of the code.
+		if (!callback && !/^<.*>$/.test(symbol.name) && !(inBody && VALUE_KINDS.has(symbol.kind))) {
+			names.push(symbol.name);
+		}
+		inBody ||= callback || symbol.kind === 'function' || symbol.kind === 'method' || symbol.kind === 'constructor';
+	}
+	return names.length ? names.join('.') : undefined;
+}
+
+/**
+ * TypeScript names the caller of a call made inside an arrow function in an object literal (every
+ * oRPC procedure, every route table) as the whole module. The outline turns those call sites into
+ * the procedures they are in, so the agent does not read the router's outline to map lines.
+ */
+async function namedSites(host: ICodeIntelHost, edge: ICallEdge): Promise<string | undefined> {
+	if (edge.kind !== 'module' && edge.kind !== 'file' && !/ callback$/.test(edge.name)) {
+		return undefined;
+	}
+	const symbols = await host.symbols(edge.uri).catch(() => []);
+	if (!symbols.length) {
+		return undefined;
+	}
+	const byName = new Map<string, number[]>();
+	for (const site of edge.sites) {
+		const name = enclosingName(symbols, site) ?? `line ${site}`;
+		byName.set(name, [...(byName.get(name) ?? []), site]);
+	}
+	return [...byName].map(([name, sites]) => `${name} (${sites.join(', ')})`).join(', ');
+}
 
 async function navigate(host: ICodeIntelHost, root: URI, op: 'definition' | 'references', position: IResolvedPosition, nav: ICodeNavIndex | undefined, lsp: boolean): Promise<IToolResult> {
 	if (position.column) {
@@ -485,6 +677,40 @@ function groupByFile(root: URI, found: readonly ICodeLocation[]): [string, ICode
 		byFile.set(key, [...(byFile.get(key) ?? []), location]);
 	}
 	return [...byFile];
+}
+
+/** Places that type something as the interface by name: a return type `): StateReader`, `implements`, `satisfies`, `const x: StateReader`. */
+const TYPED_AS = (name: string) => {
+	const word = name.replace(/[$]/g, '\\$&');
+	return new RegExp(`\\bimplements\\s+(?:[\\w$.]+\\s*,\\s*)*${word}\\b|\\)\\s*:\\s*(?:Promise<)?${word}\\b|\\bsatisfies\\s+${word}\\b|\\b(?:const|let|var)\\s+[\\w$]+\\s*:\\s*${word}\\b`);
+};
+
+/**
+ * A language server finds implementations only in the projects it has loaded: in a monorepo it
+ * reported the class next to an interface and missed the two object literals typed as it in two
+ * other packages, and the agent answered "1 implementation" (hotel benchmark, Q8). The index
+ * lists, by name, the other files that type something as the interface, so the gap is visible.
+ */
+async function unseenImplementations(host: ICodeIntelHost, root: URI, position: IResolvedPosition, found: readonly ICodeLocation[], nav: ICodeNavIndex | undefined): Promise<string> {
+	if (!nav) {
+		return '';
+	}
+	// A member (`query` of `StateReader`) is implemented where its interface is.
+	const outline = await host.symbols(position.uri).catch(() => []);
+	const owner = outline.filter(symbol => symbol.line <= position.line && symbol.endLine >= position.line && (symbol.kind === 'interface' || symbol.kind === 'class')).sort((a, b) => b.depth - a.depth)[0];
+	const name = owner?.name ?? position.name;
+	if (!name || !/^[\w$]+$/.test(name)) {
+		return '';
+	}
+	const files = new Set(found.map(location => location.uri.toString()));
+	files.add(position.uri.toString());
+	const typed = TYPED_AS(name);
+	const unseen = (await nav.references(root, name).catch(() => undefined) ?? []).filter(location => !files.has(location.uri.toString()) && location.preview && typed.test(location.preview) && !/^import\b/.test(location.preview));
+	if (!unseen.length) {
+		return '';
+	}
+	const lines = unseen.slice(0, 15).map(location => `${displayPath(root, location.uri)}:${location.line}  ${location.preview}`);
+	return `\n\nThe language server only searches the projects it has loaded. These ${unseen.length === 1 ? 'place types' : `${unseen.length} places type`} something as ${name} in files it did not report (matched by name, not type-checked):\n${lines.join('\n')}${unseen.length > 15 ? `\n[${unseen.length - 15} more]` : ''}`;
 }
 
 /**
@@ -563,14 +789,14 @@ async function workspaceSymbols(host: ICodeIntelHost, root: URI, query: string |
 		const lines = found.slice(0, MAX_SYMBOLS).map(symbol => `${symbol.kind} ${symbol.container ? `${symbol.container}.` : ''}${symbol.name}  ${displayPath(root, symbol.uri)}:${symbol.line}`);
 		return text(`${found.length} symbol${found.length === 1 ? '' : 's'} matching "${query}":\n${lines.join('\n')}`);
 	}
-	const indexed = nav && /^[\w$]+$/.test(query.trim()) ? await nav.definitions(root, query.trim()) : undefined;
+	const indexed = nav && /^[\w$]+$/.test(query.trim()) ? declarationsOnly(await nav.definitions(root, query.trim())) : undefined;
 	if (indexed?.length) {
 		return locations(root, 'definition', indexed, FROM_INDEX);
 	}
 	return text(`No symbols matching "${query}". Try grep or find_symbol with part of the name.`);
 }
 
-async function callHierarchy(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'callers' | 'callees', lsp: boolean): Promise<IToolResult> {
+async function callHierarchy(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'callers' | 'callees', lsp: boolean, depth: number | undefined): Promise<IToolResult> {
 	const edges = position.column && host.calls ? await host.calls(position.uri, position.line, position.column, op === 'callers' ? 'incoming' : 'outgoing') : undefined;
 	if (!edges) {
 		return text(`No call hierarchy for ${where(root, position)}${noLspNote(lsp)}. ${op === 'callers' ? 'Use op references' : 'Read the function body'} instead.`);
@@ -578,8 +804,73 @@ async function callHierarchy(host: ICodeIntelHost, root: URI, position: IResolve
 	if (!edges.length) {
 		return text(op === 'callers' ? `Nothing calls ${where(root, position)}.` : `${where(root, position)} calls nothing the language server can resolve.`);
 	}
-	const lines = edges.slice(0, MAX_LOCATIONS).map(edge => `${edge.kind} ${edge.container ? `${edge.container}.` : ''}${edge.name}  ${displayPath(root, edge.uri)}:${edge.line}${edge.sites.length ? `  (${op === 'callers' ? 'calls at' : 'called at'} line${edge.sites.length === 1 ? '' : 's'} ${edge.sites.slice(0, 6).join(', ')})` : ''}`);
+	const levels = Math.max(1, Math.min(MAX_CALL_DEPTH, Math.floor(depth ?? 1)));
+	if (levels > 1) {
+		return callTree(host, root, position, op, edges, levels);
+	}
+	const named = op === 'callers' ? await Promise.all(edges.slice(0, MAX_LOCATIONS).map(edge => namedSites(host, edge))) : [];
+	const lines = edges.slice(0, MAX_LOCATIONS).map((edge, index) => named[index]
+		? `${displayPath(root, edge.uri)}: calls in ${named[index]}`
+		: `${edge.kind} ${edge.container ? `${edge.container}.` : ''}${edge.name}  ${displayPath(root, edge.uri)}:${edge.line}${edge.sites.length ? `  (${op === 'callers' ? 'calls at' : 'called at'} line${edge.sites.length === 1 ? '' : 's'} ${edge.sites.slice(0, 6).join(', ')})` : ''}`);
 	return text(`${edges.length} ${op === 'callers' ? 'caller' : 'callee'}${edges.length === 1 ? '' : 's'} of ${position.name ?? where(root, position)}:\n${lines.join('\n')}${edges.length > MAX_LOCATIONS ? `\n[${edges.length - MAX_LOCATIONS} more]` : ''}`);
+}
+
+/**
+ * Callers of callers (or callees of callees) as an indented tree, so "which entry points reach X"
+ * is one call instead of one per level. Each function is expanded once; the walk stops at the
+ * depth, the node budget or the deadline, and says so.
+ */
+async function callTree(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'callers' | 'callees', first: readonly ICallEdge[], levels: number): Promise<IToolResult> {
+	const direction = op === 'callers' ? 'incoming' : 'outgoing';
+	const deadline = Date.now() + CALL_TREE_DEADLINE_MS;
+	const seen = new Set<string>([`${position.uri.toString()}:${position.line}`]);
+	const lines: string[] = [];
+	const tops: string[] = [];
+	let nodes = 0;
+	let cut = false;
+	const label = (edge: ICallEdge) => `${edge.kind} ${edge.container ? `${edge.container}.` : ''}${edge.name}  ${displayPath(root, edge.uri)}:${edge.line}${edge.sites.length ? ` (${op === 'callers' ? 'calls at' : 'called at'} ${edge.sites.slice(0, 4).join(', ')})` : ''}`;
+	const walk = async (edges: readonly ICallEdge[], level: number): Promise<void> => {
+		for (const edge of edges) {
+			if (nodes >= MAX_CALL_TREE_NODES || Date.now() > deadline) {
+				cut = true;
+				return;
+			}
+			nodes++;
+			const key = `${edge.uri.toString()}:${edge.line}`;
+			const indent = '  '.repeat(level - 1);
+			// A module "caller" is the code at the top of a file: calls from object members (route
+			// handlers), which nothing calls by name. Each one names its own sites, so it is never "repeated".
+			const named = op === 'callers' ? await namedSites(host, edge) : undefined;
+			if (named) {
+				lines.push(`${indent}${displayPath(root, edge.uri)}: calls in ${named}`);
+				continue;
+			}
+			if (seen.has(key)) {
+				lines.push(`${indent}${label(edge)}  [repeated above]`);
+				continue;
+			}
+			seen.add(key);
+			lines.push(`${indent}${label(edge)}`);
+			if (level >= levels) {
+				continue;
+			}
+			const next = await host.calls!(edge.uri, edge.line, edge.column, direction).catch(() => undefined);
+			if (next && !next.length && op === 'callers') {
+				tops.push(`${edge.container ? `${edge.container}.` : ''}${edge.name} (${displayPath(root, edge.uri)}:${edge.line})`);
+				lines[lines.length - 1] += '  [no callers]';
+			} else if (next?.length) {
+				await walk(next, level + 1);
+			}
+		}
+	};
+	await walk(first, 1);
+	const head = `${op === 'callers' ? 'Callers' : 'Callees'} of ${position.name ?? where(root, position)} (${where(root, position)}), ${levels} levels, ${nodes} functions:`;
+	const notes = [
+		...(tops.length ? [`Nothing calls these (entry points such as route handlers, exports used by name, or tests): ${tops.join(', ')}.`] : []),
+		...(cut ? [`Stopped early (${nodes >= MAX_CALL_TREE_NODES ? `${MAX_CALL_TREE_NODES} functions` : 'time limit'}); ask again from a deeper function for the rest.`] : []),
+		'Calls through dynamic dispatch, callbacks passed as values and string-keyed routes do not show; check those with references.',
+	];
+	return text(`${head}\n${lines.join('\n')}\n${notes.join('\n')}`);
 }
 
 async function typeHierarchy(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'supertypes' | 'subtypes', lsp: boolean): Promise<IToolResult> {
@@ -658,6 +949,12 @@ async function applyChanges(root: URI, title: string, changes: readonly ITextFil
 	if (!real.length) {
 		return text(unchanged ?? 'The language server returned no changes.', 'code_action');
 	}
+	// All or nothing inside the project: a rename reached through a symlinked package (node_modules
+	// linked to another checkout) would edit that checkout, and a sandboxed chat may write only here.
+	const outside = real.filter(change => !insideRoot(change.uri, root));
+	if (outside.length) {
+		return fail('code_action', `${title} was not applied: it would also change ${outside.length} file${outside.length === 1 ? '' : 's'} outside this project (${outside.slice(0, 5).map(change => change.uri.fsPath).join(', ')}${outside.length > 5 ? ', ...' : ''}). Nothing was changed. Rename the declaration in this project only, or edit the files directly.`);
+	}
 	const parts: string[] = [];
 	let added = 0;
 	let removed = 0;
@@ -668,6 +965,12 @@ async function applyChanges(root: URI, title: string, changes: readonly ITextFil
 		parts.push(`${displayPath(root, change.uri)} +${hunk.added} -${hunk.removed}${real.length <= 4 ? `\n${hunk.text}` : ''}`);
 	}
 	return { callId: '', name: 'code_action', kind: 'edit', text: `${title}: ${real.length} file${real.length === 1 ? '' : 's'}, +${added} -${removed} lines.\n${parts.join('\n')}` };
+}
+
+/** Inside `root`, also when one of them is named through macOS's `/tmp` or `/var` link (language servers report real paths). */
+function insideRoot(uri: URI, root: URI): boolean {
+	const alias = (path: string) => path.startsWith('/private/') ? path.slice('/private'.length) : /^\/(?:tmp|var|etc)\//.test(path) ? `/private${path}` : path;
+	return isEqualOrParent(uri, root) || isEqualOrParent(uri.with({ path: alias(uri.path) }), root);
 }
 
 function wholeFile(range: ICodeRange | undefined): ICodeRange {

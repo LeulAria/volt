@@ -8,7 +8,7 @@ import { modePolicy, VoltMode } from '../modes.js';
 import { DOCKER_ENSURE_TOOL_NAME, TERMINAL_OUTPUT_TOOL_NAME, TERMINAL_START_TOOL_NAME, TERMINAL_STOP_TOOL_NAME, TERMINAL_WAIT_TOOL_NAME } from '../terminalTools.js';
 import { WATCH_JOB_TOOL_NAME } from '../jobs/jobWatch.js';
 import { IRunPlan } from '../runPlan.js';
-import { IIntent } from './intent.js';
+import { IdeWork, IIntent } from './intent.js';
 import { laneDefinition } from './lanes.js';
 import { framingForShape, IRequestShape, needsResearch } from './requestShape.js';
 
@@ -56,10 +56,7 @@ export interface IContextPackInput {
 	readonly commitReview?: boolean;
 	/** The agent gets the editor's language servers, tests, debugger and tasks (code_nav, tests, debug...) through the volt MCP server. */
 	readonly ideTools?: boolean;
-	/**
-	 * The chat runs in Volt's sandbox: the host refuses tests, debug, tasks and ide there (they run
-	 * processes outside it), so the guide names only the language-server tools.
-	 */
+	/** The chat runs in Volt's sandbox: the guide says what runs inside it and what asks the user first. */
 	readonly sandboxed?: boolean;
 }
 
@@ -253,6 +250,11 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.intent.lane === 'chat' && input.intent.referencesWorkspace && (input.codeIndexed || input.ideTools)) {
 		parts.push(`[Volt] ${CODE_QUESTIONS}`);
 	}
+	if (input.ideTools && modePolicy(input.mode).allowTerminal) {
+		for (const work of input.intent.ideWork ?? []) {
+			parts.push(`[Volt] ${IDE_WORK_HINTS[work]}`);
+		}
+	}
 	for (const gallery of galleryHints(input)) {
 		parts.push(`[Volt] ${gallery}`);
 	}
@@ -323,7 +325,32 @@ export const WATCH_LONG_JOBS = `When you end your turn while a job the user wait
 /** Committing and naming the branch go through the user: Volt's commit review, then a question for the branch name. */
 export const COMMIT_REVIEW = 'To commit, group the changes into commits with Conventional Commits messages (type(scope): summary, e.g. feat(cart): apply discount at checkout), one commit when they are one change or belong together and several only where they are separate changes, and make them with git commit. Call propose_commits from the volt MCP server instead only when the user asks to review the commits first (draft commits, /draft-commit, "split them for me to review"); a plain "commit", "commit and push" or "commit and open a PR" is not that. A worktree starts on a placeholder branch (volt/ and 8 hex characters). Before pushing it or opening a pull request from it, ask the user what to call it with ask_question (one question, 4 names you suggest as type/short-kebab-summary, e.g. feat/cart-discounts or fix/login-redirect; they can type their own), then call rename_branch with the answer; never rename it with git yourself. Push with git as usual afterwards.';
 
-export const IDE_TOOLS_GUIDE = 'The volt MCP server gives you the editor itself: code_nav (op inspect: a symbol\'s type, definition with body, references and implementations in one call; callers/callees; supertypes/subtypes; workspace_symbols) answered by the language servers on the user\'s live buffers, diagnostics (type/lint errors in a second after an edit), code_action (rename, organize imports, quick fixes across files), tests (run one test by file:line; structured failures; the user sees the run in the Test Explorer) and debug (breakpoints, step, variables, evaluate, watch: each step returns the new state); ide reaches the rest of the editor by capability (editor highlights, git staging/conflicts/blame, notebooks, docker, k8s, CI logs, HTTP requests, the Profiler, analyzers, coverage; op help lists arguments). Prefer them to grep-and-read for symbol questions and to raw test commands. For slowness or memory, measure first (ide profile cpu, heap or sample), fix, profile again and compare; in the Profiler beside the chat, focus and annotate to show the user what you found, and use profile show for any data instead of drawing an HTML page.';
+/**
+ * Claude Code defers MCP tools behind its tool search: Haiku answered every relationship question
+ * of the hotel benchmark with Bash grep and never loaded code_nav when this named it only as "the
+ * volt MCP server's code_nav". code_nav, tests, debug and ide are now listed always-loaded; the
+ * exact names and the question each one answers are what get them used
+ * (docs/reports/2026-11-12-orch-devenv/02-code-intelligence.md, round2/12-ide-and-code-intel.md).
+ */
+export const IDE_TOOLS_GUIDE = 'The volt MCP server gives you the editor itself (if your client lists its tools as deferred, load them by name first, e.g. ToolSearch "select:mcp__volt__code_nav"). How code relates is code_nav, type-checked, before grep: which routes, procedures or entry points reach X, directly or through other functions, is one call (op callers, symbol X, depth 3: the chain, with the procedures named); every use of one type\'s method or field without look-alikes (op references); what implements an interface (op implementations); a symbol\'s type, body and uses (op inspect). Pass symbol (and path) and it finds the line. Grep stays right for strings, SQL, config and comments. diagnostics gives type/lint errors right after an edit; code_action op rename renames a symbol in every file. tests runs tests (one by file:line) and returns structured failures; debug sets breakpoints, steps and reads variables; ide reaches the rest by capability: http (send requests from .http files, with environments and chaining), db (SQLite/Postgres tables, schema, read-only queries), docker (ps, logs, inspect), profile (cpu: the hottest functions), notebook, git, coverage, analyze (op help lists arguments). Prefer these to raw shell commands for the same job: the user sees each run in the editor.';
+
+/** IDE_TOOLS_GUIDE for a sandboxed chat (Supervised, the default): what runs inside the sandbox and what asks first. */
+export const IDE_TOOLS_GUIDE_SANDBOXED = `${IDE_TOOLS_GUIDE} This chat runs in Volt's sandbox: programs ide runs (profiler, sqlite3, git, analyzers) run inside it with your access; a test run, debug session, task or notebook kernel runs in the editor, outside it, so the first one in this chat asks the user. Docker's socket is outside the sandbox, so docker answers only after the user switches the chat to Full access.`;
+
+/**
+ * One line per IDE tool that fits the request (`IIntent.ideWork`), in every lane: questions like
+ * "why does the container keep restarting?" go to the chat lane, which gets no IDE guide.
+ */
+export const IDE_WORK_HINTS: Readonly<Record<IdeWork, string>> = {
+	tests: 'For the tests: the volt tests tool runs them (op run; targets a file, file:line or name) and returns each failure with expected/actual and the frames; the run shows in the Test Explorer.',
+	debug: 'For runtime values: the volt debug tool (op start with program or command; breakpoints first) pauses and returns the stack and locals; step and evaluate from there.',
+	profile: 'For slowness: measure before changing code with the volt ide tool, capability profile, op cpu (command): it returns the hottest functions with self and total time.',
+	http: 'For HTTP requests: the volt ide tool, capability http (op list, then op send with name and env) sends the requests of .http files with their environment and chained values ({{login.response.body.$.token}}).',
+	docker: 'For containers: the volt ide tool, capability docker (ps, logs, inspect: state, restart count, exit code, env with secrets masked) answers in a call each.',
+	db: 'For the database: the volt ide tool, capability db (tables, schema, query with path to a SQLite file or url for Postgres) runs read-only SQL and returns the rows as a table.',
+	notebook: 'For notebooks: the volt ide tool, capability notebook (cells, run, outputs) reads and runs them in their kernel, as the user sees them.',
+	rename: 'To rename a symbol: code_action op rename (path, line, symbol, new_name) has the language server change every reference, imports included.',
+};
 
 /**
  * A question about the code (the chat lane, which gets neither INDEXED_SEARCH nor the IDE guide).
@@ -331,12 +358,6 @@ export const IDE_TOOLS_GUIDE = 'The volt MCP server gives you the editor itself:
  * answered "who calls / implements / writes X" with Grep-then-Read loops.
  */
 export const CODE_QUESTIONS = 'Answer questions about this code with the volt MCP server\'s code intelligence instead of reading file after file: find_symbol says where a name is declared, instant_grep is an indexed rg (output_mode files or count keeps the answer short), and code_nav answers who uses, calls or implements a symbol in one call (op references, callers, callees, implementations or inspect, with path, line and symbol). Read only the lines you need to confirm or quote.';
-
-/**
- * IDE_TOOLS_GUIDE for a sandboxed chat (Supervised, the default). Told about tests, debug and ide,
- * agents called them and got "not cleared to run from a sandboxed chat" back.
- */
-export const IDE_TOOLS_GUIDE_SANDBOXED = 'The volt MCP server gives you the editor\'s language servers on the user\'s live buffers: code_nav (op inspect: a symbol\'s type, definition with body, references and implementations in one call; callers/callees; supertypes/subtypes; workspace_symbols), diagnostics (type/lint errors in a second after an edit) and code_action (rename, organize imports, quick fixes across files). Prefer them to grep-and-read for symbol questions. This chat runs in Volt\'s sandbox, so run tests, debuggers and other processes with your own shell.';
 
 export const INDEXED_SEARCH = 'This project is indexed: search code with instant_grep (regex or literal, the same results as rg), find symbol declarations with find_symbol, and find files by a fuzzy name with find_files, all from the volt MCP server. They answer in milliseconds where Grep, rg and find re-read every file.';
 

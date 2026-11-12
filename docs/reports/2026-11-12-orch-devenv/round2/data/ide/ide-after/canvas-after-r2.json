@@ -1,0 +1,36 @@
+{
+ "id": "canvas",
+ "tag": "after",
+ "run": 2,
+ "access": "supervised",
+ "load": "86.03 84.08 89.99",
+ "wallMs": 26997,
+ "outcome": "done",
+ "approvals": 0,
+ "picked": true,
+ "voltErrors": 0,
+ "host": [
+  "canvas_render"
+ ],
+ "shell": [
+  "ToolSearch | ToolSearch"
+ ],
+ "cost": 0.0070238900000000005,
+ "output": 2495,
+ "cacheRead": 111099,
+ "toolUses": {
+  "ToolSearch": 1,
+  "mcp__volt__canvas_render": 1
+ },
+ "changed": "",
+ "chat": "agent-d705657c-05b9-4886-82fc-227963cc494e.jsonl",
+ "answer": "I put the two screens on a canvas, Login and Profile, linked as a flow: Sign in opens Profile, and Sign out returns to Login. The login frame shows the wrong-password error state, so you can see both states.",
+ "hostCalls": [
+  {
+   "name": "canvas_render",
+   "args": {
+    "title": "Sign-in and profile"
+   }
+  }
+ ]
+}

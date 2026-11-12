@@ -68,3 +68,57 @@ suite('ServerClientTools read rule relay', () => {
 		assert.deepStrictEqual(await tools.readRefusals('guess', ['/repo/a.ts']), ['the call that asked has ended']);
 	});
 });
+
+/**
+ * Found in the 2026-11-12 IDE round 2: under load the window answered "does instant_grep need
+ * approval?" after the server's 15 s wait, so the chat asked the user "instant_grep: acts in a Volt
+ * window". A window marks the tools whose provider never asks; the server does not ask it about them.
+ */
+suite('ServerClientTools approval check', () => {
+
+	const store = ensureNoDisposablesAreLeakedInTestSuite();
+
+	function setup() {
+		const changed = store.add(new Emitter<void>());
+		let provider: IVoltHostToolProvider | undefined;
+		const hostTools = {
+			onDidChangeTools: changed.event,
+			listTools: () => [],
+			registerToolProvider: (p: IVoltHostToolProvider) => {
+				provider = p;
+				return toDisposable(() => provider = undefined);
+			},
+		} as unknown as IVoltHostToolService;
+		const asked: string[] = [];
+		const protocol = {
+			callConnection: async (_connection: number, method: string, params: unknown[]) => {
+				if (method === 'hostTools.needsApproval') {
+					asked.push(String(params[0]));
+					return 'moves the mouse';
+				}
+				return undefined;
+			},
+		} as unknown as AgentServerProtocol;
+		const tools = store.add(new ServerClientTools(protocol, hostTools));
+		return { tools, asked, needsApproval: (name: string) => provider!.needsApproval!(name, {}, { sessionId: 's' }) };
+	}
+
+	test('a tool every window marks neverAsks runs without asking the window', async () => {
+		const { tools, asked, needsApproval } = setup();
+		tools.set(1, [
+			{ name: 'instant_grep', title: 'Searched code', description: '', inputSchema: {}, neverAsks: true },
+			{ name: 'desktop_act', title: 'Desktop', description: '', inputSchema: {} },
+		]);
+		assert.strictEqual(await needsApproval('instant_grep'), undefined);
+		assert.strictEqual(await needsApproval('desktop_act'), 'moves the mouse');
+		assert.deepStrictEqual(asked, ['desktop_act']);
+	});
+
+	test('one window that may ask (an older one sends no mark) keeps the check', async () => {
+		const { tools, asked, needsApproval } = setup();
+		tools.set(1, [{ name: 'instant_grep', title: 'Searched code', description: '', inputSchema: {}, neverAsks: true }]);
+		tools.set(2, [{ name: 'instant_grep', title: 'Searched code', description: '', inputSchema: {} }]);
+		assert.strictEqual(await needsApproval('instant_grep'), 'moves the mouse');
+		assert.deepStrictEqual(asked, ['instant_grep']);
+	});
+});

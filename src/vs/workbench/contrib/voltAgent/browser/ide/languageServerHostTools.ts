@@ -19,7 +19,7 @@ import { CodeIntelHost } from '../../../../services/voltRuntime/browser/host/cod
 import { createCodeIndexNav } from '../../../../services/voltRuntime/browser/tools/codeIndexNav.js';
 import { CODE_ACTION_DESCRIPTION, CODE_ACTION_SCHEMA, CODE_NAV_DESCRIPTION, CODE_NAV_SCHEMA, createCodeTools, DIAGNOSTICS_DESCRIPTION, DIAGNOSTICS_SCHEMA } from '../../../../services/voltRuntime/browser/tools/codeTools.js';
 import { IFileToolHost, writeComputedEdit } from '../../../../services/voltRuntime/browser/tools/fileTools.js';
-import { codeIndexEnabled, lspAllowedFor, readCodeIndexOptions } from '../../../../services/voltRuntime/common/codeIntelligence.js';
+import { codeIndexEnabled, isVoltWorktreePath, lspAllowedFor, readCodeIndexOptions } from '../../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltHostFileChange, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /**
@@ -28,7 +28,8 @@ import { IVoltHostFileChange, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToo
  * Names: `LANGUAGE_SERVER_TOOL_NAMES`; what they may do for a sandboxed chat: hostToolSandbox.ts.
  */
 const LANGUAGE_SERVER_TOOLS: readonly IVoltHostToolInfo[] = [
-	{ name: 'code_nav', title: 'Navigated code', group: 'core', description: CODE_NAV_DESCRIPTION, inputSchema: CODE_NAV_SCHEMA },
+	// Always in the prompt: behind Claude Code's tool search it went unused (02-code-intelligence.md).
+	{ name: 'code_nav', title: 'Navigated code', group: 'core', description: CODE_NAV_DESCRIPTION, inputSchema: CODE_NAV_SCHEMA, alwaysLoad: true },
 	{ name: 'diagnostics', title: 'Read diagnostics', group: 'core', description: DIAGNOSTICS_DESCRIPTION, inputSchema: DIAGNOSTICS_SCHEMA },
 	{ name: 'code_action', title: 'Refactored code', group: 'core', description: CODE_ACTION_DESCRIPTION, inputSchema: CODE_ACTION_SCHEMA, approvalInReadOnlyModes: 'changes files' },
 ];
@@ -56,7 +57,7 @@ export class LanguageServerHostTools extends Disposable implements IWorkbenchCon
 	) {
 		super();
 		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeatures, fileService));
-		this.codeIntel.setLspPolicy(uri => lspAllowedFor(configurationService, !workspace.isInsideWorkspace(uri)));
+		this.codeIntel.setLspPolicy(uri => lspAllowedFor(configurationService, !workspace.isInsideWorkspace(uri) && isVoltWorktreePath(uri.fsPath)));
 		this._register(hostTools.registerToolProvider({
 			tools: LANGUAGE_SERVER_TOOLS,
 			invoke: (name, args, call) => this.invoke(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) })),

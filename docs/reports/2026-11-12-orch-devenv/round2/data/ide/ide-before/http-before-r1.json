@@ -1,0 +1,67 @@
+{
+ "id": "http",
+ "tag": "before",
+ "run": 1,
+ "access": "supervised",
+ "load": "53.27 37.44 32.55",
+ "wallMs": 46504,
+ "outcome": "done",
+ "approvals": 3,
+ "picked": false,
+ "voltErrors": 1,
+ "host": [
+  "find_files",
+  "instant_grep",
+  "find_files",
+  "code_nav.inspect ERROR"
+ ],
+ "shell": [
+  "Read File | Read requests.http",
+  "Read File | Read http-client.env.json",
+  "Terminal | curl -s -X POST http://127.0.0.1:9987/api/login -H 'Content-Type: application/json' -d '{\"username\":\"ada\",\"password\":\"lovelace\"}'; echo; echo \"---\"",
+  "Terminal | curl -s http://127.0.0.1:9987/api/profile -H 'Authorization: Bearer tok-ada-1794502583428'; echo"
+ ],
+ "cost": 0.005911460000000001,
+ "output": 1051,
+ "cacheRead": 199956,
+ "toolUses": {
+  "mcp__volt__find_files": 2,
+  "mcp__volt__instant_grep": 1,
+  "Read": 2,
+  "mcp__volt__code_nav": 1,
+  "Bash": 2
+ },
+ "changed": "",
+ "chat": "agent-13218e3d-6b20-41ae-a718-0eb1f845e5ae.jsonl",
+ "answer": "The local environment points at `http://127.0.0.1:9987` with user `ada`. I'll run the login and profile requests against it.\nThe profile returns name **Ada Lovelace** and email **ada@example.com**.\n\nI ran the `local` environment from `requests.http` (`http://127.0.0.1:9987`, user `ada`): login returned a token, and `GET /api/profile` with that bearer token returned `{\"username\":\"ada\",\"name\":\"Ada Lovelace\",\"email\":\"ada@example.com\"}`.",
+ "hostCalls": [
+  {
+   "name": "find_files",
+   "args": {
+    "query": "requests.http"
+   }
+  },
+  {
+   "name": "instant_grep",
+   "args": {
+    "pattern": "profile",
+    "output_mode": "content"
+   }
+  },
+  {
+   "name": "find_files",
+   "args": {
+    "query": "http-client.env"
+   }
+  },
+  {
+   "name": "code_nav",
+   "args": {
+    "op": "inspect",
+    "path": "server.mjs",
+    "symbol": "/api/login"
+   },
+   "error": "This op needs line (and column or symbol)."
+  }
+ ]
+}

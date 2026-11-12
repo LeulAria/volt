@@ -1,0 +1,55 @@
+{
+ "id": "scratch",
+ "tag": "before",
+ "run": 1,
+ "access": "supervised",
+ "load": "29.49 48.19 39.83",
+ "wallMs": 45021,
+ "outcome": "done",
+ "approvals": 2,
+ "picked": true,
+ "voltErrors": 1,
+ "host": [
+  "scratch_read ERROR",
+  "scratch_draw"
+ ],
+ "shell": [
+  "ToolSearch | ToolSearch"
+ ],
+ "cost": 0.00746417,
+ "output": 1654,
+ "cacheRead": 143457,
+ "toolUses": {
+  "ToolSearch": 1,
+  "mcp__volt__scratch_read": 1,
+  "mcp__volt__scratch_draw": 1
+ },
+ "changed": "",
+ "chat": "agent-dd98222b-fd52-4d01-9561-9ebd3e623d38.jsonl",
+ "answer": "I'll check the Scratch board first, then load the drawing tools.\nThe login, token and profile flow from `server.mjs` is now on your Scratch board. It covers the `/api/login` check, token issue, the `/api/profile` lookup, and the 401 and 404 branches, with three notes on token lifetime, password stripping, and plain-text passwords.",
+ "hostCalls": [
+  {
+   "name": "scratch_read",
+   "args": {},
+   "error": "The user has no Scratch board yet. They can open one from the Scratch button beside New Chat."
+  },
+  {
+   "name": "scratch_draw",
+   "args": {
+    "title": "Login, token and profile flow (server.mjs)",
+    "mermaid": "flowchart LR\n  C([Client]) -->|1. POST /api/login| L{username and password match?}\n  L -->|no| E1[401 bad credentials]\n  L -->|yes, issue token| T[(tokens map: token to username)]\n  T -->|2. 200 token and user| C\n  C -->|3. GET /api/profile with Bearer token| P{token in tokens map?}\n  P -->|no| E2[401 no token]\n  P -->|yes| U[Profile from users record]\n  U -->|4. 200 username, name, email| C\n  C -.->|any other route| N[404 not found]",
+    "notes": [
+     {
+      "text": "Tokens are `tok-<username>-<Date.now()>` and live only in an in-memory Map, so a restart logs everyone out."
+     },
+     {
+      "text": "The profile response spreads `password: undefined`, which JSON.stringify drops, so the password is not returned."
+     },
+     {
+      "text": "Passwords are plain text in the `users` object."
+     }
+    ]
+   }
+  }
+ ]
+}

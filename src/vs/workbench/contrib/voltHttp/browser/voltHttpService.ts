@@ -7,7 +7,7 @@ import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { encodeBase64, streamToBuffer, VSBuffer } from '../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable } from '../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../base/common/map.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { joinPath } from '../../../../base/common/resources.js';
@@ -16,6 +16,7 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { createDecorator, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IRequestService } from '../../../../platform/request/common/request.js';
+import { IVoltHttpTransport } from '../../../../platform/voltHttp/common/voltHttpTransport.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { QueryBuilder } from '../../../services/search/common/queryBuilder.js';
@@ -56,14 +57,18 @@ export interface IVoltHttpService {
 	readonly onDidChangeIndex: Event<void>;
 	readonly onDidChangeEnvironment: Event<void>;
 	readonly onDidSend: Event<IHttpExchange>;
-	/** Every .http / .rest file in the workspace with its requests. */
-	index(): Promise<readonly IHttpFileEntry[]>;
-	environments(): Promise<Readonly<Record<string, Readonly<Record<string, string>>>>>;
+	/**
+	 * Every .http / .rest file in the workspace with its requests. `project`: an agent chat's
+	 * project, searched too when it is outside the window's folders (the agent window usually has none).
+	 */
+	index(project?: URI): Promise<readonly IHttpFileEntry[]>;
+	/** The workspace's environments (http-client.env.json), and `project`'s when it is outside it. */
+	environments(project?: URI): Promise<Readonly<Record<string, Readonly<Record<string, string>>>>>;
 	readonly environment: string | undefined;
 	setEnvironment(name: string | undefined): void;
 	readonly history: readonly IHttpExchange[];
 	/** Fills in variables, sends, records the exchange (and the named response for chaining). */
-	send(request: IHttpRequestSpec, options?: { readonly source?: URI; readonly fileVariables?: Readonly<Record<string, string>>; readonly token?: CancellationToken; readonly timeoutMs?: number }): Promise<IHttpExchange>;
+	send(request: IHttpRequestSpec, options?: { readonly source?: URI; readonly project?: URI; readonly fileVariables?: Readonly<Record<string, string>>; readonly token?: CancellationToken; readonly timeoutMs?: number }): Promise<IHttpExchange>;
 	/** Saves a request into a .http file: replaces the one at `line`, or appends. */
 	save(uri: URI, request: IHttpRequestSpec, line?: number): Promise<number>;
 	/** The default file new requests go to. */
@@ -94,6 +99,8 @@ export class VoltHttpService extends Disposable implements IVoltHttpService {
 	private readonly reindex = this._register(new RunOnceScheduler(() => { this.files = undefined; this._onDidChangeIndex.fire(); }, 400));
 	private _history: IHttpExchange[];
 	private _environment: string | undefined;
+	/** The desktop's main-process sender (no CORS); without one, the window's request service sends. */
+	private readonly transport: IVoltHttpTransport | undefined;
 
 	constructor(
 		@IRequestService private readonly requestService: IRequestService,
@@ -105,6 +112,7 @@ export class VoltHttpService extends Disposable implements IVoltHttpService {
 	) {
 		super();
 		this.queryBuilder = instantiationService.createInstance(QueryBuilder);
+		this.transport = instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltHttpTransport));
 		this._environment = storage.get(ENV_KEY, StorageScope.WORKSPACE);
 		this._history = this.readHistory();
 		this._register(fileService.onDidFilesChange(e => {
@@ -133,16 +141,29 @@ export class VoltHttpService extends Disposable implements IVoltHttpService {
 		this._onDidChangeEnvironment.fire();
 	}
 
-	async index(): Promise<readonly IHttpFileEntry[]> {
+	async index(project?: URI): Promise<readonly IHttpFileEntry[]> {
 		if (!this.files) {
 			this.indexing ??= this.buildIndex().finally(() => this.indexing = undefined);
 			await this.indexing;
 		}
-		return [...(this.files ?? new ResourceMap()).values()].sort((a, b) => a.uri.path.localeCompare(b.uri.path));
+		const files = [...(this.files ?? new ResourceMap()).values()];
+		// A chat project outside the window's folders is read on each call (not watched, so not cached).
+		if (this.outsideWorkspace(project)) {
+			files.push(...(await this.scan([project])).values());
+		}
+		return files.sort((a, b) => a.uri.path.localeCompare(b.uri.path));
+	}
+
+	/** A file: project no folder of this window contains. */
+	private outsideWorkspace(project: URI | undefined): project is URI {
+		return !!project && project.scheme === Schemas.file && !this.workspace.getWorkspaceFolder(project);
 	}
 
 	private async buildIndex(): Promise<void> {
-		const folders = this.workspace.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.file);
+		this.files = await this.scan(this.workspace.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.file).map(folder => folder.uri));
+	}
+
+	private async scan(folders: URI[]): Promise<ResourceMap<IHttpFileEntry>> {
 		const next = new ResourceMap<IHttpFileEntry>();
 		if (folders.length) {
 			const query = this.queryBuilder.file(folders, { includePattern: ['**/*.http', '**/*.rest'], excludePattern: [{ pattern: '**/node_modules/**' }], maxResults: MAX_FILES });
@@ -155,14 +176,18 @@ export class VoltHttpService extends Disposable implements IVoltHttpService {
 				}
 			}));
 		}
-		this.files = next;
+		return next;
 	}
 
-	async environments(): Promise<Readonly<Record<string, Readonly<Record<string, string>>>>> {
+	async environments(project?: URI): Promise<Readonly<Record<string, Readonly<Record<string, string>>>>> {
 		const texts: (string | undefined)[] = [];
-		for (const folder of this.workspace.getWorkspace().folders) {
+		const folders = this.workspace.getWorkspace().folders.map(folder => folder.uri);
+		if (this.outsideWorkspace(project)) {
+			folders.push(project);
+		}
+		for (const folder of folders) {
 			for (const name of ['http-client.env.json', 'http-client.private.env.json', '.vscode/http-client.env.json']) {
-				texts.push(await this.fileService.readFile(joinPath(folder.uri, name)).then(file => file.value.toString(), () => undefined));
+				texts.push(await this.fileService.readFile(joinPath(folder, name)).then(file => file.value.toString(), () => undefined));
 			}
 		}
 		return parseHttpEnvironments(...texts);
@@ -173,9 +198,9 @@ export class VoltHttpService extends Disposable implements IVoltHttpService {
 		return folder ? joinPath(folder, 'requests.http') : undefined;
 	}
 
-	async send(request: IHttpRequestSpec, options?: { readonly source?: URI; readonly fileVariables?: Readonly<Record<string, string>>; readonly token?: CancellationToken; readonly timeoutMs?: number }): Promise<IHttpExchange> {
-		const envs = await this.environments();
-		const fileVariables = options?.fileVariables ?? (options?.source ? (await this.index()).find(entry => entry.uri.toString() === options.source!.toString())?.variables : undefined) ?? {};
+	async send(request: IHttpRequestSpec, options?: { readonly source?: URI; readonly project?: URI; readonly fileVariables?: Readonly<Record<string, string>>; readonly token?: CancellationToken; readonly timeoutMs?: number }): Promise<IHttpExchange> {
+		const envs = await this.environments(options?.project);
+		const fileVariables = options?.fileVariables ?? (options?.source ? (await this.index(options.project)).find(entry => entry.uri.toString() === options.source!.toString())?.variables : undefined) ?? {};
 		const scope: IHttpScope = { file: fileVariables, env: (this._environment && envs[this._environment]) || {}, responses: this.responses };
 		const url = resolveHttpVariables(request.url, scope);
 		const headers = request.headers.map(([key, value]) => [key, resolveHttpVariables(value, scope)] as const);
@@ -215,6 +240,22 @@ export class VoltHttpService extends Disposable implements IVoltHttpService {
 			headerRecord[key] = basic ? `Basic ${encodeBase64(VSBuffer.fromString(`${basic[1]}:${basic[2]}`))}` : value;
 		}
 		const started = performance.now();
+		if (this.transport) {
+			const sent = this.transport.send({ method, url, headers: headerRecord, ...(body !== undefined ? { body } : {}), timeoutMs, maxBodyChars: MAX_BODY_KEPT });
+			// The main process cannot be told to stop: a cancelled request is let go of here.
+			let listener: IDisposable | undefined;
+			const cancelled = new Promise<undefined>(resolve => listener = token.onCancellationRequested(() => resolve(undefined)));
+			const answer = token.isCancellationRequested ? undefined : await Promise.race([sent, cancelled]).finally(() => listener?.dispose());
+			if (!answer) {
+				return { error: 'Cancelled.' };
+			}
+			if (answer.error !== undefined) {
+				return { error: answer.error };
+			}
+			const durationMs = Math.round(performance.now() - started);
+			const text = answer.size > MAX_BODY_KEPT ? `${answer.body}\n… (${answer.size - MAX_BODY_KEPT} more bytes)` : answer.body;
+			return { response: { status: answer.status, statusText: STATUS_TEXT[answer.status] ?? '', headers: answer.headers, body: text, durationMs, size: answer.size } };
+		}
 		try {
 			const context = await this.requestService.request({ type: method, url, headers: headerRecord, ...(body !== undefined && method !== 'GET' && method !== 'HEAD' ? { data: body } : {}), timeout: timeoutMs, followRedirects: 5, disableCache: true }, token);
 			const buffer: VSBuffer = await streamToBuffer(context.stream);

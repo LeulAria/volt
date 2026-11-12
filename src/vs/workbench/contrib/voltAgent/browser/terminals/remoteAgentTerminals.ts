@@ -230,7 +230,7 @@ export class RemoteAgentTerminalsService extends Disposable implements IAgentTer
 			return true;
 		}));
 		// The server forgot this window's viewers when the socket dropped: attach again from where each tab is.
-		this._register(client.onDidResync(() => {
+		this._register(client.onDidConnect(() => {
 			for (const attached of this.processes.values()) {
 				if (attached.isStarted && !attached.isExited) {
 					void attached.attach();

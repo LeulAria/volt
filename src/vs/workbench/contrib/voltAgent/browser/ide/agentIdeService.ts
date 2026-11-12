@@ -54,6 +54,7 @@ import { IDebugArgs, IdeDebug } from './ideDebug.js';
 import { IdeTasks } from './ideTasks.js';
 import { IdeTests } from './ideTests.js';
 import { IdeCli, IIdeCapability } from './capabilities/capability.js';
+import { DatabaseCapability } from './capabilities/databaseCapability.js';
 import { EditorCapability } from './capabilities/editorCapability.js';
 import { GitCapability } from './capabilities/gitCapability.js';
 import { CiCapability, DockerCapability, KubernetesCapability } from './capabilities/infraCapabilities.js';
@@ -195,6 +196,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			new KubernetesCapability(),
 			new CiCapability(),
 			instantiationService.invokeFunction(accessor => new HttpCapability(accessor.get(IVoltHttpService))),
+			new DatabaseCapability(),
 			instantiationService.invokeFunction(accessor => {
 				const configuration = accessor.get(IConfigurationService);
 				return new ProfileCapability(fileService, accessor.get(IVoltProfilerService), () => configuration.getValue<boolean>(IDE_AUTO_OPEN_SETTING) !== false);

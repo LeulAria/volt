@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, CODE_QUESTIONS, IDE_TOOLS_GUIDE, IDE_TOOLS_GUIDE_SANDBOXED, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
+import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, CODE_QUESTIONS, IDE_TOOLS_GUIDE, IDE_TOOLS_GUIDE_SANDBOXED, IDE_WORK_HINTS, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 
 suite('Volt context pack', () => {
@@ -226,12 +226,28 @@ suite('Volt context pack', () => {
 		const plain = classifyIntent('how much is nissan kicks in UAE', 'agent');
 		assert.ok(!buildAcpLead({ mode: 'agent', intent: plain, codeIndexed: true, ideTools: true })?.includes(CODE_QUESTIONS));
 	});
-	test('a sandboxed chat is not told about the IDE tools its sandbox refuses', () => {
+	test('a sandboxed chat is told what of the IDE runs inside its sandbox and what asks first', () => {
 		const intent = classifyIntent('add a retry to the payment webhook handler and run its tests', 'agent');
 		const open = buildAcpLead({ mode: 'agent', intent, ideTools: true }) ?? '';
 		const sandboxed = buildAcpLead({ mode: 'agent', intent, ideTools: true, sandboxed: true }) ?? '';
-		assert.ok(open.includes(IDE_TOOLS_GUIDE));
-		assert.ok(sandboxed.includes(IDE_TOOLS_GUIDE_SANDBOXED) && !sandboxed.includes(IDE_TOOLS_GUIDE));
-		assert.ok(!IDE_TOOLS_GUIDE_SANDBOXED.includes('ide profile'));
+		assert.ok(open.includes(IDE_TOOLS_GUIDE) && !open.includes(IDE_TOOLS_GUIDE_SANDBOXED));
+		assert.ok(sandboxed.includes(IDE_TOOLS_GUIDE_SANDBOXED));
+		assert.ok(IDE_TOOLS_GUIDE_SANDBOXED.includes('asks the user') && IDE_TOOLS_GUIDE_SANDBOXED.includes('Full access'));
+	});
+	test('a request an IDE tool answers gets one line naming it, in any lane', () => {
+		const hints = (text: string, mode: 'agent' | 'ask' = 'agent') => {
+			const lead = buildAcpLead({ mode, intent: classifyIntent(text, mode), ideTools: true }) ?? '';
+			return (Object.keys(IDE_WORK_HINTS) as (keyof typeof IDE_WORK_HINTS)[]).filter(kind => lead.includes(IDE_WORK_HINTS[kind]));
+		};
+		assert.deepStrictEqual(hints('The flaky container from docker-compose.yml keeps restarting. Why?'), ['docker'], 'a chat-lane question');
+		assert.deepStrictEqual(hints('scripts/slow.mjs is slow. Find which function takes the time.'), ['profile']);
+		assert.deepStrictEqual(hints('The cart tests are failing. Find out which one and why.'), ['tests']);
+		assert.deepStrictEqual(hints('Log in to the local API with the requests in requests.http and show me the profile.'), ['http']);
+		assert.deepStrictEqual(hints('Which sku has the highest revenue in shop.db?'), ['db']);
+		assert.deepStrictEqual(hints('Rename applyDiscount to applyCoupon everywhere'), ['rename']);
+		assert.deepStrictEqual(hints('If the bookings column special_request_tags were renamed in the schema, which files change?'), [], 'a question renames nothing');
+		assert.deepStrictEqual(hints('Which oRPC procedures reach resolveBookingStayRent?'), []);
+		assert.deepStrictEqual(hints('why does the container keep restarting?', 'ask'), [], 'Ask mode runs nothing');
+		assert.ok(!(buildAcpLead({ mode: 'agent', intent: classifyIntent('scripts/slow.mjs is slow', 'agent') }) ?? '').includes(IDE_WORK_HINTS.profile), 'not without the volt MCP server');
 	});
 });

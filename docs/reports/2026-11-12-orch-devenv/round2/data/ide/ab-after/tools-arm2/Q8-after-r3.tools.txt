@@ -1,0 +1,9 @@
+mcp__volt__find_symbol | mcp__volt__find_symbol
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__code_nav | mcp__volt__code_nav
+Read File | Read packages/domain/src/commands/query.ts
+mcp__volt__code_nav | mcp__volt__code_nav
+Read File | Read apps/api/src/sync/commands.ts
+Read File | Read packages/sync/src/commands.ts
+Read File | Read packages/sync/src/commands.ts

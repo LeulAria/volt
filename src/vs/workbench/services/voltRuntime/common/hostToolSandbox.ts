@@ -112,10 +112,21 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	find_symbol: 'reads',
 	find_files: 'reads',
 	// The editor's language servers: code_nav and diagnostics read the files they name; code_action
-	// writes its file (rename writes every file that uses the symbol: refused, see `hostToolSandboxUse`).
+	// writes its file (rename: every file that uses the symbol, all inside the chat's folder).
 	code_nav: 'reads',
 	diagnostics: 'reads',
 	code_action: 'writes',
+
+	// The IDE: tests, the debugger, tasks and the `ide` gateway (agentIdeService.ts). Programs its
+	// capabilities run themselves (docker, git, profilers, analyzers) run in the chat's sandbox
+	// (`IdeCli`); test runs, debug sessions, tasks and notebook kernels run in the IDE's own
+	// services, so the provider asks the user once per chat before the first one (`needsApproval`).
+	// Files they name are judged as reads. These were refused outright, so a Supervised chat had
+	// none of them, while the provider's sandbox handling was never reached.
+	tests: 'sandboxed',
+	debug: 'sandboxed',
+	tasks: 'sandboxed',
+	ide: 'sandboxed',
 
 	// Pull requests: Volt's links and watches (gh reads). The stack tools run git checkout, rebase and push here.
 	link_pull_request: 'safe',
@@ -232,6 +243,21 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	machine_run: 'escapes',
 };
 
+/**
+ * A tool Volt serves that only reads (the chat's folder, as its sandbox allows) or changes Volt's
+ * own state: code search, the language servers' answers, the Scratch board, task status. Its
+ * agent-side permission prompt is answered by Volt (`isVoltHostToolPermission`), since the host
+ * tool gate judges each call. `name` may carry the MCP prefix (`mcp__volt__code_nav`).
+ */
+export function isVoltReadOnlyHostTool(name: string): boolean {
+	const id = name.trim().replace(/^(?:mcp__volt__|volt__|volt[-_:]\s*|volt\.)/i, '').toLowerCase();
+	if (!Object.prototype.hasOwnProperty.call(HOST_TOOL_SANDBOX_CLASSES, id)) {
+		return false;
+	}
+	const kind = HOST_TOOL_SANDBOX_CLASSES[id];
+	return kind === 'safe' || kind === 'reads';
+}
+
 /** What one call would do outside the sandbox. */
 export interface IHostToolSandboxUse {
 	readonly kind: HostToolSandboxClass;
@@ -287,6 +313,11 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 			return { kind, reads: strings([args.path]).length ? strings([args.path]) : ['.'] };
 		case 'workspace_status':
 			return { kind, reads: ['.'] };
+		case 'tests':
+		case 'debug':
+		case 'tasks':
+		case 'ide':
+			return { kind, reads: ['.', ...idePaths(name === 'ide' && isRecord(args.args) ? args.args : args)] };
 		case 'code_nav':
 			// workspace_symbols and the hierarchy ops answer from the whole workspace.
 			return { kind, reads: strings([args.path]).length ? [...strings([args.path]), '.'] : ['.'] };
@@ -297,8 +328,10 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 			if (op === 'fixes') {
 				return { kind: 'reads', reads: strings([args.path]) };
 			}
-			// No path: the gate judges the chat's folder, so a read-only chat is refused.
-			return op === 'rename' ? { kind: 'escapes' } : { kind, writes: strings([args.path]).length ? strings([args.path]) : ['.'] };
+			// No path: the gate judges the chat's folder, so a read-only chat is refused. A rename writes
+			// every file that uses the symbol: the chat's folder is judged, and code_action applies
+			// nothing when any of those files is outside it (`applyChanges`).
+			return { kind, writes: op === 'rename' ? ['.', ...strings([args.path])] : strings([args.path]).length ? strings([args.path]) : ['.'] };
 		}
 		case 'browser_compare_image':
 			return { kind, reads: strings([args.reference_path]), urls: strings([args.url]) };
@@ -358,6 +391,14 @@ function asList(value: unknown): Record<string, unknown>[] {
 
 function strings(values: readonly unknown[]): string[] {
 	return values.filter((value): value is string => typeof value === 'string' && !!value.trim()).map(value => value.trim());
+}
+
+/** Files an IDE call names (a program, a notebook, an .http file, a test file), judged as reads. */
+function idePaths(args: Readonly<Record<string, unknown>>): string[] {
+	const named = strings([args.path, args.program, args.file, args.notebook, args.cwd]);
+	// Test targets are files, folders, file:line or test names: only the ones that look like paths.
+	const targets = Array.isArray(args.targets) ? strings(args.targets).map(target => target.replace(/:\d+$/, '')).filter(target => /[\\/]|\.\w+$/.test(target)) : [];
+	return [...named, ...targets];
 }
 
 /** browser_run `edits`: each `path` it changes. */

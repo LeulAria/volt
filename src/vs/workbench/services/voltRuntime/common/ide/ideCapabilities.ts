@@ -107,6 +107,13 @@ export const IDE_CAPABILITIES: readonly IIdeCapabilitySpec[] = [
 		],
 	},
 	{
+		id: 'db', summary: 'query SQLite files and Postgres, read-only', ops: [
+			{ name: 'tables', readOnly: true, help: 'path (a SQLite file) or url (postgres://...): tables with row counts. Without either, lists the SQLite files in the folder.' },
+			{ name: 'schema', readOnly: true, help: 'path or url, table?: columns with type, null, default and key; without table, every table\'s definition.' },
+			{ name: 'query', readOnly: true, help: 'path or url, sql, limit? (200): run read-only SQL (select, with, explain, pragma) and return the rows as a table. Postgres: one select.' },
+		],
+	},
+	{
 		id: 'profile', summary: 'profile CPU, memory and usage in the Profiler tab with the user; show any data as flame graph, lines or heat map', ops: [
 			{ name: 'cpu', help: 'command, timeout_ms?, interval_us?: run a Node command under the V8 CPU profiler. Returns where time goes by source, the hottest functions (self and total) with file:line, the hottest stacks and notes; opens the profile in the Profiler beside the chat (flame chart, flame graph, heat map). Returns a profile id (p1).' },
 			{ name: 'heap', help: 'command, timeout_ms?: the same with the V8 sampling heap profiler: bytes allocated (and still live) by call path.' },

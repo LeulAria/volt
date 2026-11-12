@@ -6,7 +6,7 @@
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
-import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../../base/common/map.js';
 import { observableValue } from '../../../../../base/common/observable.js';
 import { Schemas } from '../../../../../base/common/network.js';
@@ -43,6 +43,41 @@ import { IStartControllerTests, IStartControllerTestsResult, ITestErrorMessage, 
 
 export const VOLT_TEST_CONTROLLER_ID = 'volt';
 export const VOLT_TEST_RUNNER_SETTING = 'volt.testing.runner';
+
+/**
+ * Chat projects outside this window's folders. The agent window usually has no folder open, so
+ * discovery found no tests at all and the agents' tests tool answered "No test controller found
+ * tests in this workspace" for every project chat (2026-11-12 IDE round 2). The tests tool adds its
+ * chat's project here; discovery covers it like a folder.
+ */
+class ProjectTestRoots {
+	private readonly roots = new ResourceMap<true>();
+	private scan: (() => Promise<void>) | undefined;
+
+	list(): readonly URI[] {
+		return [...this.roots.keys()];
+	}
+
+	/** Covers `root` from now on; resolves once its tests are discovered (at once when it already was). */
+	async add(root: URI): Promise<void> {
+		if (root.scheme !== Schemas.file || this.roots.has(root)) {
+			return;
+		}
+		this.roots.set(root, true);
+		await this.scan?.();
+	}
+
+	bind(scan: () => Promise<void>): IDisposable {
+		this.scan = scan;
+		return toDisposable(() => {
+			if (this.scan === scan) {
+				this.scan = undefined;
+			}
+		});
+	}
+}
+
+export const projectTestRoots = new ProjectTestRoots();
 
 const RUN_PROFILE = 1;
 const DEBUG_PROFILE = 2;
@@ -159,6 +194,7 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 		this._register(toDisposable(() => profiles.removeProfile(VOLT_TEST_CONTROLLER_ID)));
 
 		this._register(workspace.onDidChangeWorkspaceFolders(() => void this.scan()));
+		this._register(projectTestRoots.bind(() => this.scan(true)));
 		this._register(configuration.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(VOLT_TEST_RUNNER_SETTING)) {
 				void this.scan();
@@ -197,14 +233,25 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 
 	// --- Discovery ---------------------------------------------------------------------------
 
-	private scan(): Promise<void> {
+	/** `again`: a scan already running started before the latest change, so another follows it. */
+	private scan(again = false): Promise<void> {
+		if (again && this.scanning) {
+			return this.scanning.then(() => this.scan());
+		}
 		this.scanning ??= this.doScan().catch(err => this.logService.warn('[volt tests] discovery failed', err)).finally(() => this.scanning = undefined);
 		return this.scanning;
 	}
 
+	/** The window's folder or chat project (projectTestRoots) a file is in. */
+	private folderOf(uri: URI): URI | undefined {
+		return this.workspace.getWorkspaceFolder(uri)?.uri
+			?? projectTestRoots.list().filter(root => isEqualOrParent(uri, root)).sort((a, b) => b.path.length - a.path.length)[0];
+	}
+
 	private async doScan(): Promise<void> {
 		this.projects.clear();
-		const folders = this.workspace.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.file);
+		const workspaceFolders = this.workspace.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.file);
+		const folders: URI[] = [...workspaceFolders.map(folder => folder.uri), ...projectTestRoots.list().filter(root => !this.workspace.getWorkspaceFolder(root))];
 		const found: URI[] = [];
 		if (this.mode() !== 'off' && folders.length) {
 			const query = this.queryBuilder.file(folders, {
@@ -231,7 +278,7 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 		if (!family || (this.mode() === 'auto' && this.coveredElsewhere(uri))) {
 			return undefined;
 		}
-		const folder = this.workspace.getWorkspaceFolder(uri)?.uri;
+		const folder = this.folderOf(uri);
 		if (!folder) {
 			return undefined;
 		}
@@ -418,7 +465,7 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 	}
 
 	private addOps(file: ITestFile): TestsDiff {
-		const folder = this.workspace.getWorkspaceFolder(file.uri)?.uri;
+		const folder = this.folderOf(file.uri);
 		const label = (folder && relativePath(folder, file.uri)) || file.uri.path.split('/').pop() || file.uri.path;
 		const ops: TestsDiff = [{
 			op: TestDiffOpType.Add,
@@ -564,7 +611,7 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 
 	/** Adds the node and its parents (root, file, suites) to the run's tree. */
 	private addToRun(result: LiveTestResult, node: ITestNode): void {
-		const folder = this.workspace.getWorkspaceFolder(node.file.uri)?.uri;
+		const folder = this.folderOf(node.file.uri);
 		const chain: ITestItem[] = [this.item(this.rootId, 'Volt', undefined, undefined), this.item(node.file.id, (folder && relativePath(folder, node.file.uri)) || node.file.uri.path, node.file.uri, undefined)];
 		const ids: string[] = [];
 		for (let id: string | undefined = node.id; id && id !== node.file.id; id = TestId.parentId(id)) {

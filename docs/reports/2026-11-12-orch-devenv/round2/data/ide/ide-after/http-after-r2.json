@@ -1,0 +1,85 @@
+{
+ "id": "http",
+ "tag": "after",
+ "run": 2,
+ "access": "supervised",
+ "load": "83.84 85.64 92.62",
+ "wallMs": 36300,
+ "outcome": "done",
+ "approvals": 1,
+ "picked": true,
+ "voltErrors": 1,
+ "host": [
+  "ide:http.list",
+  "find_files",
+  "ide:http.envs",
+  "find_files",
+  "find_files",
+  "ide:http.send ERROR"
+ ],
+ "shell": [
+  "Read File | Read requests.http",
+  "Read File | Read http-client.env.json",
+  "Terminal | set -e; TOKEN=$(curl -sS -X POST http://127.0.0.1:9987/api/login -H \"Content-Type: application/json\" -d '{\"username\":\"ada\",\"password\":\"lovelace\"}'); "
+ ],
+ "cost": 0.007311280000000001,
+ "output": 1682,
+ "cacheRead": 302328,
+ "toolUses": {
+  "mcp__volt__ide": 3,
+  "mcp__volt__find_files": 3,
+  "Read": 2,
+  "Bash": 1
+ },
+ "changed": "",
+ "chat": "agent-b33020cd-33d4-4eb6-b901-56978c4670a5.jsonl",
+ "answer": "I'll list the HTTP requests in the project's `requests.http` and its environments.\nThe HTTP tool reports no `.http` files, but the file search found `requests.http`. I'll read it to see what's there.\nThe file has a login request and a profile request. Next I'll check which environments are defined so I can use `local`.\nBoth searches point to `http-client.env.json`, but the HTTP tool reported no environments. I'll read that file directly.\nThe `local` environment is defined (`baseUrl` http://127.0.0.1:9987, username `ada` from `$shared`). I'll send the profile request, which chains the login token, using the `local` environment.\nThe HTTP tool can't see the environment file, so I'll run the same two requests with curl against the `local` values.\nThe profile returns name **Ada Lovelace** and email **ada@example.com**.\n\nThe Volt HTTP tool couldn't load the `local` environment (it reported none), so I ran the same two requests with curl against `http://127.0.0.1:9987` using the values from `http-client.env.json`. Login returned a token for user `ada`, and that token authenticated the profile request.",
+ "hostCalls": [
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "list"
+   }
+  },
+  {
+   "name": "find_files",
+   "args": {
+    "query": "requests.http"
+   }
+  },
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "envs"
+   }
+  },
+  {
+   "name": "find_files",
+   "args": {
+    "query": "http-client.env.json"
+   }
+  },
+  {
+   "name": "find_files",
+   "args": {
+    "query": ".env"
+   }
+  },
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "send",
+    "args": {
+     "name": "profile",
+     "env": "local"
+    },
+    "name": "profile",
+    "env": "local"
+   },
+   "error": "No environment \"local\". Available: none."
+  }
+ ]
+}

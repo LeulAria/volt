@@ -51,7 +51,11 @@ export interface IIntent {
 	readonly wantsLongJob?: boolean;
 	/** Committing, pushing, naming the branch or opening a pull request: Volt's commit review and branch naming. */
 	readonly wantsGit?: boolean;
+	/** IDE tools that fit the request (a failing test, slowness, an .http file, a container, a database): one hint line each. */
+	readonly ideWork?: readonly IdeWork[];
 }
+
+export type IdeWork = 'tests' | 'debug' | 'profile' | 'http' | 'docker' | 'db' | 'notebook' | 'rename';
 
 export interface IIntentContext {
 	/** A workspace folder is open. Without one there is nothing to edit or run. */
@@ -120,6 +124,26 @@ const GIT_INTENT = /\b(?:commit(?:s|ting)?|push(?:ed|ing)?|pull request|(?:raise
 const LONG_JOB_INTENT = /\b(?:bench(?:mark)?(?:s|ing)?|perf(?:ormance)? (?:tests?|runs?)|load tests?|stress tests?|train(?:ing)? (?:the |a )?(?:model|run)|fine-?tun(?:e|ing)|backfill|deploy(?:ment|ing)?|ci (?:runs?|pipeline|jobs?)|(?:release|production|prod|ios|android|docker|xcode|gradle) builds?|build (?:the |a )?(?:ios|android|release|docker|image|ipa|apk)|full (?:test )?suite|long[- ]running|in the background|overnight|crawl(?:er|ing)?|scrap(?:e|er|ing)|(?:render|export|encode|transcode) (?:the |a )?video)\b/i;
 const SERVICE_INTENT = /\b(?:docker|compose|container|kubernetes|k8s|dev ?server|web ?server|(?:start|run|launch|boot|restart|spin up)\b[^.?!]{0,30}\b(?:server|service|api|backend|database|db|redis|postgres|mongo|stack|worker|queue|app)|watch mode|watcher|hot reload|localhost:\d+)\b/i;
 const PREVIEW_INTENT = /\b(?:preview|open|show|see|view|look at)\b[^.?!]{0,40}\b(?:app|site|website|page|server|project|frontend|front-end|ui|it|this|the (?:thing|result|game|demo)|in (?:the |a )?browser|locally|on localhost)\b|\b(?:run|start|launch|serve|spin up|boot)\b[^.?!]{0,30}\b(?:app|site|website|page|(?:dev |web |http )?server|frontend|front-end|ui|game|demo|locally|on localhost|in (?:the |a )?browser)\b|\b(?:check|test)\b[^.?!]{0,30}\b(?:in (?:the |a )?browser|on localhost|the (?:ui|page|site|website|frontend))\b|\b(?:dev server|localhost|live preview|hot reload|in the browser|show me (?:the|what|how it looks))\b|\bmake it (?:run|work)\b|\bcan i see\b|\blet'?s see it\b/i;
+
+/**
+ * Requests an IDE tool answers better than a shell command. Agents picked those tools 1 run in 13
+ * (2026-11-12 test pass, round 1): they ran `npm test`, `curl` and `sqlite3`, and natural questions
+ * ("why does the container keep restarting?") went to the chat lane, which got no IDE guide at all.
+ * A code question that only mentions tests or a database ("each non-test implementation ... passes
+ * it into runCommand", "renamed in the database schema") is not that work: the verbs are words, not
+ * prefixes, "non-test"/"test-only" are not tests, and a database's schema or columns are code.
+ */
+const IDE_WORK: readonly (readonly [IdeWork, RegExp])[] = [
+	['tests', /(?<![-\w])(?:tests?|specs?|test suite|vitest|jest|pytest|mocha)\b(?!-)[^.?!]{0,60}\b(?:fail(?:s|ed|ing|ures?)?|break(?:s|ing)?|broken|red|pass(?:es|ed|ing)?|run(?:s|ning)?)\b|\b(?:fail(?:s|ed|ing)?|run|rerun)\b[^.?!]{0,40}(?<![-\w])(?:tests?|specs?|test suite)\b(?!-)/i],
+	['debug', /\b(?:debug(?:ger|ging)?|breakpoints?|step (?:through|into|over)|runtime values?|(?:inspect|watch) (?:the )?(?:values?|variables?|state|locals))\b/i],
+	['profile', /\b(?:slow(?:ness|er|est)?|too long|takes? (?:so |too |very )?long|profil(?:er|ing)|profile (?:it|this|that|the (?:script|app|code|function|server|query|build))|(?:cpu|heap|memory) profiles?|hot ?spots?|bottlenecks?|cpu (?:time|usage)|memory (?:leak|usage)|(?:speed|perf(?:ormance)?) (?:issue|problem)s?)\b/i],
+	['http', /\.(?:http|rest)\b|\bhttp (?:requests?|client)\b|\b(?:call|hit|request|query|send|log ?in to|test)\b[^.?!]{0,40}\b(?:endpoints?|(?:local |the )?api)\b/i],
+	['docker', /\b(?:docker|containers?|docker-compose|compose (?:file|service|stack))\b/i],
+	['db', /\.(?:db|sqlite3?|db3)\b|\b(?:sqlite|postgres(?:ql)?|mysql|database|sql quer(?:y|ies))\b(?!\s+(?:schemas?|migrations?|columns?|models?|types?|layer|code|clients?|drivers?))/i],
+	['notebook', /\.ipynb\b|\b(?:jupyter|notebook)\b/i],
+	// A path's dots ("in src/cart.ts to lineAmount") do not end the sentence.
+	['rename', /\brename\b(?:[^.?!]|\.(?=\w)){0,60}\b(?:to|as|everywhere|across)\b/i],
+];
 
 const CODE_FENCE = /```/;
 
@@ -224,6 +248,10 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	const wantsDevice = surfaceSkills.has('device') || DEVICE_INTENT.test(raw);
 	if (wantsDevice) { signals.push('device'); }
 
+	// Questions (and Ask/Plan mode) do not rename anything, whatever they mention.
+	const ideWork = hasWorkspace ? IDE_WORK.filter(([kind, pattern]) => pattern.test(raw) && !(kind === 'rename' && (questionShape || mode === 'ask' || mode === 'plan'))).map(([kind]) => kind) : [];
+	if (ideWork.length) { signals.push(`ide:${ideWork.join(',')}`); }
+
 	let lane: VoltLane;
 
 	if (slashMission || mode === 'multitask') {
@@ -306,6 +334,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		...(wantsServices ? { wantsServices } : {}),
 		...(wantsLongJob ? { wantsLongJob } : {}),
 		...(wantsGit ? { wantsGit } : {}),
+		...(ideWork.length ? { ideWork } : {}),
 		shape,
 	};
 }

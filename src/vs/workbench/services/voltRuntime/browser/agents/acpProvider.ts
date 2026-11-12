@@ -34,6 +34,7 @@ import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey,
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer, SUBAGENT_HOST_TOOL_GROUPS, VoltHostToolGroup } from '../../common/hostTools.js';
 import { CODE_INTELLIGENCE_TOOLS, LANGUAGE_SERVER_TOOL_NAMES } from '../../common/codeIntelligence.js';
+import { isVoltReadOnlyHostTool } from '../../common/hostToolSandbox.js';
 import { AgentQuestionDraft, cursorAskQuestionResult, elicitationResult, elicitationToQuestions, IAgentQuestionResponse, parseQuestionDraft } from '../../common/questions.js';
 import { mapAcpToolKind } from '../../common/harness/workLog.js';
 import { ACP_IDLE_TIMINGS, ACP_STALL_NOTICE_TITLE, declaredToolWaitMs, IdleWatchdog, IIdleStageInfo, IIdleWatchdogTimings, IWatchdogClock, realWatchdogClock } from '../../common/harness/acpStall.js';
@@ -348,20 +349,29 @@ function isVoltCodeTool(name: string): boolean {
 	return CODE_INTELLIGENCE_TOOLS.some(tool => tool.name === bare) || LANGUAGE_SERVER_TOOL_NAMES.includes(bare);
 }
 
-/** A permission prompt for one of Volt's own MCP tools (`volt-browser_click: browser_click`, `mcp__volt__ask_question`, Grok's `volt__find_symbol`). */
+/**
+ * A permission prompt for one of Volt's own MCP tools (`volt-browser_click: browser_click`,
+ * `mcp__volt__ask_question`, Grok's `volt__find_symbol`). Volt judges those calls itself (the host
+ * tool gate: sandbox rules, approval in read-only modes), so the agent's own prompt is answered here.
+ * The code tools and the Scratch board were missing: in a Supervised chat every code_nav,
+ * instant_grep and diagnostics call stopped on a "Run mcp__volt__code_nav?" card, and "Always Run"
+ * could not be saved (Claude writes it to the project's `.claude/settings.local.json`, which the
+ * sandbox protects).
+ */
 export function isVoltHostToolPermission(params: unknown): boolean {
 	const toolCall = (params as { toolCall?: { title?: unknown; rawInput?: { providerIdentifier?: unknown; toolName?: unknown } } } | undefined)?.toolCall;
 	if (!toolCall) {
 		return false;
 	}
+	const known = (name: string) => isVoltHostTool(name) || isVoltCodeTool(name) || !!bareTaskToolName(name) || isVoltReadOnlyHostTool(name);
 	const raw = toolCall.rawInput;
 	if (raw && raw.providerIdentifier === 'volt' && typeof raw.toolName === 'string') {
-		return isVoltHostTool(raw.toolName) || isVoltCodeTool(raw.toolName) || !!bareTaskToolName(raw.toolName);
+		return known(raw.toolName);
 	}
 	const title = typeof toolCall.title === 'string' ? toolCall.title.trim() : '';
 	// Without the code tools here, Grok's find_symbol in a council seat (Ask mode) was judged a shell
 	// command, refused as "User rejected", and Grok ended its turn: the seat came back cancelled.
-	return /^(volt[-:]|mcp__volt__|volt__)/i.test(title) && (isVoltHostTool(title) || isVoltCodeTool(title) || !!bareTaskToolName(title));
+	return /^(volt[-:]|mcp__volt__|volt__)/i.test(title) && known(title);
 }
 
 function allowOncePermission(params: unknown): unknown {

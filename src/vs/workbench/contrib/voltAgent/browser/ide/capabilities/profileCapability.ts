@@ -84,11 +84,25 @@ export class ProfileCapability implements IIdeCapability {
 
 	// --- Recording -----------------------------------------------------------------------------
 
-	/** A folder for one recording, writable from the chat's sandbox. */
-	private async recordingDir(): Promise<URI> {
-		const dir = joinPath(this.profiler.profilesHome, `run-${generateUuid().slice(0, 12)}`);
+	/**
+	 * A folder for one recording, writable from the chat's sandbox. The profiles home is in Volt's
+	 * user data, which a sandbox denies outright ("EPERM: Failed to write file .../volt-profiles/...",
+	 * 2026-11-12 IDE round 2), so a sandboxed run records in /tmp and `keep` moves it home after.
+	 */
+	private async recordingDir(ctx?: IIdeCapabilityContext): Promise<URI> {
+		const name = `run-${generateUuid().slice(0, 12)}`;
+		const dir = ctx?.cli.sandbox && !isWindows ? URI.file(`/tmp/volt-profiles/${name}`) : joinPath(this.profiler.profilesHome, name);
 		await this.fileService.createFolder(dir);
 		return dir;
+	}
+
+	/** A recording made in /tmp (see recordingDir) moves into the profiles home, like every other one. */
+	private async keep(dir: URI): Promise<URI> {
+		const home = joinPath(this.profiler.profilesHome, dir.path.split('/').pop()!);
+		if (dir.toString() === home.toString()) {
+			return dir;
+		}
+		return this.fileService.move(dir, home, true).then(stat => stat.resource, () => dir);
 	}
 
 	private async recordNode(op: 'cpu' | 'heap', args: Readonly<Record<string, unknown>>, ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
@@ -96,17 +110,24 @@ export class ProfileCapability implements IIdeCapability {
 		if (!command) {
 			return fail(`${op} needs command (e.g. "node scripts/build.js" or "npm run bench").`);
 		}
-		const dir = await this.recordingDir();
-		const flags = op === 'cpu'
-			? `--cpu-prof --cpu-prof-dir=${dir.fsPath}${num(args, 'interval_us') ? ` --cpu-prof-interval=${Math.max(50, num(args, 'interval_us')!)}` : ''}`
-			: `--heap-prof --heap-prof-dir=${dir.fsPath}`;
+		const recording = await this.recordingDir(ctx);
+		// The folder is quoted: the user's profile path has a space ("Application Support").
+		const flags = (quoted: string) => op === 'cpu'
+			? `--cpu-prof --cpu-prof-dir=${quoted}${num(args, 'interval_us') ? ` --cpu-prof-interval=${Math.max(50, num(args, 'interval_us')!)}` : ''}`
+			: `--heap-prof --heap-prof-dir=${quoted}`;
 		const started = Date.now();
-		// Every Node process the command starts writes one; the largest is the work (npm itself is Node too).
-		const result = await ctx.cli.shell(command, { timeoutMs: num(args, 'timeout_ms') ?? 600_000, env: { NODE_OPTIONS: flags }, writable: [dir.fsPath] });
+		// A sandbox drops NODE_OPTIONS (it would inject code into every Node process it starts), so a
+		// command that runs node itself gets the flags on its command line; anything else (npm run, a
+		// script) gets NODE_OPTIONS, where every Node process it starts writes one and the largest is the work.
+		const direct = /^(\s*(?:\S*\/)?node)(\s)/.exec(command);
+		const run = direct ? `${direct[1]} ${flags(shellQuote(recording.fsPath, isWindows))}${direct[2]}${command.slice(direct[0].length)}` : command;
+		const result = await ctx.cli.shell(run, { timeoutMs: num(args, 'timeout_ms') ?? 600_000, ...(direct ? {} : { env: { NODE_OPTIONS: flags(`"${recording.fsPath}"`) } }), writable: [recording.fsPath] });
+		const dir = await this.keep(recording);
 		const extension = op === 'cpu' ? '.cpuprofile' : '.heapprofile';
 		const entries = (await this.fileService.resolve(dir).catch(() => undefined))?.children?.filter(child => child.name.endsWith(extension)) ?? [];
 		if (!entries.length) {
-			return fail(`No ${op === 'cpu' ? 'CPU' : 'heap'} profile was written (exit code ${result.code}). Only Node.js processes are profiled this way; for other languages record with their profiler (py-spy record --format speedscope, perf + stackcollapse, go test -cpuprofile then pprof -raw) and open the file, or use op sample for memory and CPU over time.\n${tailOf(result.stderr || result.stdout, 15)}`);
+			const sandboxed = !direct && ctx.cli.sandbox ? ' This chat runs in Volt\'s sandbox, which removes NODE_OPTIONS: pass a command that starts with node (e.g. "node scripts/build.js") to profile it here.' : '';
+			return fail(`No ${op === 'cpu' ? 'CPU' : 'heap'} profile was written (exit code ${result.code}).${sandboxed} Only Node.js processes are profiled this way; for other languages record with their profiler (py-spy record --format speedscope, perf + stackcollapse, go test -cpuprofile then pprof -raw) and open the file, or use op sample for memory and CPU over time.\n${tailOf(result.stderr || result.stdout, 15)}`);
 		}
 		const sized = await Promise.all(entries.map(async entry => ({ uri: entry.resource, size: (await this.fileService.stat(entry.resource)).size })));
 		const biggest = sized.sort((a, b) => b.size - a.size)[0];
@@ -124,7 +145,7 @@ export class ProfileCapability implements IIdeCapability {
 		if (isWindows) {
 			return fail('sample needs a POSIX shell and ps (macOS or Linux).');
 		}
-		const dir = await this.recordingDir();
+		const dir = await this.recordingDir(ctx);
 		const out = joinPath(dir, 'usage.txt');
 		const interval = Math.max(0.05, Math.min(5, (num(args, 'interval_ms') ?? 200) / 1000));
 		const started = Date.now();
@@ -150,7 +171,7 @@ export class ProfileCapability implements IIdeCapability {
 		const warmup = Math.min(num(args, 'warmup') ?? 1, 20);
 		const hyperfine = await ctx.cli.run('hyperfine', ['--version'], { timeoutMs: 10_000 });
 		if (!hyperfine.missing && hyperfine.code === 0) {
-			const dir = await this.recordingDir();
+			const dir = await this.recordingDir(ctx);
 			const report = joinPath(dir, 'bench.json');
 			const result = await ctx.cli.run('hyperfine', ['--runs', String(runs), '--warmup', String(warmup), '--export-json', report.fsPath, '--style', 'none', command], { timeoutMs: 1_800_000, writable: [dir.fsPath] });
 			const json = await this.fileService.readFile(report).then(file => JSON.parse(file.value.toString()) as { results: { mean: number; stddev: number; min: number; max: number; median: number }[] }, () => undefined);

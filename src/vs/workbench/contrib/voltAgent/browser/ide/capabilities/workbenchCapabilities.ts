@@ -22,12 +22,12 @@ export class HttpCapability implements IIdeCapability {
 	async invoke(op: string, args: Readonly<Record<string, unknown>>, ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
 		switch (op) {
 			case 'list': {
-				const files = await this.http.index();
+				const files = await this.http.index(ctx.root);
 				const lines = files.flatMap(file => [`${display(ctx.root, file.uri)}`, ...file.requests.map(request => `  ${request.name ?? '(unnamed)'}  ${request.method} ${request.url}  :${request.line}`)]);
 				return ok(lines.length ? lines.join('\n') : 'No .http or .rest files in the workspace. Send ad hoc with method + url, or create requests.http.');
 			}
 			case 'envs': {
-				const envs = await this.http.environments();
+				const envs = await this.http.environments(ctx.root);
 				const names = Object.keys(envs);
 				if (!names.length) {
 					return ok('No environments (http-client.env.json).');
@@ -37,7 +37,7 @@ export class HttpCapability implements IIdeCapability {
 			case 'send': {
 				const envName = str(args, 'env');
 				if (envName && envName !== this.http.environment) {
-					const envs = await this.http.environments();
+					const envs = await this.http.environments(ctx.root);
 					if (!envs[envName]) {
 						return fail(`No environment "${envName}". Available: ${Object.keys(envs).join(', ') || 'none'}.`);
 					}
@@ -47,7 +47,7 @@ export class HttpCapability implements IIdeCapability {
 				let request: IHttpRequestSpec | undefined;
 				let source;
 				if (name) {
-					for (const file of await this.http.index()) {
+					for (const file of await this.http.index(ctx.root)) {
 						const found = file.requests.find(item => item.name === name);
 						if (found) {
 							request = found;
@@ -69,7 +69,7 @@ export class HttpCapability implements IIdeCapability {
 					const headers = body && args.body !== undefined && typeof args.body !== 'string' && !rawHeaders.some(([key]) => key.toLowerCase() === 'content-type') ? [...rawHeaders, ['Content-Type', 'application/json'] as const] : rawHeaders;
 					request = { method, url, headers, ...(body !== undefined ? { body } : {}), line: 0 };
 				}
-				const exchange = await this.http.send(request, { ...(source ? { source } : {}), token: ctx.token, ...(num(args, 'timeout_ms') ? { timeoutMs: num(args, 'timeout_ms') } : {}) });
+				const exchange = await this.http.send(request, { ...(source ? { source } : {}), ...(ctx.root ? { project: ctx.root } : {}), token: ctx.token, ...(num(args, 'timeout_ms') ? { timeoutMs: num(args, 'timeout_ms') } : {}) });
 				if (exchange.error || !exchange.response) {
 					return fail(`${exchange.method} ${exchange.url}: ${exchange.error ?? 'no response'}`);
 				}

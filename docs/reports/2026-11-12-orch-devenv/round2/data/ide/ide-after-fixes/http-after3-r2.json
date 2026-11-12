@@ -1,0 +1,70 @@
+{
+ "id": "http",
+ "tag": "after3",
+ "run": 2,
+ "access": "supervised",
+ "load": "23.71 29.90 51.36",
+ "wallMs": 8789,
+ "outcome": "done",
+ "approvals": 0,
+ "picked": true,
+ "voltErrors": 0,
+ "host": [
+  "ide:http.list",
+  "ide:http.envs",
+  "ide:http.send",
+  "ide:http.send"
+ ],
+ "shell": [],
+ "cost": 0.00485913,
+ "output": 622,
+ "cacheRead": 141313,
+ "toolUses": {
+  "mcp__volt__ide": 4
+ },
+ "changed": "",
+ "chat": "agent-0cd6ce96-1359-4400-9641-d58221f8a1e7.jsonl",
+ "answer": "The file has `login` and `profile` requests, and the `local` environment is selected. I'll send the login first, then the profile, so the token chains through.\nThe profile returns name **Ada Lovelace** and email **ada@example.com**.\n\nI ran the `login` and then `profile` requests from `requests.http` using the `local` environment (`http://127.0.0.1:9987`). Login returned 200 with user `ada`, and the profile request returned 200.",
+ "hostCalls": [
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "list"
+   }
+  },
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "envs"
+   }
+  },
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "send",
+    "args": {
+     "name": "login",
+     "env": "local"
+    },
+    "name": "login",
+    "env": "local"
+   }
+  },
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "send",
+    "args": {
+     "name": "profile",
+     "env": "local"
+    },
+    "name": "profile",
+    "env": "local"
+   }
+  }
+ ]
+}

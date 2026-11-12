@@ -5,7 +5,7 @@
 
 import { raceTimeout } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
-import { isEqualOrParent, joinPath, relativePath } from '../../../../../base/common/resources.js';
+import { isEqual, isEqualOrParent, joinPath, relativePath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
 import { stripAnsi } from '../../../../services/voltRuntime/common/ide/testReports.js';
@@ -15,7 +15,7 @@ import { ITestResultService } from '../../../testing/common/testResultService.js
 import { ITestService } from '../../../testing/common/testService.js';
 import { IncrementalTestCollectionItem, InternalTestItem, ITestErrorMessage, TestItemExpandState, TestMessageType, TestResultItem, TestResultState, TestRunProfileBitset } from '../../../testing/common/testTypes.js';
 import { TestId } from '../../../testing/common/testId.js';
-import { VOLT_TEST_CONTROLLER_ID } from './voltTestController.js';
+import { projectTestRoots, VOLT_TEST_CONTROLLER_ID } from './voltTestController.js';
 
 const MAX_LISTED_TESTS = 150;
 const MAX_FAILURES = 12;
@@ -58,7 +58,7 @@ export class IdeTests {
 	) { }
 
 	async list(root: URI | undefined, path: string | undefined, query: string | undefined): Promise<ITestToolResult> {
-		await this.settle();
+		await this.settle(root);
 		const scope = path ? this.resolvePath(root, path) : undefined;
 		const needle = query?.trim().toLowerCase();
 		const entries = this.entries().filter(entry => entry.leaf && (!scope || isEqualOrParent(entry.file, scope)) && (!needle || entry.names.join(' ').toLowerCase().includes(needle)));
@@ -95,7 +95,7 @@ export class IdeTests {
 	}
 
 	async run(key: string, root: URI | undefined, args: { readonly targets?: readonly string[]; readonly failed?: boolean; readonly coverage?: boolean }, watcher: ITestRunWatcher | undefined, token: CancellationToken): Promise<ITestToolResult> {
-		await this.settle();
+		await this.settle(root);
 		let tests: InternalTestItem[];
 		let title: string;
 		if (args.failed) {
@@ -118,7 +118,9 @@ export class IdeTests {
 			tests = resolved.tests;
 			title = args.targets.join(', ');
 		} else {
-			tests = [...this.testService.collection.rootItems];
+			// A chat project outside the window's folders: its own tests, not every project's.
+			const project = root && projectTestRoots.list().some(candidate => isEqual(candidate, root)) ? this.resolveTargets(root, [root.fsPath]) : undefined;
+			tests = project && !('error' in project) ? project.tests : project ? [] : [...this.testService.collection.rootItems];
 			if (!tests.length) {
 				return { text: 'No tests in this workspace to run.', isError: true };
 			}
@@ -154,8 +156,11 @@ export class IdeTests {
 		return { text: items.slice(0, 5).map(item => this.detail(root, last, item, true)).join('\n\n') };
 	}
 
-	/** Waits for controllers to publish and for lazily resolved children (bounded). */
-	private async settle(): Promise<void> {
+	/** Waits for controllers to publish and for lazily resolved children (bounded). The chat's project is discovered first. */
+	private async settle(root: URI | undefined): Promise<void> {
+		if (root) {
+			await raceTimeout(projectTestRoots.add(root), EXPAND_WAIT_MS);
+		}
 		await raceTimeout(this.testService.syncTests(), EXPAND_WAIT_MS);
 		const expandable = [...this.testService.collection.all].filter(item => item.expand === TestItemExpandState.Expandable).slice(0, 200);
 		if (expandable.length) {

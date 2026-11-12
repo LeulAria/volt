@@ -1,0 +1,47 @@
+{
+ "id": "http",
+ "tag": "before",
+ "run": 2,
+ "access": "supervised",
+ "load": "50.45 47.48 40.74",
+ "wallMs": 44107,
+ "outcome": "done",
+ "approvals": 2,
+ "picked": false,
+ "voltErrors": 0,
+ "host": [
+  "find_files",
+  "find_symbol"
+ ],
+ "shell": [
+  "Terminal | cat /private/tmp/vbench-ide-fx/requests.http; echo ---; ls -la /private/tmp/vbench-ide-fx | head -50",
+  "Read File | Read http-client.env.json",
+  "Terminal | cd /private/tmp/vbench-ide-fx; TOKEN=$(curl -s -X POST http://127.0.0.1:9987/api/login -H 'Content-Type: application/json' -d '{\"username\":\"ada\",\"pas"
+ ],
+ "cost": 0.005559540000000001,
+ "output": 926,
+ "cacheRead": 163894,
+ "toolUses": {
+  "mcp__volt__find_files": 1,
+  "mcp__volt__find_symbol": 1,
+  "Bash": 2,
+  "Read": 1
+ },
+ "changed": "",
+ "chat": "agent-9cee4b6b-a58c-4ba8-acab-9e7257bb0b17.jsonl",
+ "answer": "I'll locate the `requests.http` file in the workspace first.\nThe request uses variables from the `local` environment, so I'll read `http-client.env.json`.\nI have the local values (`baseUrl` http://127.0.0.1:9987, username `ada`). Now I'll run the login and profile requests in sequence.\nThe profile returned name **Ada Lovelace** and email **ada@example.com**.\n\nI ran the `requests.http` flow against the `local` environment (`http://127.0.0.1:9987`) with curl: login as `ada`, then `GET /api/profile` with the bearer token. The profile call returned HTTP 200.",
+ "hostCalls": [
+  {
+   "name": "find_files",
+   "args": {
+    "query": "requests.http"
+   }
+  },
+  {
+   "name": "find_symbol",
+   "args": {
+    "name": "profile"
+   }
+  }
+ ]
+}

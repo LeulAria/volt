@@ -1,0 +1,6 @@
+mcp__volt__find_symbol | mcp__volt__find_symbol
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__ide | mcp__volt__ide
+Read File | Read packages/api/src/routers/bookings/validations.ts
+Read File | Read packages/validations/src/bookings/validations.ts
+Read File | Read packages/api/src/routers/bookings/index.ts

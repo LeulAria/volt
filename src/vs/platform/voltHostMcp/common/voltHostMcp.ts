@@ -18,6 +18,8 @@ export interface IVoltHostMcpToolInfo {
 	readonly group?: string;
 	/** Earlier names still accepted in `tools/call` (never listed). */
 	readonly aliases?: readonly string[];
+	/** MCP tool `_meta`, listed as is (e.g. `anthropic/alwaysLoad`). */
+	readonly _meta?: Readonly<Record<string, unknown>>;
 }
 
 /** Where agents reach a window's server, and the secret their bearer tokens derive from. */

@@ -1,0 +1,18 @@
+mcp__volt__code_nav | mcp__volt__code_nav
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read packages/domain/src/commands/kernel.ts
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read packages/domain/src/commands/registry.ts
+Read File | Read packages/domain/src/commands/rooms.ts
+Read File | Read packages/domain/src/commands/rates.ts
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read apps/web/src/sync/useCommand.ts
+Read File | Read apps/api/src/sync/commands.ts
+Read File | Read apps/web/src/features/room-status/components/RoomLifecyclePanel.tsx
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read apps/web/src/sync/SyncProvider.tsx
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read packages/api/src/routers/rateRestrictions/index.ts
+Read File | Read packages/api/src/routers/rooms/index.ts

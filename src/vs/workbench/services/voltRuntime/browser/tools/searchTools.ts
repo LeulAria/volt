@@ -145,6 +145,18 @@ export function createSearchTools(search: VoltSearch, root: () => URI | undefine
 	];
 }
 
+/**
+ * Space-separated relative paths, as globs over workspace-relative paths (a file stays a file, a
+ * folder covers what is under it); undefined for a single path or one with spaces in a name.
+ */
+export function severalPaths(path: string | undefined): string[] | undefined {
+	const parts = path?.trim().split(/\s+/).map(part => part.replace(/^\.\//, '').replace(/\/+$/, '')).filter(Boolean);
+	if (!parts || parts.length < 2 || parts.some(part => part.startsWith('/') || part.startsWith('-') || part.includes('..'))) {
+		return undefined;
+	}
+	return parts.map(part => /\.[\w]+$/.test(part) || /[*?{]/.test(part) ? part : `${part}/**`);
+}
+
 /** A line saying which engine did not answer and why, only when it matters to the reader. */
 function fallbackNote(meta: IVoltSearchMeta): string {
 	return meta.fallback && /error|failed|unusable/i.test(meta.fallback) ? `\n[The code index could not answer (${meta.fallback}); searched with ripgrep.]` : '';
@@ -155,7 +167,13 @@ async function runGrep(search: VoltSearch, root: URI | undefined, args: unknown,
 	if (!pattern) {
 		return fail('grep', 'pattern is required.');
 	}
-	const folder = resolveWorkspaceUri(root, pickString(args, 'path', 'directory')) ?? root;
+	// Several paths in one string, as rg takes them ("apps/web/src packages/api/src/index.ts"): the
+	// index answered "not indexed" for the whole string. Each becomes a glob instead.
+	const several = severalPaths(pickString(args, 'path', 'directory'));
+	if (several && (pickString(args, 'glob', 'include') || pickString(args, 'type'))) {
+		return fail('grep', 'path takes one folder or file. For several, leave out path and pass them as glob: "{apps/web/src/**,packages/api/src/index.ts}".');
+	}
+	const folder = several ? root : resolveWorkspaceUri(root, pickString(args, 'path', 'directory')) ?? root;
 	if (!folder) {
 		return fail('grep', 'No workspace is open.');
 	}
@@ -163,7 +181,9 @@ async function runGrep(search: VoltSearch, root: URI | undefined, args: unknown,
 	const literal = pickBoolean(args, 'literal');
 	const context = Math.min(5, Math.max(0, pickNumber(args, 'context') ?? 0));
 	const limit = Math.max(1, pickNumber(args, 'head_limit') ?? (mode === 'content' ? DEFAULT_MATCHES : DEFAULT_FILES));
-	const { includes, excludes } = fileFilter(pickString(args, 'glob', 'include'), pickString(args, 'type'));
+	const filter = fileFilter(pickString(args, 'glob', 'include'), pickString(args, 'type'));
+	const includes = several ?? filter.includes;
+	const excludes = filter.excludes;
 	let result;
 	try {
 		result = await search.grep({

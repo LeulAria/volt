@@ -81,8 +81,9 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 				this._onDidChangeTools.fire();
 			}
 		}));
-		// A new connection (or a restarted server) learns this window's tools and turned-off features again.
-		this._register(client.onDidResync(() => {
+		// Every new connection (a resumed one too, or a restarted server) learns this window's tools and
+		// turned-off features again: the server dropped them with the old socket.
+		this._register(client.onDidConnect(() => {
 			this.sendTools();
 			this.sendFeatureEnablement();
 		}));
@@ -163,9 +164,11 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 
 	private sendTools(): void {
 		if (!this.client.isReady) {
-			return; // onDidResync sends them once connected
+			return; // onDidConnect sends them once connected
 		}
-		const tools = [...this.providers].flatMap(provider => provider.tools).filter(tool => !this.disabledTools.has(tool.name));
+		const tools = [...this.providers]
+			.flatMap(provider => provider.needsApproval ? provider.tools : provider.tools.map(tool => ({ ...tool, neverAsks: true })))
+			.filter(tool => !this.disabledTools.has(tool.name));
 		this.client.send('hostTools.setClientTools', tools);
 	}
 

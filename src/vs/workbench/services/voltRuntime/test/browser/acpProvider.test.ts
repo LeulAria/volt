@@ -819,3 +819,24 @@ suite('ACP provider sandbox', () => {
 		assert.ok(!isVoltHostToolPermission(prompt('volt__rm_rf')));
 	});
 });
+
+suite('ACP permission prompts for Volt\'s own tools', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	const prompt = (title: string, rawInput?: unknown) => ({ toolCall: { title, ...(rawInput ? { rawInput } : {}) }, options: [{ optionId: 'allow', kind: 'allow_once' }] });
+
+	test('the code tools and the Scratch board are Volt\'s, so their prompts never reach the user', () => {
+		// A Supervised chat stopped on "Run mcp__volt__code_nav" before every code_nav, instant_grep and diagnostics call.
+		for (const title of ['mcp__volt__code_nav', 'mcp__volt__instant_grep', 'mcp__volt__find_symbol', 'mcp__volt__diagnostics', 'mcp__volt__scratch_draw', 'mcp__volt__ask_question', 'mcp__volt__tests']) {
+			assert.strictEqual(isVoltHostToolPermission(prompt(title)), true, title);
+		}
+		assert.strictEqual(isVoltHostToolPermission(prompt('code_nav', { providerIdentifier: 'volt', toolName: 'code_nav' })), true);
+	});
+
+	test('other servers\' tools, and Volt tools that run or write, still go to the gate', () => {
+		for (const title of ['mcp__github__code_nav', 'code_nav', 'Bash', 'mcp__volt__code_action', 'mcp__volt__terminal_start', 'mcp__volt__app_open']) {
+			assert.strictEqual(isVoltHostToolPermission(prompt(title)), false, title);
+		}
+	});
+});
