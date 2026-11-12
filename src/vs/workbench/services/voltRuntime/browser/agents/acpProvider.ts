@@ -33,6 +33,7 @@ import { voltExec } from '../../common/execContext.js';
 import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey, sandboxStrategy, SandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer, SUBAGENT_HOST_TOOL_GROUPS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { CODE_INTELLIGENCE_TOOLS, LANGUAGE_SERVER_TOOL_NAMES } from '../../common/codeIntelligence.js';
 import { AgentQuestionDraft, cursorAskQuestionResult, elicitationResult, elicitationToQuestions, IAgentQuestionResponse, parseQuestionDraft } from '../../common/questions.js';
 import { mapAcpToolKind } from '../../common/harness/workLog.js';
 import { ACP_IDLE_TIMINGS, ACP_STALL_NOTICE_TITLE, declaredToolWaitMs, IdleWatchdog, IIdleStageInfo, IIdleWatchdogTimings, IWatchdogClock, realWatchdogClock } from '../../common/harness/acpStall.js';
@@ -337,18 +338,30 @@ export function isAgentTransportError(message: string): boolean {
 
 export type AcpQuestionAsker = (sessionId: string, runId: string, draft: AgentQuestionDraft) => Promise<IAgentQuestionResponse>;
 
-/** A permission prompt for one of Volt's own MCP tools (`volt-browser_click: browser_click`, `mcp__volt__ask_question`). */
-function isVoltHostToolPermission(params: unknown): boolean {
+/**
+ * The volt server's code tools (find_symbol, instant_grep, find_files, code_nav, diagnostics,
+ * code_action). Volt gates them itself (hostToolSandbox: reads stay in the chat's folders, a
+ * read-only chat cannot apply code actions), like its other host tools.
+ */
+function isVoltCodeTool(name: string): boolean {
+	const bare = name.trim().replace(/^(?:mcp__volt__|volt__|volt[-_:]\s*)/i, '').replace(/^.*?:\s*/, '').toLowerCase();
+	return CODE_INTELLIGENCE_TOOLS.some(tool => tool.name === bare) || LANGUAGE_SERVER_TOOL_NAMES.includes(bare);
+}
+
+/** A permission prompt for one of Volt's own MCP tools (`volt-browser_click: browser_click`, `mcp__volt__ask_question`, Grok's `volt__find_symbol`). */
+export function isVoltHostToolPermission(params: unknown): boolean {
 	const toolCall = (params as { toolCall?: { title?: unknown; rawInput?: { providerIdentifier?: unknown; toolName?: unknown } } } | undefined)?.toolCall;
 	if (!toolCall) {
 		return false;
 	}
 	const raw = toolCall.rawInput;
 	if (raw && raw.providerIdentifier === 'volt' && typeof raw.toolName === 'string') {
-		return isVoltHostTool(raw.toolName) || !!bareTaskToolName(raw.toolName);
+		return isVoltHostTool(raw.toolName) || isVoltCodeTool(raw.toolName) || !!bareTaskToolName(raw.toolName);
 	}
 	const title = typeof toolCall.title === 'string' ? toolCall.title.trim() : '';
-	return /^(volt[-:]|mcp__volt__|volt__)/i.test(title) && (isVoltHostTool(title) || !!bareTaskToolName(title));
+	// Without the code tools here, Grok's find_symbol in a council seat (Ask mode) was judged a shell
+	// command, refused as "User rejected", and Grok ended its turn: the seat came back cancelled.
+	return /^(volt[-:]|mcp__volt__|volt__)/i.test(title) && (isVoltHostTool(title) || isVoltCodeTool(title) || !!bareTaskToolName(title));
 }
 
 function allowOncePermission(params: unknown): unknown {

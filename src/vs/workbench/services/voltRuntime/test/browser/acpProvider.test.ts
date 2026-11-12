@@ -16,7 +16,7 @@ import { IVoltSandboxEvent, IVoltSandboxFileResult, IVoltStdioService } from '..
 import { isSandboxUnavailableError, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IAccessDecision } from '../../common/access/accessTypes.js';
-import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent } from '../../browser/agents/acpProvider.js';
+import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent, isVoltHostToolPermission } from '../../browser/agents/acpProvider.js';
 import { IVoltEvent } from '../../common/events.js';
 import { ACP_IDLE_TIMINGS } from '../../common/harness/acpStall.js';
 import { isAcpTurnRestartable } from '../../common/harness/sessionRetry.js';
@@ -805,5 +805,17 @@ suite('ACP provider sandbox', () => {
 		const env = setup();
 		await assert.rejects(env.provider.start(request(SANDBOXED)), (err: unknown) => isSandboxUnavailableError(err) && /Windows/.test((err as Error).message));
 		assert.strictEqual(env.agent.spawned.length, 0);
+	});
+
+	test('a permission prompt for one of the volt server\'s code tools is Volt\'s own, whatever the agent prefixes it with', () => {
+		const prompt = (title: string, rawInput?: unknown) => ({ toolCall: { title, rawInput }, options: [{ optionId: 'allow', kind: 'allow_once' }] });
+		// Grok wraps MCP calls in use_tool and titles the prompt with the server-prefixed name.
+		assert.ok(isVoltHostToolPermission(prompt('volt__find_symbol', { tool_name: 'volt__find_symbol', tool_input: { name: 'applyDiscount' } })));
+		assert.ok(isVoltHostToolPermission(prompt('mcp__volt__code_nav')));
+		assert.ok(isVoltHostToolPermission(prompt('x', { providerIdentifier: 'volt', toolName: 'instant_grep' })));
+		assert.ok(isVoltHostToolPermission(prompt('volt__browser_click')), 'the other host tools still are');
+		assert.ok(!isVoltHostToolPermission(prompt('find_symbol')), 'not without the volt server prefix');
+		assert.ok(!isVoltHostToolPermission(prompt('other__find_symbol')));
+		assert.ok(!isVoltHostToolPermission(prompt('volt__rm_rf')));
 	});
 });
