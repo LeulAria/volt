@@ -65,6 +65,7 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 			'targets are files, folders, file:line (the test at that line) or test names; omit targets to run everything; failed: true reruns the last failures.',
 			'op results: the last run again, or one test\'s full messages and output (target).',
 			'Prefer it over running the test command in shell: it targets single tests, returns structured failures and is visible to the user.',
+			'In a sandboxed chat a run first asks the user (it runs outside the sandbox); the test command in shell runs inside the sandbox without asking.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',

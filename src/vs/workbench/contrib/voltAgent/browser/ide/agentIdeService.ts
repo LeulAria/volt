@@ -52,7 +52,7 @@ import { ITestService } from '../../../testing/common/testService.js';
 import { TestResultState } from '../../../testing/common/testTypes.js';
 import { IDebugArgs, IdeDebug } from './ideDebug.js';
 import { IdeTasks } from './ideTasks.js';
-import { IdeTests } from './ideTests.js';
+import { IdeTests, ITestRunArgs } from './ideTests.js';
 import { IdeCli, IIdeCapability } from './capabilities/capability.js';
 import { DatabaseCapability } from './capabilities/databaseCapability.js';
 import { EditorCapability } from './capabilities/editorCapability.js';
@@ -242,7 +242,12 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 		}
 		const settings = this.sandboxSettings(call.sessionId);
 		const what = escapesSandbox(name, args, settings);
-		if (!what || this.allowedOutside.get(outsideKey(this.runtime.chatFor(call.sessionId), name, args)) === sandboxLaunchKey(settings)) {
+		const chatId = this.runtime.chatFor(call.sessionId);
+		if (!what || this.allowedOutside.get(outsideKey(chatId, name, args)) === sandboxLaunchKey(settings)) {
+			return undefined;
+		}
+		// Nothing to run (a `node --test` project no controller covers): the call answers at once.
+		if (name === TESTS_TOOL_NAME && !await this.tests.wouldRun(chatId, callRoot(call, this.workspace), testRunArgs(args))) {
 			return undefined;
 		}
 		return `${what} outside this chat's sandbox (${settings.level === 'read-only' ? 'read-only' : 'workspace only'}${settings.network ? '' : ', network off'}); allowing it covers this chat until its sandbox changes`;
@@ -295,7 +300,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			const logKey = `${chatId}\u0000${key}`;
 			this.logs.set(logKey, [...(this.logs.get(logKey) ?? []), entry].slice(-MAX_LOG_ENTRIES));
 			this._onDidLog.fire({ chatId, key });
-			void this.commandService.executeCommand(OPEN_IDE_ACTIVITY_TAB_COMMAND_ID, { chatId, sessionId: call?.sessionId, root: (call?.cwd ? URI.file(call.cwd) : this.workspace.getWorkspace().folders[0]?.uri)?.toString(), key, op, args: opArgs }).catch(() => undefined);
+			void this.commandService.executeCommand(OPEN_IDE_ACTIVITY_TAB_COMMAND_ID, { chatId, sessionId: call?.sessionId, root: callRoot(call, this.workspace)?.toString(), key, op, args: opArgs }).catch(() => undefined);
 		}
 		return result;
 	}
@@ -305,7 +310,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 	}
 
 	private async invoke(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
-		const root = call?.cwd ? URI.file(call.cwd) : this.workspace.getWorkspace().folders[0]?.uri;
+		const root = callRoot(call, this.workspace);
 		const chatId = call?.sessionId ? this.runtime.chatFor(call.sessionId) : undefined;
 		// Per-chat state (the last run, the chat's debug sessions); outside agents share one slot.
 		const key = chatId ?? call?.external?.grantId ?? 'external';
@@ -321,8 +326,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 					return toResult(await this.tests.resultsFor(key, root, str(args.target)));
 				}
 				if (op === 'run') {
-					const targets = Array.isArray(args.targets) ? args.targets.filter((item): item is string => typeof item === 'string') : typeof args.targets === 'string' ? [args.targets] : undefined;
-					return toResult(await this.tests.run(key, root, { targets, failed: args.failed === true, coverage: args.coverage === true }, chatId ? { started: (result, title) => this.trackTests(chatId, key, result, title) } : undefined, token));
+					return toResult(await this.tests.run(key, root, testRunArgs(args), chatId ? { started: (result, title) => this.trackTests(chatId, key, result, title) } : undefined, token));
 				}
 				return { error: 'op must be list, run or results.' };
 			}
@@ -575,6 +579,16 @@ function str(value: unknown): string | undefined {
 
 function num(value: unknown): number | undefined {
 	return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/** The folder a call works in: the agent's own, else the window's first. */
+function callRoot(call: IVoltHostToolCall | undefined, workspace: IWorkspaceContextService): URI | undefined {
+	return call?.cwd ? URI.file(call.cwd) : workspace.getWorkspace().folders[0]?.uri;
+}
+
+function testRunArgs(args: Record<string, unknown>): ITestRunArgs {
+	const targets = Array.isArray(args.targets) ? args.targets.filter((item): item is string => typeof item === 'string') : typeof args.targets === 'string' ? [args.targets] : undefined;
+	return { targets, failed: args.failed === true, coverage: args.coverage === true };
 }
 
 registerSingleton(IAgentIdeService, AgentIdeService, InstantiationType.Delayed);

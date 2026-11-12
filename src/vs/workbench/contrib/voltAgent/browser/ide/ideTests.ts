@@ -33,6 +33,12 @@ export interface ITestToolResult {
 	readonly isError?: boolean;
 }
 
+export interface ITestRunArgs {
+	readonly targets?: readonly string[];
+	readonly failed?: boolean;
+	readonly coverage?: boolean;
+}
+
 interface ITestEntry {
 	readonly item: IncrementalTestCollectionItem;
 	readonly file: URI;
@@ -94,38 +100,23 @@ export class IdeTests {
 		return { text: lines.join('\n') };
 	}
 
-	async run(key: string, root: URI | undefined, args: { readonly targets?: readonly string[]; readonly failed?: boolean; readonly coverage?: boolean }, watcher: ITestRunWatcher | undefined, token: CancellationToken): Promise<ITestToolResult> {
+	/**
+	 * Whether `run` with these arguments would start a run. A run asks before it leaves a sandboxed
+	 * chat's sandbox, and a call with nothing to run (a `node --test` project no controller covers)
+	 * answers at once instead of waiting on a card the agent's MCP client gives up on after 60 s.
+	 */
+	async wouldRun(key: string, root: URI | undefined, args: ITestRunArgs): Promise<boolean> {
 		await this.settle(root);
-		let tests: InternalTestItem[];
-		let title: string;
-		if (args.failed) {
-			const last = this.lastResult(key);
-			if (!last) {
-				return { text: 'No earlier test run to take failures from. Run tests first.', isError: true };
-			}
-			tests = [...last.tests].filter(item => item.ownComputedState === TestResultState.Failed || item.ownComputedState === TestResultState.Errored)
-				.map(item => this.testService.collection.getNodeById(item.item.extId))
-				.filter((item): item is IncrementalTestCollectionItem => !!item);
-			if (!tests.length) {
-				return { text: 'The last run had no failures.' };
-			}
-			title = `Rerun ${tests.length} failed`;
-		} else if (args.targets?.length) {
-			const resolved = this.resolveTargets(root, args.targets);
-			if ('error' in resolved) {
-				return { text: resolved.error, isError: true };
-			}
-			tests = resolved.tests;
-			title = args.targets.join(', ');
-		} else {
-			// A chat project outside the window's folders: its own tests, not every project's.
-			const project = root && projectTestRoots.list().some(candidate => isEqual(candidate, root)) ? this.resolveTargets(root, [root.fsPath]) : undefined;
-			tests = project && !('error' in project) ? project.tests : project ? [] : [...this.testService.collection.rootItems];
-			if (!tests.length) {
-				return { text: 'No tests in this workspace to run.', isError: true };
-			}
-			title = 'All tests';
+		return 'tests' in this.select(key, root, args);
+	}
+
+	async run(key: string, root: URI | undefined, args: ITestRunArgs, watcher: ITestRunWatcher | undefined, token: CancellationToken): Promise<ITestToolResult> {
+		await this.settle(root);
+		const selected = this.select(key, root, args);
+		if (!('tests' in selected)) {
+			return selected;
 		}
+		const { tests, title } = selected;
 		const coverage = !!args.coverage && tests.every(test => this.profiles.getControllerProfiles(test.controllerId).some(profile => profile.group & TestRunProfileBitset.Coverage));
 		const runPromise = this.testService.runTests({ group: coverage ? TestRunProfileBitset.Coverage : TestRunProfileBitset.Run, tests, preserveFocus: true }, token);
 		// The live result exists as soon as the run starts: the card shows it running.
@@ -137,6 +128,28 @@ export class IdeTests {
 		this.lastRun.set(key, result.id);
 		const note = args.coverage && !coverage ? '\n(No coverage profile for these tests; ran them without coverage.)' : '';
 		return { text: this.summarize(root, result) + note };
+	}
+
+	/** The tests a run takes, or why there are none. Call after `settle`. */
+	private select(key: string, root: URI | undefined, args: ITestRunArgs): { readonly tests: InternalTestItem[]; readonly title: string } | ITestToolResult {
+		if (args.failed) {
+			const last = this.lastResult(key);
+			if (!last) {
+				return { text: 'No earlier test run to take failures from. Run tests first.', isError: true };
+			}
+			const tests = [...last.tests].filter(item => item.ownComputedState === TestResultState.Failed || item.ownComputedState === TestResultState.Errored)
+				.map(item => this.testService.collection.getNodeById(item.item.extId))
+				.filter((item): item is IncrementalTestCollectionItem => !!item);
+			return tests.length ? { tests, title: `Rerun ${tests.length} failed` } : { text: 'The last run had no failures.' };
+		}
+		if (args.targets?.length) {
+			const resolved = this.resolveTargets(root, args.targets);
+			return 'error' in resolved ? { text: resolved.error, isError: true } : { tests: resolved.tests, title: args.targets.join(', ') };
+		}
+		// A chat project outside the window's folders: its own tests, not every project's.
+		const project = root && projectTestRoots.list().some(candidate => isEqual(candidate, root)) ? this.resolveTargets(root, [root.fsPath]) : undefined;
+		const tests = project && !('error' in project) ? project.tests : project ? [] : [...this.testService.collection.rootItems];
+		return tests.length ? { tests, title: 'All tests' } : { text: 'No tests in this workspace to run.', isError: true };
 	}
 
 	async resultsFor(key: string, root: URI | undefined, target: string | undefined): Promise<ITestToolResult> {
