@@ -175,6 +175,8 @@ export interface IVoltSandboxEvent {
 	readonly id: string;
 	readonly denial?: ISandboxDenial;
 	readonly warning?: string;
+	/** A partial sandbox dimension the user can act on: said once, quietly, with what to do about it. */
+	readonly note?: { readonly title: string; readonly detail: string };
 	/**
 	 * A sandboxed host crashed and the supervisor restarts it (`restarting`), or the new instance runs
 	 * (`restarted`): what the old instance was asked is lost, and a protocol must start over.

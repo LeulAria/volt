@@ -235,6 +235,10 @@ suite('Volt sandbox denials', () => {
 		for (const target of ['/Users/me/.claude/skills/synced/0b1c/manifest.json', '/Users/me/.claude/skills/.trash', '/Users/me/.claude/plugins/store', '/Users/me/.claude/sessions/123.key.tmp', '/Users/me/.claude.json', '/Users/me/.local/state/claude/locks', '/Users/me/.cache/claude/staging/x']) {
 			assert.ok(quiet('write', target), target);
 		}
+		// Plugins synced from claude.ai and the marketplace list's lock (2026-11-12: four cards in every new sandboxed chat).
+		for (const target of ['/Users/me/.claude/plugins/known_marketplaces_claudeai.json.lock', '/Users/me/.claude/plugins/synced/bb14_5f1e/.last-complete-round', '/Users/me/.claude/plugins/synced/bb14_5f1e/.marketplaces.json.tmp.7bd7a611', '/Users/me/.claude/plugins/synced/bb14_5f1e/manifest.json']) {
+			assert.ok(quiet('write', target), target);
+		}
 		assert.ok(quiet('read', '/Users/me/.local/state/claude/locks'));
 		assert.ok(quiet('read', '/Users/me'), 'a look at the home folder itself');
 		assert.ok(quiet('read', '/Users'), 'and at its parent');
@@ -243,7 +247,7 @@ suite('Volt sandbox denials', () => {
 		// A moved config folder (CLAUDE_CONFIG_DIR): its housekeeping there too.
 		assert.ok(quiet('write', '/opt/claude-cfg/skills/synced/a/manifest.json', { realConfig: '/opt/claude-cfg' }));
 		// Still shown: edits to settings, instructions and skills, anything else in the home folder, other agents, network.
-		for (const target of ['/Users/me/.claude/settings.json', '/Users/me/.claude/CLAUDE.md', '/Users/me/.claude/skills/my-skill/SKILL.md', '/Users/me/.claude/hooks/x.sh', '/Users/me/.zshrc', '/Users/me/notes/a.txt', '/Users/me/.claude.json.evil', '/Users/me/.claude-other/x']) {
+		for (const target of ['/Users/me/.claude/settings.json', '/Users/me/.claude/CLAUDE.md', '/Users/me/.claude/skills/my-skill/SKILL.md', '/Users/me/.claude/hooks/x.sh', '/Users/me/.zshrc', '/Users/me/notes/a.txt', '/Users/me/.claude.json.evil', '/Users/me/.claude-other/x', '/Users/me/.claude/plugins/known_marketplaces_claudeai.json.evil']) {
 			assert.ok(!quiet('write', target), target);
 		}
 		assert.ok(!quiet('read', '/Users/me/notes'), 'a folder below the home folder');
