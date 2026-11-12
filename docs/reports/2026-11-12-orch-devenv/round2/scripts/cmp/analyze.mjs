@@ -22,7 +22,7 @@ const excludedFile = join(DATA, 'excluded.json');
 const excluded = new Set(existsSync(excludedFile) ? JSON.parse(readFileSync(excludedFile, 'utf8')).rows.map(r => `${r.id}@${r.at}`) : []);
 const rows = readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(r => !excluded.has(`${r.id}@${r.at.slice(0, 19)}`));
 const HAIKU = { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.20 };
-const haikuArm = arm => ['cc', 'hermes', 't3'].includes(arm) || arm === 'volt' || arm.startsWith('volt-after');
+const haikuArm = arm => ['cc', 'hermes', 't3'].includes(arm) || arm === 'volt' || arm.startsWith('volt-after') || arm.startsWith('volt-final');
 const listCost = u => u ? ((u.input ?? 0) * HAIKU.input + (u.output ?? 0) * HAIKU.output + (u.cacheRead ?? 0) * HAIKU.cacheRead + (u.cacheWrite ?? 0) * HAIKU.cacheWrite) / 1e6 : undefined;
 const tokens = u => u ? (u.input ?? 0) + (u.output ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) : 0;
 export const med = xs => { const s = xs.filter(x => typeof x === 'number' && !isNaN(x)).sort((a, b) => a - b); if (!s.length) { return undefined; } const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
@@ -86,7 +86,7 @@ export function summarize(rs) {
 	};
 }
 
-const order = ['cc', 't3', 'hermes', 'volt', 'volt-after', 'volt-after-cold', 'cursor-sonnet', 'volt-cursor-sonnet', 'volt-cursor-sonnet-after', 'cursor-grok', 'volt-cursor-grok', 'volt-cursor-grok-after'];
+const order = ['cc', 't3', 'hermes', 'volt', 'volt-after', 'volt-after-cold', 'volt-after2', 'volt-final', 'volt-final-fix', 'cursor-sonnet', 'volt-cursor-sonnet', 'volt-cursor-sonnet-after', 'cursor-grok', 'volt-cursor-grok', 'volt-cursor-grok-after'];
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	const out = [];
 	const json = {};
