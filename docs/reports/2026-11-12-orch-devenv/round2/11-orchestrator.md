@@ -158,4 +158,83 @@ A write to an rc file still shows. After the fix: **0 rows per run** in B1 (2 of
 challenge, the team and the councils; before: 12 (9-24) per B1 run. The agent server log shows the
 same denials as "housekeeping denial, not shown".
 
+### 5. Chat titles (item 6)
+
+Round 1: titles sometimes came from the agent's first words ("I couldn't run this. No `council`").
+The cause was the title call itself: Claude Code's title request ran Haiku under Claude Code's
+full agent prompt, and Haiku answered the message instead of naming it. Commit 023bc9a4f0a gives
+the title call its own short system prompt, says the message is data, and drops replies that
+answer instead of name (`sanitizeTitle`).
+
+| Arm | Runs | Titles that answer the request | Examples |
+|---|---|---|---|
+| Before (B1, interleaved) | 3 | **1** ("I can't run this benchmark. `delegate_task` and…", `img/orch/base-title-from-agent.png`) | "Run Orch bench B1 delegation", "Orch bench B1" |
+| After (B1, natural, councils, challenge, team) | 3 + 3 + 2 + 3 + 3 + 3 | **0** | "Orch bench B1 delegate and wait run", "Pricing function bug", "Volt council benchmark pricing", "Benchmark spawn_team call for fx-audit" |
+
+The UI agent's own title change was reverted in favour of this one (as the brief says); no
+further change here.
+
+### 6. A 6-step job with dependencies and a fallback, a team, a council (item 7)
+
+After arm only (this branch before the two last fixes below), N=3 each, interleaved challenge, team,
+council (`after.sh 3`), Haiku 5.5 parent. The machine was busy: load 26-249.
+
+**Challenge** (`chal-prompt.txt`): one `delegate_task` with six parts on a fresh copy of the
+fixture: C1 research (callers), C2/C3/C4 implementation in parallel, C4 starting on fx
+(`fx:openai/gpt-5.4-nano`) with `fallback_models: [claude-haiku-5-5]`, C5 tests `after` 2-4, C6
+review `after` 1 and 5. The parent ends its turn and is woken with the reports.
+
+| Metric | Median (range), N=3 | Notes |
+|---|---|---|
+| Load (1 min) | 49 (26-74) | |
+| End to end | **114.4 s** (83.5-125.6) | |
+| Critical path (accepted → last report) | 90.9 s (69.7-109.2) | C2-C4 in parallel → C5 → C6 |
+| Outcome checks (`chalcheck.sh`) | **3 of 3 runs: fix, restock, formatCents and the tests all right, 0 stray files** | |
+| Fallback: fx fails → Claude prompt sent | fx failed 2.9-5.0 s after dispatch ("Failed to load startup state", fx in a sandbox); the fallback turn was queued at 0 ms and its agent bound 6.1-8.2 s later (cold start) | 3 of 3 |
+| Parent woken after the last report | **1.4 s** (0.7-2.9), then its wake turn 4.1 s (3.8-8.6) | 2 parent runs each, no extra wake-ups |
+| First request, research / review (read-only) | 9.3k / 10.6-10.9k | |
+| First request, implementation (work profile) | 15.3-15.5k (C4 with the fallback note 16.3-16.5k) | before: one profile for all, 28.3k+ |
+| First request, test (with 3 upstream reports) | 16.9-21.5k | |
+| Cost | $0.955 (0.873-1.096) | |
+| Failures, denial rows | 0; 0-2 (two `node` rows in one run: `~/.npmrc`, a tsx pipe) | |
+
+**Team** (`team-prompt.txt`): `spawn_team` with 3 Haiku 5.5 research members and 6 board items.
+
+| Metric | Median (range), N=3 |
+|---|---|
+| Load | 102 (60-249) |
+| End to end | **49.3 s** (43.3-63.8) |
+| Critical path | 34.7 s (28.1-48.1) |
+| Answers right | 6 of 6 items in 3 of 3 runs |
+| Member first request | 10.5k (10.3-10.6k) |
+| Parent woken after the team's last member | 1.6 s (1.6-1.9) |
+| Cost | $0.688 (0.594-0.688) |
+
+**Council** (`council-prompt.txt`): seats Haiku 5.5, Grok 4.7, Haiku 4.5; moderator Haiku 5.5; one
+review round.
+
+| Metric | Median (range), N=3 |
+|---|---|
+| Load | 88 (64-151) |
+| End to end | **135.5 s** (102.7-136.6) |
+| Verdict | (A) in 3 of 3, with the reason and the caveat that Grok gave nothing |
+| Grok seat | **cancelled in 3 of 3** (answer and review; one review "Rate limited") — bug, fixed below |
+| Cost | $0.82 (0.69-0.83) |
+
+**Default seating (item 5)**: the council tool with no participants (`council-default-prompt.txt`),
+N=2, load 29 and 38.
+
+| Run | Seats Volt picked | Answered | Why the others failed |
+|---|---|---|---|
+| cdef-1 (first council in this window) | Opus 5.5, Codex GPT-6-Luna, fx GPT 5.2, Grok 4.7 | 1 of 4 | Codex out of quota (resets Nov 26); fx cannot start in a sandboxed chat; Grok refused its code tool (bug below) |
+| cdef-2 | Grok 4.7, Ollama gemma4:26b, Antigravity Gemini 3.8 Flash, Cursor Auto | 1 of 4 (Cursor answered its review only) | Antigravity cannot bind a loopback port in the sandbox; Cursor did not answer `session/new` within 120 s; Grok as above |
+
+- **Partly verified.** The second council left out the two providers that failed in the first
+  (Codex: quota; fx: start in this sandbox), as 3894a2fa65b intends. But Volt learns only from
+  failures in the runs it has loaded: the first council of a session seats providers blind, and
+  Antigravity and fx are known (round 1) not to start in a sandboxed chat. Both runs ended with one
+  real answer and a verdict that says so. Open issue below.
+- cdef-2 took 460 s: the local gemma4:26b took 252 s to answer and Cursor's `session/new` waited
+  out its 120 s timeout.
+
 <!-- RESULTS -->
