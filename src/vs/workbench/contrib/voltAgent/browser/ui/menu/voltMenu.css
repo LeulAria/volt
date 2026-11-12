@@ -26,7 +26,8 @@
 .volt-menu {
 	display: flex;
 	flex-direction: column;
-	max-width: calc(100vw - 16px);
+	/* The composer's controls sit 16px in: a menu as wide as the window then still shows its right edge. */
+	max-width: calc(100vw - 32px);
 	box-sizing: border-box;
 	padding: 0;
 	background: var(--vscode-editor-background, #1e1e1e);

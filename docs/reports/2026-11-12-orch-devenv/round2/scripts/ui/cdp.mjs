@@ -1,6 +1,6 @@
 // CDP driver for the round-2 UI pass.
 // node cdp.mjs <port> eval '<expr>' | evalf <file.js> | shot <file.png> [x y w h] | type '<text>' | enter
-//                     | click <x> <y> | move <x> <y> | wheel <x> <y> <dy> | key <key> [modifiers] | reload
+//                     | click <x> <y> | move <x> <y> | wheel <x> <y> <dy> | viewport <w> <h>|clear | key <key> [modifiers] | reload
 // Screenshots paint html/body/.monaco-workbench with the window's base colour first: the transparent
 // agent window otherwise composites over white in CDP (white-composite trap).
 const [port, cmd, ...args] = process.argv.slice(2);
@@ -55,6 +55,15 @@ if (cmd === 'eval') {
 	const [x, y, dy] = args.map(Number);
 	await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY: dy });
 	console.log('wheel', dy);
+} else if (cmd === 'viewport') {
+	// viewport <width> <height> | viewport clear: emulate a narrow window (the layout follows it).
+	if (args[0] === 'clear') {
+		await send('Emulation.clearDeviceMetricsOverride');
+	} else {
+		const [width, height] = args.map(Number);
+		await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 2, mobile: false });
+	}
+	console.log('viewport', args.join(' '));
 } else if (cmd === 'key') {
 	const [key, mods] = args;
 	const codes = { Escape: 27, Tab: 9, ArrowDown: 40, ArrowUp: 38, Enter: 13, Space: 32 };
