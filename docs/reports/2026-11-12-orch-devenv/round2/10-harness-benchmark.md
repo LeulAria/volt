@@ -1,6 +1,6 @@
 # 10 · Cross-harness benchmark: Volt vs Hermes Agent, Claude Code, Cursor and T3 Code
 
-Status: in progress (runs going). Numbers below are filled in as they land.
+Status: in progress (baseline complete; after-fix runs going). Numbers below are filled in as they land.
 
 ## Setup
 
@@ -56,3 +56,48 @@ Hermes' default for one-shot runs is **2 children per run**, and a batch of 3 is
 ("Delegation budget for this one-shot run is exhausted (0/2 subagents used)"), so the parent did the
 work itself (seen in a smoke run). With the cap raised, batches of 3 run as documented. The
 Claude plugin worked fully non-interactively.
+
+### Changes to the setup during the run (read before the tables)
+
+- **Claude subscription outage, 17:27Z to at least 17:47Z.** Every Claude-backed arm failed in that
+  window ("Claude Code can't use your Claude subscription, usually because a payment is past due";
+  Hermes: OAuth 403). The nine rows it broke stay in `runs.jsonl` but are listed in
+  `data/cmp/excluded.json` and left out of every table; all nine were re-run at 18:53-19:22Z once
+  `claude -p` worked again. Their raw files were overwritten by the re-runs (same id).
+- **Cursor CLI updated itself during the run**: `cursor-agent` 2026.10.16-e3cb207 installed
+  2026.11.11-b912975 at 16:33Z, three minutes into the first batch. Every Cursor row after
+  `cursor-grok-t0-1` (both the CLI arms and Volt's Cursor arms, which run the same binary) is on
+  2026.11.11.
+- **One T3 row excluded for contamination**: `t3-t2-2` (19:09Z) ran while Volt restarted the hung
+  Cursor subagents of `volt-cursor-sonnet-t2-1` (see Bugs), which edited `/tmp/vcmp/w/t2` under it.
+  Re-run in the after batch.
+- **Volt on Cursor, t2/t3**: the first run (`volt-cursor-sonnet-t2-1`) hung (the sandbox bug fixed
+  below); the second was stopped by hand after the cause was clear. Those two arms were then run
+  on the fixed code only, as `volt-cursor-*-after`.
+- **Load.** Five agents shared the machine. 1-minute load average at the start of each run: 8-134
+  over all rows; per arm: cc 8-124, hermes 8-115, t3 8-58, volt 14-114, cursor-sonnet 11-90,
+  cursor-grok 8-134, volt-cursor-* 17-79; the after batch ran at 69-120. Interleaving spreads it
+  over the arms of a batch, but compare batches with care.
+
+### What each number means
+
+- **Wall**: send (or process spawn) to the end of the last run of the root and every subagent
+  (Volt: the trace's last `run.end`; CLIs: process exit; T3: the thread's final `run.updated`).
+- **First output**: first streamed token of any kind (text, thinking, tool input). T3's
+  WebSocket stream only carries the assistant text when the turn ends, so its column is the end
+  of the turn, not a first token: not comparable.
+- **Tokens**: input + output + cache read + cache write of the parent and all subagents.
+  Volt-on-Cursor has none: Cursor's ACP agent reports no usage (`n/r`).
+- **Cost reported**: the harness's own number. Volt's is what the Claude ACP adapter reports, which
+  is wrong for Haiku 5.5 (see Bugs); compare with **Cost at Haiku list** (same rate card for every
+  Haiku arm).
+- **Tool calls**: all calls of the parent and its subagents, except Cursor CLI (`*`: its
+  `--print` stream shows only the parent's calls).
+- **Score** (per run, 0-1): t0 reply is exactly OK; t1 graded answers / 4; t2 all 7 tests green and
+  no stray file; t3 all 7 hidden checks pass incl. the planted bug.
+- **Volt overhead** (`scripts/cmp/breakdown.mjs`, from Volt's own traces): on the critical path,
+  Enter → `run.start`, `run.start` → prompt written to the agent (spare adopted or cold start), per
+  delegation wave the last-ending subagent's task start → its `run.start` and its agent start, and
+  the delay before the parent sees the reports. Everything else is "model + tools" (model requests,
+  file reads, tests). Harness overhead of the other arms cannot be split out the same way (no
+  equivalent traces), so only end-to-end numbers are compared across harnesses.

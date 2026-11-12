@@ -86,7 +86,7 @@ export function summarize(rs) {
 	};
 }
 
-const order = ['cc', 't3', 'hermes', 'volt', 'volt-after', 'cursor-sonnet', 'volt-cursor-sonnet', 'volt-cursor-sonnet-after', 'cursor-grok', 'volt-cursor-grok', 'volt-cursor-grok-after'];
+const order = ['cc', 't3', 'hermes', 'volt', 'volt-after', 'volt-after-cold', 'cursor-sonnet', 'volt-cursor-sonnet', 'volt-cursor-sonnet-after', 'cursor-grok', 'volt-cursor-grok', 'volt-cursor-grok-after'];
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	const out = [];
 	const json = {};

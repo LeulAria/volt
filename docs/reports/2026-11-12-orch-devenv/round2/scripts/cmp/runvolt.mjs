@@ -25,13 +25,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const ARMS = {
 	volt: { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/ },
 	// The same arm on changed code (a re-run after fixes): rows are kept apart from the baseline.
-	'volt-after': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/ },
+	'volt-after': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, settings: { 'volt.agent.multitask.warmSubagents': true } },
+	// The same changed code with subagent warming off (interleaved with volt-after: same load).
+	'volt-after-cold': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, settings: { 'volt.agent.multitask.warmSubagents': false } },
 	// Cursor's catalog in Volt (from its ACP model list): base ids, effort/thinking are options.
 	'volt-cursor-sonnet': { model: 'agent:seed-cursor-acp:claude-sonnet-5', sub: 'agent:seed-cursor-acp:claude-sonnet-5', label: /Sonnet 5(?!\.)/ },
 	'volt-cursor-grok': { model: 'agent:seed-cursor-acp:grok-4.7', sub: 'agent:seed-cursor-acp:grok-4.7', label: /Grok 4\.7/ },
+	// Cursor arms on the changed code (Cursor's ai-tracking database writable in the sandbox, warm subagents).
+	'volt-cursor-sonnet-after': { model: 'agent:seed-cursor-acp:claude-sonnet-5', sub: 'agent:seed-cursor-acp:claude-sonnet-5', label: /Sonnet 5(?!\.)/ },
+	'volt-cursor-grok-after': { model: 'agent:seed-cursor-acp:grok-4.7', sub: 'agent:seed-cursor-acp:grok-4.7', label: /Grok 4\.7/ },
 };
 
-function writeSettings(model) {
+function writeSettings(model, extra = {}) {
 	mkdirSync(USER, { recursive: true });
 	const file = join(USER, 'settings.json');
 	let s = {};
@@ -45,7 +50,8 @@ function writeSettings(model) {
 		'security.workspace.trust.enabled': false,
 		'update.mode': 'none',
 		'telemetry.telemetryLevel': 'off',
-	});
+		'volt.agent.multitask.warmSubagents': true,
+	}, extra);
 	writeFileSync(file, JSON.stringify(s, null, '\t'));
 }
 
@@ -212,7 +218,7 @@ async function newChat(c) {
 async function run(arm, task, rep) {
 	const a = ARMS[arm];
 	resetFixture(task);
-	writeSettings(a.model);
+	writeSettings(a.model, a.settings);
 	await sleep(800);
 	const prompt = buildPrompt('volt', task, a.sub);
 	const c = await cdp();

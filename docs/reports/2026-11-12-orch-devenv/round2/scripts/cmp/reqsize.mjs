@@ -9,7 +9,9 @@ import { fileURLToPath } from 'url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DATA = process.argv[2] ?? join(here, '../../data/cmp');
-const rows = readFileSync(join(DATA, 'runs.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+// Excluded rows (excluded.json) are left out; their re-runs wrote over the same raw files.
+const excluded = new Set(existsSync(join(DATA, 'excluded.json')) ? JSON.parse(readFileSync(join(DATA, 'excluded.json'), 'utf8')).rows.map(r => `${r.id}@${r.at}`) : []);
+const rows = readFileSync(join(DATA, 'runs.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(r => !excluded.has(`${r.id}@${r.at.slice(0, 19)}`));
 const med = xs => { const s = xs.filter(Number.isFinite).sort((a, b) => a - b); return s.length ? s[s.length >> 1] : undefined; };
 const k = x => x === undefined ? '–' : `${(x / 1000).toFixed(1)}k`;
 const out = {};
