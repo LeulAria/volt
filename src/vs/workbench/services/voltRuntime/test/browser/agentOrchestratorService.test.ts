@@ -341,6 +341,48 @@ suite('Agent orchestrator service', () => {
 		assert.match(await tool('parent', 'delegate_task', { task: 'x', previous_task_id: 't-000000' }), /No task t-000000/);
 	});
 
+	test('a batch of subagents is saved in a couple of writes, each started once its own state is on disk, and a restart reads every one back', async () => {
+		const first = await setup();
+		await first.service.submit('parent', { text: 'split it' }, 'auto', 'p1');
+		await settle();
+		const rootFile = URI.file('/user/voltOrchestrator/roots/parent.json');
+		let writes = 0;
+		const write = first.fileService.writeFile.bind(first.fileService);
+		first.fileService.writeFile = (...args: Parameters<FileService['writeFile']>) => {
+			writes++;
+			return write(...args);
+		};
+		// No child starts before the saved tree holds its task.
+		const unsaved: string[] = [];
+		const startTurn = first.host.startTurn.bind(first.host);
+		first.host.startTurn = async request => {
+			const saved = (await first.fileService.readFile(rootFile)).value.toString();
+			if (!saved.includes(request.threadId)) {
+				unsaved.push(request.threadId);
+			}
+			return startTurn(request);
+		};
+		const brief = 'x'.repeat(2_000);
+		const result = await first.tool('parent', 'delegate_task', { tasks: Array.from({ length: 6 }, (_, i) => ({ task: `${brief} part ${i}`, title: `Part ${i}` })) });
+		assert.match(result, /Started 6 of 6 tasks/);
+		await settle();
+		await timeout(50);
+		const tasks = first.service.tasksOf('parent');
+		assert.strictEqual(tasks.filter(task => task.state === 'running').length, 6);
+		assert.deepStrictEqual(unsaved, []);
+		assert.ok(writes <= 3, `6 spawns took ${writes} writes`);
+		assert.ok(first.service.getThread(tasks[0].childId!)?.active?.prompt.text.includes(brief), 'the turn itself keeps the whole brief');
+		await timeout(300);
+
+		const saved = JSON.parse((await first.fileService.readFile(rootFile)).value.toString()) as { events: { event: { turn?: { prompt: { text: string } }; item?: { prompt: { text: string } } } }[] };
+		const prompts = saved.events.map(envelope => envelope.event.turn?.prompt.text ?? envelope.event.item?.prompt.text).filter((text): text is string => !!text);
+		assert.ok(prompts.length > 0);
+		assert.ok(prompts.every(text => text.length < 500), 'the audit trail keeps prompts short');
+		const second = await setup({ fileService: first.fileService });
+		await settle();
+		assert.strictEqual(second.service.tasksOf('parent').length, 6, 'every task was saved');
+	});
+
 	test('a harness subagent is tracked from the Task call and ends with its parent turn', async () => {
 		const { service, runtime } = await setup();
 		await service.submit('chat', { text: 'explore' }, 'auto', 't1');

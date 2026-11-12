@@ -35,7 +35,7 @@ import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../
 import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSpawnOutcome, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, IOrchModelChoice, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_KEEP_WORKING_SETTING, ORCH_ROLE_MODELS_SETTING, ORCH_SUBAGENT_SANDBOX_SETTING, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_MAX_TEAM_AGENTS_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, orchHoldReason, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
 import { ORCH_MACHINE_CAPACITY_SETTING } from '../../common/orchestration/machineCapacity.js';
 import { ILimitSignal, isClaudeProvider, isRealAnswer, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
-import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
+import { compactEnvelope, extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { isRescueTurnId, rescueDueAt, rescueWaits } from '../../common/orchestration/rescue.js';
 import { failureRetryCount, harnessTaskId, IOrchStep, isFailureRetryTurn, limitTickWaits, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
@@ -560,7 +560,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				taskIds.forEach(taskId => tasks.add(taskId));
 				for (const rootId of this.rootsFor(envelope.event, before)) {
 					const list = this.rootEvents.get(rootId) ?? [];
-					list.push(envelope);
+					list.push(compactEnvelope(envelope));
 					if (list.length > 400) {
 						list.splice(0, list.length - 200);
 					}
@@ -672,7 +672,6 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const roots = [...this.dirtyRoots];
 		this.dirtyRoots.clear();
 		const state = this.state;
-		const now = Date.now();
 		const writes: Promise<boolean>[] = [];
 		// A write that did not land is written again (with what the state holds then), not forgotten.
 		const track = (write: Promise<boolean>, onFailure: () => void) => writes.push(write.then(ok => {
@@ -690,7 +689,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				continue;
 			}
 			this.knownRoots.add(rootId);
-			track(this.store.saveRoot(extractRoot(state, rootId, this.rootEvents.get(rootId) ?? [], now)), () => this.dirtyRoots.add(rootId));
+			// The tree as it is when the write begins (a newer state holds this one's changes too), so a
+			// burst of changes is one write. A tree let go of meanwhile (another window runs it) is not written.
+			track(this.store.saveRoot(rootId, () => Object.values(this.state.threads).some(thread => thread.rootId === rootId)
+				? extractRoot(this.state, rootId, this.rootEvents.get(rootId) ?? [], Date.now())
+				: undefined), () => this.dirtyRoots.add(rootId));
 		}
 		const index: Omit<IOrchIndex, 'version'> = {
 			seq: state.seq,
