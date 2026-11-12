@@ -24,7 +24,9 @@
 import type { IVoltHostToolInfo } from '../hostTools.js';
 import { describeMachineLoad, IRelayMachine, RELAY_AGENT_IDS } from '../relay/relayMachines.js';
 import { AGENT_TASK_ROLES } from './agentTasks.js';
+import { limitFromError } from './limitRecovery.js';
 import { describeMachine, IMachineCapacity } from './machineCapacity.js';
+import type { IOrchState } from './orchestrator.js';
 
 //#region Settings
 
@@ -384,6 +386,109 @@ export function buildMemberBrief(spec: IMemberBriefSpec): string {
 	return lines.join('\n');
 }
 
+/** What Volt last saw of a model, for default council seating. */
+export interface ICouncilSeatHealth {
+	/** Its last run that finished (any chat Volt has loaded). */
+	readonly okAt?: number;
+	/** Its last failed run that was neither a usage limit nor a failed start. */
+	readonly failedAt?: number;
+	/** Its account is out of quota (a usage-limit failure whose reset has not passed). */
+	readonly limited?: boolean;
+	/** It failed before doing anything in a chat sandboxed like this one (fx, Antigravity: the agent could not start there). */
+	readonly cannotStart?: boolean;
+}
+
+export interface ICouncilCandidate {
+	readonly ref: string;
+	readonly providerId: string;
+	readonly kind: string;
+}
+
+/**
+ * The council's seats when neither the call nor the settings name any. One model per provider
+ * family, so the views differ; providers that are out of quota or cannot start in this chat's
+ * sandbox are left out, those that ran recently come first, then ones Volt has not seen fail,
+ * then the rest, harnesses before plain models (they can read the code). With fewer than `min`
+ * families a second model of a seated family fills the seat, so every review compares at least
+ * two answers. Before: seats went to the first model of each provider, quota or not (live: Codex
+ * out of quota, fx and Antigravity unable to start sandboxed, three of four seats failed).
+ */
+export function pickCouncilSeats<T extends ICouncilCandidate>(catalog: readonly T[], family: (providerId: string) => string, health: (item: T) => ICouncilSeatHealth | undefined, max = 4, min = 3): T[] {
+	const usable = catalog.filter(item => { const h = health(item); return !h?.limited && !h?.cannotStart; });
+	const tier = (item: T) => { const h = health(item); return h?.okAt !== undefined && (h.failedAt === undefined || h.okAt > h.failedAt) ? 0 : h?.failedAt !== undefined ? 2 : 1; };
+	const ranked = usable
+		.map((item, index) => ({ item, index }))
+		.sort((a, b) => tier(a.item) - tier(b.item) || (a.item.kind === 'agent' ? 0 : 1) - (b.item.kind === 'agent' ? 0 : 1) || (health(b.item)?.okAt ?? 0) - (health(a.item)?.okAt ?? 0) || a.index - b.index)
+		.map(entry => entry.item);
+	const seats: T[] = [];
+	for (const item of ranked) {
+		if (seats.length < max && !seats.some(seat => family(seat.providerId) === family(item.providerId))) {
+			seats.push(item);
+		}
+	}
+	for (const item of ranked) {
+		if (seats.length >= Math.min(min, max)) {
+			break;
+		}
+		if (!seats.some(seat => seat.ref === item.ref)) {
+			seats.push(item);
+		}
+	}
+	return seats;
+}
+
+/** How long a usage-limit failure without a reset time, or a failed start, keeps a provider off the default seats. */
+const SEAT_LIMIT_MEMORY_MS = 6 * 60 * 60_000;
+
+/**
+ * What the loaded orchestration says about each provider (`providerOf` maps a model ref to its
+ * provider): its subagents' and chats' last runs. A failed start counts only in chats sandboxed like
+ * this one (`sandboxed`); `sandboxOf` says whether a chat ran sandboxed.
+ */
+export function councilSeatHealth(state: Pick<IOrchState, 'tasks' | 'threads'>, providerOf: (ref: string) => string | undefined, sandboxOf: (chatId: string) => boolean, sandboxed: boolean, now: number): (providerId: string) => ICouncilSeatHealth | undefined {
+	const health = new Map<string, { okAt?: number; failedAt?: number; limited?: boolean; cannotStart?: boolean }>();
+	const note = (ref: string | undefined, chatId: string | undefined, at: number, ok: boolean, error: string | undefined, startFailed: boolean) => {
+		const provider = ref ? providerOf(ref) : undefined;
+		if (!provider) {
+			return;
+		}
+		const entry = health.get(provider) ?? {};
+		health.set(provider, entry);
+		if (ok) {
+			entry.okAt = Math.max(entry.okAt ?? 0, at);
+			return;
+		}
+		const limit = limitFromError(error, at);
+		if (limit) {
+			if (limit.resetAt ? limit.resetAt > now : now - at < SEAT_LIMIT_MEMORY_MS) {
+				entry.limited = true;
+			}
+		} else if (startFailed && now - at < SEAT_LIMIT_MEMORY_MS && (!chatId || sandboxOf(chatId) === sandboxed)) {
+			entry.cannotStart = true;
+		} else {
+			entry.failedAt = Math.max(entry.failedAt ?? 0, at);
+		}
+	};
+	for (const task of Object.values(state.tasks)) {
+		if (task.source === 'volt' && (task.state === 'completed' || task.state === 'failed')) {
+			note(task.modelRef, task.childId, task.endedAt ?? task.createdAt, task.state === 'completed', task.error, task.steps === 0);
+		}
+	}
+	for (const thread of Object.values(state.threads)) {
+		if (!thread.taskId && thread.last && (thread.last.outcome === 'done' || thread.last.outcome === 'failed')) {
+			note(thread.modelRef, thread.id, thread.last.at, thread.last.outcome === 'done', thread.last.error, false);
+		}
+	}
+	return providerId => health.get(providerId);
+}
+
+/**
+ * With two seats each reviewer sees one other answer, so a "ranking" says nothing. Such a council
+ * still runs (the user may have two providers only): reviews are critiques, the verdict has no
+ * ranking, and the call's result says how to get a ranked review.
+ */
+export const TWO_SEAT_COUNCIL_NOTE = 'With two participants each reviewer sees only the other answer, so the reviews are critiques without a ranking. Name a third participant (another provider, or a second model of one) for a ranked review.';
+
 /** Stage 1: an answer of its own, before seeing anyone else's. */
 export function councilAnswerBrief(question: string, seats: number): string {
 	return [
@@ -401,8 +506,21 @@ export function councilAnswerBrief(question: string, seats: number): string {
 }
 
 /** Stage 2: judge the anonymized answers of the others, then restate a position. */
-export function councilReviewBrief(question: string, round: number, rounds: number): string {
+export function councilReviewBrief(question: string, round: number, rounds: number, seats?: number): string {
 	const first = round === 1;
+	if (seats === 2) {
+		return [
+			first
+				? 'You sit on a council of two deciding the question below. The other member\'s answer follows under <upstream_reports> as "Response A". Your own answer is not shown.'
+				: `Review round ${round} of ${rounds}. The other member's answer follows under <upstream_reports> as "Response A", with their review of last round as "Review 1". Answer the criticism that matters, including any of your own last review.`,
+			'',
+			'Question:',
+			question.trim(),
+			'',
+			'Judge the work, not its style or length. Check the claims you can check (read the files it cites): what it gets right, what it gets wrong or misses, and whether its evidence holds.',
+			'Then give your own position now: keep it or change it, and say what convinced you. There is nothing to rank.',
+		].join('\n');
+	}
 	return [
 		first
 			? 'You sit on a council deciding the question below. The other members\' answers follow under <upstream_reports>, anonymized as "Response A", "Response B" and so on. Your own answer is not among them.'
@@ -440,9 +558,12 @@ export function councilVerdictBrief(question: string, seats: readonly ICouncilSe
 		'3. Disagreements: where they differed, who held which view, and how you resolved it (or why it stays open).',
 		'4. Evidence: the facts the decision rests on, with files and lines.',
 		'5. Risks: what could go wrong, and how to detect it early.',
-		'6. Ranking: the average position of each response across the reviews (from their FINAL RANKING lines), best first.',
-		'7. Next actions: concrete steps the user or an agent can take now, in order.',
-		'8. Confidence: low, medium or high, and what would raise it.',
+		...(seats.length > 2
+			? ['6. Ranking: the average position of each response across the reviews (from their FINAL RANKING lines), best first.']
+			: []),
+		`${seats.length > 2 ? 7 : 6}. Next actions: concrete steps the user or an agent can take now, in order.`,
+		`${seats.length > 2 ? 8 : 7}. Confidence: low, medium or high, and what would raise it.`,
+		...(seats.length === 2 ? ['', 'With two members each review saw one answer: weigh the critiques; there is no ranking.'] : []),
 	].join('\n');
 }
 

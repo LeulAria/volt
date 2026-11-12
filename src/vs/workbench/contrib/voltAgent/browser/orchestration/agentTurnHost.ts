@@ -17,6 +17,8 @@ import { IAgentOrchestratorService, IOrchPrompt, IOrchStartTurnRequest } from '.
 import '../../../../services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
+import type { IVoltCatalogItem } from '../../../../services/voltRuntime/common/providers.js';
+import type { VoltAccessMode } from '../../../../services/voltRuntime/common/access/accessModes.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AgentRunOn, AgentWorktreeTarget } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { imageAttachmentsFromMentions, resourceAttachmentsFromMentions } from '../composer/agentMentionImages.js';
@@ -182,7 +184,7 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 			controller.endUnstartedTurn(turn.id, localize('agentTurnHost.noModel', "No model is set for this run. Pick a model for the chat, then send again."));
 			return undefined;
 		}
-		await this.beginCheckpoint(threadId, turn.id, ref);
+		await this.beginCheckpoint(threadId, turn.id, ref, request.subagent === 'readonly');
 		if (!request.isCurrent()) {
 			controller.endUnstartedTurn(turn.id, undefined);
 			return undefined;
@@ -277,10 +279,14 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 	 * chat's write gate, the snapshot becomes that gate and the prompt goes out at once; otherwise
 	 * the send waits for it (bounded by the checkpoint service to about 2 s). Nothing is waited on
 	 * when the last turn's after-snapshot still matches the project.
+	 *
+	 * A read-only subagent (research, review: Ask mode, no file tools, see `subagentProfileForTask`)
+	 * changes no files, so its prompt never waits for the snapshot: under Full access each one waited
+	 * 1.0-2.3 s for git (siblings in one repository queue on its index) before its prompt went out.
 	 */
-	private async beginCheckpoint(sessionId: string, turnId: string, ref: string | undefined): Promise<void> {
+	private async beginCheckpoint(sessionId: string, turnId: string, ref: string | undefined, readOnly: boolean): Promise<void> {
 		try {
-			await this.checkpoints.beginTurn(sessionId, turnId, { writesGated: this.writesWaitForGate(sessionId, ref) });
+			await this.checkpoints.beginTurn(sessionId, turnId, { writesGated: this.writesWaitForGate(sessionId, ref, readOnly) });
 		} catch (err) {
 			// A missed snapshot only disables Restore for this turn; the run goes ahead.
 			this.logService.warn('[volt orchestrator] checkpoint before turn failed', err);
@@ -295,14 +301,19 @@ export class AgentTurnHostContribution extends Disposable implements IWorkbenchC
 	 * own mode decides (Cursor), or a model not known yet can change files before Volt hears of
 	 * it: its checkpoint is taken before the prompt goes out.
 	 */
-	private writesWaitForGate(sessionId: string, ref: string | undefined): boolean {
+	private writesWaitForGate(sessionId: string, ref: string | undefined, readOnlySubagent: boolean): boolean {
 		const effective = ref ?? this.runtime.getOrCreateSession(sessionId).providerRef;
 		const item = effective ? this.runtime.listCatalog().find(candidate => candidate.ref === effective) : undefined;
-		if (item?.kind === 'model') {
-			return true;
-		}
-		return !!item && ASKING_CLI_AGENTS.has(item.providerId) && this.runtime.getAccessMode(sessionId) === 'supervised';
+		return turnWritesGated(item, this.runtime.getAccessMode(sessionId), readOnlySubagent);
 	}
+}
+
+/** See `AgentTurnHostContribution.writesWaitForGate`; `readOnlySubagent` (a research or review subagent) changes no files. */
+export function turnWritesGated(item: Pick<IVoltCatalogItem, 'kind' | 'providerId'> | undefined, accessMode: VoltAccessMode, readOnlySubagent = false): boolean {
+	if (readOnlySubagent || item?.kind === 'model') {
+		return true;
+	}
+	return !!item && ASKING_CLI_AGENTS.has(item.providerId) && accessMode === 'supervised';
 }
 
 registerWorkbenchContribution2(AgentTurnHostContribution.ID, AgentTurnHostContribution, WorkbenchPhase.AfterRestored);

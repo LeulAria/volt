@@ -8,7 +8,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/
 import { blindLabel, blindOrder, buildTaskNotification, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { computeMachineCapacity, parseMachineCapacity, parseParallelAnswer, planParallel } from '../../../common/orchestration/machineCapacity.js';
 import {
-	agentMentionBlock, buildMemberBrief, councilReviewBrief, councilVerdictBrief, fillTemplate, localMachine, machineMentionBlock, memberNames, MENTION_COUNCIL_VALUE, MENTION_TEAM_VALUE,
+	agentMentionBlock, buildMemberBrief, councilReviewBrief, councilSeatHealth, councilVerdictBrief, fillTemplate, ICouncilSeatHealth, pickCouncilSeats, TWO_SEAT_COUNCIL_NOTE, localMachine, machineMentionBlock, memberNames, MENTION_COUNCIL_VALUE, MENTION_TEAM_VALUE,
 	parseRanking, resolveMachine, rosterSizes, splitItems, tallyRankings,
 } from '../../../common/orchestration/orchestra.js';
 import { DEFAULT_ORCH_LIMITS, IOrchTask, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
@@ -347,5 +347,71 @@ suite('Volt orchestra: machines and mentions', () => {
 		assert.ok(agentMentionBlock({ label: 'Council', value: MENTION_COUNCIL_VALUE }, ['codex:gpt-6', 'claude-code:opus']).includes('participants ["codex:gpt-6","claude-code:opus"]'));
 		assert.ok(agentMentionBlock({ label: 'Team', value: MENTION_TEAM_VALUE }, []).includes('spawn_team'));
 		assert.ok(agentMentionBlock({ label: 'Opus', value: 'agent:claude:opus' }, []).includes('delegate_task with model "agent:claude:opus"'));
+	});
+});
+
+suite('Volt orchestra: council seating', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	const item = (ref: string, providerId: string, kind = 'agent') => ({ ref, providerId, kind });
+	const family = (providerId: string) => providerId.replace(/-.*$/, '');
+	const catalog = [item('codex:gpt', 'codex'), item('fx:a', 'fx'), item('agy:g', 'antigravity'), item('claude:opus', 'claude'), item('claude:haiku', 'claude'), item('grok:47', 'grok'), item('api:gemini', 'gemini', 'model')];
+
+	test('providers out of quota or unable to start in this sandbox are not seated; recent ones come first', () => {
+		const health: Record<string, ICouncilSeatHealth> = { codex: { limited: true }, fx: { cannotStart: true }, antigravity: { cannotStart: true }, grok: { okAt: 200 }, claude: { okAt: 100 } };
+		const seats = pickCouncilSeats(catalog, family, seat => health[seat.providerId]);
+		assert.deepStrictEqual(seats.map(seat => seat.ref), ['grok:47', 'claude:opus', 'api:gemini']);
+		// Before (first model of each provider): Codex, fx, Antigravity and Claude, three of which failed live.
+		assert.deepStrictEqual(pickCouncilSeats(catalog, family, () => undefined).map(seat => seat.ref), ['codex:gpt', 'fx:a', 'agy:g', 'claude:opus']);
+	});
+
+	test('a provider that failed after it last ran fine goes after the ones Volt has not seen fail', () => {
+		const seats = pickCouncilSeats(catalog, family, seat => seat.providerId === 'codex' ? { okAt: 1, failedAt: 5 } : seat.providerId === 'claude' ? { okAt: 9 } : undefined, 3);
+		assert.deepStrictEqual(seats.map(seat => seat.ref), ['claude:opus', 'fx:a', 'agy:g']);
+	});
+
+	test('with only two usable providers a second model of one fills the third seat, so reviews compare two answers', () => {
+		const seats = pickCouncilSeats(catalog, family, seat => ['claude', 'grok'].includes(seat.providerId) ? { okAt: 1 } : { limited: true });
+		assert.deepStrictEqual(seats.map(seat => seat.ref), ['claude:opus', 'grok:47', 'claude:haiku']);
+	});
+
+	test('seat health comes from the runs Volt has seen: usage limits, failed starts in a like sandbox, finished runs', () => {
+		const now = 10_000_000;
+		const task = (modelRef: string, state: string, extra: Record<string, unknown> = {}) => ({ id: modelRef + state, source: 'volt', modelRef, state, createdAt: now - 1000, endedAt: now - 500, steps: 3, childId: `c-${modelRef}`, ...extra });
+		const state = {
+			tasks: Object.fromEntries([
+				task('codex:gpt', 'failed', { error: 'You\'ve hit your usage limit. Try again later.' }),
+				task('fx:a', 'failed', { error: 'Failed to load startup state', steps: 0 }),
+				task('agy:g', 'failed', { error: 'exited', steps: 0, childId: 'unsandboxed' }),
+				task('claude:haiku', 'completed'),
+				task('grok:47', 'failed', { error: 'Tool failed' }),
+			].map(entry => [entry.id, entry])),
+			threads: { main: { id: 'main', modelRef: 'claude:opus', last: { outcome: 'done', at: now - 100 } } },
+		} as never;
+		const providerOf = (ref: string) => catalog.find(entry => entry.ref === ref)?.providerId;
+		const health = councilSeatHealth(state, providerOf, chat => chat !== 'unsandboxed', true, now);
+		assert.deepStrictEqual(health('codex'), { limited: true });
+		assert.deepStrictEqual(health('fx'), { cannotStart: true });
+		assert.deepStrictEqual(health('antigravity'), { failedAt: now - 500 }, 'it failed to start without a sandbox: not a reason to skip it here');
+		assert.deepStrictEqual(health('claude'), { okAt: now - 100 });
+		assert.deepStrictEqual(health('grok'), { failedAt: now - 500 });
+		assert.strictEqual(health('gemini'), undefined);
+		// A day later the limit and the failed start are forgotten.
+		const later = councilSeatHealth(state, providerOf, () => true, true, now + 24 * 60 * 60_000);
+		assert.strictEqual(later('codex')?.limited, undefined);
+		assert.strictEqual(later('fx')?.cannotStart, undefined);
+	});
+
+	test('a two-seat council reviews without a ranking and says how to get one', () => {
+		const review = councilReviewBrief('Which cache?', 1, 1, 2);
+		assert.ok(!review.includes('FINAL RANKING'));
+		assert.ok(review.includes('"Response A"') && review.includes('nothing to rank'));
+		const verdict = councilVerdictBrief('Which cache?', [{ label: 'A', model: 'Codex' }, { label: 'B', model: 'Claude' }], 1);
+		assert.ok(!verdict.includes('Ranking:') && verdict.includes('6. Next actions') && verdict.includes('7. Confidence'));
+		const three = councilVerdictBrief('Which cache?', [{ label: 'A', model: 'Codex' }, { label: 'B', model: 'Claude' }, { label: 'C', model: 'Grok' }], 1);
+		assert.ok(three.includes('6. Ranking') && three.includes('8. Confidence'));
+		assert.ok(councilReviewBrief('Which cache?', 1, 1, 3).includes('FINAL RANKING:'));
+		assert.ok(/third participant/.test(TWO_SEAT_COUNCIL_NOTE));
 	});
 });
