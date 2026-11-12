@@ -49,6 +49,12 @@ suite('Volt provider access bridges', () => {
 		assert.strictEqual(request.providerId, 'codex');
 	});
 
+	test('an MCP tool Claude names mcp__server__tool is an MCP request, not a command', () => {
+		const request = normalizeAcpPermission('session/request_permission', { toolCall: { title: 'mcp__volt__code_action', kind: 'other', rawInput: { op: 'rename' } }, options: [] }, { sessionId: 's', runId: 'r', providerId: 'claude-code' });
+		assert.strictEqual(request?.action, 'mcp');
+		assert.deepStrictEqual(request?.resource, { type: 'tool', value: 'mcp__volt__code_action' });
+	});
+
 	test('toNativeResponse never hardcodes allow-once when options exist', () => {
 		const response = acpPermissionResponse(allowOnce, params) as { outcome: { optionId: string } };
 		assert.strictEqual(response.outcome.optionId, 'allow-once');

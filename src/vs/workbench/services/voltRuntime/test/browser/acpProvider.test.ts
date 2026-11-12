@@ -16,7 +16,7 @@ import { IVoltSandboxEvent, IVoltSandboxFileResult, IVoltStdioService } from '..
 import { isSandboxUnavailableError, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IAccessDecision } from '../../common/access/accessTypes.js';
-import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent } from '../../browser/agents/acpProvider.js';
+import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent, isVoltHostToolPermission } from '../../browser/agents/acpProvider.js';
 import { IVoltEvent } from '../../common/events.js';
 import { ACP_IDLE_TIMINGS } from '../../common/harness/acpStall.js';
 import { isAcpTurnRestartable } from '../../common/harness/sessionRetry.js';
@@ -779,5 +779,26 @@ suite('ACP provider sandbox', () => {
 		const env = setup();
 		await assert.rejects(env.provider.start(request(SANDBOXED)), (err: unknown) => isSandboxUnavailableError(err) && /Windows/.test((err as Error).message));
 		assert.strictEqual(env.agent.spawned.length, 0);
+	});
+});
+
+suite('ACP permission prompts for Volt\'s own tools', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	const prompt = (title: string, rawInput?: unknown) => ({ toolCall: { title, ...(rawInput ? { rawInput } : {}) }, options: [{ optionId: 'allow', kind: 'allow_once' }] });
+
+	test('the code tools and the Scratch board are Volt\'s, so their prompts never reach the user', () => {
+		// A Supervised chat stopped on "Run mcp__volt__code_nav" before every code_nav, instant_grep and diagnostics call.
+		for (const title of ['mcp__volt__code_nav', 'mcp__volt__instant_grep', 'mcp__volt__find_symbol', 'mcp__volt__diagnostics', 'mcp__volt__scratch_draw', 'mcp__volt__ask_question', 'mcp__volt__tests']) {
+			assert.strictEqual(isVoltHostToolPermission(prompt(title)), true, title);
+		}
+		assert.strictEqual(isVoltHostToolPermission(prompt('code_nav', { providerIdentifier: 'volt', toolName: 'code_nav' })), true);
+	});
+
+	test('other servers\' tools, and Volt tools that run or write, still go to the gate', () => {
+		for (const title of ['mcp__github__code_nav', 'code_nav', 'Bash', 'mcp__volt__code_action', 'mcp__volt__terminal_start', 'mcp__volt__app_open']) {
+			assert.strictEqual(isVoltHostToolPermission(prompt(title)), false, title);
+		}
 	});
 });

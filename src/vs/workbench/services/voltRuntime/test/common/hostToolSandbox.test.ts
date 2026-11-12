@@ -6,12 +6,13 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
-import { FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, LANGUAGE_SERVER_TOOL_NAMES } from '../../common/codeIntelligence.js';
+import { FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, isVoltWorktreePath, LANGUAGE_SERVER_TOOL_NAMES } from '../../common/codeIntelligence.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from '../../common/deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from '../../common/desktopTools.js';
 import { WORKSPACE_STATUS_TOOL_NAME } from '../../common/harness/workspaceContext.js';
 import { AUTOMATION_TOOL_NAMES, canonicalHostToolName, COMMIT_PLAN_TOOL_NAMES, PULL_REQUEST_TOOL_NAMES, THREAD_TOOL_NAMES, VISUAL_TOOL_NAMES, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
-import { HOST_TOOL_SANDBOX_CLASSES, hostToolSandboxUse, ISandboxPathContext, sandboxBrowserUrlRefusal, sandboxCovers, sandboxReadRefusal, sandboxRefusalMessage, sandboxWriteRefusal } from '../../common/hostToolSandbox.js';
+import { HOST_TOOL_SANDBOX_CLASSES, hostToolSandboxUse, isVoltReadOnlyHostTool, ISandboxPathContext, sandboxBrowserUrlRefusal, sandboxCovers, sandboxReadRefusal, sandboxRefusalMessage, sandboxWriteRefusal } from '../../common/hostToolSandbox.js';
+import { IDE_TOOL_NAMES } from '../../common/ide/ideTools.js';
 import { MEMORY_TOOL_NAMES } from '../../common/memory/voltMemory.js';
 import { AGENT_TASK_TOOL_NAMES } from '../../common/orchestration/agentTasks.js';
 import { ORCHESTRA_TOOL_NAMES } from '../../common/orchestration/orchestra.js';
@@ -30,6 +31,7 @@ const SERVED_TOOLS = new Set<string>([
 	...VISUAL_TOOL_NAMES.map(canonicalHostToolName), ...DEVICE_TOOL_NAMES, ...CAPTURE_TOOL_NAMES, ...DESKTOP_TOOL_NAMES,
 	...PLAYGROUND_TOOL_NAMES, ...MEMORY_TOOL_NAMES, ...TERMINAL_TOOL_NAMES, ...AGENT_TASK_TOOL_NAMES, ...ORCHESTRA_TOOL_NAMES, ...WATCHED_TASK_TOOL_NAMES,
 	INSTANT_GREP_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, FIND_FILES_TOOL_NAME, ...LANGUAGE_SERVER_TOOL_NAMES, WORKSPACE_STATUS_TOOL_NAME, 'scratch_draw', 'scratch_read',
+	...IDE_TOOL_NAMES,
 ]);
 
 suite('Volt host tool sandbox classes', () => {
@@ -43,6 +45,36 @@ suite('Volt host tool sandbox classes', () => {
 		assert.deepStrictEqual(unknown, [], 'no stale or misspelled names');
 		assert.strictEqual(hostToolSandboxUse('brand_new_tool', {}), undefined);
 		assert.strictEqual(hostToolSandboxUse('render_html', {}), undefined, 'the gate sees canonical names only');
+	});
+
+	test('the IDE tools reach their provider, which runs programs in the sandbox or asks once; the files they name are reads', () => {
+		// They were refused outright ("not cleared to run from a sandboxed chat"), so a Supervised chat had no tests, debugger, profiler or HTTP client.
+		assert.deepStrictEqual(hostToolSandboxUse('tests', { op: 'run', targets: ['test/cart.test.ts:12', 'adds tax'] }), { kind: 'sandboxed', reads: ['.', 'test/cart.test.ts'] });
+		assert.deepStrictEqual(hostToolSandboxUse('debug', { op: 'start', program: 'scripts/slow.mjs' }), { kind: 'sandboxed', reads: ['.', 'scripts/slow.mjs'] });
+		assert.deepStrictEqual(hostToolSandboxUse('ide', { capability: 'http', op: 'send', args: { file: 'requests.http', name: 'login' } }), { kind: 'sandboxed', reads: ['.', 'requests.http'] });
+		assert.deepStrictEqual(hostToolSandboxUse('ide', { capability: 'editor', op: 'open', args: { path: '/Users/me/.ssh/id_rsa' } }), { kind: 'sandboxed', reads: ['.', '/Users/me/.ssh/id_rsa'] });
+		assert.deepStrictEqual(hostToolSandboxUse('tasks', { op: 'list' }), { kind: 'sandboxed', reads: ['.'] });
+	});
+
+	test('a rename writes the chat\'s folder: judged as a write there, not refused as an escape', () => {
+		assert.deepStrictEqual(hostToolSandboxUse('code_action', { op: 'rename', path: 'src/cart.ts', symbol: 'lineTotal', new_name: 'lineAmount' }), { kind: 'writes', writes: ['.', 'src/cart.ts'] });
+		assert.deepStrictEqual(hostToolSandboxUse('code_action', { op: 'fixes', path: 'src/cart.ts' }), { kind: 'reads', reads: ['src/cart.ts'] });
+	});
+
+	test('only Volt\'s worktree checkouts count as worktrees for language servers, not a project the window has no folder for', () => {
+		assert.strictEqual(isVoltWorktreePath('/Users/me/.volt/worktrees/hotel-1a2b/volt-3c4d/src/a.ts'), true);
+		assert.strictEqual(isVoltWorktreePath('C:\\Users\\me\\.volt\\worktrees\\hotel\\x\\a.ts'), true);
+		assert.strictEqual(isVoltWorktreePath('/private/tmp/vbench-hotel/packages/domain/src/commands/query.ts'), false);
+		assert.strictEqual(isVoltWorktreePath('/Users/me/Desktop/Projects/hotel/src/a.ts'), false);
+	});
+
+	test('read-only host tools are told apart by class, with or without the MCP prefix', () => {
+		for (const name of ['code_nav', 'mcp__volt__code_nav', 'instant_grep', 'find_symbol', 'diagnostics', 'scratch_draw', 'mcp__volt__scratch_read', 'workspace_status']) {
+			assert.strictEqual(isVoltReadOnlyHostTool(name), true, name);
+		}
+		for (const name of ['code_action', 'terminal_start', 'docker_ensure', 'app_open', 'memory_write', 'tests', 'Bash', 'mcp__other__code_nav']) {
+			assert.strictEqual(isVoltReadOnlyHostTool(name), false, name);
+		}
 	});
 
 	test('teams and councils run from a sandboxed chat like delegate_task; a worktree team and machine_run do not', () => {

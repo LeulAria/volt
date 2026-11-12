@@ -133,6 +133,12 @@ const KIND_TO_ACTION: Record<string, PermissionAction> = {
 };
 
 export function actionFromToolKind(kind: string | undefined, name?: string): PermissionAction {
+	// Claude Code names MCP tools `mcp__<server>__<tool>`: `\bmcp\b` never matched them (the `_` is a
+	// word character), so `mcp__volt__code_nav` fell through to 'shell' and its approval card read
+	// "$ mcp__volt__code_nav" like a command.
+	if (/(?:^|\s)mcp__[\w-]+__/i.test(name ?? '')) {
+		return 'mcp';
+	}
 	const key = (kind ?? '').toLowerCase();
 	if (KIND_TO_ACTION[key]) {
 		return KIND_TO_ACTION[key];

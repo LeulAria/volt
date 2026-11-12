@@ -18,6 +18,7 @@ function jsonLines<T>(text: string): T[] {
 }
 
 const DOCKER_DOWN = /Cannot connect to the Docker daemon|error during connect|docker daemon is not running/i;
+const DOCKER_SOCKET_DENIED = /docker\.sock.*(?:permission denied|operation not permitted)|(?:permission denied|operation not permitted).*docker\.sock/i;
 
 /**
  * Containers through the docker CLI (the Container Tools extension's views show the same daemon):
@@ -30,6 +31,10 @@ export class DockerCapability implements IIdeCapability {
 	async invoke(op: string, args: Readonly<Record<string, unknown>>, ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
 		const docker = async (dockerArgs: string[], timeoutMs = 30_000) => {
 			const result = await ctx.cli.run('docker', dockerArgs, { timeoutMs });
+			if (result.code !== 0 && ctx.cli.sandbox && (DOCKER_DOWN.test(result.stderr) || DOCKER_SOCKET_DENIED.test(result.stderr))) {
+				// Docker may well be running: the sandbox keeps the chat away from its socket, which controls the whole machine.
+				return { ...result, stderr: 'This chat runs in Volt\'s sandbox, which does not reach Docker\'s socket (whoever holds it controls the machine), so Docker cannot be asked from here. To use Docker, the user switches this chat to Full access (the Supervised chip under the composer), or runs the docker command themselves.' };
+			}
 			if (result.code !== 0 && DOCKER_DOWN.test(result.stderr)) {
 				return { ...result, stderr: 'Docker is not running. Start it (docker_ensure does it when the volt tools offer it) and try again.' };
 			}
