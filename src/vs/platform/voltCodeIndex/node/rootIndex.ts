@@ -1493,7 +1493,7 @@ export class RootIndex {
 			result = { ...await this.verify(unique, matcher, context, request.maxMatches, maxLineChars), engine: 'index' };
 		} else if (this.options.confined) {
 			// ripgrep opens files by path, through any symlink a sandboxed chat swaps in.
-			return { kind: 'fallback', reason: 'this pattern needs ripgrep, which a sandboxed chat\'s search does not run' };
+			return { kind: 'fallback', reason: loneBrace(request.pattern, request.isRegExp) ? 'a `{` or `}` that is not a repetition must be escaped as \\{ or \\} (ripgrep rejects it too)' : 'this pattern needs ripgrep, which a sandboxed chat\'s search does not run' };
 		} else {
 			try {
 				result = { ...await ripgrep(unique, request.maxMatches), scanned: unique.length, engine: 'ripgrep' };
@@ -1821,3 +1821,12 @@ function fuzzyMatcher(query: string): (name: string) => number | undefined {
 
 /** Used by tests: the folded byte string the index would store for `text`. */
 export const indexedForm = toByteString;
+
+/** A regex with a brace that is neither a repetition (`{2}`, `{1,3}`) nor part of an escape (`\p{L}`): ripgrep refuses it. */
+export function loneBrace(pattern: string, isRegExp: boolean): boolean {
+	if (!isRegExp) {
+		return false;
+	}
+	const stripped = pattern.replace(/\\[pPxuN]\{[^}]*\}|\\./g, '').replace(/\[(?:\\.|[^\]])*\]/g, '').replace(/\{\d+(?:,\d*)?\}/g, '');
+	return /[{}]/.test(stripped);
+}
