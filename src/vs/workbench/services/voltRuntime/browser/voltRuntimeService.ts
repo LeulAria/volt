@@ -1153,7 +1153,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.messages.push({ role: 'user', content: request.text });
 		const catalogItem = this.catalog.find(item => item.ref === session.providerRef && item.enabled) ?? this.catalog.find(item => item.enabled);
 		const userMessages = session.messages.filter(message => message.role === 'user');
-		if (!session.titleState && userMessages.length === 1) {
+		// A subagent's chat is named after its task (the orchestrator sets it): naming it again is a
+		// `claude -p` / `codex exec` process per subagent, started while the subagents start.
+		if (!session.titleState && userMessages.length === 1 && this.history.isSubagentSession?.(sessionId)) {
+			session.titleState = 'done';
+		} else if (!session.titleState && userMessages.length === 1) {
 			session.titleState = 'pending';
 			session.titleRetry = isVagueMessage(request.text) ? 'due' : undefined;
 			this.startTitle(session, catalogItem, buildTitlePrompt(request.text, attachmentNames(request)), true);
