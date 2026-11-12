@@ -28,6 +28,13 @@ const ARMS = {
 	'volt-after': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, settings: { 'volt.agent.multitask.warmSubagents': true } },
 	// The same changed code with subagent warming off (interleaved with volt-after: same load).
 	'volt-after-cold': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, settings: { 'volt.agent.multitask.warmSubagents': false } },
+	// After the Claude ACP adapter bump (0.81.2 -> 0.106.0), on top of volt-after's changes.
+	'volt-after2': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/ },
+	// The merged round-2 tree (all five branches, incl. the orchestrator branch's lean subagent sessions),
+	// launched with `launch --checkout <merged checkout>`.
+	'volt-final': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/ },
+	// volt-final plus the `tests` fix: a run with nothing to run answers without the sandbox ask.
+	'volt-final-fix': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/ },
 	// Cursor's catalog in Volt (from its ACP model list): base ids, effort/thinking are options.
 	'volt-cursor-sonnet': { model: 'agent:seed-cursor-acp:claude-sonnet-5', sub: 'agent:seed-cursor-acp:claude-sonnet-5', label: /Sonnet 5(?!\.)/ },
 	'volt-cursor-grok': { model: 'agent:seed-cursor-acp:grok-4.7', sub: 'agent:seed-cursor-acp:grok-4.7', label: /Grok 4\.7/ },

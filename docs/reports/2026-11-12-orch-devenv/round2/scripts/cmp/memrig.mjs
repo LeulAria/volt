@@ -61,7 +61,8 @@ async function volt(round) {
 	const ud = '/tmp/vcmp/m-volt-ud';
 	mkdirSync(join(ud, 'User'), { recursive: true });
 	writeFileSync(join(ud, 'User', 'settings.json'), JSON.stringify({ 'volt.agent.defaultModel': 'agent:seed-claude-code:claude-haiku-5-5', 'window.dialogStyle': 'custom', 'update.mode': 'none', 'telemetry.telemetryLevel': 'off', 'security.workspace.trust.enabled': false }));
-	const p = spawn(`${app}/Contents/MacOS/Volt`, ['--user-data-dir', ud, '--remote-debugging-port=9942', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--folder-uri', 'file:///tmp/vcmp/w/t0'], { env: env0, detached: true, stdio: 'ignore' });
+	// The release bundle's executable keeps Electron's name.
+	const p = spawn(`${app}/Contents/MacOS/Electron`,['--user-data-dir', ud, '--remote-debugging-port=9942', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--folder-uri', 'file:///tmp/vcmp/w/t0'], { env: env0, detached: true, stdio: 'ignore' });
 	await waitPort(9942);
 	await sleep(45_000);
 	const idle = mem(`volt-0.0.6 idle r${round}`, p.pid, ud.replace(/\//g, '\\/'));
