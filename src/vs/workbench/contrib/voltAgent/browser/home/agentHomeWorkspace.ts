@@ -15,6 +15,35 @@ export interface IAgentHomeWorkspaceEntry {
 	readonly path: string;
 }
 
+/** How many characters of a folder's location a menu row shows (about the width it has). */
+export const AGENT_HOME_LOCATION_MAX = 28;
+
+/**
+ * Where a folder is, for a row that already shows its name: the parent of `path`, shortened at
+ * whole path segments in the middle when longer than `max` ("~/…/Projects/FALCON"), never mid-word.
+ * The first segment (`~`, a drive, or the root) and the last are always kept, whole.
+ */
+export function agentHomeFolderLocation(path: string, max = AGENT_HOME_LOCATION_MAX): string {
+	const separator = path.includes('/') || !path.includes('\\') ? '/' : '\\';
+	const trimmed = path.length > 1 ? path.replace(/[\\/]+$/, '') : path;
+	const cut = trimmed.lastIndexOf(separator);
+	const parent = cut > 0 ? trimmed.slice(0, cut) : cut === 0 ? separator : trimmed;
+	const parts = parent.split(separator);
+	if (parent.length <= max || parts.length <= 2) {
+		return parent;
+	}
+	const head = parts[0];
+	let tail = parts[parts.length - 1];
+	for (let i = parts.length - 2; i > 0; i--) {
+		const longer = `${parts[i]}${separator}${tail}`;
+		if (`${head}${separator}\u2026${separator}${longer}`.length > max) {
+			break;
+		}
+		tail = longer;
+	}
+	return `${head}${separator}\u2026${separator}${tail}`;
+}
+
 /** Folders listed under Recents before the rest move to On This Mac. */
 export const AGENT_HOME_RECENT_LIMIT = 6;
 
