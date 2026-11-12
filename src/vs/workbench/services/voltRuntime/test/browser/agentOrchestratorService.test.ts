@@ -224,6 +224,30 @@ suite('Agent orchestrator service', () => {
 		assert.ok(wake?.turn.prompt.text.includes('README written: 40 lines.'));
 	});
 
+	test('the parts of one delegate_task call wake the idle parent once, with both reports', async () => {
+		const { service, runtime, host, tool } = await setup();
+		await service.submit('parent', { text: 'do both' }, 'auto', 'p1');
+		await settle();
+		const started = await tool('parent', 'delegate_task', { tasks: [{ task: 'Fix a.ts', title: 'Fix a' }, { task: 'Review b.ts', title: 'Review b' }] });
+		assert.match(started, /delivered to this chat together once all of them have finished/);
+		await settle();
+		const [first, second] = service.tasksOf('parent');
+		assert.ok(first.batch && first.batch === second.batch, 'both parts carry the call\'s batch id');
+		await tool('parent', 'delegate_task', { task: 'Count the tests' });
+		assert.strictEqual(service.tasksOf('parent')[2].batch, undefined, 'a single task is not a batch');
+
+		runtime.finish('parent', 'Started them.');
+		await settle();
+		runtime.finish(first.childId!, 'a.ts fixed.');
+		await settle();
+		const wakes = () => host.started.filter(request => request.threadId === 'parent' && request.turn.kind === 'notification');
+		assert.strictEqual(wakes().length, 0, 'one part done: the parent sleeps on');
+		runtime.finish(second.childId!, 'b.ts has one bug.');
+		await settle();
+		assert.strictEqual(wakes().length, 1);
+		assert.ok(wakes()[0].turn.prompt.text.includes('a.ts fixed.') && wakes()[0].turn.prompt.text.includes('b.ts has one bug.'));
+	});
+
 	test('a subagent of a sandboxed chat is confined at least as tightly before its first turn', async () => {
 		const { service, runtime, host, tool } = await setup();
 		runtime.sandboxes.set('parent', { level: 'read-only', network: false });

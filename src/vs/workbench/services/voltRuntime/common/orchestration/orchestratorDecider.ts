@@ -1249,6 +1249,7 @@ function decideSpawn(state: IOrchState, command: Extract<OrchCommand, { type: 't
 		...(spawn.fallbacks?.length ? { fallbacks: spawn.fallbacks } : {}),
 		...(spawn.blind?.length ? { blind: [...spawn.blind] } : {}),
 		...(spawn.team ? { team: spawn.team } : {}),
+		...(spawn.batch ? { batch: spawn.batch } : {}),
 		...(spawn.quiet ? { quiet: true } : {}),
 		...(spawn.verify?.length ? { verify: [...spawn.verify] } : {}),
 	};
@@ -2054,7 +2055,13 @@ export function isDeliverable(state: IOrchState, task: IOrchTask): boolean {
 	if (task.source !== 'volt' || task.delivery !== 'pending' || !isTerminalTaskState(task.state)) {
 		return false;
 	}
-	return !task.team || !Object.values(state.tasks).some(other => other.team === task.team && other.parentId === task.parentId && !isTerminalTaskState(other.state));
+	if (task.team) {
+		return !Object.values(state.tasks).some(other => other.team === task.team && other.parentId === task.parentId && !isTerminalTaskState(other.state));
+	}
+	// Parts started in one call report together: a parent woken for each part (live: three wake-ups
+	// for three parts) spent a turn on every early report only to say it waits for the rest. A part
+	// waiting for the user does not hold the others back.
+	return !task.batch || !Object.values(state.tasks).some(other => other.batch === task.batch && other.parentId === task.parentId && (other.state === 'queued' || other.state === 'running'));
 }
 
 export function liveChildren(state: IOrchState, threadId: string): IOrchTask[] {

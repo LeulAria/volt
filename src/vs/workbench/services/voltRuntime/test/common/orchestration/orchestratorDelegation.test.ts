@@ -8,6 +8,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/
 import { buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
 import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
+import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
 import { buildParentCapsule, userRequests } from '../../../common/orchestration/taskContext.js';
 import { foldSpend, seedSpendTracker, spendUsage } from '../../../common/orchestration/taskSpend.js';
 import { OrchSim } from './orchestratorSim.js';
@@ -210,6 +211,50 @@ suite('Volt orchestrator: budgets, dependencies and fallbacks', () => {
 		assert.ok(brief.prompt.text.includes('Colors live in theme.ts'));
 
 		assert.ok(sim.spawn('root', 'x', { after: ['t-nope'] }).rejected?.includes('not a task of this chat'));
+	});
+
+	test('the parts of one delegate_task call wake the parent once, with every report; other tasks still report on their own', () => {
+		const sim = new OrchSim();
+		sim.submit('root', 'go');
+		sim.start('root');
+		const parts = ['a', 'b', 'c'].map(name => sim.spawn('root', `part ${name}`, { batch: 'b-1' }).taskId!);
+		const solo = sim.spawn('root', 'unrelated work').taskId!;
+		assert.strictEqual(sim.state.tasks[parts[0]].batch, 'b-1');
+		assert.strictEqual(sim.state.tasks[solo].batch, undefined);
+		sim.complete('root');
+		sim.complete(sim.childOf(parts[0]), 'done', 'report A');
+		sim.complete(sim.childOf(parts[1]), 'done', 'report B');
+		assert.strictEqual(sim.thread('root').active, undefined, 'two of three parts done: no wake-up yet');
+		assert.strictEqual(isDeliverable(sim.state, sim.state.tasks[parts[0]]), false);
+		assert.strictEqual(sim.state.tasks[parts[0]].delivery, 'pending');
+		sim.complete(sim.childOf(solo), 'done', 'solo report');
+		assert.deepStrictEqual(sim.thread('root').active?.taskIds, [solo], 'a task from another call is not held back');
+		sim.complete('root');
+		sim.complete(sim.childOf(parts[2]), 'failed', '');
+		const wake = sim.thread('root').active;
+		assert.deepStrictEqual([...wake?.taskIds ?? []].sort(), [...parts].sort(), 'a failed part ends the wait like a finished one');
+		assert.ok(wake?.prompt.text.includes('report A') && wake.prompt.text.includes('report B'));
+
+		// The batch id survives a save and load, so a restart does not split the parts up.
+		const loaded = parseRootSnapshot(JSON.parse(JSON.stringify(extractRoot(sim.state, 'root', [], sim.now))))!;
+		assert.strictEqual(loaded.tasks.find(item => item.id === parts[1])!.batch, 'b-1');
+	});
+
+	test('a part waiting for the user, or for a slot, behaves as the batch says: the first does not hold the others, the second does', () => {
+		const sim = new OrchSim({ ...DEFAULT_ORCH_LIMITS, runningPerParent: 2 });
+		sim.submit('root', 'go');
+		sim.start('root');
+		const [asking, working, later] = ['asks', 'works', 'later'].map(name => sim.spawn('root', `part ${name}`, { batch: 'b-1' }).taskId!);
+		assert.strictEqual(sim.state.tasks[later].state, 'queued', 'over the per-chat limit');
+		sim.complete('root');
+		sim.start(sim.childOf(asking));
+		sim.run({ type: 'input.opened', threadId: sim.childOf(asking), inputId: 'q', kind: 'question' });
+		assert.strictEqual(sim.state.tasks[asking].state, 'waiting');
+		sim.complete(sim.childOf(working), 'done', 'worked');
+		assert.strictEqual(sim.state.tasks[later].state, 'running', 'the freed slot goes to the queued part');
+		assert.strictEqual(sim.thread('root').active, undefined, 'a part that has not run yet holds the report back');
+		sim.complete(sim.childOf(later), 'done', 'later done');
+		assert.deepStrictEqual([...sim.thread('root').active?.taskIds ?? []].sort(), [working, later].sort(), 'the part waiting for the user does not hold the rest');
 	});
 
 	test('a task whose upstream failed does not start, and says why', () => {

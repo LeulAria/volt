@@ -2024,7 +2024,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return outcomes;
 	}
 
-	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, toolCallId: string | undefined, single = false): Promise<IVoltHostToolResult & { readonly taskId?: string; readonly reused?: boolean }> {
+	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, toolCallId: string | undefined, single = false, batch?: string): Promise<IVoltHostToolResult & { readonly taskId?: string; readonly reused?: boolean }> {
 		if (Array.isArray(args.tasks) && args.tasks.length && !single) {
 			return this.delegateBatch(parentId, args, args.tasks, token, toolCallId);
 		}
@@ -2098,6 +2098,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				...(budgetUsd !== undefined ? { budgetUsd } : {}),
 				...(fallbacks.length ? { fallbacks } : {}),
 				...(team ? { team } : {}),
+				...(batch && !team ? { batch } : {}),
 				...(blind.length ? { blind } : {}),
 				...(quiet ? { quiet: true } : {}),
 				...(verify.length ? { verify } : {}),
@@ -2200,6 +2201,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			this.resolveFallbacks(entry.fallback_models ?? args.fallback_models, undefined);
 		}
 		const key = typeof args.client_request_id === 'string' && args.client_request_id.trim() ? args.client_request_id.trim() : undefined;
+		// The parts report together (`IOrchTask.batch`).
+		const batch = entries.length > 1 ? `b-${generateUuid()}` : undefined;
 		const ids: string[] = [];
 		const lines: string[] = [];
 		// The task each entry started, by position, for later entries' `after`.
@@ -2226,7 +2229,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				...Object.fromEntries(ENTRY_CONTRACT_KEYS.filter(name => entry[name] !== undefined).map(name => [name, entry[name]])),
 				after,
 				client_request_id: key ? `${key}:${index}` : undefined,
-			}, token, toolCallId, true);
+			}, token, toolCallId, true, batch);
 			const id = result.error ? undefined : /\b(t-[0-9a-f]{6})\b/.exec(result.text ?? '')?.[1];
 			byIndex.push(id);
 			if (id) {
@@ -2251,7 +2254,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				`Started ${tasks.length} of ${entries.length} tasks:`,
 				...lines,
 				...tasks.map(task => describeTask(task, now, { includeResult: isTerminalTaskState(task.state) })),
-				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat as they finish: end your turn now unless there is other work to do. wait_tasks returns them sooner if you cannot continue without them.',
+				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat together once all of them have finished: end your turn now unless there is other work to do. wait_tasks (any=true for the first) returns them sooner if you cannot continue without them.',
 			].filter(Boolean).join('\n'),
 		};
 	}
@@ -2268,6 +2271,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const models = names.map(name => this.resolveModel(name)!);
 		const key = typeof args.client_request_id === 'string' && args.client_request_id.trim() ? args.client_request_id.trim() : undefined;
 		const baseTitle = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 60) : titleFromBrief(String(args.task));
+		const batch = `b-${generateUuid()}`;
 		const ids: string[] = [];
 		const lines: string[] = [];
 		for (const model of models) {
@@ -2278,7 +2282,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				wait: false,
 				title: `${baseTitle} · ${model.label}`,
 				...(key ? { client_request_id: `${key}:${model.ref}` } : {}),
-			}, token, toolCallId, true);
+			}, token, toolCallId, true, batch);
 			const id = /\b(t-[0-9a-f]{6})\b/.exec(result.text ?? '')?.[1];
 			if (id) {
 				ids.push(id);
@@ -2299,7 +2303,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				`Started the same brief on ${ids.length} models:`,
 				...lines,
 				...tasks.map(task => describeTask(task, now, { includeResult: isTerminalTaskState(task.state) })),
-				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat as they finish; you may end your turn. wait_tasks returns them sooner if you need them now.',
+				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat together once all of them have finished; you may end your turn. wait_tasks returns them sooner if you need them now.',
 			].filter(Boolean).join('\n'),
 		};
 	}

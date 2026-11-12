@@ -475,6 +475,7 @@ function parseTask(value: unknown): IOrchTask | undefined {
 		...(Array.isArray(task.failedOn) && task.failedOn.length ? { failedOn: task.failedOn.filter((label): label is string => typeof label === 'string') } : {}),
 		...(Array.isArray(task.blind) && task.blind.length ? { blind: task.blind.filter((id): id is string => typeof id === 'string') } : {}),
 		...(str(task.team) ? { team: task.team as string } : {}),
+		...(str(task.batch) ? { batch: task.batch as string } : {}),
 		...(task.quiet === true ? { quiet: true } : {}),
 		...(Array.isArray(task.verify) && task.verify.some(item => typeof item === 'string') ? { verify: task.verify.filter((command): command is string => typeof command === 'string') } : {}),
 		...optional('verification', parseVerification(task.verification)),
