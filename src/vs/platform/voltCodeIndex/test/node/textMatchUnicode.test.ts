@@ -90,5 +90,18 @@ suite('Volt code index: Unicode classes match ripgrep', function () {
 		assert.strictEqual(createJsMatcher('\\p{Greek}', true, true, false, false), undefined);
 		assert.strictEqual(createJsMatcher('-foo-', false, true, false, true), undefined, '-w around non-word edges');
 		assert.strictEqual(createJsMatcher('fo+', true, true, false, true), undefined, '-w on a regex');
+		assert.strictEqual(createJsMatcher('(?i:foo)bar', true, true, false, false), undefined, 'inline flags on a group');
+		assert.strictEqual(createJsMatcher('(?-i)foo', true, true, false, false), undefined, 'inline flags turned off');
 	});
+
+	// A sandboxed chat's search refused these as "needs ripgrep" (hotel-repo benchmark); both engines read them alike.
+	for (const pattern of ['foo(?:_bar|-bar)', '(?:caf|na)\\w+', '\\b(?:foo|afoo)\\b', '(?:\\d)+', 'a(?:\\s|x)', '(?:(?:foo)1|1(?:foo))']) {
+		for (const caseSensitive of [true, false]) {
+			test(`non-capturing group ${pattern}${caseSensitive ? '' : ' (ignore case)'}`, () => {
+				const js = jsLines(pattern, true, caseSensitive, false);
+				assert.ok(js, 'answered in-process');
+				assert.deepStrictEqual(js, rgLines(pattern, caseSensitive ? ['--case-sensitive'] : ['--ignore-case']));
+			});
+		}
+	}
 });
