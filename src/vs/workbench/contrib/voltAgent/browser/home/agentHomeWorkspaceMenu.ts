@@ -6,7 +6,7 @@
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { isMacintosh } from '../../../../../base/common/platform.js';
-import { isEqual } from '../../../../../base/common/resources.js';
+import { basename, isEqual, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
@@ -27,6 +27,8 @@ export interface IAgentHomeWorkspaceMenuHost {
 	readonly entries: readonly IAgentHomeWorkspaceEntry[];
 	/** The project the menu was opened from; its rows get a check. */
 	readonly current?: URI;
+	/** For a typed `~/…` path. */
+	readonly userHome?: URI;
 	/** Where cloned and new projects are made, as a path label. */
 	location(): string;
 	/** Asks for another location in Volt's folder picker and keeps it for next time. */
@@ -56,6 +58,18 @@ type WorkspacePick =
 	| { readonly kind: 'none' };
 
 type WorkspaceItem = IVoltMenuItem<WorkspacePick>;
+
+/** The folder a search reads as a local path: absolute (`/x`, `C:\x`) or under the home folder (`~/x`). */
+export function typedFolder(query: string, userHome: URI | undefined): URI | undefined {
+	const value = query.trim().replace(/[\\/]+$/, '');
+	if (value.startsWith('~')) {
+		return userHome && (value === '~' || /^~[\\/]/.test(value)) ? joinPath(userHome, ...value.slice(1).split(/[\\/]/).filter(Boolean)) : undefined;
+	}
+	if (value.startsWith('/') && value.length > 1) {
+		return URI.file(value);
+	}
+	return /^[a-zA-Z]:[\\/]/.test(value) ? URI.file(value) : undefined;
+}
 
 const NONE: WorkspacePick = { kind: 'none' };
 
@@ -227,6 +241,21 @@ export function showAgentHomeWorkspaceMenu(
 		search: { placeholder: localize('voltAgent.workspace.searchProjects', "Search projects and folders"), icon: createHomeSearchIcon },
 		emptyMessage: localize('voltAgent.workspace.noMatches', "No folders match"),
 		sections: () => [{
+			id: 'path',
+			searchOnly: true,
+			items: [],
+			// A typed path opens that folder (it need not be a recent one); a wrong path is reported by the open.
+			fromQuery: query => {
+				const folder = typedFolder(query, host.userHome);
+				return folder && !host.entries.some(entry => isEqual(entry.uri, folder)) ? [{
+					id: folder.toString(),
+					label: localize('voltAgent.workspace.openPath', "Open {0}", basename(folder) || folder.fsPath),
+					description: folder.fsPath,
+					icon: Codicon.folderOpened,
+					data: { kind: 'open', folders: [folder] },
+				}] : [];
+			},
+		}, {
 			id: 'recent',
 			items: host.entries.map(entry => folderItem(entry, false)),
 			emptyMessage: localize('voltAgent.workspace.noFolders', "No folders yet."),

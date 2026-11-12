@@ -96,6 +96,7 @@ export class AgentHomeWorkspaceActions {
 		return {
 			entries,
 			current,
+			userHome: await this.pathService.userHome({ preferLocal: true }),
 			location: () => this.labelService.getUriLabel(this.locationUri()),
 			changeLocation: () => this.changeLocation(),
 			openFolders: folders => this.openFolders(folders),
@@ -185,6 +186,12 @@ export class AgentHomeWorkspaceActions {
 		const [first] = folders;
 		if (!first || (folders.length === 1 && current && isEqual(first, current))) {
 			return;
+		}
+		// A typed path may name nothing, or a file: say so instead of opening an empty project.
+		const stats = await Promise.all(folders.map(folder => this.fileService.stat(folder).catch(() => undefined)));
+		const missing = folders.find((_, index) => !stats[index]?.isDirectory);
+		if (missing) {
+			throw new Error(localize('voltAgent.workspace.notAFolder', "{0} is not a folder.", this.labelService.getUriLabel(missing)));
 		}
 		void this.workspacesService.addRecentlyOpened(folders.map(folderUri => ({ folderUri })));
 		if (folders.length === 1 && this.openOne) {

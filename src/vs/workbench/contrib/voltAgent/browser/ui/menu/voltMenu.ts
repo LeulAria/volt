@@ -77,6 +77,8 @@ export interface IVoltMenuSection<T> {
 	readonly searchOnly?: boolean;
 	/** Shown in place of items when the section is empty. */
 	readonly emptyMessage?: string;
+	/** Rows made from what was typed (a folder path), listed first while searching and never filtered out. */
+	readonly fromQuery?: (query: string) => readonly IVoltMenuItem<T>[];
 }
 
 /**
@@ -584,7 +586,9 @@ class VoltMenuWidget<T> extends Disposable {
 			if (section.searchOnly && !query) {
 				continue;
 			}
-			const items: Row<T>[] = [];
+			const items: Row<T>[] = query && section.fromQuery
+				? section.fromQuery(query).map(item => ({ kind: 'item', id: `${section.id}:${item.id}`, item }))
+				: [];
 			for (const item of section.items) {
 				if (!query || !filterLocally) {
 					items.push({ kind: 'item', id: `${section.id}:${item.id}`, item });

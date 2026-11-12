@@ -6,6 +6,7 @@
 import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+import { typedFolder } from '../../browser/home/agentHomeWorkspaceMenu.js';
 import {
 	agentHomeWorkspaceEntries,
 	claudeHistoryFolderKind,
@@ -154,5 +155,18 @@ suite('Agent home workspace menu', () => {
 		assert.strictEqual(gitErrorSummary(`Cloning into '/Users/me/repo'...\nremote: Repository not found.\nfatal: repository 'https://github.com/x/y/' not found\n`), `repository 'https://github.com/x/y/' not found`);
 		assert.strictEqual(gitErrorSummary('zsh: command not found: git\n'), 'zsh: command not found: git');
 		assert.strictEqual(gitErrorSummary(''), undefined);
+	});
+
+	test('a typed absolute or ~ path reads as a folder; names and relative paths do not', () => {
+		const home = URI.file('/Users/me');
+		assert.strictEqual(typedFolder('/tmp/bench/fx/', home)?.fsPath, URI.file('/tmp/bench/fx').fsPath);
+		assert.strictEqual(typedFolder('  ~/Desktop/app ', home)?.fsPath, URI.file('/Users/me/Desktop/app').fsPath);
+		assert.strictEqual(typedFolder('~', home)?.fsPath, home.fsPath);
+		assert.strictEqual(typedFolder('~/x', undefined), undefined);
+		assert.strictEqual(typedFolder('~other/x', home), undefined);
+		assert.strictEqual(typedFolder('hotel', home), undefined);
+		assert.strictEqual(typedFolder('src/app', home), undefined);
+		assert.strictEqual(typedFolder('/', home), undefined);
+		assert.ok(typedFolder('C:\\work\\app', home));
 	});
 });
