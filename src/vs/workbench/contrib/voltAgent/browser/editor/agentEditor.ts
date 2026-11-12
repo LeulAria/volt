@@ -1379,6 +1379,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				// row and the group's "2 working · 1 queued" read live task state. Without this they kept the
 				// counts of the last render while the side panel already showed the subagents done.
 				this.scheduleThreadRender();
+				// The "N subagents running" chip and card too: they lagged one step behind (4 running with 3 live).
+				this.syncComposerAgents();
 			} else if (change.tasks.some(taskId => harnessSubagentChatId(taskId) === this.sessionKey)) {
 				// A harness subagent's chat has no thread: its bar follows its task.
 				this.renderSubagentBar();
@@ -7762,6 +7764,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		void this.orchestrator.dispatch({ type: 'task.cancel', taskId: task.id, reason: 'The user stopped it.' });
 	}
 
+	/** The composer's agents card and chip, from this chat's live tasks. */
+	private syncComposerAgents(): void {
+		if (!this.composerQueue) {
+			return;
+		}
+		const dock = dockModel(this.orchestrator.getState(), this.sessionKey);
+		const agentViews = dock.agents.map(row => subagentView(row, ref => this.providerOf(ref)));
+		this.composerQueue.setAgents({ views: agentViews, conflicts: dock.conflicts });
+		this.syncAgentsChip(agentViews);
+	}
+
 	/** "3 multitasks running" above the text area while this chat's agents work. */
 	private syncAgentsChip(views: readonly ISubagentView[]): void {
 		const counts = subagentCounts(views);
@@ -8516,10 +8529,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			modelLabel: this.queuedModelLabel(item.prompt.modelRef),
 		})));
 		this.renderSubagentBar();
-		const dock = dockModel(this.orchestrator.getState(), this.sessionKey);
-		const agentViews = dock.agents.map(row => subagentView(row, ref => this.providerOf(ref)));
-		this.composerQueue.setAgents({ views: agentViews, conflicts: dock.conflicts });
-		this.syncAgentsChip(agentViews);
+		this.syncComposerAgents();
 		this.composerQueue.setState(this.queueState());
 		this.updateInputPlaceholder();
 		this._onDidChangeQueue.fire();
