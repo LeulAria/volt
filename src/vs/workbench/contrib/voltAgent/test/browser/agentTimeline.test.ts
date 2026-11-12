@@ -511,4 +511,10 @@ suite('Agent run state', () => {
 		assert.ok(prompt.text.includes('<plan>\n1. Parse the id as a number\n2. Add a test\n</plan>'));
 		assert.strictEqual(createdPlanPrompt({ markdown: '' }).display, 'Build the plan');
 	});
+
+	test('a wait tool\'s past-tense title reads as "Waiting" while it runs', () => {
+		// The composer chip said "Waited for tasks" beside the tail's "Waiting · 37s".
+		assert.strictEqual(streamingActivityLines('', 'Waited for tasks', [], 1000, 1000).phrase, 'Waiting');
+		assert.strictEqual(streamingActivityLines('', 'Waiting', [], 1000, 1000).phrase, 'Waiting');
+	});
 });

@@ -6296,8 +6296,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const startedAt = lastAgent?.startedAt;
 		const endedAt = lastAgent?.endedAt;
 		const durationMs = lastAgent?.durationMs ?? (startedAt ? (endedAt ?? Date.now()) - startedAt : undefined);
+		const activity = lastAgent?.activity;
+		// The transcript tail's own words: the raw status is the last tool's title, past tense
+		// ("Waited for tasks" beside the tail's "Waiting · 37s").
 		const status = streaming
-			? (lastAgent?.activity?.status || localize('voltAgent.working', "Working"))
+			? (activity?.status ? streamingActivityLines('', activity.status, activity.items ?? [], Date.now(), activity.shimmerStartedAt ?? Date.now(), activity.statusPinned === true).phrase : localize('voltAgent.working', "Working"))
 			: lastAgent?.cancelled
 				? localize('voltAgent.cancelled', "Cancelled")
 				: durationMs !== undefined
