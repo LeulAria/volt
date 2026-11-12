@@ -23,6 +23,9 @@ import { IUserGestureToken, SubjectKey } from '../../../../platform/voltSandbox/
 import { TrustGrantDraft } from '../../../../platform/voltSandbox/common/trust.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
+import { isScannedExtension, IVoltExtensionCodeScanService, summarizeFindings } from '../../../services/extensions/browser/voltExtensionCodeScan.js';
+import { IVoltExtensionSandboxService } from '../../../services/extensions/common/voltExtensionSandbox.js';
+import { codeScanDigest } from '../../../../platform/voltPlugins/common/extensionCodeScan.js';
 import { IVoltExtensionApiService } from '../../../services/voltPlugins/common/voltExtensionApi.js';
 import { pickVoltContributes } from '../../../services/voltPlugins/common/voltContributions.js';
 import { bindGestureButton } from '../../../services/voltTrust/browser/gestureTokens.js';
@@ -93,17 +96,27 @@ export function installSheetKey(subject: SubjectKey, groups: readonly IInstallSh
 	return `volt.trust.installSheet.${subject}.${sha.digest().slice(0, 16)}`;
 }
 
-type SheetRow = { readonly kind: 'group'; readonly group: IInstallSheetGroup } | { readonly kind: 'capability'; readonly capability: IInstallSheetCapability };
+/** A line of the install-time code scan (`extensionCodeScan.ts`), as the sheet lists it. */
+export interface IInstallSheetFinding {
+	readonly severity: 'high' | 'medium';
+	/** Volt's words: "builds a sensitive name from pieces to hide it (eval, child_process)". */
+	readonly text: string;
+	/** `out/extension.js:12`. */
+	readonly where: string;
+}
+
+type SheetRow = { readonly kind: 'group'; readonly group: IInstallSheetGroup } | { readonly kind: 'capability'; readonly capability: IInstallSheetCapability }
+	| { readonly kind: 'scan'; readonly sandboxed: boolean } | { readonly kind: 'finding'; readonly finding: IInstallSheetFinding };
 
 const GROUP_HEIGHT = 40;
 const CAPABILITY_HEIGHT = 46;
 
 class SheetDelegate implements IListVirtualDelegate<SheetRow> {
 	getHeight(row: SheetRow): number {
-		return row.kind === 'group' ? GROUP_HEIGHT : CAPABILITY_HEIGHT;
+		return row.kind === 'group' || row.kind === 'scan' ? GROUP_HEIGHT : CAPABILITY_HEIGHT;
 	}
 	getTemplateId(row: SheetRow): string {
-		return row.kind === 'group' ? 'group' : 'capability';
+		return row.kind === 'group' || row.kind === 'scan' ? 'group' : 'capability';
 	}
 }
 
@@ -124,6 +137,11 @@ class GroupRenderer implements IListRenderer<SheetRow, { readonly title: HTMLEle
 		if (row.kind === 'group') {
 			template.title.textContent = CLASS_LABELS[row.group.class];
 			template.outcome.textContent = row.group.outcome;
+		} else if (row.kind === 'scan') {
+			template.title.textContent = localize('voltSheet.scan', "Found in its code");
+			template.outcome.textContent = row.sandboxed
+				? localize('voltSheet.scanSandboxed', "It runs in Volt's sandbox, which blocks what it is not allowed.")
+				: localize('voltSheet.scanShared', "It runs with your access. Volt's sandbox would block what it is not allowed.");
 		}
 	}
 	disposeTemplate(): void { }
@@ -136,6 +154,14 @@ class CapabilityRenderer implements IListRenderer<SheetRow, { readonly title: HT
 		return { title: append(row, $('span.title')), detail: append(row, $('span.detail')) };
 	}
 	renderElement(row: SheetRow, _index: number, template: { readonly title: HTMLElement; readonly detail: HTMLElement }): void {
+		template.title.parentElement!.classList.toggle('high', row.kind === 'finding' && row.finding.severity === 'high');
+		if (row.kind === 'finding') {
+			// A list line of its own: "Builds a sensitive name ..." (the text also runs inside sentences).
+			template.title.textContent = row.finding.text.charAt(0).toUpperCase() + row.finding.text.slice(1);
+			template.detail.textContent = row.finding.where;
+			template.title.parentElement!.title = `${row.finding.text}\n${row.finding.where}`;
+			return;
+		}
 		if (row.kind !== 'capability') {
 			return;
 		}
@@ -152,6 +178,10 @@ export interface IInstallSheetRequest {
 	readonly publisher: string;
 	readonly groups: readonly IInstallSheetGroup[];
 	readonly gesture: { readonly registry: IVoltTrustService['gestures']; readonly principal: string };
+	/** What the install-time code scan found, the high findings first. */
+	readonly findings?: readonly IInstallSheetFinding[];
+	/** Set while it runs with the user's access: the sheet offers "Run in a Sandbox". */
+	readonly runInSandbox?: () => void;
 }
 
 /**
@@ -168,7 +198,10 @@ export function showInstallSheet(layoutService: ILayoutService, instantiationSer
 			answer(allowed, gesture);
 		}
 	};
-	const rows: SheetRow[] = request.groups.flatMap(group => [{ kind: 'group' as const, group }, ...group.capabilities.map(capability => ({ kind: 'capability' as const, capability }))]);
+	const rows: SheetRow[] = [
+		...(request.findings?.length ? [{ kind: 'scan' as const, sandboxed: !request.runInSandbox }, ...request.findings.map(finding => ({ kind: 'finding' as const, finding }))] : []),
+		...request.groups.flatMap(group => [{ kind: 'group' as const, group }, ...group.capabilities.map(capability => ({ kind: 'capability' as const, capability }))]),
+	];
 	const grantsSomething = request.groups.some(group => group.class === 'medium');
 	return showVoltModal(layoutService, {
 		title: localize('voltSheet.title', "Extension permissions"),
@@ -186,7 +219,7 @@ export function showInstallSheet(layoutService: ILayoutService, instantiationSer
 			append(titles, $('h2')).textContent = localize('voltSheet.ask', "{0} asks for these permissions", request.extensionName);
 			append(titles, $('.meta')).textContent = localize('voltSheet.meta', "Extension by {0}", request.publisher);
 			const host = append(content, $('.volt-install-sheet-list'));
-			const height = rows.reduce((sum, row) => sum + (row.kind === 'group' ? GROUP_HEIGHT : CAPABILITY_HEIGHT), 0);
+			const height = rows.reduce((sum, row) => sum + (row.kind === 'group' || row.kind === 'scan' ? GROUP_HEIGHT : CAPABILITY_HEIGHT), 0);
 			host.style.height = `${height}px`;
 			const list = store.add(instantiationService.createInstance(WorkbenchList<SheetRow>, 'VoltInstallSheet', host, new SheetDelegate(), [new GroupRenderer(), new CapabilityRenderer()], {
 				multipleSelectionSupport: false,
@@ -194,7 +227,9 @@ export function showInstallSheet(layoutService: ILayoutService, instantiationSer
 				alwaysConsumeMouseWheel: false,
 				accessibilityProvider: {
 					getWidgetAriaLabel: () => localize('voltSheet.aria', "Permissions the extension declares"),
-					getAriaLabel: (row: SheetRow) => row.kind === 'group' ? `${CLASS_LABELS[row.group.class]}: ${row.group.outcome}` : voltCapabilityCopy(row.capability.id).title,
+					getAriaLabel: (row: SheetRow) => row.kind === 'group' ? `${CLASS_LABELS[row.group.class]}: ${row.group.outcome}`
+						: row.kind === 'capability' ? voltCapabilityCopy(row.capability.id).title
+							: row.kind === 'finding' ? `${row.finding.text}, ${row.finding.where}` : localize('voltSheet.scan', "Found in its code"),
 				},
 			}));
 			list.layout(height);
@@ -202,6 +237,18 @@ export function showInstallSheet(layoutService: ILayoutService, instantiationSer
 
 			const footer = append(body, $('.volt-add-footer'));
 			append(footer, $('span.volt-add-footer-hint'));
+			const runInSandbox = request.runInSandbox;
+			if (runInSandbox) {
+				const sandbox = store.add(createVoltButton(footer));
+				sandbox.label = localize('voltSheet.runInSandbox', "Run in a Sandbox");
+				sandbox.element.classList.add('sandbox');
+				// Opts it in; the sheet stays for the permissions (the move happens at the next reload).
+				store.add(sandbox.onDidClick(() => {
+					runInSandbox();
+					sandbox.label = localize('voltSheet.sandboxChosen', "Sandbox On After Reload");
+					sandbox.enabled = false;
+				}));
+			}
 			const deny = store.add(createVoltButton(footer));
 			deny.label = localize('voltSheet.deny', "Don't Allow");
 			deny.element.classList.add('deny');
@@ -237,6 +284,8 @@ export class InstallSheetContribution extends Disposable implements IWorkbenchCo
 
 	private queue: Promise<void> = Promise.resolve();
 	private readonly shown = new Set<string>();
+	/** Extensions (by declared set and version) already queued for a look. */
+	private readonly considered = new Set<string>();
 
 	constructor(
 		@IExtensionService private readonly extensionService: IExtensionService,
@@ -246,6 +295,8 @@ export class InstallSheetContribution extends Disposable implements IWorkbenchCo
 		@ILayoutService private readonly layoutService: ILayoutService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@ILogService private readonly logService: ILogService,
+		@IVoltExtensionCodeScanService private readonly codeScan: IVoltExtensionCodeScanService,
+		@IVoltExtensionSandboxService private readonly sandbox: IVoltExtensionSandboxService,
 	) {
 		super();
 		const check = () => void this.trust.whenReady.then(() => this.check());
@@ -259,23 +310,39 @@ export class InstallSheetContribution extends Disposable implements IWorkbenchCo
 				continue; // Built-ins: zero prompts, capped by their ceilings (N.2).
 			}
 			const groups = installSheetGroups(extension);
-			if (!groups.length) {
+			const scanned = isScannedExtension(extension);
+			if (!groups.length && !scanned) {
 				continue;
 			}
 			const subject = this.extensionApi.subjectOf?.(extension.identifier.value);
 			if (!subject) {
 				continue;
 			}
-			const key = installSheetKey(subject, groups);
-			if (this.shown.has(key) || this.storage.getBoolean(key, StorageScope.APPLICATION, false)) {
+			const considered = `${installSheetKey(subject, groups)}@${extension.version}`;
+			if (this.considered.has(considered)) {
 				continue;
 			}
-			this.shown.add(key);
-			this.queue = this.queue.then(() => this.ask(extension, subject, groups, key));
+			this.considered.add(considered);
+			this.queue = this.queue.then(async () => {
+				// The code scan (once per version, cached): code that hides what it does gets the sheet
+				// even when it declares no Volt capability, and again when an update adds such code.
+				const scan = scanned ? await this.codeScan.scan(extension) : undefined;
+				const high = scan?.findings.filter(finding => finding.severity === 'high') ?? [];
+				if (!groups.length && !high.length) {
+					return;
+				}
+				const key = installSheetKey(subject, groups) + (high.length ? `.${codeScanDigest(high)}` : '');
+				if (this.shown.has(key) || this.storage.getBoolean(key, StorageScope.APPLICATION, false)) {
+					return;
+				}
+				this.shown.add(key);
+				return this.ask(extension, subject, groups, key, scan ? summarizeFindings(scan.findings) : []);
+			});
 		}
 	}
 
-	private ask(extension: IExtensionDescription, subject: SubjectKey, groups: readonly IInstallSheetGroup[], key: string): Promise<void> {
+	private ask(extension: IExtensionDescription, subject: SubjectKey, groups: readonly IInstallSheetGroup[], key: string, findings: readonly IInstallSheetFinding[]): Promise<void> {
+		const id = extension.identifier.value;
 		return new Promise<void>(resolve => {
 			const sheet = this._register(new DisposableStore());
 			sheet.add(showInstallSheet(this.layoutService, this.instantiationService, {
@@ -283,6 +350,8 @@ export class InstallSheetContribution extends Disposable implements IWorkbenchCo
 				publisher: extension.publisher,
 				groups,
 				gesture: { registry: this.trust.gestures, principal: subject },
+				...(findings.length ? { findings } : {}),
+				...(findings.length && !this.sandbox.isOptedIn(id) ? { runInSandbox: () => void this.sandbox.setOptedIn(id, true) } : {}),
 			}, (allowed, gesture) => {
 				const done = () => {
 					this._store.delete(sheet);

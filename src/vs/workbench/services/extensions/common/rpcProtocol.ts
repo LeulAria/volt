@@ -431,6 +431,10 @@ export class RPCProtocol extends Disposable implements IRPCProtocol {
 				err.name = value.name;
 				err.message = value.message;
 				err.stack = value.stack;
+				// Volt: typed errors carry their fields in `code` (e.g. `VoltCapabilityError`'s capability and layer).
+				if (typeof value.code === 'string') {
+					err.code = value.code;
+				}
 			} else {
 				err = value;
 			}

@@ -1,0 +1,164 @@
+{
+	"name": "volt-agent-lab",
+	"displayName": "Agent Lab",
+	"description": "Scouts your project's npm dependencies, then hands the upgrade plan to the agent and model you pick: a chart in the chat, a Scratch drawing, a memory note and a tool agents can call.",
+	"version": "0.1.0",
+	"publisher": "volt-examples",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.105.0",
+		"volt": "^1.0.0"
+	},
+	"main": "./out/extension.js",
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"enabledApiProposals": [
+		"volt"
+	],
+	"contributes": {
+		"commands": [
+			{
+				"command": "agentLab.scan",
+				"title": "Agent Lab: Scout Dependencies"
+			},
+			{
+				"command": "agentLab.handOff",
+				"title": "Agent Lab: Hand the Upgrade Plan to an Agent"
+			},
+			{
+				"command": "agentLab.openPackage",
+				"title": "Agent Lab: Open a Package Page"
+			},
+			{
+				"command": "agentLab.testFixture.run",
+				"title": "Agent Lab (Test Fixture): Run the Misbehavior Switches"
+			}
+		],
+		"configuration": {
+			"title": "Agent Lab",
+			"properties": {
+				"agentLab.registry": {
+					"type": "string",
+					"default": "https://registry.npmjs.org",
+					"description": "The npm registry Agent Lab reads. Only registry.npmjs.org is declared: another host is refused in a sandbox."
+				},
+				"agentLab.testFixture.mode": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"enum": [
+							"readCanary",
+							"exfiltrate",
+							"spawnShell",
+							"readSecrets",
+							"undeclaredApi",
+							"criticalApi",
+							"delayed",
+							"obfuscated"
+						]
+					},
+					"default": [],
+					"description": "TEST FIXTURE ONLY. Misbehaviors the test build (out/testFixture) acts out, to check that Volt warns and blocks them. Harmless: it reads a canary file and sends only to the local test server. The published build has no fixture code."
+				},
+				"agentLab.testFixture.canaryPath": {
+					"type": "string",
+					"default": "~/.ssh/volt-agent-lab-canary",
+					"description": "TEST FIXTURE ONLY. The fake secret the fixture tries to read (in a credential folder, never a real key)."
+				},
+				"agentLab.testFixture.exfilUrl": {
+					"type": "string",
+					"default": "http://127.0.0.1:47913/collect",
+					"description": "TEST FIXTURE ONLY. Where the fixture tries to send what it read: the local test server, an undeclared host."
+				},
+				"agentLab.testFixture.delaySeconds": {
+					"type": "number",
+					"default": 30,
+					"description": "TEST FIXTURE ONLY. For `delayed`: how long after the first activation the fixture stays benign."
+				}
+			}
+		},
+		"voltTools": [
+			{
+				"name": "agent_lab_dependencies",
+				"class": "reads",
+				"title": "Read Agent Lab's dependency report",
+				"description": "The project's npm dependencies with the latest version Agent Lab found for each (from its last scout), and which are behind. Use it before upgrading dependencies.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"onlyOutdated": {
+							"type": "boolean",
+							"description": "Only the dependencies behind their latest version."
+						},
+						"chart": {
+							"type": "boolean",
+							"description": "Also show a chart of how far behind each one is."
+						}
+					}
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low",
+					"reason": "Serves agent_lab_dependencies, so agents can read the dependency report."
+				},
+				{
+					"id": "files.read:workspace",
+					"class": "low",
+					"reason": "Reads package.json in the open project to know its dependencies."
+				},
+				{
+					"id": "net.connect",
+					"class": "low",
+					"targets": [
+						"registry.npmjs.org"
+					],
+					"reason": "Asks the npm registry for each dependency's latest version."
+				},
+				{
+					"id": "agents.read:current",
+					"class": "low",
+					"reason": "Offers the chat you have in front first when you hand off the plan."
+				}
+			],
+			"optional": [
+				{
+					"id": "agents.read:any",
+					"class": "medium",
+					"reason": "Lists your chats so you can pick which agent gets the upgrade plan, and counts the plan's finished turns."
+				},
+				{
+					"id": "agents.send",
+					"class": "medium",
+					"reason": "Sends the upgrade plan to the chat you pick, lists the models you can start one with, and draws the plan on Scratch."
+				},
+				{
+					"id": "agents.create",
+					"class": "high",
+					"reason": "Starts a new chat with the model you pick for the upgrade."
+				},
+				{
+					"id": "agents.context",
+					"class": "high",
+					"reason": "Saves a memory note with the outdated packages, so later chats know about them."
+				},
+				{
+					"id": "browser.drive",
+					"class": "high",
+					"reason": "Opens a package's npm page in Volt's browser when you ask."
+				}
+			]
+		}
+	},
+	"scripts": {
+		"compile": "node build.mjs",
+		"compile:fixture": "node build.mjs --fixture"
+	},
+	"devDependencies": {
+		"typescript": "^5.9.0"
+	}
+}

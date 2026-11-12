@@ -150,3 +150,8 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+
+/* The code scan's findings (installSheet.ts `finding` rows): a high one is marked by its title's color, no stripe. */
+.volt-install-sheet-capability.high .title {
+	color: var(--vscode-list-warningForeground);
+}
