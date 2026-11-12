@@ -307,7 +307,10 @@ registerAction2(class extends Action2 {
 			input.dispose();
 			return;
 		}
-		input.onWillDispose(() => dismissed.add(dismissKey));
+		const onClose = input.onWillDispose(() => {
+			onClose.dispose();
+			dismissed.add(dismissKey);
+		});
 		await openBeside(accessor, input, request);
 	}
 });
