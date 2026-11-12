@@ -193,7 +193,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { IAgentTurnReveal, onDidRequestAgentTurnReveal, takeAgentTurnReveal } from '../search/agentTurnReveal.js';
 import { AgentThreadView } from './agentThreadView.js';
-import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip, setIconButtonTooltip } from '../chrome/agentTooltip.js';
 import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
@@ -1501,7 +1501,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.toolbarStartEl = append(this.toolbarEl, $('.volt-agent-toolbar-start'));
 		this.toolbarEndEl = append(this.toolbarEl, $('.volt-agent-toolbar-end'));
 		this.plusButton = append(this.toolbarStartEl, $('button.volt-agent-plus')) as HTMLButtonElement;
-		setAgentTooltip(this.plusButton, localize('voltAgent.add', "Add"));
+		setIconButtonTooltip(this.plusButton, localize('voltAgent.add', "Add"));
 		this.plusButton.appendChild(createPlusIcon());
 		this.modeButton = append(this.toolbarStartEl, $('button.volt-agent-mode')) as HTMLButtonElement;
 		this.modelButton = append(this.toolbarStartEl, $('button.volt-agent-model')) as HTMLButtonElement;
@@ -1555,12 +1555,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}));
 
 		this.attachButton = append(this.toolbarEndEl, $('button.volt-agent-icon-btn.volt-agent-attach-btn')) as HTMLButtonElement;
-		setAgentTooltip(this.attachButton, localize('voltAgent.attach', "Add context"));
+		setIconButtonTooltip(this.attachButton, localize('voltAgent.attach', "Add context"));
 		this.attachButton.appendChild(renderIcon(Codicon.attach));
 
 		this.micButton = append(this.toolbarEndEl, $('button.volt-agent-icon-btn.volt-agent-mic-btn')) as HTMLButtonElement;
 		this.micButton.type = 'button';
-		setAgentTooltip(this.micButton, localize('voltAgent.voice', "Voice"));
+		setIconButtonTooltip(this.micButton, localize('voltAgent.voice', "Voice"));
 		this.micButton.appendChild(createMicIcon());
 
 		this.sendButton = append(this.toolbarEndEl, $('button.volt-agent-send')) as HTMLButtonElement;
@@ -4633,7 +4633,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const end = append(toolbar, $('.volt-agent-toolbar-end'));
 
 		this.editPlusButton = append(start, $('button.volt-agent-plus')) as HTMLButtonElement;
-		setAgentTooltip(this.editPlusButton, localize('voltAgent.add', "Add"));
+		setIconButtonTooltip(this.editPlusButton, localize('voltAgent.add', "Add"));
 		this.editPlusButton.appendChild(createPlusIcon());
 		this.editEditorDisposables.add(addDisposableListener(this.editPlusButton, 'click', e => {
 			e.preventDefault();
@@ -4665,7 +4665,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.editSendButton = append(end, $('button.volt-agent-send')) as HTMLButtonElement;
 		this.editSendButton.type = 'button';
 		this.editSendButton.appendChild(createSendIcon());
-		setAgentTooltip(this.editSendButton, localize('voltAgent.send', "Send"));
+		setIconButtonTooltip(this.editSendButton, localize('voltAgent.send', "Send"));
 		this.editEditorDisposables.add(addDisposableListener(this.editSendButton, 'click', () => this.sendUserEdit()));
 		const editBlankSurfaces = new Set<EventTarget>([this.editInputBox, this.editMonacoHost, toolbar, start, end]);
 		this.editEditorDisposables.add(addDisposableListener(this.editInputBox, 'mousedown', e => {
@@ -8332,7 +8332,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		if (this.micButton.classList.contains('recording') !== active) {
 			this.micButton.classList.toggle('recording', active);
-			setAgentTooltip(this.micButton, active ? localize('voltAgent.voiceStop', "Stop dictation") : localize('voltAgent.voice', "Voice"));
+			setIconButtonTooltip(this.micButton, active ? localize('voltAgent.voiceStop', "Stop dictation") : localize('voltAgent.voice', "Voice"));
 			this.updateSendButton();
 		}
 	}
@@ -8366,7 +8366,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.sendKind = kind;
 		this.sendButton.replaceChildren();
 		this.sendButton.classList.remove('stop');
-		setAgentTooltip(this.sendButton, !canSend
+		setIconButtonTooltip(this.sendButton, !canSend
 			? localize('voltAgent.makingScratchFolder', "Making a folder for this chat...")
 			: kind === 'send'
 				? localize('voltAgent.send', "Send")

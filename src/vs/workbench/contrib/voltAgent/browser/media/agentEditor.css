@@ -5873,6 +5873,16 @@ pre.volt-agent-searchable {
 	box-shadow: none !important;
 }
 
+/*
+ * Keyboard focus in the composer: the controls drop the browser's ring for the mouse, which left
+ * Tab with nothing to show where it was (model, mic, send, permissions, branch, usage). The theme's
+ * focus border shows for keyboard focus only.
+ */
+.monaco-workbench .volt-agent-editor .volt-agent-composer button:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder) !important;
+	outline-offset: 1px;
+}
+
 .volt-agent-status-access .icon {
 	display: inline-flex;
 }

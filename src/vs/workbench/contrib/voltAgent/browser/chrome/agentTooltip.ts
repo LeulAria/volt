@@ -520,6 +520,15 @@ export function bindTruncatedHoverTooltip(element: HTMLElement, text: string, de
 }
 
 /**
+ * An icon-only button's tooltip, which is also its accessible name: with no text of its own, a
+ * screen reader otherwise announced the composer's +, mic and send as just "button".
+ */
+export function setIconButtonTooltip(button: HTMLElement, text: string): void {
+	setAgentTooltip(button, text);
+	button.setAttribute('aria-label', text);
+}
+
+/**
  * Attach (or update) the shared styled tooltip on an element. Replaces the
  * native `title` attribute so every tooltip in the agent UI looks the same.
  * Optionally takes a formatted shortcut (see {@link formatAgentTooltipShortcut})

@@ -58,6 +58,8 @@ if (cmd === 'eval') {
 } else if (cmd === 'viewport') {
 	// viewport <width> <height> | viewport clear: emulate a narrow window (the layout follows it).
 	if (args[0] === 'clear') {
+		// Width/height 0 turns the override off; clearing alone left Electron's window at the old size.
+		await send('Emulation.setDeviceMetricsOverride', { width: 0, height: 0, deviceScaleFactor: 0, mobile: false });
 		await send('Emulation.clearDeviceMetricsOverride');
 	} else {
 		const [width, height] = args.map(Number);

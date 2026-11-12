@@ -8,7 +8,7 @@ import { mainWindow } from '../../../../../base/browser/window.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { AgentTooltip, setAgentTooltip } from '../../browser/chrome/agentTooltip.js';
+import { AgentTooltip, setAgentTooltip, setIconButtonTooltip } from '../../browser/chrome/agentTooltip.js';
 import { subagentHoverRows } from '../../browser/chrome/agentSubagents.js';
 
 suite('Agent tooltip card', () => {
@@ -54,5 +54,13 @@ suite('Agent tooltip card', () => {
 			doc.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
 			button.remove();
 		}
+	});
+
+	test('an icon-only button is named by its tooltip', () => {
+		const button = mainWindow.document.createElement('button');
+		setIconButtonTooltip(button, 'Send');
+		assert.strictEqual(button.getAttribute('aria-label'), 'Send');
+		setIconButtonTooltip(button, 'Voice');
+		assert.strictEqual(button.getAttribute('aria-label'), 'Voice');
 	});
 });
