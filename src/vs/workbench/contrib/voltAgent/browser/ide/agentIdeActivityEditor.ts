@@ -102,6 +102,7 @@ function tabMeta(key: AgentIdeTabKey): ITabMeta {
 		case 'extensions': return { title: localize('voltIde.tab.extensions', "Extensions"), icon: Codicon.extensions, actions: [{ label: localize('voltIde.act.extensions', "Extensions View"), icon: Codicon.extensions, run: viewContainer('workbench.view.extensions') }] };
 		case 'http': return { title: localize('voltIde.tab.http', "HTTP Client"), icon: Codicon.send, actions: [] };
 		case 'notebook': return { title: localize('voltIde.tab.notebook', "Notebook"), icon: Codicon.notebook, actions: [] };
+		case 'db': return { title: localize('voltIde.tab.db', "Database"), icon: Codicon.database, actions: [] };
 	}
 	return { title: ideCapability(key)?.summary ?? key, icon: Codicon.tools, actions: [] };
 }
