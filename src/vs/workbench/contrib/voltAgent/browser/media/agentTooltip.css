@@ -253,11 +253,16 @@
 	border-color: rgba(0, 0, 0, 0.2);
 }
 
+/* The card is where a title its row cuts short is read whole ("Ping loopback for a while and report
+ * the su…" was cut here too): it wraps, up to three lines. */
 .volt-agent-tooltip-card-title {
 	margin-bottom: 2px;
 	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	white-space: normal;
+	overflow-wrap: anywhere;
 }
 
 /* A hint at the card's foot (what a click does): muted like a detail line, wrapped rather than cut. */
@@ -332,6 +337,17 @@
 .volt-agent-tooltip-card-detail {
 	font-size: 12px;
 	color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+/* A muted line (a subagent's step or outcome, a chat's folder) is read whole here, like the title:
+ * the row it hovers already cut it. Up to three lines. */
+.volt-agent-tooltip-card-text > .volt-agent-tooltip-label.muted {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	line-height: 16px;
 }
 
 .volt-agent-tooltip-card-detail {
