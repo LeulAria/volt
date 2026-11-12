@@ -1,0 +1,154 @@
+{
+ "root": "/tmp/volt-e2e/ide/hotel",
+ "commit": "83f88e548b8c418d4ee33e7be79e4c269a56d615",
+ "node": "v25.1.0",
+ "runs": 15,
+ "coldBuild": {
+  "ms": 684,
+  "files": 1856,
+  "bytes": 9102506,
+  "symbols": 17742,
+  "diskBytes": 6194161,
+  "heapDeltaMB": 1.2,
+  "rssDeltaMB": 78,
+  "externalDeltaMB": 41.4
+ },
+ "firstQueryMs": 9.1,
+ "reloadFromDisk": {
+  "ms": 42
+ },
+ "grep": [
+  {
+   "label": "literal rare",
+   "pattern": "reservationStatusEnum",
+   "indexMedianMs": 1.11,
+   "indexP90Ms": 22.08,
+   "rgMedianMs": 54.3,
+   "indexFiles": 2,
+   "indexEngine": "index",
+   "candidates": 4,
+   "rgFiles": 2
+  },
+  {
+   "label": "literal common",
+   "pattern": "propertyId",
+   "indexMedianMs": 1.88,
+   "indexP90Ms": 2.18,
+   "rgMedianMs": 82.5,
+   "indexFiles": 14,
+   "indexEngine": "index",
+   "candidates": 706,
+   "rgFiles": 697
+  },
+  {
+   "label": "regex insert",
+   "pattern": "insert\\(reservations\\)",
+   "indexMedianMs": 3.05,
+   "indexP90Ms": 22.93,
+   "rgMedianMs": 64.9,
+   "indexFiles": 5,
+   "indexEngine": "index",
+   "candidates": 8,
+   "rgFiles": 5
+  },
+  {
+   "label": "regex route",
+   "pattern": "@(Post|Patch|Put)\\(",
+   "indexMedianMs": 1.47,
+   "indexP90Ms": 1.67,
+   "rgMedianMs": 41.5,
+   "indexFiles": 20,
+   "indexEngine": "index",
+   "candidates": 54,
+   "rgFiles": 54
+  },
+  {
+   "label": "regex wide",
+   "pattern": "status\\s*[:=]\\s*'(cancelled|checked_out)'",
+   "indexMedianMs": 6.77,
+   "indexP90Ms": 31.61,
+   "rgMedianMs": 51.1,
+   "indexFiles": 31,
+   "indexEngine": "index",
+   "candidates": 93,
+   "rgFiles": 31
+  },
+  {
+   "label": "literal miss",
+   "pattern": "zzNoSuchTokenzz",
+   "indexMedianMs": 0.05,
+   "indexP90Ms": 0.06,
+   "rgMedianMs": 40.7,
+   "indexFiles": 0,
+   "indexEngine": "index",
+   "candidates": 0,
+   "rgFiles": 0
+  }
+ ],
+ "symbols": [
+  {
+   "query": "ReservationService",
+   "match": "exact",
+   "medianMs": 0.3,
+   "p90Ms": 1.58,
+   "results": 1,
+   "rgDeclarationRegexMedianMs": 64.6
+  },
+  {
+   "query": "Reservation",
+   "match": "prefix",
+   "medianMs": 1.94,
+   "p90Ms": 5.17,
+   "results": 30,
+   "rgDeclarationRegexMedianMs": 92.3
+  },
+  {
+   "query": "resSvc",
+   "match": "fuzzy",
+   "medianMs": 4.37,
+   "p90Ms": 25.79,
+   "results": 1,
+   "rgDeclarationRegexMedianMs": 76.9
+  },
+  {
+   "query": "checkIn",
+   "match": "exact",
+   "medianMs": 0.8,
+   "p90Ms": 1.6,
+   "results": 5,
+   "rgDeclarationRegexMedianMs": 77.9
+  }
+ ],
+ "findFiles": [
+  {
+   "query": "reservation service",
+   "medianMs": 0.45,
+   "top": [
+    "apps/api/src/modules/reservation/reservation.service.ts",
+    "packages/booking-requests/src/domain/reservation-service-event.ts",
+    "apps/api/src/modules/ancillary/reservation-service-event.ts"
+   ],
+   "rgFilesListMedianMs": 31.3
+  },
+  {
+   "query": "folio controller",
+   "medianMs": 0.16,
+   "top": [
+    "apps/api/src/modules/folio/folio.controller.ts",
+    "apps/api/src/modules/folio/folio.controller.roles.spec.ts",
+    "apps/api/src/modules/folio-inbound/folio-inbound.controller.ts"
+   ],
+   "rgFilesListMedianMs": 30.5
+  },
+  {
+   "query": "nightaudit",
+   "medianMs": 0.14,
+   "top": [
+    "apps/dashboard/src/pages/NightAudit.tsx",
+    "scripts/cron/night-audit.sh",
+    "apps/api/src/modules/night-audit/night-audit.module.ts"
+   ],
+   "rgFilesListMedianMs": 23.7
+  }
+ ]
+}
