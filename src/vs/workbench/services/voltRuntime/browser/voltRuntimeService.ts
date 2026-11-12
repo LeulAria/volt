@@ -4804,7 +4804,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			...(mode === 'multitask' ? { taskModels: [...new Set(this.listCatalog().filter(item => item.enabled).map(item => item.label))] } : {}),
 			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
 			...(withMemory && await indexed ? { codeIndexed: true } : {}),
-			...(this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'code_nav') ? { ideTools: true } : {}),
+			...(this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'code_nav') ? { ideTools: true, ...(this.getSandboxSettings(session.sessionId).level !== 'off' ? { sandboxed: true } : {}) } : {}),
 			browserTools: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run'),
 			...(intent.wantsGit && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'propose_commits') ? { commitReview: true } : {}),
 		};

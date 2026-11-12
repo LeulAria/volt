@@ -1,0 +1,12 @@
+[instant_grep 327.8 ms, 168 chars, ERROR]
+instant_grep was not run: . is relative and this chat has no folder. A sandboxed chat reads files only in its workspace, the folders the user allowed, and temp folders.
+[find_symbol 122.8 ms, 167 chars, ERROR]
+find_symbol was not run: . is relative and this chat has no folder. A sandboxed chat reads files only in its workspace, the folders the user allowed, and temp folders.
+[find_files 29.0 ms, 166 chars, ERROR]
+find_files was not run: . is relative and this chat has no folder. A sandboxed chat reads files only in its workspace, the folders the user allowed, and temp folders.
+[instant_grep 382.5 ms, 149 chars, ERROR]
+instant_grep was not run: Volt cannot tell which files this sandboxed chat may read. Search with your own tools instead: they run inside the sandbox.
+[code_nav 46.0 ms, 199 chars, ERROR]
+code_nav was not run: packages/database/src/schema/room.ts is relative and this chat has no folder. A sandboxed chat reads files only in its workspace, the folders the user allowed, and temp folders.
+[diagnostics 46.4 ms, 221 chars, ERROR]
+diagnostics was not run: apps/api/src/modules/reservation/reservation.service.ts is relative and this chat has no folder. A sandboxed chat reads files only in its workspace, the folders the user allowed, and temp folders.

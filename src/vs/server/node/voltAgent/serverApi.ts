@@ -201,6 +201,13 @@ export class AgentServerApi extends Disposable {
 			},
 			listTools: () => toWire(this.hostTools.listTools()),
 			setClientTools: (ctx, tools) => this.clientTools.set(ctx.client.connectionId, Array.isArray(tools) ? fromWire(tools) : []),
+			// A window running a sandboxed chat's search asks which files it found the chat may read.
+			readRefusals: (ctx, key, paths) => {
+				if (ctx.client.role !== 'owner') {
+					throw Object.assign(new Error('Only Volt on this computer runs tools for chats.'), { code: 'Forbidden' });
+				}
+				return this.clientTools.readRefusals(String(key), Array.isArray(paths) ? paths : []);
+			},
 		}));
 		// Repository facts for sidebar rows (initials, branch), read the way a window reads them.
 		const repos = new AgentRepoResolver(this.fileService);

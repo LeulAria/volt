@@ -20,9 +20,14 @@ export interface IClientToolCall {
 	/** The calling chat's sandbox (the server's gate already ran): the window's tool reads it, and its nested calls carry it back. */
 	readonly sandbox?: IVoltSandboxSettings;
 	readonly cancelKey?: string;
+	/**
+	 * Set when the chat is sandboxed: its read rule stays here (a function does not cross the
+	 * socket), and the window asks `hostTools.readRefusals` with this key for the files it found.
+	 */
+	readonly readRuleKey?: string;
 }
 
-function toClientToolCall(call: IVoltHostToolCall | undefined, cancelKey?: string): IClientToolCall | undefined {
+function toClientToolCall(call: IVoltHostToolCall | undefined, cancelKey?: string, readRuleKey?: string): IClientToolCall | undefined {
 	if (!call) {
 		return cancelKey ? { cancelKey } : undefined;
 	}
@@ -34,8 +39,12 @@ function toClientToolCall(call: IVoltHostToolCall | undefined, cancelKey?: strin
 		...(call.external ? { external: call.external } : {}),
 		...(call.sandbox ? { sandbox: call.sandbox } : {}),
 		...(cancelKey ? { cancelKey } : {}),
+		...(readRuleKey ? { readRuleKey } : {}),
 	};
 }
+
+/** At most this many paths are judged per `hostTools.readRefusals` call. */
+const MAX_READ_REFUSALS = 2_000;
 
 /** What a window that cannot say whether its tool needs approval gets asked anyway. */
 const UNKNOWN_APPROVAL_REASON = 'acts in a Volt window';
@@ -58,6 +67,8 @@ export class ServerClientTools extends Disposable {
 	private nextCancelKey = 1;
 	/** Unique to this server process: a window still running a call from a server that restarted keeps it apart. */
 	private readonly cancelPrefix = generateUuid().slice(0, 8);
+	/** The read rules of sandboxed calls a window is running, by `readRuleKey`; gone when the call ends. */
+	private readonly readRules = new Map<string, (path: string) => Promise<string | undefined>>();
 
 	constructor(
 		private readonly protocol: AgentServerProtocol,
@@ -78,6 +89,19 @@ export class ServerClientTools extends Disposable {
 	set(connectionId: number, tools: readonly IVoltHostToolInfo[]): void {
 		this.byConnection.set(connectionId, tools.filter(tool => tool && typeof tool.name === 'string'));
 		this.refresh();
+	}
+
+	/**
+	 * Why the sandboxed call `key` may not read each path (undefined: it may). A key that is not
+	 * running (ended, or never issued) refuses every path, so a window can never widen a sandbox.
+	 */
+	async readRefusals(key: string, paths: readonly unknown[]): Promise<(string | undefined)[]> {
+		const rule = this.readRules.get(key);
+		const list = paths.slice(0, MAX_READ_REFUSALS);
+		if (!rule) {
+			return list.map(() => 'the call that asked has ended');
+		}
+		return Promise.all(list.map(path => typeof path === 'string' ? rule(path).catch(() => 'unreadable') : 'not a path'));
 	}
 
 	/** Only these connections are still there. */
@@ -157,12 +181,20 @@ export class ServerClientTools extends Disposable {
 					const cancel = cancelKey ? call!.token!.onCancellationRequested(() => {
 						this.protocol.callConnection(owner.connectionId, 'hostTools.cancel', [cancelKey], NOTICE_TIMEOUT_MS).catch(() => { /* gone */ });
 					}) : undefined;
+					// A sandboxed chat's search tools filter what they find by its read rule: the window asks for it by key.
+					const readRuleKey = call?.readRefusal ? `${this.cancelPrefix}.r${this.nextCancelKey++}.${generateUuid()}` : undefined;
+					if (readRuleKey) {
+						this.readRules.set(readRuleKey, call!.readRefusal!);
+					}
 					try {
-						return fromWire<IVoltHostToolResult>(await this.protocol.callConnection(owner.connectionId, 'hostTools.invoke', [name, toWire(args), toClientToolCall(call, cancelKey)]));
+						return fromWire<IVoltHostToolResult>(await this.protocol.callConnection(owner.connectionId, 'hostTools.invoke', [name, toWire(args), toClientToolCall(call, cancelKey, readRuleKey)]));
 					} catch (err) {
 						return { error: err instanceof Error ? err.message : String(err) };
 					} finally {
 						cancel?.dispose();
+						if (readRuleKey) {
+							this.readRules.delete(readRuleKey);
+						}
 					}
 				},
 			});

@@ -11,7 +11,7 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { ISearchService } from '../../../services/search/common/search.js';
-import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, readCodeIndexOptions, readFffSettings } from '../../../services/voltRuntime/common/codeIntelligence.js';
+import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, confinedIndexOptions, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, readCodeIndexOptions, readFffSettings } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { isSandboxed } from '../../../services/voltRuntime/common/hostToolSandbox.js';
 import { ISearchConfinement, VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
@@ -42,7 +42,11 @@ export class CodeIndexWarmup extends Disposable {
 		const options = readCodeIndexOptions(this.configurationService);
 		for (const folder of this.workspace.getWorkspace().folders) {
 			if (folder.uri.scheme === Schemas.file) {
-				void this.codeIndex.warm(folder.uri.fsPath, options);
+				void this.codeIndex.warm(folder.uri.fsPath, options).then(() => {
+					// Sandboxed chats (the default, Supervised) search their own confined index. Unwarmed,
+					// the first search of a big project waited 4 s and then refused ("indexing").
+					void this.codeIndex.warm(folder.uri.fsPath, confinedIndexOptions(options));
+				});
 			}
 		}
 	}

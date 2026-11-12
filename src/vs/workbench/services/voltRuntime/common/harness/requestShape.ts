@@ -53,7 +53,7 @@ const LOOKUP = /\b(?:latest|news|today|current|currently|official|release date|r
 /** World facts that double as product nouns: "how much is X" is a lookup, "build a pricing page" is not. */
 const WORLD_FACT = /\b(?:price|prices|pricing|cost|costs|how much|weather|stock|population|specs?|specifications)\b/i;
 
-const CITE = /\b(?:cite|citations?|sources?|with (?:links|references)|(?:add|include|list) (?:the )?references|official (?:docs?|documentation|api|spec|site)|from the (?:docs|documentation|spec|rfc))\b/i;
+const CITE = /\b(?:cite|citations?|sources?(?! ?(?:files?|code|tree|maps?|folders?|director(?:y|ies)|control|lines?)\b)|with (?:links|references)|(?:add|include|list) (?:the )?references|official (?:docs?|documentation|api|spec|site)|from the (?:docs|documentation|spec|rfc))\b/i;
 
 /** File paths, URLs and code say nothing about whether the user wants research ("design/pricing.png"). */
 const NOT_PROSE = /```[\s\S]*?(?:```|$)|`[^`\n]*`|https?:\/\/\S+|(?:^|[\s"'(])(?:\.{0,2}\/|~\/)?[\w.-]+(?:\/[\w.-]+)+|\b[\w-]+\.(?:png|jpe?g|webp|gif|svg|ts|tsx|js|jsx|mjs|css|html|json|md|py)\b/gi;

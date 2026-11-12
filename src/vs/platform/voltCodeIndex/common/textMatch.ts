@@ -179,7 +179,9 @@ export function createJsMatcher(pattern: string, isRegExp: boolean, caseSensitiv
 			dotAll = lead[1].includes('s');
 			source = source.slice(lead[0].length);
 		}
-		if (UNSUPPORTED.some(re => re.test(source)) || /\(\?[a-zA-Z-]*[:)]/.test(source) || hasRustClassSyntax(source)) {
+		// Inline flags (`(?i)`, `(?i:...)`) mid-pattern go to ripgrep; a bare non-capturing group
+		// `(?:...)` means the same in both engines (a sandboxed chat, which has no ripgrep, refused it).
+		if (UNSUPPORTED.some(re => re.test(source)) || /\(\?[a-zA-Z-]+[:)]/.test(source) || hasRustClassSyntax(source)) {
 			return undefined;
 		}
 		source = source.replace(/\(\?P<([A-Za-z_]\w*)>/g, '(?<$1>').replace(/\(\?P=([A-Za-z_]\w*)\)/g, '\\k<$1>');

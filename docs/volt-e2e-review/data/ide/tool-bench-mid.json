@@ -1,0 +1,170 @@
+{
+ "runs": 5,
+ "rows": [
+  {
+   "label": "find_symbol exact",
+   "tool": "find_symbol",
+   "firstMs": 35.7,
+   "warmMedianMs": 18.6,
+   "chars": 121,
+   "estTokens": 30,
+   "isError": false,
+   "head": "apps/api/src/modules/reservation/reservation.service.ts:54  class ReservationService  — export class ReservationService {"
+  },
+  {
+   "label": "find_symbol fuzzy",
+   "tool": "find_symbol",
+   "firstMs": 93.8,
+   "warmMedianMs": 44,
+   "chars": 119,
+   "estTokens": 30,
+   "isError": false,
+   "head": "apps/api/src/modules/night-audit/night-audit.service.ts:38  class NightAuditService  — export class NightAuditService {"
+  },
+  {
+   "label": "find_files",
+   "tool": "find_files",
+   "firstMs": 114.1,
+   "warmMedianMs": 30.3,
+   "chars": 58,
+   "estTokens": 15,
+   "isError": false,
+   "head": "apps/api/src/modules/reservation/reservation.controller.ts"
+  },
+  {
+   "label": "instant_grep literal",
+   "tool": "instant_grep",
+   "firstMs": 25.8,
+   "warmMedianMs": 49.5,
+   "rgMs": 154.1,
+   "chars": 1363,
+   "estTokens": 341,
+   "isError": false,
+   "head": "apps/api/src/modules/payment/hosted-authorization-finalizer.ts: |   66:         assertTransition(reservation.status, 'cancelled');"
+  },
+  {
+   "label": "instant_grep regex",
+   "tool": "instant_grep",
+   "firstMs": 55.8,
+   "warmMedianMs": 94.2,
+   "rgMs": 77.6,
+   "chars": 2156,
+   "estTokens": 539,
+   "isError": false,
+   "head": "apps/api/src/modules/channel/inbound-reservation.service.ts: |   157:         .insert(reservations)"
+  },
+  {
+   "label": "instant_grep files",
+   "tool": "instant_grep",
+   "firstMs": 29.5,
+   "warmMedianMs": 337,
+   "rgMs": 80.1,
+   "chars": 3518,
+   "estTokens": 880,
+   "isError": false,
+   "head": "61 files match: | apps/api/src/booking-requests.bootstrap.ts"
+  },
+  {
+   "label": "instant_grep glob+type",
+   "tool": "instant_grep",
+   "firstMs": 17,
+   "warmMedianMs": 45.9,
+   "rgMs": 48.1,
+   "chars": 1772,
+   "estTokens": 443,
+   "isError": false,
+   "head": "apps/api/src/modules/channel/inbound-reservation.service.ts: |   306:         .update(reservations)"
+  },
+  {
+   "label": "instant_grep !glob",
+   "tool": "instant_grep",
+   "firstMs": 11.5,
+   "warmMedianMs": 10.4,
+   "rgMs": 92.4,
+   "chars": 67,
+   "estTokens": 17,
+   "isError": false,
+   "head": "No matches for pattern \"insert\\\\(reservations\\\\)\" in !**/*.spec.ts."
+  },
+  {
+   "label": "code_nav definition",
+   "tool": "code_nav",
+   "firstMs": 18,
+   "warmMedianMs": 10.2,
+   "chars": 107,
+   "estTokens": 27,
+   "isError": false,
+   "head": "1 definition: | apps/api/src/modules/reservation/reservation.service.ts:54  export class ReservationService {"
+  },
+  {
+   "label": "code_nav references",
+   "tool": "code_nav",
+   "firstMs": 172.7,
+   "warmMedianMs": 336.7,
+   "chars": 1301,
+   "estTokens": 325,
+   "isError": false,
+   "head": "15 references in 4 files: | apps/api/src/modules/reservation/reservation-state-machine.ts:"
+  },
+  {
+   "label": "code_nav references (ORM column)",
+   "tool": "code_nav",
+   "firstMs": 7359.6,
+   "warmMedianMs": 65.3,
+   "chars": 1415,
+   "estTokens": 354,
+   "isError": false,
+   "head": "1 reference: | packages/database/src/schema/room.ts:50  maxOccupancy: integer('max_occupancy').notNull(),"
+  },
+  {
+   "label": "code_nav callers",
+   "tool": "code_nav",
+   "firstMs": 188.4,
+   "warmMedianMs": 377.4,
+   "chars": 888,
+   "estTokens": 222,
+   "isError": false,
+   "head": "8 callers of assertTransition: | function finalizeHostedAuthorization  apps/api/src/modules/payment/hosted-authorization-finalizer.ts:13  (calls at lines 66, 10"
+  },
+  {
+   "label": "code_nav implementations",
+   "tool": "code_nav",
+   "firstMs": 218.6,
+   "warmMedianMs": 23.7,
+   "chars": 87,
+   "estTokens": 22,
+   "isError": false,
+   "head": "No implementations reported for packages/shared/src/payment-gateway.interface.ts:66:18."
+  },
+  {
+   "label": "code_nav inspect",
+   "tool": "code_nav",
+   "firstMs": 841,
+   "warmMedianMs": 710.9,
+   "chars": 1400,
+   "estTokens": 350,
+   "isError": false,
+   "head": "`assertTransition` at apps/api/src/modules/reservation/reservation-state-machine.ts:41:17 | "
+  },
+  {
+   "label": "code_nav workspace_symbols",
+   "tool": "code_nav",
+   "firstMs": 193.4,
+   "warmMedianMs": 71.8,
+   "chars": 795,
+   "estTokens": 199,
+   "isError": false,
+   "head": "8 symbols matching \"NightAudit\": | class NightAuditAnomalyAgent  apps/api/src/modules/agent/night-audit/night-audit-anomaly.agent.ts:25"
+  },
+  {
+   "label": "diagnostics file",
+   "tool": "diagnostics",
+   "firstMs": 46.5,
+   "warmMedianMs": 7.5,
+   "chars": 69,
+   "estTokens": 17,
+   "isError": false,
+   "head": "No errors in apps/api/src/modules/reservation/reservation.service.ts."
+  }
+ ]
+}

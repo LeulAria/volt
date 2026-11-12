@@ -41,6 +41,11 @@ export function readCodeIndexOptions(configuration: IConfigurationService): IVol
 	};
 }
 
+/** A sandboxed chat's index of the same folder: symlinks never followed, kept apart from the window's. */
+export function confinedIndexOptions(options: IVoltCodeIndexOptions): IVoltCodeIndexOptions {
+	return { ...options, ignoreSymlinks: true, confined: true };
+}
+
 export function clampLspWorkspaces(value: unknown, fallback = 3): number {
 	const number = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback;
 	return Math.min(LSP_WORKSPACES_MAX, Math.max(LSP_WORKSPACES_MIN, number));
@@ -141,7 +146,7 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 			properties: {
 				pattern: { type: 'string', description: 'Regular expression (or literal text when literal is true)' },
 				path: { type: 'string', description: 'Folder to search in (default: the project root)' },
-				glob: { type: 'string', description: 'File filter, e.g. src/**/*.ts' },
+				glob: { type: 'string', description: 'File filter, e.g. src/**/*.ts; a leading ! leaves files out (!**/*.spec.ts). Applies together with type.' },
 				type: { type: 'string', description: 'File type shortcut: ts, js, py, go, rust, java, css, html, json, md, ...' },
 				literal: { type: 'boolean', description: 'Treat pattern as plain text' },
 				case_sensitive: { type: 'boolean' },

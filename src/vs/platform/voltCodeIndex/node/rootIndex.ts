@@ -1341,6 +1341,13 @@ export class RootIndex {
 		};
 	}
 
+	/** One file, with globs matched against its name (as they are against paths below a folder). */
+	private fileFilter(file: string, includes: readonly string[] | undefined, excludes: readonly string[] | undefined): (path: string) => boolean {
+		const slash = file.lastIndexOf('/');
+		const inFolder = this.pathFilter(slash < 0 ? '' : file.slice(0, slash), includes, excludes);
+		return path => path === file && inFolder(path);
+	}
+
 	private hasFilesUnder(folder: string): boolean {
 		if (!folder) {
 			return this.listed.size > 0;
@@ -1386,7 +1393,9 @@ export class RootIndex {
 			return { kind: 'fallback', reason: notReady };
 		}
 		const folder = this.folderOf(request.folder);
-		if (folder === undefined || !this.hasFilesUnder(folder)) {
+		// `instant_grep` with `path` set to one file: a sandboxed chat (no ripgrep) refused it as "not indexed".
+		const file = folder && this.listed.has(folder) ? folder : undefined;
+		if (folder === undefined || (!file && !this.hasFilesUnder(folder))) {
 			return { kind: 'fallback', reason: 'not indexed' };
 		}
 		const caseInsensitive = !request.caseSensitive;
@@ -1396,7 +1405,7 @@ export class RootIndex {
 		if (query.op === 'all' && !filtered && !matcher) {
 			return { kind: 'fallback', reason: 'unselective' }; // nothing to look up: ripgrep's full scan is faster
 		}
-		const keep = this.pathFilter(folder, request.includes, request.excludes);
+		const keep = file ? this.fileFilter(file, request.includes, request.excludes) : this.pathFilter(folder, request.includes, request.excludes);
 
 		const candidates: string[] = [];
 		if (query.op === 'all') {
@@ -1493,7 +1502,7 @@ export class RootIndex {
 			result = { ...await this.verify(unique, matcher, context, request.maxMatches, maxLineChars), engine: 'index' };
 		} else if (this.options.confined) {
 			// ripgrep opens files by path, through any symlink a sandboxed chat swaps in.
-			return { kind: 'fallback', reason: 'this pattern needs ripgrep, which a sandboxed chat\'s search does not run' };
+			return { kind: 'fallback', reason: loneBrace(request.pattern, request.isRegExp) ? 'a `{` or `}` that is not a repetition must be escaped as \\{ or \\} (ripgrep rejects it too)' : 'this pattern needs ripgrep, which a sandboxed chat\'s search does not run' };
 		} else {
 			try {
 				result = { ...await ripgrep(unique, request.maxMatches), scanned: unique.length, engine: 'ripgrep' };
@@ -1821,3 +1830,12 @@ function fuzzyMatcher(query: string): (name: string) => number | undefined {
 
 /** Used by tests: the folded byte string the index would store for `text`. */
 export const indexedForm = toByteString;
+
+/** A regex with a brace that is neither a repetition (`{2}`, `{1,3}`) nor part of an escape (`\p{L}`): ripgrep refuses it. */
+export function loneBrace(pattern: string, isRegExp: boolean): boolean {
+	if (!isRegExp) {
+		return false;
+	}
+	const stripped = pattern.replace(/\\[pPxuN]\{[^}]*\}|\\./g, '').replace(/\[(?:\\.|[^\]])*\]/g, '').replace(/\{\d+(?:,\d*)?\}/g, '');
+	return /[{}]/.test(stripped);
+}
