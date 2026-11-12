@@ -1,0 +1,62 @@
+{
+ "id": "http",
+ "tag": "after3",
+ "run": 1,
+ "access": "supervised",
+ "load": "31.96 32.46 54.41",
+ "wallMs": 8969,
+ "outcome": "done",
+ "approvals": 0,
+ "picked": true,
+ "voltErrors": 0,
+ "host": [
+  "ide:http.list",
+  "ide:http.send",
+  "ide:http.send"
+ ],
+ "shell": [],
+ "cost": 0.00438409,
+ "output": 577,
+ "cacheRead": 101599,
+ "toolUses": {
+  "mcp__volt__ide": 3
+ },
+ "changed": "",
+ "chat": "agent-5686bd10-249e-46b8-aa65-b48c87b6b7be.jsonl",
+ "answer": "The profile returns **name: Ada Lovelace** and **email: ada@example.com** (username `ada`).\n\nI sent the login and profile requests in parallel, so the profile call may not have carried the token from the login response. It still returned 200. If you want the profile fetched with the token attached, I can chain the two requests in order.",
+ "hostCalls": [
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "list"
+   }
+  },
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "send",
+    "args": {
+     "name": "login",
+     "env": "local"
+    },
+    "name": "login",
+    "env": "local"
+   }
+  },
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "send",
+    "args": {
+     "name": "profile",
+     "env": "local"
+    },
+    "name": "profile",
+    "env": "local"
+   }
+  }
+ ]
+}

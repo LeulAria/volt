@@ -1,0 +1,10 @@
+Read File | Read packages/domain/src/commands/kernel.ts
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read packages/domain/src/commands/rooms.ts
+Read File | Read packages/domain/src/commands/rates.ts
+Read File | Read packages/domain/src/commands/registry.ts
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read apps/api/src/sync/commands.ts

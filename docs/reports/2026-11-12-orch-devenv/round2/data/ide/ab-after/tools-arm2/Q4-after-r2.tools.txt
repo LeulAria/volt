@@ -1,0 +1,17 @@
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__find_symbol | mcp__volt__find_symbol
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read apps/web/src/routes/journey-steps/_journey_layout/booking/_journey/_hooks/useBookingSubmit.tsx
+mcp__volt__find_symbol | mcp__volt__find_symbol
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read packages/api/src/routers/bookings/index.ts
+Read File | Read apps/web/src/routes/journey-steps/_journey_layout/booking/_journey/step-2.tsx
+Read File | Read packages/api/src/routers/bookings/index.ts
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read apps/web/src/routes/journey-steps/_journey_layout/booking/_journey/step-2.tsx
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Terminal | cd /private/tmp/vbench-hotel && grep -n "insertInto(" packages/api/src/routers/bookings/index.ts | head -40; echo ---; grep -rn "bookings" packages/api/src/routers/index.ts | head; echo ---; grep -rn "appRouter\|RPCHandler\|/rpc" apps/server/src/apiApp.ts apps/server/src/app.ts apps/server/src/index.ts 2>/dev/null | head -20; echo ---; grep -n "export const bookings\|export const bookingRooms\|export const booking_rooms" packages/database/src/schema/hotel.ts | head
+Terminal | cd /private/tmp/vbench-hotel && awk 'NR>=1583 && /^\t[a-zA-Z]+: requirePermission|^\t[a-zA-Z]+: /{print NR": "$0}' packages/api/src/routers/bookings/index.ts | head -5; echo ---; sed -n 2012,2018p packages/api/src/routers/bookings/index.ts; echo ---; sed -n 1555,1575p apps/server/src/index.ts; echo ---; grep -n "rpcHandler\|apiHandler\|app.use\|app.all\|\.route(" apps/server/src/index.ts | head -20; echo ---; grep -rn "rpc" apps/web/src/utils/orpc.ts* 2>/dev/null | head -5; echo ---; grep -n "bookings\|rpcHandler" apps/server/lambda-entry.js apps/server/src/lambda.ts apps/server/src/apiApp.ts 2>/dev/null | head -10
+Terminal | cd /private/tmp/vbench-hotel && grep -n "baseURL\|/rpc\|url" apps/web/src/utils/orpc.ts | head -5; echo ---; grep -n "from \"./lambda\|app\b" apps/server/src/lambda.ts apps/server/lambda-entry.js | head -5; echo ---; grep -n "rpc\|export default\|apiApp" apps/server/src/apiApp.ts | head -5; echo ---; grep -n "priceBooking\|assertSellable\|allocateBookingReference\|claimIdempotency\|assertBookingCreatable\|replaceBookingGuests\|quoteBooking\|loadCompany\|requirePermission = \|export const requirePermission" packages/api/src/routers/bookings/index.ts | head -20; echo ---; grep -n "export.*function buildBookingPayload\|buildBookingPayload = \|const buildBookingPayload" -r apps/web/src/routes/journey-steps | head -3; echo ---; grep -n "^export function\|^export async function\|^export const" packages/api/src/lib/permissions.ts | head -5; echo ---; sed -n 439,442p packages/database/src/schema/hotel.ts; sed -n 682,684p packages/database/src/schema/hotel.ts
