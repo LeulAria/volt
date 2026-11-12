@@ -966,7 +966,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 					args: [],
 					acpAdapter: {
 						command: 'claude-agent-acp',
-						package: '@agentclientprotocol/claude-agent-acp@0.81.2',
+						package: '@agentclientprotocol/claude-agent-acp@0.106.0',
 					},
 					env: {
 						CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',

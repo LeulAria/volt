@@ -30,7 +30,9 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		versionArgs: ['--version'],
 		// Claude Code has no `acp` subcommand; the official adapter speaks ACP for it.
 		acpArgs: [],
-		acpAdapter: { command: 'claude-agent-acp', package: '@agentclientprotocol/claude-agent-acp@0.81.2' },
+		// 0.106.0 (Agent SDK 0.3.322) prices Haiku 5.5 right (0.81.2 reported 35-130x its list cost) and
+		// starts a session ~6k tokens smaller (measured 2026-11-12, harness bench).
+		acpAdapter: { command: 'claude-agent-acp', package: '@agentclientprotocol/claude-agent-acp@0.106.0' },
 		// Claude Code turns its to-do tools (TodoWrite / TaskCreate) on only for older models, so Opus 5.5
 		// and newer had no list to show in the Tasks card. This switch turns them on for every model.
 		acpEnv: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' },
