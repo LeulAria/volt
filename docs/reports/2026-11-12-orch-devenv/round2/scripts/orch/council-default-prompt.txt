@@ -1,0 +1,2 @@
+Benchmark run for Volt's council seating. Call the council tool exactly once with these arguments (no participants: Volt picks the seats), then reply with the tool's first line only and end your turn.
+{"question":"In /tmp/voltbench/fx/src/pricing.ts, should applyDiscount divide pct by 100 (A) or should callers pass pct/100 (B)? One line.","rounds":1,"client_request_id":"council-default-{TAG}"}
