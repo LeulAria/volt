@@ -21,6 +21,7 @@ below. The first chat ("So in this branch i want you to merge main…") had its 
 | 05 | [05-ide-tooling.md](05-ide-tooling.md) | Debug, tests, HTTP, Docker, DB, profiler (**pointer**: results are in parallel/02) |
 | 06 | [06-agent-to-agent.md](06-agent-to-agent.md) | Teams, councils and subagents compared with Claude Code's own |
 | P | [parallel/](parallel/README.md) | The first chat's review: orchestrator micro-bench, code intelligence A/B on a hotel PMS, sandbox attack matrix |
+| R2 | [round2/](round2/README.md) | Round 2 (2026-11-12/13): benchmark against Hermes Agent, Claude Code, Cursor and T3 Code; round 1's open items; UI sweep |
 
 ## Headline numbers
 
