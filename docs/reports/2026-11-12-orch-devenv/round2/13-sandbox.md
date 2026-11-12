@@ -252,4 +252,14 @@ By this agent:
 
 ## Final checks
 
-(Filled in at the end of the run.)
+- tsgo: 0 errors on the last code commit (`d0eb53d`).
+- CI lints: all pass (list under (a)).
+- `suites.sh` after the last fix (53 files, load 98-160, `data/sbx/suites-after.txt`): **513 passing,
+  37 pending, 1 failing**: MCP-QUOTA-MEM timed out at 120 s. Re-run alone at load 105 its file passes
+  9/9, MCP-QUOTA-MEM in 1.5 s; round 1 saw the same load flake in the MCP host suites.
+- The Security page hover after the fixes: refusals right after the identity, one per line
+  (`shots/11-security-hover-blocked-first.png`).
+- Cleanup: the test window (`/tmp/v2-sbx-ud`), its agent server, sandbox helpers, extension and
+  plugin hosts, file watcher, and the exfil test server were stopped; no launchd agent was registered
+  for this profile; the canary `~/.ssh/volt-agent-lab-canary` and the four test grants in
+  `~/.volt/trust/grants.json` were removed.
