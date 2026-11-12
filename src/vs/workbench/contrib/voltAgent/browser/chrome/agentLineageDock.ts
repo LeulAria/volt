@@ -345,7 +345,9 @@ export class AgentLineageDock extends Disposable {
 				return;
 			}
 			const rootId = orchestrator.getThread(this.sessionId)?.rootId;
-			if (change.threads.some(id => id === this.sessionId || orchestrator.getThread(id)?.rootId === rootId)) {
+			const inTree = (id: string | undefined) => !!id && (id === this.sessionId || orchestrator.getThread(id)?.rootId === rootId);
+			// A task that settles names no thread (the agent server's task changes); its parent's tree is ours.
+			if (change.threads.some(inTree) || change.tasks.some(taskId => inTree(orchestrator.getTask(taskId)?.parentId))) {
 				this.render(false);
 			}
 		}));

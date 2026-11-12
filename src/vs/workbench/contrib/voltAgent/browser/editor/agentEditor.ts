@@ -83,6 +83,7 @@ import { peekTurnDisplay } from '../orchestration/agentTurnDisplays.js';
 import { IAgentSubagentChatService } from '../orchestration/agentSubagentChats.js';
 import { AgentHistoryCodec, resolveActivityImage } from '../history/agentHistoryCodec.js';
 import { agentRow, dockModel, formatElapsed as formatOrchElapsed, isMultitaskTask } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
+import { orchTasksOf } from '../../../../services/voltRuntime/common/orchestration/orchestratorQueries.js';
 import { jobWakeEnd } from '../../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { harnessSubagentChatId, harnessTaskOfChat, isHarnessSubagentChatId } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { createReportStackIcon, isLiveSubagentState, isResumableSubagent, isRetryableSubagentState, ISubagentView, renderCursorSubagentRow, resumeSubagentTask, retryHarnessSubagent, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView } from '../chrome/agentSubagents.js';
@@ -933,6 +934,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** Redraws the live turn when its reply text has gone quiet, so the live line comes back. */
 	private textQuietTimer: IDisposable | undefined;
 	private dockSyncAt = 0;
+	/** What this chat's subagent rows show (state, activity, report), so a task change redraws the transcript only when a row would change. */
+	private ownTaskStates = '';
 	private findWidget!: AgentFindWidget;
 	private findMatches: HTMLElement[] = [];
 	private currentFindIndex = 0;
@@ -1354,9 +1357,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this._register(toDisposable(() => dockObserver.disconnect()));
 		syncAgentsInDock();
 		this._register(this.orchestrator.onDidChange(change => {
+			const ownTasks = change.tasks.some(taskId => this.orchestrator.getTask(taskId)?.parentId === this.sessionKey);
 			// The prompt's Stop follows the turn and this chat's subagents, not only the stream.
-			if (change.threads.includes(this.sessionKey) || change.tasks.some(taskId => this.orchestrator.getTask(taskId)?.parentId === this.sessionKey)) {
+			if (change.threads.includes(this.sessionKey) || ownTasks) {
 				this.syncStreamingClass();
+			}
+			if (ownTasks && !change.threads.includes(this.sessionKey)) {
+				// A subagent started, settled or waits: the agent server's task changes name no thread, so the
+				// agents chip, the "N subagents running" card and the transcript rows follow the tasks themselves
+				// (they lagged until the parent's own thread next changed, 25 s into a wait).
+				this.syncAgentViews();
+				// What a row shows: its state and its line (the latest activity, then the report or the error).
+				const states = JSON.stringify(orchTasksOf(this.orchestrator.getState(), this.sessionKey).map(task => [task.id, task.state, task.activity, task.result?.length, task.error]));
+				if (states !== this.ownTaskStates) {
+					this.ownTaskStates = states;
+					this.scheduleThreadRender();
+				}
 			}
 			if (change.threads.includes(this.sessionKey)) {
 				this.followAgentHandoff();
@@ -8519,14 +8535,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			modelRef: item.prompt.modelRef,
 			modelLabel: this.queuedModelLabel(item.prompt.modelRef),
 		})));
+		this.syncAgentViews();
+		this.composerQueue.setState(this.queueState());
+		this.updateInputPlaceholder();
+		this._onDidChangeQueue.fire();
+	}
+
+	/** The subagent bar, the "N subagents running" card and the agents chip, from the orchestrator's tasks. */
+	private syncAgentViews(): void {
 		this.renderSubagentBar();
+		if (!this.composerQueue) {
+			return;
+		}
 		const dock = dockModel(this.orchestrator.getState(), this.sessionKey);
 		const agentViews = dock.agents.map(row => subagentView(row, ref => this.providerOf(ref)));
 		this.composerQueue.setAgents({ views: agentViews, conflicts: dock.conflicts });
 		this.syncAgentsChip(agentViews);
-		this.composerQueue.setState(this.queueState());
-		this.updateInputPlaceholder();
-		this._onDidChangeQueue.fire();
 	}
 
 	private clearComposer(): void {
