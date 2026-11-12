@@ -33,7 +33,6 @@ import { voltExec } from '../../common/execContext.js';
 import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey, sandboxStrategy, SandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
 import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer, SUBAGENT_HOST_TOOL_GROUPS, VoltHostToolGroup } from '../../common/hostTools.js';
-import { CODE_INTELLIGENCE_TOOLS, LANGUAGE_SERVER_TOOL_NAMES } from '../../common/codeIntelligence.js';
 import { isVoltReadOnlyHostTool } from '../../common/hostToolSandbox.js';
 import { AgentQuestionDraft, cursorAskQuestionResult, elicitationResult, elicitationToQuestions, IAgentQuestionResponse, parseQuestionDraft } from '../../common/questions.js';
 import { mapAcpToolKind } from '../../common/harness/workLog.js';
@@ -340,16 +339,6 @@ export function isAgentTransportError(message: string): boolean {
 export type AcpQuestionAsker = (sessionId: string, runId: string, draft: AgentQuestionDraft) => Promise<IAgentQuestionResponse>;
 
 /**
- * The volt server's code tools (find_symbol, instant_grep, find_files, code_nav, diagnostics,
- * code_action). Volt gates them itself (hostToolSandbox: reads stay in the chat's folders, a
- * read-only chat cannot apply code actions), like its other host tools.
- */
-function isVoltCodeTool(name: string): boolean {
-	const bare = name.trim().replace(/^(?:mcp__volt__|volt__|volt[-_:]\s*)/i, '').replace(/^.*?:\s*/, '').toLowerCase();
-	return CODE_INTELLIGENCE_TOOLS.some(tool => tool.name === bare) || LANGUAGE_SERVER_TOOL_NAMES.includes(bare);
-}
-
-/**
  * A permission prompt for one of Volt's own MCP tools (`volt-browser_click: browser_click`,
  * `mcp__volt__ask_question`, Grok's `volt__find_symbol`). Volt judges those calls itself (the host
  * tool gate: sandbox rules, approval in read-only modes), so the agent's own prompt is answered here.
@@ -363,7 +352,7 @@ export function isVoltHostToolPermission(params: unknown): boolean {
 	if (!toolCall) {
 		return false;
 	}
-	const known = (name: string) => isVoltHostTool(name) || isVoltCodeTool(name) || !!bareTaskToolName(name) || isVoltReadOnlyHostTool(name);
+	const known = (name: string) => isVoltHostTool(name) || !!bareTaskToolName(name) || isVoltReadOnlyHostTool(name);
 	const raw = toolCall.rawInput;
 	if (raw && raw.providerIdentifier === 'volt' && typeof raw.toolName === 'string') {
 		return known(raw.toolName);
