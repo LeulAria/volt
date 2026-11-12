@@ -9,6 +9,7 @@
 		{ "id": "hermes-t2-3", "at": "2026-11-12T17:35:30", "reason": "Claude subscription refused" },
 		{ "id": "volt-t3-3", "at": "2026-11-12T17:47:12", "reason": "Claude subscription refused (1 s, no tokens)" },
 		{ "id": "cc-t3-3", "at": "2026-11-12T17:47:20", "reason": "Claude subscription refused" },
-		{ "id": "hermes-t3-3", "at": "2026-11-12T17:47:22", "reason": "Claude subscription refused" }
+		{ "id": "hermes-t3-3", "at": "2026-11-12T17:47:22", "reason": "Claude subscription refused" },
+		{ "id": "t3-t2-2", "at": "2026-11-12T19:09:02", "reason": "Contaminated: Volt restarted the three hung Cursor subagents of volt-cursor-sonnet-t2-1 (after their processes were stopped) and they edited /tmp/vcmp/w/t2 at 19:09:07-12, inside this run. Re-run." }
 	]
 }
