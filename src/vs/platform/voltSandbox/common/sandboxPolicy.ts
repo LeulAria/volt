@@ -141,6 +141,8 @@ export const AGENT_HOUSEKEEPING: Readonly<Record<string, readonly string[]>> = {
 	'claude-code': [
 		'.claude.json', '.claude/skills/synced', '.claude/skills/.trash', '.claude/plugins/store', '.claude/plugins/cache', '.claude/plugins/repos',
 		'.claude/plugins/marketplaces', '.claude/plugins/known_marketplaces.json', '.claude/plugins/installed_plugins.json', '.claude/plugins/install-counts-cache.json',
+		// claude.ai plugin sync at every start of a chat that has it on (2.1.280).
+		'.claude/plugins/synced', '.claude/plugins/known_marketplaces_claudeai.json', '.claude/plugins/known_marketplaces_claudeai.json.lock', '.claude/state',
 		'.claude/statsig', '.claude/todos', '.claude/shell-snapshots', '.claude/sessions', '.claude/session-env', '.claude/projects', '.claude/debug',
 		'.claude/telemetry', '.claude/stats-cache.json', '.claude/history.jsonl', '.claude/ide', '.claude/paste-cache', '.claude/backups', '.claude/cache',
 		'.claude/plans', '.claude/tasks', '.claude/transcripts', '.claude/file-history', '.claude/mcp-needs-auth-cache.json', '.claude/.last-cleanup',
@@ -150,6 +152,12 @@ export const AGENT_HOUSEKEEPING: Readonly<Record<string, readonly string[]>> = {
 };
 
 const NPM_DOMAINS = ['registry.npmjs.org'];
+
+/** Folders above the system temp root, looked at as folders on the way to it. */
+const PATH_WALK_FOLDERS: readonly string[] = ['/private', '/private/var', '/var'];
+
+/** The shell startup files a login or interactive shell reads from the home folder. */
+const SHELL_STARTUP_FILES: readonly string[] = ['.zshenv', '.zprofile', '.zshrc', '.zlogin', '.bashrc', '.bash_profile', '.bash_login', '.profile'];
 
 /** Volt's own per-chat agent state (config overlays, see agentState.ts), below the home folder. */
 export const AGENT_STATE_ROOT = '.volt/sandbox/agent-state';
@@ -303,6 +311,13 @@ export function isAgentHousekeepingDenial(providerId: string, home: string, deni
 	// The home folder and its parent as folders (a listing), never anything below them.
 	const parent = root.slice(0, root.lastIndexOf('/')) || '/';
 	if ((own.sentinel && target === normalizeSandboxPath(own.sentinel)) || (denial.kind === 'read' && (target === root || target === parent))) {
+		return true;
+	}
+	// Looks every sandboxed CLI and shell makes at start, kept out on purpose: `~/.config` and the
+	// folders above the temp root as folders (XDG lookups, path walks), and the user's shell startup
+	// files, which the agent's Bash runs without (they may export tokens). Reads only: a write to an
+	// rc file still shows. Measured 2026-11-12: 3 such rows in every Claude subagent's first turn.
+	if (denial.kind === 'read' && (target === `${root}/.config` || PATH_WALK_FOLDERS.includes(target) || SHELL_STARTUP_FILES.some(name => target === `${root}/${name}`))) {
 		return true;
 	}
 	const overlay = Object.prototype.hasOwnProperty.call(AGENT_OVERLAYS, providerId) ? AGENT_OVERLAYS[providerId] : undefined;
