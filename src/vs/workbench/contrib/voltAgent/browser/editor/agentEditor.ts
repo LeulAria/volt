@@ -1354,8 +1354,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this._register(toDisposable(() => dockObserver.disconnect()));
 		syncAgentsInDock();
 		this._register(this.orchestrator.onDidChange(change => {
+			const ownTasks = change.tasks.some(taskId => this.orchestrator.getTask(taskId)?.parentId === this.sessionKey);
 			// The prompt's Stop follows the turn and this chat's subagents, not only the stream.
-			if (change.threads.includes(this.sessionKey) || change.tasks.some(taskId => this.orchestrator.getTask(taskId)?.parentId === this.sessionKey)) {
+			if (change.threads.includes(this.sessionKey) || ownTasks) {
 				this.syncStreamingClass();
 			}
 			if (change.threads.includes(this.sessionKey)) {
@@ -1373,6 +1374,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				if (change.tasks.length || this.pendingSteers.size) {
 					this.scheduleThreadRender();
 				}
+			} else if (ownTasks) {
+				// A subagent started, finished or moved on while this chat waits (wait_tasks, or idle): its
+				// row and the group's "2 working · 1 queued" read live task state. Without this they kept the
+				// counts of the last render while the side panel already showed the subagents done.
+				this.scheduleThreadRender();
 			} else if (change.tasks.some(taskId => harnessSubagentChatId(taskId) === this.sessionKey)) {
 				// A harness subagent's chat has no thread: its bar follows its task.
 				this.renderSubagentBar();

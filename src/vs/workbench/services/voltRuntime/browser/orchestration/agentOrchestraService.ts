@@ -900,7 +900,11 @@ export class AgentOrchestraService extends Disposable implements IAgentOrchestra
 		const catalog = this.catalog();
 		const sandboxed = (chatId: string) => this.runtime.getSandboxSettings(chatId).level !== 'off';
 		const health = councilSeatHealth(this.orchestrator.getState(), ref => catalog.find(item => item.ref === ref)?.providerId, sandboxed, sandboxed(callerId), Date.now());
-		return pickCouncilSeats(catalog, providerFamily, item => health(item.providerId));
+		const unverified = new Set(this.runtime.listProviderStatuses().filter(status => status.state === 'available').map(status => status.providerId));
+		return pickCouncilSeats(catalog, providerFamily, item => {
+			const seen = health(item.providerId);
+			return unverified.has(item.providerId) ? { ...seen, unverified: true } : seen;
+		});
 	}
 
 	private async council(caller: ICaller, args: Record<string, unknown>, token: CancellationToken): Promise<IVoltHostToolResult> {

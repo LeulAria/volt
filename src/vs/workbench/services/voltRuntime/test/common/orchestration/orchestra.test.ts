@@ -371,6 +371,11 @@ suite('Volt orchestra: council seating', () => {
 		assert.deepStrictEqual(seats.map(seat => seat.ref), ['claude:opus', 'fx:a', 'agy:g']);
 	});
 
+	test('a provider Volt could not confirm is signed in goes after the ones it has not seen fail', () => {
+		const seats = pickCouncilSeats(catalog, family, seat => seat.providerId === 'codex' ? { unverified: true } : undefined, 3);
+		assert.deepStrictEqual(seats.map(seat => seat.ref), ['fx:a', 'agy:g', 'claude:opus']);
+	});
+
 	test('with only two usable providers a second model of one fills the third seat, so reviews compare two answers', () => {
 		const seats = pickCouncilSeats(catalog, family, seat => ['claude', 'grok'].includes(seat.providerId) ? { okAt: 1 } : { limited: true });
 		assert.deepStrictEqual(seats.map(seat => seat.ref), ['claude:opus', 'grok:47', 'claude:haiku']);

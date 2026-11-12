@@ -396,6 +396,8 @@ export interface ICouncilSeatHealth {
 	readonly limited?: boolean;
 	/** It failed before doing anything in a chat sandboxed like this one (fx, Antigravity: the agent could not start there). */
 	readonly cannotStart?: boolean;
+	/** Installed, but Volt could not confirm it is signed in. */
+	readonly unverified?: boolean;
 }
 
 export interface ICouncilCandidate {
@@ -415,7 +417,7 @@ export interface ICouncilCandidate {
  */
 export function pickCouncilSeats<T extends ICouncilCandidate>(catalog: readonly T[], family: (providerId: string) => string, health: (item: T) => ICouncilSeatHealth | undefined, max = 4, min = 3): T[] {
 	const usable = catalog.filter(item => { const h = health(item); return !h?.limited && !h?.cannotStart; });
-	const tier = (item: T) => { const h = health(item); return h?.okAt !== undefined && (h.failedAt === undefined || h.okAt > h.failedAt) ? 0 : h?.failedAt !== undefined ? 2 : 1; };
+	const tier = (item: T) => { const h = health(item); return h?.okAt !== undefined && (h.failedAt === undefined || h.okAt > h.failedAt) ? 0 : h?.failedAt !== undefined || h?.unverified ? 2 : 1; };
 	const ranked = usable
 		.map((item, index) => ({ item, index }))
 		.sort((a, b) => tier(a.item) - tier(b.item) || (a.item.kind === 'agent' ? 0 : 1) - (b.item.kind === 'agent' ? 0 : 1) || (health(b.item)?.okAt ?? 0) - (health(a.item)?.okAt ?? 0) || a.index - b.index)
