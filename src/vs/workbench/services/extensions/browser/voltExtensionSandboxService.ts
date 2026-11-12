@@ -27,6 +27,8 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 	readonly onDidChange = this._onDidChange.event;
 	private readonly states = new Map<string, VoltExtensionSandboxState>();
 	private readonly notified = new Set<string>();
+	/** A choice made before the extension is installed (the install review) needs no reload. */
+	private quiet = 0;
 
 	constructor(
 		@IConfigurationService private readonly configurationService: IConfigurationService,
@@ -37,7 +39,7 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 	) {
 		super();
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
-			if (affectsVoltExtensionSandbox(e)) {
+			if (affectsVoltExtensionSandbox(e) && !this.quiet) {
 				// Where an extension runs is decided when its host starts: the change applies after a reload.
 				this.notificationService.prompt(Severity.Info, localize('voltSandbox.reload', "Reload the window to apply the change to which extensions run in a sandbox."), [{
 					label: localize('voltSandbox.reloadNow', "Reload Window"),
@@ -67,7 +69,15 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 		return effectiveExtensionSandboxMode(this.configurationService.getValue(VOLT_EXTENSION_SANDBOX_MODE_SETTING), voltPlatform()) === 'required';
 	}
 
-	async setOptedIn(extensionId: string, sandboxed: boolean): Promise<void> {
+	async setOptedIn(extensionId: string, sandboxed: boolean, options?: { readonly beforeInstall?: boolean }): Promise<void> {
+		if (options?.beforeInstall) {
+			this.quiet++;
+			try {
+				return await this.setOptedIn(extensionId, sandboxed);
+			} finally {
+				this.quiet--;
+			}
+		}
 		const lower = extensionId.toLowerCase();
 		if (this.required()) {
 			// Every third-party extension is in scope: in clears an earlier "run without sandbox", out is that choice (asked first).

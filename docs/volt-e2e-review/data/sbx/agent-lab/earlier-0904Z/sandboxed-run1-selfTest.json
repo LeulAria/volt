@@ -1,0 +1,82 @@
+{
+ "kind": "selfTest",
+ "at": "2026-11-12T09:04:38.689Z",
+ "value": {
+  "activationMs": 113,
+  "hostUptimeAtActivationMs": 5882,
+  "steps": [
+   {
+    "step": "settings",
+    "ok": true,
+    "ms": 6,
+    "detail": "task setting read (63 chars)"
+   },
+   {
+    "step": "secrets",
+    "ok": true,
+    "ms": 7,
+    "detail": "stored and read back"
+   },
+   {
+    "step": "workspace-read",
+    "ok": true,
+    "ms": 175,
+    "detail": "3 files found, read lab-notes.md (51 bytes)"
+   },
+   {
+    "step": "workspace-write",
+    "ok": true,
+    "ms": 26,
+    "detail": "wrote lab-notes.md with a WorkspaceEdit"
+   },
+   {
+    "step": "http (fetch)",
+    "ok": true,
+    "ms": 121,
+    "detail": "www.githubstatus.com answered 200"
+   },
+   {
+    "step": "http (https module)",
+    "ok": true,
+    "ms": 74,
+    "detail": "www.githubstatus.com answered 200"
+   },
+   {
+    "step": "http (exfil-capable host)",
+    "ok": false,
+    "ms": 33,
+    "detail": "fetch failed"
+   },
+   {
+    "step": "process",
+    "ok": true,
+    "ms": 9618,
+    "detail": "git version 2.54.0 (Apple Git-157)"
+   },
+   {
+    "step": "terminal",
+    "ok": true,
+    "ms": 0,
+    "detail": "opened a terminal"
+   },
+   {
+    "step": "volt.storage",
+    "ok": true,
+    "ms": 49,
+    "detail": "set and read back"
+   },
+   {
+    "step": "volt.chats.current",
+    "ok": true,
+    "ms": 2,
+    "detail": "the chat in front: none"
+   },
+   {
+    "step": "volt api latency",
+    "ok": true,
+    "ms": 81,
+    "detail": "volt.storage.get round trip p50 1.97 ms, p90 3.59 ms (n=30)"
+   }
+  ]
+ }
+}

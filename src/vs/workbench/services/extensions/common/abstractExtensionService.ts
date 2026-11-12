@@ -341,6 +341,12 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 			extHostManager => this._updateExtensionsOnExtHost(extHostManager, versionId, toAdd, toRemove, removedRunningLocation)
 		);
 		await Promise.all(promises);
+		// Volt (P2, P6): an extension added while Volt runs (an install) that runs in the sandbox has
+		// a location of its own and no host yet; start it now (its init data holds the extension),
+		// or it would stay off until a reload.
+		if (this._runningLocations.sandboxedRunningLocations.some(location => !this._extensionHostManagers.getByRunningLocation(location))) {
+			this._startExtensionHostsIfNecessary(false, []);
+		}
 	}
 
 	private async _updateExtensionsOnExtHost(extensionHostManager: IExtensionHostManager, versionId: number, toAdd: IExtensionDescription[], toRemove: ExtensionIdentifier[], removedRunningLocation: ExtensionIdentifierMap<ExtensionRunningLocation | null>): Promise<void> {

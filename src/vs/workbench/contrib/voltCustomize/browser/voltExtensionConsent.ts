@@ -48,6 +48,11 @@ export function voltCapabilityCopy(capability: string): IVoltCapabilityCopy {
 		case 'clipboard.read': return { title: localize('cap.clipboard', "Read your clipboard"), detail: localize('cap.clipboard.detail', "Read what you copied.") };
 		case 'devices.drive': return { title: localize('cap.devices', "Use simulators and emulators"), detail: localize('cap.devices.detail', "Boot, tap and type on iOS simulators and Android emulators.") };
 		case 'net.local.connect': return { title: localize('cap.netLocal', "Reach your local network"), detail: localize('cap.netLocal.detail', "Connect to devices and services on your local network.") };
+		case 'net.connect': return { title: localize('cap.netConnect', "Connect to the internet"), detail: localize('cap.netConnect.detail', "Reach the hosts it names. Any other host is refused.") };
+		case 'tools.register': return { title: localize('cap.toolsRegister', "Add tools for agents"), detail: localize('cap.toolsRegister.detail', "Serve tools that agents in your chats can call.") };
+		case 'files.read:workspace': return { title: localize('cap.filesReadWorkspace', "Read this project's files"), detail: localize('cap.filesReadWorkspace.detail', "Search and read the files of the open project through Volt.") };
+		case 'agents.read:current': return { title: localize('cap.agentsReadCurrent', "See the chat you have open"), detail: localize('cap.agentsReadCurrent.detail', "Read the title and turns of the chat in front, not your other chats.") };
+		case 'usage.report': return { title: localize('cap.usageReport', "Read your usage"), detail: localize('cap.usageReport.detail', "Read token use, cost and plan limits. Never which account.") };
 	}
 	const colon = bare.indexOf(':');
 	const base = colon > 0 ? bare.slice(0, colon) : bare;

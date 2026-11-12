@@ -596,6 +596,15 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 	});
 
 	// bubblewrap cannot guard paths that do not exist yet: filesystem.protectNew (documented).
+	macTest('GIT-SHIM-1: the /usr/bin developer shims run in a sandbox (they read whether the Xcode license was accepted)', async function () {
+		if (!await exists('/Library/Preferences/com.apple.dt.Xcode.plist') || !await exists('/usr/bin/git')) {
+			this.skip(); // no accepted license on this machine: the shim refuses outside a sandbox too
+		}
+		const result = await sh(workspace(), '/usr/bin/git --version');
+		assert.strictEqual(result.exitCode, 0, result.stderr);
+		assert.match(result.stdout, /^git version /);
+	});
+
 	macTest('a new git repository cannot be planted in the workspace (macOS)', async () => {
 		await sh(workspace(), `mkdir ${f.ws}/sub/.git; mkdir ${f.ws}/sub/.GIT; echo 'gitdir: ${f.outside}' > ${f.ws}/sub/x; mv ${f.ws}/sub/x ${f.ws}/sub/.git`);
 		assert.ok(!await exists(join(f.ws, 'sub', '.git')) && !await exists(join(f.ws, 'sub', '.GIT')));

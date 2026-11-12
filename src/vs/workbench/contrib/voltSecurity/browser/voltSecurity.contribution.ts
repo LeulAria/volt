@@ -10,6 +10,7 @@ import { SANDBOX_SUPERVISOR_SETTING } from '../../../../platform/voltSandbox/com
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { FlowGrantSync } from './flowGrantSync.js';
 import { InstallSheetContribution } from './installSheet.js';
+import { SandboxDenialNotifier } from './sandboxDenialNotifier.js';
 import './voltPluginHosts.js';
 
 /**
@@ -20,7 +21,10 @@ import './voltPluginHosts.js';
 
 registerWorkbenchContribution2(FlowGrantSync.ID, FlowGrantSync, WorkbenchPhase.AfterRestored);
 // The install sheet: a third-party extension's declared Volt capabilities, by class, at first activation.
-registerWorkbenchContribution2(InstallSheetContribution.ID, InstallSheetContribution, WorkbenchPhase.Eventually);
+// Early: it also reviews installs from Volt's UI before they happen.
+registerWorkbenchContribution2(InstallSheetContribution.ID, InstallSheetContribution, WorkbenchPhase.AfterRestored);
+// What the sandbox refuses a sandboxed extension or plugin host, told to the user as it happens.
+registerWorkbenchContribution2(SandboxDenialNotifier.ID, SandboxDenialNotifier, WorkbenchPhase.AfterRestored);
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.sandbox.supervisor',

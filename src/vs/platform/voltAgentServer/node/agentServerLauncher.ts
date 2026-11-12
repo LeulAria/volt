@@ -8,7 +8,8 @@ import { promises as fs } from 'fs';
 import * as http from 'http';
 import { homedir, networkInterfaces } from 'os';
 import { dirname, join, sep } from '../../../base/common/path.js';
-import { IAgentServerRuntimeInfo, IVoltExtensionHostTicket, IVoltLocalLink, VOLT_EXTHOST_TICKET_PATH, VOLT_LOCAL_LINK_PATH } from '../common/protocol.js';
+import { IAgentServerRuntimeInfo, IVoltExtensionHostTicket, IVoltLocalLink, VOLT_DESKTOP_EXTENSIONS_DIR_ENV, VOLT_EXTHOST_TICKET_PATH, VOLT_LOCAL_LINK_PATH, VOLT_SANDBOX_WORKLOADS_PATH } from '../common/protocol.js';
+import type { ISandboxWorkloadInfo } from '../../voltSandbox/common/sandboxWorkloads.js';
 import { IVoltAgentServerEndpoint } from '../common/agentServerService.js';
 import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
 import { agentServerPaths, IAgentServerPaths, isProcessAlive, readAgentServerRuntime, readAgentServerToken } from './agentServerFiles.js';
@@ -55,6 +56,11 @@ export interface IAgentServerLauncherOptions {
 	readonly electronPath: string;
 	/** The build's commit (packaged builds): a server from another build is replaced. */
 	readonly commit?: string;
+	/**
+	 * The desktop's extensions folder (`--extensions-dir`): the server finds the extensions it runs
+	 * in sandboxed hosts (P6) and serves the browser there, so both see the same installs.
+	 */
+	readonly extensionsDir?: string;
 	readonly log: (message: string) => void;
 }
 
@@ -182,6 +188,9 @@ export class AgentServerLauncher {
 		if (process.env['VSCODE_DEV']) {
 			env['VSCODE_DEV'] = '1';
 			env['NODE_ENV'] = 'development';
+		}
+		if (this.options.extensionsDir) {
+			env[VOLT_DESKTOP_EXTENSIONS_DIR_ENV] = this.options.extensionsDir;
 		}
 		if (process.env['VOLT_AGENT_SERVER_LOG']) {
 			env['VOLT_AGENT_SERVER_LOG'] = process.env['VOLT_AGENT_SERVER_LOG'];
@@ -344,6 +353,44 @@ export class AgentServerLauncher {
 			req.end();
 		});
 		return { ...ticket, port: info.port };
+	}
+
+	/** The running server's sandboxed hosts (P6). Never starts it: none when it isn't running or can't say. */
+	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> {
+		const body = await this.askRunning('GET', VOLT_SANDBOX_WORKLOADS_PATH) as { workloads?: unknown } | undefined;
+		return Array.isArray(body?.workloads) ? body.workloads as ISandboxWorkloadInfo[] : [];
+	}
+
+	async stopSandboxWorkload(id: string): Promise<boolean> {
+		const body = await this.askRunning('POST', `${VOLT_SANDBOX_WORKLOADS_PATH}/stop?id=${encodeURIComponent(id)}`) as { stopped?: unknown } | undefined;
+		return body?.stopped === true;
+	}
+
+	/** One JSON request to the server with its own token, only when it already runs; undefined on any failure. */
+	private async askRunning(method: 'GET' | 'POST', path: string): Promise<unknown> {
+		const info = await this.healthy();
+		const token = info && await readAgentServerToken(this.paths);
+		if (!info || !token) {
+			return undefined;
+		}
+		const host = info.host === 'localhost' ? 'localhost' : '127.0.0.1';
+		return new Promise(resolve => {
+			const req = http.request(`http://${host}:${info.port}${path}`, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }, timeout: 5_000 }, res => {
+				let body = '';
+				res.setEncoding('utf8');
+				res.on('data', chunk => body += chunk);
+				res.on('end', () => {
+					try {
+						resolve(res.statusCode === 200 ? JSON.parse(body) : undefined);
+					} catch {
+						resolve(undefined);
+					}
+				});
+			});
+			req.on('error', () => resolve(undefined));
+			req.on('timeout', () => req.destroy());
+			req.end();
+		});
 	}
 
 	/**

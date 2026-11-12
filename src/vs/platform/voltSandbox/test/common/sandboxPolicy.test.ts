@@ -8,6 +8,8 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/c
 import { denialKindForOperation, denialsInOutput, describeDenial, folderToAllow, isNoiseDenial } from '../../common/sandboxDenials.js';
 import { agentApiDomains, codexSandboxValue, domainAllowed, isAgentHousekeepingDenial, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
 import { parseSeatbeltLogLine, sbplRegex, sbplString } from '../../common/seatbelt.js';
+import { protectedEditTarget } from '../../common/sandboxProfiles.js';
+import { isUserFacingDenial } from '../../common/sandboxWorkloads.js';
 
 const MAC: ISandboxHostInfo = { platform: 'darwin', home: '/Users/me', tmpdir: '/private/var/folders/ab/xyz/T', darwinUserCacheDir: '/private/var/folders/ab/xyz/C', uid: 501 };
 
@@ -292,5 +294,35 @@ suite('Volt sandbox denials', () => {
 		assert.ok(!planAllowsWrite(plan, '/Users/me/repo/.envrc'));
 		assert.ok(!planAllowsWrite(plan, '/Users/me/.claude/CLAUDE.md'), 'read into every later Claude Code session');
 		assert.ok(!planAllowsWrite(resolveSandboxPlan(request({ providerId: 'codex' }), MAC), '/Users/me/.codex/AGENTS.md'));
+	});
+});
+
+suite('Volt sandbox: edits through the window and host warnings (e2e review)', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('EDIT-GUARD-1: an edit to what the sandbox keeps read-only is named; ordinary project files are not', () => {
+		assert.strictEqual(protectedEditTarget('/repo/.git/hooks/post-merge'), '.git/hooks');
+		assert.strictEqual(protectedEditTarget('/repo/.git/config'), '.git/config');
+		assert.strictEqual(protectedEditTarget('/repo/sub/.git/info/attributes'), '.git/info');
+		assert.strictEqual(protectedEditTarget('/repo/.vscode/tasks.json'), '.vscode');
+		assert.strictEqual(protectedEditTarget('/repo/packages/a/.vscode/settings.json'), '.vscode');
+		assert.strictEqual(protectedEditTarget('/repo/.husky/pre-commit'), '.husky');
+		assert.strictEqual(protectedEditTarget('/repo/.claude/settings.json'), '.claude/settings.json');
+		assert.strictEqual(protectedEditTarget('/repo/.mcp.json'), '.mcp.json');
+		for (const path of ['/repo/src/a.ts', '/repo/lab-notes.md', '/repo/.git/COMMIT_EDITMSG', '/repo/refs/notes.md', '/repo/objects/model.ts', '/repo/HEAD.md', '/repo/.claude/notes.md', '/repo/.vscodeignore', '/repo/docs/.github/x.md']) {
+			assert.strictEqual(protectedEditTarget(path), undefined, path);
+		}
+	});
+
+	test('HOST-WARN-1: a host is warned about what it tried, not the runtime\'s own denials', () => {
+		assert.ok(isUserFacingDenial({ kind: 'read', target: '/Users/me/.ssh/id_ed25519' }));
+		assert.ok(isUserFacingDenial({ kind: 'write', target: '/private/var/folders/x/T/volt-sbx-other/tmp/f' }), 'another run\'s temp');
+		assert.ok(isUserFacingDenial({ kind: 'network', target: 'example.com:443' }));
+		assert.ok(!isUserFacingDenial({ kind: 'launch', target: 'com.apple.logd' }));
+		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/private/var/folders/x/T/runs/volt-sbx-abc/canary' }), 'the run\'s own canary');
+		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist' }));
+		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/Users/me/.CFUserTextEncoding' }));
+		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/dev/dtracehelper' }));
 	});
 });

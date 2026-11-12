@@ -217,6 +217,13 @@ export class MainThreadVolt extends Disposable implements MainThreadVoltShape {
 						...(optionalStr(options.project, 'project') ? { project: options.project as string } : {}),
 					}));
 				}
+				case 'chats.pickModel': {
+					const options = record(arg(0), 'options');
+					return volt.agents.pickModel({
+						...(optionalStr(options.title, 'title') ? { title: options.title as string } : {}),
+						...(optionalStr(options.placeHolder, 'placeHolder') ? { placeHolder: options.placeHolder as string } : {}),
+					});
+				}
 				case 'tools.invoke': {
 					const chatId = optionalStr(arg(2), 'chatId');
 					return this.result(extensionId, await volt.tools.invoke(str(arg(0), 'name'), record(arg(1), 'input'), chatId ? { chatId } : undefined));

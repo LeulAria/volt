@@ -14,22 +14,33 @@ import { ResourceNotebookCellEdit } from '../../contrib/bulkEdit/browser/bulkCel
 import { CellEditType } from '../../contrib/notebook/common/notebookCommon.js';
 import { IExtHostContext, extHostNamedCustomer } from '../../services/extensions/common/extHostCustomers.js';
 import { SerializableObjectWithBuffers } from '../../services/extensions/common/proxyIdentifier.js';
+import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
+import { VoltSandboxedEditGuard } from './voltSandboxedEditGuard.js';
 
 
 @extHostNamedCustomer(MainContext.MainThreadBulkEdits)
 export class MainThreadBulkEdits implements MainThreadBulkEditsShape {
 
+	/** Volt: a sandboxed host's edits may not change what the sandbox keeps read-only. */
+	private readonly _voltEditGuard: VoltSandboxedEditGuard;
+
 	constructor(
 		_extHostContext: IExtHostContext,
 		@IBulkEditService private readonly _bulkEditService: IBulkEditService,
 		@ILogService private readonly _logService: ILogService,
-		@IUriIdentityService private readonly _uriIdentService: IUriIdentityService
-	) { }
+		@IUriIdentityService private readonly _uriIdentService: IUriIdentityService,
+		@IInstantiationService instantiationService: IInstantiationService,
+	) {
+		this._voltEditGuard = instantiationService.createInstance(VoltSandboxedEditGuard, _extHostContext);
+	}
 
 	dispose(): void { }
 
 	$tryApplyWorkspaceEdit(dto: SerializableObjectWithBuffers<IWorkspaceEditDto>, undoRedoGroupId?: number, isRefactoring?: boolean): Promise<boolean> {
 		const edits = reviveWorkspaceEditDto(dto.value, this._uriIdentService);
+		if (!this._voltEditGuard.allows(edits.edits.flatMap(edit => ResourceFileEdit.is(edit) ? [edit.oldResource, edit.newResource] : ResourceTextEdit.is(edit) || ResourceNotebookCellEdit.is(edit) ? [edit.resource] : []))) {
+			return Promise.resolve(false);
+		}
 		return this._bulkEditService.apply(edits, { undoRedoGroupId, respectAutoSaveConfig: isRefactoring }).then((res) => res.isApplied, err => {
 			this._logService.warn(`IGNORING workspace edit: ${err}`);
 			return false;

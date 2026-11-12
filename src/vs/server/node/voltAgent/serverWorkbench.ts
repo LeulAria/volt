@@ -21,7 +21,8 @@ import { ILogService } from '../../../platform/log/common/log.js';
 import product from '../../../platform/product/common/product.js';
 import { RemoteAgentConnectionContext } from '../../../platform/remote/common/remoteAgentEnvironment.js';
 import { IAgentServerAuth } from '../../../platform/voltAgentServer/common/protocolServer.js';
-import { IVoltExtensionHostTicket, VOLT_EXTHOST_TICKET_QUERY } from '../../../platform/voltAgentServer/common/protocol.js';
+import { IVoltExtensionHostTicket, VOLT_DESKTOP_EXTENSIONS_DIR_ENV, VOLT_EXTHOST_TICKET_QUERY } from '../../../platform/voltAgentServer/common/protocol.js';
+import type { ISandboxWorkloadInfo } from '../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import { VOLT_FS_BROWSE_CHANNEL_NAME } from '../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../../platform/voltGit/common/voltGit.js';
@@ -202,6 +203,15 @@ export class ServerWorkbench extends Disposable {
 	}
 
 	private readonly tickets = new Map<string, number>();
+
+	/** The sandboxed hosts the workbench windows started here (P6: the desktop's sandboxed extensions). None before any. */
+	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> {
+		return this._stdio ? this._stdio.sandboxWorkloads() : [];
+	}
+
+	async stopSandboxWorkload(id: string): Promise<boolean> {
+		return !!id && !!this._stdio && this._stdio.stopSandboxWorkload(id);
+	}
 
 	private consumeTicket(ticket: string): boolean {
 		const expiresAt = this.tickets.get(ticket);
@@ -386,8 +396,9 @@ export class ServerWorkbench extends Disposable {
 		args['accept-server-license-terms'] = true;
 		args['server-data-dir'] = dataDir;
 		args['user-data-dir'] = join(dataDir, 'data');
-		// The desktop's extensions, so the browser has the same ones.
-		args['extensions-dir'] = join(homedir(), product.dataFolderName, 'extensions');
+		// The desktop's extensions, so the browser has the same ones and the desktop's sandboxed
+		// extensions are found (P6): the folder the app said it uses, else the default one.
+		args['extensions-dir'] = process.env[VOLT_DESKTOP_EXTENSIONS_DIR_ENV] || join(homedir(), product.dataFolderName, 'extensions');
 		args['builtin-extensions-dir'] = join(APP_ROOT, 'extensions');
 		args['telemetry-level'] = 'off';
 		if ((await this.desktopSettings())['security.workspace.trust.enabled'] === false) {

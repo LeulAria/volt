@@ -3,7 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IAttestation, redactSandboxText, SandboxBackendId } from './sandboxBackend.js';
+import { IAttestation, ISandboxRunDenial, redactSandboxText, SandboxBackendId } from './sandboxBackend.js';
+import { isNoiseDenial } from './sandboxDenials.js';
 import { IResolvedSandboxPolicy } from './sandboxResolved.js';
 import { SandboxDimension } from './sandboxSchema.js';
 
@@ -102,6 +103,46 @@ export interface ISandboxWorkloadInfo {
 	readonly resources?: ISandboxResourceSample;
 	/** A broken host's last error, or the reason it stopped. */
 	readonly detail?: string;
+	/**
+	 * Hosts: what the sandbox refused it that a person should hear about ({@link isUserFacingDenial}),
+	 * one entry per kind and target, least recent first, at most {@link MAX_WORKLOAD_DENIALS}.
+	 */
+	readonly denials?: readonly ISandboxWorkloadDenial[];
+	/** Hosts: every user-facing refusal since it started, including those dropped from `denials`. */
+	readonly deniedCount?: number;
+}
+
+/** One refusal a host met (all times it met it), as the window warns about it. */
+export interface ISandboxWorkloadDenial {
+	readonly kind: ISandboxRunDenial['kind'];
+	/** A path (the home folder shown as `~`), or `host:port` for the network. */
+	readonly target: string;
+	/** Epoch ms of the last time. */
+	readonly at: number;
+	readonly count: number;
+}
+
+export const MAX_WORKLOAD_DENIALS = 20;
+
+/**
+ * Whether a refusal is something the host tried, not the runtime's own background noise: the
+ * kernel also denies, on every launch, the run's own canary (the sandbox checking itself), Mach
+ * lookups of system daemons (`launch`), and the preference and logging files CoreFoundation reads
+ * at start. Telling the user about those would bury the one that matters.
+ */
+export function isUserFacingDenial(denial: Pick<ISandboxRunDenial, 'kind' | 'target'>): boolean {
+	if (denial.kind === 'launch') {
+		return false;
+	}
+	if (denial.kind === 'read' || denial.kind === 'write') {
+		const target = denial.target;
+		// The transcript's noise list, except temp folders: another run's temp is worth a warning here.
+		const noise = isNoiseDenial({ kind: denial.kind, target, source: 'os' }) && !/^\/(private\/)?var\/folders\//.test(target);
+		return !(noise
+			|| /\/volt-sbx-[^/]+\/canary$/.test(target)
+			|| target.endsWith('/.CFUserTextEncoding'));
+	}
+	return true;
 }
 
 export function summarizeSandboxPolicy(policy: IResolvedSandboxPolicy): ISandboxPolicySummary {

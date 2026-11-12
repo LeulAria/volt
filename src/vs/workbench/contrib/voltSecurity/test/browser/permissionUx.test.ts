@@ -15,7 +15,7 @@ import { mainWindow } from '../../../../../base/browser/window.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { ExtensionIdentifier, IExtensionDescription } from '../../../../../platform/extensions/common/extensions.js';
+import { ExtensionIdentifier, IExtensionDescription, IExtensionManifest } from '../../../../../platform/extensions/common/extensions.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
 import { SubjectKey } from '../../../../../platform/voltSandbox/common/principals.js';
@@ -34,7 +34,9 @@ import { VoltTrustService } from '../../../../services/voltTrust/browser/voltTru
 import { IVoltTrustService } from '../../../../services/voltTrust/common/voltTrust.js';
 import { renderSandboxDenialCard, RUN_OUTSIDE_CONFIRMATION } from '../../../voltAgent/browser/editor/sandboxDenialCard.js';
 import { AccessPageSection } from '../../browser/accessPage.js';
-import { installSheetDrafts, installSheetGroups, installSheetKey } from '../../browser/installSheet.js';
+import { InstallSheetPlace, installSheetDrafts, installSheetGroups, installSheetKey, showInstallSheet } from '../../browser/installSheet.js';
+import { CancellationError } from '../../../../../base/common/errors.js';
+import { setVoltInstallReview, voltReviewInstall } from '../../../../services/extensionManagement/common/voltInstallReview.js';
 import { permissionsSummaryText } from '../../browser/permissionsSummary.js';
 
 async function until(check: () => boolean, ms = 3_000): Promise<void> {
@@ -269,6 +271,55 @@ suite('Volt permission UX in the window (P4)', () => {
 		const refused = ask('agents.create');
 		assert.strictEqual(refused.allowed, false);
 		assert.ok(!refused.denial?.promptable, 'a refusal is not asked again');
+	});
+
+	test('UX-SHEET-2: the review before install says where the code runs (a sandbox recommended), names every capability in Volt\'s words, and grants nothing', async () => {
+		const disposables = store.add(new DisposableStore());
+		const instantiation = workbenchInstantiationService(undefined, disposables);
+		const container = mainWindow.document.body.appendChild(mainWindow.document.createElement('div'));
+		disposables.add({ dispose: () => container.remove() });
+		const layout: Partial<ILayoutService> = { activeContainer: container };
+		const declared: Record<string, unknown> = { voltCapabilities: { required: [{ id: 'tools.register' }, { id: 'net.connect', targets: ['api.github.com'] }], optional: [{ id: 'files.write', reason: 'Writes lab-notes.md' }, { id: 'agents.create' }] } };
+		const groups = installSheetGroups({ contributes: declared as IExtensionDescription['contributes'] }, true);
+		assert.match(groups.find(group => group.class === 'medium')!.outcome, /Volt asks when the extension first uses them/, 'Install grants nothing: medium is asked at first use');
+		const answers: [boolean, boolean, InstallSheetPlace | undefined][] = [];
+		const show = (sandbox: { available: true } | { available: false; reason: string }) => disposables.add(showInstallSheet(layout as ILayoutService, instantiation, {
+			extensionName: 'Agent Lab', publisher: 'volt-examples', groups, gesture: { registry: new GestureTokenRegistry(), principal: 'volt-examples.volt-agent-lab' }, install: { sandbox },
+		}, (install, gesture, place) => answers.push([install, !!gesture, place])));
+
+		show({ available: true });
+		const sheet = () => container.querySelector<HTMLElement>('.volt-install-sheet')!;
+		assert.match(sheet().querySelector('h2')?.textContent ?? '', /^Install Agent Lab\?$/);
+		assert.match(sheet().querySelector('.volt-install-sheet-where')?.textContent ?? '', /Where its code runs.*In a sandbox \(recommended\).*reaches only the hosts it names/);
+		assert.match(sheet().textContent ?? '', /Add tools for agents/, 'low capabilities in Volt\'s words, not their ids');
+		assert.match(sheet().textContent ?? '', /Send data to hosts anyone can read \(api\.github\.com\)/, 'a host that takes data from anyone is high, as the broker judges it');
+		const split = installSheetGroups({ contributes: { voltCapabilities: { required: [{ id: 'net.connect', targets: ['www.githubstatus.com', 'gist.github.com'] }] } } as unknown as IExtensionDescription['contributes'] }, true);
+		assert.deepStrictEqual(split.map(group => [group.class, group.capabilities.map(entry => entry.targets)]), [['low', [['www.githubstatus.com']]], ['high', [['gist.github.com']]]]);
+		assert.deepStrictEqual([...sheet().querySelectorAll('.volt-add-footer .monaco-button')].map(button => button.textContent), ['Cancel', 'Install']);
+		sheet().querySelector<HTMLElement>('.allow')!.click();
+		assert.deepStrictEqual(answers, [[true, false, 'sandbox']], 'Install keeps the recommended place and needs no gesture: it grants nothing');
+
+		show({ available: false, reason: 'It must run beside Volt\'s window.' });
+		assert.match(sheet().querySelector('.volt-install-sheet-where')?.textContent ?? '', /With your access: It must run beside/);
+		assert.ok(!sheet().querySelector('.volt-install-sheet-place'), 'no choice where there is none');
+		sheet().querySelector<HTMLElement>('.deny')!.click();
+		assert.deepStrictEqual(answers[1], [false, false, 'full']);
+	});
+
+	test('UX-SHEET-3: an install waits for the review, and a cancel installs nothing', async () => {
+		const manifest = { publisher: 'acme', name: 'lab', version: '1.0.0', engines: { vscode: '*' } } as IExtensionManifest;
+		await voltReviewInstall(manifest);
+		let answer = false;
+		const seen: string[] = [];
+		const hook = setVoltInstallReview({ review: async m => { seen.push(`${m.publisher}.${m.name}`); return answer; } });
+		try {
+			await assert.rejects(voltReviewInstall(manifest), (err: unknown) => err instanceof CancellationError);
+			answer = true;
+			await voltReviewInstall(manifest);
+			assert.deepStrictEqual(seen, ['acme.lab', 'acme.lab']);
+		} finally {
+			hook.dispose();
+		}
 	});
 
 	test('UX-5b: the consent dialog\'s Allow needs a real click: a synthetic one answers nothing', async () => {

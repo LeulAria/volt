@@ -18,13 +18,13 @@
 
 import assert from 'assert';
 import { execFile, spawn } from 'child_process';
-import { promises as fs } from 'fs';
+import { existsSync, promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { chatSubject, IPrincipal } from '../../common/principals.js';
 import { builtinProfile } from '../../common/sandboxProfiles.js';
-import { ISandboxResourceSample } from '../../common/sandboxWorkloads.js';
+import { ISandboxResourceSample, ISandboxWorkloadInfo, isUserFacingDenial } from '../../common/sandboxWorkloads.js';
 import { SandboxFault } from '../../node/sandboxBackends.js';
 import { processAlive, SandboxManager } from '../../node/sandboxManager.js';
 import { ISandboxHostFacts, sandboxHostFacts } from '../../node/sandboxResolver.js';
@@ -209,6 +209,39 @@ suite('Volt sandbox supervisor (C5, real processes)', function () {
 		}
 		assert.strictEqual(h.state, 'stopped');
 		assert.strictEqual(supervisor.list().length, 0, 'a stopped host leaves the list');
+	});
+
+	test('DENY-HOST-1: what the sandbox refuses a running host is on its row (the window warns from it), without the runtime\'s own noise', async () => {
+		const supervisor = supervisorWith();
+		await fs.mkdir(join(home, '.ssh'), { recursive: true });
+		await fs.writeFile(join(home, '.ssh', 'id_ed25519'), 'CANARY-SSH\n');
+		const outside = join(root, 'outside-deny.txt');
+		// A host that tries, a few times (the kernel's denial log is best effort), then stays up.
+		// The workspace profile gives the host a home of its own: name the real one's key.
+		const attempts = `for i in 1 2 3 4 5; do cat "${join(home, '.ssh', 'id_ed25519')}"; echo x > "${outside}"; sleep 0.3; done; sleep 30`;
+		let changes = 0;
+		store.add(supervisor.onDidChange(() => changes++));
+		const h = await started(await supervisor.start(nodeHost({ command: { file: '/bin/sh', args: ['-c', attempts] }, ipc: false })));
+		try {
+			let row: ISandboxWorkloadInfo | undefined;
+			const end = Date.now() + 20_000;
+			while (Date.now() < end) {
+				row = (await supervisor.workloads()).find(r => r.id === h.id);
+				if (row?.denials?.some(d => d.kind === 'read' && d.target.endsWith('/.ssh/id_ed25519')) && row.denials.some(d => d.kind === 'write' && d.target.endsWith('outside-deny.txt'))) {
+					break;
+				}
+				await new Promise(resolve => setTimeout(resolve, 200));
+			}
+			assert.ok(row?.denials?.some(d => d.kind === 'read' && d.target === '~/.ssh/id_ed25519'), `the key read, home shown as ~: ${JSON.stringify(row?.denials)}`);
+			assert.ok(row?.denials?.some(d => d.kind === 'write' && d.target.endsWith('outside-deny.txt')), `the write outside: ${JSON.stringify(row?.denials)}`);
+			assert.ok(row!.denials!.every(d => isUserFacingDenial(d)), 'no canary, Mach lookups or preference reads');
+			assert.ok((row!.deniedCount ?? 0) >= row!.denials!.length, 'the total counts repeats');
+			assert.ok(row!.denials!.every(d => d.count >= 1 && d.at > 0));
+			assert.ok(changes > 0, 'the window hears of it');
+			assert.ok(!existsSync(outside), 'and the write did not happen');
+		} finally {
+			await h.terminate();
+		}
 	});
 
 	test('IPC-CHAN-1: NODE_CHANNEL_FD round-trips, as the fd after the launch protocol\'s, and only after the go byte', async () => {

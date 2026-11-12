@@ -10,6 +10,8 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ISandboxWorkloadInfo } from '../../../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltAgentServerMainService } from '../../../../../platform/voltAgentServer/common/agentServerService.js';
+import { deniedSummary, freshDenials } from '../../browser/sandboxDenialNotifier.js';
 import { workbenchInstantiationService } from '../../../../test/browser/workbenchTestServices.js';
 import { SandboxWorkloadsSection } from '../../browser/sandboxWorkloadsSection.js';
 
@@ -64,6 +66,7 @@ suite('Volt Security page: sandboxed processes (C5)', () => {
 			onDidChangeSandboxWorkloads: changed.event,
 		};
 		instantiation.stub(IVoltStdioService, stdio);
+		instantiation.stub(IVoltAgentServerMainService, {});
 		const page = mainWindow.document.body.appendChild(mainWindow.document.createElement('div'));
 		disposables.add({ dispose: () => page.remove() });
 		const pageStore = disposables.add(new DisposableStore());
@@ -105,6 +108,7 @@ suite('Volt Security page: sandboxed processes (C5)', () => {
 		const instantiation = workbenchInstantiationService(undefined, disposables);
 		const silent: Partial<IVoltStdioService> = {};
 		instantiation.stub(IVoltStdioService, silent);
+		instantiation.stub(IVoltAgentServerMainService, {});
 		const page = mainWindow.document.createElement('div');
 		instantiation.createInstance(SandboxWorkloadsSection, {
 			store: disposables.add(new DisposableStore()),
@@ -136,6 +140,7 @@ suite('Volt Security page: sandboxed processes (C5)', () => {
 			onDidChangeSandboxWorkloads: changed.event,
 		};
 		instantiation.stub(IVoltStdioService, stdio);
+		instantiation.stub(IVoltAgentServerMainService, {});
 		const page = mainWindow.document.body.appendChild(mainWindow.document.createElement('div'));
 		disposables.add({ dispose: () => page.remove() });
 		instantiation.createInstance(SandboxWorkloadsSection, {
@@ -155,5 +160,53 @@ suite('Volt Security page: sandboxed processes (C5)', () => {
 		byId.querySelector<HTMLElement>('.monaco-button')!.click();
 		await until(() => rowsShown().length === 1);
 		assert.deepStrictEqual(stopped, ['m1']);
+	});
+
+	test('SEC-PAGE-T3: the agent server\'s sandboxed extension hosts are listed beside the window\'s, with what was blocked; Stop goes to the server', async () => {
+		const disposables = store.add(new DisposableStore());
+		const instantiation = workbenchInstantiationService(undefined, disposables);
+		instantiation.stub(IVoltStdioService, { sandboxWorkloads: async () => [workload('agent')] } satisfies Partial<IVoltStdioService>);
+		let serverRows = [workload('ext', {
+			label: 'extension volt-examples.volt-agent-lab', subject: 'plugin:volt-examples.volt-agent-lab@local', deniedCount: 3,
+			denials: [{ kind: 'read', target: '~/.ssh/id_ed25519', at: 1, count: 2 }, { kind: 'network', target: 'evil.example:443', at: 2, count: 1 }],
+		})];
+		const stoppedOnServer: string[] = [];
+		instantiation.stub(IVoltAgentServerMainService, {
+			sandboxWorkloads: async () => serverRows,
+			stopSandboxWorkload: async (id: string) => { stoppedOnServer.push(id); serverRows = []; return true; },
+		} satisfies Partial<IVoltAgentServerMainService>);
+		const page = mainWindow.document.body.appendChild(mainWindow.document.createElement('div'));
+		disposables.add({ dispose: () => page.remove() });
+		instantiation.createInstance(SandboxWorkloadsSection, {
+			store: disposables.add(new DisposableStore()),
+			sectionLabel: () => undefined,
+			sectionHint: () => undefined,
+			settingsGroup: () => page.appendChild(mainWindow.document.createElement('div')),
+			isCurrent: () => true,
+		}).render();
+		const rowsShown = () => [...page.querySelectorAll<HTMLElement>('.volt-security-workload')];
+		await until(() => rowsShown().length === 2);
+		const ext = rowsShown().find(row => /volt-agent-lab/.test(row.textContent ?? ''))!;
+		assert.match(ext.textContent ?? '', /3 blocked/);
+		const detail = ext.getAttribute('data-volt-tooltip') ?? '';
+		assert.match(detail, /Blocked: connect to evil\.example:443 \(1x/);
+		assert.match(detail, /Blocked: read ~\/\.ssh\/id_ed25519 \(2x/);
+		assert.ok(detail.indexOf('evil.example') < detail.indexOf('id_ed25519'), 'newest first');
+		ext.querySelector<HTMLElement>('.monaco-button')!.click();
+		await until(() => rowsShown().length === 1);
+		assert.deepStrictEqual(stoppedOnServer, ['ext']);
+	});
+
+	test('SEC-DENY-1: the runtime warning names only new refusals of extension and plugin hosts, once each', () => {
+		const seen = new Set<string>();
+		const ext = workload('ext', { subject: 'plugin:acme.lab@local', denials: [{ kind: 'read', target: '~/.aws/credentials', at: 1, count: 1 }] });
+		const chat = workload('chat', { denials: [{ kind: 'write', target: '/etc/hosts', at: 1, count: 1 }] });
+		assert.deepStrictEqual(freshDenials(seen, [ext, chat]).map(fresh => [fresh.workload.id, fresh.denials.map(d => d.target)]), [['ext', ['~/.aws/credentials']]], 'chats warn in their transcript instead');
+		assert.deepStrictEqual(freshDenials(seen, [ext]), [], 'the same refusal again is not news');
+		const restarted = workload('ext-2', { subject: 'plugin:acme.lab@local', denials: [{ kind: 'read', target: '~/.aws/credentials', at: 3, count: 4 }, { kind: 'network', target: 'evil.example:443', at: 4, count: 1 }] });
+		assert.deepStrictEqual(freshDenials(seen, [restarted]).map(fresh => fresh.denials.map(d => d.target)), [['evil.example:443']], 'a restarted host is the same extension');
+		assert.strictEqual(deniedSummary([{ kind: 'read', target: '~/.ssh/id_ed25519' }]), 'it tried to read ~/.ssh/id_ed25519');
+		assert.strictEqual(deniedSummary([{ kind: 'read', target: 'a' }, { kind: 'network', target: 'b:443' }]), 'it tried to read a and connect to b:443');
+		assert.strictEqual(deniedSummary([{ kind: 'read', target: 'a' }, { kind: 'write', target: 'b' }, { kind: 'network', target: 'c:443' }, { kind: 'process', target: 'curl' }, { kind: 'limit', target: 'memory' }]), 'it tried to read a, write b, connect to c:443 and 2 more');
 	});
 });

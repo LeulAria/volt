@@ -40,7 +40,11 @@ import { POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../../..
 import { BROWSER_PAGE_URL_COMMAND_ID, IVoltHostToolCall, IVoltHostToolService, THREAD_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
 import { IVoltMemoryService } from '../../../services/voltRuntime/common/memory/voltMemory.js';
 import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
-import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
+import { enabledProfileIds, isPickerModelVisible } from '../../../services/voltRuntime/common/models/modelVisibility.js';
+import type { IVoltCatalogItem } from '../../../services/voltRuntime/common/providers.js';
+import { providerFamily, providerFamilyLabel } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { IQuickInputService, IQuickPickItem, IQuickPickSeparator } from '../../../../platform/quickinput/common/quickInput.js';
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
 import { shownAgentChat } from '../../voltAgent/browser/editor/agentShownChat.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../../voltAgent/browser/preview/browserEditorInput.js';
@@ -291,6 +295,28 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 				await history.whenReady;
 				const metas = options.query ? history.search(options.query) : history.list();
 				return metas.slice(0, Math.max(1, Math.min(options.limit ?? 50, 200))).map(chatSummary);
+			},
+			pickModel: async (options, caller) => {
+				// The models the composer's picker shows: enabled, their provider on and connected.
+				const runtime = this.get(IAgentRuntimeService);
+				const profiles = enabledProfileIds(runtime.listProfiles());
+				const models = runtime.listCatalog().filter(item => isPickerModelVisible(item, profiles) && featureService.isOn('provider', providerFamily(item.providerId)) && item.label.trim().toLowerCase() !== 'auto');
+				type ModelItem = IQuickPickItem & { readonly model?: IVoltCatalogItem };
+				const items: (ModelItem | IQuickPickSeparator)[] = [];
+				for (const item of models) {
+					const family = providerFamilyLabel(item.providerId);
+					if (!items.some(entry => entry.type === 'separator' && entry.label === family)) {
+						items.push({ type: 'separator', label: family });
+					}
+					items.push({ label: item.label, ...(item.qualifier ? { description: item.qualifier } : {}), model: item });
+				}
+				const picked = await this.get(IQuickInputService).pick<ModelItem>(items, {
+					// Volt names who asks: an extension's title is its claim, shown under Volt's own words.
+					title: localize('voltExtension.pickModel', "{0} asks you to pick a model", caller.label),
+					placeHolder: options.placeHolder ?? options.title ?? localize('voltExtension.pickModelHint', "Pick a model"),
+					matchOnDescription: true,
+				});
+				return picked?.model ? { id: picked.model.ref, label: picked.model.label, provider: picked.model.providerId } : undefined;
 			},
 			currentChat: () => {
 				const id = shownAgentChat();
