@@ -146,7 +146,7 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 			properties: {
 				pattern: { type: 'string', description: 'Regular expression (or literal text when literal is true)' },
 				path: { type: 'string', description: 'Folder to search in (default: the project root)' },
-				glob: { type: 'string', description: 'File filter, e.g. src/**/*.ts' },
+				glob: { type: 'string', description: 'File filter, e.g. src/**/*.ts; a leading ! leaves files out (!**/*.spec.ts). Applies together with type.' },
 				type: { type: 'string', description: 'File type shortcut: ts, js, py, go, rust, java, css, html, json, md, ...' },
 				literal: { type: 'boolean', description: 'Treat pattern as plain text' },
 				case_sensitive: { type: 'boolean' },

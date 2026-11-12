@@ -64,6 +64,8 @@ export interface IVoltGrepQuery {
 	readonly context?: number;
 	/** Globs over workspace-relative paths; a file must match one. */
 	readonly includes?: readonly string[];
+	/** Globs over workspace-relative paths; a file that matches one is left out. */
+	readonly excludes?: readonly string[];
 	/** Matching lines to collect before stopping; `limitHit` says more exist. */
 	readonly maxMatches: number;
 	readonly maxLineChars?: number;
@@ -202,7 +204,7 @@ export class VoltSearch extends Disposable {
 		if (query.confine) {
 			return this.confinedGrep(query, query.confine);
 		}
-		const key = JSON.stringify(['grep', query.root?.toString(), query.folder.toString(), query.pattern, !!query.literal, !!query.caseSensitive, !!query.multiline, !!query.wholeWord, query.context ?? 0, query.includes ?? [], query.maxMatches]);
+		const key = JSON.stringify(['grep', query.root?.toString(), query.folder.toString(), query.pattern, !!query.literal, !!query.caseSensitive, !!query.multiline, !!query.wholeWord, query.context ?? 0, query.includes ?? [], query.excludes ?? [], query.maxMatches]);
 		return this.cached(key, () => this.doGrep(query, token), query.folder, query.indexOnly);
 	}
 
@@ -235,6 +237,7 @@ export class VoltSearch extends Disposable {
 			multiline: !!query.multiline,
 			wholeWord: !!query.wholeWord,
 			includes: query.includes,
+			...(query.excludes?.length ? { excludes: query.excludes } : {}),
 			context: query.context,
 			maxMatches: query.maxMatches,
 			maxLineChars: query.maxLineChars ?? LINE_CHARS,
@@ -325,6 +328,7 @@ export class VoltSearch extends Disposable {
 				multiline: !!query.multiline,
 				wholeWord: !!query.wholeWord,
 				includes: query.includes,
+				...(query.excludes?.length ? { excludes: query.excludes } : {}),
 				context: query.context,
 				maxMatches: query.maxMatches,
 				maxLineChars,
@@ -363,7 +367,7 @@ export class VoltSearch extends Disposable {
 			previewOptions: { matchLines: 1, charsPerLine: maxLineChars },
 			...(query.context ? { surroundingContext: query.context } : {}),
 			...(includes ? { includePattern: includes } : {}),
-			...(folder.path.includes('/node_modules') ? {} : { excludePattern: { ...DEFAULT_EXCLUDES } }),
+			...(folder.path.includes('/node_modules') && !query.excludes?.length ? {} : { excludePattern: { ...(folder.path.includes('/node_modules') ? {} : DEFAULT_EXCLUDES), ...Object.fromEntries((query.excludes ?? []).map(glob => [glob, true])) } }),
 		}, token);
 		const files: IVoltGrepFile[] = [];
 		let total = 0;
