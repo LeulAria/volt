@@ -22,6 +22,8 @@ export interface IRemoteHostToolCall {
 	readonly sandbox?: IVoltHostToolCall['sandbox'];
 	/** Set on calls the server may cancel (`hostTools.cancel`). */
 	readonly cancelKey?: string;
+	/** Set on a sandboxed chat's calls: the server judges what they may read (`hostTools.readRefusals`). */
+	readonly readRuleKey?: string;
 }
 
 export function toRemoteHostToolCall(call: IVoltHostToolCall | undefined): IRemoteHostToolCall | undefined {
@@ -182,8 +184,34 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 		if (!call) {
 			return undefined;
 		}
-		const { cancelKey: _cancelKey, ...rest } = call;
-		return { ...rest, mode: call.mode as VoltMode | undefined, token };
+		const { cancelKey: _cancelKey, readRuleKey, ...rest } = call;
+		return { ...rest, mode: call.mode as VoltMode | undefined, token, ...(typeof readRuleKey === 'string' ? { readRefusal: this.serverReadRule(readRuleKey) } : {}) };
+	}
+
+	/**
+	 * A sandboxed call's read rule, which stays in the server (a function does not cross the
+	 * socket). Without it the window's search tools refused every sandboxed chat. Paths asked in
+	 * the same tick go in one request: a search checks all the files it found at once.
+	 */
+	private serverReadRule(key: string): (path: string) => Promise<string | undefined> {
+		let batch: { path: string; resolve: (why: string | undefined) => void }[] | undefined;
+		const flush = (items: { path: string; resolve: (why: string | undefined) => void }[]) => {
+			this.client.call<unknown>('hostTools.readRefusals', key, items.map(item => item.path)).then(answers => {
+				const list = Array.isArray(answers) ? answers : [];
+				// null is "may read"; a path the server did not judge is refused.
+				items.forEach((item, i) => item.resolve(i < list.length ? (typeof list[i] === 'string' ? list[i] as string : undefined) : 'not checked by the sandbox'));
+			}, () => items.forEach(item => item.resolve('the sandbox could not be asked')));
+		};
+		return path => new Promise(resolve => {
+			if (!batch) {
+				const items: { path: string; resolve: (why: string | undefined) => void }[] = batch = [];
+				void Promise.resolve().then(() => {
+					batch = undefined;
+					flush(items);
+				});
+			}
+			batch.push({ path, resolve });
+		});
 	}
 
 	/** The server runs a tool one of this window's providers serves. */
