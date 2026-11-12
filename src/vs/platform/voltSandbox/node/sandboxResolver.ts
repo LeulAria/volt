@@ -238,7 +238,8 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 		}
 		if (c.exists && c.isDirectory) {
 			write.push(c.path);
-		} else if (c.exists || /\.[a-z0-9]{1,8}$/i.test(c.path)) {
+		} else if (c.exists || /\.[a-z0-9]{1,8}(-wal|-shm|-journal)?$/i.test(c.path)) {
+			// A file that is created later: a lock, or SQLite's sidecars, which exist only while the database is open.
 			writeFiles.push(c.path);
 		} else {
 			notes.push(`write path does not exist, skipped: ${c.path}`);

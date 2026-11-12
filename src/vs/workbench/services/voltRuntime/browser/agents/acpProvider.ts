@@ -1111,9 +1111,8 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	private startArgs(req: IAgentStartRequest): string[] {
 		const args = req.profile.args?.length ? [...req.profile.args] : [...this.defaultArgs];
-		if (this.id === 'antigravity' && req.modelId) {
-			args.push('--model', this.antigravityModelLabel(req));
-		}
+		// Antigravity's model is set on the session (`applySelection`, its `model` config option): `agy acp`
+		// 1.5 has no --model flag and exits at once with one ("flags provided but not defined: -model").
 		if (this.id === 'cursor-acp') {
 			const model = this.cursorModelArg(req);
 			const acp = args.lastIndexOf('acp');

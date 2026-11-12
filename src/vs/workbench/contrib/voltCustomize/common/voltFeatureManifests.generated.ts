@@ -1218,7 +1218,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 					apiHosts: ['x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
 					state: {
 						writable: ['.grok/sessions', '.grok/logs', '.grok/memory-v2', '.grok/memtrace', '.grok/grove', '.grok/downloads', '.local/state/grok'],
-						writableFiles: ['.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db', '.grok/models_cache.json', '.grok/settings_cache.json', '.grok/tip_cursor.json', '.grok/agent_id', '.grok/.config-init.lock', '.grok/managed_config.lock', '.grok/.metadata_version'],
+						writableFiles: ['.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db', '.grok/worktrees.db-wal', '.grok/worktrees.db-shm', '.grok/worktrees.db-journal', '.grok/bundled/.lock', '.grok/installed-plugins/registry.lock', '.grok/models_cache.json', '.grok/settings_cache.json', '.grok/tip_cursor.json', '.grok/agent_id', '.grok/.config-init.lock', '.grok/managed_config.lock', '.grok/.metadata_version'],
 						readable: ['.grok'],
 						credentials: ['.grok/auth.json'],
 						envKeys: ['XAI_API_KEY', 'GROK_API_KEY'],

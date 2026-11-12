@@ -534,4 +534,31 @@ suite('Volt sandbox pattern walk scope (B-27)', () => {
 			await fs.rm(root, { recursive: true, force: true });
 		}
 	});
+
+	test('a CLI\'s SQLite sidecars stay writable before they exist; a missing name without a file extension is skipped', async () => {
+		const root = await fs.realpath(await fs.mkdtemp(join(homedir(), '.volt-walk-sidecars-')));
+		try {
+			const home = join(root, 'home');
+			const ws = join(home, 'project');
+			await fs.mkdir(join(home, '.grok'), { recursive: true });
+			await fs.mkdir(ws, { recursive: true });
+			// At rest only the database exists: SQLite makes -wal/-shm when it opens it, inside the sandbox.
+			await fs.writeFile(join(home, '.grok', 'worktrees.db'), '');
+			const facts: ISandboxHostFacts = { ...await sandboxHostFacts(), home };
+			const policy = agentSandboxPolicy(
+				{ level: 'workspace-write', network: false, providerId: 'grok', workspaceRoots: [ws] },
+				{ platform: process.platform, home, tempDirs: [facts.tmpRoot], cacheDir: join(root, 'cache') },
+			);
+			const runTmp = join(root, 'run');
+			await fs.mkdir(runTmp);
+			const { policy: resolved, notes } = await resolveSandboxPolicy(policy, { workspaceRoots: [ws], hostEnv: { PATH: '/usr/bin:/bin', HOME: home } }, facts, runTmp);
+			for (const name of ['worktrees.db', 'worktrees.db-wal', 'worktrees.db-shm', 'worktrees.db-journal']) {
+				assert.ok(resolved.writeFiles.includes(join(home, '.grok', name)), name);
+			}
+			assert.ok(!resolved.write.includes(join(home, '.grok')), 'never the CLI\'s whole folder');
+			assert.ok(notes.some(note => note.includes('.local/state/grok')), 'a missing folder is still skipped');
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
 });

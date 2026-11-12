@@ -208,8 +208,11 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	},
 	grok: {
 		writable: ['.grok/sessions', '.grok/logs', '.grok/memory-v2', '.grok/memtrace', '.grok/grove', '.grok/downloads', '.local/state/grok'],
+		// worktrees.db is SQLite: without its -wal/-shm sidecars and the two lock files Grok waits on
+		// them, and a sandboxed turn ended minutes after its answer (measured 2026-11-12: 130-400 s).
 		writableFiles: [
-			'.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db', '.grok/models_cache.json',
+			'.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db',
+			'.grok/worktrees.db-wal', '.grok/worktrees.db-shm', '.grok/worktrees.db-journal', '.grok/bundled/.lock', '.grok/installed-plugins/registry.lock', '.grok/models_cache.json',
 			'.grok/settings_cache.json', '.grok/tip_cursor.json', '.grok/agent_id', '.grok/.config-init.lock', '.grok/managed_config.lock', '.grok/.metadata_version',
 		],
 		readable: ['.grok'],
