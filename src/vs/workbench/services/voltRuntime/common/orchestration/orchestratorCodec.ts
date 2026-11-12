@@ -38,6 +38,32 @@ export interface IOrchIndex {
 	readonly roots: readonly string[];
 }
 
+/** Prompt text an audit-trail event keeps; the full text is in the turn itself and the chat's history. */
+export const ORCH_EVENT_PROMPT_CHARS = 400;
+
+/**
+ * An event as the audit trail keeps it: a turn's or queued message's prompt clipped. A subagent's
+ * framed brief is kilobytes and rode along twice (queued, then dispatched), so the trail was most
+ * of a tree's file, rewritten on every save. Events that carry no long prompt are returned as is.
+ */
+export function compactEnvelope(envelope: IOrchEventEnvelope): IOrchEventEnvelope {
+	const event = envelope.event;
+	const clip = <T extends { readonly prompt: { readonly text: string; readonly display?: unknown } }>(holder: T): T => {
+		const text = holder.prompt.text;
+		const { display: _display, ...prompt } = holder.prompt;
+		return { ...holder, prompt: { ...prompt, text: `${text.slice(0, ORCH_EVENT_PROMPT_CHARS)}… [${text.length} chars]` } };
+	};
+	const long = (prompt: { readonly text: string } | undefined) => !!prompt && typeof prompt.text === 'string' && prompt.text.length > ORCH_EVENT_PROMPT_CHARS;
+	switch (event.type) {
+		case 'turn.dispatched':
+			return long(event.turn.prompt) ? { ...envelope, event: { ...event, turn: clip(event.turn) } } : envelope;
+		case 'queue.added':
+			return long(event.item.prompt) ? { ...envelope, event: { ...event, item: clip(event.item) } } : envelope;
+		default:
+			return envelope;
+	}
+}
+
 export function rootIdsOf(state: IOrchState): string[] {
 	return [...new Set(Object.values(state.threads).map(thread => thread.rootId))];
 }
@@ -449,6 +475,7 @@ function parseTask(value: unknown): IOrchTask | undefined {
 		...(Array.isArray(task.failedOn) && task.failedOn.length ? { failedOn: task.failedOn.filter((label): label is string => typeof label === 'string') } : {}),
 		...(Array.isArray(task.blind) && task.blind.length ? { blind: task.blind.filter((id): id is string => typeof id === 'string') } : {}),
 		...(str(task.team) ? { team: task.team as string } : {}),
+		...(str(task.batch) ? { batch: task.batch as string } : {}),
 		...(task.quiet === true ? { quiet: true } : {}),
 		...(Array.isArray(task.verify) && task.verify.some(item => typeof item === 'string') ? { verify: task.verify.filter((command): command is string => typeof command === 'string') } : {}),
 		...optional('verification', parseVerification(task.verification)),

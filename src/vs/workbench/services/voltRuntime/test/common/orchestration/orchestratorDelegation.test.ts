@@ -5,9 +5,10 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildTaskPrompt, contractFromArgs, describeSpend, describeTask, lintTaskBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
-import { extractRoot, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
+import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
+import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
 import { buildParentCapsule, userRequests } from '../../../common/orchestration/taskContext.js';
 import { foldSpend, seedSpendTracker, spendUsage } from '../../../common/orchestration/taskSpend.js';
 import { OrchSim } from './orchestratorSim.js';
@@ -212,6 +213,50 @@ suite('Volt orchestrator: budgets, dependencies and fallbacks', () => {
 		assert.ok(sim.spawn('root', 'x', { after: ['t-nope'] }).rejected?.includes('not a task of this chat'));
 	});
 
+	test('the parts of one delegate_task call wake the parent once, with every report; other tasks still report on their own', () => {
+		const sim = new OrchSim();
+		sim.submit('root', 'go');
+		sim.start('root');
+		const parts = ['a', 'b', 'c'].map(name => sim.spawn('root', `part ${name}`, { batch: 'b-1' }).taskId!);
+		const solo = sim.spawn('root', 'unrelated work').taskId!;
+		assert.strictEqual(sim.state.tasks[parts[0]].batch, 'b-1');
+		assert.strictEqual(sim.state.tasks[solo].batch, undefined);
+		sim.complete('root');
+		sim.complete(sim.childOf(parts[0]), 'done', 'report A');
+		sim.complete(sim.childOf(parts[1]), 'done', 'report B');
+		assert.strictEqual(sim.thread('root').active, undefined, 'two of three parts done: no wake-up yet');
+		assert.strictEqual(isDeliverable(sim.state, sim.state.tasks[parts[0]]), false);
+		assert.strictEqual(sim.state.tasks[parts[0]].delivery, 'pending');
+		sim.complete(sim.childOf(solo), 'done', 'solo report');
+		assert.deepStrictEqual(sim.thread('root').active?.taskIds, [solo], 'a task from another call is not held back');
+		sim.complete('root');
+		sim.complete(sim.childOf(parts[2]), 'failed', '');
+		const wake = sim.thread('root').active;
+		assert.deepStrictEqual([...wake?.taskIds ?? []].sort(), [...parts].sort(), 'a failed part ends the wait like a finished one');
+		assert.ok(wake?.prompt.text.includes('report A') && wake.prompt.text.includes('report B'));
+
+		// The batch id survives a save and load, so a restart does not split the parts up.
+		const loaded = parseRootSnapshot(JSON.parse(JSON.stringify(extractRoot(sim.state, 'root', [], sim.now))))!;
+		assert.strictEqual(loaded.tasks.find(item => item.id === parts[1])!.batch, 'b-1');
+	});
+
+	test('a part waiting for the user, or for a slot, behaves as the batch says: the first does not hold the others, the second does', () => {
+		const sim = new OrchSim({ ...DEFAULT_ORCH_LIMITS, runningPerParent: 2 });
+		sim.submit('root', 'go');
+		sim.start('root');
+		const [asking, working, later] = ['asks', 'works', 'later'].map(name => sim.spawn('root', `part ${name}`, { batch: 'b-1' }).taskId!);
+		assert.strictEqual(sim.state.tasks[later].state, 'queued', 'over the per-chat limit');
+		sim.complete('root');
+		sim.start(sim.childOf(asking));
+		sim.run({ type: 'input.opened', threadId: sim.childOf(asking), inputId: 'q', kind: 'question' });
+		assert.strictEqual(sim.state.tasks[asking].state, 'waiting');
+		sim.complete(sim.childOf(working), 'done', 'worked');
+		assert.strictEqual(sim.state.tasks[later].state, 'running', 'the freed slot goes to the queued part');
+		assert.strictEqual(sim.thread('root').active, undefined, 'a part that has not run yet holds the report back');
+		sim.complete(sim.childOf(later), 'done', 'later done');
+		assert.deepStrictEqual([...sim.thread('root').active?.taskIds ?? []].sort(), [working, later].sort(), 'the part waiting for the user does not hold the rest');
+	});
+
 	test('a task whose upstream failed does not start, and says why', () => {
 		const sim = new OrchSim();
 		sim.submit('root', 'go');
@@ -261,5 +306,51 @@ suite('Volt orchestrator: budgets, dependencies and fallbacks', () => {
 		assert.deepStrictEqual([task.after, task.budgetUsd, task.contract, task.fallbacks], [[first], 3, { goal: 'g', doneWhen: ['d'] }, [{ ref: 'x:y', label: 'Y' }]]);
 		assert.deepStrictEqual(loaded.tasks.find(item => item.id === first)!.usage, usage(2));
 		assert.strictEqual(loaded.threads.find(thread => thread.id === 'root')!.spend?.usd, 2);
+	});
+});
+
+suite('Volt orchestrator: what agents write into delegate_task', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('Claude Code\'s Agent-tool names (prompt, description) count as task and title, at the top and in tasks entries', () => {
+		assert.deepStrictEqual(delegateArgsWithAliases({ prompt: 'Fix a.js', description: 'Fix a' }), { task: 'Fix a.js', title: 'Fix a', description: 'Fix a' });
+		assert.deepStrictEqual(delegateArgsWithAliases({ tasks: [{ prompt: 'one' }, { task: 'two', prompt: 'ignored' }, 'bad'] }).tasks, [{ task: 'one' }, { task: 'two', prompt: 'ignored' }, 'bad']);
+		assert.deepStrictEqual(delegateArgsWithAliases({ task: 'kept', title: 'T' }), { task: 'kept', title: 'T' });
+	});
+
+	test('a model named the way agents write it finds the catalog entry, and an unknown one finds nothing', () => {
+		const items = [
+			{ ref: 'agent:seed-claude-code:claude-haiku-4-5-20251001', id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', providerLabel: 'Claude', providerId: 'claude-code' },
+			{ ref: 'agent:seed-claude-code:claude-sonnet-5-5', id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', qualifier: 'Medium', providerLabel: 'Claude', providerId: 'claude-code' },
+			{ ref: 'agent:seed-cursor:sonnet-5-5', id: 'sonnet-5-5', label: 'Sonnet 5.5', providerLabel: 'Cursor', providerId: 'cursor-acp' },
+			{ ref: 'agent:seed-grok:grok-4.7', id: 'grok-4.7', label: 'Grok 4.7', providerLabel: 'Grok', providerId: 'grok' },
+		];
+		const ref = (value: string) => matchTaskModel(items, value)?.ref;
+		assert.strictEqual(ref('Claude Haiku 4.5'), items[0].ref);
+		assert.strictEqual(ref('claude-haiku-4-5'), items[0].ref);
+		assert.strictEqual(ref('Haiku 4.5'), items[0].ref);
+		assert.strictEqual(ref('Sonnet 5.5 Medium'), items[1].ref);
+		assert.strictEqual(ref('Cursor Sonnet 5.5'), items[2].ref, 'the provider the name mentions wins');
+		assert.strictEqual(ref('grok-4.7'), items[3].ref);
+		assert.strictEqual(ref('GPT 9'), undefined);
+		assert.strictEqual(ref('4.5'), items[0].ref, 'a bare fragment still matches by substring, as before');
+	});
+
+	test('a task title skips the "In <path>:" a brief opens with', () => {
+		assert.strictEqual(titleFromBrief('In /private/tmp/repo: edit src/a.js so charge() throws'), 'Edit src/a.js so charge() throws');
+		assert.strictEqual(titleFromBrief('Working in ~/code/app, review the auth flow'), 'Review the auth flow');
+		assert.strictEqual(titleFromBrief('In this repo, nothing to strip'), 'In this repo, nothing to strip');
+	});
+
+	test('the saved audit trail keeps long prompts short and leaves other events as they are', () => {
+		const long = 'x'.repeat(ORCH_EVENT_PROMPT_CHARS * 5);
+		const turn = { seq: 1, at: 1, commandId: 'c', event: { type: 'turn.dispatched' as const, threadId: 't', turn: { id: 'u', kind: 'brief' as const, prompt: { text: long, display: { text: 'shown' } }, at: 1, phase: 'dispatching' as const } } };
+		const compact = compactEnvelope(turn);
+		const text = compact.event.type === 'turn.dispatched' ? compact.event.turn.prompt.text : '';
+		assert.ok(text.length < ORCH_EVENT_PROMPT_CHARS + 40 && text.endsWith(`[${long.length} chars]`), text.slice(-30));
+		assert.strictEqual(turn.event.turn.prompt.text, long, 'the live event is not changed');
+		const short = { seq: 2, at: 1, commandId: 'c', event: { type: 'turn.cancelled' as const, threadId: 't', turnId: 'u' } };
+		assert.strictEqual(compactEnvelope(short as never), short);
 	});
 });

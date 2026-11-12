@@ -194,7 +194,7 @@ function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
 		description: [
 			'Run one task on a Volt subagent: a separate chat, on any model from list_models, that starts with your brief plus a short digest of this chat (the user\'s request, your plan, what other subagents do). Use it to work in parallel (several independent tasks at once), to get a second opinion from a different model (review, research), or to give a self-contained piece of work to a model better suited to it.',
 			'Write the brief like a hand-off to a capable colleague: the relevant files and facts you already found, and what to do with them. Fill the contract: `goal` (the outcome), `scope` (files it owns and may change), `files` (files to read first), `constraints`, and `done_when` (the checks that prove it is done; it reports each as met or not met). For work that edits code, name the files to change and what to change in each (paths, symbols, line numbers you saw), so the subagent can start editing at once instead of exploring again. Do not delegate trivial lookups you can do faster yourself.',
-			'To run several parts at once, start them all in ONE call with `tasks` (one entry per part, each with its own complete brief) instead of one call per part. A part that needs another part\'s result names it in `after` (that part\'s 1-based position in `tasks`, or a task_id): it starts once those finish, with their reports added to its brief.',
+			'To run several parts at once, start them all in ONE call with `tasks` (one entry per part, each with its own complete brief) instead of one call per part. A part that needs another part\'s result names it in `after` (that part\'s 1-based position in `tasks`, or a task_id): it starts once those finish, with their reports added to its brief. The reports of the parts of one call reach this chat together, once all of them have finished.',
 			'Returns a task_id at once (wait=false, the default). Several tasks run in parallel. When a task finishes its report is delivered to this chat as a new message, so after starting tasks you may end your turn instead of polling; call wait_tasks only when you need the results before you can continue in this turn. task_status reads progress and spend. Subagent spend counts against the user\'s budget for this request; a task over its budget is stopped.',
 			'Review rounds: for each new round of a review (or any work you send back after changes), call delegate_task again with previous_task_id set to the last round and a fresh client_request_id (keep that id when you retry the same round). Do not use message_task for a new round: a fresh subagent reviews the current code without the previous reviewer\'s assumptions. Tasks and their reports survive a Volt restart.',
 		].join(' '),
@@ -745,9 +745,72 @@ export function newTaskId(existing: (id: string) => boolean, random: () => numbe
 	}
 }
 
+/**
+ * delegate_task arguments with the names other harnesses use for the same thing: Claude Code's own
+ * Agent tool takes `prompt` and `description`, and Claude wrote those into delegate_task's `tasks`
+ * entries (a refused call and a retry before any subagent started). `prompt`/`brief` count as
+ * `task`, and `description` as `title` when there is none.
+ */
+export function delegateArgsWithAliases(args: Record<string, unknown>): Record<string, unknown> {
+	const fix = (entry: Record<string, unknown>): Record<string, unknown> => {
+		if (typeof entry.task === 'string' && entry.task.trim()) {
+			return entry;
+		}
+		const task = [entry.prompt, entry.brief].find((value): value is string => typeof value === 'string' && !!value.trim());
+		if (!task) {
+			return entry;
+		}
+		const { prompt: _prompt, brief: _brief, ...rest } = entry;
+		return { ...rest, task, ...(rest.title === undefined && typeof entry.description === 'string' ? { title: entry.description } : {}) };
+	};
+	const top = fix(args);
+	return Array.isArray(top.tasks)
+		? { ...top, tasks: top.tasks.map(entry => entry && typeof entry === 'object' && !Array.isArray(entry) ? fix(entry as Record<string, unknown>) : entry) }
+		: top;
+}
+
+/** A model a task may run on, as `model` arguments name it. */
+export interface ITaskModelCandidate {
+	readonly ref: string;
+	readonly id: string;
+	readonly label: string;
+	readonly qualifier?: string;
+	/** The provider's name as the user sees it ("Claude", "Cursor"). */
+	readonly providerLabel?: string;
+	readonly providerId?: string;
+}
+
+/**
+ * The model a `model` argument names: its ref, id or label exactly, else by words, so the names
+ * agents write ("Claude Haiku 4.5", "claude-haiku-4-5", "Sonnet 5.5") find "Haiku 4.5" of the
+ * Claude provider instead of costing a failed call and a list_models round trip.
+ */
+export function matchTaskModel<T extends ITaskModelCandidate>(items: readonly T[], value: string): T | undefined {
+	const wanted = value.trim().toLowerCase();
+	const exact = items.find(item => item.ref.toLowerCase() === wanted)
+		?? items.find(item => item.id.toLowerCase() === wanted)
+		?? items.find(item => item.label.toLowerCase() === wanted)
+		?? items.find(item => `${item.label} ${item.qualifier ?? ''}`.trim().toLowerCase() === wanted);
+	if (exact) {
+		return exact;
+	}
+	const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+	const w = words(value);
+	if (!w) {
+		return undefined;
+	}
+	const hits = items.filter(item => [item.label, `${item.label} ${item.qualifier ?? ''}`, `${item.providerLabel ?? ''} ${item.label}`, item.id].map(words).some(name =>
+		!!name && (name === w || name.startsWith(`${w} `) || (name.length >= 4 && w.endsWith(` ${name}`)))));
+	// The same model under two providers: the one the name mentions.
+	const named = hits.find(item => [item.providerLabel, item.providerId].some(provider => provider && w.includes(words(provider))));
+	return named ?? hits[0] ?? items.find(item => item.label.toLowerCase().includes(wanted) || item.ref.toLowerCase().includes(wanted));
+}
+
 /** First line of the brief, trimmed to a title, when the caller gave none. */
 export function titleFromBrief(brief: string, max = 60): string {
 	const line = brief.trim().split('\n').map(text => text.trim()).find(Boolean) ?? 'Task';
-	const plain = line.replace(/^[#>*\-\s]+/, '').replace(/[`*_]/g, '');
+	// Briefs often open with where to work ("In /tmp/repo: edit src/a.js ..."): the title is the work.
+	const unplaced = line.replace(/^(?:working\s+)?in\s+(?:the\s+)?(?:repo\s+|project\s+)?[`'"]?[~.]?\/[^\s`'"]*[`'"]?\s*[:,]\s*(?=\S)/i, '');
+	const plain = (unplaced.charAt(0).toUpperCase() + unplaced.slice(1)).replace(/^[#>*\-\s]+/, '').replace(/[`*_]/g, '');
 	return plain.length > max ? `${plain.slice(0, max - 1).trimEnd()}…` : plain;
 }

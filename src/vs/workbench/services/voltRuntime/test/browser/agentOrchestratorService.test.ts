@@ -18,6 +18,7 @@ import { IVoltHostToolProvider } from '../../common/hostTools.js';
 import { IOrchStartTurnRequest, IOrchTurnHost } from '../../common/orchestration/orchestrator.js';
 import { IVoltSendRequest } from '../../common/session.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { VoltAccessMode } from '../../common/access/accessModes.js';
 
 /** A runtime that runs nothing: the test starts and ends runs and says what the reply was. */
 class FakeRuntime {
@@ -35,6 +36,7 @@ class FakeRuntime {
 			{ ref: 'agent:cursor', kind: 'agent', providerId: 'cursor', profileId: 'p', id: 'grok', label: 'Cursor Grok 4.6', enabled: true },
 		];
 	}
+	listProviderStatuses() { return [{ profileId: 'p', label: 'Claude' }]; }
 	canSteer() { return false; }
 	steer() { return false; }
 	chatFor(id: string) { return id; }
@@ -43,6 +45,9 @@ class FakeRuntime {
 	readonly sandboxes = new Map<string, IVoltSandboxSettings>();
 	getSandboxSettings(threadId: string): IVoltSandboxSettings { return this.sandboxes.get(threadId) ?? DEFAULT_SANDBOX_SETTINGS; }
 	async setSandboxSettings(threadId: string, settings: IVoltSandboxSettings) { this.sandboxes.set(threadId, settings); }
+	readonly access = new Map<string, VoltAccessMode>();
+	getAccessMode(threadId?: string): VoltAccessMode { return (threadId ? this.access.get(threadId) : undefined) ?? 'supervised'; }
+	async setAccessMode(mode: VoltAccessMode, threadId?: string) { this.access.set(threadId ?? '', mode); }
 	getOrCreateSession(threadId: string) {
 		const reply = this.replies.get(threadId);
 		return { providerRef: undefined, messages: reply ? [{ role: 'assistant', content: reply }] : [] };
@@ -219,6 +224,30 @@ suite('Agent orchestrator service', () => {
 		assert.ok(wake?.turn.prompt.text.includes('README written: 40 lines.'));
 	});
 
+	test('the parts of one delegate_task call wake the idle parent once, with both reports', async () => {
+		const { service, runtime, host, tool } = await setup();
+		await service.submit('parent', { text: 'do both' }, 'auto', 'p1');
+		await settle();
+		const started = await tool('parent', 'delegate_task', { tasks: [{ task: 'Fix a.ts', title: 'Fix a' }, { task: 'Review b.ts', title: 'Review b' }] });
+		assert.match(started, /delivered to this chat together once all of them have finished/);
+		await settle();
+		const [first, second] = service.tasksOf('parent');
+		assert.ok(first.batch && first.batch === second.batch, 'both parts carry the call\'s batch id');
+		await tool('parent', 'delegate_task', { task: 'Count the tests' });
+		assert.strictEqual(service.tasksOf('parent')[2].batch, undefined, 'a single task is not a batch');
+
+		runtime.finish('parent', 'Started them.');
+		await settle();
+		runtime.finish(first.childId!, 'a.ts fixed.');
+		await settle();
+		const wakes = () => host.started.filter(request => request.threadId === 'parent' && request.turn.kind === 'notification');
+		assert.strictEqual(wakes().length, 0, 'one part done: the parent sleeps on');
+		runtime.finish(second.childId!, 'b.ts has one bug.');
+		await settle();
+		assert.strictEqual(wakes().length, 1);
+		assert.ok(wakes()[0].turn.prompt.text.includes('a.ts fixed.') && wakes()[0].turn.prompt.text.includes('b.ts has one bug.'));
+	});
+
 	test('a subagent of a sandboxed chat is confined at least as tightly before its first turn', async () => {
 		const { service, runtime, host, tool } = await setup();
 		runtime.sandboxes.set('parent', { level: 'read-only', network: false });
@@ -234,6 +263,39 @@ suite('Agent orchestrator service', () => {
 		assert.deepStrictEqual(runtime.getSandboxSettings(task.childId!), { level: 'read-only', network: false }, 'confined before the host starts it');
 		gate.complete();
 		await settle();
+	});
+
+	test('a subagent asks for approval as its parent chat does: a Full access parent\'s subagent does not stop for approvals', async () => {
+		const { service, runtime, host, tool } = await setup();
+		runtime.access.set('parent', 'full-access');
+		const gate = new DeferredPromise<void>();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		host.gate = gate.p;
+		await tool('parent', 'delegate_task', { task: 'Fix a.ts' });
+		await settle();
+		const task = service.tasksOf('parent')[0];
+		assert.ok(host.started.some(request => request.threadId === task.childId), 'its brief turn is starting');
+		assert.strictEqual(runtime.getAccessMode(task.childId!), 'full-access', 'set before the host starts it');
+		gate.complete();
+		await settle();
+		// The user tightens the parent: the next round follows.
+		runtime.access.set('parent', 'supervised');
+		runtime.finish(task.childId!, 'Fixed.');
+		await settle();
+		await tool('parent', 'message_task', { task_id: task.id, message: 'Also b.ts' });
+		await settle();
+		assert.strictEqual(runtime.getAccessMode(task.childId!), 'supervised');
+	});
+
+	test('delegate_task takes the names agents use for a brief and a model, and a refusal lists the models', async () => {
+		const { service, tool } = await setup();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		const started = await tool('parent', 'delegate_task', { tasks: [{ prompt: 'In /tmp/repo: fix a.ts', model: 'Claude Opus 5.5' }, { prompt: 'Review b.ts', description: 'Review b', model: 'cursor grok 4.6' }] });
+		assert.match(started, /Started 2 of 2 tasks/);
+		assert.deepStrictEqual(service.tasksOf('parent').map(task => [task.title, task.modelLabel]), [['Fix a.ts', 'Claude Opus 5.5'], ['Review b', 'Cursor Grok 4.6']]);
+		assert.match(await tool('parent', 'delegate_task', { task: 'x', model: 'GPT 9' }), /No connected model matches "GPT 9". Pass one of: "Claude Opus 5.5" \(Claude\), "Cursor Grok 4.6"/);
 	});
 
 	test('a subagent\'s checks run in its checkout before its report wakes the parent', async () => {
@@ -339,6 +401,48 @@ suite('Agent orchestrator service', () => {
 		assert.ok(brief?.turn.prompt.text.includes('Found: missing null check in login().'), 'the new reviewer sees the previous report');
 		assert.ok(brief?.turn.prompt.text.includes('round 2'));
 		assert.match(await tool('parent', 'delegate_task', { task: 'x', previous_task_id: 't-000000' }), /No task t-000000/);
+	});
+
+	test('a batch of subagents is saved in a couple of writes, each started once its own state is on disk, and a restart reads every one back', async () => {
+		const first = await setup();
+		await first.service.submit('parent', { text: 'split it' }, 'auto', 'p1');
+		await settle();
+		const rootFile = URI.file('/user/voltOrchestrator/roots/parent.json');
+		let writes = 0;
+		const write = first.fileService.writeFile.bind(first.fileService);
+		first.fileService.writeFile = (...args: Parameters<FileService['writeFile']>) => {
+			writes++;
+			return write(...args);
+		};
+		// No child starts before the saved tree holds its task.
+		const unsaved: string[] = [];
+		const startTurn = first.host.startTurn.bind(first.host);
+		first.host.startTurn = async request => {
+			const saved = (await first.fileService.readFile(rootFile)).value.toString();
+			if (!saved.includes(request.threadId)) {
+				unsaved.push(request.threadId);
+			}
+			return startTurn(request);
+		};
+		const brief = 'x'.repeat(2_000);
+		const result = await first.tool('parent', 'delegate_task', { tasks: Array.from({ length: 6 }, (_, i) => ({ task: `${brief} part ${i}`, title: `Part ${i}` })) });
+		assert.match(result, /Started 6 of 6 tasks/);
+		await settle();
+		await timeout(50);
+		const tasks = first.service.tasksOf('parent');
+		assert.strictEqual(tasks.filter(task => task.state === 'running').length, 6);
+		assert.deepStrictEqual(unsaved, []);
+		assert.ok(writes <= 3, `6 spawns took ${writes} writes`);
+		assert.ok(first.service.getThread(tasks[0].childId!)?.active?.prompt.text.includes(brief), 'the turn itself keeps the whole brief');
+		await timeout(300);
+
+		const saved = JSON.parse((await first.fileService.readFile(rootFile)).value.toString()) as { events: { event: { turn?: { prompt: { text: string } }; item?: { prompt: { text: string } } } }[] };
+		const prompts = saved.events.map(envelope => envelope.event.turn?.prompt.text ?? envelope.event.item?.prompt.text).filter((text): text is string => !!text);
+		assert.ok(prompts.length > 0);
+		assert.ok(prompts.every(text => text.length < 500), 'the audit trail keeps prompts short');
+		const second = await setup({ fileService: first.fileService });
+		await settle();
+		assert.strictEqual(second.service.tasksOf('parent').length, 6, 'every task was saved');
 	});
 
 	test('a harness subagent is tracked from the Task call and ends with its parent turn', async () => {

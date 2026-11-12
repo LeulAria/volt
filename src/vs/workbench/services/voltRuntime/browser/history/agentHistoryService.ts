@@ -986,7 +986,6 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		}
 	}
 
-	/** @internal */
 	isSubagentSession(id: string): boolean {
 		return this.pinnedSubagents.has(id) || !!this.sessions.get(id)?.subagent;
 	}

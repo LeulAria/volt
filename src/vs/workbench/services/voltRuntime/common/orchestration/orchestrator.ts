@@ -385,6 +385,11 @@ export interface IOrchTask {
 	/** The team it is a member of (`spawn_team`, `council`): its teammates share the id and a board. */
 	readonly team?: string;
 	/**
+	 * The delegate_task call that started it with others (`tasks`, `models`): their reports reach the
+	 * parent together once none of them is queued or running, as one wake-up instead of one each.
+	 */
+	readonly batch?: string;
+	/**
 	 * Its report is not delivered to the parent: later tasks read it through `after` (a council's
 	 * answers and reviews; only the verdict reaches the chat). task_status still shows it.
 	 */
@@ -475,6 +480,8 @@ export interface IOrchTaskSpawn {
 	readonly blind?: readonly string[];
 	/** The team it joins (`IOrchTask.team`). Team spawns count against `maxTeamAgents`, not `maxSpawnsPerTurn`. */
 	readonly team?: string;
+	/** The call that started it with others (`IOrchTask.batch`). */
+	readonly batch?: string;
 	/** Its report reaches only the tasks that wait on it (`IOrchTask.quiet`). */
 	readonly quiet?: boolean;
 	/** Commands Volt runs before the report goes up (`IOrchTask.verify`). */

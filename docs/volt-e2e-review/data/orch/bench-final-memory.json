@@ -1,0 +1,591 @@
+{
+  "store": "memory",
+  "runs": 30,
+  "at": "2026-11-12T09:39:13.169Z",
+  "commit": "9dd62762a4f",
+  "submitToStart": {
+    "ms": {
+      "n": 30,
+      "mean": 0.48,
+      "p50": 0.372,
+      "p90": 0.605,
+      "min": 0.257,
+      "max": 3.261
+    },
+    "writes": {
+      "n": 30,
+      "mean": 2,
+      "p50": 2,
+      "p90": 2,
+      "min": 2,
+      "max": 2
+    },
+    "bytes": {
+      "n": 30,
+      "mean": 1014,
+      "p50": 1014,
+      "p90": 1014,
+      "min": 1014,
+      "max": 1014
+    }
+  },
+  "delegateToChildStart": {
+    "toolReturnMs": {
+      "n": 30,
+      "mean": 0.321,
+      "p50": 0.213,
+      "p90": 0.405,
+      "min": 0.162,
+      "max": 2.113
+    },
+    "childStartMs": {
+      "n": 30,
+      "mean": 0.359,
+      "p50": 0.244,
+      "p90": 0.465,
+      "min": 0.183,
+      "max": 2.301
+    },
+    "writes": {
+      "n": 30,
+      "mean": 1,
+      "p50": 1,
+      "p90": 1,
+      "min": 1,
+      "max": 1
+    },
+    "bytes": {
+      "n": 30,
+      "mean": 9064,
+      "p50": 9064,
+      "p90": 9064,
+      "min": 9064,
+      "max": 9064
+    },
+    "toolResultChars": {
+      "n": 30,
+      "mean": 288,
+      "p50": 288,
+      "p90": 288,
+      "min": 288,
+      "max": 288
+    },
+    "childPromptChars": {
+      "n": 30,
+      "mean": 3259,
+      "p50": 3259,
+      "p90": 3259,
+      "min": 3259,
+      "max": 3259
+    }
+  },
+  "childEndToParentWake": {
+    "ms": {
+      "n": 30,
+      "mean": 0.329,
+      "p50": 0.296,
+      "p90": 0.465,
+      "min": 0.236,
+      "max": 0.659
+    },
+    "writes": {
+      "n": 30,
+      "mean": 1,
+      "p50": 1,
+      "p90": 1,
+      "min": 1,
+      "max": 1
+    },
+    "bytes": {
+      "n": 30,
+      "mean": 8135,
+      "p50": 8135,
+      "p90": 8135,
+      "min": 8135,
+      "max": 8135
+    },
+    "wakePromptChars": {
+      "n": 30,
+      "mean": 684,
+      "p50": 684,
+      "p90": 684,
+      "min": 684,
+      "max": 684
+    },
+    "reportChars": {
+      "n": 30,
+      "mean": 245,
+      "p50": 245,
+      "p90": 245,
+      "min": 245,
+      "max": 245
+    }
+  },
+  "waitTasksReturn": {
+    "ms": {
+      "n": 30,
+      "mean": 0.245,
+      "p50": 0.244,
+      "p90": 0.303,
+      "min": 0.178,
+      "max": 0.335
+    },
+    "resultChars": {
+      "n": 30,
+      "mean": 363,
+      "p50": 363,
+      "p90": 363,
+      "min": 363,
+      "max": 363
+    }
+  },
+  "fanOut5": {
+    "toolReturnMs": {
+      "n": 10,
+      "mean": 0.575,
+      "p50": 0.483,
+      "p90": 1.037,
+      "min": 0.406,
+      "max": 1.037
+    },
+    "firstChildMs": {
+      "n": 10,
+      "mean": 0.77,
+      "p50": 0.648,
+      "p90": 1.224,
+      "min": 0.581,
+      "max": 1.224
+    },
+    "allChildrenMs": {
+      "n": 10,
+      "mean": 0.845,
+      "p50": 0.714,
+      "p90": 1.343,
+      "min": 0.64,
+      "max": 1.343
+    },
+    "writes": {
+      "n": 10,
+      "mean": 2,
+      "p50": 2,
+      "p90": 2,
+      "min": 2,
+      "max": 2
+    },
+    "kbWritten": {
+      "n": 10,
+      "mean": 46.146,
+      "p50": 46.146,
+      "p90": 46.146,
+      "min": 46.146,
+      "max": 46.146
+    },
+    "writeMs": {
+      "n": 10,
+      "mean": 0.273,
+      "p50": 0.271,
+      "p90": 0.401,
+      "min": 0.195,
+      "max": 0.401
+    },
+    "toolResultChars": {
+      "n": 10,
+      "mean": 868,
+      "p50": 868,
+      "p90": 868,
+      "min": 868,
+      "max": 868
+    },
+    "allDoneToWakeMs": {
+      "n": 10,
+      "mean": 3.977,
+      "p50": 0.51,
+      "p90": 34.863,
+      "min": 0.398,
+      "max": 34.863
+    },
+    "parentWakes": {
+      "n": 10,
+      "mean": 1,
+      "p50": 1,
+      "p90": 1,
+      "min": 1,
+      "max": 1
+    },
+    "wakePromptChars": {
+      "n": 10,
+      "mean": 2231,
+      "p50": 2231,
+      "p90": 2231,
+      "min": 2231,
+      "max": 2231
+    }
+  },
+  "fanOut10": {
+    "toolReturnMs": {
+      "n": 10,
+      "mean": 0.819,
+      "p50": 0.651,
+      "p90": 1.241,
+      "min": 0.588,
+      "max": 1.241
+    },
+    "firstChildMs": {
+      "n": 10,
+      "mean": 1.184,
+      "p50": 0.983,
+      "p90": 1.631,
+      "min": 0.909,
+      "max": 1.631
+    },
+    "allChildrenMs": {
+      "n": 10,
+      "mean": 1.346,
+      "p50": 1.233,
+      "p90": 1.822,
+      "min": 1.017,
+      "max": 1.822
+    },
+    "writes": {
+      "n": 10,
+      "mean": 2,
+      "p50": 2,
+      "p90": 2,
+      "min": 2,
+      "max": 2
+    },
+    "kbWritten": {
+      "n": 10,
+      "mean": 83.955,
+      "p50": 83.955,
+      "p90": 83.955,
+      "min": 83.955,
+      "max": 83.955
+    },
+    "writeMs": {
+      "n": 10,
+      "mean": 0.572,
+      "p50": 0.48,
+      "p90": 0.888,
+      "min": 0.387,
+      "max": 0.888
+    },
+    "toolResultChars": {
+      "n": 10,
+      "mean": 1492,
+      "p50": 1492,
+      "p90": 1492,
+      "min": 1492,
+      "max": 1492
+    },
+    "allDoneToWakeMs": {
+      "n": 10,
+      "mean": 0.72,
+      "p50": 0.682,
+      "p90": 1.095,
+      "min": 0.639,
+      "max": 1.095
+    },
+    "parentWakes": {
+      "n": 10,
+      "mean": 1,
+      "p50": 1,
+      "p90": 1,
+      "min": 1,
+      "max": 1
+    },
+    "wakePromptChars": {
+      "n": 10,
+      "mean": 4078,
+      "p50": 4078,
+      "p90": 4078,
+      "min": 4078,
+      "max": 4078
+    }
+  },
+  "fanOut20": {
+    "toolReturnMs": {
+      "n": 10,
+      "mean": 1.578,
+      "p50": 1.378,
+      "p90": 2.288,
+      "min": 1.297,
+      "max": 2.288
+    },
+    "firstChildMs": {
+      "n": 10,
+      "mean": 1.856,
+      "p50": 1.659,
+      "p90": 2.582,
+      "min": 1.559,
+      "max": 2.582
+    },
+    "allChildrenMs": {
+      "n": 10,
+      "mean": 4.488,
+      "p50": 2.329,
+      "p90": 24.137,
+      "min": 1.953,
+      "max": 24.137
+    },
+    "writes": {
+      "n": 10,
+      "mean": 2,
+      "p50": 2,
+      "p90": 2,
+      "min": 2,
+      "max": 2
+    },
+    "kbWritten": {
+      "n": 10,
+      "mean": 160.829,
+      "p50": 160.829,
+      "p90": 160.829,
+      "min": 160.829,
+      "max": 160.829
+    },
+    "writeMs": {
+      "n": 10,
+      "mean": 1.008,
+      "p50": 0.843,
+      "p90": 1.699,
+      "min": 0.784,
+      "max": 1.699
+    },
+    "toolResultChars": {
+      "n": 10,
+      "mean": 2752,
+      "p50": 2752,
+      "p90": 2752,
+      "min": 2752,
+      "max": 2752
+    },
+    "allDoneToWakeMs": {
+      "n": 10,
+      "mean": 1.37,
+      "p50": 1.38,
+      "p90": 1.726,
+      "min": 1.161,
+      "max": 1.726
+    },
+    "parentWakes": {
+      "n": 10,
+      "mean": 1,
+      "p50": 1,
+      "p90": 1,
+      "min": 1,
+      "max": 1
+    },
+    "wakePromptChars": {
+      "n": 10,
+      "mean": 7778,
+      "p50": 7778,
+      "p90": 7778,
+      "min": 7778,
+      "max": 7778
+    }
+  },
+  "staggered3_oneCall": {
+    "parentWakes": {
+      "n": 10,
+      "mean": 1,
+      "p50": 1,
+      "p90": 1,
+      "min": 1,
+      "max": 1
+    },
+    "wakePromptCharsTotal": {
+      "n": 10,
+      "mean": 1316,
+      "p50": 1316,
+      "p90": 1316,
+      "min": 1316,
+      "max": 1316
+    },
+    "lastChildDoneToLastWakeMs": {
+      "n": 10,
+      "mean": 0.364,
+      "p50": 0.359,
+      "p90": 0.481,
+      "min": 0.304,
+      "max": 0.481
+    },
+    "firstWakeAfterLastChild": {
+      "n": 10,
+      "mean": 1,
+      "p50": 1,
+      "p90": 1,
+      "min": 1,
+      "max": 1
+    }
+  },
+  "staggered3_separateCalls": {
+    "parentWakes": {
+      "n": 10,
+      "mean": 3,
+      "p50": 3,
+      "p90": 3,
+      "min": 3,
+      "max": 3
+    },
+    "wakePromptCharsTotal": {
+      "n": 10,
+      "mean": 2114,
+      "p50": 2114,
+      "p90": 2114,
+      "min": 2114,
+      "max": 2114
+    },
+    "lastChildDoneToLastWakeMs": {
+      "n": 10,
+      "mean": 0.26,
+      "p50": 0.252,
+      "p90": 0.317,
+      "min": 0.219,
+      "max": 0.317
+    },
+    "firstWakeAfterLastChild": {
+      "n": 10,
+      "mean": 0,
+      "p50": 0,
+      "p90": 0,
+      "min": 0,
+      "max": 0
+    }
+  },
+  "afterChain5": {
+    "meanHopMs": {
+      "n": 10,
+      "mean": 0.267,
+      "p50": 0.254,
+      "p90": 0.489,
+      "min": 0.185,
+      "max": 0.489
+    },
+    "lastBriefChars": {
+      "n": 10,
+      "mean": 3478,
+      "p50": 3478,
+      "p90": 3478,
+      "min": 3478,
+      "max": 3478
+    }
+  },
+  "toolTokens": {
+    "tasks": {
+      "tools": 7,
+      "chars": 12595,
+      "estTokens": 3149
+    },
+    "threads": {
+      "tools": 21,
+      "chars": 16869,
+      "estTokens": 4217
+    },
+    "orchestra": {
+      "tools": 6,
+      "chars": 11512,
+      "estTokens": 2878
+    },
+    "hostCore": {
+      "tools": 28,
+      "chars": 38432,
+      "estTokens": 9608
+    },
+    "terminal": {
+      "tools": 8,
+      "chars": 4354,
+      "estTokens": 1089
+    },
+    "memory": {
+      "tools": 5,
+      "chars": 3456,
+      "estTokens": 864
+    },
+    "jobs": {
+      "tools": 2,
+      "chars": 2501,
+      "estTokens": 625
+    },
+    "watchedTasks": {
+      "tools": 3,
+      "chars": 2613,
+      "estTokens": 653
+    },
+    "codeIntel": {
+      "tools": 3,
+      "chars": 2887,
+      "estTokens": 722
+    },
+    "ide": {
+      "tools": 4,
+      "chars": 7261,
+      "estTokens": 1815
+    },
+    "devices": {
+      "tools": 13,
+      "chars": 10422,
+      "estTokens": 2606
+    },
+    "capture": {
+      "tools": 4,
+      "chars": 1575,
+      "estTokens": 394
+    },
+    "desktop": {
+      "tools": 3,
+      "chars": 4714,
+      "estTokens": 1179
+    },
+    "playground": {
+      "tools": 4,
+      "chars": 4693,
+      "estTokens": 1173
+    },
+    "allStatic": {
+      "tools": 111,
+      "chars": 123884,
+      "estTokens": 30971
+    },
+    "perTool": {
+      "list_models": 73,
+      "delegate_task": 2404,
+      "task_status": 116,
+      "wait_tasks": 135,
+      "cancel_task": 72,
+      "message_task": 132,
+      "handoff": 217,
+      "orchestrator_capabilities": 118,
+      "thread_list": 272,
+      "thread_search": 157,
+      "thread_read": 223,
+      "thread_send": 355,
+      "thread_wait": 187,
+      "thread_interrupt": 121,
+      "thread_fork": 360,
+      "thread_merge_back": 186,
+      "thread_launch": 616,
+      "thread_update": 196,
+      "thread_configure": 141,
+      "queue_list": 123,
+      "queue_edit": 119,
+      "queue_cancel": 107,
+      "queue_reorder": 147,
+      "queue_send_now": 134,
+      "queue_resume": 112,
+      "worktree_status": 108,
+      "worktree_list": 84,
+      "worktree_handoff": 353,
+      "orchestra_status": 161,
+      "spawn_team": 1175,
+      "team_send": 271,
+      "team_board": 369,
+      "council": 572,
+      "machine_run": 331
+    }
+  },
+  "notificationForOneReport": {
+    "chars": 686,
+    "reportChars": 245
+  }
+}

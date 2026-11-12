@@ -79,6 +79,8 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 	/** Session objects handed out, updated in place as the server's summaries change. */
 	private readonly sessions = new Map<string, IVoltSession>();
 	private readonly requested = new Set<string>();
+	/** Each chat's access mode and sandbox as last mirrored, so a change of them redraws access pickers. */
+	private readonly accessSeen = new Map<string, string>();
 	/** `/compact` plans for a model other than the chat's own, by chat and model, asked of the server once per transcript length. */
 	private readonly compactionPlans = new Map<string, { readonly key: string; plan: IVoltCompactionPlan | undefined }>();
 
@@ -120,8 +122,23 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 				this._onDidChangeActiveCatalog.fire();
 			}
 		} else if (col === 'sessions') {
+			let access = false;
 			for (const key of keys) {
 				this.refreshSession(key);
+				// A chat's own access mode and sandbox arrive in its summary, after the call that set them.
+				const summary = this.summary(key);
+				if (!summary) {
+					this.accessSeen.delete(key);
+					continue;
+				}
+				const seen = JSON.stringify([summary.accessMode, summary.sandbox]);
+				if (this.accessSeen.get(key) !== seen) {
+					access = true;
+					this.accessSeen.set(key, seen);
+				}
+			}
+			if (access) {
+				this._onDidChangeAccess.fire();
 			}
 		} else if (col === 'questions') {
 			for (const key of keys) {

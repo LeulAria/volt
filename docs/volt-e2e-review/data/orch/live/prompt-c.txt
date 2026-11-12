@@ -1,0 +1,1 @@
+Get two independent opinions, one from Claude Sonnet and one from Claude Haiku, run in parallel as subagents: "What is the single most important bug in src/c.js, and what is the fix?" Neither should change files. Then compare their answers and give me your verdict in three sentences.

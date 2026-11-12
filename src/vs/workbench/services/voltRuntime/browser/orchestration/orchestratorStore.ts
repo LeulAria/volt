@@ -24,6 +24,8 @@ const ROOTS_DIR = 'roots';
 export class OrchestratorStore {
 
 	private readonly chains = new Map<string, Promise<boolean>>();
+	/** The write of each file that waits for the one in flight; later saves join it (see `write`). */
+	private readonly queued = new Map<string, { content: () => string | undefined; result: Promise<boolean> }>();
 	private ensured: Promise<void> | undefined;
 
 	constructor(
@@ -78,11 +80,19 @@ export class OrchestratorStore {
 		return isSafeId(rootId) ? this.fileService.exists(this.rootFile(rootId)) : Promise.resolve(false);
 	}
 
-	saveRoot(snapshot: IOrchRootSnapshot): Promise<boolean> {
-		if (!isSafeId(snapshot.rootId)) {
+	/**
+	 * Writes the root as `snapshot` returns it when the write begins (undefined: nothing to write).
+	 * Saves asked for while an earlier one of the same root is still on its way share one write of
+	 * the newest state, which holds everything each of them asked to save.
+	 */
+	saveRoot(rootId: string, snapshot: () => IOrchRootSnapshot | undefined): Promise<boolean> {
+		if (!isSafeId(rootId)) {
 			return Promise.resolve(true);
 		}
-		return this.write(this.rootFile(snapshot.rootId), JSON.stringify(snapshot));
+		return this.write(this.rootFile(rootId), () => {
+			const value = snapshot();
+			return value ? JSON.stringify(value) : undefined;
+		});
 	}
 
 	deleteRoot(rootId: string): Promise<boolean> {
@@ -90,6 +100,8 @@ export class OrchestratorStore {
 			return Promise.resolve(true);
 		}
 		const file = this.rootFile(rootId);
+		// A save asked for after this delete must not join a write queued before it.
+		this.queued.delete(file.toString());
 		return this.serialize(file, async () => {
 			await this.fileService.del(file).catch(err => {
 				if (!isNotFound(err)) {
@@ -100,7 +112,8 @@ export class OrchestratorStore {
 	}
 
 	saveIndex(index: Omit<IOrchIndex, 'version'>): Promise<boolean> {
-		return this.write(this.indexFile, JSON.stringify({ version: ORCHESTRATOR_STATE_VERSION, ...index }));
+		const content = JSON.stringify({ version: ORCHESTRATOR_STATE_VERSION, ...index });
+		return this.write(this.indexFile, () => content);
 	}
 
 	/** Resolves when every write accepted so far is on disk. */
@@ -108,13 +121,34 @@ export class OrchestratorStore {
 		await Promise.all([...this.chains.values()]);
 	}
 
-	private write(file: URI, content: string): Promise<boolean> {
-		return this.serialize(file, async () => {
+	/**
+	 * One write per file at a time, in order. A write asked for while another of the same file waits
+	 * to start joins it: the waiting write takes the newest content and both callers get its result.
+	 * A burst of N saves (a batch of subagents starting) is then two writes, not N growing ones.
+	 */
+	private write(file: URI, content: () => string | undefined): Promise<boolean> {
+		const key = file.toString();
+		const waiting = this.queued.get(key);
+		if (waiting) {
+			waiting.content = content;
+			return waiting.result;
+		}
+		const entry: { content: () => string | undefined; result: Promise<boolean> } = { content, result: Promise.resolve(true) };
+		this.queued.set(key, entry);
+		entry.result = this.serialize(file, async () => {
+			if (this.queued.get(key) === entry) {
+				this.queued.delete(key);
+			}
+			const text = entry.content();
+			if (text === undefined) {
+				return;
+			}
 			await this.ensureDirectories();
 			// Atomic where the provider can (the user data folder can); a plain write elsewhere.
 			const atomic = this.fileService.hasCapability(file, FileSystemProviderCapabilities.FileAtomicWrite);
-			await this.fileService.writeFile(file, VSBuffer.fromString(content), atomic ? ATOMIC : undefined);
+			await this.fileService.writeFile(file, VSBuffer.fromString(text), atomic ? ATOMIC : undefined);
 		});
+		return entry.result;
 	}
 
 	/** Writes to one file run one at a time, in order; a failure is logged, resolves false, and never blocks the next. */

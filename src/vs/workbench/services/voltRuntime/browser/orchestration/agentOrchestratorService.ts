@@ -28,14 +28,14 @@ import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { retryDelay, RUN_START_RETRY } from '../../common/jobs/retryPolicy.js';
 import { normalizeVoltMode } from '../../common/modes.js';
-import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, contractFromArgs, verifyFromArgs, DELEGATE_TASK_TOOL_NAME, describeSpend, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, lintTaskBrief, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeContextLevel, normalizeTaskRole, stringListArg, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, TaskContextLevel, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
+import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, contractFromArgs, verifyFromArgs, DELEGATE_TASK_TOOL_NAME, delegateArgsWithAliases, matchTaskModel, describeSpend, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, lintTaskBrief, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeContextLevel, normalizeTaskRole, stringListArg, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, TaskContextLevel, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { buildParentCapsule, userRequests } from '../../common/orchestration/taskContext.js';
 import { foldSpend, ITaskSpendTracker, ITaskTokenRates, seedSpendTracker, spendUsage } from '../../common/orchestration/taskSpend.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
 import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSpawnOutcome, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, IOrchModelChoice, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_KEEP_WORKING_SETTING, ORCH_ROLE_MODELS_SETTING, ORCH_SUBAGENT_SANDBOX_SETTING, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_MAX_TEAM_AGENTS_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, orchHoldReason, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
 import { ORCH_MACHINE_CAPACITY_SETTING } from '../../common/orchestration/machineCapacity.js';
 import { ILimitSignal, isClaudeProvider, isRealAnswer, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
-import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
+import { compactEnvelope, extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { isRescueTurnId, rescueDueAt, rescueWaits } from '../../common/orchestration/rescue.js';
 import { failureRetryCount, harnessTaskId, IOrchStep, isFailureRetryTurn, limitTickWaits, runOrchCommand } from '../../common/orchestration/orchestratorDecider.js';
 import { IAgentRuntimeService } from '../../common/runtime.js';
@@ -560,7 +560,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				taskIds.forEach(taskId => tasks.add(taskId));
 				for (const rootId of this.rootsFor(envelope.event, before)) {
 					const list = this.rootEvents.get(rootId) ?? [];
-					list.push(envelope);
+					list.push(compactEnvelope(envelope));
 					if (list.length > 400) {
 						list.splice(0, list.length - 200);
 					}
@@ -672,7 +672,6 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const roots = [...this.dirtyRoots];
 		this.dirtyRoots.clear();
 		const state = this.state;
-		const now = Date.now();
 		const writes: Promise<boolean>[] = [];
 		// A write that did not land is written again (with what the state holds then), not forgotten.
 		const track = (write: Promise<boolean>, onFailure: () => void) => writes.push(write.then(ok => {
@@ -690,7 +689,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				continue;
 			}
 			this.knownRoots.add(rootId);
-			track(this.store.saveRoot(extractRoot(state, rootId, this.rootEvents.get(rootId) ?? [], now)), () => this.dirtyRoots.add(rootId));
+			// The tree as it is when the write begins (a newer state holds this one's changes too), so a
+			// burst of changes is one write. A tree let go of meanwhile (another window runs it) is not written.
+			track(this.store.saveRoot(rootId, () => Object.values(this.state.threads).some(thread => thread.rootId === rootId)
+				? extractRoot(this.state, rootId, this.rootEvents.get(rootId) ?? [], Date.now())
+				: undefined), () => this.dirtyRoots.add(rootId));
 		}
 		const index: Omit<IOrchIndex, 'version'> = {
 			seq: state.seq,
@@ -1089,6 +1092,19 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	/**
+	 * A delegated subagent asks for approval exactly as the chat that delegated to it would (every
+	 * turn: the user may switch the parent). Without this every subagent ran on the default mode
+	 * (Supervised): under a Full access parent its first edit waited for an approval in a chat the
+	 * user was not looking at, and the whole request stalled.
+	 */
+	private async inheritAccessMode(childId: string, parentId: string): Promise<void> {
+		const mode = this.runtime.getAccessMode(parentId);
+		if (this.runtime.getAccessMode(childId) !== mode) {
+			await this.runtime.setAccessMode(mode, childId);
+		}
+	}
+
+	/**
 	 * With `confine`, a subagent runs at least in its checkout's sandbox (read-only for research and
 	 * review), on top of its parent's (`confineChatSandbox`, every turn). Set before its first turn
 	 * starts the agent process, whose OS sandbox is fixed at launch.
@@ -1172,6 +1188,9 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			if (thread?.parentId) {
 				// A subagent is never confined less than the chat that delegated to it (every turn: the parent's may have tightened).
 				await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(thread.parentId));
+			}
+			if (thread?.taskId && thread.parentId) {
+				await this.inheritAccessMode(threadId, thread.parentId);
 			}
 			if (thread?.taskId && thread.parentId && turn.kind === 'brief') {
 				await this.confineSubagent(threadId, thread.parentId, this.state.tasks[thread.taskId]?.role);
@@ -1821,7 +1840,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 					return { text: this.listModels(threadId) };
 				case DELEGATE_TASK_TOOL_NAME:
 					// Taken first: a call refused below must not leave its id for the next call's row.
-					return await this.delegate(threadId, args, token, this.takeDelegateCall(threadId));
+					return await this.delegate(threadId, delegateArgsWithAliases(args), token, this.takeDelegateCall(threadId));
 				case TASK_STATUS_TOOL_NAME:
 					return { text: this.taskStatus(threadId, typeof args.task_id === 'string' ? args.task_id : undefined) };
 				case WAIT_TASKS_TOOL_NAME:
@@ -1850,15 +1869,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		if (typeof value !== 'string' || !value.trim()) {
 			return undefined;
 		}
-		const wanted = value.trim().toLowerCase();
-		const items = this.runtime.listCatalog().filter(item => item.enabled);
-		const match = items.find(item => item.ref.toLowerCase() === wanted)
-			?? items.find(item => item.id.toLowerCase() === wanted)
-			?? items.find(item => item.label.toLowerCase() === wanted)
-			?? items.find(item => `${item.label} ${item.qualifier ?? ''}`.trim().toLowerCase() === wanted)
-			?? items.find(item => item.label.toLowerCase().includes(wanted) || item.ref.toLowerCase().includes(wanted));
+		const providers = new Map(this.runtime.listProviderStatuses().map(status => [status.profileId, status.label]));
+		const items = this.runtime.listCatalog().filter(item => item.enabled).map(item => ({ ...item, providerLabel: providers.get(item.profileId) }));
+		const match = matchTaskModel(items, value);
 		if (!match) {
-			throw new Error(`No connected model matches "${value}". Call list_models for the exact values.`);
+			// The choices go with the refusal: the next call can name one without a list_models round trip.
+			const choices = items.slice(0, 24).map(item => `"${item.label}"${item.providerLabel ? ` (${item.providerLabel})` : ''}`).join(', ');
+			throw new Error(`No connected model matches "${value}". Pass one of: ${choices}${items.length > 24 ? ', ... (list_models has all)' : ''}.`);
 		}
 		return { ref: match.ref, label: match.label, providerId: match.providerId };
 	}
@@ -2014,7 +2031,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return outcomes;
 	}
 
-	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, toolCallId: string | undefined, single = false): Promise<IVoltHostToolResult & { readonly taskId?: string; readonly reused?: boolean }> {
+	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, toolCallId: string | undefined, single = false, batch?: string): Promise<IVoltHostToolResult & { readonly taskId?: string; readonly reused?: boolean }> {
 		if (Array.isArray(args.tasks) && args.tasks.length && !single) {
 			return this.delegateBatch(parentId, args, args.tasks, token, toolCallId);
 		}
@@ -2088,6 +2105,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				...(budgetUsd !== undefined ? { budgetUsd } : {}),
 				...(fallbacks.length ? { fallbacks } : {}),
 				...(team ? { team } : {}),
+				...(batch && !team ? { batch } : {}),
 				...(blind.length ? { blind } : {}),
 				...(quiet ? { quiet: true } : {}),
 				...(verify.length ? { verify } : {}),
@@ -2190,6 +2208,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			this.resolveFallbacks(entry.fallback_models ?? args.fallback_models, undefined);
 		}
 		const key = typeof args.client_request_id === 'string' && args.client_request_id.trim() ? args.client_request_id.trim() : undefined;
+		// The parts report together (`IOrchTask.batch`).
+		const batch = entries.length > 1 ? `b-${generateUuid()}` : undefined;
 		const ids: string[] = [];
 		const lines: string[] = [];
 		// The task each entry started, by position, for later entries' `after`.
@@ -2216,7 +2236,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				...Object.fromEntries(ENTRY_CONTRACT_KEYS.filter(name => entry[name] !== undefined).map(name => [name, entry[name]])),
 				after,
 				client_request_id: key ? `${key}:${index}` : undefined,
-			}, token, toolCallId, true);
+			}, token, toolCallId, true, batch);
 			const id = result.error ? undefined : /\b(t-[0-9a-f]{6})\b/.exec(result.text ?? '')?.[1];
 			byIndex.push(id);
 			if (id) {
@@ -2241,7 +2261,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				`Started ${tasks.length} of ${entries.length} tasks:`,
 				...lines,
 				...tasks.map(task => describeTask(task, now, { includeResult: isTerminalTaskState(task.state) })),
-				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat as they finish: end your turn now unless there is other work to do. wait_tasks returns them sooner if you cannot continue without them.',
+				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat together once all of them have finished: end your turn now unless there is other work to do. wait_tasks (any=true for the first) returns them sooner if you cannot continue without them.',
 			].filter(Boolean).join('\n'),
 		};
 	}
@@ -2258,6 +2278,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const models = names.map(name => this.resolveModel(name)!);
 		const key = typeof args.client_request_id === 'string' && args.client_request_id.trim() ? args.client_request_id.trim() : undefined;
 		const baseTitle = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 60) : titleFromBrief(String(args.task));
+		const batch = `b-${generateUuid()}`;
 		const ids: string[] = [];
 		const lines: string[] = [];
 		for (const model of models) {
@@ -2268,7 +2289,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				wait: false,
 				title: `${baseTitle} · ${model.label}`,
 				...(key ? { client_request_id: `${key}:${model.ref}` } : {}),
-			}, token, toolCallId, true);
+			}, token, toolCallId, true, batch);
 			const id = /\b(t-[0-9a-f]{6})\b/.exec(result.text ?? '')?.[1];
 			if (id) {
 				ids.push(id);
@@ -2289,7 +2310,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				`Started the same brief on ${ids.length} models:`,
 				...lines,
 				...tasks.map(task => describeTask(task, now, { includeResult: isTerminalTaskState(task.state) })),
-				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat as they finish; you may end your turn. wait_tasks returns them sooner if you need them now.',
+				finished.length === tasks.length ? '' : 'Their reports are delivered to this chat together once all of them have finished; you may end your turn. wait_tasks returns them sooner if you need them now.',
 			].filter(Boolean).join('\n'),
 		};
 	}
