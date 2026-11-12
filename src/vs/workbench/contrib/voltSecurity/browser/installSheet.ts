@@ -266,7 +266,9 @@ export function showInstallSheet(layoutService: ILayoutService, instantiationSer
 			const titles = append(head, $('.titles'));
 			append(titles, $('h2')).textContent = request.install
 				? localize('voltSheet.installAsk', "Install {0}?", request.extensionName)
-				: localize('voltSheet.ask', "{0} asks for these permissions", request.extensionName);
+				: !request.groups.length && request.findings?.length
+					? localize('voltSheet.foundTitle', "What Volt found in {0}'s code", request.extensionName)
+					: localize('voltSheet.ask', "{0} asks for these permissions", request.extensionName);
 			append(titles, $('.meta')).textContent = localize('voltSheet.meta', "Extension by {0}", request.publisher);
 			const sandbox = request.install?.sandbox;
 			if (sandbox) {
@@ -422,7 +424,10 @@ export class InstallSheetContribution extends Disposable implements IWorkbenchCo
 				const reviewed = this.storage.getBoolean(installReviewKey(extension.identifier.value, groups), StorageScope.APPLICATION, false);
 				const forGroups = groups.length > 0 && !reviewed;
 				const forScan = high.length > 0 && !(reviewed && this.sandbox.isOptedIn(extension.identifier.value));
-				if (!forGroups && !forScan) {
+				// Reviewed and put in a sandbox before install: the review saw only the manifest (the code was
+				// not unpacked yet), so what the scan found is said once now, with nothing to grant.
+				const tellOnly = high.length > 0 && !forGroups && !forScan;
+				if (!forGroups && !forScan && !tellOnly) {
 					return;
 				}
 				const key = installSheetKey(subject, groups) + (high.length ? `.${codeScanDigest(high)}` : '');
@@ -430,7 +435,7 @@ export class InstallSheetContribution extends Disposable implements IWorkbenchCo
 					return;
 				}
 				this.shown.add(key);
-				return this.ask(extension, subject, groups, key, scan ? summarizeFindings(scan.findings) : []);
+				return this.ask(extension, subject, tellOnly ? [] : groups, key, scan ? summarizeFindings(scan.findings) : []);
 			});
 		}
 	}

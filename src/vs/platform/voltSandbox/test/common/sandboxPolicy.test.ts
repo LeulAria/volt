@@ -245,6 +245,10 @@ suite('Volt sandbox denials', () => {
 		assert.ok(isNoiseDenial({ kind: 'read', target: '/private/var/run/utmpx', source: 'os' }));
 		assert.ok(isNoiseDenial({ kind: 'write', target: '/var/run/utmp', source: 'os' }));
 		assert.ok(!isNoiseDenial({ kind: 'write', target: '/private/var/run/notes.txt', source: 'os' }));
+		// Claude Code's start-up knock on other sessions' sockets: still refused, no card.
+		assert.ok(isNoiseDenial({ kind: 'network', target: '/private/tmp/cc-socks/68979.sock', source: 'os' }));
+		assert.ok(!isNoiseDenial({ kind: 'network', target: '/private/tmp/other/68979.sock', source: 'os' }));
+		assert.ok(!isNoiseDenial({ kind: 'write', target: '/private/tmp/cc-socks/68979.sock', source: 'os' }));
 		assert.strictEqual(describeDenial({ kind: 'write', target: '/Users/me/notes.txt', source: 'os' }, '/Users/me'), 'Sandbox blocked a write to ~/notes.txt');
 		assert.strictEqual(folderToAllow('/Users/me/out/a.txt', false), '/Users/me/out');
 		assert.strictEqual(folderToAllow('/Users/me/out/', true), '/Users/me/out');
