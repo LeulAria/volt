@@ -67,6 +67,17 @@ export function lspAllowedFor(configuration: IConfigurationService, inWorktree: 
 	return !inWorktree || configuration.getValue<boolean>(LSP_WORKTREES_SETTING) === true;
 }
 
+/**
+ * Whether `path` is a worktree checkout Volt made for a chat (`~/.volt/worktrees/<repo>/<checkout>`),
+ * which `volt.codeIntelligence.lsp.worktrees` governs. Callers asked "is it outside this window's
+ * folders" instead, but the agent window usually has no folder open: every chat on a project was
+ * taken for a worktree, and code_nav, diagnostics and code_action answered "language servers are
+ * off for this checkout" (hotel benchmark, round 2).
+ */
+export function isVoltWorktreePath(path: string): boolean {
+	return /[\\/]\.volt[\\/]worktrees[\\/]/.test(path);
+}
+
 export function rtkEnabled(configuration: IConfigurationService): boolean {
 	return configuration.getValue<boolean>(RTK_ENABLED_SETTING) !== false;
 }
@@ -136,6 +147,8 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: INSTANT_GREP_TOOL_NAME,
 		title: 'Searched code',
 		group: 'core',
+		// Agents reach for it on most code questions; behind tool search each run spent a turn loading it.
+		alwaysLoad: true,
 		description: [
 			'Regex or literal search over the project\'s files, answered from Volt\'s local trigram index: milliseconds even in very large repos, where ripgrep re-reads every file.',
 			'Same semantics as ripgrep (honors .gitignore, case-insensitive unless case_sensitive). Results are grouped by file with line numbers.',
@@ -162,6 +175,7 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: FIND_SYMBOL_TOOL_NAME,
 		title: 'Found symbol',
 		group: 'core',
+		alwaysLoad: true,
 		description: [
 			'Where functions, classes, interfaces, types, methods and constants are declared, by name, across the whole project. Instant, from Volt\'s code index; no language server needed.',
 			'match "exact" (default), "prefix", or "fuzzy" (camel-case and substring: "usrSvc" finds UserService).',

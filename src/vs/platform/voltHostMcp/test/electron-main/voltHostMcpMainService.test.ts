@@ -21,7 +21,7 @@ interface IReply {
 interface IRpcReply {
 	readonly result: {
 		readonly serverInfo: { readonly name: string };
-		readonly tools: { name: string; group?: string }[];
+		readonly tools: { name: string; group?: string; _meta?: Record<string, unknown> }[];
 		readonly content: readonly { readonly text: string }[];
 		readonly isError?: boolean;
 	};
@@ -51,7 +51,7 @@ function post(url: string, body: unknown, headers: Record<string, string> = {}, 
 
 const INIT = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26' } };
 const TOOLS = [
-	{ name: 'ask_question', description: 'q', inputSchema: { type: 'object' }, group: 'core' },
+	{ name: 'ask_question', description: 'q', inputSchema: { type: 'object' }, group: 'core', _meta: { 'anthropic/alwaysLoad': true } },
 	{ name: 'browser_snapshot', description: 's', inputSchema: { type: 'object' }, group: 'browser' },
 ];
 
@@ -274,6 +274,7 @@ suite('Volt host MCP server', () => {
 			assert.deepStrictEqual((await list('')).map(tool => tool.name), ['ask_question', 'browser_snapshot']);
 			assert.deepStrictEqual((await list('?groups=core', ['core'])).map(tool => tool.name), ['ask_question']);
 			assert.ok((await list('')).every(tool => tool.group === undefined), 'groups stay internal');
+			assert.deepStrictEqual((await list('')).map(tool => tool._meta?.['anthropic/alwaysLoad']), [true, undefined], 'a tool\'s _meta is listed, so Claude Code keeps it out of its tool search');
 
 			const called = await post(`${endpoint.url}/chat%201`, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'browser_snapshot', arguments: { interactive: true } } }, auth());
 			assert.strictEqual((JSON.parse(called.body) as IRpcReply).result.content[0].text, 'ran browser_snapshot');

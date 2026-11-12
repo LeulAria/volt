@@ -127,8 +127,9 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 		// One line per question, so the model picks the cheapest mechanism that answers it.
 		tools.push([
 			'- Finding code, cheapest first: exact text or regex -> grep; a name you know -> find_symbol; a file name -> glob.',
-			'  Meaning -> code_nav: op inspect gives a symbol\'s type, definition with body, references by file and implementations in one call;',
-			'  callers/callees, implementations, supertypes/subtypes for structure. Locate with grep/find_symbol, resolve with code_nav, then read only the lines you need.',
+			'  How code relates -> code_nav (type-checked, no look-alikes): callers with depth 2-4 walks callers of callers to the entry points in one call;',
+			'  references on a method or field finds that member only; implementations, supertypes/subtypes for structure; inspect gives type, body and uses at once.',
+			'  Pass symbol (and path) and it finds the line. Locate with grep/find_symbol, resolve with code_nav, then read only the lines you need.',
 		].join('\n'));
 	}
 	if (policy.allowWrites && has('code_action')) {

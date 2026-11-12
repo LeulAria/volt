@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { ICodeIntelHost, ICodeLocation, ICodeNavIndex, runCodeNav } from '../../browser/tools/codeTools.js';
+import { declarationLineIn, declarationsOnly, declaredNameOn, enclosingName, ICodeIntelHost, ICodeLocation, ICodeNavIndex, outlineSymbols, runCodeAction, runCodeNav } from '../../browser/tools/codeTools.js';
 
 suite('code_nav answers', () => {
 
@@ -109,5 +109,118 @@ suite('code_nav answers', () => {
 			assert.deepStrictEqual(asked, [{ line: 7, column: 3 }]);
 			assert.ok(!result.text.includes('not 7'), result.text);
 		});
+
+		test('no line: the symbol\'s declaration in the file is used', async () => {
+			// The hotel benchmark's warm-up: { op: 'references', path, symbol: 'StateReader' } answered "This op needs line".
+			const asked: { line: number; column: number }[] = [];
+			const result = await runCodeNav(fileHost(asked), root, { op: 'definition', path: 'a.ts', symbol: 'Other.cancel' }, undefined);
+			assert.deepStrictEqual(asked, [{ line: 8, column: 9 }]);
+			assert.ok(!result.isError, result.text);
+			assert.ok(!result.text.includes(' not '), result.text);
+		});
+	});
+
+	test('declarationLineIn prefers a declaration to a use, and finds a member after its type', () => {
+		const text = ['import { StateReader } from "./query";', 'const r: StateReader = x;', 'export interface StateReader {', '  query(sql: string): Row[];', '}', 'reader.query("x");'].join('\n');
+		assert.strictEqual(declarationLineIn(text, 'StateReader'), 3);
+		assert.strictEqual(declarationLineIn(text, 'StateReader.query'), 4);
+		assert.strictEqual(declarationLineIn(text, 'nothingHere'), undefined);
+	});
+
+	test('a symbol without a path is found by its declaration; tests lose to the real one, ties are listed', async () => {
+		const ref = (path: string, line: number, name = 'StateReader', container?: string) => ({ name, kind: 'interface', uri: URI.file(`/repo/${path}`), line, column: 18, ...(container ? { container } : {}) });
+		const asked: string[] = [];
+		const lsp = (symbols: ReturnType<typeof ref>[]): ICodeIntelHost => ({ ...host([]), workspaceSymbols: async () => symbols, references: async (uri, line) => { asked.push(`${uri.path}:${line}`); return [at('x.ts', 1, 'StateReader')]; } });
+		const found = await runCodeNav(lsp([ref('packages/domain/test/fake.test.ts', 3), ref('packages/domain/src/query.ts', 41)]), root, { op: 'references', symbol: 'StateReader' }, undefined);
+		assert.ok(!found.isError, found.text);
+		assert.deepStrictEqual(asked, ['/repo/packages/domain/src/query.ts:41']);
+		const tie = await runCodeNav(lsp([ref('a/one.ts', 3), ref('b/two.ts', 9)]), root, { op: 'references', symbol: 'StateReader' }, undefined);
+		assert.strictEqual(tie.isError, true);
+		assert.ok(tie.text.startsWith('"StateReader" is declared in 2 places; pass path (and line) for the one you mean:\ninterface StateReader  a/one.ts:3\ninterface StateReader  b/two.ts:9'), tie.text);
+	});
+
+	test('a rename that would reach outside the project changes nothing', async () => {
+		// The hotel copy's node_modules link into another checkout: a rename through them would edit it.
+		let wrote = 0;
+		const write = async () => { wrote++; return { added: 1, removed: 1, text: '' }; };
+		const lsp = (paths: string[]): ICodeIntelHost => ({ ...host([]), fileText: async () => 'export function lineTotal() {}', rename: async () => paths.map(path => ({ uri: URI.file(path), before: 'lineTotal', after: 'lineAmount' })) });
+		const ctx = { signal: new AbortController().signal } as Parameters<typeof runCodeAction>[4];
+		const refused = await runCodeAction(lsp(['/repo/src/cart.ts', '/elsewhere/node_modules/pkg/cart.ts']), root, { op: 'rename', path: 'src/cart.ts', line: 1, symbol: 'lineTotal', new_name: 'lineAmount' }, write, ctx);
+		assert.strictEqual(refused.isError, true);
+		assert.ok(refused.text.includes('outside this project (/elsewhere/node_modules/pkg/cart.ts)'), refused.text);
+		assert.strictEqual(wrote, 0);
+		const done = await runCodeAction(lsp(['/repo/src/cart.ts', '/repo/test/cart.test.ts']), root, { op: 'rename', path: 'src/cart.ts', line: 1, symbol: 'lineTotal', new_name: 'lineAmount' }, write, ctx);
+		assert.ok(!done.isError, done.text);
+		assert.strictEqual(wrote, 2);
+	});
+
+	test('a line without symbol or column names what is declared on it', () => {
+		// "Pass column or symbol." answered { op: 'inspect', path, line: 43 } in the hotel benchmark.
+		const text = 'export interface StateReader {\n  query(sql: string): Row[];\n  if (x) {\n}';
+		assert.strictEqual(declaredNameOn(text, 1), 'StateReader');
+		assert.strictEqual(declaredNameOn(text, 2), 'query');
+		assert.strictEqual(declaredNameOn(text, 3), undefined);
+		assert.strictEqual(declaredNameOn(text, 9), undefined);
+	});
+
+	test('the index\'s declarations leave out import specifiers', () => {
+		const found = declarationsOnly([at('a.ts', 1, 'type StateReader,'), at('b.ts', 2, 'import type { StateReader } from "x";'), at('c.ts', 41, 'export interface StateReader {'), at('d.ts', 5, 'StateReader as Reader,')]);
+		assert.deepStrictEqual(found?.map(location => location.uri.path), ['/repo/c.ts']);
+	});
+
+	test('the outline leaves out locals and callbacks inside function bodies', () => {
+		const symbols = [
+			{ name: 'bookingsRouter', kind: 'constant', line: 1, endLine: 40, depth: 0 },
+			{ name: 'create', kind: 'property', line: 2, endLine: 20, depth: 1 },
+			{ name: 'handler() callback', kind: 'function', line: 3, endLine: 19, depth: 2 },
+			{ name: 'tenant', kind: 'variable', line: 4, endLine: 4, depth: 3 },
+			{ name: 'quote', kind: 'property', line: 21, endLine: 39, depth: 1 },
+			{ name: 'priceBooking', kind: 'function', line: 42, endLine: 60, depth: 0 },
+			{ name: 'total', kind: 'variable', line: 43, endLine: 43, depth: 1 },
+		];
+		assert.deepStrictEqual(outlineSymbols(symbols).map(symbol => symbol.name), ['bookingsRouter', 'create', 'quote', 'priceBooking']);
+		assert.strictEqual(enclosingName(symbols, 4), 'bookingsRouter.create');
+		assert.strictEqual(enclosingName(symbols, 43), 'priceBooking');
+	});
+
+	test('callers with depth walk callers of callers, and name the procedures a module-level call is in', async () => {
+		const file = (path: string) => URI.file(`/repo/${path}`);
+		const edge = (name: string, kind: string, path: string, line: number, sites: number[]) => ({ name, kind, uri: file(path), line, column: 7, sites });
+		const graph: Record<string, ReturnType<typeof edge>[]> = {
+			'/repo/lib/pricing.ts:10': [edge('priceBooking', 'function', 'services/quote.ts', 300, [362]), edge('quoteBooking', 'function', 'services/quote.ts', 788, [815])],
+			'/repo/services/quote.ts:300': [edge('index.ts', 'module', 'routers/bookings.ts', 1, [1830])],
+			'/repo/services/quote.ts:788': [edge('index.ts', 'module', 'routers/bookings.ts', 1, [1580])],
+		};
+		const routerOutline = [
+			{ name: 'bookingsRouter', kind: 'constant', line: 1500, endLine: 2100, depth: 0 },
+			{ name: 'quote', kind: 'property', line: 1576, endLine: 1582, depth: 1 },
+			{ name: 'create', kind: 'property', line: 1583, endLine: 2050, depth: 1 },
+		];
+		const lsp: ICodeIntelHost = {
+			...host([]),
+			calls: async (uri, line) => graph[`${uri.path}:${line}`] ?? [],
+			symbols: async uri => uri.path.endsWith('routers/bookings.ts') ? routerOutline : [],
+		};
+		const result = await runCodeNav(lsp, root, { op: 'callers', path: 'lib/pricing.ts', line: 10, symbol: 'resolveBookingStayRent', depth: 3 }, undefined);
+		assert.ok(!result.isError, result.text);
+		const lines = result.text.split('\n');
+		assert.ok(lines[0].startsWith('Callers of resolveBookingStayRent (lib/pricing.ts:10:3), 3 levels, 4 functions:'), result.text);
+		assert.deepStrictEqual(lines.slice(1, 5), [
+			'function priceBooking  services/quote.ts:300 (calls at 362)',
+			'  routers/bookings.ts: calls in bookingsRouter.create (1830)',
+			'function quoteBooking  services/quote.ts:788 (calls at 815)',
+			'  routers/bookings.ts: calls in bookingsRouter.quote (1580)',
+		]);
+	});
+
+	test('implementations: places typed as the interface in files the language server did not report are listed', async () => {
+		const nav: ICodeNavIndex = {
+			definitions: async () => [], outline: async () => [],
+			references: async () => [at('packages/domain/src/query.ts', 41, 'export interface StateReader {'), at('apps/api/src/sync/commands.ts', 88, 'export const postgresReader = (db: Db): StateReader => ({'), at('apps/api/src/sync/commands.ts', 23, 'import type { StateReader } from "@hotel/domain";'), at('packages/sync/src/commands.ts', 39, 'const sqliteReader: StateReader = {')],
+		};
+		const lsp: ICodeIntelHost = { ...host([]), implementations: async () => [at('packages/domain/src/memory.ts', 9, 'export class MemoryStore implements StateReader {')] };
+		const result = await runCodeNav(lsp, root, { op: 'implementations', path: 'packages/domain/src/query.ts', line: 41, symbol: 'StateReader' }, nav);
+		assert.ok(result.text.startsWith('1 implementation:\npackages/domain/src/memory.ts:9'), result.text);
+		assert.ok(result.text.includes('These 2 places type something as StateReader in files it did not report (matched by name, not type-checked):\napps/api/src/sync/commands.ts:88  export const postgresReader = (db: Db): StateReader => ({\npackages/sync/src/commands.ts:39  const sqliteReader: StateReader = {'), result.text);
 	});
 });

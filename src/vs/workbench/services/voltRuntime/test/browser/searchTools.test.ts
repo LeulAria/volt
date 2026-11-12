@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { fileFilter, formatMatches } from '../../browser/tools/searchTools.js';
+import { fileFilter, formatMatches, severalPaths } from '../../browser/tools/searchTools.js';
 
 /** grep's glob and type follow ripgrep: both apply, and `!glob` leaves files out. */
 suite('grep file filter', () => {
@@ -31,6 +31,20 @@ suite('grep file filter', () => {
 		assert.deepStrictEqual(fileFilter(undefined, 'py'), { includes: ['**/*.{py,pyi}'] });
 		assert.deepStrictEqual(fileFilter('src/**/*.ts', undefined), { includes: ['src/**/*.ts'] });
 		assert.deepStrictEqual(fileFilter(undefined, undefined), {});
+	});
+});
+
+suite('grep with several paths in one string', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('each path becomes a glob: folders cover what is under them, files stay files', () => {
+		// Hotel benchmark: path "apps/web/src/routes/... packages/api/src/routers/index.ts apps/web/src/utils/orpc.ts" answered "not indexed".
+		assert.deepStrictEqual(severalPaths('apps/web/src/routes/booking packages/api/src/routers/index.ts ./apps/web/src/utils/'), ['apps/web/src/routes/booking/**', 'packages/api/src/routers/index.ts', 'apps/web/src/utils/**']);
+		assert.strictEqual(severalPaths('apps/web/src'), undefined);
+		assert.strictEqual(severalPaths('/etc/passwd apps'), undefined, 'absolute paths are left to the path check');
+		assert.strictEqual(severalPaths('../other apps'), undefined);
+		assert.strictEqual(severalPaths(undefined), undefined);
 	});
 });
 

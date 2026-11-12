@@ -52,7 +52,7 @@ import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService, runGitThrough, VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { chatExec, IChatExec, voltExec } from '../common/execContext.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
-import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, lspAllowedFor, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
+import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, isVoltWorktreePath, lspAllowedFor, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
 import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
 import { ISearchIndex, VoltSearch } from './search/voltSearch.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
@@ -716,8 +716,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	) {
 		super();
 		this.codeIntel = this._register(createRuntimeCodeIntel(markerService, textModelService, languageFeaturesService, fileService));
-		// Worktrees are outside the workspace folders; their language servers are opt-in (Settings > Code Intelligence).
-		this.codeIntel.setLspPolicy(uri => lspAllowedFor(this.configurationService, !this.workspace.isInsideWorkspace(uri)));
+		// Volt's worktree checkouts get language servers only when opted in (Settings > Code Intelligence); projects always do.
+		this.codeIntel.setLspPolicy(uri => lspAllowedFor(this.configurationService, !this.workspace.isInsideWorkspace(uri) && isVoltWorktreePath(uri.fsPath)));
 		this.searchIndex = {
 			service: codeIndexService,
 			enabled: () => codeIndexEnabled(this.configurationService),

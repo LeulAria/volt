@@ -170,6 +170,12 @@ export interface IVoltHostToolInfo {
 	 * simulator". Unset: it runs in every mode.
 	 */
 	readonly approvalInReadOnlyModes?: string;
+	/**
+	 * Listed to MCP clients as always loaded (`_meta` `anthropic/alwaysLoad`): Claude Code then puts
+	 * it in the prompt instead of behind its tool search, where agents rarely look. For the few tools
+	 * that answer questions agents otherwise answer worse with their own tools (code_nav).
+	 */
+	readonly alwaysLoad?: boolean;
 }
 
 export interface IVoltHostToolResult {

@@ -22,7 +22,7 @@ import { ITextFileService } from '../../../../services/textfile/common/textfiles
 import { IAgentServerClientService } from '../../../../services/voltAgentServer/common/agentServerClient.js';
 import { CodeIntelHost } from '../../../../services/voltRuntime/browser/host/codeIntelHost.js';
 import { ICodeRange } from '../../../../services/voltRuntime/browser/tools/codeTools.js';
-import { lspAllowedFor } from '../../../../services/voltRuntime/common/codeIntelligence.js';
+import { isVoltWorktreePath, lspAllowedFor } from '../../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IWorkingCopyService } from '../../../../services/workingCopy/common/workingCopyService.js';
@@ -159,7 +159,7 @@ export class AgentServerWindow extends Disposable {
 			void sendFolders();
 		}
 		const host = this._register(new CodeIntelHost(accessor.get(IMarkerService), accessor.get(ITextModelService), accessor.get(ILanguageFeaturesService), accessor.get(IFileService)));
-		host.setLspPolicy(uri => lspAllowedFor(configuration, !workspace.isInsideWorkspace(uri)));
+		host.setLspPolicy(uri => lspAllowedFor(configuration, !workspace.isInsideWorkspace(uri) && isVoltWorktreePath(uri.fsPath)));
 		const allowed = (uri: unknown): uri is URI => URI.isUri(uri) && host.lspAllowed(uri);
 		// The server's `file:` URIs come in as this window names them, and the answers go back in the server's names.
 		const handle = (method: string, handler: (...args: unknown[]) => unknown) => this._register(client.registerHandler(method, async (...args) =>
