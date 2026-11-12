@@ -34,6 +34,9 @@ function sandboxUnavailableHere(): string | undefined {
 	return reason ? localize('voltAgent.sandbox.unavailableWindows', "OS sandboxing isn't available on Windows yet.") : undefined;
 }
 
+/** The permissions menu's width: its longest description, the icon, the check and the row's padding. */
+const ACCESS_MENU_WIDTH = 410;
+
 type AccessPick =
 	| { readonly kind: 'mode'; readonly mode: VoltAccessMode }
 	| { readonly kind: 'sandbox'; readonly level: VoltSandboxLevel }
@@ -106,6 +109,8 @@ export class AgentAccessPicker extends Disposable {
 				id: option.id,
 				label: option.label,
 				subtitle: option.description,
+				// The whole description when a narrow window cuts the line.
+				tooltip: option.description,
 				icon: () => createAccessIcon(option.id),
 				checked: option.id === current,
 				data: { kind: 'mode', mode: option.id },
@@ -119,7 +124,10 @@ export class AgentAccessPicker extends Disposable {
 			anchor: this.element,
 			position: 'above',
 			align: 'left',
-			width: 300,
+			// Wide and tall enough for every line whole: at 300 px four of the seven descriptions were
+			// cut, and the list scrolled with Network access hidden under Read-only.
+			width: ACCESS_MENU_WIDTH,
+			maxListHeight: 520,
 			ariaLabel: localize('voltAgent.permissions', "Permissions"),
 			className: 'volt-agent-access-menu',
 			sections,
@@ -133,7 +141,7 @@ export class AgentAccessPicker extends Disposable {
 		const unavailable = sandboxUnavailableHere();
 		const level = (id: VoltSandboxLevel, label: string, subtitle: string): IVoltMenuItem<AccessPick> => ({
 			id: `sandbox:${id}`, label, subtitle: unavailable && id !== 'off' ? unavailable : subtitle, icon: () => createSandboxIcon(id), checked: settings.level === id, data: { kind: 'sandbox', level: id },
-			...(unavailable && id !== 'off' ? { disabled: true, tooltip: unavailable } : {}),
+			...(unavailable && id !== 'off' ? { disabled: true, tooltip: unavailable } : { tooltip: subtitle }),
 		});
 		const items: IVoltMenuItem<AccessPick>[] = [
 			level('off', localize('voltAgent.sandbox.off', "Off"), localize('voltAgent.sandbox.off.desc', "The agent runs with your permissions")),

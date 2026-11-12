@@ -427,7 +427,8 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
 	delegate = { tooltip: markAsSingleton(new AgentTooltip()), current: undefined };
 	tooltipDelegates.set(doc, delegate);
 	const show = (target: HTMLElement) => {
-		const rows = tooltipRowsFor(target);
+		// A button whose menu is open says nothing: its tooltip would lie over the menu's last rows.
+		const rows = target.getAttribute('aria-expanded') === 'true' ? [] : tooltipRowsFor(target);
 		if (rows.length) {
 			const placement = target.getAttribute(TOOLTIP_PLACEMENT_ATTR);
 			const variant = target.getAttribute(TOOLTIP_VARIANT_ATTR);

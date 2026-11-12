@@ -8,7 +8,7 @@ import { mainWindow } from '../../../../../base/browser/window.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { AgentTooltip } from '../../browser/chrome/agentTooltip.js';
+import { AgentTooltip, setAgentTooltip } from '../../browser/chrome/agentTooltip.js';
 import { subagentHoverRows } from '../../browser/chrome/agentSubagents.js';
 
 suite('Agent tooltip card', () => {
@@ -35,5 +35,24 @@ suite('Agent tooltip card', () => {
 		tooltip.show(anchor, [{ label: 'Chat' }, { label: '~/repo', icon: Codicon.folder, muted: true }], { variant: 'card' });
 		assert.strictEqual(tooltip.domNode.querySelectorAll('.volt-agent-tooltip-card-note').length, 0);
 		assert.strictEqual(tooltip.domNode.querySelector('.volt-agent-tooltip-card-row .volt-agent-tooltip-label.muted')?.textContent, '~/repo');
+	});
+
+	test('a button with its menu open shows no tooltip over the menu', () => {
+		const doc = mainWindow.document;
+		const button = doc.body.appendChild(doc.createElement('button'));
+		const label = button.appendChild(doc.createElement('span'));
+		try {
+			setAgentTooltip(button, 'Ask before commands and file changes.');
+			const shown = () => [...doc.querySelectorAll('.volt-agent-tooltip:not(.hidden)')].filter(el => el.textContent?.includes('Ask before commands'));
+			label.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+			assert.strictEqual(shown().length, 1, 'closed: the tooltip shows');
+			doc.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+			button.setAttribute('aria-expanded', 'true');
+			label.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+			assert.strictEqual(shown().length, 0, 'open: nothing over the menu');
+		} finally {
+			doc.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+			button.remove();
+		}
 	});
 });
