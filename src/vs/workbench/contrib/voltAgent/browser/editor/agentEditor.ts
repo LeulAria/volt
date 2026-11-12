@@ -83,6 +83,7 @@ import { peekTurnDisplay } from '../orchestration/agentTurnDisplays.js';
 import { IAgentSubagentChatService } from '../orchestration/agentSubagentChats.js';
 import { AgentHistoryCodec, resolveActivityImage } from '../history/agentHistoryCodec.js';
 import { agentRow, dockModel, formatElapsed as formatOrchElapsed, isMultitaskTask } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
+import { orchTasksOf } from '../../../../services/voltRuntime/common/orchestration/orchestratorQueries.js';
 import { jobWakeEnd } from '../../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { harnessSubagentChatId, harnessTaskOfChat, isHarnessSubagentChatId } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { createReportStackIcon, isLiveSubagentState, isResumableSubagent, isRetryableSubagentState, ISubagentView, renderCursorSubagentRow, resumeSubagentTask, retryHarnessSubagent, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView } from '../chrome/agentSubagents.js';
@@ -193,7 +194,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { IAgentTurnReveal, onDidRequestAgentTurnReveal, takeAgentTurnReveal } from '../search/agentTurnReveal.js';
 import { AgentThreadView } from './agentThreadView.js';
-import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip, setIconButtonTooltip } from '../chrome/agentTooltip.js';
 import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
@@ -933,6 +934,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** Redraws the live turn when its reply text has gone quiet, so the live line comes back. */
 	private textQuietTimer: IDisposable | undefined;
 	private dockSyncAt = 0;
+	/** What this chat's subagent rows show (state, activity, report), so a task change redraws the transcript only when a row would change. */
+	private ownTaskStates = '';
 	private findWidget!: AgentFindWidget;
 	private findMatches: HTMLElement[] = [];
 	private currentFindIndex = 0;
@@ -1360,6 +1363,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (change.threads.includes(this.sessionKey) || ownTasks) {
 				this.syncStreamingClass();
 			}
+			if (ownTasks && !change.threads.includes(this.sessionKey)) {
+				// A subagent started, settled or waits: the agent server's task changes name no thread, so the
+				// agents chip, the "N subagents running" card and the transcript rows follow the tasks themselves
+				// (they lagged until the parent's own thread next changed, 25 s into a wait).
+				this.syncAgentViews();
+				// What a row shows: its state and its line (the latest activity, then the report or the error).
+				const states = JSON.stringify(orchTasksOf(this.orchestrator.getState(), this.sessionKey).map(task => [task.id, task.state, task.activity, task.result?.length, task.error]));
+				if (states !== this.ownTaskStates) {
+					this.ownTaskStates = states;
+					this.scheduleThreadRender();
+				}
+			}
 			if (change.threads.includes(this.sessionKey)) {
 				this.followAgentHandoff();
 				this.followThreadModel();
@@ -1375,13 +1390,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				if (change.tasks.length || this.pendingSteers.size) {
 					this.scheduleThreadRender();
 				}
-			} else if (ownTasks) {
-				// A subagent started, finished or moved on while this chat waits (wait_tasks, or idle): its
-				// row and the group's "2 working · 1 queued" read live task state. Without this they kept the
-				// counts of the last render while the side panel already showed the subagents done.
-				this.scheduleThreadRender();
-				// The "N subagents running" chip and card too: they lagged one step behind (4 running with 3 live).
-				this.syncComposerAgents();
 			} else if (change.tasks.some(taskId => harnessSubagentChatId(taskId) === this.sessionKey)) {
 				// A harness subagent's chat has no thread: its bar follows its task.
 				this.renderSubagentBar();
@@ -1510,7 +1518,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.toolbarStartEl = append(this.toolbarEl, $('.volt-agent-toolbar-start'));
 		this.toolbarEndEl = append(this.toolbarEl, $('.volt-agent-toolbar-end'));
 		this.plusButton = append(this.toolbarStartEl, $('button.volt-agent-plus')) as HTMLButtonElement;
-		setAgentTooltip(this.plusButton, localize('voltAgent.add', "Add"));
+		setIconButtonTooltip(this.plusButton, localize('voltAgent.add', "Add"));
 		this.plusButton.appendChild(createPlusIcon());
 		this.modeButton = append(this.toolbarStartEl, $('button.volt-agent-mode')) as HTMLButtonElement;
 		this.modelButton = append(this.toolbarStartEl, $('button.volt-agent-model')) as HTMLButtonElement;
@@ -1564,12 +1572,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}));
 
 		this.attachButton = append(this.toolbarEndEl, $('button.volt-agent-icon-btn.volt-agent-attach-btn')) as HTMLButtonElement;
-		setAgentTooltip(this.attachButton, localize('voltAgent.attach', "Add context"));
+		setIconButtonTooltip(this.attachButton, localize('voltAgent.attach', "Add context"));
 		this.attachButton.appendChild(renderIcon(Codicon.attach));
 
 		this.micButton = append(this.toolbarEndEl, $('button.volt-agent-icon-btn.volt-agent-mic-btn')) as HTMLButtonElement;
 		this.micButton.type = 'button';
-		setAgentTooltip(this.micButton, localize('voltAgent.voice', "Voice"));
+		setIconButtonTooltip(this.micButton, localize('voltAgent.voice', "Voice"));
 		this.micButton.appendChild(createMicIcon());
 
 		this.sendButton = append(this.toolbarEndEl, $('button.volt-agent-send')) as HTMLButtonElement;
@@ -4642,7 +4650,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const end = append(toolbar, $('.volt-agent-toolbar-end'));
 
 		this.editPlusButton = append(start, $('button.volt-agent-plus')) as HTMLButtonElement;
-		setAgentTooltip(this.editPlusButton, localize('voltAgent.add', "Add"));
+		setIconButtonTooltip(this.editPlusButton, localize('voltAgent.add', "Add"));
 		this.editPlusButton.appendChild(createPlusIcon());
 		this.editEditorDisposables.add(addDisposableListener(this.editPlusButton, 'click', e => {
 			e.preventDefault();
@@ -4674,7 +4682,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.editSendButton = append(end, $('button.volt-agent-send')) as HTMLButtonElement;
 		this.editSendButton.type = 'button';
 		this.editSendButton.appendChild(createSendIcon());
-		setAgentTooltip(this.editSendButton, localize('voltAgent.send', "Send"));
+		setIconButtonTooltip(this.editSendButton, localize('voltAgent.send', "Send"));
 		this.editEditorDisposables.add(addDisposableListener(this.editSendButton, 'click', () => this.sendUserEdit()));
 		const editBlankSurfaces = new Set<EventTarget>([this.editInputBox, this.editMonacoHost, toolbar, start, end]);
 		this.editEditorDisposables.add(addDisposableListener(this.editInputBox, 'mousedown', e => {
@@ -5253,6 +5261,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			}
 			if (role === 'out') {
 				motionEl.setAttribute('aria-hidden', 'true');
+				// Gone once it has slid out: left in the grid, a longer old phrase kept the line as wide
+				// as itself and pushed the timer away ("Thinking        · 5s") until the next redraw.
+				motionEl.addEventListener('animationend', e => {
+					if (e.target === motionEl) {
+						motionEl.remove();
+					}
+				}, { once: true });
 			}
 			const status = append(motionEl, $('span.volt-agent-activity-progress.shimmer'));
 			status.style.animationDelay = `${-((now - shimmerAnchor) % 900)}ms`;
@@ -6298,8 +6313,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const startedAt = lastAgent?.startedAt;
 		const endedAt = lastAgent?.endedAt;
 		const durationMs = lastAgent?.durationMs ?? (startedAt ? (endedAt ?? Date.now()) - startedAt : undefined);
+		const activity = lastAgent?.activity;
+		// The transcript tail's own words: the raw status is the last tool's title, past tense
+		// ("Waited for tasks" beside the tail's "Waiting · 37s").
 		const status = streaming
-			? (lastAgent?.activity?.status || localize('voltAgent.working', "Working"))
+			? (activity?.status ? streamingActivityLines('', activity.status, activity.items ?? [], Date.now(), activity.shimmerStartedAt ?? Date.now(), activity.statusPinned === true).phrase : localize('voltAgent.working', "Working"))
 			: lastAgent?.cancelled
 				? localize('voltAgent.cancelled', "Cancelled")
 				: durationMs !== undefined
@@ -8345,7 +8363,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		if (this.micButton.classList.contains('recording') !== active) {
 			this.micButton.classList.toggle('recording', active);
-			setAgentTooltip(this.micButton, active ? localize('voltAgent.voiceStop', "Stop dictation") : localize('voltAgent.voice', "Voice"));
+			setIconButtonTooltip(this.micButton, active ? localize('voltAgent.voiceStop', "Stop dictation") : localize('voltAgent.voice', "Voice"));
 			this.updateSendButton();
 		}
 	}
@@ -8379,7 +8397,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.sendKind = kind;
 		this.sendButton.replaceChildren();
 		this.sendButton.classList.remove('stop');
-		setAgentTooltip(this.sendButton, !canSend
+		setIconButtonTooltip(this.sendButton, !canSend
 			? localize('voltAgent.makingScratchFolder', "Making a folder for this chat...")
 			: kind === 'send'
 				? localize('voltAgent.send', "Send")
@@ -8529,11 +8547,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			modelRef: item.prompt.modelRef,
 			modelLabel: this.queuedModelLabel(item.prompt.modelRef),
 		})));
-		this.renderSubagentBar();
-		this.syncComposerAgents();
+		this.syncAgentViews();
 		this.composerQueue.setState(this.queueState());
 		this.updateInputPlaceholder();
 		this._onDidChangeQueue.fire();
+	}
+
+	/** The subagent bar, the "N subagents running" card and the agents chip, from the orchestrator's tasks. */
+	private syncAgentViews(): void {
+		this.renderSubagentBar();
+		this.syncComposerAgents();
 	}
 
 	private clearComposer(): void {

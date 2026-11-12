@@ -64,9 +64,12 @@ export interface ISandboxLaunch {
 	readonly principal: IPrincipal;
 	readonly policy: IResolvedSandboxPolicy;
 	readonly mechanism: SandboxMechanism;
-	/** Dimensions running best effort (status `partial`). Shown in the transcript. */
+	/** Dimensions running best effort (status `partial`). Listed on the Security page. */
 	readonly unenforced: readonly SandboxDimension[];
+	/** Something the user should know before trusting the run (shown in the transcript as a warning). */
 	readonly warnings: readonly string[];
+	/** A partial dimension the user can do something about: shown once in the chat, quietly (see {@link sandboxLaunchNotices}). */
+	readonly notes: readonly ISandboxLaunchNote[];
 	/** Attests the spawned process from outside, then lets the agent run (F.5). Never `ok` without evidence. */
 	confirm(child: ChildProcess): Promise<SandboxConfirmation>;
 	/** The external evidence the agent started on, once `confirm` succeeded (F.12). */
@@ -158,10 +161,37 @@ interface ILogger {
 	warn(message: string, ...args: unknown[]): void;
 }
 
-const UNENFORCED_TEXT: Partial<Record<SandboxDimension, string>> = {
-	'filesystem.protectNew': 'protected files that do not exist yet (new git hooks, editor tasks) are not guarded on this OS',
-	'process.tree': 'a process that detaches itself completely can outlive the agent (it stays sandboxed)',
+/** A partial sandbox dimension the chat mentions: what is partial, why, and how to fix it. */
+export interface ISandboxLaunchNote {
+	readonly title: string;
+	readonly detail: string;
+}
+
+/**
+ * The partial dimensions worth a line in the chat: only ones that are true for this run and that
+ * the user can change. The rest are limits of the OS nobody can change from Volt (macOS tracks the
+ * process tree from its root, polls memory, mediates operations rather than syscalls; bubblewrap
+ * cannot guard files that do not exist yet): the Security page lists them as "not enforced", and
+ * the chat stays quiet about them instead of warning at the top of every sandboxed chat.
+ */
+const ACTIONABLE_PARTIAL: Partial<Record<SandboxDimension, ISandboxLaunchNote>> = {
+	'platform.tcc': {
+		title: 'Sandbox uses Volt\'s macOS privacy permissions here',
+		detail: 'This project is in Desktop, Documents, Downloads, iCloud Drive or on an external volume, which macOS opens only to apps you allowed. So the agent runs under Volt\'s privacy permissions (Files and Folders, and any others you gave Volt) instead of none of its own. The sandbox\'s file and network limits still apply. To run it with no privacy permissions, move the project to a folder outside those, such as ~/Projects.',
+	},
 };
+
+/** The chat's warnings and notes for a launch with `unenforced` dimensions, on `backend`. */
+export function sandboxLaunchNotices(unenforced: readonly SandboxDimension[], backend: SandboxBackendId, policy: Pick<IVoltSandboxPolicy, 'network'>): { readonly warnings: string[]; readonly notes: ISandboxLaunchNote[] } {
+	const notes = unenforced.flatMap(dimension => ACTIONABLE_PARTIAL[dimension] ?? []);
+	const warnings: string[] = [];
+	// bubblewrap shares the host's network when it is on, and seccomp cannot tell ports apart: a granted
+	// port lets the agent listen on any (bubblewrapBackend.ts, `blockListen`).
+	if (backend === 'bubblewrap' && policy.network.mode === 'host' && (policy.network.listen || policy.network.listenPorts?.length)) {
+		warnings.push('With the network on, Linux cannot limit listening to the ports you allowed, so the agent may listen on any port. Turn the network off for this chat to hold it to those ports.');
+	}
+	return { warnings, notes };
+}
 
 /**
  * Agent CLI processes in the OS sandbox: builds the agent profile for a chat's request and runs
@@ -576,10 +606,7 @@ export class VoltSandboxLauncher extends Disposable {
 			}
 			this.report(prepared.tag, shown);
 		});
-		const warnings = prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`);
-		if (policy.network.listen) {
-			warnings.push('Sandbox is partial here: with the network on, Linux cannot limit listening to the ports you allowed, so the agent may listen on any port.');
-		}
+		const { warnings, notes } = sandboxLaunchNotices(prepared.unenforced, prepared.backend, policy);
 		let disposed = false;
 		return {
 			command: prepared.command,
@@ -594,6 +621,7 @@ export class VoltSandboxLauncher extends Disposable {
 			mechanism: mechanismOf(prepared.backend),
 			unenforced: prepared.unenforced,
 			warnings,
+			notes,
 			confirm: child => prepared.confirm(child),
 			attestation: () => prepared.attestation(),
 			terminate: child => prepared.terminate(child),

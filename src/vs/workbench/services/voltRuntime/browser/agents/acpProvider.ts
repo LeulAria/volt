@@ -1113,6 +1113,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			this.pushActivity(session, turn, { type: 'sandbox.denial', denial: event.denial });
 		} else if (event.warning) {
 			this.pushActivity(session, turn, { type: 'notice', severity: 'warning', title: 'Sandbox', description: event.warning });
+		} else if (event.note) {
+			this.pushActivity(session, turn, { type: 'notice', severity: 'info', title: event.note.title, description: event.note.detail });
 		}
 	}
 

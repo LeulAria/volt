@@ -1,0 +1,32 @@
+{
+ "lineHeight": "",
+ "worstOverlapPx": 5.4,
+ "framesWithBothVisibleAndOverlapping": 4,
+ "of": 22,
+ "sample": [
+  {
+   "t": 20,
+   "overlap": 4.1,
+   "outOpacity": "0.83",
+   "inOpacity": "0.17"
+  },
+  {
+   "t": 40,
+   "overlap": 2.9,
+   "outOpacity": "0.66",
+   "inOpacity": "0.34"
+  },
+  {
+   "t": 60,
+   "overlap": 1.8,
+   "outOpacity": "0.50",
+   "inOpacity": "0.50"
+  },
+  {
+   "t": 80,
+   "overlap": 0.9,
+   "outOpacity": "0.38",
+   "inOpacity": "0.62"
+  }
+ ]
+}

@@ -358,6 +358,9 @@ function shownBackdrop(root: HTMLElement): HTMLElement | undefined {
 	return shown;
 }
 
+/** What Orbit's moving names never draw over: the new chat's controls. */
+const KEEP_CLEAR_SELECTOR = '.volt-agent-landing-chrome > *, .volt-agent-input-box, .volt-agent-suggest-chip, .volt-agent-landing-recents';
+
 /** The chat whose backdrop runs up under each window's title bar (the root's TITLEBAR classes are its). */
 const titlebarChats = new WeakMap<HTMLElement, AgentChatBackdrop>();
 
@@ -457,6 +460,7 @@ export class AgentChatBackdrop extends Disposable {
 		}
 		this.syncTitlebar();
 		this.syncFrost();
+		this.drawing?.view.invalidateKeepClear?.();
 	}
 
 	/**
@@ -487,7 +491,7 @@ export class AgentChatBackdrop extends Disposable {
 		const kind = agentChatDrawing(resolveAgentChatBackground(this.configurationService.getValue(AGENT_CHAT_BACKGROUND_SETTING)));
 		if (this.drawing?.kind !== kind) {
 			this.drawing?.view.dispose();
-			this.drawing = kind ? { kind, view: createAgentChatDrawing(kind, this.element, () => !!this.element.closest('.monaco-workbench.reduce-motion') || getWindow(this.element).matchMedia('(prefers-reduced-motion: reduce)').matches) } : undefined;
+			this.drawing = kind ? { kind, view: createAgentChatDrawing(kind, this.element, () => !!this.element.closest('.monaco-workbench.reduce-motion') || getWindow(this.element).matchMedia('(prefers-reduced-motion: reduce)').matches, () => this.keepClear()) } : undefined;
 			this.drawing?.view.resize(this.width, this.height);
 		}
 		if (this.shown) {
@@ -497,6 +501,26 @@ export class AgentChatBackdrop extends Disposable {
 		}
 		this.syncTitlebar();
 		this.syncFrost();
+	}
+
+	/**
+	 * The chat's controls over the backdrop, in its CSS pixels: the title bar's when the backdrop runs
+	 * under it, the new chat's pickers, composer, suggestions and recent projects. Orbit's names stay off them.
+	 */
+	private keepClear(): { left: number; top: number; right: number; bottom: number }[] {
+		const origin = this.element.getBoundingClientRect();
+		const boxes: { left: number; top: number; right: number; bottom: number }[] = [];
+		const add = (element: Element | null | undefined) => {
+			const box = element?.getBoundingClientRect();
+			if (box && box.width > 0 && box.height > 0) {
+				boxes.push({ left: box.left - origin.left, top: box.top - origin.top, right: box.right - origin.left, bottom: box.bottom - origin.top });
+			}
+		};
+		if (this.underTitlebar) {
+			add(this.layoutService.getContainer(getWindow(this.column), Parts.TITLEBAR_PART));
+		}
+		this.chat.querySelectorAll(KEEP_CLEAR_SELECTOR).forEach(add);
+		return boxes;
 	}
 
 	private syncTitlebar(): void {

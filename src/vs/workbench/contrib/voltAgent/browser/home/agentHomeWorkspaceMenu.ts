@@ -15,6 +15,7 @@ import { createHomeBitbucketIcon, createHomeFolderIcon, createHomeFoldersIcon, c
 import {
 	AGENT_CLONE_PROVIDERS,
 	AgentCloneProvider,
+	agentHomeFolderLocation,
 	cloneProviderLabel,
 	cloneProviderPlaceholder,
 	IAgentHomeWorkspaceEntry,
@@ -105,7 +106,10 @@ export function showAgentHomeWorkspaceMenu(
 	const folderItem = (entry: IAgentHomeWorkspaceEntry, toggle: boolean): WorkspaceItem => ({
 		id: entry.uri.toString(),
 		label: entry.name,
-		description: entry.path,
+		// Where it is, as under Recent projects; the whole path in the tooltip and the search.
+		description: agentHomeFolderLocation(entry.path),
+		tooltip: entry.path,
+		keywords: entry.path,
 		icon: createHomeFolderIcon,
 		checked: toggle ? selected.has(entry.uri.toString()) : isCurrent(entry.uri),
 		keepOpen: toggle,

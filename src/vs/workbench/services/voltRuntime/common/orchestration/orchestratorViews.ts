@@ -183,7 +183,7 @@ export function taskStateLabel(task: Pick<IOrchTask, 'state' | 'waitingOn'>): st
 
 function rowDetail(task: IOrchTask): string | undefined {
 	if (task.state === 'failed') {
-		return firstLine(task.error) ?? 'Failed';
+		return orchHeadline(task.error) ?? 'Failed';
 	}
 	if (task.state === 'interrupted') {
 		return 'Volt restarted while it ran';
@@ -192,17 +192,36 @@ function rowDetail(task: IOrchTask): string | undefined {
 		return 'Waiting for a free slot';
 	}
 	if (isTerminalTaskState(task.state)) {
-		return firstLine(task.result) ?? task.activity;
+		return orchHeadline(task.result) ?? task.activity;
 	}
 	return task.activity;
 }
 
-function firstLine(text: string | undefined): string | undefined {
-	const line = text?.split('\n').map(part => part.trim()).find(Boolean);
+/** A heading alone on its line ("## Outcome", "**Outcome:**"): a report's section name, not what happened. */
+const HEADING_LINE = /^(#{1,6}\s+\S.*|\*\*[^*]+\*\*:?|__[^_]+__:?)$/;
+/** The report's "Outcome" section heading, in any of the forms HEADING_LINE takes. */
+const OUTCOME_HEADING = /^(#{1,6}\s+|\*\*|__)outcome\b/i;
+
+/**
+ * The line a row shows for a report or an error: its first line with words in it, as plain text.
+ * A subagent's report starts with the "## Outcome" heading (agentTasks.ts asks for it), so section
+ * headings are passed over for the sentence under them; only a report of headings alone shows one.
+ * Models often say what they are about to do first ("Running the ping command now; ...") and then
+ * write the report: the sentence under "Outcome" wins over that preamble.
+ * Markdown marks go; underscores inside names (`math_utils.ts`) stay.
+ */
+export function orchHeadline(text: string | undefined): string | undefined {
+	const lines = text?.split('\n').map(part => part.trim()).filter(Boolean) ?? [];
+	const outcome = lines.findIndex(candidate => HEADING_LINE.test(candidate) && OUTCOME_HEADING.test(candidate));
+	const line = (outcome > 0 ? lines.slice(outcome).find(candidate => !HEADING_LINE.test(candidate)) : undefined)
+		?? lines.find(candidate => !HEADING_LINE.test(candidate)) ?? lines[0];
 	if (!line) {
 		return undefined;
 	}
-	const plain = line.replace(/^[#>*\-\s]+/, '').replace(/[`*_]/g, '');
+	const plain = line
+		.replace(/^[#>*\-\s]+/, '')
+		.replace(/[`*]/g, '')
+		.replace(/(^|[^\p{L}\p{N}_])_{1,2}([^_\n]+?)_{1,2}(?![\p{L}\p{N}_])/gu, '$1$2');
 	return plain.length > 140 ? `${plain.slice(0, 139)}…` : plain;
 }
 

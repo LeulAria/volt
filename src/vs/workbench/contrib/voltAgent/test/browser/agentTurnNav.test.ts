@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { turnNavPreview } from '../../browser/editor/agentTurnNav.js';
+import { turnNavHasOffscreen, turnNavPreview } from '../../browser/editor/agentTurnNav.js';
 
 suite('Agent turn nav', () => {
 
@@ -26,5 +26,16 @@ suite('Agent turn nav', () => {
 
 	test('an empty reply has no preview', () => {
 		assert.strictEqual(turnNavPreview(''), '');
+	});
+
+	test('the rail rests while every sent message is on screen', () => {
+		assert.strictEqual(turnNavHasOffscreen([true, true], 0), false);
+		assert.strictEqual(turnNavHasOffscreen([], 0), false);
+	});
+
+	test('the rail shows once a message is off screen or not drawn yet', () => {
+		assert.strictEqual(turnNavHasOffscreen([false, true], 0), true);
+		assert.strictEqual(turnNavHasOffscreen([true, true, false], 0), true);
+		assert.strictEqual(turnNavHasOffscreen([true, true], 3), true);
 	});
 });

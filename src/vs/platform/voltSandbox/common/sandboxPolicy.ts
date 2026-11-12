@@ -163,6 +163,8 @@ export const AGENT_HOUSEKEEPING: Readonly<Record<string, readonly string[]>> = {
 		'.claude/statsig', '.claude/todos', '.claude/shell-snapshots', '.claude/sessions', '.claude/session-env', '.claude/projects', '.claude/debug',
 		'.claude/telemetry', '.claude/stats-cache.json', '.claude/history.jsonl', '.claude/ide', '.claude/paste-cache', '.claude/backups', '.claude/cache',
 		'.claude/plans', '.claude/tasks', '.claude/transcripts', '.claude/file-history', '.claude/mcp-needs-auth-cache.json', '.claude/.last-cleanup',
+		// Plugins synced from claude.ai and the marketplace list's lock and temp files (four cards at the start of every chat).
+		'.claude/plugins/synced', '.claude/plugins/known_marketplaces.json.lock', '.claude/plugins/known_marketplaces_claudeai.json', '.claude/plugins/known_marketplaces_claudeai.json.lock',
 		// Its version locks (`<version>#<pid>.lock`) and updater staging: never opened (a planted or removed lock steers the user's own updater).
 		'.local/state/claude', '.cache/claude',
 	],
