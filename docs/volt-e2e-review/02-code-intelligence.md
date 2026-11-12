@@ -25,6 +25,9 @@ Raw data: [`data/ide/`](data/ide/). Drivers and how to re-run them: [`scripts/vo
   | Tokens | 51% more |
   | Cost | 8% more |
 
+  These were measured before the last three fixes (one-file grep, off-by-N `code_nav` lines, non-capturing groups),
+  which remove 11 of the 13 Volt-tool errors in the final arm. No A/B was run after them.
+
 - **The 100x goal was not reached** for agent answers, and it cannot be reached by faster tools alone. An answer's time
   is model turns, not tool time; see [What fell short of 100x](#what-fell-short-of-100x-and-why).
 - **Agents almost never use the IDE tools** (debugger, test runner, profiler, HTTP client, Docker). They used them in
@@ -168,6 +171,10 @@ Files: [`ab-before.jsonl`](data/ide/ab-before.jsonl), [`ab-after1.jsonl`](data/i
 [`ab-after2.jsonl`](data/ide/ab-after2.jsonl). Tables made with
 `node scripts/volt-e2e/ide/summarize.mjs ab-before.jsonl ab-after1.jsonl ab-after2.jsonl`.
 
+All A/B numbers were measured before the last three fixes (`b3092eb8245`, `b9e5d9d12c8`, `3c2165b815e`: one-file
+grep, off-by-N `code_nav` lines, non-capturing groups). Those fixes come from the errors in these runs and were
+checked with unit tests only. No A/B was run after them.
+
 | Arm | Accuracy | Fully right | Wall s, mean ± sd | Wall s, median | Cost / run | Tokens / run | Output tokens | Tool calls | Volt calls | Tool output chars |
 |---|---|---|---|---|---|---|---|---|---|---|
 | own (baseline) | 96.1% | 30/36 | 23.9 ± 15.8 | 18.7 | $0.0370 | 103,274 | 1,481 | 4.9 | 0 | 25,500 |
@@ -215,14 +222,19 @@ How to read these results:
     2.3k-character `[Volt]` lead are re-read on every turn.
   - **Why cost grew less:** cache reads are cheap, so cost grew 8%, not 51%.
   - **Output tokens rose 27%:** the volt arm's answers were longer.
-- **Tool errors in the final arm: 16 in 36 runs.** All of them are follow-ups below. Two of the 16 came from the
-  bench, not Volt: the lead invites `scratch_draw`, which this read-only bench does not allow. The rest:
+- **Tool errors in the final arm: 16 in 36 runs, 15 of them from Volt tools.** Two came from the bench, not Volt: the
+  lead invites `scratch_draw`, which this read-only bench does not allow. The other 13, with the same errors in
+  `after1` for comparison:
 
-  | Error | Count | Cause |
-  |---|---|---|
-  | `code_nav`: "does not appear on line N" | 7 | the agent passed a line off by one, or line 1 |
-  | `instant_grep` with `path` set to one file: "not indexed" | 3 | a sandboxed chat's index only answers for its root |
-  | `instant_grep` "needs ripgrep" | 3 | `(?:…)` or a quote class; a sandboxed chat's search does not run `rg` |
+  | Error | `after2` | `after1` | Cause | Status |
+  |---|---|---|---|---|
+  | `code_nav`: "does not appear on line N" | 7 | 3 | the agent passed a line off by 1 to 30, or line 1 | fixed after the A/B, `b9e5d9d12c8` |
+  | `instant_grep` with `path` set to one file: "not indexed" | 3 | 5 | the index only took folders | fixed after the A/B, `b3092eb8245` |
+  | `instant_grep` "needs ripgrep" on `(?:…)` | 1 | 0 | a sandboxed chat's search does not run `rg` | fixed after the A/B, `3c2165b815e` |
+  | `instant_grep` "needs ripgrep" on `['\"]` | 2 | 0 | `\"` is not a valid escape; ripgrep rejects it too | still open: the message should say so |
+
+  So 11 of the final arm's 13 Volt-side errors (and 8 of `after1`'s) are fixed by the three commits that landed after
+  the A/B. Their effect on time and tokens is not measured.
 
 ### IDE tools: did agents use debug, Docker, DB, HTTP and the profiler?
 
@@ -272,6 +284,9 @@ No "after" run of the IDE tasks was made. The only change aimed at them is the s
 | `fc12d4b010c` | `instant_grep` and the native grep apply `glob` and `type` together, as ripgrep does, and a leading `!` excludes. Content matches in up to 25 files end with `(in Class.method)`. | Tool bench glob rows; A/B `after1` → `after2` |
 | `8aaec91e8b9` | `code_nav` implementations and inspect fall back to the index (classes that name the interface after `implements` or `extends`) when the language server has not loaded the implementing project. | `PaymentGateway`: "none" → 9 implementations |
 | `312a28a64ff` | The bench drivers and raw data. | |
+| `b3092eb8245` | `instant_grep` with `path` set to one file inside the root searches that file. The index took only folders, so a sandboxed chat's search (no ripgrep) answered "not indexed". Made after the A/B. | 8 calls in `after1` + `after2`; `codeIndexSingleFile.test.ts` (fails before, passes after) |
+| `b9e5d9d12c8` | When `code_nav`'s line misses the symbol, it tries the lines 1 and 2 away, then the file's declaration of that name nearest the line, then the nearest whole-word use. The answer starts with `"X" is on line N, not M.` Made after the A/B. | 10 calls in `after1` + `after2` (lines off by 1 to 30, or 1); `codeTools.test.ts` |
+| `3c2165b815e` | Patterns with `(?:…)` run in-process. The inline-flag check also caught non-capturing groups and sent them to ripgrep, which a sandboxed chat's search does not run. `(?i:…)` and other inline flags still go to ripgrep. Made after the A/B. | 1 call in `after2`; `textMatchUnicode.test.ts` compares 12 cases against ripgrep |
 
 **Checks on this branch:**
 
@@ -280,6 +295,9 @@ No "after" run of the IDE tasks was made. The only change aimed at them is the s
   host session resolver, server client tools, intent, context pack, codeIntel, workspacePath and hostToolService
   tests.
 - The voltHostMcp main service and requestShape tests: 20 passing.
+- After the last three fixes: tsgo still reports 0 errors. 126 tests pass across the code index (single file,
+  confined, search, braces, FFF, Unicode matching), codeTools, searchTools, voltSearch and hostToolService.
+  Before the fixes, 19 of the new tests failed.
 
 ## What fell short of 100x, and why
 
@@ -310,6 +328,7 @@ No "after" run of the IDE tasks was made. The only change aimed at them is the s
 - A/B with a stronger model (Sonnet or Opus). Haiku only.
 - More than 3 runs per question.
 - A re-run of the own arm after the fixes.
+- An A/B after the last three fixes (`b3092eb8245`, `b9e5d9d12c8`, `3c2165b815e`).
 - A final tool bench after the 12:53 restart, because the chat had no run (see above).
 - IDE tasks after the fixes, and Sonnet T4 and T5.
 - Docker.
@@ -318,21 +337,19 @@ No "after" run of the IDE tasks was made. The only change aimed at them is the s
 
 **Follow-ups found in the data:**
 
-1. **`instant_grep` with `path` set to a single file** inside an indexed root is refused as "not indexed" in sandboxed
-   chats (8 calls across `after1` and `after2`). Search the root with that file as the glob.
-2. **`code_nav` with a line off by one or two** fails with "does not appear on line N" (10 calls). When the name
-   appears once within a few lines, or once in the file, use that line.
-3. **Sandboxed `instant_grep` refuses `(?:…)` and some quote classes** as "needs ripgrep" (4 calls). Widen the index's
-   regex support, or translate non-capturing groups.
-4. **Token overhead (+51% per run).** Shorten the `[Volt]` lead for read-only questions (it carries UI, browser and
+1. **A pattern with an escape ripgrep rejects (`\"`)** is refused as "needs ripgrep" in a sandboxed chat (2 calls in
+   `after2`). Like the lone-brace case (`069bc77b120`), the message should say the pattern is invalid and how to
+   write it (`"` needs no escape).
+2. **Re-run the A/B** to measure the three fixes that landed after it.
+3. **Token overhead (+51% per run).** Shorten the `[Volt]` lead for read-only questions (it carries UI, browser and
    visuals guidance that these questions do not need), and expose the four code tools without deferral so `ToolSearch`
    is not needed.
-5. **The classifier gives "Profile it…" a `ui` signal,** and slowness prompts get the browser lead. Route them to
+4. **The classifier gives "Profile it…" a `ui` signal,** and slowness prompts get the browser lead. Route them to
    "measure with `ide profile` first".
-6. **Warm tsserver when a chat on a TypeScript project starts.** The first `code_nav` callers call took 10 s and the
+5. **Warm tsserver when a chat on a TypeScript project starts.** The first `code_nav` callers call took 10 s and the
    first `diagnostics` call took 3.2 s.
-7. **Add a database capability** (SQLite and Postgres schema and query), or say plainly that the shell is the path.
-8. **Build harder IDE tasks** where the IDE tool is the shorter path (runtime state for the debugger, a container for
+6. **Add a database capability** (SQLite and Postgres schema and query), or say plainly that the shell is the path.
+7. **Build harder IDE tasks** where the IDE tool is the shorter path (runtime state for the debugger, a container for
    Docker, an authenticated `.http` file for HTTP), and re-run them on Haiku and Sonnet.
-9. **The bench allowlist omits `scratch_draw` and `render_chart`,** which the lead invites (2 to 3 errors per arm).
+8. **The bench allowlist omits `scratch_draw` and `render_chart`,** which the lead invites (2 to 3 errors per arm).
    Either allow them in the bench or drop the visuals guidance for short read-only answers.
