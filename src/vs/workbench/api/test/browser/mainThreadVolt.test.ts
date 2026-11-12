@@ -43,7 +43,9 @@ import { VoltCapabilityError } from '../../../services/voltPlugins/common/capabi
 import { IVoltExtensionApiService } from '../../../services/voltPlugins/common/voltExtensionApi.js';
 import { IAutomation, IAutomationCreateInput, IAutomationRun, IAutomationService } from '../../../services/voltRuntime/common/automations/automations.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../../../contrib/voltAutomations/common/voltAutomations.js';
-import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
+import { IAgentRuntimeService, OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../services/voltRuntime/common/runtime.js';
+import { IVoltCatalogItem } from '../../../services/voltRuntime/common/providers.js';
+import { IQuickInputService, IQuickPickItem, IQuickPickSeparator } from '../../../../platform/quickinput/common/quickInput.js';
 import { IAgentCustomization } from '../../../contrib/voltAgent/browser/customize/agentCustomize.js';
 import { IAgentCustomizeService } from '../../../contrib/voltAgent/browser/customize/agentCustomizeService.js';
 import { OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID } from '../../../contrib/voltSkills/common/voltSkills.js';
@@ -242,6 +244,23 @@ suite('Volt extension API (vscode.volt)', () => {
 		instantiation.stub(IVoltSessionContextService, new class extends mock<IVoltSessionContextService>() {
 			override readonly activeProject = undefined;
 		});
+		const catalog = (ref: string, label: string, providerId: string, profileId: string, enabled = true) => ({ ref, kind: 'model', providerId, profileId, id: ref, label, enabled }) as unknown as IVoltCatalogItem;
+		instantiation.stub(IAgentRuntimeService, new class extends mock<IAgentRuntimeService>() {
+			override listProfiles() { return [{ id: 'p-claude', enabled: true }, { id: 'p-off', enabled: false }] as unknown as ReturnType<IAgentRuntimeService['listProfiles']>; }
+			override listCatalog() {
+				return [catalog('claude:sonnet', 'Claude Sonnet', 'claude-code', 'p-claude'), catalog('claude:haiku', 'Claude Haiku', 'claude-code', 'p-claude', false), catalog('x:model', 'Hidden Provider', 'grok', 'p-off')];
+			}
+		});
+		/** What the model picker offered, and its title; the user picks `pickLabel`. */
+		const picks: { labels: string[]; title?: string }[] = [];
+		let pickLabel: string | undefined = 'Claude Sonnet';
+		instantiation.stub(IQuickInputService, new class extends mock<IQuickInputService>() {
+			override async pick(items: unknown, options?: { title?: string }): Promise<never> {
+				const entries = items as (IQuickPickItem | IQuickPickSeparator)[];
+				picks.push({ labels: entries.map(entry => entry.type === 'separator' ? `-- ${entry.label}` : entry.label!), title: options?.title });
+				return entries.find(entry => entry.type !== 'separator' && entry.label === pickLabel) as never;
+			}
+		});
 		const layoutService = new class extends mock<ILayoutService>() {
 			override get activeContainer() { return container; }
 		};
@@ -276,7 +295,7 @@ suite('Volt extension API (vscode.volt)', () => {
 			threads[id] = { id, rootId: id, depth: 0, createdAt: 0, queue: [], inputs: [], turns: 1, handoffs: [], ...thread } as IOrchThread;
 			orchestratorChanges.fire({ threads: [id], tasks: [] });
 		};
-		return { rpc, api, features, featuresOff, voltFor, grant, providers, invoked, commands, memories, automations, usageLimitReads, agentCalls, turn };
+		return { rpc, api, features, featuresOff, voltFor, grant, providers, invoked, commands, memories, automations, usageLimitReads, agentCalls, turn, picks, setPick: (label: string | undefined) => { pickLabel = label; } };
 	}
 
 	const acme = () => description('acme.notes', { contributes: ACME_CONTRIBUTES });
@@ -306,6 +325,18 @@ suite('Volt extension API (vscode.volt)', () => {
 	}
 
 	// --- Round trips ------------------------------------------------------------------------------
+
+	test('EXT-RT-pickModel: Volt\'s model picker offers the visible models only, names the extension, needs no consent, and returns the pick', async () => {
+		const h = host([acme()], ['acme.notes']);
+		const volt = h.voltFor('acme.notes');
+		assert.deepStrictEqual(await volt.chats.pickModel({ placeHolder: 'Model for the lab run' }), { id: 'claude:sonnet', label: 'Claude Sonnet', provider: 'claude-code' });
+		// A disabled model and a model of a provider that is off are not offered; the extension's words are a placeholder, Volt's are the title.
+		assert.deepStrictEqual(h.picks[0].labels.filter(label => !label.startsWith('-- ')), ['Claude Sonnet']);
+		assert.strictEqual(h.picks[0].title, 'Notes asks you to pick a model');
+		// Closing the picker is undefined, never a model.
+		h.setPick(undefined);
+		assert.strictEqual(await volt.chats.pickModel(), undefined);
+	});
 
 	test('EXT-RT-chats: list, current, read, send, start and turn events', async () => {
 		const h = host([acme()], ['acme.notes']);
