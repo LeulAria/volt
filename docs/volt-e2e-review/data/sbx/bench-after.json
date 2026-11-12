@@ -1,0 +1,138 @@
+{
+  "machine": {
+    "cpu": "Apple M4 Max",
+    "cores": 14,
+    "memoryGB": 36,
+    "platform": "darwin",
+    "node": "v25.1.0",
+    "backend": "seatbelt",
+    "details": [
+      "macOS 26.6",
+      "/usr/bin/sandbox-exec",
+      "attestation: sandbox_check from outside, TCC responsibility disclaimed (/Users/leularia/Desktop/VOLT/volt-e2e-sbx/out/volt-helpers/volt-sandbox-helper)",
+      "process tree: kqueue fork/exit tracking and the responsible-process sweep (ok in the trial); memory: footprint polled every 1 s"
+    ]
+  },
+  "runs": 30,
+  "compileMs": {
+    "median": 6.95,
+    "p90": 10.35,
+    "p95": 12.42,
+    "min": 6.19,
+    "n": 30
+  },
+  "agentCompileMs": {
+    "median": 13.44,
+    "p90": 17.23,
+    "p95": 17.44,
+    "min": 12.77,
+    "n": 30
+  },
+  "agentProfile": {
+    "bytes": 17605,
+    "regex": 19,
+    "subpath": 60,
+    "literal": 1
+  },
+  "agentSandboxExecMs": {
+    "median": 11.96,
+    "p90": 12.23,
+    "p95": 12.81,
+    "min": 11.21,
+    "n": 30
+  },
+  "startupMs": {
+    "direct": {
+      "median": 1.53,
+      "p90": 1.78,
+      "p95": 1.95,
+      "min": 1.12,
+      "n": 30
+    },
+    "workspace": {
+      "median": 30,
+      "p90": 34,
+      "p95": 52,
+      "min": 27,
+      "n": 30
+    },
+    "agent": {
+      "median": 40,
+      "p90": 45,
+      "p95": 48,
+      "min": 38,
+      "n": 30
+    },
+    "workspacePrepare": {
+      "median": 8,
+      "p90": 10,
+      "p95": 11,
+      "min": 7,
+      "n": 30
+    },
+    "workspaceStart": {
+      "median": 13,
+      "p90": 16,
+      "p95": 18,
+      "min": 12,
+      "n": 30
+    },
+    "agentPrepare": {
+      "median": 15,
+      "p90": 19,
+      "p95": 19,
+      "min": 14,
+      "n": 30
+    },
+    "agentStart": {
+      "median": 17,
+      "p90": 20,
+      "p95": 22,
+      "min": 16,
+      "n": 30
+    }
+  },
+  "perCommandMs": {
+    "direct": {
+      "median": 1.62,
+      "p90": 1.72,
+      "p95": 1.72,
+      "min": 1.54,
+      "n": 10
+    },
+    "sandboxed": {
+      "median": 1.8,
+      "p90": 1.99,
+      "p95": 1.99,
+      "min": 1.67,
+      "n": 10
+    }
+  },
+  "eightConcurrentMs": {
+    "median": 88.78,
+    "p90": 96.25,
+    "p95": 96.25,
+    "min": 83.52,
+    "n": 10
+  },
+  "thousandSmallFilesMs": {
+    "direct": {
+      "median": 2153.93,
+      "p90": 4528.96,
+      "p95": 4528.96,
+      "min": 2117.27,
+      "n": 5
+    },
+    "sandboxed": {
+      "median": 2319.12,
+      "p90": 4436.4,
+      "p95": 4436.4,
+      "min": 2225.03,
+      "n": 5
+    }
+  },
+  "hostSideRssKB": {
+    "processes": 10,
+    "total": 13184
+  }
+}

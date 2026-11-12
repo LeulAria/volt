@@ -1,0 +1,9 @@
+{
+ "kind": "activation",
+ "at": "2026-11-12T09:04:48.554Z",
+ "value": {
+  "activationMs": 2,
+  "hostUptimeAtActivationMs": 2291,
+  "pid": 85009
+ }
+}
