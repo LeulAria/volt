@@ -745,9 +745,72 @@ export function newTaskId(existing: (id: string) => boolean, random: () => numbe
 	}
 }
 
+/**
+ * delegate_task arguments with the names other harnesses use for the same thing: Claude Code's own
+ * Agent tool takes `prompt` and `description`, and Claude wrote those into delegate_task's `tasks`
+ * entries (a refused call and a retry before any subagent started). `prompt`/`brief` count as
+ * `task`, and `description` as `title` when there is none.
+ */
+export function delegateArgsWithAliases(args: Record<string, unknown>): Record<string, unknown> {
+	const fix = (entry: Record<string, unknown>): Record<string, unknown> => {
+		if (typeof entry.task === 'string' && entry.task.trim()) {
+			return entry;
+		}
+		const task = [entry.prompt, entry.brief].find((value): value is string => typeof value === 'string' && !!value.trim());
+		if (!task) {
+			return entry;
+		}
+		const { prompt: _prompt, brief: _brief, ...rest } = entry;
+		return { ...rest, task, ...(rest.title === undefined && typeof entry.description === 'string' ? { title: entry.description } : {}) };
+	};
+	const top = fix(args);
+	return Array.isArray(top.tasks)
+		? { ...top, tasks: top.tasks.map(entry => entry && typeof entry === 'object' && !Array.isArray(entry) ? fix(entry as Record<string, unknown>) : entry) }
+		: top;
+}
+
+/** A model a task may run on, as `model` arguments name it. */
+export interface ITaskModelCandidate {
+	readonly ref: string;
+	readonly id: string;
+	readonly label: string;
+	readonly qualifier?: string;
+	/** The provider's name as the user sees it ("Claude", "Cursor"). */
+	readonly providerLabel?: string;
+	readonly providerId?: string;
+}
+
+/**
+ * The model a `model` argument names: its ref, id or label exactly, else by words, so the names
+ * agents write ("Claude Haiku 4.5", "claude-haiku-4-5", "Sonnet 5.5") find "Haiku 4.5" of the
+ * Claude provider instead of costing a failed call and a list_models round trip.
+ */
+export function matchTaskModel<T extends ITaskModelCandidate>(items: readonly T[], value: string): T | undefined {
+	const wanted = value.trim().toLowerCase();
+	const exact = items.find(item => item.ref.toLowerCase() === wanted)
+		?? items.find(item => item.id.toLowerCase() === wanted)
+		?? items.find(item => item.label.toLowerCase() === wanted)
+		?? items.find(item => `${item.label} ${item.qualifier ?? ''}`.trim().toLowerCase() === wanted);
+	if (exact) {
+		return exact;
+	}
+	const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+	const w = words(value);
+	if (!w) {
+		return undefined;
+	}
+	const hits = items.filter(item => [item.label, `${item.label} ${item.qualifier ?? ''}`, `${item.providerLabel ?? ''} ${item.label}`, item.id].map(words).some(name =>
+		!!name && (name === w || name.startsWith(`${w} `) || (name.length >= 4 && w.endsWith(` ${name}`)))));
+	// The same model under two providers: the one the name mentions.
+	const named = hits.find(item => [item.providerLabel, item.providerId].some(provider => provider && w.includes(words(provider))));
+	return named ?? hits[0] ?? items.find(item => item.label.toLowerCase().includes(wanted) || item.ref.toLowerCase().includes(wanted));
+}
+
 /** First line of the brief, trimmed to a title, when the caller gave none. */
 export function titleFromBrief(brief: string, max = 60): string {
 	const line = brief.trim().split('\n').map(text => text.trim()).find(Boolean) ?? 'Task';
-	const plain = line.replace(/^[#>*\-\s]+/, '').replace(/[`*_]/g, '');
+	// Briefs often open with where to work ("In /tmp/repo: edit src/a.js ..."): the title is the work.
+	const unplaced = line.replace(/^(?:working\s+)?in\s+(?:the\s+)?(?:repo\s+|project\s+)?[`'"]?[~.]?\/[^\s`'"]*[`'"]?\s*[:,]\s*(?=\S)/i, '');
+	const plain = (unplaced.charAt(0).toUpperCase() + unplaced.slice(1)).replace(/^[#>*\-\s]+/, '').replace(/[`*_]/g, '');
 	return plain.length > max ? `${plain.slice(0, max - 1).trimEnd()}…` : plain;
 }

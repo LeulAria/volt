@@ -84,6 +84,8 @@ class BenchRuntime {
 	rememberWorktree() { }
 	releaseSession() { }
 	getSandboxSettings() { return DEFAULT_SANDBOX_SETTINGS; }
+	getAccessMode() { return 'full-access'; }
+	async setAccessMode() { }
 	async setSandboxSettings() { }
 	getOrCreateSession(threadId) {
 		const reply = this.replies.get(threadId);

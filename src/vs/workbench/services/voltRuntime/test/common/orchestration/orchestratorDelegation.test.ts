@@ -5,9 +5,9 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildTaskPrompt, contractFromArgs, describeSpend, describeTask, lintTaskBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
-import { extractRoot, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
+import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { buildParentCapsule, userRequests } from '../../../common/orchestration/taskContext.js';
 import { foldSpend, seedSpendTracker, spendUsage } from '../../../common/orchestration/taskSpend.js';
 import { OrchSim } from './orchestratorSim.js';
@@ -261,5 +261,51 @@ suite('Volt orchestrator: budgets, dependencies and fallbacks', () => {
 		assert.deepStrictEqual([task.after, task.budgetUsd, task.contract, task.fallbacks], [[first], 3, { goal: 'g', doneWhen: ['d'] }, [{ ref: 'x:y', label: 'Y' }]]);
 		assert.deepStrictEqual(loaded.tasks.find(item => item.id === first)!.usage, usage(2));
 		assert.strictEqual(loaded.threads.find(thread => thread.id === 'root')!.spend?.usd, 2);
+	});
+});
+
+suite('Volt orchestrator: what agents write into delegate_task', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('Claude Code\'s Agent-tool names (prompt, description) count as task and title, at the top and in tasks entries', () => {
+		assert.deepStrictEqual(delegateArgsWithAliases({ prompt: 'Fix a.js', description: 'Fix a' }), { task: 'Fix a.js', title: 'Fix a', description: 'Fix a' });
+		assert.deepStrictEqual(delegateArgsWithAliases({ tasks: [{ prompt: 'one' }, { task: 'two', prompt: 'ignored' }, 'bad'] }).tasks, [{ task: 'one' }, { task: 'two', prompt: 'ignored' }, 'bad']);
+		assert.deepStrictEqual(delegateArgsWithAliases({ task: 'kept', title: 'T' }), { task: 'kept', title: 'T' });
+	});
+
+	test('a model named the way agents write it finds the catalog entry, and an unknown one finds nothing', () => {
+		const items = [
+			{ ref: 'agent:seed-claude-code:claude-haiku-4-5-20251001', id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', providerLabel: 'Claude', providerId: 'claude-code' },
+			{ ref: 'agent:seed-claude-code:claude-sonnet-5-5', id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', qualifier: 'Medium', providerLabel: 'Claude', providerId: 'claude-code' },
+			{ ref: 'agent:seed-cursor:sonnet-5-5', id: 'sonnet-5-5', label: 'Sonnet 5.5', providerLabel: 'Cursor', providerId: 'cursor-acp' },
+			{ ref: 'agent:seed-grok:grok-4.7', id: 'grok-4.7', label: 'Grok 4.7', providerLabel: 'Grok', providerId: 'grok' },
+		];
+		const ref = (value: string) => matchTaskModel(items, value)?.ref;
+		assert.strictEqual(ref('Claude Haiku 4.5'), items[0].ref);
+		assert.strictEqual(ref('claude-haiku-4-5'), items[0].ref);
+		assert.strictEqual(ref('Haiku 4.5'), items[0].ref);
+		assert.strictEqual(ref('Sonnet 5.5 Medium'), items[1].ref);
+		assert.strictEqual(ref('Cursor Sonnet 5.5'), items[2].ref, 'the provider the name mentions wins');
+		assert.strictEqual(ref('grok-4.7'), items[3].ref);
+		assert.strictEqual(ref('GPT 9'), undefined);
+		assert.strictEqual(ref('4.5'), items[0].ref, 'a bare fragment still matches by substring, as before');
+	});
+
+	test('a task title skips the "In <path>:" a brief opens with', () => {
+		assert.strictEqual(titleFromBrief('In /private/tmp/repo: edit src/a.js so charge() throws'), 'Edit src/a.js so charge() throws');
+		assert.strictEqual(titleFromBrief('Working in ~/code/app, review the auth flow'), 'Review the auth flow');
+		assert.strictEqual(titleFromBrief('In this repo, nothing to strip'), 'In this repo, nothing to strip');
+	});
+
+	test('the saved audit trail keeps long prompts short and leaves other events as they are', () => {
+		const long = 'x'.repeat(ORCH_EVENT_PROMPT_CHARS * 5);
+		const turn = { seq: 1, at: 1, commandId: 'c', event: { type: 'turn.dispatched' as const, threadId: 't', turn: { id: 'u', kind: 'brief' as const, prompt: { text: long, display: { text: 'shown' } }, at: 1, phase: 'dispatching' as const } } };
+		const compact = compactEnvelope(turn);
+		const text = compact.event.type === 'turn.dispatched' ? compact.event.turn.prompt.text : '';
+		assert.ok(text.length < ORCH_EVENT_PROMPT_CHARS + 40 && text.endsWith(`[${long.length} chars]`), text.slice(-30));
+		assert.strictEqual(turn.event.turn.prompt.text, long, 'the live event is not changed');
+		const short = { seq: 2, at: 1, commandId: 'c', event: { type: 'turn.cancelled' as const, threadId: 't', turnId: 'u' } };
+		assert.strictEqual(compactEnvelope(short as never), short);
 	});
 });

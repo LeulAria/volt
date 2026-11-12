@@ -28,7 +28,7 @@ import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { retryDelay, RUN_START_RETRY } from '../../common/jobs/retryPolicy.js';
 import { normalizeVoltMode } from '../../common/modes.js';
-import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, contractFromArgs, verifyFromArgs, DELEGATE_TASK_TOOL_NAME, describeSpend, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, lintTaskBrief, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeContextLevel, normalizeTaskRole, stringListArg, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, TaskContextLevel, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
+import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, contractFromArgs, verifyFromArgs, DELEGATE_TASK_TOOL_NAME, delegateArgsWithAliases, matchTaskModel, describeSpend, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, lintTaskBrief, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeContextLevel, normalizeTaskRole, stringListArg, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, TaskContextLevel, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { buildParentCapsule, userRequests } from '../../common/orchestration/taskContext.js';
 import { foldSpend, ITaskSpendTracker, ITaskTokenRates, seedSpendTracker, spendUsage } from '../../common/orchestration/taskSpend.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
@@ -1092,6 +1092,19 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	/**
+	 * A delegated subagent asks for approval exactly as the chat that delegated to it would (every
+	 * turn: the user may switch the parent). Without this every subagent ran on the default mode
+	 * (Supervised): under a Full access parent its first edit waited for an approval in a chat the
+	 * user was not looking at, and the whole request stalled.
+	 */
+	private async inheritAccessMode(childId: string, parentId: string): Promise<void> {
+		const mode = this.runtime.getAccessMode(parentId);
+		if (this.runtime.getAccessMode(childId) !== mode) {
+			await this.runtime.setAccessMode(mode, childId);
+		}
+	}
+
+	/**
 	 * With `confine`, a subagent runs at least in its checkout's sandbox (read-only for research and
 	 * review), on top of its parent's (`confineChatSandbox`, every turn). Set before its first turn
 	 * starts the agent process, whose OS sandbox is fixed at launch.
@@ -1175,6 +1188,9 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			if (thread?.parentId) {
 				// A subagent is never confined less than the chat that delegated to it (every turn: the parent's may have tightened).
 				await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(thread.parentId));
+			}
+			if (thread?.taskId && thread.parentId) {
+				await this.inheritAccessMode(threadId, thread.parentId);
 			}
 			if (thread?.taskId && thread.parentId && turn.kind === 'brief') {
 				await this.confineSubagent(threadId, thread.parentId, this.state.tasks[thread.taskId]?.role);
@@ -1817,7 +1833,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 					return { text: this.listModels(threadId) };
 				case DELEGATE_TASK_TOOL_NAME:
 					// Taken first: a call refused below must not leave its id for the next call's row.
-					return await this.delegate(threadId, args, token, this.takeDelegateCall(threadId));
+					return await this.delegate(threadId, delegateArgsWithAliases(args), token, this.takeDelegateCall(threadId));
 				case TASK_STATUS_TOOL_NAME:
 					return { text: this.taskStatus(threadId, typeof args.task_id === 'string' ? args.task_id : undefined) };
 				case WAIT_TASKS_TOOL_NAME:
@@ -1846,15 +1862,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		if (typeof value !== 'string' || !value.trim()) {
 			return undefined;
 		}
-		const wanted = value.trim().toLowerCase();
-		const items = this.runtime.listCatalog().filter(item => item.enabled);
-		const match = items.find(item => item.ref.toLowerCase() === wanted)
-			?? items.find(item => item.id.toLowerCase() === wanted)
-			?? items.find(item => item.label.toLowerCase() === wanted)
-			?? items.find(item => `${item.label} ${item.qualifier ?? ''}`.trim().toLowerCase() === wanted)
-			?? items.find(item => item.label.toLowerCase().includes(wanted) || item.ref.toLowerCase().includes(wanted));
+		const providers = new Map(this.runtime.listProviderStatuses().map(status => [status.profileId, status.label]));
+		const items = this.runtime.listCatalog().filter(item => item.enabled).map(item => ({ ...item, providerLabel: providers.get(item.profileId) }));
+		const match = matchTaskModel(items, value);
 		if (!match) {
-			throw new Error(`No connected model matches "${value}". Call list_models for the exact values.`);
+			// The choices go with the refusal: the next call can name one without a list_models round trip.
+			const choices = items.slice(0, 24).map(item => `"${item.label}"${item.providerLabel ? ` (${item.providerLabel})` : ''}`).join(', ');
+			throw new Error(`No connected model matches "${value}". Pass one of: ${choices}${items.length > 24 ? ', ... (list_models has all)' : ''}.`);
 		}
 		return { ref: match.ref, label: match.label, providerId: match.providerId };
 	}

@@ -18,6 +18,7 @@ import { IVoltHostToolProvider } from '../../common/hostTools.js';
 import { IOrchStartTurnRequest, IOrchTurnHost } from '../../common/orchestration/orchestrator.js';
 import { IVoltSendRequest } from '../../common/session.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { VoltAccessMode } from '../../common/access/accessModes.js';
 
 /** A runtime that runs nothing: the test starts and ends runs and says what the reply was. */
 class FakeRuntime {
@@ -35,6 +36,7 @@ class FakeRuntime {
 			{ ref: 'agent:cursor', kind: 'agent', providerId: 'cursor', profileId: 'p', id: 'grok', label: 'Cursor Grok 4.6', enabled: true },
 		];
 	}
+	listProviderStatuses() { return [{ profileId: 'p', label: 'Claude' }]; }
 	canSteer() { return false; }
 	steer() { return false; }
 	chatFor(id: string) { return id; }
@@ -43,6 +45,9 @@ class FakeRuntime {
 	readonly sandboxes = new Map<string, IVoltSandboxSettings>();
 	getSandboxSettings(threadId: string): IVoltSandboxSettings { return this.sandboxes.get(threadId) ?? DEFAULT_SANDBOX_SETTINGS; }
 	async setSandboxSettings(threadId: string, settings: IVoltSandboxSettings) { this.sandboxes.set(threadId, settings); }
+	readonly access = new Map<string, VoltAccessMode>();
+	getAccessMode(threadId?: string): VoltAccessMode { return (threadId ? this.access.get(threadId) : undefined) ?? 'supervised'; }
+	async setAccessMode(mode: VoltAccessMode, threadId?: string) { this.access.set(threadId ?? '', mode); }
 	getOrCreateSession(threadId: string) {
 		const reply = this.replies.get(threadId);
 		return { providerRef: undefined, messages: reply ? [{ role: 'assistant', content: reply }] : [] };
@@ -234,6 +239,39 @@ suite('Agent orchestrator service', () => {
 		assert.deepStrictEqual(runtime.getSandboxSettings(task.childId!), { level: 'read-only', network: false }, 'confined before the host starts it');
 		gate.complete();
 		await settle();
+	});
+
+	test('a subagent asks for approval as its parent chat does: a Full access parent\'s subagent does not stop for approvals', async () => {
+		const { service, runtime, host, tool } = await setup();
+		runtime.access.set('parent', 'full-access');
+		const gate = new DeferredPromise<void>();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		host.gate = gate.p;
+		await tool('parent', 'delegate_task', { task: 'Fix a.ts' });
+		await settle();
+		const task = service.tasksOf('parent')[0];
+		assert.ok(host.started.some(request => request.threadId === task.childId), 'its brief turn is starting');
+		assert.strictEqual(runtime.getAccessMode(task.childId!), 'full-access', 'set before the host starts it');
+		gate.complete();
+		await settle();
+		// The user tightens the parent: the next round follows.
+		runtime.access.set('parent', 'supervised');
+		runtime.finish(task.childId!, 'Fixed.');
+		await settle();
+		await tool('parent', 'message_task', { task_id: task.id, message: 'Also b.ts' });
+		await settle();
+		assert.strictEqual(runtime.getAccessMode(task.childId!), 'supervised');
+	});
+
+	test('delegate_task takes the names agents use for a brief and a model, and a refusal lists the models', async () => {
+		const { service, tool } = await setup();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		const started = await tool('parent', 'delegate_task', { tasks: [{ prompt: 'In /tmp/repo: fix a.ts', model: 'Claude Opus 5.5' }, { prompt: 'Review b.ts', description: 'Review b', model: 'cursor grok 4.6' }] });
+		assert.match(started, /Started 2 of 2 tasks/);
+		assert.deepStrictEqual(service.tasksOf('parent').map(task => [task.title, task.modelLabel]), [['Fix a.ts', 'Claude Opus 5.5'], ['Review b', 'Cursor Grok 4.6']]);
+		assert.match(await tool('parent', 'delegate_task', { task: 'x', model: 'GPT 9' }), /No connected model matches "GPT 9". Pass one of: "Claude Opus 5.5" \(Claude\), "Cursor Grok 4.6"/);
 	});
 
 	test('a subagent\'s checks run in its checkout before its report wakes the parent', async () => {
