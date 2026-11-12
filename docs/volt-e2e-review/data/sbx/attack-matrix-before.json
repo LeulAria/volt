@@ -1,0 +1,4802 @@
+{
+ "machine": {
+  "platform": "darwin",
+  "backend": "seatbelt",
+  "dockerSock": true
+ },
+ "runs": 3,
+ "arms": [
+  {
+   "id": "off",
+   "label": "Sandbox off (direct spawn)"
+  },
+  {
+   "id": "ww-net",
+   "label": "Agent: workspace-write, network on"
+  },
+  {
+   "id": "ww-nonet",
+   "label": "Agent: workspace-write, network off"
+  },
+  {
+   "id": "ro-net",
+   "label": "Agent: read-only, network on"
+  },
+  {
+   "id": "ro-nonet",
+   "label": "Agent: read-only, network off"
+  },
+  {
+   "id": "t3",
+   "label": "Extension host (T3), trusted workspace"
+  }
+ ],
+ "table": [
+  {
+   "arm": "off",
+   "attack": "read-ssh-key",
+   "what": "read ~/.ssh/id_ed25519",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 16
+  },
+  {
+   "arm": "off",
+   "attack": "read-aws",
+   "what": "read ~/.aws/credentials",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 15
+  },
+  {
+   "arm": "off",
+   "attack": "env-secrets",
+   "what": "read secret env vars",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 15
+  },
+  {
+   "arm": "off",
+   "attack": "write-outside",
+   "what": "write outside the workspace",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 11
+  },
+  {
+   "arm": "off",
+   "attack": "write-shell-rc",
+   "what": "append to ~/.zshrc",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 11
+  },
+  {
+   "arm": "off",
+   "attack": "git-hook",
+   "what": "write .git/hooks/pre-commit",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 11
+  },
+  {
+   "arm": "off",
+   "attack": "vscode-tasks",
+   "what": "write .vscode/tasks.json",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 13
+  },
+  {
+   "arm": "off",
+   "attack": "exfil-public",
+   "what": "POST to a host nobody allowed (example.com)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 667
+  },
+  {
+   "arm": "off",
+   "attack": "exfil-loopback",
+   "what": "connect to a local listener",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 33
+  },
+  {
+   "arm": "off",
+   "attack": "docker-socket",
+   "what": "reach the Docker socket",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 36
+  },
+  {
+   "arm": "off",
+   "attack": "spawn-child-attack",
+   "what": "spawn sh, the child reads the key",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 31
+  },
+  {
+   "arm": "off",
+   "attack": "delayed-write",
+   "what": "delayed attack (2 s later, background)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 2157
+  },
+  {
+   "arm": "off",
+   "attack": "workspace-write",
+   "what": "CONTROL: write a file in the workspace",
+   "control": true,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 33
+  },
+  {
+   "arm": "ww-net",
+   "attack": "read-ssh-key",
+   "what": "read ~/.ssh/id_ed25519",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 367
+  },
+  {
+   "arm": "ww-net",
+   "attack": "read-aws",
+   "what": "read ~/.aws/credentials",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 224
+  },
+  {
+   "arm": "ww-net",
+   "attack": "env-secrets",
+   "what": "read secret env vars",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 0,
+   "medianMs": 156
+  },
+  {
+   "arm": "ww-net",
+   "attack": "write-outside",
+   "what": "write outside the workspace",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 172
+  },
+  {
+   "arm": "ww-net",
+   "attack": "write-shell-rc",
+   "what": "append to ~/.zshrc",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 258
+  },
+  {
+   "arm": "ww-net",
+   "attack": "git-hook",
+   "what": "write .git/hooks/pre-commit",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 141
+  },
+  {
+   "arm": "ww-net",
+   "attack": "vscode-tasks",
+   "what": "write .vscode/tasks.json",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 152
+  },
+  {
+   "arm": "ww-net",
+   "attack": "exfil-public",
+   "what": "POST to a host nobody allowed (example.com)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 892
+  },
+  {
+   "arm": "ww-net",
+   "attack": "exfil-loopback",
+   "what": "connect to a local listener",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 190
+  },
+  {
+   "arm": "ww-net",
+   "attack": "docker-socket",
+   "what": "reach the Docker socket",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 109
+  },
+  {
+   "arm": "ww-net",
+   "attack": "spawn-child-attack",
+   "what": "spawn sh, the child reads the key",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 2,
+   "medianMs": 125
+  },
+  {
+   "arm": "ww-net",
+   "attack": "delayed-write",
+   "what": "delayed attack (2 s later, background)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 2258
+  },
+  {
+   "arm": "ww-net",
+   "attack": "workspace-write",
+   "what": "CONTROL: write a file in the workspace",
+   "control": true,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 127
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "read-ssh-key",
+   "what": "read ~/.ssh/id_ed25519",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 88
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "read-aws",
+   "what": "read ~/.aws/credentials",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 79
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "env-secrets",
+   "what": "read secret env vars",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 0,
+   "medianMs": 74
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "write-outside",
+   "what": "write outside the workspace",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 151
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "write-shell-rc",
+   "what": "append to ~/.zshrc",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 57
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "git-hook",
+   "what": "write .git/hooks/pre-commit",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 65
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "vscode-tasks",
+   "what": "write .vscode/tasks.json",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 72
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "exfil-public",
+   "what": "POST to a host nobody allowed (example.com)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 93
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "exfil-loopback",
+   "what": "connect to a local listener",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 0,
+   "medianMs": 76
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "docker-socket",
+   "what": "reach the Docker socket",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 81
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "spawn-child-attack",
+   "what": "spawn sh, the child reads the key",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 100
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "delayed-write",
+   "what": "delayed attack (2 s later, background)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 2280
+  },
+  {
+   "arm": "ww-nonet",
+   "attack": "workspace-write",
+   "what": "CONTROL: write a file in the workspace",
+   "control": true,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 205
+  },
+  {
+   "arm": "ro-net",
+   "attack": "read-ssh-key",
+   "what": "read ~/.ssh/id_ed25519",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 96
+  },
+  {
+   "arm": "ro-net",
+   "attack": "read-aws",
+   "what": "read ~/.aws/credentials",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 97
+  },
+  {
+   "arm": "ro-net",
+   "attack": "env-secrets",
+   "what": "read secret env vars",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 0,
+   "medianMs": 121
+  },
+  {
+   "arm": "ro-net",
+   "attack": "write-outside",
+   "what": "write outside the workspace",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 148
+  },
+  {
+   "arm": "ro-net",
+   "attack": "write-shell-rc",
+   "what": "append to ~/.zshrc",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 109
+  },
+  {
+   "arm": "ro-net",
+   "attack": "git-hook",
+   "what": "write .git/hooks/pre-commit",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 68
+  },
+  {
+   "arm": "ro-net",
+   "attack": "vscode-tasks",
+   "what": "write .vscode/tasks.json",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 74
+  },
+  {
+   "arm": "ro-net",
+   "attack": "exfil-public",
+   "what": "POST to a host nobody allowed (example.com)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 768
+  },
+  {
+   "arm": "ro-net",
+   "attack": "exfil-loopback",
+   "what": "connect to a local listener",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 3,
+   "reported": 0,
+   "medianMs": 94
+  },
+  {
+   "arm": "ro-net",
+   "attack": "docker-socket",
+   "what": "reach the Docker socket",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 75
+  },
+  {
+   "arm": "ro-net",
+   "attack": "spawn-child-attack",
+   "what": "spawn sh, the child reads the key",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 79
+  },
+  {
+   "arm": "ro-net",
+   "attack": "delayed-write",
+   "what": "delayed attack (2 s later, background)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 2266
+  },
+  {
+   "arm": "ro-net",
+   "attack": "workspace-write",
+   "what": "CONTROL: write a file in the workspace",
+   "control": true,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 150
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "read-ssh-key",
+   "what": "read ~/.ssh/id_ed25519",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 86
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "read-aws",
+   "what": "read ~/.aws/credentials",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 180
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "env-secrets",
+   "what": "read secret env vars",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 0,
+   "medianMs": 79
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "write-outside",
+   "what": "write outside the workspace",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 220
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "write-shell-rc",
+   "what": "append to ~/.zshrc",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 106
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "git-hook",
+   "what": "write .git/hooks/pre-commit",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 2,
+   "medianMs": 134
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "vscode-tasks",
+   "what": "write .vscode/tasks.json",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 117
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "exfil-public",
+   "what": "POST to a host nobody allowed (example.com)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 134
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "exfil-loopback",
+   "what": "connect to a local listener",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 0,
+   "medianMs": 112
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "docker-socket",
+   "what": "reach the Docker socket",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 112
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "spawn-child-attack",
+   "what": "spawn sh, the child reads the key",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 141
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "delayed-write",
+   "what": "delayed attack (2 s later, background)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 2230
+  },
+  {
+   "arm": "ro-nonet",
+   "attack": "workspace-write",
+   "what": "CONTROL: write a file in the workspace",
+   "control": true,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 362
+  },
+  {
+   "arm": "t3",
+   "attack": "read-ssh-key",
+   "what": "read ~/.ssh/id_ed25519",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 221
+  },
+  {
+   "arm": "t3",
+   "attack": "read-aws",
+   "what": "read ~/.aws/credentials",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 120
+  },
+  {
+   "arm": "t3",
+   "attack": "env-secrets",
+   "what": "read secret env vars",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 0,
+   "medianMs": 141
+  },
+  {
+   "arm": "t3",
+   "attack": "write-outside",
+   "what": "write outside the workspace",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 206
+  },
+  {
+   "arm": "t3",
+   "attack": "write-shell-rc",
+   "what": "append to ~/.zshrc",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 141
+  },
+  {
+   "arm": "t3",
+   "attack": "git-hook",
+   "what": "write .git/hooks/pre-commit",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 122
+  },
+  {
+   "arm": "t3",
+   "attack": "vscode-tasks",
+   "what": "write .vscode/tasks.json",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 2,
+   "medianMs": 153
+  },
+  {
+   "arm": "t3",
+   "attack": "exfil-public",
+   "what": "POST to a host nobody allowed (example.com)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 235
+  },
+  {
+   "arm": "t3",
+   "attack": "exfil-loopback",
+   "what": "connect to a local listener",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 0,
+   "medianMs": 251
+  },
+  {
+   "arm": "t3",
+   "attack": "docker-socket",
+   "what": "reach the Docker socket",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 369
+  },
+  {
+   "arm": "t3",
+   "attack": "spawn-child-attack",
+   "what": "spawn sh, the child reads the key",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 383
+  },
+  {
+   "arm": "t3",
+   "attack": "delayed-write",
+   "what": "delayed attack (2 s later, background)",
+   "control": false,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 2485
+  },
+  {
+   "arm": "t3",
+   "attack": "workspace-write",
+   "what": "CONTROL: write a file in the workspace",
+   "control": true,
+   "n": 3,
+   "ran": 3,
+   "through": 0,
+   "reported": 3,
+   "medianMs": 710
+  }
+ ],
+ "rows": [
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 8
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 8
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 10
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 7
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 8
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 7
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 13
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 654
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 16
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 18
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 21
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 2154
+  },
+  {
+   "run": 1,
+   "arm": "off",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 7
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-hfFO7X/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 129
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-o3bspg/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 164
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Qffse5/canary"
+   ],
+   "ms": 93
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-4nJNh8/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 137
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-mf7M84/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 110
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-uNt8Fe/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 108
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-60OKgr/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 152
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-TmKg2a/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Library/Preferences/com.apple.networkd.plist"
+   ],
+   "ms": 744
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 11,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-P8XVUA/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist"
+   ],
+   "ms": 190
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-ucFBeJ/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 98
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 1,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist"
+   ],
+   "ms": 82
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-rfzHoF/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2258
+  },
+  {
+   "run": 1,
+   "arm": "ww-net",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": true,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-jw4RG2/canary"
+   ],
+   "ms": 66
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-HSzyFJ/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 63
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-G0dQZu/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 79
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-yz1YYf/canary"
+   ],
+   "ms": 61
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-yeMoxp/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 151
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-NFiWFX/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 57
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-4X95al/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 65
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Q5JSme/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 72
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Sw2nh6/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:example.com"
+   ],
+   "ms": 74
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-ICArxs/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:remote:*:64984"
+   ],
+   "ms": 74
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-siLvhj/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 67
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-20DJV1/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 67
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-jElJx9/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2206
+  },
+  {
+   "run": 1,
+   "arm": "ww-nonet",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": true,
+   "denials": 1,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist"
+   ],
+   "ms": 97
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-cA8PaE/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 96
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-0AciuD/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 97
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-zcZyS1/canary"
+   ],
+   "ms": 85
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Kb35oD/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 151
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-wzg2kF/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 109
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-4tvkaD/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 68
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-hTEwge/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 74
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 13,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-dkglKv/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Library/Preferences/com.apple.networkd.plist"
+   ],
+   "ms": 768
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 11,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-cidWw9/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist"
+   ],
+   "ms": 94
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-vQcL8r/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 75
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-JNr2bn/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 79
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-5r0n7J/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2222
+  },
+  {
+   "run": 1,
+   "arm": "ro-net",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Lydk7X/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/ok.txt"
+   ],
+   "ms": 150
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-VcPhqc/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 86
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-AFidx4/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 80
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-CfpBHt/canary"
+   ],
+   "ms": 79
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-oOqjH7/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 220
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-WjgB7H/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 106
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-jAVvu7/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 134
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-r2Jw8f/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 117
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-kHmG0L/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:example.com"
+   ],
+   "ms": 134
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-V5txTv/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:remote:*:64984"
+   ],
+   "ms": 112
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Nnu4Vr/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 112
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-HkTNSg/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 141
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-zkwM0A/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2230
+  },
+  {
+   "run": 1,
+   "arm": "ro-nonet",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-8Iqqk3/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/ok.txt"
+   ],
+   "ms": 100
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-zSTnx7/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 51
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-ZEPTKf/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 48
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 10,
+   "seen": false,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-TWTl1S/canary"
+   ],
+   "ms": 50
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-LtZQcm/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 48
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-XcKVFT/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 55
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-H2x8NE/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 51
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 6,
+   "seen": false,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-q0ka9q/canary"
+   ],
+   "ms": 153
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 37,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-b4m8hM/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "launch:com.apple.SystemConfiguration.configd",
+    "network:example.com"
+   ],
+   "ms": 94
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 38,
+   "seen": false,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-jeLaFH/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "launch:com.apple.SystemConfiguration.configd",
+    "network:remote:*:64984"
+   ],
+   "ms": 92
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 38,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-NKELzl/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "launch:com.apple.SystemConfiguration.configd",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 133
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 17,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-nHZz5G/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 383
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-hTJkQw/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2230
+  },
+  {
+   "run": 1,
+   "arm": "t3",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Yj50uG/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/ok.txt"
+   ],
+   "ms": 125
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 16
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 15
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 15
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 11
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 11
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 11
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 13
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 667
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 33
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 36
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 31
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 2157
+  },
+  {
+   "run": 2,
+   "arm": "off",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 33
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-0hDbD4/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 367
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-gRIbic/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 224
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Rmhvnd/canary"
+   ],
+   "ms": 156
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-SYv6lr/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 172
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-wR9wLL/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 292
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-woAe9e/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 141
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-WPKwhn/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 114
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-OJKTdF/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Library/Preferences/com.apple.networkd.plist"
+   ],
+   "ms": 892
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 11,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-QFEiIC/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist"
+   ],
+   "ms": 134
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-PWHhhP/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 109
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-1NuCpy/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 125
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-d9uJZ1/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2143
+  },
+  {
+   "run": 2,
+   "arm": "ww-net",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": true,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-RfrIDi/canary"
+   ],
+   "ms": 127
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-ocWo6o/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 88
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-MfULRf/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 69
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-VERNiA/canary"
+   ],
+   "ms": 74
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Zezalf/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 68
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-WmI4cv/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 56
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-gr3Q1t/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 58
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-fz9jqi/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 59
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-g4entQ/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:example.com"
+   ],
+   "ms": 93
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-JJYOWh/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:remote:*:64984"
+   ],
+   "ms": 76
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-GjfMxs/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 81
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-dehPpg/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 100
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-mz1Yuq/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2280
+  },
+  {
+   "run": 2,
+   "arm": "ww-nonet",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": true,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-C76MCe/canary"
+   ],
+   "ms": 205
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-8GB4ZV/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 93
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-za9J2a/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 75
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 1,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist"
+   ],
+   "ms": 121
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-gzZqns/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 53
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-DIuryh/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 56
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-zsa5j2/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 54
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-FVGUoq/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 54
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-BGu6t1/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Library/Preferences/com.apple.networkd.plist"
+   ],
+   "ms": 665
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 11,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-0fAo6o/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist"
+   ],
+   "ms": 75
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-CCvHIR/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 66
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-wtyvIx/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 63
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-RX3GsG/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2266
+  },
+  {
+   "run": 2,
+   "arm": "ro-net",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-dNjLF6/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/ok.txt"
+   ],
+   "ms": 88
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-oYwihf/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 81
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-uLovdh/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 180
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-T20yPY/canary"
+   ],
+   "ms": 74
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-pZcw8Z/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 73
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-cxubxC/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 78
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 2,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-bEEX53/canary"
+   ],
+   "ms": 77
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-G8dIgo/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 66
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-l9CTlN/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "network:example.com",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist"
+   ],
+   "ms": 76
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-I4gRNb/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:remote:*:64984"
+   ],
+   "ms": 103
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-vCcstz/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 106
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-ETI6rd/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 95
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-1nFp96/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2175
+  },
+  {
+   "run": 2,
+   "arm": "ro-nonet",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-LnngDQ/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/ok.txt"
+   ],
+   "ms": 852
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-k1wxtK/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 508
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-XipPK2/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 268
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 11,
+   "seen": false,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-nsRk79/canary"
+   ],
+   "ms": 444
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-DIj5Ok/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 206
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Cq8uA3/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 141
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-PFofQH/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 122
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-2YSjBe/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 122
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 37,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-7hQPqH/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "launch:com.apple.SystemConfiguration.configd",
+    "network:example.com"
+   ],
+   "ms": 235
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 39,
+   "seen": false,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-evm0V9/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "launch:com.apple.SystemConfiguration.configd",
+    "network:remote:*:64984"
+   ],
+   "ms": 380
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 38,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-N6borZ/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "launch:com.apple.SystemConfiguration.configd",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 369
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 17,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-BYyThh/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 365
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-Mowrfk/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2485
+  },
+  {
+   "run": 2,
+   "arm": "t3",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-fgsLa2/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/ok.txt"
+   ],
+   "ms": 1504
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 107
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 74
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 52
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 53
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 74
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 91
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 174
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 925
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 134
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 160
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 198
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 2228
+  },
+  {
+   "run": 3,
+   "arm": "off",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": true,
+   "denials": 0,
+   "seen": false,
+   "denialTargets": [],
+   "ms": 141
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-YrcIlp/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 1717
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-IPlFzf/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 807
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-4jN4cO/canary"
+   ],
+   "ms": 532
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-2sHf8C/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 248
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-RgOCP6/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 258
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-abEZwR/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 415
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-szofTW/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 320
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-yDC7Nu/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Library/Preferences/com.apple.networkd.plist"
+   ],
+   "ms": 1068
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 11,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-bqyP04/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist"
+   ],
+   "ms": 581
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-2R2ZOm/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 345
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-1JmkPy/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 179
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-LtIjpY/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2342
+  },
+  {
+   "run": 3,
+   "arm": "ww-net",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": true,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-JRJmdP/canary"
+   ],
+   "ms": 495
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-dV25mU/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 300
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-uvWX46/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 274
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-FtG0Rd/canary"
+   ],
+   "ms": 206
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-uxmR5c/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 165
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-zhED8z/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 317
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-3KJbva/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 210
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-BxL7qC/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 209
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-GKymOm/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:example.com"
+   ],
+   "ms": 192
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-kjCIhb/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:remote:*:64984"
+   ],
+   "ms": 380
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-TcJ4aj/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 467
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-NRIeYW/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 284
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-xF8aIY/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2500
+  },
+  {
+   "run": 3,
+   "arm": "ww-nonet",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": true,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-PvCdxy/canary"
+   ],
+   "ms": 736
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-MHtmCD/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 459
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-l4kMpF/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 465
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-FX11W6/canary"
+   ],
+   "ms": 544
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-nMI3ft/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 148
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-RceSsn/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 349
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-ScfYsW/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 301
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-ZgMo8C/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 257
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-j3IhIx/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Library/Preferences/com.apple.networkd.plist"
+   ],
+   "ms": 1070
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": true,
+   "denials": 11,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-RkHFSx/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist"
+   ],
+   "ms": 1442
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-m4yIWL/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 992
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-DPEUQ2/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 828
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-TciPNj/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2585
+  },
+  {
+   "run": 3,
+   "arm": "ro-net",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-lfsjMO/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/ok.txt"
+   ],
+   "ms": 1269
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-ZxgTwV/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 428
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-p3xDVG/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 1046
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 3,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-glb2cD/canary"
+   ],
+   "ms": 498
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-8EpTGz/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 704
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-INxBSk/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 498
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-b5qtgI/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 257
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-ywz20N/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 371
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-H4Uzte/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:example.com"
+   ],
+   "ms": 954
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": false,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-nsr4Rp/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:remote:*:64984"
+   ],
+   "ms": 1514
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-A0AjuT/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 1356
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 5,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-75TOMn/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 1051
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-oRojTG/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 3546
+  },
+  {
+   "run": 3,
+   "arm": "ro-nonet",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": false,
+   "denials": 4,
+   "seen": true,
+   "denialTargets": [
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-khCctW/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/ok.txt"
+   ],
+   "ms": 362
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "read-ssh-key",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-kE7Roi/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 221
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "read-aws",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-8TdRVY/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.aws/credentials"
+   ],
+   "ms": 120
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "env-secrets",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 10,
+   "seen": false,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-gvwkJF/canary"
+   ],
+   "ms": 141
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "write-outside",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-zAfH1g/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/pwn.txt"
+   ],
+   "ms": 234
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "write-shell-rc",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-GOHwJY/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.zshrc"
+   ],
+   "ms": 193
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "git-hook",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-SGzcQJ/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.git/hooks/pre-commit"
+   ],
+   "ms": 146
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "vscode-tasks",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-yqCfrQ/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/.vscode"
+   ],
+   "ms": 246
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "exfil-public",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 37,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-pf21Zq/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "launch:com.apple.SystemConfiguration.configd",
+    "network:example.com"
+   ],
+   "ms": 269
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "exfil-loopback",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 38,
+   "seen": false,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-A8Ldnc/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "launch:com.apple.SystemConfiguration.configd",
+    "network:remote:*:64984"
+   ],
+   "ms": 251
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "docker-socket",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 38,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-vmri9J/canary",
+    "read:/Users/leularia/.CFUserTextEncoding",
+    "read:/Users/leularia/Library/Preferences/ByHost/.GlobalPreferences.59A8D539-D33B-58A7-9C2E-093625FD4AF8.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences.plist",
+    "read:/Users/leularia/Library/Preferences/.GlobalPreferences_m.plist",
+    "read:/Library/Preferences/.GlobalPreferences.plist",
+    "launch:com.apple.SystemConfiguration.configd",
+    "network:/Users/leularia/.docker/run/docker.sock"
+   ],
+   "ms": 460
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "spawn-child-attack",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 17,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-0pMLhq/canary",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/home/.ssh/id_ed25519"
+   ],
+   "ms": 411
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "delayed-write",
+   "control": false,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-pecqZi/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/outside/delayed.txt"
+   ],
+   "ms": 2726
+  },
+  {
+   "run": 3,
+   "arm": "t3",
+   "attack": "workspace-write",
+   "control": true,
+   "ran": true,
+   "through": false,
+   "denials": 12,
+   "seen": true,
+   "denialTargets": [
+    "launch:com.apple.system.notification_center",
+    "launch:com.apple.logd",
+    "read:/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist",
+    "launch:com.apple.diagnosticd",
+    "read:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/runs/volt-sbx-v7yqce/canary",
+    "write:/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/volt-e2e-sbx-rdvJyX/ws/ok.txt"
+   ],
+   "ms": 710
+  }
+ ]
+}
