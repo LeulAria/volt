@@ -583,11 +583,12 @@
 	gap: 6px;
 }
 
-/* Stop on the running prompt, in its bottom-right corner, for as long as the run streams. */
+/* Stop on the running prompt, in its bottom-right corner, for as long as the run streams.
+ * Centred on the last text line, beside Read more: the bubble's 8px padding less half of (24px - the 22px line). */
 .volt-agent-user-stop {
 	position: absolute;
 	right: 5px;
-	bottom: 5px;
+	bottom: 7px;
 	z-index: 3;
 	width: 24px;
 	height: 24px;
@@ -10509,7 +10510,8 @@ pre.volt-agent-searchable {
 	opacity: 1;
 }
 
-/* Rewind to Here on a sent message: hidden until the bubble is hovered, in its bottom-right corner (Cursor). */
+/* Rewind to Here on a sent message: hidden until the bubble is hovered, in its bottom-right corner (Cursor),
+ * centred on the last text line like Read more beside it (the bubble's 8px padding plus half of 22px - 20px). */
 
 .volt-agent-user-restore {
 	width: 20px;
@@ -10525,7 +10527,7 @@ pre.volt-agent-searchable {
 	justify-content: center;
 	position: absolute;
 	right: 5px;
-	bottom: 5px;
+	bottom: 9px;
 	z-index: 3;
 	visibility: hidden;
 }
