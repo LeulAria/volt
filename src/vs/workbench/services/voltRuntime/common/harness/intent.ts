@@ -95,6 +95,19 @@ const PATH_RE = /(^|[\s"'`(])((\.{1,2}|~)?\/?[\w.-]+\/[\w./-]+|[\w-]+\.(ts|tsx|j
 
 const MENTION_RE = /(^|\s)@[\w./-]+/;
 
+/**
+ * Code named in prose: a `backticked` identifier, a camelCase name (`assertTransition`), a
+ * PascalCase name with a code suffix or three or more humps (`FolioService`, `NightAuditService`),
+ * a snake_case name (`max_occupancy`) or a member (`rooms.id`, `ReservationService.cancel`). In a
+ * workspace that is a question about the project: benchmarks saw "which methods call
+ * `assertTransition`?" routed as a web lookup ("search and fetch primary sources") with no hint
+ * of the code index. Brand names (iPhone, YouTube, PlayStation) do not count.
+ */
+const CODE_IDENTIFIER = /`[A-Za-z_$][\w$]*(?:[.:#][\w$]+)*(?:\(\))?`|\b[a-z]{2,}(?:[A-Z][a-z0-9]+)+\b|\b(?:[A-Z][a-z0-9]+)+(?:Service|Module|Controller|Provider|Repository|Gateway|Adapter|Listener|Handler|Factory|Manager|Store|Client|Dto|DTO|Entity|Schema|Component|Hook|Context|Props|Guard|Pipe|Middleware|Resolver|Worker|Queue|Event|Command|Query|Interface|Impl|Helper|Config|Options|Error|Exception)\b|\b(?:[A-Z][a-z0-9]+){3,}\b|\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b|\b[A-Za-z_]\w+\.(?!(?:js|ts|io|com|org|net|dev|app|ai|md|py|co|uk|me|sh|json|html|css)\b)[a-z_]\w+\b/;
+
+/** Tests named only to leave them out ("non-test files", "ignore *.spec.ts"): not a request about tests. */
+const EXCLUDED_TESTS = /\bnon-?tests?\b|\b(?:ignor(?:e|ing)|exclud(?:e|ing)|except|without|skip(?:ping)?|other than|not)\s+(?:the\s+|any\s+)?(?:tests?|specs?)(?:\s+files)?\b|\*\.(?:spec|test|e2e-spec)\.[jt]sx?\b/gi;
+
 const WORKSPACE_REF = /\b(this|the|our|my) (repo|repository|code ?base|project|app|application|file|function|class|component|module|package|service|folder|directory|workspace|test|tests|branch|pr|pull request)\b|\bin (here|the code)\b/i;
 
 /**
@@ -150,7 +163,8 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	const hasFence = CODE_FENCE.test(raw);
 	const smashedQuestion = !raw.includes(' ') && QUESTION_STEM.test(raw);
 	const questionShape = QUESTION_START.test(raw) || raw.endsWith('?') || smashedQuestion;
-	const referencesWorkspace = hasPath || hasMention || hasFence || WORKSPACE_REF.test(raw) || (questionShape && SMASHED_WORKSPACE.test(raw));
+	const namesCode = hasWorkspace && CODE_IDENTIFIER.test(raw);
+	const referencesWorkspace = hasPath || hasMention || hasFence || WORKSPACE_REF.test(raw) || (questionShape && SMASHED_WORKSPACE.test(raw)) || namesCode;
 	const codingVerb = CODING_VERBS.test(raw);
 	const sentences = raw.split(/[.!?]+\s|\n+/).filter(s => s.trim().length > 0).length;
 	const words = raw.split(/\s+/).filter(Boolean).length;
@@ -161,7 +175,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	if (hasPath) { signals.push('path'); }
 	if (hasMention) { signals.push('mention'); }
 	if (hasFence) { signals.push('code-fence'); }
-	if (referencesWorkspace && !hasPath && !hasMention && !hasFence) { signals.push('workspace-ref'); }
+	if (referencesWorkspace && !hasPath && !hasMention && !hasFence) { signals.push(namesCode && !WORKSPACE_REF.test(raw) ? 'code-identifier' : 'workspace-ref'); }
 	if (codingVerb) { signals.push('coding-verb'); }
 	if (questionShape) { signals.push('question'); }
 
@@ -196,7 +210,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	const broadChange = hasWorkspace && mode !== 'ask' && mode !== 'plan' && BROAD_CHANGE.test(raw);
 	if (broadChange) { signals.push('broad-change'); }
 
-	const mentionsTests = hasWorkspace && mode !== 'ask' && mode !== 'plan' && TESTS_REF.test(raw);
+	const mentionsTests = hasWorkspace && mode !== 'ask' && mode !== 'plan' && TESTS_REF.test(raw.replace(EXCLUDED_TESTS, ' '));
 	if (mentionsTests) { signals.push('tests'); }
 
 	const wantsMockups = MOCKUP_INTENT.test(raw);

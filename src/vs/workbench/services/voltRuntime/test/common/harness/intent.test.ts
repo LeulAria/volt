@@ -265,4 +265,35 @@ suite('Volt intent router', () => {
 			['read', 'search', 'web', 'meta'],
 		);
 	});
+	test('a question naming code is about the workspace, not a web lookup', () => {
+		for (const text of [
+			'Which functions or methods call `assertTransition`, and with which target status does each call it?',
+			'Which classes inject FolioService through their constructor? List them.',
+			'Which database tables have a foreign key that references rooms.id?',
+			'what does max_occupancy mean here',
+		]) {
+			const intent = classifyIntent(text, 'agent');
+			assert.strictEqual(intent.referencesWorkspace, true, text);
+			assert.strictEqual(intent.wantsWeb, false, text);
+		}
+		assert.ok(classifyIntent('Which classes inject FolioService through their constructor?', 'agent').signals.includes('code-identifier'));
+	});
+
+	test('brand names and domains are not code', () => {
+		for (const text of ['how much is the iPhone 17 in UAE', 'PlayStation 5 price today', 'is YouTube down', 'best PowerPoint templates']) {
+			assert.strictEqual(classifyIntent(text, 'agent').referencesWorkspace, false, text);
+		}
+	});
+
+	test('"source files" is the project, not a request for cited sources', () => {
+		const intent = classifyIntent('Which non-test source files write to the `reservations` table? List each file.', 'agent');
+		assert.strictEqual(intent.wantsWeb, false);
+		assert.strictEqual(intent.shape.cite, false);
+		assert.strictEqual(classifyIntent('summarize the EU AI act with sources', 'agent').shape.cite, true);
+	});
+
+	test('tests named only to leave them out are not a request about tests', () => {
+		assert.strictEqual(classifyIntent('Which non-test source files write to the reservations table? Ignore *.spec.ts files.', 'agent').mentionsTests, undefined);
+		assert.strictEqual(classifyIntent('fix the failing tests in the cart module', 'agent').mentionsTests, true);
+	});
 });

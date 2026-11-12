@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
+import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, CODE_QUESTIONS, IDE_TOOLS_GUIDE, IDE_TOOLS_GUIDE_SANDBOXED, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 
 suite('Volt context pack', () => {
@@ -217,5 +217,21 @@ suite('Volt context pack', () => {
 		assert.ok(buildSystemPrompt({ mode: 'agent', intent: classifyIntent('[/scratch skill] the release plan', 'agent'), visuals: true }).includes(SCRATCH_REPLIES), 'native prompts receive the same guidance');
 		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('sketch out the auth architecture', 'agent') })?.includes(SURFACES), 'not without the volt MCP server');
 		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('add pagination to the users table', 'agent'), visuals: true })?.includes(SURFACES));
+	});
+	test('a question about the code gets the code-intelligence hint, a plain question does not', () => {
+		const code = classifyIntent('Which classes inject FolioService through their constructor?', 'agent');
+		assert.strictEqual(code.lane, 'chat');
+		assert.ok(buildAcpLead({ mode: 'agent', intent: code, codeIndexed: true, ideTools: true })?.includes(CODE_QUESTIONS));
+		assert.ok(!buildAcpLead({ mode: 'agent', intent: code })?.includes(CODE_QUESTIONS));
+		const plain = classifyIntent('how much is nissan kicks in UAE', 'agent');
+		assert.ok(!buildAcpLead({ mode: 'agent', intent: plain, codeIndexed: true, ideTools: true })?.includes(CODE_QUESTIONS));
+	});
+	test('a sandboxed chat is not told about the IDE tools its sandbox refuses', () => {
+		const intent = classifyIntent('add a retry to the payment webhook handler and run its tests', 'agent');
+		const open = buildAcpLead({ mode: 'agent', intent, ideTools: true }) ?? '';
+		const sandboxed = buildAcpLead({ mode: 'agent', intent, ideTools: true, sandboxed: true }) ?? '';
+		assert.ok(open.includes(IDE_TOOLS_GUIDE));
+		assert.ok(sandboxed.includes(IDE_TOOLS_GUIDE_SANDBOXED) && !sandboxed.includes(IDE_TOOLS_GUIDE));
+		assert.ok(!IDE_TOOLS_GUIDE_SANDBOXED.includes('ide profile'));
 	});
 });
