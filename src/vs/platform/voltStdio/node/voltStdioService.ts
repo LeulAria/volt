@@ -14,7 +14,7 @@ import { generateUuid } from '../../../base/common/uuid.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
-import { isPathInside, planAllowsWrite } from '../../voltSandbox/common/sandboxPolicy.js';
+import { isPathInside, IVoltSandboxRequest, planAllowsWrite, scrubSandboxEnv } from '../../voltSandbox/common/sandboxPolicy.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
 import { ChildLedger } from './childLedger.js';
 import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltSandboxEvent, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
@@ -58,6 +58,8 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	/** The sandbox of each sandboxed spawn, and the spawn of each sandbox tag. */
 	private readonly sandboxes = new Map<string, ISandboxLaunch>();
 	private readonly sandboxTags = new Map<string, string>();
+	/** Which variables were held back from sandboxed processes, logged once per agent and set. */
+	private readonly scrubLogged = new Set<string>();
 
 	/** Foreground commands and background jobs, by caller-chosen id. */
 	private readonly runs = new Map<string, ExecRun>();
@@ -116,7 +118,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			this.sandboxes.set(id, launch);
 			this.sandboxTags.set(launch.tag, id);
 		}
-		const env = { ...await this.env(), ...options.env, ...sandboxEnv };
+		const env = { ...await this.baseEnv(options.sandbox), ...options.env, ...sandboxEnv };
 		if (launch) {
 			// Diagnostics for sandboxed spawns: exactly what runs, where, from which parent and with which env names.
 			this.logService.info(`[volt-sandbox-spawn] ${id} ppid=${process.pid} cwd=${options.cwd ?? ''} argv=${JSON.stringify([command, ...args.filter(arg => arg.length < 200)])}`);
@@ -300,21 +302,24 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	async execFile(request: IVoltExecFileRequest): Promise<IVoltExecFileResult> {
-		const env = { ...await this.env(), ...request.env };
+		const env = { ...await this.baseEnv(request.sandbox), ...request.env };
+		const launch = request.sandbox ? await this.prepareSandbox(request.file, request.args, request.sandbox) : undefined;
 		return new Promise(resolve => {
-			execFile(request.file, [...request.args], {
+			execFile(launch?.command ?? request.file, launch?.args ?? [...request.args], {
 				cwd: request.cwd,
-				env,
+				env: launch ? { ...env, ...launch.env } : env,
 				timeout: request.timeoutMs,
 				maxBuffer: request.maxBytes ?? 1024 * 1024,
 				windowsHide: true,
 				encoding: 'utf8',
 			}, (err, stdout, stderr) => {
+				launch?.dispose();
 				const failure = err as (NodeJS.ErrnoException & { code?: string | number; killed?: boolean }) | null;
+				const notes = launch?.warnings.length ? `${launch.warnings.join('\n')}\n` : '';
 				resolve({
 					exitCode: !failure ? 0 : typeof failure.code === 'number' ? failure.code : null,
 					stdout: String(stdout ?? ''),
-					stderr: String(stderr ?? ''),
+					stderr: `${notes}${String(stderr ?? '')}`,
 					...(failure && typeof failure.code !== 'number' ? { error: failure.killed ? `timed out after ${request.timeoutMs} ms` : failure.message } : {}),
 				});
 			});
@@ -323,12 +328,14 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 
 	/** {@link exec} on behalf of one window; its commands stop when it reloads or closes. */
 	async execFor(owner: string | undefined, request: IVoltExecRequest): Promise<IVoltExecResult> {
-		const env = { ...await this.env(), ...request.env };
+		const env: Record<string, string | undefined> = { ...await this.baseEnv(request.sandbox), ...request.env };
 		const shell = shellFor(env);
 		const started = Date.now();
-		const child = spawn(shell.file, shell.args(request.command), {
+		// A command run for a sandboxed chat runs in that chat's sandbox: the shell and all it starts.
+		const launch = request.sandbox ? await this.prepareSandbox(shell.file, shell.args(request.command), request.sandbox) : undefined;
+		const child = spawn(launch?.command ?? shell.file, launch?.args ?? shell.args(request.command), {
 			cwd: request.cwd,
-			env,
+			env: launch ? { ...env, ...launch.env } : env,
 			// No stdin: a command that prompts gets EOF instead of hanging the run.
 			stdio: ['ignore', 'pipe', 'pipe'],
 			detached: process.platform !== 'win32',
@@ -337,6 +344,10 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		this.track(child, shell.file);
 		const run = new ExecRun(request.id, request.command, child, started, owner);
 		this.runs.set(request.id, run);
+		if (launch) {
+			launch.warnings.forEach(warning => run.note(`[volt sandbox] ${warning}`));
+			run.onDone(() => launch.dispose());
+		}
 		this.pruneFinishedJobs();
 		run.onDone(() => {
 			// A command that handed control back stays readable as a job.
@@ -465,6 +476,31 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		return file;
 	}
 
+	/**
+	 * The environment a process starts from: the user's, minus credentials when it runs sandboxed
+	 * (a token in the environment is as readable as one in `~/.aws`). Variables the caller passes
+	 * (a provider profile's key, a project's environment) are added after this, on purpose.
+	 */
+	private async baseEnv(sandbox: IVoltSandboxRequest | undefined): Promise<NodeJS.ProcessEnv> {
+		const env = await this.env();
+		if (!sandbox) {
+			return env;
+		}
+		const scrubbed = scrubSandboxEnv(env, sandbox.providerId);
+		const key = `${sandbox.providerId}\u0000${scrubbed.dropped.join(',')}`;
+		if (scrubbed.dropped.length && !this.scrubLogged.has(key)) {
+			this.scrubLogged.add(key);
+			this.logService.info(`[volt-sandbox] not passed to sandboxed ${sandbox.providerId} processes: ${scrubbed.dropped.join(', ')}`);
+		}
+		return scrubbed.env;
+	}
+
+	private async prepareSandbox(command: string, args: readonly string[], sandbox: IVoltSandboxRequest): Promise<ISandboxLaunch> {
+		const launch = await this.sandbox.prepare(command, args, sandbox);
+		this.logService.info(`[volt-sandbox-exec] ${launch.mechanism} ${sandbox.level} network=${sandbox.network} ${basename(command)}`);
+		return launch;
+	}
+
 	/** The user's shell environment, resolved once by the main process and cached. */
 	private env(): Promise<NodeJS.ProcessEnv> {
 		this.shellEnv ??= getResolvedShellEnv(this.configurationService, this.logService, { _: [] }, process.env)
@@ -575,6 +611,11 @@ class ExecRun {
 			running: this.running,
 			exitCode: this.exitCode,
 		};
+	}
+
+	/** A line Volt adds to the command's stderr (the sandbox is weaker than asked). */
+	note(text: string): void {
+		this.append(this.stderr, `${text}\n`);
 	}
 
 	private append(log: OutputLog, data: string): void {

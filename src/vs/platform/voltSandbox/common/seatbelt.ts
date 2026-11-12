@@ -85,6 +85,15 @@ export function buildSeatbeltProfile(plan: ISandboxPlan, tag: string): string {
 			'(allow network-outbound (remote unix-socket))',
 		);
 	}
+	if (plan.denyUnixSockets.length) {
+		// Last, so it wins over the unix-socket allow above. Seatbelt matches the resolved path, so
+		// the plan lists where symlinks lead (/var/run/docker.sock -> ~/.docker/run/docker.sock) too.
+		lines.push(
+			'',
+			'; Container engines: a container with the host\'s disk mounted runs outside this sandbox.',
+			`(deny network-outbound ${message}\n\t${plan.denyUnixSockets.map(path => `(remote unix-socket (path-literal ${sbplString(path)}))`).join('\n\t')})`,
+		);
+	}
 	return lines.join('\n') + '\n';
 }
 

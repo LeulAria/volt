@@ -66,6 +66,7 @@ import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
 import { DevicesPage } from './devicesPage.js';
+import { OrchestrationPage } from './orchestrationPage.js';
 import type { VoltConnectionKind } from './addDeviceModal.js';
 import { createSettingsIcon } from './settingsIcons.js';
 import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
@@ -91,7 +92,7 @@ import { SettingsThemeList } from './settingsThemeList.js';
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
 /** Volt's own pages, then every registered setting by category (`cat:`), Extensions included. */
-type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
+type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'orchestration' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
 type CatalogSection = `cat:${string}`;
 
 function isCatalogSection(section: string): section is CatalogSection {
@@ -129,6 +130,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
 	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
 	{ id: 'devices', label: localize('voltSettings.devices', "Devices"), icon: Codicon.deviceMobile, group: 2 },
+	{ id: 'orchestration', label: localize('voltSettings.orchestration', "Orchestration"), icon: Codicon.organization, group: 2 },
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
 	{ id: 'git', label: localize('voltSettings.git', "Git & PRs"), icon: Codicon.gitPullRequest, group: 2 },
 	{ id: 'worktrees', label: localize('voltSettings.worktrees', "Worktrees"), icon: Codicon.repoForked, group: 2 },
@@ -794,6 +796,24 @@ export class VoltSettingsEditor extends EditorPane {
 				);
 				const generation = this.renderGeneration;
 				pending = this.devices.render(() => generation === this.renderGeneration && this.section === 'devices').finally(() => this.scheduleScrollSync());
+				break;
+			}
+			case 'orchestration': {
+				this.pageHead(
+					localize('voltSettings.orchestration', "Orchestration"),
+					localize('voltSettings.orchestrationLead', "Teams of agents from any provider, councils that decide together, and the machines their work runs on. Ask in any chat: \"spawn 20 agents, half Claude and half Codex\", \"@Council review this design\", \"@build-server run the tests\"."),
+				);
+				const generation = this.renderGeneration;
+				const page = new OrchestrationPage(this.instantiationService, {
+					store: this.renderStore,
+					target: () => this.target,
+					sectionLabel: label => this.sectionLabel(label),
+					settingsGroup: () => this.settingsGroup(),
+					settingRow: (parent, title, desc, render) => this.settingRow(parent, title, desc, render),
+					stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+					rerender: () => this.renderContent(),
+				});
+				pending = page.render(() => generation === this.renderGeneration && this.section === 'orchestration').finally(() => this.scheduleScrollSync());
 				break;
 			}
 			case 'projects':

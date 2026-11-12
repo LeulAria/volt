@@ -5,10 +5,12 @@
 
 import { Event } from '../../../../../base/common/event.js';
 import type { IDisposable } from '../../../../../base/common/lifecycle.js';
+import type { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import type { IVoltModelOptions } from '../models/modelOptions.js';
 import type { AgentTaskDelivery, AgentTaskIsolation, AgentTaskOrigin, AgentTaskRole, ITaskContract } from './agentTasks.js';
 import type { IWorkspaceMoveSpec } from '../git/workspaceMove.js';
+import { ORCH_MACHINE_CAPACITY_SETTING, parseMachineCapacity } from './machineCapacity.js';
 
 /**
  * Volt's agent orchestrator: the one owner of what every chat (thread) is doing.
@@ -269,6 +271,11 @@ export interface IOrchThread {
 	readonly lastMove?: IOrchMoveResult;
 	/** A root chat: what its delegated tasks (the whole tree) spent since the user's latest message. */
 	readonly spend?: IOrchSpend;
+	/**
+	 * How many of its subagents run at once, as the user chose for a large spawn ("8 at a time"):
+	 * replaces `runningPerParent` for this chat, still within `runningTotal`. Unset: the limit.
+	 */
+	readonly maxChildren?: number;
 }
 
 /** What a task spent, folded from its chat's usage reports (absolute totals, so a repeat changes nothing). */
@@ -369,6 +376,37 @@ export interface IOrchTask {
 	readonly fallbacks?: readonly IOrchModelChoice[];
 	/** Models it failed on before the one it runs on now. */
 	readonly failedOn?: readonly string[];
+	/**
+	 * Its upstream reports (`after`) reach it anonymized: no task ids, titles or models, each as
+	 * "Response A", "Response B" by its place in this pool of task ids, so every judge of a council
+	 * round uses the same labels even though none sees its own answer.
+	 */
+	readonly blind?: readonly string[];
+	/** The team it is a member of (`spawn_team`, `council`): its teammates share the id and a board. */
+	readonly team?: string;
+	/**
+	 * Its report is not delivered to the parent: later tasks read it through `after` (a council's
+	 * answers and reviews; only the verdict reaches the chat). task_status still shows it.
+	 */
+	readonly quiet?: boolean;
+	/**
+	 * Commands that prove the work (a test file, a type-check). When the subagent reports done, Volt
+	 * runs them in its checkout, in its sandbox, before the report goes up: a failure sends the
+	 * subagent back with the output (`maxVerifyRounds`), and the result is part of the report.
+	 * Harness-agnostic: it holds Claude Code, Codex and Cursor subagents to the same checks.
+	 */
+	readonly verify?: readonly string[];
+	readonly verification?: IOrchVerification;
+}
+
+/** Volt's own run of a task's `verify` commands, for its latest report. */
+export interface IOrchVerification {
+	/** 1 for the first report, 2 after one fix, ... */
+	readonly round: number;
+	readonly state: 'running' | 'passed' | 'failed' | 'skipped';
+	/** One line per command (pass/fail, time) and the tail of what failed. */
+	readonly summary?: string;
+	readonly at: number;
 }
 
 export interface IOrchConflict {
@@ -433,6 +471,14 @@ export interface IOrchTaskSpawn {
 	readonly after?: readonly string[];
 	readonly budgetUsd?: number;
 	readonly fallbacks?: readonly IOrchModelChoice[];
+	/** Its upstream reports arrive anonymized (`IOrchTask.blind`). */
+	readonly blind?: readonly string[];
+	/** The team it joins (`IOrchTask.team`). Team spawns count against `maxTeamAgents`, not `maxSpawnsPerTurn`. */
+	readonly team?: string;
+	/** Its report reaches only the tasks that wait on it (`IOrchTask.quiet`). */
+	readonly quiet?: boolean;
+	/** Commands Volt runs before the report goes up (`IOrchTask.verify`). */
+	readonly verify?: readonly string[];
 	/** Id for the new task and its child chat, picked by the caller so a retry can be recognized. */
 	readonly taskId: string;
 	readonly childId: string;
@@ -451,7 +497,8 @@ export type OrchCommandBody =
 	 * Another chat's agent messages a chat the same way (`thread_send`), so two agents cannot keep
 	 * each other busy forever. `interrupt`: stop the running turn and run this one next.
 	 */
-	| { readonly type: 'thread.notify'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt; readonly interrupt?: boolean }
+	/** `steer`: a running agent that reads messages between steps takes it now (still a notification, never the user's prompt). */
+	| { readonly type: 'thread.notify'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt; readonly interrupt?: boolean; readonly steer?: boolean }
 	| { readonly type: 'thread.block'; readonly threadId: string; readonly reason: string | undefined }
 	| { readonly type: 'thread.forget'; readonly threadId: string }
 	| { readonly type: 'queue.remove'; readonly threadId: string; readonly itemId: string }
@@ -477,7 +524,7 @@ export type OrchCommandBody =
 	 */
 	| { readonly type: 'run.settled'; readonly threadId: string; readonly runId?: string; readonly turnId?: string; readonly outcome: OrchOutcome; readonly error?: string; readonly reply?: string; readonly limit?: { readonly resetAt?: number; readonly message: string; readonly stop?: boolean }; readonly account?: IOrchLimitAccount; readonly openPlan?: readonly string[]; readonly stepLimit?: boolean; readonly worked?: boolean }
 	/** A steer could not be delivered (the run ended first): reports go back to pending, a prompt back to the queue's head. */
-	| { readonly type: 'steer.failed'; readonly threadId: string; readonly steerId: string; readonly prompt: IOrchPrompt; readonly taskIds?: readonly string[] }
+	| { readonly type: 'steer.failed'; readonly threadId: string; readonly steerId: string; readonly prompt: IOrchPrompt; readonly taskIds?: readonly string[]; readonly notification?: boolean }
 	/** The effect that starts a turn failed before the runtime took it. */
 	| { readonly type: 'dispatch.failed'; readonly threadId: string; readonly turnId: string; readonly error: string }
 	| { readonly type: 'input.opened'; readonly threadId: string; readonly inputId: string; readonly kind: 'approval' | 'question' }
@@ -487,6 +534,8 @@ export type OrchCommandBody =
 	| { readonly type: 'task.message'; readonly taskId: string; readonly turnId: string; readonly prompt: IOrchPrompt }
 	/** The parent's agent read these reports itself (task_status, wait_tasks): no notification turn. */
 	| { readonly type: 'task.ack'; readonly taskIds: readonly string[] }
+	/** Volt ran a task's `verify` commands for its report of `round` (`skipped`: they could not run). */
+	| { readonly type: 'task.verified'; readonly taskId: string; readonly round: number; readonly outcome: 'passed' | 'failed' | 'skipped'; readonly summary: string }
 	| { readonly type: 'task.progress'; readonly taskId: string; readonly activity?: string; readonly steps?: number; readonly files?: readonly string[] }
 	/** What a Volt task spent so far (totals): it adds to its root's spend, and a budget it passes stops the work. */
 	| { readonly type: 'task.usage'; readonly taskId: string; readonly usage: IOrchTaskUsage }
@@ -509,6 +558,8 @@ export type OrchCommandBody =
 	| { readonly type: 'limit.resume'; readonly threadId: string }
 	/** The user's choice for a parked chat: `auto` false cancels its resume; undefined follows the setting. */
 	| { readonly type: 'limit.configure'; readonly threadId: string; readonly auto: boolean | undefined }
+	/** How many of the chat's subagents run at once (`IOrchThread.maxChildren`); undefined: back to the limit. */
+	| { readonly type: 'thread.children'; readonly threadId: string; readonly maxRunning: number | undefined }
 	/**
 	 * A resume of a parked chat heard back from the provider (its first text or tool): the account is
 	 * usable again. The park ends, and the other chats parked on the account follow, staggered.
@@ -559,6 +610,13 @@ export const ORCH_BUDGET_USD_SETTING = 'volt.agent.multitask.budgetUsd';
 export const ORCH_BUDGET_TOKENS_SETTING = 'volt.agent.multitask.budgetTokens';
 /** The model `model: "auto"` picks for each task role (role -> model value). */
 export const ORCH_ROLE_MODELS_SETTING = 'volt.agent.multitask.roleModels';
+/**
+ * How subagents are sandboxed. `inherit`: never less than the chat that started them. `confine`:
+ * that, and at least their checkout (research and review read-only) even when the parent runs free.
+ */
+export const ORCH_SUBAGENT_SANDBOX_SETTING = 'volt.agent.multitask.sandbox';
+/** Team members one request may start (`maxTeamAgents`). */
+export const ORCH_MAX_TEAM_AGENTS_SETTING = 'volt.orchestra.maxAgentsPerRequest';
 
 export type OrchCommand = OrchCommandBody & {
 	/** Idempotency key. A command id seen before is acknowledged without effect. */
@@ -575,6 +633,7 @@ export type OrchEvent =
 	| { readonly type: 'thread.updated'; readonly threadId: string; readonly title?: string; readonly modelRef?: string; readonly modelLabel?: string }
 	| { readonly type: 'thread.blocked'; readonly threadId: string; readonly reason: string | undefined }
 	| { readonly type: 'thread.forgotten'; readonly threadId: string }
+	| { readonly type: 'thread.children'; readonly threadId: string; readonly maxRunning: number | undefined }
 	| { readonly type: 'queue.added'; readonly threadId: string; readonly item: IOrchQueueItem; readonly head?: boolean }
 	| { readonly type: 'queue.removed'; readonly threadId: string; readonly itemId: string; readonly reason: 'user' | 'dispatched' | 'cleared' }
 	| { readonly type: 'queue.reordered'; readonly threadId: string; readonly ids: readonly string[] }
@@ -582,7 +641,7 @@ export type OrchEvent =
 	| { readonly type: 'queue.paused'; readonly threadId: string; readonly reason: OrchPause }
 	| { readonly type: 'queue.resumed'; readonly threadId: string }
 	| { readonly type: 'turn.dispatched'; readonly threadId: string; readonly turn: IOrchTurn }
-	| { readonly type: 'turn.steered'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt; readonly steerId: string; readonly taskIds?: readonly string[] }
+	| { readonly type: 'turn.steered'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt; readonly steerId: string; readonly taskIds?: readonly string[]; readonly notification?: boolean }
 	| { readonly type: 'turn.bound'; readonly threadId: string; readonly turnId: string; readonly runId: string; readonly steerable?: boolean }
 	| { readonly type: 'turn.cancelling'; readonly threadId: string; readonly turnId: string }
 	| { readonly type: 'turn.settled'; readonly threadId: string; readonly turnId: string; readonly outcome: OrchOutcome; readonly at: number; readonly error?: string }
@@ -601,6 +660,12 @@ export type OrchEvent =
 	/** Volt restarted while the task ran and it continues in a resume turn. */
 	| { readonly type: 'task.restarted'; readonly taskId: string; readonly at: number }
 	| { readonly type: 'task.delivery'; readonly taskIds: readonly string[]; readonly delivery: AgentTaskDelivery }
+	/**
+	 * The subagent reported done and Volt runs its `verify` commands: the task stays running (it
+	 * keeps its slot) and its report waits in `result` until they pass, fail for good, or are skipped.
+	 */
+	| { readonly type: 'task.verifying'; readonly taskId: string; readonly round: number; readonly at: number; readonly result?: string }
+	| { readonly type: 'task.verification'; readonly taskId: string; readonly verification: IOrchVerification }
 	/** Old finished tasks leave the state (their chats stay in history). */
 	| { readonly type: 'task.pruned'; readonly taskIds: readonly string[] }
 	| { readonly type: 'handoff.requested'; readonly threadId: string; readonly handoff: IOrchHandoff }
@@ -640,14 +705,16 @@ export interface IOrchEventEnvelope {
 /** Work the service does after the events that caused it are durable. */
 export type OrchEffect =
 	| { readonly kind: 'startTurn'; readonly threadId: string; readonly turn: IOrchTurn }
-	| { readonly kind: 'steer'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt; readonly steerId: string; readonly taskIds?: readonly string[] }
+	| { readonly kind: 'steer'; readonly threadId: string; readonly turnId: string; readonly prompt: IOrchPrompt; readonly steerId: string; readonly taskIds?: readonly string[]; readonly notification?: boolean }
 	| { readonly kind: 'cancelTurn'; readonly threadId: string; readonly turnId: string; readonly runId?: string }
 	/** Long polls (`wait_tasks`) waiting on these tasks re-check. */
 	| { readonly kind: 'tasksChanged'; readonly taskIds: readonly string[] }
 	/** A subagent asked for a worktree; the service creates it before its first turn starts. */
 	| { readonly kind: 'prepareWorktree'; readonly taskId: string }
 	/** Move a chat's checkout (see `IOrchWorkspaceMover`); ends with `move.finished`. */
-	| { readonly kind: 'moveWorkspace'; readonly threadId: string; readonly move: IOrchMove };
+	| { readonly kind: 'moveWorkspace'; readonly threadId: string; readonly move: IOrchMove }
+	/** Run a task's `verify` commands in its checkout; ends with `task.verified` for `round`. */
+	| { readonly kind: 'verifyTask'; readonly taskId: string; readonly round: number };
 
 //#endregion
 
@@ -666,6 +733,11 @@ export interface IOrchLimits {
 	 * one turn is refused and told to wait for the reports it has.
 	 */
 	readonly maxSpawnsPerTurn: number;
+	/**
+	 * Team members (`spawn_team`, `council`) one turn may start: the user asked for a team, so the
+	 * cap is the user's setting rather than the doom-loop guard. They still run `runningTotal` at once.
+	 */
+	readonly maxTeamAgents: number;
 	/** Finished runs of the same brief under one parent before another is refused (read the report instead). */
 	readonly maxBriefRepeats: number;
 	/** Rounds of one piece of work (`previous_task_id` chains) before the next is refused. */
@@ -692,6 +764,8 @@ export interface IOrchLimits {
 	readonly budgetUsd: number;
 	/** The same in fresh tokens (input, output, cache writes; 0: no limit), for models without a price. */
 	readonly budgetTokens: number;
+	/** Runs of a task's `verify` commands per report: past the last, a failing report goes up as it is. */
+	readonly maxVerifyRounds: number;
 }
 
 export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
@@ -700,6 +774,7 @@ export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
 	maxDepth: 2,
 	spawnsPerCall: 8,
 	maxSpawnsPerTurn: 16,
+	maxTeamAgents: 100,
 	maxBriefRepeats: 3,
 	maxRounds: 6,
 	receipts: 512,
@@ -709,26 +784,31 @@ export const DEFAULT_ORCH_LIMITS: IOrchLimits = {
 	supervise: false,
 	budgetUsd: 0,
 	budgetTokens: 0,
+	maxVerifyRounds: 3,
 };
 
 /** The subagent budget per request the setting starts at (USD). */
 export const ORCH_DEFAULT_BUDGET_USD = 25;
 
 /** The most each multitask setting accepts. */
-export const ORCH_LIMIT_MAX = { runningPerParent: 16, runningTotal: 32, spawnsPerCall: 16 } as const;
+export const ORCH_LIMIT_MAX = { runningPerParent: 64, runningTotal: 64, spawnsPerCall: 32, teamAgents: 500 } as const;
 
 /**
  * The limits with the user's multitask settings applied. Values are clamped to 1 and
- * `ORCH_LIMIT_MAX`; one left unset (or not a number) keeps its default.
+ * `ORCH_LIMIT_MAX`; one left unset (or not a number) keeps its default. The two parallel
+ * settings at 0 (their default) mean "what this machine can run": the capacity Volt measured
+ * on first launch (`ORCH_MACHINE_CAPACITY_SETTING`), recommended per chat and its max in total.
  */
 export function readOrchLimits(get: (key: string) => unknown): IOrchLimits {
 	const read = (key: string, fallback: number, max: number) => {
 		const value = get(key);
-		return typeof value === 'number' && Number.isFinite(value) ? Math.max(1, Math.min(max, Math.floor(value))) : fallback;
+		return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? Math.max(1, Math.min(max, Math.floor(value))) : fallback;
 	};
-	const runningPerParent = read(ORCH_MAX_PARALLEL_SETTING, DEFAULT_ORCH_LIMITS.runningPerParent, ORCH_LIMIT_MAX.runningPerParent);
-	const runningTotal = Math.max(runningPerParent, read(ORCH_MAX_PARALLEL_TOTAL_SETTING, DEFAULT_ORCH_LIMITS.runningTotal, ORCH_LIMIT_MAX.runningTotal));
+	const capacity = parseMachineCapacity(get(ORCH_MACHINE_CAPACITY_SETTING));
+	const runningPerParent = read(ORCH_MAX_PARALLEL_SETTING, Math.min(ORCH_LIMIT_MAX.runningPerParent, capacity?.recommended ?? DEFAULT_ORCH_LIMITS.runningPerParent), ORCH_LIMIT_MAX.runningPerParent);
+	const runningTotal = Math.max(runningPerParent, read(ORCH_MAX_PARALLEL_TOTAL_SETTING, Math.min(ORCH_LIMIT_MAX.runningTotal, capacity?.max ?? DEFAULT_ORCH_LIMITS.runningTotal), ORCH_LIMIT_MAX.runningTotal));
 	const spawnsPerCall = read(ORCH_MAX_PER_CALL_SETTING, DEFAULT_ORCH_LIMITS.spawnsPerCall, ORCH_LIMIT_MAX.spawnsPerCall);
+	const maxTeamAgents = read(ORCH_MAX_TEAM_AGENTS_SETTING, DEFAULT_ORCH_LIMITS.maxTeamAgents, ORCH_LIMIT_MAX.teamAgents);
 	// The doom-loop guard always leaves room for two full calls in one turn.
 	const maxSpawnsPerTurn = Math.max(DEFAULT_ORCH_LIMITS.maxSpawnsPerTurn, spawnsPerCall * 2);
 	// On unless turned off.
@@ -739,7 +819,7 @@ export function readOrchLimits(get: (key: string) => unknown): IOrchLimits {
 	};
 	const budgetUsd = amount(ORCH_BUDGET_USD_SETTING, ORCH_DEFAULT_BUDGET_USD);
 	const budgetTokens = Math.floor(amount(ORCH_BUDGET_TOKENS_SETTING, 0));
-	return { ...DEFAULT_ORCH_LIMITS, runningPerParent, runningTotal, spawnsPerCall, maxSpawnsPerTurn, supervise, budgetUsd, budgetTokens };
+	return { ...DEFAULT_ORCH_LIMITS, runningPerParent, runningTotal, spawnsPerCall, maxSpawnsPerTurn, maxTeamAgents, supervise, budgetUsd, budgetTokens };
 }
 
 //#endregion
@@ -758,6 +838,13 @@ export interface IOrchChange {
 	/** Threads whose state changed (projection consumers re-read these). */
 	readonly threads: readonly string[];
 	readonly tasks: readonly string[];
+}
+
+export interface IOrchSpawnOutcome {
+	readonly taskId?: string;
+	/** The entry named a task that already exists (same client_request_id or the same live brief). */
+	readonly reused?: boolean;
+	readonly error?: string;
 }
 
 export interface IOrchStartTurnRequest {
@@ -824,10 +911,18 @@ export interface IAgentOrchestratorService {
 	resumeLimit(threadId: string): Promise<IOrchSubmitResult>;
 	/** The chat's own auto-resume choice while parked: false cancels, true asks, undefined follows the setting. */
 	configureLimit(threadId: string, auto: boolean | undefined): Promise<void>;
+	/**
+	 * Starts subagents of `parentId` for the orchestra (teams, councils): each entry takes
+	 * delegate_task's fields (task, title, model, role, isolation, after as task ids, the contract,
+	 * client_request_id) plus `team` and `blind`. Entries start in order, so later ones can wait on
+	 * earlier ones. Only the orchestrator that runs the agents has it (not a window's mirror of the
+	 * agent server's).
+	 */
+	spawnTasks?(parentId: string, entries: readonly Record<string, unknown>[], token: CancellationToken): Promise<readonly IOrchSpawnOutcome[]>;
 	/** Starts every queued message of the chat now (or only `itemIds`), each as a multitask agent running in parallel. Returns how many started. */
 	multitaskQueue(threadId: string, itemIds?: readonly string[]): Promise<number>;
 	/** Wakes the chat with a notification turn (see `thread.notify`). A retried `turnId` is not sent twice. */
-	notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult>;
+	notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean; readonly steer?: boolean }): Promise<IOrchSubmitResult>;
 	/** The user's Stop (or Stop all). Agents interrupt chats with `dispatch({ type: 'turn.cancel' })`, which does not fire `onDidStop`. */
 	cancel(threadId: string, options?: { readonly cascade?: 'turn' | 'all' }): Promise<void>;
 	/** The user stopped a chat: what it was waiting on for itself (pull request watches) ends too. */

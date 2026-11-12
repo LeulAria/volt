@@ -121,7 +121,9 @@ export class VoltSandboxLauncher extends Disposable {
 			workspaceRoots: await withRealpaths(request.workspaceRoots),
 			extraWritableRoots: await withRealpaths(request.extraWritableRoots ?? []),
 		};
-		const plan = resolveSandboxPlan(resolved, host);
+		const base = resolveSandboxPlan(resolved, host);
+		// Seatbelt matches a socket by where its symlink leads (/var/run/docker.sock is one).
+		const plan: ISandboxPlan = { ...base, denyUnixSockets: await withRealpaths(base.denyUnixSockets) };
 		const support = await this.getSupport();
 		const warnings: string[] = [];
 		let proxy: SandboxNetworkProxy | undefined;

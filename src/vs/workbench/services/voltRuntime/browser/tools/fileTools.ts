@@ -375,6 +375,22 @@ async function runDelete(host: IFileToolHost, args: unknown, ctx: IToolContext):
 }
 
 /** Writes through the open editor when it holds unsaved changes; otherwise to disk, refusing a stale overwrite. */
+/**
+ * Writes an edit another tool computed (a language server's rename, format or quick fix) the way
+ * edit_file writes: into the open buffer when there is one, recorded in the ledger and the chat's
+ * change set. Returns the diff summary for the tool result.
+ */
+export async function writeComputedEdit(host: IFileToolHost, uri: URI, before: string, after: string, ctx: IToolContext): Promise<{ readonly added: number; readonly removed: number; readonly text: string }> {
+	const dirty = host.documents?.dirtyText(uri);
+	if (dirty !== undefined && dirty !== before) {
+		throw new Error(`${displayPath(host.root(), uri)} changed while the edit was computed; run it again.`);
+	}
+	const version = await writeText(host, uri, after, dirty !== undefined, undefined);
+	host.ledger?.()?.recordWrite(uri.toString(), displayPath(host.root(), uri), version);
+	ctx.emit?.({ type: 'file.change', uri, kind: 'edit', before, existed: true });
+	return diffHunk(before, after);
+}
+
 async function writeText(host: IFileToolHost, uri: URI, text: string, open: boolean, etag: string | undefined): Promise<string | undefined> {
 	if (open && host.documents && await host.documents.writeOpen(uri, text)) {
 		return `dirty:${text.length}:${quickHash(text)}`;

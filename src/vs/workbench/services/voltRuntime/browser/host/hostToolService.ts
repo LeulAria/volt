@@ -19,7 +19,7 @@ import { browserBlockedMessage, IVoltBrowserAccessService } from '../../common/b
 import { PROPOSE_PLAN_TOOL_NAME } from '../../common/plans.js';
 import { VoltMode } from '../../common/modes.js';
 import '../browserAccessService.js';
-import { AgentQuestionDraft, parseQuestionDraft, questionResponseText } from '../../common/questions.js';
+import { AgentQuestionDraft, IAgentQuestionResponse, parseQuestionDraft, questionResponseText } from '../../common/questions.js';
 import { cropImage, describeInspection, flattenAlpha, IImagePoint, IImageRect, inspectImage, IRgbaImage, MAX_ANALYSIS_PIXELS, parseRect } from '../../common/tools/imageAnalysis.js';
 import { applyFileEdits, groupFileEdits, parseFileEdits, safeEditPath } from '../../common/tools/fileEdits.js';
 import { decodeImage, ImageFormat, MAX_IMAGE_BYTES, scaleScreenshot, zoomImage } from './imageCodec.js';
@@ -394,6 +394,19 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		this.mcpUrl = url;
 		this.mcpToken = url ? token : undefined;
 		this._onDidChangeMcp.fire();
+	}
+
+	async askUser(sessionId: string, draft: AgentQuestionDraft, options: { readonly requestId?: string; readonly ms: number; readonly token: CancellationToken }): Promise<{ readonly requestId: string; readonly response?: IAgentQuestionResponse } | undefined> {
+		if (!this.questionHandler) {
+			return undefined;
+		}
+		const requestId = options.requestId && this.drafts.has(options.requestId) ? options.requestId : this.questionHandler.ask(sessionId, draft);
+		this.drafts.set(requestId, draft);
+		const response = await this.questionHandler.wait(requestId, options.ms, options.token);
+		if (response) {
+			this.drafts.delete(requestId);
+		}
+		return { requestId, ...(response ? { response } : {}) };
 	}
 
 	setQuestionHandler(handler: IVoltQuestionHandler | undefined): void {

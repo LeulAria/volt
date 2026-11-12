@@ -75,11 +75,17 @@ export interface ISandboxPlan {
 	/** Hosts the proxy lets through when network is `proxy`. Wildcards: `*.example.com`. */
 	readonly allowedDomains: readonly string[];
 	readonly loopbackPorts: readonly number[];
+	/**
+	 * Unix sockets never reachable, at any network setting: a container engine's API starts a
+	 * container with the host's disk mounted, which runs outside every sandbox.
+	 */
+	readonly denyUnixSockets: readonly string[];
 }
 
-/** Files that run as code later, outside any sandbox (srt's mandatory denies, plus Volt's own). */
-const DANGEROUS_ROOT_FILES = ['.gitconfig', '.gitmodules', '.bashrc', '.bash_profile', '.zshrc', '.zprofile', '.zshenv', '.profile', '.ripgreprc', '.mcp.json'];
-const DANGEROUS_ROOT_DIRS = ['.git/hooks', '.vscode', '.idea', '.claude/commands', '.claude/agents', '.cursor/hooks', '.volt/hooks'];
+/** Files that run as code later, outside any sandbox (srt's mandatory denies, plus Volt's own). `.envrc` runs on `cd` with direnv. */
+const DANGEROUS_ROOT_FILES = ['.gitconfig', '.gitmodules', '.bashrc', '.bash_profile', '.zshrc', '.zprofile', '.zshenv', '.profile', '.ripgreprc', '.mcp.json', '.envrc'];
+/** `.husky` holds the git hooks of repositories whose `core.hooksPath` points there. */
+const DANGEROUS_ROOT_DIRS = ['.git/hooks', '.husky', '.vscode', '.idea', '.claude/commands', '.claude/agents', '.cursor/hooks', '.volt/hooks'];
 const DANGEROUS_ROOT_EXACT = ['.git/config', '.claude/settings.json', '.claude/settings.local.json', '.cursor/hooks.json', '.cursor/mcp.json', '.volt/hooks.json'];
 
 /** Credentials no agent needs (git over SSH still works: `~/.ssh` stays readable). */
@@ -106,13 +112,14 @@ const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	'claude-code': {
 		homeDirs: ['.claude', '.config/claude', '.local/share/claude'],
 		homeFiles: ['.claude.json'],
-		protectedHome: ['.claude/settings.json', '.claude/settings.local.json', '.claude/commands', '.claude/agents', '.claude/hooks'],
+		// CLAUDE.md is read into every later session, sandboxed or not: a place to plant instructions.
+		protectedHome: ['.claude/settings.json', '.claude/settings.local.json', '.claude/commands', '.claude/agents', '.claude/hooks', '.claude/CLAUDE.md'],
 		tmpDirs: uid => [`/private/tmp/claude-${uid ?? 0}`, `/tmp/claude-${uid ?? 0}`, '/private/tmp/cc-socks', '/tmp/cc-socks'],
 		domains: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
 	},
 	codex: {
 		homeDirs: ['.codex'],
-		protectedHome: ['.codex/config.toml', '.codex/rules'],
+		protectedHome: ['.codex/config.toml', '.codex/rules', '.codex/AGENTS.md'],
 		domains: ['chatgpt.com', '*.chatgpt.com', 'api.openai.com', '*.openai.com', 'auth.openai.com'],
 	},
 	'cursor-acp': {
@@ -129,7 +136,7 @@ const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	opencode: {
 		// OpenCode 2 keeps credentials and sessions in `.local/share/opencode/opencode.db` and its CLI settings in `.config/opencode/cli.json`.
 		homeDirs: ['.local/share/opencode', '.config/opencode', '.opencode', '.omo', '.local/share/oh-my-opencode', '.claude/transcripts'],
-		protectedHome: ['.config/opencode/opencode.json', '.config/opencode/opencode.jsonc', '.config/opencode/cli.json', '.config/opencode/plugin', '.config/opencode/plugins'],
+		protectedHome: ['.config/opencode/opencode.json', '.config/opencode/opencode.jsonc', '.config/opencode/cli.json', '.config/opencode/plugin', '.config/opencode/plugins', '.config/opencode/AGENTS.md'],
 		domains: ['opencode.ai', '*.opencode.ai', 'models.dev', 'api.anthropic.com', 'api.openai.com', 'openrouter.ai', '*.openrouter.ai', 'generativelanguage.googleapis.com', 'api.x.ai', 'api.deepseek.com', 'api.moonshot.ai', 'api.z.ai'],
 	},
 	antigravity: {
@@ -139,7 +146,7 @@ const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	pi: {
 		// `.pi/agent/auth.json` stays writable: Pi refreshes its OAuth tokens there.
 		homeDirs: ['.pi'],
-		protectedHome: ['.pi/agent/settings.json', '.pi/agent/models.json', '.pi/agent/mcp.json', '.pi/agent/keybindings.json'],
+		protectedHome: ['.pi/agent/settings.json', '.pi/agent/models.json', '.pi/agent/mcp.json', '.pi/agent/keybindings.json', '.pi/agent/AGENTS.md'],
 		domains: ['pi.dev', '*.pi.dev', 'api.anthropic.com', 'api.openai.com', 'chatgpt.com', '*.chatgpt.com', 'auth.openai.com', 'openrouter.ai', '*.openrouter.ai', 'generativelanguage.googleapis.com', 'api.x.ai', 'api.deepseek.com', 'api.moonshot.ai', 'api.z.ai', 'api.groq.com', 'api.mistral.ai', 'api.cerebras.ai'],
 	},
 	kimi: {
@@ -268,6 +275,111 @@ export function resolveSandboxPlan(request: IVoltSandboxRequest, host: ISandboxH
 		network,
 		allowedDomains: network === 'proxy' ? unique([...agentApiDomains(request.providerId), ...(request.allowedDomains ?? [])].map(domain => domain.trim().toLowerCase()).filter(Boolean)) : [],
 		loopbackPorts: unique((request.loopbackPorts ?? []).filter(port => Number.isInteger(port) && port > 0 && port < 65536).map(String)).map(Number),
+		denyUnixSockets: unique([
+			...CONTAINER_SOCKETS,
+			...CONTAINER_HOME_SOCKETS.map(path => `${home}/${path}`),
+			...(host.uid !== undefined ? [`/run/user/${host.uid}/docker.sock`, `/run/user/${host.uid}/podman/podman.sock`] : []),
+		].flatMap(path => withPrivateAliases(path, host.platform))),
+	};
+}
+
+/** Container engine API sockets (Docker, Podman), system-wide. The launcher adds where symlinks lead. */
+const CONTAINER_SOCKETS = ['/var/run/docker.sock', '/run/docker.sock', '/run/podman/podman.sock', '/var/run/podman/podman.sock'];
+/** The same under the home folder: Docker Desktop, OrbStack, Colima, Rancher Desktop, Lima, Podman machines. */
+const CONTAINER_HOME_SOCKETS = [
+	'.docker/run/docker.sock', '.docker/desktop/docker.sock', '.orbstack/run/docker.sock',
+	'.colima/default/docker.sock', '.colima/docker.sock', '.rd/docker.sock', '.lima/docker/sock/docker.sock',
+	'.local/share/containers/podman/machine/podman.sock', '.local/share/containers/podman/machine/qemu/podman.sock',
+];
+
+/** Environment names that hold credentials. Matched on `_`-separated words, so `MONKEY` is not `KEY`. */
+const SECRET_ENV_NAME = /(^|_)(TOKEN|TOKENS|SECRET|SECRETS|PASSWORD|PASSWD|PASSPHRASE|PRIVATE_KEY|API_KEY|APIKEY|ACCESS_KEY|ACCESS_KEY_ID|SESSION_TOKEN|CREDENTIAL|CREDENTIALS|AUTH|KEY)(_|$)/i;
+/** Whole families that are credentials whatever the rest of the name says, and connection strings with passwords in them. */
+const SECRET_ENV_PREFIX = /^(AWS_|AZURE_|GOOGLE_APPLICATION_CREDENTIALS$|GCLOUD_|VAULT_|NPM_TOKEN$|NODE_AUTH_TOKEN$|DOCKER_AUTH_CONFIG$|.*_(DATABASE|DB)_URL$|DATABASE_URL$|REDIS_URL$|MONGO(DB)?_URI$|POSTGRES(QL)?_URL$|MYSQL_URL$|AMQP_URL$|SENTRY_AUTH_TOKEN$)/i;
+/** Never secrets, even though a word matches (`SSH_AUTH_SOCK` is the agent's socket, not a key). */
+const SAFE_ENV_NAME = /^(SSH_AUTH_SOCK|GPG_AGENT_INFO|GPG_TTY|XAUTHORITY|KEYTIMEOUT|VOLT_.*|VSCODE_.*|ELECTRON_.*|TERM_PROGRAM.*)$/;
+/** The model providers' own keys: what agents need to reach their model at all. */
+const MODEL_KEY_NAME = /^(ANTHROPIC_|CLAUDE_|OPENAI_|AZURE_OPENAI_|CODEX_|OPENROUTER_|GEMINI_|GOOGLE_API_KEY$|GOOGLE_GENERATIVE_AI_|XAI_|GROK_|DEEPSEEK_|MOONSHOT_|KIMI_|ZAI_|ZHIPU_|GROQ_|MISTRAL_|CEREBRAS_|FIREWORKS_|TOGETHER_|AI_GATEWAY_|CURSOR_|OPENCODE_|PI_|FX_|MUSE_)/i;
+
+/** True when the environment variable `name` looks like a credential a sandboxed process should not inherit. */
+export function isSecretEnvName(name: string): boolean {
+	return !SAFE_ENV_NAME.test(name) && (SECRET_ENV_NAME.test(name) || SECRET_ENV_PREFIX.test(name));
+}
+
+/**
+ * The user's environment as a sandboxed process gets it: credentials dropped (cloud keys, tokens,
+ * database URLs), except the model keys agents need and anything the caller sets on purpose
+ * (`keep`: a provider profile's or project's own variables, which are added after this anyway).
+ * Claude Code on Bedrock or Vertex keeps the cloud credentials it says it uses.
+ * The file side of the same rule is `SECRET_HOME_DIRS`: a key in the environment is as readable
+ * as a key in `~/.aws`, so the sandbox closes both.
+ */
+export function scrubSandboxEnv(env: Readonly<Record<string, string | undefined>>, providerId: string, keep: readonly string[] = []): { readonly env: Record<string, string>; readonly dropped: readonly string[] } {
+	const cloud = providerId === 'claude-code' && (truthy(env.CLAUDE_CODE_USE_BEDROCK) || truthy(env.CLAUDE_CODE_USE_VERTEX));
+	const out: Record<string, string> = {};
+	const dropped: string[] = [];
+	for (const [name, value] of Object.entries(env)) {
+		if (value === undefined) {
+			continue;
+		}
+		const kept = keep.includes(name) || MODEL_KEY_NAME.test(name) || (cloud && /^(AWS_|GOOGLE_APPLICATION_CREDENTIALS$|CLOUD_ML_|VERTEX_)/.test(name));
+		if (!kept && isSecretEnvName(name)) {
+			dropped.push(name);
+			continue;
+		}
+		out[name] = value;
+	}
+	return { env: out, dropped: dropped.sort() };
+}
+
+function truthy(value: string | undefined): boolean {
+	return !!value && value !== '0' && value.toLowerCase() !== 'false';
+}
+
+const LEVEL_STRENGTH: Readonly<Record<VoltSandboxLevel, number>> = { 'off': 0, 'workspace-write': 1, 'read-only': 2 };
+
+/** The level that confines more (read-only over workspace-write over off). */
+export function strongerSandboxLevel(a: VoltSandboxLevel, b: VoltSandboxLevel): VoltSandboxLevel {
+	return LEVEL_STRENGTH[a] >= LEVEL_STRENGTH[b] ? a : b;
+}
+
+/**
+ * A subagent's sandbox: never weaker than its parent's. The stronger level, network only when
+ * both allow it, writable folders and hosts only those the parent has too. A parent that runs
+ * unconfined leaves the child as it is.
+ */
+export function attenuateSandbox(child: IVoltSandboxSettings, parent: IVoltSandboxSettings): IVoltSandboxSettings {
+	if (parent.level === 'off') {
+		return child;
+	}
+	const level = strongerSandboxLevel(child.level, parent.level);
+	const parentRoots = parent.extraWritableRoots ?? [];
+	const roots = (child.level === 'off' ? parentRoots : (child.extraWritableRoots ?? []).filter(root => parentRoots.some(allowed => isPathInside(root, allowed))));
+	const parentDomains = parent.allowedDomains ?? [];
+	const domains = (child.level === 'off' ? parentDomains : (child.allowedDomains ?? []).filter(domain => domainAllowed(domain.replace(/^\*\./, ''), parentDomains)));
+	return {
+		level,
+		network: child.network && parent.network,
+		...(roots.length ? { extraWritableRoots: roots } : {}),
+		...(domains.length ? { allowedDomains: domains } : {}),
+	};
+}
+
+/**
+ * The OS sandbox for a command Volt runs on a chat's behalf (a test run, a subagent's checks, an
+ * IDE tool's program): the chat's own settings and folders. Undefined when the chat is unconfined.
+ */
+export function chatSandboxRequest(settings: IVoltSandboxSettings, workspaceRoots: readonly string[], providerId = 'volt'): IVoltSandboxRequest | undefined {
+	if (settings.level === 'off') {
+		return undefined;
+	}
+	return {
+		level: settings.level,
+		network: settings.network,
+		providerId,
+		workspaceRoots,
+		...(settings.extraWritableRoots?.length ? { extraWritableRoots: settings.extraWritableRoots } : {}),
+		...(settings.allowedDomains?.length ? { allowedDomains: settings.allowedDomains } : {}),
 	};
 }
 
