@@ -626,6 +626,9 @@ export function legacyHostToolRefusal(use: IHostToolSandboxUse | undefined, call
 			return true;
 		case 'network':
 			return !sandbox.network;
+		case 'writes':
+			// A read-only chat may write nowhere: refused before its paths are judged, as the Authority does.
+			return sandbox.level === 'read-only';
 		case 'delegates':
 			return !!use.target && use.target !== callerSessionId && !covers;
 		case 'reads-other':
