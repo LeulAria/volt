@@ -403,6 +403,19 @@ export function subagentSpareKinds(allowWrites: boolean, request: string | undef
 	return { work: total, readonly: 0 };
 }
 
+/** Words of a request that asks for subagents outright (`requestAsksForSubagents`). */
+const ASKS_FOR_SUBAGENTS = /\b(?:sub-?agents?|delegate_task|delegate\s+(?:it|them|this|these|each(?:\s+\w+)?|the\s+\w+)\s+to|(?:parallel|separate)\s+agents?|agents?\s+in\s+parallel)\b/i;
+
+/**
+ * True when the request itself asks for subagents ("with three subagents", "use delegate_task"):
+ * their spares can start with the run instead of when the delegate_task call starts streaming.
+ * Since delegate_task is loaded up front (no tool search first), that call starts about 3-5 s
+ * before the tasks exist, less than an agent takes to start on a busy machine.
+ */
+export function requestAsksForSubagents(request: string | undefined): boolean {
+	return !!request && ASKS_FOR_SUBAGENTS.test(request);
+}
+
 /**
  * What goes up as a subagent's report: its final message (the text after its last tool call), as
  * its brief says, not the notes it wrote between tool calls (`whole`). A final message that is not
