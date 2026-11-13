@@ -252,13 +252,17 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.ideTools && input.intent.lane !== 'chat') {
 		parts.push(`[Volt] ${input.sandboxed ? IDE_TOOLS_GUIDE_SANDBOXED : IDE_TOOLS_GUIDE}`);
 	}
-	if (input.intent.lane === 'chat' && input.intent.referencesWorkspace && (input.codeIndexed || input.ideTools)) {
+	const codeQuestions = input.intent.lane === 'chat' && input.intent.referencesWorkspace && (input.codeIndexed || input.ideTools);
+	if (codeQuestions) {
 		parts.push(`[Volt] ${CODE_QUESTIONS}`);
 	}
-	if (input.ideTools && modePolicy(input.mode).allowTerminal) {
-		for (const work of input.intent.ideWork ?? []) {
-			parts.push(`[Volt] ${IDE_WORK_HINTS[work]}`);
-		}
+	const ideHints = input.ideTools && modePolicy(input.mode).allowTerminal ? input.intent.ideWork ?? [] : [];
+	for (const work of ideHints) {
+		parts.push(`[Volt] ${IDE_WORK_HINTS[work]}`);
+	}
+	// The IDE guide says how to load a deferred volt tool; a hint without it does not.
+	if ((codeQuestions || ideHints.length) && !(input.ideTools && input.intent.lane !== 'chat')) {
+		parts.push(`[Volt] ${LOAD_DEFERRED}`);
 	}
 	for (const gallery of galleryHints(input)) {
 		parts.push(`[Volt] ${gallery}`);
@@ -335,9 +339,10 @@ export const COMMIT_REVIEW = 'To commit, group the changes into commits with Con
 /**
  * Claude Code defers MCP tools behind its tool search: Haiku answered every relationship question
  * of the hotel benchmark with Bash grep and never loaded code_nav when this named it only as "the
- * volt MCP server's code_nav". code_nav, tests, debug and ide are now listed always-loaded; the
- * exact names and the question each one answers are what get them used
- * (docs/reports/2026-11-12-orch-devenv/02-code-intelligence.md, round2/12-ide-and-code-intel.md).
+ * volt MCP server's code_nav". The exact names, how to load them and the question each one answers
+ * are what get them used (docs/reports/2026-11-12-orch-devenv/02-code-intelligence.md,
+ * round2/12-ide-and-code-intel.md). Since round 3 every volt tool is deferred again (each one in
+ * the prompt was every request's cost), so the turns that need them say how to load them.
  */
 export const IDE_TOOLS_GUIDE = 'The volt MCP server gives you the editor itself (if your client lists its tools as deferred, load them by name first, e.g. ToolSearch "select:mcp__volt__code_nav"). How code relates is code_nav, type-checked, before grep: which routes, procedures or entry points reach X, directly or through other functions, is one call (op callers, symbol X, depth 3: the chain, with the procedures named); every use of one type\'s method or field without look-alikes (op references); what implements an interface (op implementations); a symbol\'s type, body and uses (op inspect). Pass symbol (and path) and it finds the line. Grep stays right for strings, SQL, config and comments. diagnostics gives type/lint errors right after an edit; code_action op rename renames a symbol in every file. tests runs tests (one by file:line) and returns structured failures; debug sets breakpoints, steps and reads variables; ide reaches the rest by capability: http (send requests from .http files, with environments and chaining), db (SQLite/Postgres tables, schema, read-only queries), docker (ps, logs, inspect), profile (cpu: the hottest functions), notebook, git, coverage, analyze (op help lists arguments). Prefer these to raw shell commands for the same job: the user sees each run in the editor.';
 
@@ -365,6 +370,9 @@ export const IDE_WORK_HINTS: Readonly<Record<IdeWork, string>> = {
  * answered "who calls / implements / writes X" with Grep-then-Read loops.
  */
 export const CODE_QUESTIONS = 'Answer questions about this code with the volt MCP server\'s code intelligence instead of reading file after file: find_symbol says where a name is declared, instant_grep is an indexed rg (output_mode files or count keeps the answer short), and code_nav answers who uses, calls or implements a symbol in one call (op references, callers, callees, implementations or inspect, with path, line and symbol). Read only the lines you need to confirm or quote.';
+
+/** With {@link CODE_QUESTIONS} or an IDE hint outside the code lanes, which get the IDE guide's own note. */
+export const LOAD_DEFERRED = 'If your client lists the volt tools as deferred, load the ones named here by name first (e.g. ToolSearch "select:mcp__volt__code_nav,mcp__volt__tests").';
 
 export const INDEXED_SEARCH = 'This project is indexed: search code with instant_grep (regex or literal, the same results as rg), find symbol declarations with find_symbol, and find files by a fuzzy name with find_files, all from the volt MCP server. They answer in milliseconds where Grep, rg and find re-read every file.';
 

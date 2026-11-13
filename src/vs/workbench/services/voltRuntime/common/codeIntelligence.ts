@@ -175,7 +175,8 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: FIND_SYMBOL_TOOL_NAME,
 		title: 'Found symbol',
 		group: 'core',
-		alwaysLoad: true,
+		// Behind Claude Code's tool search like every volt tool: the server instructions name it, and
+		// the turn's lead names it (and how to load it) when the request is about the code.
 		description: [
 			'Where functions, classes, interfaces, types, methods and constants are declared, by name, across the whole project. Instant, from Volt\'s code index; no language server needed.',
 			'match "exact" (default), "prefix", or "fuzzy" (camel-case and substring: "usrSvc" finds UserService).',

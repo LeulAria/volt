@@ -185,8 +185,9 @@ export interface IVoltHostToolInfo {
 	readonly approvalInReadOnlyModes?: string;
 	/**
 	 * Listed to MCP clients as always loaded (`_meta` `anthropic/alwaysLoad`): Claude Code then puts
-	 * it in the prompt instead of behind its tool search, where agents rarely look. For the few tools
-	 * that answer questions agents otherwise answer worse with their own tools (code_nav).
+	 * it in the prompt instead of behind its tool search, where agents rarely look. Every such tool is
+	 * in every request of every chat, "hi" included, so none is since 2026-11-13: the turn's lead names
+	 * the tools a request needs and how to load them (contextPack.ts).
 	 */
 	readonly alwaysLoad?: boolean;
 	/**
