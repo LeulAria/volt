@@ -108,11 +108,15 @@ export function revealAgentSidePanel(layoutService: IWorkbenchLayoutService): vo
 	layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
 }
 
-/** Unhide the agent list on the left and give it a real width. */
+/**
+ * Unhide the agent list on the left and give it a real width. `focus` moves the keyboard into the list, which a
+ * user's toggle wants; the window opening does not, or the composer it already focused loses the first keys typed.
+ */
 export async function openAgentSidebar(
 	_configurationService: IConfigurationService,
 	layoutService: IWorkbenchLayoutService,
 	paneCompositeService: IPaneCompositePartService,
+	focus = true,
 ): Promise<void> {
 	if (layoutService.isAuxiliaryBarMaximized()) {
 		layoutService.setAuxiliaryBarMaximized(false);
@@ -120,7 +124,7 @@ export async function openAgentSidebar(
 	if (!layoutService.isVisible(Parts.AUXILIARYBAR_PART)) {
 		layoutService.setPartHidden(false, Parts.AUXILIARYBAR_PART);
 	}
-	await paneCompositeService.openPaneComposite(AGENT_SIDE_PANEL_ID, ViewContainerLocation.AuxiliaryBar, true);
+	await paneCompositeService.openPaneComposite(AGENT_SIDE_PANEL_ID, ViewContainerLocation.AuxiliaryBar, focus);
 	const size = layoutService.getSize(Parts.AUXILIARYBAR_PART);
 	if (size.width < AGENT_SIDEBAR_MIN_WIDTH && !isAgentDrawerMode(layoutService)) {
 		layoutService.setSize(Parts.AUXILIARYBAR_PART, {
@@ -340,7 +344,8 @@ class LayoutModeChromeContribution extends Disposable {
 		// A scoped window pins its side bar in memory, so the main window switching modes leaves it be.
 		void applySidebarLocation(this.configurationService, mode, this.windowScope);
 		if (mode === 'agent' && !isAgentLeftSidebarHidden(this.storageService)) {
-			void openAgentSidebar(this.configurationService, this.layoutService, this.paneCompositeService);
+			// Without focus: the restored chat's composer has it, and a launch must type into the composer.
+			void openAgentSidebar(this.configurationService, this.layoutService, this.paneCompositeService, false);
 		}
 	}
 
