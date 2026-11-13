@@ -310,5 +310,9 @@ suite('Volt intent router', () => {
 		assert.deepStrictEqual(work('Which test-only helpers call runMigrations?'), []);
 		assert.deepStrictEqual(work('run the tests for the cart'), ['tests']);
 		assert.deepStrictEqual(work('what is in the database? show me the rows of orders'), ['db']);
+		// The tests tool does not run node's own runner: no hint that sends the agent there first (round 3, t2).
+		assert.deepStrictEqual(work('Benchmark task in /tmp/w/t2 (a node project; `npm test` runs node:test). Three tests fail: fix them, then run `npm test`.'), []);
+		assert.deepStrictEqual(work('The tests fail; they run with node --test test/'), []);
+		assert.deepStrictEqual(work('The tests fail: we moved from node --test to vitest.'), ['tests']);
 	});
 });
