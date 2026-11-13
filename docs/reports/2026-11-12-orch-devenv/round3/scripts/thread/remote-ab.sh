@@ -19,11 +19,15 @@ cd "$HERE"
 EL=/Applications/Volt.app/Contents/MacOS/Electron
 
 stop_server() {
-	[ -f "$STATE/hyb.pid" ] && kill "$(cat "$STATE/hyb.pid")" 2>/dev/null || true
+	# The server's extension and pty hosts outlive it: stop them first.
+	[ -f "$STATE/hyb.pid" ] && { pkill -P "$(cat "$STATE/hyb.pid")" 2>/dev/null; kill "$(cat "$STATE/hyb.pid")" 2>/dev/null; } || true
 	for i in $(seq 1 20); do curl -s -o /dev/null -m 1 http://127.0.0.1:9962/ || break; sleep 0.5; done
 }
 start_server() {
 	stop_server
+	# xterm's canvas renderer leaves no text in the DOM for the terminal bench to read: DOM renderer.
+	mkdir -p "/tmp/v3-thread-hyb-ud-$1/agentServer/workbench/data/Machine"
+	echo '{ "terminal.integrated.gpuAcceleration": "off" }' > "/tmp/v3-thread-hyb-ud-$1/agentServer/workbench/data/Machine/settings.json"
 	ELECTRON_RUN_AS_NODE=1 nohup "$EL" "/tmp/v3-thread-hyb-$1/out/volt-agent-server-main.js" \
 		--user-data-dir "/tmp/v3-thread-hyb-ud-$1" --port 9962 >> "/tmp/v3-thread-hyb-$1.log" 2>&1 &
 	echo $! > "$STATE/hyb.pid"
@@ -73,7 +77,7 @@ fi
 [ -f /tmp/v3-thread-hyb-new/out/volt-agent-server-main.js ] || node hybrid-server.mjs new
 node premake-copies.mjs /tmp/v3-thread-hyb-new /tmp/v3-thread-hyb-ud-new
 ensure_link
-for r in $(seq 1 "$ROUNDS"); do
+for ((r = 1; r <= ROUNDS; r++)); do
 	for side in base new; do
 		waitload
 		start_server "$side"
@@ -86,17 +90,26 @@ for r in $(seq 1 "$ROUNDS"); do
 		curl -s -o /dev/null http://127.0.0.1:9977/slow
 	done
 done
-for s in $EXTRA; do
-	waitload
-	echo "== hyb-new $s"
-	case $s in
-		reconnect) node web-bench.mjs --mode reconnect --url http://127.0.0.1:9976/code/ --control 9977 --runs 3 --out "$DATA/hyb-new-reconnect-slow3g.json" ;;
-		terminal) node web-bench.mjs --mode terminal --url http://127.0.0.1:9976/code/ --control 9977 --runs 3 --out "$DATA/hyb-new-terminal-slow3g.json" ;;
-		# The same page and origin with the link's pacing off (the paired origin is the link's).
-		terminal-fast) curl -s -o /dev/null http://127.0.0.1:9977/fast
-			node web-bench.mjs --mode terminal --url http://127.0.0.1:9976/code/ --control 9977 --runs 3 --out "$DATA/hyb-new-terminal-fast.json"
-			curl -s -o /dev/null http://127.0.0.1:9977/slow ;;
-	esac
+# Extra steps on each of $EXTRA_SIDES (default: new), $EXTRA_ROUNDS times (default 1), sides
+# interleaved; `remote-ab.sh 0 "terminal"` runs only them.
+for ((r = 1; r <= ${EXTRA_ROUNDS:-1}; r++)); do
+	for side in ${EXTRA_SIDES:-new}; do
+		[ -n "$EXTRA" ] || break
+		waitload
+		start_server "$side"
+		for s in $EXTRA; do
+			waitload
+			echo "== hyb-$side r$r $s"
+			case $s in
+				reconnect) node web-bench.mjs --mode reconnect --url http://127.0.0.1:9976/code/ --control 9977 --runs 3 --out "$DATA/hyb-$side-r$r-reconnect-slow3g.json" ;;
+				terminal) node web-bench.mjs --mode terminal --url http://127.0.0.1:9976/code/ --control 9977 --runs 3 --out "$DATA/hyb-$side-r$r-terminal-slow3g.json" ;;
+				# The same page and origin with the link's pacing off (the paired origin is the link's).
+				terminal-fast) curl -s -o /dev/null http://127.0.0.1:9977/fast
+					node web-bench.mjs --mode terminal --url http://127.0.0.1:9976/code/ --control 9977 --runs 3 --out "$DATA/hyb-$side-r$r-terminal-fast.json"
+					curl -s -o /dev/null http://127.0.0.1:9977/slow ;;
+			esac
+		done
+	done
 done
 stop_server
 echo REMOTE-AB-DONE

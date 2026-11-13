@@ -1,0 +1,49 @@
+{
+ "chat": "Long thread A11 (seeded)",
+ "marker": "LONGTHREAD-END a11",
+ "cold": false,
+ "copies": false,
+ "runs": 3,
+ "load": "13.06 16.17 20.94",
+ "settled": {
+  "n": 3,
+  "median": 126.2,
+  "min": 125.5,
+  "max": 583.1
+ },
+ "firstVisible": {
+  "n": 3,
+  "median": 126.2,
+  "min": 125.5,
+  "max": 583.1
+ },
+ "results": [
+  {
+   "settled": 126.19999999925494,
+   "firstVisible": 126.19999999925494,
+   "frames": 119,
+   "longTaskMs": 136,
+   "maxGap": 24,
+   "loadBefore": 13.68,
+   "loadAfter": "16.43 17.82 22.92"
+  },
+  {
+   "settled": 125.5,
+   "firstVisible": 125.5,
+   "frames": 82,
+   "longTaskMs": 324,
+   "maxGap": 83,
+   "loadBefore": 12.18,
+   "loadAfter": "12.18 16.51 21.91"
+  },
+  {
+   "settled": 583.1000000014901,
+   "firstVisible": 583.1000000014901,
+   "frames": 11,
+   "longTaskMs": 1171,
+   "maxGap": 316,
+   "loadBefore": 13.06,
+   "loadAfter": "13.06 16.17 20.94"
+  }
+ ]
+}

@@ -1,0 +1,60 @@
+{
+ "mode": "launch",
+ "url": "http://127.0.0.1:9976/code/",
+ "warm": false,
+ "proxied": true,
+ "runs": 1,
+ "load": "33.63 34.03 26.65",
+ "composerMs": {
+  "n": 0,
+  "median": null,
+  "min": null,
+  "max": null
+ },
+ "results": [
+  {
+   "composerMs": null,
+   "requests": 23,
+   "encodedBytes": 6718634,
+   "largest": [
+    [
+     "/code/stable-de2ea41bdd7f55a3dde7dfb34f6918436e311a48/static/out/vs/code/browser/workbench/workbench.js",
+     5768174
+    ],
+    [
+     "/code/stable-de2ea41bdd7f55a3dde7dfb34f6918436e311a48/static/out/vs/code/browser/workbench/workbench.css",
+     287854
+    ],
+    [
+     "/code/stable-de2ea41bdd7f55a3dde7dfb34f6918436e311a48/static/out/nls.messages.js",
+     228661
+    ],
+    [
+     "/code/stable-de2ea41bdd7f55a3dde7dfb34f6918436e311a48/static/out/media/GeistMono-Italic-Variable.ttf",
+     95317
+    ],
+    [
+     "/code/stable-de2ea41bdd7f55a3dde7dfb34f6918436e311a48/static/out/media/GeistMono-Variable.ttf",
+     85590
+    ],
+    [
+     "/code/stable-de2ea41bdd7f55a3dde7dfb34f6918436e311a48/static/node_modules/katex/dist/katex.min.js",
+     69822
+    ],
+    [
+     "/code/stable-de2ea41bdd7f55a3dde7dfb34f6918436e311a48/vscode-remote-resource",
+     57643
+    ],
+    [
+     "/code/stable-de2ea41bdd7f55a3dde7dfb34f6918436e311a48/static/out/media/codicon.ttf",
+     47220
+    ]
+   ],
+   "wireDownBytes": 25901902,
+   "wireUpBytes": 285413,
+   "connections": 54,
+   "loadBefore": 13.9,
+   "loadAfter": "33.63 34.03 26.65"
+  }
+ ]
+}

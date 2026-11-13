@@ -2,11 +2,13 @@
 # One side of an interleaved A/B round: switch out/ to `side` (ab.sh), wait for the window, then run
 # every long-thread bench once, each only when the 1-minute load is at or below $MAXLOAD.
 #   suite.sh base|new <round> [tests]
-# tests (default all): warm cold open75k home earlier a11open stutter idle reasoning send
+# tests (default all): warm cold open75k earlier home a11open stutter idle reasoning send
+# `earlier` runs before `home`: the branch's Home draws the whole 45k chat, which left `earlier`
+# nothing to draw when it ran second (round 1).
 set -e
 SIDE=$1
 ROUND=$2
-TESTS=${3:-"warm cold open75k home earlier a11open stutter idle reasoning send"}
+TESTS=${3:-"warm cold open75k earlier home a11open stutter idle reasoning send"}
 MAXLOAD=${MAXLOAD:-14}
 HERE=$(cd "$(dirname "$0")" && pwd)
 DATA=${DATA:-$HERE/../../data/thread/ab}
