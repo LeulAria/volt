@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CLAUDE_MAIN_RULES, CLAUDE_OPEN_TASKS_REASON, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, claudeWorkRulesMeta, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
+import { CLAUDE_MAIN_RULES, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, claudeWorkRulesMeta, isClaudePlaceholderTitle, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
 
 /** What a POSIX shell passes to printf for `printf '%s' '<quoted>'`: single quotes, with `'\''` for a quote inside. */
 function shellArgument(command: string): string {
@@ -55,7 +55,7 @@ suite('Volt Claude work rules', () => {
 		assert.strictEqual(main.claudeCode.options.disallowedTools, undefined);
 		assert.strictEqual(main.claudeCode.options.settings.autoMemoryEnabled, undefined);
 		assert.strictEqual(main.claudeCode.options.settings.disableClaudeAiConnectors, undefined);
-		assert.strictEqual(main.claudeCode.options.title, undefined);
+		assert.strictEqual(main.claudeCode.options.title, CLAUDE_SESSION_TITLE, 'Volt names the chat: no title call of Claude Code\'s own');
 		assert.deepStrictEqual(lean.claudeCode.options.disallowedTools, [...CLAUDE_SUBAGENT_DISALLOWED_TOOLS]);
 		for (const tool of ['Agent', 'AskUserQuestion', 'Workflow', 'ScheduleWakeup']) {
 			assert.ok(lean.claudeCode.options.disallowedTools?.includes(tool), tool);
@@ -72,6 +72,16 @@ suite('Volt Claude work rules', () => {
 		assert.strictEqual(JSON.stringify(claudeWorkRulesMeta('claude-haiku-5-5', { subagent: false })), JSON.stringify(main));
 		// `true` (an older build, or a caller without a role) is a working subagent.
 		assert.strictEqual(JSON.stringify(claudeWorkRulesMeta('claude-haiku-5-5', { subagent: true })), JSON.stringify(lean));
+	});
+
+	test('every session skips Claude Code\'s own title and next-prompt calls, which Volt never shows', () => {
+		type Meta = { claudeCode: { options: { promptSuggestions?: boolean; title?: string } } };
+		for (const subagent of [false, 'work', 'readonly'] as const) {
+			const options = (claudeWorkRulesMeta('claude-haiku-5-5', { subagent }) as Meta).claudeCode.options;
+			assert.strictEqual(options.promptSuggestions, false, String(subagent));
+			assert.ok(options.title && isClaudePlaceholderTitle(options.title), String(subagent));
+		}
+		assert.ok(!isClaudePlaceholderTitle('Fix sidebar list jumping to top'));
 	});
 
 	test('a read-only subagent runs on its own short prompt, with no file tools and only Volt\'s MCP server', () => {

@@ -114,6 +114,28 @@ export const CLAUDE_SUBAGENT_PLAN_MODE = 'This is a read-only task another agent
 /** A subagent's chat is named after its task by Volt, so Claude Code's own title request is skipped. */
 export const CLAUDE_SUBAGENT_SESSION_TITLE = 'Volt subagent';
 
+/**
+ * Volt names every chat itself (titleGeneration.ts), so a Claude Code session gets a fixed title and
+ * skips its own: without one, Claude Code asks Haiku to name each new session from its first
+ * message (1.2k-3.5k tokens, measured 2026-11-13), also for Volt's title and prediction sessions.
+ * The adapter reports it back as the session's title; Volt ignores it ({@link isClaudePlaceholderTitle}).
+ */
+export const CLAUDE_SESSION_TITLE = 'Volt chat';
+
+/** A title Volt gave a Claude Code session itself, not one worth showing. */
+export function isClaudePlaceholderTitle(title: string): boolean {
+	return title === CLAUDE_SESSION_TITLE || title === CLAUDE_SUBAGENT_SESSION_TITLE;
+}
+
+/**
+ * Options every Claude Code session Volt starts gets:
+ * - `promptSuggestions: false`: the adapter turns on Claude Code's predicted next prompt, a forked
+ *   model call after every turn but the first (the whole context again plus ~300 tokens). Volt
+ *   never shows it (its composer predicts on its own), and in Volt's long-lived prediction
+ *   session it ran after every prediction (3.4k tokens each, measured 2026-11-13).
+ */
+export const CLAUDE_SESSION_OPTIONS = { promptSuggestions: false } as const;
+
 /** Appended to Claude Code's prompt for a subagent that changes files: the main rules without the user-facing parts (Tasks card, handing work on). */
 export const CLAUDE_WORK_SUBAGENT_RULES = [
 	'# Working in Volt',
@@ -164,12 +186,13 @@ export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?:
 			options: {
 				// The exact model: the adapter's picker takes only its aliases (default, sonnet, haiku, ...).
 				...(model ? { model } : {}),
+				...CLAUDE_SESSION_OPTIONS,
 				...(subagent ? {
 					disallowedTools: [...CLAUDE_SUBAGENT_DISALLOWED_TOOLS, ...(subagent === 'readonly' ? CLAUDE_READONLY_SUBAGENT_DISALLOWED_TOOLS : [])],
 					planModeInstructions: CLAUDE_SUBAGENT_PLAN_MODE,
 					title: CLAUDE_SUBAGENT_SESSION_TITLE,
 					...(subagent === 'readonly' ? { strictMcpConfig: true } : {}),
-				} : {}),
+				} : { title: CLAUDE_SESSION_TITLE }),
 				settings: {
 					...(subagent ? CLAUDE_SUBAGENT_SESSION_SETTINGS : {}),
 					hooks: {

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { claudeWorkRulesMeta } from '../../common/harness/claudeWorkRules.js';
+import { CLAUDE_SESSION_OPTIONS, CLAUDE_SESSION_TITLE, claudeWorkRulesMeta, isClaudePlaceholderTitle } from '../../common/harness/claudeWorkRules.js';
 import { bareTaskToolName } from '../../common/orchestration/agentTasks.js';
 import { raceTimeout, timeout } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
@@ -774,6 +774,9 @@ export class AcpAgentProvider implements IAgentProvider {
 					persistSession: false,
 					thinking: { type: 'disabled' },
 					effort: 'low',
+					// No title or next-prompt call of Claude Code's own for a title, prediction or summary.
+					title: CLAUDE_SESSION_TITLE,
+					...CLAUDE_SESSION_OPTIONS,
 					// An agent entry without a model list would run the account's default (often Opus).
 					...(req.modelId ? optionalModel(this.claudeModel(req)) : { model: 'haiku' }),
 				},
@@ -2089,7 +2092,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			}
 		} else if (kind === 'session_info_update') {
 			const title = typeof update.title === 'string' ? update.title.trim() : '';
-			if (title) {
+			// Volt's own fixed session title (claudeWorkRules) is not a name for the chat.
+			if (title && !isClaudePlaceholderTitle(title)) {
 				events.push({ type: 'title', text: title });
 			}
 		} else if (kind === 'usage_update' || kind === 'state_update') {
