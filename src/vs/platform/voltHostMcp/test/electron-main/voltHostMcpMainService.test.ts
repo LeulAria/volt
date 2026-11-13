@@ -285,7 +285,7 @@ suite('Volt host MCP server', () => {
 			assert.ok(!/browser_|render_chart|thread_launch|link_pull_request|desktop_|device_/.test(lean), lean);
 			assert.ok(lean.length < all.length / 3);
 			// Claude Code sends them in every request of every chat: keep the whole set short.
-			assert.ok(all.length < 3200, `${all.length} chars`);
+			assert.ok(all.length < 2200, `${all.length} chars`);
 			assert.deepStrictEqual((await list('')).map(tool => tool._meta?.['anthropic/alwaysLoad']), [true, undefined], 'a tool\'s _meta is listed, so Claude Code keeps it out of its tool search');
 
 			const called = await post(`${endpoint.url}/chat%201`, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'browser_snapshot', arguments: { interactive: true } } }, auth());
