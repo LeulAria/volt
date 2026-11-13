@@ -6,12 +6,12 @@
 //
 //   node send-bench.mjs --chat "Long thread 75k" [--runs 3] [--out f.json]
 import fs from 'node:fs';
-import { connect, rowCenter, sleep, load, stats } from './lib.mjs';
+import { connect, rowCenter, sleep, load, stats, waitLoad, withLoad } from './lib.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : fallback);
 const port = Number(opt('port', '9953'));
-const chat = opt('chat', 'Long thread 75k');
+const chat = opt('chat', 'Long thread 75k|Turn 1: keep reading the modules');
 const from = opt('from', 'Short thread');
 const runs = Number(opt('runs', '3'));
 const out = opt('out');
@@ -49,8 +49,14 @@ for (let run = 0; run < runs; run++) {
 	const fromAt = await rowCenter(cdp, from);
 	await cdp.click(fromAt.x, fromAt.y);
 	await sleep(1500);
-	const at = await rowCenter(cdp, chat);
+	// The first send names the chat after its first prompt: `--chat` takes either name ("a|b").
+	let at;
+	for (const name of chat.split('|')) {
+		at ??= await rowCenter(cdp, name);
+	}
 	await cdp.click(at.x, at.y);
+	// Off the row, so its hover card (which opens over the composer) closes.
+	await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1200, y: 300 });
 	await sleep(4000);
 	const composer = await cdp.evaluate(`(() => { const ed = [...document.querySelectorAll('.volt-agent-editor')].find(e => e.offsetParent); const c = ed.querySelector('.volt-agent-monaco .monaco-editor'); const b = c.getBoundingClientRect(); return { x: Math.round(b.x + 40), y: Math.round(b.y + b.height / 2) }; })()`);
 	await cdp.click(composer.x, composer.y);
@@ -58,6 +64,7 @@ for (let run = 0; run < runs; run++) {
 	const mark = `SENDMARK-${Date.now().toString(36)}`;
 	await cdp.send('Input.insertText', { text: `Reply with the single word OK. (${mark})` });
 	await sleep(500);
+	const before = await waitLoad();
 	await cdp.evaluate(PROBE);
 	await cdp.evaluate(`window.__voltSendState = window.__voltSendProbe(${JSON.stringify(mark)}), true`);
 	await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
@@ -71,7 +78,7 @@ for (let run = 0; run < runs; run++) {
 	const blocked = (state?.longTasks ?? []).filter(([s]) => s >= state.t0 && s <= state.t0 + (state.echo || 0) + 50);
 	const result = state ? { echoMs: Math.round(state.echo) || null, firstWordMs: Math.round(state.firstWord) || null, firstText: state.firstText, longTasksToEcho: blocked.map(([, d]) => d), longTaskMs: state.longTasks.filter(([s]) => s >= state.t0).reduce((a, [, d]) => a + d, 0), maxGap: Math.round(state.maxGap) } : null;
 	console.log(`run ${run + 1}: ${result ? `sent message on screen ${result.echoMs} ms, first word ${result.firstWordMs} ms ("${result.firstText ?? ''}"), long tasks ${result.longTaskMs} ms, max frame gap ${result.maxGap} ms` : 'no result'}  (load ${load()})`);
-	results.push(result);
+	results.push(withLoad(result, before));
 	// Let the reply finish: the stop button goes back to send.
 	for (let i = 0; i < 600; i++) {
 		const busy = await cdp.evaluate(`(() => { const ed = [...document.querySelectorAll('.volt-agent-editor')].find(e => e.offsetParent); const stop = ed?.querySelector('.volt-agent-user-stop'); return !!stop && !!stop.offsetParent && getComputedStyle(stop).visibility !== 'hidden'; })()`);

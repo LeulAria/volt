@@ -10,7 +10,18 @@
 // --cold reloads the window before each run (first open in a fresh window); otherwise the runs
 // alternate from-chat -> chat, so they include whatever the app keeps for a chat it showed before.
 import fs from 'node:fs';
-import { connect, rowCenter, sleep, load, stats } from './lib.mjs';
+import { connect, rowCenter as rowOf, sleep, load, stats, waitLoad, withLoad } from './lib.mjs';
+
+// A chat's first send names it after its first prompt: `--chat` takes either name ("a|b").
+async function rowCenter(cdp, names) {
+	for (const name of names.split('|')) {
+		const at = await rowOf(cdp, name);
+		if (at) {
+			return at;
+		}
+	}
+	return null;
+}
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : fallback);
@@ -41,7 +52,8 @@ const PROBE = `window.__voltOpenProbe = (sessionId, marker) => {
 		let el = null;
 		if (ex) {
 			const ps = ex.querySelectorAll('p');
-			for (let i = ps.length - 1; i >= Math.max(0, ps.length - 4); i--) { if (ps[i].textContent.includes(marker)) { el = ps[i]; break; } }
+			// marker LAST: the last paragraph of the last exchange, whatever it says (a chat live sends grew).
+			for (let i = ps.length - 1; i >= Math.max(0, ps.length - 4); i--) { if (marker === 'LAST' || ps[i].textContent.includes(marker)) { el = ps[i]; break; } }
 		}
 		const vr = scroll.getBoundingClientRect();
 		let visible = false, top = -1;
@@ -112,10 +124,24 @@ for (let run = 0; run < runs; run++) {
 		await waitRows(cdp);
 		await sleep(6000);
 	}
+	const t = target(run);
+	if (!copies) {
+		// A chat reopens where the reader left it: park it at its end first (End in the focused
+		// transcript), so every run, on either side of an A/B, opens it following its end.
+		const at = await rowCenter(cdp, t.chat);
+		await cdp.click(at.x, at.y);
+		await sleep(2500);
+		const margin = await cdp.evaluate(`(() => { const ed = [...document.querySelectorAll('.volt-agent-editor')].find(e => e.offsetParent); const b = ed.querySelector('.volt-agent-thread-scroll').getBoundingClientRect(); return { x: Math.round(b.x + 30), y: Math.round(b.y + b.height / 2) }; })()`);
+		await cdp.click(margin.x, margin.y);
+		for (const type of ['rawKeyDown', 'keyUp']) {
+			await cdp.send('Input.dispatchKeyEvent', { type, key: 'End', code: 'End', windowsVirtualKeyCode: 35 });
+		}
+		await sleep(2000);
+	}
 	const fromAt = await rowCenter(cdp, from);
 	await cdp.click(fromAt.x, fromAt.y);
 	await sleep(2500);
-	const t = target(run);
+	const before = await waitLoad();
 	await cdp.evaluate(PROBE);
 	await cdp.evaluate(`window.__voltOpenState = window.__voltOpenProbe(${JSON.stringify(t.sessionId)}, ${JSON.stringify(t.marker)}), true`);
 	const at = await rowCenter(cdp, t.chat);
@@ -132,7 +158,7 @@ for (let run = 0; run < runs; run++) {
 	}
 	const r = state && settle(state);
 	console.log(`run ${run + 1}: ${r ? `settled ${r.settled.toFixed(1)} ms, first visible ${r.firstVisible.toFixed(1)} ms, long tasks ${r.longTaskMs} ms, max frame gap ${r.maxGap} ms` : 'end marker never settled on screen'}  (load ${load()})`);
-	results.push(r ?? null);
+	results.push(withLoad(r, before));
 }
 const ok = results.filter(Boolean);
 const summary = { chat: copies ? 'Cold 41k <run>' : chat, marker, cold, copies, runs, load: load(), settled: ok.length ? stats(ok.map(r => r.settled)) : null, firstVisible: ok.length ? stats(ok.map(r => r.firstVisible)) : null, results };

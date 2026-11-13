@@ -19,7 +19,7 @@
 //   node scroll-bench.mjs --mode earlier --chat "Long thread 45k" [--runs 3]
 //   node scroll-bench.mjs --mode stutter --chat "Long thread A11 (seeded)" [--runs 5]
 import fs from 'node:fs';
-import { connect, rowCenter, sleep, load, stats } from './lib.mjs';
+import { connect, rowCenter, sleep, load, stats, waitLoad, withLoad } from './lib.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : fallback);
@@ -99,6 +99,7 @@ for (let run = 0; run < runs; run++) {
 	await cdp.click(margin.x, margin.y);
 	const c = await threadPoint(cdp);
 	await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y });
+	const before = await waitLoad();
 	await cdp.evaluate(PROBE);
 	await cdp.evaluate(`window.__voltScrollState = window.__voltScrollProbe(${JSON.stringify(top)}), true`);
 	let result;
@@ -152,7 +153,7 @@ for (let run = 0; run < runs; run++) {
 		result = settledAt < 0 ? null : { toTop: frames[settledAt][0] - state.t0, firstVisible: frames[firstVisible][0] - state.t0, gapsOver33: gaps.filter(g => g > 33).length, maxGap: Math.round(Math.max(0, ...gaps)), longTaskMs: state.longTasks.filter(([s]) => s >= state.t0).reduce((a, [, d]) => a + d, 0) };
 		console.log(`run ${run + 1}: ${result ? `first message settled on screen after ${result.toTop.toFixed(0)} ms (first seen ${result.firstVisible.toFixed(0)} ms), ${result.gapsOver33} gaps > 33 ms, max gap ${result.maxGap} ms, long tasks ${result.longTaskMs} ms` : 'first message never settled on screen within 60 s'}  (load ${load()})`);
 	}
-	results.push(result);
+	results.push(withLoad(result, before));
 	// Back to the end, so the chat opens following its end next time.
 	await key(cdp, 'End', 35);
 	await sleep(1500);

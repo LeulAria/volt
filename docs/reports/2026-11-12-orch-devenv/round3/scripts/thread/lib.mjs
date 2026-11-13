@@ -82,6 +82,23 @@ export function load() {
 	return execSync('uptime').toString().trim().replace(/.*load averages?: /, '');
 }
 
+/** Waits until the 1-minute load is at or below $MAXLOAD (14): every timed sample starts below it. */
+export async function waitLoad(max = Number(process.env.MAXLOAD ?? 14)) {
+	for (; ;) {
+		const one = Number(load().split(/\s+/)[0]);
+		if (one <= max) {
+			return one;
+		}
+		console.log(`load ${one} > ${max}, waiting`);
+		await sleep(30000);
+	}
+}
+
+/** The result with the load before and after its sample (null stays null). */
+export function withLoad(result, before) {
+	return result ? { ...result, loadBefore: before, loadAfter: load() } : null;
+}
+
 export function stats(values) {
 	const sorted = [...values].sort((a, b) => a - b);
 	const mid = sorted.length >> 1;

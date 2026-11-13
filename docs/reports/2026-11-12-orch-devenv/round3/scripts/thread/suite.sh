@@ -2,11 +2,11 @@
 # One side of an interleaved A/B round: switch out/ to `side` (ab.sh), wait for the window, then run
 # every long-thread bench once, each only when the 1-minute load is at or below $MAXLOAD.
 #   suite.sh base|new <round> [tests]
-# tests (default all): warm cold home earlier a11open stutter idle
+# tests (default all): warm cold open75k home earlier a11open stutter idle reasoning send
 set -e
 SIDE=$1
 ROUND=$2
-TESTS=${3:-"warm cold home earlier a11open stutter idle"}
+TESTS=${3:-"warm cold open75k home earlier a11open stutter idle reasoning send"}
 MAXLOAD=${MAXLOAD:-14}
 HERE=$(cd "$(dirname "$0")" && pwd)
 DATA=${DATA:-$HERE/../../data/thread/ab}
@@ -37,7 +37,11 @@ for t in $TESTS; do
 		home) node scroll-bench.mjs --chat "Long thread 45k" --top "Turn 1: keep reading the modules (long45k)" --runs 3 --out "$(out home)" ;;
 		earlier) node scroll-bench.mjs --mode earlier --chat "Long thread 45k" --runs 2 --out "$(out earlier)" ;;
 		idle) node idle-cpu.mjs --chat "Long thread 45k" --drawall --runs 3 --out "$(out idle)" ;;
+		open75k) node open-bench.mjs --chat "Long thread 75k|Turn 1: keep reading the modules" --marker LAST --session agent-bench-long75k --runs 3 --out "$(out open75k)" ;;
 		a11open) node open-bench.mjs --chat "Long thread A11 (seeded)" --marker "LONGTHREAD-END a11" --runs 3 --out "$(out a11open)" ;;
 		stutter) node scroll-bench.mjs --mode stutter --chat "Long thread A11 (seeded)" --runs 5 --out "$(out stutter)" ;;
+		reasoning) node reasoning-bench.mjs --runs 3 --out "$(out reasoning)" ;;
+		# Live turns (Haiku 5.5), two per side and round.
+		send) node pick-model.mjs > /dev/null && node send-bench.mjs --runs 2 --out "$(out send)" ;;
 	esac
 done

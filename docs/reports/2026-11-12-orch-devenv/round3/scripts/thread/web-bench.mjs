@@ -12,7 +12,7 @@
 //
 //   node web-bench.mjs --mode launch --url http://127.0.0.1:9959/code/ [--runs 3] [--control 9960] [--out f.json]
 import fs from 'node:fs';
-import { connect, sleep, load, stats } from './lib.mjs';
+import { connect, sleep, load, stats, waitLoad, withLoad } from './lib.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : fallback);
@@ -81,7 +81,7 @@ async function loadPage() {
 	encoded = 0;
 	largest = new Map();
 	await cdp.send('Page.navigate', { url });
-	for (let i = 0; i < 1800; i++) {
+	for (let i = 0; i < 6000; i++) {
 		await sleep(100);
 		const t = await cdp.evaluate('window.__bench && window.__bench.composer').catch(() => undefined);
 		if (t) {
@@ -94,6 +94,7 @@ async function loadPage() {
 const results = [];
 for (let run = 0; run < runs; run++) {
 	let result;
+	const before = await waitLoad();
 	if (mode === 'launch') {
 		const ms = await loadPage();
 		await sleep(3000);
@@ -155,7 +156,7 @@ for (let run = 0; run < runs; run++) {
 		await cdp.evaluate('document.querySelectorAll(".xterm").forEach(x => x.dataset.benchSeen = "1"), true');
 		console.log(`run ${run + 1}: ${result ? `terminal on screen ${result.terminalShownMs} ms, first output ${result.firstOutputMs} ms ("${result.firstText}")` : 'no terminal output in 60 s'}  (load ${load()})`);
 	}
-	results.push(result ?? null);
+	results.push(withLoad(result, before));
 }
 const ok = results.filter(Boolean);
 const key = { launch: 'composerMs', reconnect: 'firstMessage', terminal: 'firstOutputMs' }[mode];

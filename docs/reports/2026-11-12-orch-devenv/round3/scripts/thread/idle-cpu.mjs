@@ -5,7 +5,7 @@
 // drawn (every exchange in the DOM, as after a reader scrolled all the way up), and back to its end after.
 //   node idle-cpu.mjs --chat "Long thread 45k" [--drawall] [--ms 10000] [--runs 3] [--out f.json]
 import fs from 'node:fs';
-import { connect, rowCenter, sleep, load, stats } from './lib.mjs';
+import { connect, rowCenter, sleep, load, stats, waitLoad, withLoad } from './lib.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : fallback);
@@ -44,13 +44,14 @@ const metrics = async () => Object.fromEntries((await cdp.send('Performance.getM
 await sleep(settle);
 const results = [];
 for (let run = 0; run < runs; run++) {
+	const before = await waitLoad();
 	const a = await metrics();
 	await sleep(ms);
 	const b = await metrics();
 	const per = k => Math.round((b[k] - a[k]) * 1000 / (ms / 1000) * 10) / 10;
 	const r = { taskMsPerS: per('TaskDuration'), scriptMsPerS: per('ScriptDuration'), layoutMsPerS: per('LayoutDuration'), styleMsPerS: per('RecalcStyleDuration'), layouts: b.LayoutCount - a.LayoutCount, nodes: b.Nodes };
 	console.log(`run ${run + 1}: ${JSON.stringify(r)}  (load ${load()})`);
-	results.push(r);
+	results.push(withLoad(r, before));
 }
 if (drawAll) {
 	// Back to the end (a native scroll there makes the chat follow its end again).

@@ -1,0 +1,44 @@
+{
+ "mode": "stutter",
+ "chat": "Long thread A11 (seeded)",
+ "runs": 5,
+ "load": "23.83 21.60 27.61",
+ "gapsOver33": {
+  "n": 5,
+  "median": 0,
+  "min": 0,
+  "max": 2
+ },
+ "results": [
+  {
+   "gapsOver33": 0,
+   "maxGap": 18,
+   "frames": 47,
+   "longTaskMs": 0
+  },
+  {
+   "gapsOver33": 1,
+   "maxGap": 95,
+   "frames": 52,
+   "longTaskMs": 0
+  },
+  {
+   "gapsOver33": 0,
+   "maxGap": 13,
+   "frames": 42,
+   "longTaskMs": 0
+  },
+  {
+   "gapsOver33": 0,
+   "maxGap": 30,
+   "frames": 54,
+   "longTaskMs": 0
+  },
+  {
+   "gapsOver33": 2,
+   "maxGap": 242,
+   "frames": 54,
+   "longTaskMs": 107
+  }
+ ]
+}
