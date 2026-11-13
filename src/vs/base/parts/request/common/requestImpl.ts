@@ -32,6 +32,11 @@ export async function request(options: IRequestOptions, token: CancellationToken
 		if (options.disableCache) {
 			fetchInit.cache = 'no-store';
 		}
+		if (options.followRedirects === 0) {
+			// The caller judges each hop itself (a sandboxed chat's HTTP send). fetch cannot hand back the
+			// redirect: in a browser it answers with an opaque response (status 0, no headers).
+			fetchInit.redirect = 'manual';
+		}
 		const res = await fetch(options.url || '', fetchInit);
 		const head = {
 			statusCode: res.status,

@@ -9,13 +9,13 @@ import { isEqualOrParent, joinPath, relativePath } from '../../../../../base/com
 import { URI } from '../../../../../base/common/uri.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
 import { stripAnsi } from '../../../../services/voltRuntime/common/ide/testReports.js';
-import { ITestProfileService } from '../../../testing/common/testProfileService.js';
+import { canUseProfileWithTest, ITestProfileService } from '../../../testing/common/testProfileService.js';
 import { ITestResult } from '../../../testing/common/testResult.js';
 import { ITestResultService } from '../../../testing/common/testResultService.js';
 import { ITestService } from '../../../testing/common/testService.js';
-import { IncrementalTestCollectionItem, InternalTestItem, ITestErrorMessage, TestItemExpandState, TestMessageType, TestResultItem, TestResultState, TestRunProfileBitset } from '../../../testing/common/testTypes.js';
+import { IncrementalTestCollectionItem, InternalTestItem, ITestErrorMessage, ITestRunProfile, ResolvedTestRunRequest, TestItemExpandState, TestMessageType, TestResultItem, TestResultState, TestRunProfileBitset } from '../../../testing/common/testTypes.js';
 import { TestId } from '../../../testing/common/testId.js';
-import { VOLT_TEST_CONTROLLER_ID } from './voltTestController.js';
+import { agentTestRuns, IAgentTestRun, VOLT_TEST_CONTROLLER_ID, voltTestRoots } from './voltTestController.js';
 
 const MAX_LISTED_TESTS = 150;
 const MAX_FAILURES = 12;
@@ -31,6 +31,11 @@ export interface ITestRunWatcher {
 export interface ITestToolResult {
 	readonly text: string;
 	readonly isError?: boolean;
+}
+
+/** A sandboxed chat's call: the gate's read rule. Without it the chat sees no tests (Volt cannot tell which files it may read). */
+export interface ITestConfinement {
+	readonly readRefusal?: (path: string) => Promise<string | undefined>;
 }
 
 interface ITestEntry {
@@ -57,13 +62,15 @@ export class IdeTests {
 		private readonly profiles: ITestProfileService,
 	) { }
 
-	async list(root: URI | undefined, path: string | undefined, query: string | undefined): Promise<ITestToolResult> {
-		await this.settle();
+	/** `confined`: a sandboxed chat's call, which sees only tests in files it may read. */
+	async list(root: URI | undefined, path: string | undefined, query: string | undefined, confined?: ITestConfinement): Promise<ITestToolResult> {
+		await this.settle(!!confined, root);
 		const scope = path ? this.resolvePath(root, path) : undefined;
 		const needle = query?.trim().toLowerCase();
-		const entries = this.entries().filter(entry => entry.leaf && (!scope || isEqualOrParent(entry.file, scope)) && (!needle || entry.names.join(' ').toLowerCase().includes(needle)));
+		const visible = await this.visibleEntries(confined);
+		const entries = visible.filter(entry => entry.leaf && (!scope || isEqualOrParent(entry.file, scope)) && (!needle || entry.names.join(' ').toLowerCase().includes(needle)));
 		const controllers = new Map<string, number>();
-		for (const entry of this.entries().filter(item => item.leaf)) {
+		for (const entry of visible.filter(item => item.leaf)) {
 			controllers.set(this.controllerLabel(entry.item), (controllers.get(this.controllerLabel(entry.item)) ?? 0) + 1);
 		}
 		if (!entries.length) {
@@ -94,10 +101,17 @@ export class IdeTests {
 		return { text: lines.join('\n') };
 	}
 
-	async run(key: string, root: URI | undefined, args: { readonly targets?: readonly string[]; readonly failed?: boolean; readonly coverage?: boolean }, watcher: ITestRunWatcher | undefined, token: CancellationToken): Promise<ITestToolResult> {
-		await this.settle();
+	/**
+	 * Runs tests for `as` (the calling chat: its exec, in its sandbox when it has one). A sandboxed
+	 * chat's run is Volt's runner only: a test extension's controller runs tests in its extension
+	 * host, outside any sandbox.
+	 */
+	async run(key: string, root: URI | undefined, args: { readonly targets?: readonly string[]; readonly failed?: boolean; readonly coverage?: boolean }, watcher: ITestRunWatcher | undefined, token: CancellationToken, as?: IAgentTestRun & ITestConfinement): Promise<ITestToolResult> {
+		const sandboxed = !!as?.exec.sandbox;
+		await this.settle(sandboxed, root);
 		let tests: InternalTestItem[];
 		let title: string;
+		let skipped = '';
 		if (args.failed) {
 			const last = this.lastResult(key);
 			if (!last) {
@@ -111,7 +125,7 @@ export class IdeTests {
 			}
 			title = `Rerun ${tests.length} failed`;
 		} else if (args.targets?.length) {
-			const resolved = this.resolveTargets(root, args.targets);
+			const resolved = this.resolveTargets(root, args.targets, sandboxed ? await this.visibleEntries(as) : undefined);
 			if ('error' in resolved) {
 				return { text: resolved.error, isError: true };
 			}
@@ -119,28 +133,74 @@ export class IdeTests {
 			title = args.targets.join(', ');
 		} else {
 			tests = [...this.testService.collection.rootItems];
+			if (sandboxed) {
+				const others = tests.filter(test => test.controllerId !== VOLT_TEST_CONTROLLER_ID);
+				tests = tests.filter(test => test.controllerId === VOLT_TEST_CONTROLLER_ID);
+				skipped = others.length ? `\n(Not run: the tests of ${[...new Set(others.map(test => this.controllerLabel(test)))].join(', ')}, whose extension runs them outside this chat's sandbox. Run those with your own shell tool: it runs inside the sandbox.)` : '';
+			}
 			if (!tests.length) {
-				return { text: 'No tests in this workspace to run.', isError: true };
+				return { text: `No tests in this workspace to run.${skipped}`, isError: true };
 			}
 			title = 'All tests';
 		}
+		if (sandboxed) {
+			const foreign = tests.filter(test => test.controllerId !== VOLT_TEST_CONTROLLER_ID);
+			if (foreign.length) {
+				const owners = [...new Set(foreign.map(test => this.controllerLabel(test)))].join(', ');
+				return { text: `The tests did not run: ${foreign.length === tests.length ? 'they belong' : `${foreign.length} of them belong`} to ${owners}, a test extension that runs them in its extension host, outside this chat's sandbox. Run them with your own shell tool instead (it runs inside the sandbox), or target tests Volt's runner covers (tests op list shows who runs each).`, isError: true };
+			}
+		}
 		const coverage = !!args.coverage && tests.every(test => this.profiles.getControllerProfiles(test.controllerId).some(profile => profile.group & TestRunProfileBitset.Coverage));
-		const runPromise = this.testService.runTests({ group: coverage ? TestRunProfileBitset.Coverage : TestRunProfileBitset.Run, tests, preserveFocus: true }, token);
+		const request = this.resolveRun(tests, coverage ? TestRunProfileBitset.Coverage : TestRunProfileBitset.Run);
+		if (!request.targets.length) {
+			return { text: 'No test controller can run these tests (no run profile).', isError: true };
+		}
+		if (as) {
+			// Before the run starts: Volt's controller runs its commands for the calling chat, in its sandbox.
+			agentTestRuns.set(request, { exec: as.exec, ...(as.readRefusal ? { readRefusal: as.readRefusal } : {}), ...(as.tmpdir ? { tmpdir: as.tmpdir } : {}) });
+		}
+		const runPromise = this.testService.runResolvedTests(request, token);
 		// The live result exists as soon as the run starts: the card shows it running.
-		const live = this.results.results[0];
+		const live = this.results.results.find(candidate => candidate.request === request);
 		if (live && !live.completedAt) {
 			watcher?.started(live, title);
 		}
 		const result = await runPromise;
 		this.lastRun.set(key, result.id);
 		const note = args.coverage && !coverage ? '\n(No coverage profile for these tests; ran them without coverage.)' : '';
-		return { text: this.summarize(root, result) + note };
+		return { text: this.summarize(root, result) + note + skipped };
 	}
 
-	async resultsFor(key: string, root: URI | undefined, target: string | undefined): Promise<ITestToolResult> {
-		const last = this.lastResult(key) ?? this.results.results.find(result => result.completedAt);
+	/** The run request the Testing service would make for these tests, made here so the agent's run can be told apart (`agentTestRuns`). */
+	private resolveRun(tests: readonly InternalTestItem[], group: TestRunProfileBitset): ResolvedTestRunRequest {
+		const byProfile: { profile: ITestRunProfile; ids: string[] }[] = [];
+		for (const test of tests) {
+			const existing = byProfile.find(entry => canUseProfileWithTest(entry.profile, test));
+			const profile = existing?.profile
+				?? this.profiles.getDefaultProfileForTest(group, test)
+				?? this.profiles.getControllerProfiles(test.controllerId).find(candidate => candidate.group === group && canUseProfileWithTest(candidate, test));
+			if (!profile) {
+				continue;
+			}
+			let entry = byProfile.find(item => item.profile === profile);
+			if (!entry) {
+				entry = { profile, ids: [] };
+				byProfile.push(entry);
+			}
+			entry.ids.push(test.item.extId);
+		}
+		return {
+			group,
+			targets: byProfile.map(({ profile, ids }) => ({ profileId: profile.profileId, controllerId: profile.controllerId, testIds: ids })),
+			preserveFocus: true,
+		};
+	}
+
+	/** `confined`: a sandboxed chat's call: only its own runs, never another's (the user's, outside the sandbox). */
+	async resultsFor(key: string, root: URI | undefined, target: string | undefined, confined?: ITestConfinement): Promise<ITestToolResult> {
+		const last = this.lastResult(key) ?? (confined ? undefined : this.results.results.find(result => result.completedAt));
 		if (!last) {
-			return { text: 'No test results yet. Run tests first.' };
+			return { text: confined ? 'This chat has run no tests yet. Run them with op run.' : 'No test results yet. Run tests first.' };
 		}
 		if (!target) {
 			return { text: this.summarize(root, last) };
@@ -154,13 +214,42 @@ export class IdeTests {
 		return { text: items.slice(0, 5).map(item => this.detail(root, last, item, true)).join('\n\n') };
 	}
 
-	/** Waits for controllers to publish and for lazily resolved children (bounded). */
-	private async settle(): Promise<void> {
+	/**
+	 * Waits for controllers to publish and for lazily resolved children (bounded). `sandboxed`: only
+	 * Volt's runner, which reads test files statically. Expanding an extension's tests runs its
+	 * discovery in its extension host, outside the sandbox, which for pytest and friends imports the
+	 * project's code: a sandboxed chat sees what those controllers already published, nothing more.
+	 */
+	private async settle(sandboxed: boolean, root: URI | undefined): Promise<void> {
+		// The chat's folder may be outside the window's workspace (the agent window has none): Volt's runner discovers it now.
+		if (root) {
+			await raceTimeout(voltTestRoots.ensure(root), EXPAND_WAIT_MS * 2);
+		}
+		if (sandboxed) {
+			await raceTimeout(this.testService.getTestController(VOLT_TEST_CONTROLLER_ID)?.syncTests(CancellationToken.None) ?? Promise.resolve(), EXPAND_WAIT_MS);
+			return;
+		}
 		await raceTimeout(this.testService.syncTests(), EXPAND_WAIT_MS);
 		const expandable = [...this.testService.collection.all].filter(item => item.expand === TestItemExpandState.Expandable).slice(0, 200);
 		if (expandable.length) {
 			await raceTimeout(Promise.all(expandable.map(item => this.testService.collection.expand(item.item.extId, Infinity).catch(() => undefined))), EXPAND_WAIT_MS);
 		}
+	}
+
+	/** The tests a call may see: all of them, or for a sandboxed chat those in files it may read. */
+	private async visibleEntries(confined: ITestConfinement | undefined): Promise<ITestEntry[]> {
+		const entries = this.entries();
+		if (!confined) {
+			return entries;
+		}
+		const readable = new Map<string, boolean>();
+		for (const entry of entries) {
+			const key = entry.file.toString();
+			if (!readable.has(key)) {
+				readable.set(key, !!confined.readRefusal && !(await confined.readRefusal(entry.file.fsPath)));
+			}
+		}
+		return entries.filter(entry => readable.get(entry.file.toString()));
 	}
 
 	private lastResult(key: string): ITestResult | undefined {
@@ -219,8 +308,8 @@ export class IdeTests {
 		return isAbsolute(path) ? URI.file(path) : root ? joinPath(root, path) : undefined;
 	}
 
-	private resolveTargets(root: URI | undefined, targets: readonly string[]): { readonly tests: InternalTestItem[] } | { readonly error: string } {
-		const entries = this.entries();
+	private resolveTargets(root: URI | undefined, targets: readonly string[], visible?: readonly ITestEntry[]): { readonly tests: InternalTestItem[] } | { readonly error: string } {
+		const entries = visible ?? this.entries();
 		const picked = new Map<string, InternalTestItem>();
 		for (const target of targets) {
 			const raw = target.trim();

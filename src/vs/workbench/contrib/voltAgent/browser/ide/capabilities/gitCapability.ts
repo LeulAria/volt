@@ -4,12 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { IFileService } from '../../../../../../platform/files/common/files.js';
-import { cliText, display, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, list, num, ok, resolvePath, safeName, str } from './capability.js';
+import { cliText, confinedReadRefusal, display, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, list, num, ok, resolvePath, safeName, str } from './capability.js';
 
 /**
  * Source control beyond git_status / git_diff / git_log: staging, commits, branches, merge
- * conflicts, blame and file history. Runs git itself in the chat's folder, so the Source Control
- * view, the gutter and the chat's change set all see the result.
+ * conflicts, blame and file history. Runs git in the chat's folder through HostGit (no repository
+ * hook, fsmonitor or `ext::` remote runs), inside the chat's sandbox when it has one, so the Source
+ * Control view, the gutter and the chat's change set all see the result.
  */
 export class GitCapability implements IIdeCapability {
 
@@ -18,7 +19,7 @@ export class GitCapability implements IIdeCapability {
 	constructor(private readonly fileService: IFileService) { }
 
 	async invoke(op: string, args: Readonly<Record<string, unknown>>, ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
-		const git = (gitArgs: string[], timeoutMs = 30_000) => ctx.cli.run('git', gitArgs, { timeoutMs });
+		const git = (gitArgs: string[], timeoutMs = 30_000) => ctx.cli.git(gitArgs, { timeoutMs });
 		const paths = list(args, 'paths').map(path => resolvePath(ctx.root, path)).filter(uri => !!uri).map(uri => display(ctx.root, uri!));
 		switch (op) {
 			case 'branches': {
@@ -98,13 +99,13 @@ export class GitCapability implements IIdeCapability {
 	}
 
 	private async status(ctx: IIdeCapabilityContext, done: string): Promise<IIdeCapabilityResult> {
-		const status = await ctx.cli.run('git', ['status', '--short', '--branch'], { timeoutMs: 15_000 });
+		const status = await ctx.cli.git(['status', '--short', '--branch'], { timeoutMs: 15_000 });
 		return ok(`${done}\n${status.stdout.trim()}`);
 	}
 
-	/** Conflicted files and their regions, read from the markers in the working tree. */
+	/** Conflicted files and their regions, read from the markers in the working tree (for a sandboxed chat, only files it may read). */
 	private async conflicts(ctx: IIdeCapabilityContext): Promise<IIdeCapabilityResult> {
-		const result = await ctx.cli.run('git', ['diff', '--name-only', '--diff-filter=U'], { timeoutMs: 15_000 });
+		const result = await ctx.cli.git(['diff', '--name-only', '--diff-filter=U'], { timeoutMs: 15_000 });
 		if (result.code !== 0) {
 			return cliText(result, 'git');
 		}
@@ -115,6 +116,11 @@ export class GitCapability implements IIdeCapability {
 		const out: string[] = [`${files.length} conflicted file${files.length === 1 ? '' : 's'}:`];
 		for (const file of files.slice(0, 20)) {
 			const uri = resolvePath(ctx.root, file);
+			const refused = uri ? await confinedReadRefusal(ctx, uri) : undefined;
+			if (refused) {
+				out.push(`${file} (not read: ${refused})`);
+				continue;
+			}
 			const text = uri ? await this.fileService.readFile(uri).then(content => content.value.toString(), () => undefined) : undefined;
 			const regions = text ? conflictRegions(text) : [];
 			out.push(`${file} (${regions.length} region${regions.length === 1 ? '' : 's'})`);

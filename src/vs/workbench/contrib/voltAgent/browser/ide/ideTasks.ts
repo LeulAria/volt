@@ -43,17 +43,26 @@ export class IdeTasks {
 		private readonly terminalService: ITerminalService,
 	) { }
 
-	async invoke(root: URI | undefined, op: string, name: string | undefined, waitMs: number | undefined, watcher: ITaskWatcher | undefined, token: CancellationToken): Promise<ITaskToolResult> {
+	/**
+	 * `own`: a sandboxed chat's call, which sees the state, output and stop of only the tasks it
+	 * started itself (a task's terminal is the user's otherwise), and runs none: a task runs outside
+	 * the sandbox (the gate refuses it too).
+	 */
+	async invoke(root: URI | undefined, op: string, name: string | undefined, waitMs: number | undefined, watcher: ITaskWatcher | undefined, token: CancellationToken, own?: (task: Task) => boolean): Promise<ITaskToolResult> {
 		switch (op) {
 			case 'list': return this.list(root);
-			case 'status': return this.status();
-			case 'run': return this.run(name, waitMs, watcher, token);
+			case 'status': return this.status(own);
+			case 'run':
+				if (own) {
+					return { text: 'The task did not run: this chat runs in Volt\'s sandbox, and a task runs its command in a terminal outside it. Run the command with your own shell tool instead.', isError: true };
+				}
+				return this.run(name, waitMs, watcher, token);
 			case 'output': {
-				const task = await this.find(name, true);
+				const task = await this.find(name, true, own);
 				return typeof task === 'string' ? { text: task, isError: true } : { text: this.output(task) || `${task._label} has no output yet.` };
 			}
 			case 'stop': {
-				const task = await this.find(name, true);
+				const task = await this.find(name, true, own);
 				if (typeof task === 'string') {
 					return { text: task, isError: true };
 				}
@@ -83,22 +92,22 @@ export class IdeTasks {
 		return { text: `${tasks.length} task${tasks.length === 1 ? '' : 's'}:\n${lines.join('\n')}${tasks.length > 80 ? `\n[${tasks.length - 80} more]` : ''}` };
 	}
 
-	private async status(): Promise<ITaskToolResult> {
-		const active = await this.taskService.getActiveTasks();
+	private async status(own?: (task: Task) => boolean): Promise<ITaskToolResult> {
+		const active = (await this.taskService.getActiveTasks()).filter(task => !own || own(task));
 		if (!active.length) {
-			return { text: 'No tasks are running.' };
+			return { text: own ? 'No task this chat started is running.' : 'No tasks are running.' };
 		}
 		const busy = new Set((await this.taskService.getBusyTasks()).map(task => task.getMapKey()));
 		return { text: active.map(task => `- ${task._label}: ${busy.has(task.getMapKey()) ? 'busy' : task.configurationProperties.isBackground ? 'watching (idle)' : 'running'}`).join('\n') };
 	}
 
 	/** The task named exactly, else the only one containing the name. */
-	private async find(name: string | undefined, activeFirst: boolean): Promise<Task | string> {
+	private async find(name: string | undefined, activeFirst: boolean, own?: (task: Task) => boolean): Promise<Task | string> {
 		if (!name?.trim()) {
 			return 'Pass name (tasks list shows them).';
 		}
 		const wanted = name.trim().toLowerCase();
-		const pools = activeFirst ? [await this.taskService.getActiveTasks(), await this.all()] : [await this.all()];
+		const pools = (activeFirst ? [await this.taskService.getActiveTasks(), await this.all()] : [await this.all()]).map(pool => own ? pool.filter(own) : pool);
 		for (const pool of pools) {
 			const exact = pool.find(task => task._label.toLowerCase() === wanted || task.getQualifiedLabel().toLowerCase() === wanted);
 			if (exact) {
@@ -112,7 +121,7 @@ export class IdeTasks {
 				return `"${name}" matches ${partial.map(task => JSON.stringify(task._label)).join(', ')}; pass the full label.`;
 			}
 		}
-		return `No task "${name}". tasks list shows them.`;
+		return own ? `No task "${name}" that this chat started. A sandboxed chat reads and stops only its own tasks.` : `No task "${name}". tasks list shows them.`;
 	}
 
 	private async run(name: string | undefined, waitMs: number | undefined, watcher: ITaskWatcher | undefined, token: CancellationToken): Promise<ITaskToolResult> {

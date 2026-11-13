@@ -6,8 +6,8 @@
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
-import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
-import { ResourceMap } from '../../../../../base/common/map.js';
+import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { ResourceMap, ResourceSet } from '../../../../../base/common/map.js';
 import { observableValue } from '../../../../../base/common/observable.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { isWindows } from '../../../../../base/common/platform.js';
@@ -25,9 +25,10 @@ import { FileChangeType, IFileService } from '../../../../../platform/files/comm
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
+import { env } from '../../../../../base/common/process.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { userExec } from '../../../../services/voltRuntime/common/execContext.js';
-import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { IChatExec, userExec } from '../../../../services/voltRuntime/common/execContext.js';
+import { IWorkspaceContextService, IWorkspaceFolder } from '../../../../../platform/workspace/common/workspace.js';
 import { IWorkbenchContribution } from '../../../../common/contributions.js';
 import { QueryBuilder } from '../../../../services/search/common/queryBuilder.js';
 import { ISearchService } from '../../../../services/search/common/search.js';
@@ -35,11 +36,11 @@ import { buildTestCommand, detectJsFramework, familyOf, isJsTestPath, IStaticTes
 import { ITestOutcome, ITestReport, parseTestReport, stripAnsi } from '../../../../services/voltRuntime/common/ide/testReports.js';
 import { IConfig, IDebugService } from '../../../debug/common/debug.js';
 import { ITestProfileService } from '../../../testing/common/testProfileService.js';
-import { LiveTestResult } from '../../../testing/common/testResult.js';
+import { ITestResult, LiveTestResult } from '../../../testing/common/testResult.js';
 import { ITestResultService } from '../../../testing/common/testResultService.js';
 import { IMainThreadTestController, ITestService } from '../../../testing/common/testService.js';
 import { TestId } from '../../../testing/common/testId.js';
-import { IStartControllerTests, IStartControllerTestsResult, ITestErrorMessage, ITestItem, ITestMessageStackFrame, TestControllerCapability, TestDiffOpType, TestItemExpandState, TestMessageType, TestResultState, TestRunProfileBitset, TestsDiff } from '../../../testing/common/testTypes.js';
+import { IStartControllerTests, IStartControllerTestsResult, ITestErrorMessage, ITestItem, ITestMessageStackFrame, ResolvedTestRunRequest, TestControllerCapability, TestDiffOpType, TestItemExpandState, TestMessageType, TestResultState, TestRunProfileBitset, TestsDiff } from '../../../testing/common/testTypes.js';
 
 export const VOLT_TEST_CONTROLLER_ID = 'volt';
 export const VOLT_TEST_RUNNER_SETTING = 'volt.testing.runner';
@@ -47,6 +48,45 @@ export const VOLT_TEST_RUNNER_SETTING = 'volt.testing.runner';
 const RUN_PROFILE = 1;
 const DEBUG_PROFILE = 2;
 const COVERAGE_PROFILE = 3;
+
+/** Who a Testing run's commands run for, when an agent started it (the tests tool). */
+export interface IAgentTestRun {
+	/** The calling chat's: its principal, and its sandbox when it has one. */
+	readonly exec: IChatExec;
+	/** A sandboxed chat's: the gate's read rule, for the report its sandboxed run wrote. */
+	readonly readRefusal?: (path: string) => Promise<string | undefined>;
+	/** A sandboxed chat's temp folder, which its sandbox may write (the report goes there). */
+	readonly tmpdir?: string;
+}
+
+/**
+ * Runs an agent started, by their request (`LiveTestResult.request`, the object the run was
+ * started with, so nothing else can claim it): the tests tool registers the calling chat's exec
+ * before it starts the run, and Volt's controller runs that run's commands with it. A run nobody
+ * registered is the user's own (Run Test, the gutter, the Test Explorer): `userExec()`.
+ */
+export const agentTestRuns = new WeakMap<ResolvedTestRunRequest, IAgentTestRun>();
+
+/** An agent's runs whose commands its sandbox refused, with why: nothing ran (the card says so instead of "failed"). */
+export const refusedTestRuns = new WeakMap<ITestResult, string>();
+
+/**
+ * Folders whose tests Volt's runner discovers besides the window's workspace folders: a chat's
+ * project or worktree (the agent window and the agent server have no workspace folder). The tests
+ * tool adds the calling chat's folder before it lists or runs; the controller scans it then.
+ */
+export const voltTestRoots = new class {
+	private add: ((root: URI) => Promise<void>) | undefined;
+	/** Set by the controller. */
+	serve(add: (root: URI) => Promise<void>): IDisposable {
+		this.add = add;
+		return toDisposable(() => this.add = this.add === add ? undefined : this.add);
+	}
+	/** Resolves once `root`'s tests are in the Testing view (at once when it already is). */
+	ensure(root: URI): Promise<void> {
+		return this.add?.(root) ?? Promise.resolve();
+	}
+};
 /** Test files read per scan, and the size past which a file is not parsed. */
 const MAX_FILES = 4_000;
 const MAX_FILE_BYTES = 512 * 1024;
@@ -117,6 +157,8 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 	private published = false;
 	private rootShown = false;
 	private scanning: Promise<void> | undefined;
+	/** Chats' folders outside the window's workspace (`voltTestRoots`). */
+	private readonly extraRoots = new ResourceSet();
 
 	constructor(
 		@ITestService private readonly testService: ITestService,
@@ -159,6 +201,7 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 		this._register(toDisposable(() => profiles.removeProfile(VOLT_TEST_CONTROLLER_ID)));
 
 		this._register(workspace.onDidChangeWorkspaceFolders(() => void this.scan()));
+		this._register(voltTestRoots.serve(root => this.addRoot(root)));
 		this._register(configuration.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(VOLT_TEST_RUNNER_SETTING)) {
 				void this.scan();
@@ -202,9 +245,28 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 		return this.scanning;
 	}
 
+	/** A chat's folder: scanned with the workspace's from now on (once; a folder inside one already scanned adds nothing). */
+	private async addRoot(root: URI): Promise<void> {
+		if (root.scheme !== Schemas.file || this.folderOf(root)) {
+			await this.scanning;
+			return;
+		}
+		this.extraRoots.add(root);
+		// Outside the workspace nothing watches it: test files the agent adds or changes reach the Testing view through this.
+		this._register(this.fileService.watch(root, { recursive: true, excludes: ['**/node_modules/**', '**/.git/**'] }));
+		// A scan already going started without it.
+		await this.scanning;
+		await this.scan();
+	}
+
+	/** The workspace folder, or the chat's folder, a file belongs to. */
+	private folderOf(uri: URI): URI | undefined {
+		return this.workspace.getWorkspaceFolder(uri)?.uri ?? [...this.extraRoots].find(root => isEqualOrParent(uri, root));
+	}
+
 	private async doScan(): Promise<void> {
 		this.projects.clear();
-		const folders = this.workspace.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.file);
+		const folders: (IWorkspaceFolder | URI)[] = [...this.workspace.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.file), ...this.extraRoots];
 		const found: URI[] = [];
 		if (this.mode() !== 'off' && folders.length) {
 			const query = this.queryBuilder.file(folders, {
@@ -231,7 +293,7 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 		if (!family || (this.mode() === 'auto' && this.coveredElsewhere(uri))) {
 			return undefined;
 		}
-		const folder = this.workspace.getWorkspaceFolder(uri)?.uri;
+		const folder = this.folderOf(uri);
 		if (!folder) {
 			return undefined;
 		}
@@ -418,7 +480,7 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 	}
 
 	private addOps(file: ITestFile): TestsDiff {
-		const folder = this.workspace.getWorkspaceFolder(file.uri)?.uri;
+		const folder = this.folderOf(file.uri);
 		const label = (folder && relativePath(folder, file.uri)) || file.uri.path.split('/').pop() || file.uri.path;
 		const ops: TestsDiff = [{
 			op: TestDiffOpType.Add,
@@ -474,18 +536,20 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 				list.push({ file, ...('file' in entry ? { node: entry } : {}) });
 				groups.set(file.project, list);
 			}
+			// An agent's run runs for its chat (in its sandbox); any other is the user's.
+			const agent = agentTestRuns.get(result.request);
 			for (const [project, entries] of groups) {
 				if (token.isCancellationRequested) {
 					break;
 				}
-				await this.runProject(result, taskId, project, entries, request.profileId, token);
+				await this.runProject(result, taskId, project, entries, request.profileId, agent, token);
 			}
 		} finally {
 			result.markTaskComplete(taskId);
 		}
 	}
 
-	private async runProject(result: LiveTestResult, taskId: string, project: IProject, entries: readonly { file: ITestFile; node?: ITestNode }[], profileId: number, token: CancellationToken): Promise<void> {
+	private async runProject(result: LiveTestResult, taskId: string, project: IProject, entries: readonly { file: ITestFile; node?: ITestNode }[], profileId: number, agent: IAgentTestRun | undefined, token: CancellationToken): Promise<void> {
 		const leaves = entries.flatMap(entry => entry.node ? this.leavesOf([entry.node]) : this.leavesOf(entry.file.nodes));
 		for (const leaf of leaves) {
 			this.addToRun(result, leaf);
@@ -496,7 +560,15 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 			file: relativePath(project.root, entry.file.uri) ?? entry.file.uri.fsPath,
 			path: entry.node ? entry.node.path : [],
 		}));
-		const reportDir = joinPath(this.environment.cacheHome, 'volt-tests');
+		const sandboxed = !!agent?.exec.sandbox;
+		const debug = profileId === DEBUG_PROFILE && (project.framework === 'vitest' || project.framework === 'jest' || project.framework === 'mocha');
+		if (debug && sandboxed) {
+			// js-debug starts the tests and its adapter outside any sandbox.
+			this.refuseLeaves(result, taskId, leaves, 'The tests did not run: this chat runs in Volt\'s sandbox, and a debug run starts the debugger outside it. Run them with the tests tool (they run in the sandbox) or your own shell tool.');
+			return;
+		}
+		// A sandboxed run writes its report where its sandbox may write: the chat's temp folder.
+		const reportDir = sandboxed ? joinPath(URI.file(agent?.tmpdir ?? env['TMPDIR'] ?? '/tmp'), 'volt-tests') : joinPath(this.environment.cacheHome, 'volt-tests');
 		await this.fileService.createFolder(reportDir).catch(() => undefined);
 		const report = joinPath(reportDir, `${generateUuid()}.${project.framework === 'pytest' ? 'xml' : 'json'}`);
 		const command = buildTestCommand(project.framework, selection, {
@@ -508,16 +580,26 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 		for (const leaf of leaves) {
 			result.updateState(leaf.id, taskId, TestResultState.Running);
 		}
-		result.appendOutput(VSBuffer.fromString(`\x1b[2m$ ${command.command}\x1b[0m\r\n`), taskId);
-		const debug = profileId === DEBUG_PROFILE && (project.framework === 'vitest' || project.framework === 'jest' || project.framework === 'mocha');
+		result.appendOutput(VSBuffer.fromString(`\x1b[2m$ ${command.command}${sandboxed ? '   (in the chat\'s sandbox)' : ''}\x1b[0m\r\n`), taskId);
 		const exit = debug
 			? await this.debugCommand(command.command, project.root, token)
-			: await this.execCommand(command.command, project.root, output => result.appendOutput(VSBuffer.fromString(output.replace(/\r?\n/g, '\r\n')), taskId), token);
+			: await this.execCommand(command.command, project.root, output => result.appendOutput(VSBuffer.fromString(output.replace(/\r?\n/g, '\r\n')), taskId), agent?.exec ?? userExec(), token);
+		if (exit.refused) {
+			this.fileService.del(report).catch(() => undefined);
+			this.refuseLeaves(result, taskId, leaves, `The test command did not run: ${exit.refused}`);
+			return;
+		}
 		let parsed: ITestReport | undefined;
 		let reportError: string | undefined;
 		try {
-			const raw = (await this.fileService.readFile(report)).value.toString();
-			parsed = parseTestReport(command.format, raw);
+			// What a sandboxed run wrote is read only where its sandbox reads (a link it left in the report's place is not followed out).
+			const refused = sandboxed ? (agent?.readRefusal ? await agent.readRefusal(report.fsPath) : 'Volt cannot tell whether this sandboxed chat may read it') : undefined;
+			if (refused) {
+				reportError = `The run's report was not read: ${refused}.`;
+			} else {
+				const raw = (await this.fileService.readFile(report)).value.toString();
+				parsed = parseTestReport(command.format, raw);
+			}
 		} catch (err) {
 			reportError = token.isCancellationRequested ? 'Cancelled.' : `No report was written (exit code ${exit.code ?? 'none'}). ${stripAnsi(exit.tail).trim().split('\n').slice(-30).join('\n')}`;
 		} finally {
@@ -554,6 +636,16 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 		}
 	}
 
+	/** Nothing ran: every selected test is errored with why, and the run is marked refused, so it reads as refused, not as failing tests. */
+	private refuseLeaves(result: LiveTestResult, taskId: string, leaves: readonly ITestNode[], why: string): void {
+		refusedTestRuns.set(result, why);
+		result.appendOutput(VSBuffer.fromString(`${why}\r\n`), taskId);
+		for (const leaf of leaves) {
+			result.updateState(leaf.id, taskId, TestResultState.Errored);
+			result.appendMessage(leaf.id, taskId, { type: TestMessageType.Error, message: why, expected: undefined, actual: undefined, contextValue: undefined, location: undefined, stackTrace: undefined });
+		}
+	}
+
 	private filesOf(project: IProject): ITestFile[] {
 		return [...this.files.values()].filter(file => file.project === project);
 	}
@@ -564,7 +656,7 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 
 	/** Adds the node and its parents (root, file, suites) to the run's tree. */
 	private addToRun(result: LiveTestResult, node: ITestNode): void {
-		const folder = this.workspace.getWorkspaceFolder(node.file.uri)?.uri;
+		const folder = this.folderOf(node.file.uri);
 		const chain: ITestItem[] = [this.item(this.rootId, 'Volt', undefined, undefined), this.item(node.file.id, (folder && relativePath(folder, node.file.uri)) || node.file.uri.path, node.file.uri, undefined)];
 		const ids: string[] = [];
 		for (let id: string | undefined = node.id; id && id !== node.file.id; id = TestId.parentId(id)) {
@@ -661,8 +753,12 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 		return isWindows ? 'python' : 'python3';
 	}
 
-	/** Runs a command as a job, streaming its output; cancellation stops its process tree. */
-	private async execCommand(command: string, cwd: URI, onOutput: (text: string) => void, token: CancellationToken): Promise<{ code: number | null; tail: string }> {
+	/**
+	 * Runs a command as a job, streaming its output; cancellation stops its process tree. `exec`: the
+	 * Testing view's runs are the user's (Run Test, the gutter); an agent's are its chat's, in the
+	 * chat's sandbox when it has one (`agentTestRuns`). A command its sandbox refused did not run.
+	 */
+	private async execCommand(command: string, cwd: URI, onOutput: (text: string) => void, exec: IChatExec, token: CancellationToken): Promise<{ code: number | null; tail: string; refused?: string }> {
 		const id = `volt-test-${generateUuid()}`;
 		const cancel = token.onCancellationRequested(() => void this.stdio.cancelExec(id));
 		let tail = '';
@@ -673,8 +769,10 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 			}
 		};
 		try {
-			// The Testing view's runs are the user's (Run Test, the gutter); an agent's go through the tests tool.
-			const started = await this.stdio.exec({ id, command, cwd: cwd.fsPath, timeoutMs: RUN_TIMEOUT_MS, background: true, backgroundWaitMs: 300, ...userExec() });
+			const started = await this.stdio.exec({ id, command, cwd: cwd.fsPath, timeoutMs: RUN_TIMEOUT_MS, background: true, backgroundWaitMs: 300, ...exec });
+			if (started.refused) {
+				return { code: null, tail, refused: started.refused.reason };
+			}
 			take(started.combined);
 			if (!started.running) {
 				return { code: started.exitCode, tail };
@@ -700,7 +798,7 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 	}
 
 	/** Runs a JS test command under the debugger (js-debug's JavaScript Debug Terminal) and waits for it to end. */
-	private async debugCommand(command: string, cwd: URI, token: CancellationToken): Promise<{ code: number | null; tail: string }> {
+	private async debugCommand(command: string, cwd: URI, token: CancellationToken): Promise<{ code: number | null; tail: string; refused?: string }> {
 		const name = `Debug tests (${generateUuid().slice(0, 4)})`;
 		const ended = new Promise<void>(resolve => {
 			const listener = this.debugService.onDidEndSession(({ session }) => {

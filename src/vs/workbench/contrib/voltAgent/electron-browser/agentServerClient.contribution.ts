@@ -37,7 +37,7 @@ import { IMarkerService } from '../../../../platform/markers/common/markers.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
 import { ICodeRange } from '../../../services/voltRuntime/browser/tools/codeTools.js';
-import { lspAllowedFor } from '../../../services/voltRuntime/common/codeIntelligence.js';
+import { lspOffMessage, lspPolicy } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltBrowserAccessService } from '../../../services/voltRuntime/common/browserAccess.js';
 import { IHostService } from '../../../services/host/browser/host.js';
 import { AGENT_SERVER_ENABLED_SETTING, AgentServerClient, agentServerEnabled, IAgentServerClientService } from '../../../services/voltAgentServer/common/agentServerClient.js';
@@ -285,7 +285,7 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 			void sendFolders();
 		}
 		const host = this._register(new CodeIntelHost(accessor.get(IMarkerService), accessor.get(ITextModelService), accessor.get(ILanguageFeaturesService), accessor.get(IFileService)));
-		host.setLspPolicy(uri => lspAllowedFor(configuration, !workspace.isInsideWorkspace(uri)));
+		host.setLspPolicy(lspPolicy(configuration, uri => workspace.isInsideWorkspace(uri)));
 		const allowed = (uri: unknown): uri is URI => URI.isUri(uri) && host.lspAllowed(uri);
 		this._register(client.registerHandler('codeIntel.noteWrite', uri => {
 			if (URI.isUri(uri)) {
@@ -299,7 +299,7 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 		this._register(client.registerHandler('codeIntel.diagnostics', (uris, severity) => {
 			const list = Array.isArray(uris) ? uris.filter(allowed) : undefined;
 			if (Array.isArray(uris) && uris.length && !list?.length) {
-				throw new Error('Language servers are off for this checkout (Settings > Code Intelligence), so the editor has no diagnostics for it. Run the project\'s type checker or linter instead.');
+				throw new Error(lspOffMessage('diagnostics'));
 			}
 			return host.diagnostics(list?.length ? list : undefined, severity === 'warning' || severity === 'all' ? severity : 'error');
 		}));
@@ -326,7 +326,7 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 			const value = direction(way, ['supertypes', 'subtypes'] as const);
 			return allowed(uri) && position(line, column) && value ? host.typeHierarchy(uri, line as number, column as number, value) : undefined;
 		}));
-		const off = 'Language servers are off for this checkout (Settings > Code Intelligence). Edit the files directly.';
+		const off = lspOffMessage('code_action');
 		this._register(client.registerHandler('codeIntel.rename', (uri, line, column, newName) => allowed(uri) && position(line, column) && typeof newName === 'string' ? host.rename(uri, line as number, column as number, newName) : off));
 		this._register(client.registerHandler('codeIntel.format', uri => allowed(uri) ? host.format(uri) : off));
 		this._register(client.registerHandler('codeIntel.codeActions', (uri, value, only) => {

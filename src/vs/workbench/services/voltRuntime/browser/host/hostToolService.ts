@@ -148,8 +148,8 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		const located = requested?.sessionId && !requested.cwd ? { ...requested, cwd: this.sessions?.cwd(requested.sessionId) } : requested;
 		// The native loop's calls carry no sandbox (MCP calls carry the one their session token names): Volt's record of the chat's counts.
 		const sandboxed = located?.source === 'native' && located.sessionId && !located.sandbox && this.sandboxes ? { ...located, sandbox: this.sandboxes.settings(located.sessionId) } : located;
-		// A sandboxed chat's providers get the gate's read rule, for files they find rather than files named (search results).
-		const call = sandboxed && isSandboxed(sandboxed.sandbox) ? { ...sandboxed, readRefusal: this.readRule(sandboxed, sandboxed.sandbox) } : sandboxed;
+		// A sandboxed chat's providers get the gate's read and write rules, for files they find rather than files named (search results, a rename's other files).
+		const call = sandboxed && isSandboxed(sandboxed.sandbox) ? await this.withPathRules(sandboxed, sandboxed.sandbox) : sandboxed;
 		if (this.disabledTools.has(name)) {
 			return { error: `${name} belongs to a Volt feature the user turned off (Capabilities or Extensions). Do not call it again in this chat.` };
 		}
@@ -274,7 +274,7 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		const covers = chats.target ? legacySandboxCovers(chats.target.settings, sandbox, { targetStrategy: chats.target.strategy, callerStrategy: chats.caller.strategy, target: chats.target.folder, caller: chats.caller.folder }) : !other;
 		const decision = this.authority.classDecision(use, chats.caller, chats.target);
 		if (this.authority.compare(name, chatSubject(call.sessionId ?? '(none)'), legacyHostToolRefusal(use, call.sessionId, sandbox, covers), decision)) {
-			return { error: sandboxRefusalMessage(name, use?.kind, sandbox) };
+			return { error: sandboxRefusalMessage(name, use?.kind, sandbox, args) };
 		}
 		if (!use) {
 			return undefined;
@@ -288,7 +288,7 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		if (!use.reads?.length && !use.writes?.length) {
 			return undefined;
 		}
-		const context = await this.sandboxContext(call);
+		const context = call.sandboxPaths ?? await this.sandboxContext(call);
 		// Relative paths resolve where the tools resolve them: the chat's folder, else the window's.
 		const base = call.cwd ?? this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 		// The files broker's rules (I.15): its plan on the real path, then the Authority on the capability.
@@ -327,15 +327,23 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 		return targets.length && targets.every(own) ? { kind: 'reads-other' } : use;
 	}
 
-	/** The gate's read rule for one call: an absolute path, through its symlinks, against the chat's sandbox. */
-	private readRule(call: IVoltHostToolCall, sandbox: IVoltSandboxSettings): (path: string) => Promise<string | undefined> {
-		let context: Promise<ISandboxPathContext> | undefined;
+	/**
+	 * A sandboxed chat's call with the gate's rules for files its provider finds or computes rather
+	 * than files the agent named: `readRefusal` (B-15), `writeRefusal`, and the folders they judge by
+	 * (`sandboxPaths`, which a window serving the call for the agent server applies the same way).
+	 */
+	private async withPathRules(call: IVoltHostToolCall, sandbox: IVoltSandboxSettings): Promise<IVoltHostToolCall> {
+		const context = await this.sandboxContext(call);
+		return { ...call, readRefusal: this.pathRule(call, sandbox, 'read', context), writeRefusal: this.pathRule(call, sandbox, 'write', context), sandboxPaths: context };
+	}
+
+	/** The gate's rule for one call: an absolute path, through its symlinks, against the chat's sandbox. */
+	private pathRule(call: IVoltHostToolCall, sandbox: IVoltSandboxSettings, access: 'read' | 'write', context: ISandboxPathContext): (path: string) => Promise<string | undefined> {
 		return async path => {
 			if (!isAbsolute(path)) {
 				return `${path} is not an absolute path`;
 			}
-			context ??= this.sandboxContext(call);
-			return this.authority.filesRefusal(this.gateChat(call, sandbox), await this.realPath(URI.file(path)), 'read', await context);
+			return this.authority.filesRefusal(this.gateChat(call, sandbox), await this.realPath(URI.file(path)), access, context);
 		};
 	}
 

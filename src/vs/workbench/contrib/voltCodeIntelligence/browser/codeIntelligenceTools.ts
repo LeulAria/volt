@@ -15,26 +15,17 @@ import { ITextModelService } from '../../../../editor/common/services/resolverSe
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
-import { CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, lspAllowedFor, readCodeIndexOptions, readFffSettings } from '../../../services/voltRuntime/common/codeIntelligence.js';
-import { IVoltHostFileChange, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
+import { CODE_ACTION_TOOL_NAME, CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, lspPolicy, readCodeIndexOptions, readFffSettings } from '../../../services/voltRuntime/common/codeIntelligence.js';
+import { IVoltHostFileChange, IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { isSandboxed } from '../../../services/voltRuntime/common/hostToolSandbox.js';
-import { IVoltTool } from '../../../services/voltRuntime/common/tools/tool.js';
+import { IToolContext, IVoltTool } from '../../../services/voltRuntime/common/tools/tool.js';
 import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
-import { ISearchConfinement, VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
+import { VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
 import { createCodeIndexNav } from '../../../services/voltRuntime/browser/tools/codeIndexNav.js';
-import { CODE_ACTION_DESCRIPTION, CODE_ACTION_SCHEMA, CODE_NAV_DESCRIPTION, CODE_NAV_SCHEMA, createCodeTools, DIAGNOSTICS_DESCRIPTION, DIAGNOSTICS_SCHEMA } from '../../../services/voltRuntime/browser/tools/codeTools.js';
+import { createCodeTools, ITextFileChange } from '../../../services/voltRuntime/browser/tools/codeTools.js';
 import { IFileToolHost, writeComputedEdit } from '../../../services/voltRuntime/browser/tools/fileTools.js';
+import { confineCodeIntel, ICodeIntelRules } from './codeIntelConfinement.js';
 import { createSearchTools } from '../../../services/voltRuntime/browser/tools/searchTools.js';
-
-/**
- * The editor's language servers for agents that bring their own tools: the same code_nav,
- * diagnostics and code_action the native agent has, answered from the buffers the user sees.
- */
-const LANGUAGE_SERVER_TOOLS: readonly IVoltHostToolInfo[] = [
-	{ name: 'code_nav', title: 'Navigated code', group: 'core', description: CODE_NAV_DESCRIPTION, inputSchema: CODE_NAV_SCHEMA },
-	{ name: 'diagnostics', title: 'Read diagnostics', group: 'core', description: DIAGNOSTICS_DESCRIPTION, inputSchema: DIAGNOSTICS_SCHEMA },
-	{ name: 'code_action', title: 'Refactored code', group: 'core', description: CODE_ACTION_DESCRIPTION, inputSchema: CODE_ACTION_SCHEMA, approvalInReadOnlyModes: 'changes files' },
-];
 
 /** Indexes the open project's folders in the background, so the first agent search is already fast. */
 export class CodeIndexWarmup extends Disposable {
@@ -99,22 +90,26 @@ export class CodeIntelligenceHostTools extends Disposable {
 			fff: () => readFffSettings(configurationService),
 		}, fileService.onDidFilesChange));
 		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeatures, fileService));
-		this.codeIntel.setLspPolicy(uri => lspAllowedFor(configurationService, !workspace.isInsideWorkspace(uri)));
+		this.codeIntel.setLspPolicy(lspPolicy(configurationService, uri => workspace.isInsideWorkspace(uri)));
 		this._register(hostTools.registerToolProvider({
-			tools: [...CODE_INTELLIGENCE_TOOLS, ...LANGUAGE_SERVER_TOOLS],
+			tools: CODE_INTELLIGENCE_TOOLS,
 			invoke: (name, args, call) => this.invoke(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) })),
 		}));
 	}
 
 	private async invoke(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		const root = call?.cwd ? URI.file(call.cwd) : this.workspace.getWorkspace().folders[0]?.uri;
-		// A sandboxed chat searches its own confined index, and sees only results its sandbox may read (B-15).
-		let confine: ISearchConfinement | undefined;
+		// A sandboxed chat searches its own confined index, and sees only results its sandbox may read (B-15);
+		// its language server edits change only files its sandbox may write.
+		let confine: ICodeIntelRules | undefined;
 		if (call && isSandboxed(call.sandbox)) {
 			if (!call.readRefusal || !call.cwd) {
 				return { error: `${name} was not run: Volt cannot tell which files this sandboxed chat may read. Search with your own tools instead: they run inside the sandbox.` };
 			}
-			confine = { readRefusal: call.readRefusal };
+			if (name === CODE_ACTION_TOOL_NAME && !call.writeRefusal) {
+				return { error: `${name} did not start: no file was changed. Volt cannot tell which files this sandboxed chat may write. Edit the files with your own tools instead.` };
+			}
+			confine = { readRefusal: call.readRefusal, ...(call.writeRefusal ? { writeRefusal: call.writeRefusal } : {}) };
 		}
 		const changes: IVoltHostFileChange[] = [];
 		const tool = this.toolFor(name, root, confine);
@@ -140,7 +135,7 @@ export class CodeIntelligenceHostTools extends Disposable {
 		}
 	}
 
-	private toolFor(name: string, root: URI | undefined, confine: ISearchConfinement | undefined): IVoltTool | undefined {
+	private toolFor(name: string, root: URI | undefined, confine: ICodeIntelRules | undefined): IVoltTool | undefined {
 		if (name === INSTANT_GREP_TOOL_NAME || name === FIND_SYMBOL_TOOL_NAME || name === FIND_FILES_TOOL_NAME) {
 			const local = name === INSTANT_GREP_TOOL_NAME ? 'grep' : name === FIND_SYMBOL_TOOL_NAME ? 'find_symbol' : 'find_files';
 			return createSearchTools(this.search, () => root, confine).find(candidate => candidate.name === local);
@@ -165,7 +160,18 @@ export class CodeIntelligenceHostTools extends Disposable {
 				},
 			},
 		};
-		const nav = createCodeIndexNav({ service: this.codeIndex, enabled: () => codeIndexEnabled(this.configurationService), options: () => readCodeIndexOptions(this.configurationService) });
-		return createCodeTools(this.codeIntel, () => root, nav, (change, ctx) => writeComputedEdit(files, change.uri, change.before, change.after, ctx)).find(candidate => candidate.name === name);
+		const index = createCodeIndexNav({ service: this.codeIndex, enabled: () => codeIndexEnabled(this.configurationService), options: () => readCodeIndexOptions(this.configurationService) });
+		const { host, nav } = confine ? confineCodeIntel(this.codeIntel, index, confine) : { host: this.codeIntel, nav: index };
+		// code_action's edits are written here, in Volt's process (writeComputedEdit: the open buffer, else
+		// IFileService). A sandboxed chat's edit was judged whole by the confined host; each file is judged
+		// again just before it is written.
+		const write = async (change: ITextFileChange, ctx: IToolContext) => {
+			const why = confine && (confine.writeRefusal ? await confine.writeRefusal(change.uri.fsPath) : 'Volt cannot tell which files this sandboxed chat may write');
+			if (why) {
+				throw new Error(`Stopped before changing ${change.uri.fsPath}: ${why} (this chat runs in Volt's sandbox). Files of this edit listed before it may already be changed: check them with git diff, and make the rest of the change with your own edit tools.`);
+			}
+			return writeComputedEdit(files, change.uri, change.before, change.after, ctx);
+		};
+		return createCodeTools(host, () => root, nav, write).find(candidate => candidate.name === name);
 	}
 }

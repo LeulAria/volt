@@ -143,6 +143,9 @@ import { IVoltSkillsDirectoryService, VOLT_SKILLS_DIRECTORY_CHANNEL_NAME } from 
 import { VoltSkillsDirectoryMainService } from '../../platform/voltMarketplace/electron-main/voltSkillsDirectoryMainService.js';
 import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
+import { IVoltHttpTransport, VOLT_HTTP_TRANSPORT_CHANNEL_NAME } from '../../platform/voltHttp/common/voltHttpTransport.js';
+import { VoltHttpTransportMainService } from '../../platform/voltHttp/electron-main/voltHttpTransportMain.js';
+import { RequestChannel } from '../../platform/request/common/requestIpc.js';
 import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME, VOLT_BROWSER_PARTITION } from '../../platform/voltBrowser/common/voltBrowser.js';
 import { guardBrowserPartition, onGuestWindowOpen, onWillAttachWebview } from '../../platform/voltBrowser/electron-main/browserGuestGuard.js';
 import { VoltBrowserMainService } from '../../platform/voltBrowser/electron-main/voltBrowserMainService.js';
@@ -1172,6 +1175,9 @@ export class CodeApplication extends Disposable {
 		// Volt in-app folder picker
 		services.set(IVoltFsBrowseService, new SyncDescriptor(VoltFsBrowseService, undefined, false /* proxied to other processes */));
 
+		// Volt HTTP client: requests leave from here, so no page CORS check applies
+		services.set(IVoltHttpTransport, new SyncDescriptor(VoltHttpTransportMainService, undefined, true));
+
 		// Volt in-app browser (session data, color scheme emulation)
 		services.set(IVoltBrowserService, new SyncDescriptor(VoltBrowserMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltDevicesService, new SyncDescriptor(VoltDevicesMainService, undefined, false /* proxied to other processes */));
@@ -1384,6 +1390,9 @@ export class CodeApplication extends Disposable {
 		// Volt in-app folder picker
 		const voltFsBrowseChannel = ProxyChannel.fromService(accessor.get(IVoltFsBrowseService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_FS_BROWSE_CHANNEL_NAME, voltFsBrowseChannel);
+
+		// Volt HTTP client (the request editor's and agents' `ide http` sends)
+		mainProcessElectronServer.registerChannel(VOLT_HTTP_TRANSPORT_CHANNEL_NAME, new RequestChannel(accessor.get(IVoltHttpTransport) as VoltHttpTransportMainService));
 
 		// Volt in-app browser
 		const voltBrowserChannel = ProxyChannel.fromService(accessor.get(IVoltBrowserService), disposables);
