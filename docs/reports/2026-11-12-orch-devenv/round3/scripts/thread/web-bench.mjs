@@ -5,7 +5,7 @@
 //
 //   --mode launch:    load /code/ with an empty cache (`--warm`: cache kept) and time it until the
 //                     composer is on screen; bytes on the wire (from the proxy) and requests.
-//   --mode reconnect: with /code/ loaded, cut the link (`--outage` ms, default 5000), restore it,
+//   --mode reconnect: with /code/ loaded (over the link at full speed unless --load-slow), cut the link (`--outage` ms, default 5000), restore it,
 //                     and time until the page has a new WebSocket that has received a message, and
 //                     until no "reconnect" text is on screen.
 //   --mode terminal:  open a new terminal (Ctrl+Shift+`) and time until its first line of output.
@@ -24,7 +24,8 @@ const control = opt('control', '9960');
 const outage = Number(opt('outage', '5000'));
 const warm = args.includes('--warm');
 const out = opt('out');
-const proxied = !url.includes(':9958');
+// `--direct`: straight to the server (no proxy stats); :9958 is the installed app's server.
+const proxied = !args.includes('--direct') && !url.includes(':9958');
 
 const ctl = async path => proxied ? (await fetch(`http://127.0.0.1:${control}/${path}`)).json() : {};
 
@@ -91,6 +92,20 @@ async function loadPage() {
 	return undefined;
 }
 
+// Reconnect and terminal start from a page that is already open: it loads with the link's pacing off
+// (`--load-slow` keeps it on), then the link is slow again for the timed part.
+async function loadOnce() {
+	const fast = proxied && !args.includes('--load-slow');
+	if (fast) {
+		await ctl('fast');
+	}
+	await loadPage();
+	await sleep(8000);
+	if (fast) {
+		await ctl('slow');
+	}
+}
+
 const results = [];
 for (let run = 0; run < runs; run++) {
 	let result;
@@ -104,8 +119,7 @@ for (let run = 0; run < runs; run++) {
 		console.log(`run ${run + 1}: composer on screen ${result.composerMs} ms, ${requests} requests, ${(encoded / 1e6).toFixed(2)} MB encoded, wire down ${link.down === undefined ? '-' : (link.down / 1e6).toFixed(2) + ' MB'}  (load ${load()})`);
 	} else if (mode === 'reconnect') {
 		if (run === 0) {
-			await loadPage();
-			await sleep(8000);
+			await loadOnce();
 		}
 		const before = await cdp.evaluate('window.__bench.ws.length');
 		await ctl('down');
@@ -132,8 +146,7 @@ for (let run = 0; run < runs; run++) {
 		await sleep(5000);
 	} else if (mode === 'terminal') {
 		if (run === 0) {
-			await loadPage();
-			await sleep(8000);
+			await loadOnce();
 		}
 		await cdp.evaluate('document.querySelectorAll(".xterm").forEach(x => x.dataset.benchSeen = "1"), true');
 		const t0 = Date.now();
