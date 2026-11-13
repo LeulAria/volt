@@ -629,11 +629,13 @@ async function longThread(app: App, rep: number, clickLong: (cdp: Cdp, arm: () =
     const rtt = ms(a, b); if (rtt < best.rtt) best = { rtt, off: Number((a + b) / 2n) / 1e6 - p! };
   }
   const visibility = await cdp.eval<string>("document.visibilityState");
-  const t0 = await clickLong(cdp, () => cdp.eval("window.__lt.arm()"));
-  let r: any;
-  for (let i = 0; i < 400; i++) { r = await cdp.eval(`(()=>({seen:window.__lt.seen,last:window.__lt.last,done:!!window.__lt.done}))()`); if (r?.done) break; await sleep(50); }
+  let r: any; let t0: bigint;
+  // Closed on every path: an open socket left by a thrown clickRow kept bun alive after the last row (it hung once).
+  try {
+    t0 = await clickLong(cdp, () => cdp.eval("window.__lt.arm()"));
+    for (let i = 0; i < 400; i++) { r = await cdp.eval(`(()=>({seen:window.__lt.seen,last:window.__lt.last,done:!!window.__lt.done}))()`); if (r?.done) break; await sleep(50); }
+  } finally { cdp.close(); }
   const t0ms = Number(t0) / 1e6;
-  cdp.close();
   row({ app: app.id, test: "A11", rep, open_visible_ms: r?.seen != null ? r.seen + best.off - t0ms : null, settled_ms: r?.last != null ? r.last + best.off - t0ms : null, clock_rtt_ms: best.rtt, visibility, method: "dom: marker in viewport; settled = no text or node change in the thread area for 1 s; document.visibilityState recorded" });
 }
 
