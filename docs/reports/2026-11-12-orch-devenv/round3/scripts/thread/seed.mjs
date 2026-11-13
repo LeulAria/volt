@@ -96,7 +96,41 @@ function writeChat(chat, title, turns, stepsPerTurn, firstPrompt, rank = 1) {
 	return meta;
 }
 
+/**
+ * T3's long reasoning preview: one reply that thought for `lines` lines (prose, lists and code, about
+ * 80 characters a line) before a short answer.
+ */
+function writeReasoningChat(chat, title, lines, rank) {
+	const id = `agent-bench-${chat}`;
+	const createdAt = now - (rank + 1) * 3_600_000;
+	let thought = '';
+	for (let i = 1; i <= lines; i++) {
+		thought += i % 40 === 0
+			? `\n\`\`\`ts\nconst step${i} = check(modules[${i % 20}]);\n\`\`\`\n\n`
+			: i % 7 === 0 ? `- Step ${i}: the export of mod${i % 20}.ts still needs its test, so it goes on the list.\n`
+				: `Line ${i} of the plan: read mod${i % 20}.ts, compare its exports with the index, note what differs.\n`;
+	}
+	const turn = crypto.randomUUID();
+	const prompt = 'Think it through at length, then answer.';
+	const answer = `Done thinking.\n\nLONGTHREAD-END ${chat}`;
+	const message = { kind: 'agent', id: turn, title: '', steps: [], segments: [{ kind: 'thought', text: thought, startedAt: createdAt + 1000, updatedAt: createdAt + 61_000 }, { kind: 'text', text: answer }], blockState: {}, startedAt: createdAt + 1000, endedAt: createdAt + 62_000, durationMs: 61_000, model, outcome: 'done' };
+	const recs = [
+		JSON.stringify({ type: 'header', version: 1, id, createdAt, workspace }),
+		JSON.stringify({ type: 'user', turn, at: createdAt, text: prompt, message: { kind: 'user', id: turn, text: prompt, mode: 'agent' } }),
+		JSON.stringify({ type: 'agent', turn, at: createdAt + 62_000, final: true, status: 'done', text: answer, summary: 'Thought at length', message }),
+	];
+	const file = path.join(sessions, `${id}.jsonl`);
+	fs.writeFileSync(file, recs.join('\n') + '\n');
+	console.log(`${id}\tthought ${thought.length} chars, ${lines} lines\t${(fs.statSync(file).size / 1e6).toFixed(1)} MB`);
+	return {
+		id, title, customTitle: true, createdAt, updatedAt: createdAt + 62_000, workspaceId: workspace.id, workspaceLabel: workspace.label, workspaceFolder: repo,
+		turnCount: 1, preview: prompt, summary: 'Thought at length', status: 'done', lastPromptAt: createdAt, lastUserPromptAt: createdAt, mode: 'agent', model: model.label,
+	};
+}
+
 const specs = {
+	// Not in the default set: add with --chats ...,reasoning.
+	reasoning: () => writeReasoningChat('reasoning', 'Long reasoning', 2500, 8),
 	long41k: () => writeChat('long41k', 'Long thread 41k', 1000, 20, undefined, 10),
 	long45k: () => writeChat('long45k', 'Long thread 45k', 1098, 20, undefined, 11),
 	long75k: () => writeChat('long75k', 'Long thread 75k', 1830, 20, undefined, 12),
