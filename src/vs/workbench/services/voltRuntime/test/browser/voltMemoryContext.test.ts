@@ -62,7 +62,7 @@ suite('Volt memory context (sandboxed host)', () => {
 		const first = service.context();
 		await answer();
 		await first;
-		await provider().invoke('memory_write', { name: 'x', content: 'y' });
+		await provider().invoke('memory_write', { name: 'x', content: 'y' }, undefined);
 		const next = service.context();
 		await answer();
 		assert.strictEqual(await next, 'note B');
