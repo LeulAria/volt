@@ -7,8 +7,9 @@ import { chatCovers } from '../../../../platform/voltSandbox/common/authority.js
 import { chatSubject } from '../../../../platform/voltSandbox/common/principals.js';
 import { domainAllowed, isPathInside, IVoltSandboxSettings, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { ideSandboxInstead, ideToolSandboxUse } from './ide/ideSandbox.js';
-import { threadIdArg } from './orchestration/agentThreadTools.js';
+import { stringList, threadIdArg } from './orchestration/agentThreadTools.js';
 import { parseActScript } from './tools/actScript.js';
+import { fileEditPaths } from './tools/fileEdits.js';
 import { localImagePaths } from './tools/localImages.js';
 
 /**
@@ -313,7 +314,8 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 		case 'manage_automations':
 			return { kind: MANAGE_AUTOMATION_SAFE.has(action) ? 'safe' : 'escapes' };
 		case 'automation':
-			return { kind: AUTOMATION_ACTIONS[action] ?? 'escapes' };
+			// Own keys only: `constructor` is an action the gate does not know, not Object's (SEC3-4).
+			return { kind: Object.prototype.hasOwnProperty.call(AUTOMATION_ACTIONS, action) ? AUTOMATION_ACTIONS[action] : 'escapes' };
 		case 'image_inspect':
 			return { kind, reads: strings([args.path]) };
 		case 'instant_grep':
@@ -356,7 +358,8 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 		case 'worktree_status':
 			return { kind, target: threadIdArg(args.thread_id) };
 		case 'thread_wait': {
-			const targets = [...(Array.isArray(args.thread_ids) ? args.thread_ids : []).map(threadIdArg), threadIdArg(args.thread_id)].filter((id): id is string => !!id);
+			// `thread_ids` as the tool reads it: a list, JSON text of one, or a single id (SEC3-4).
+			const targets = [...stringList(args.thread_ids, 20).map(threadIdArg), threadIdArg(args.thread_id)].filter((id): id is string => !!id);
 			return { kind, ...(targets.length ? { targets } : { readsAnyChat: true }) };
 		}
 		case 'thread_search':
@@ -426,12 +429,9 @@ function listOf(value: unknown): string[] {
 	return strings(Array.isArray(value) ? value : [value]);
 }
 
-/** browser_run `edits`: each `path` it changes. */
+/** browser_run `edits`: each path it changes, under every key the edit parser reads (`file`, `file_path`, ...). */
 function editPaths(edits: unknown): string[] {
-	if (edits === undefined) {
-		return [];
-	}
-	return strings((Array.isArray(edits) ? edits : [edits]).map(edit => isRecord(edit) ? edit.path : undefined));
+	return edits === undefined ? [] : fileEditPaths(edits);
 }
 
 /** A flow `save` writes `.volt/flows/<name>.flow` in the chat's folder. */
@@ -441,6 +441,37 @@ function flowWrites(save: unknown): string[] {
 
 const OPEN_ACTIONS = new Set(['navigate', 'goto', 'open', 'visit', 'launch']);
 const OPEN_LINE = /^\s*(?:\?\s*)?(?:goto|open|navigate|visit|launch)\b\s*(?:"([^"]*)"|'([^']*)'|(\S*))/i;
+
+/**
+ * What one step object opens, read as loosely as any step parser reads it (SEC3-4): the action
+ * under `action`, `do`, `type_of` or `step` (`browser_` prefix, any case), the shorthand
+ * `{ navigate: url }` or `{ goto: { href } }`, and the URL under `url` or `href`. More than a parser
+ * takes is fine: the gate only judges more.
+ */
+function stepTargets(step: Readonly<Record<string, unknown>>): string[] {
+	const out: string[] = [];
+	const named = [step.action, step.do, step.type_of, step.step].find((value): value is string => typeof value === 'string');
+	const action = named?.trim().toLowerCase().replace(/^browser_/, '') ?? '';
+	for (const key of ['url', 'href']) {
+		if (typeof step[key] === 'string') {
+			out.push(step[key] as string);
+		}
+	}
+	if (OPEN_ACTIONS.has(action) && !out.length) {
+		out.push(typeof step.target === 'string' ? step.target : '');
+	}
+	for (const [key, value] of Object.entries(step)) {
+		if (!OPEN_ACTIONS.has(key.toLowerCase().replace(/^browser_/, ''))) {
+			continue;
+		}
+		if (typeof value === 'string') {
+			out.push(value);
+		} else if (isRecord(value)) {
+			out.push(...strings([value.url, value.href, value.target]));
+		}
+	}
+	return out;
+}
 
 /**
  * What the steps of an act call open (`goto` lines, navigate steps): URLs in a browser, deep links
@@ -464,10 +495,7 @@ function openedTargets(args: Readonly<Record<string, unknown>>): string[] {
 		}
 	}
 	for (const step of asList(args.steps)) {
-		const action = typeof step.action === 'string' ? step.action.trim().toLowerCase() : '';
-		if (OPEN_ACTIONS.has(action) || typeof step.url === 'string') {
-			out.push(typeof step.url === 'string' ? step.url : typeof step.target === 'string' ? step.target : '');
-		}
+		out.push(...stepTargets(step));
 	}
 	return out;
 }

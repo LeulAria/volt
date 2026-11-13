@@ -111,7 +111,8 @@ export const LEGACY_TOOL_NAMES: Readonly<Record<string, string>> = {
 
 /** The current name of a host tool an agent may call by an earlier one. */
 export function canonicalHostToolName(name: string): string {
-	return LEGACY_TOOL_NAMES[name] ?? name;
+	// Own keys only: `constructor` or `toString` is a name the gate refuses, never a prototype member (SEC3-4).
+	return Object.prototype.hasOwnProperty.call(LEGACY_TOOL_NAMES, name) ? LEGACY_TOOL_NAMES[name] : name;
 }
 
 /** A visual a render tool published: where its spec or page is stored, for the transcript to draw. */
@@ -1157,6 +1158,13 @@ export interface IVoltHostToolService {
 	/** The browser half of an ACP agent's turn primer (the app serving and open in the chat's browser, audits). */
 	preflightBrowser(sessionId: string, request: IVoltBrowserPreflightRequest, token: CancellationToken): Promise<IVoltBrowserPreflightResult>;
 	invokeTool(name: string, input?: unknown, call?: IVoltHostToolCall): Promise<IVoltHostToolResult>;
+	/**
+	 * The gate's file rule for a file Volt itself reads or writes for a sandboxed chat (a native
+	 * model's file tools): why `path` (absolute) may not be accessed for `call`, judged on its real
+	 * path as a host tool's path is, or undefined when it may (or the chat is not sandboxed). A
+	 * service without it cannot judge: callers refuse a sandboxed chat's file access (SEC3-1).
+	 */
+	sandboxFileRefusal?(call: IVoltHostToolCall, path: string, access: 'read' | 'write'): Promise<string | undefined>;
 	/**
 	 * The MCP server to hand a chat's agent; tool calls through it are tied to `sessionId` and carry
 	 * the server's bearer token. `groups` limits the tools it lists (default: all).

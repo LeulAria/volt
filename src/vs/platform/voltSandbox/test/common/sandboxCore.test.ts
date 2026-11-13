@@ -289,7 +289,10 @@ suite('Volt sandbox Seatbelt profile', () => {
 		const denySocket = agentProxy.indexOf('(deny network-outbound (with message "VOLTSBX-d") (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))');
 		assert.ok(denySocket > allowSocket, 'even a granted socket list cannot reopen DNS');
 		assert.ok(agentProxy.includes('(global-name "com.apple.dnssd.service")'), 'the allow-default base denies the DNS service');
-		for (const name of ['com.apple.cfprefsd.daemon', 'com.apple.CoreServices.coreservicesd', 'com.apple.coreservices.appleevents', 'com.apple.pasteboard.1']) {
+		for (const name of ['com.apple.cfprefsd.daemon', 'com.apple.CoreServices.coreservicesd', 'com.apple.coreservices.appleevents', 'com.apple.pasteboard.1',
+			// Persistence and the LaunchServices database: run code at login, or make the agent's app a handler.
+			'com.apple.xpc.smd', 'com.apple.xpc.loginitemregisterd', 'com.apple.backgroundtaskmanagement', 'com.apple.backgroundtaskmanagementagent',
+			'com.apple.coreservices.sharedfilelistd.xpc', 'com.apple.lsd.modifydb', 'com.apple.lsd.open', 'com.apple.coreservices.launchservicesd']) {
 			assert.ok(agentProxy.includes(`(global-name "${name}")`), name);
 		}
 		const agentHost = buildSeatbeltProfile({ ...RESOLVED, readAll: true, systemServices: true, network: { ...RESOLVED.network, mode: 'host' } }, { tag: 'h' });
@@ -428,6 +431,19 @@ suite('Volt sandbox agent profile', () => {
 		assert.ok(policy.filesystem.deny.includes('/Users/me/.ssh/id_ed25519'));
 		assert.deepStrictEqual(policy.host.unixSockets, ['/private/tmp/ssh-x/agent.1']);
 		assert.strictEqual(policy.network.mode, 'host');
+	});
+
+	test('SSH-1: network on reads only what ssh needs in ~/.ssh (config, known hosts, public keys), never the folder', () => {
+		const readable = ['/Users/me/.ssh/config', '/Users/me/dotfiles/ssh/config', '/Users/me/.ssh/config.d', '/Users/me/.ssh/known_hosts', '/Users/me/.ssh/id_ed25519.pub'];
+		const policy = agentSandboxPolicy({ level: 'workspace-write', network: true, providerId: 'claude-code', workspaceRoots: ['/Users/me/repo'] }, { ...host, sshReadable: [...readable, '/Users/me', 'relative/config'] });
+		for (const path of readable) {
+			assert.ok(policy.filesystem.read.includes(path), path);
+		}
+		assert.ok(!policy.filesystem.read.includes('/Users/me/.ssh'), 'not the folder: notes, tokens and keys under other names stay unreadable');
+		assert.ok(!policy.filesystem.read.includes('/Users/me') && !policy.filesystem.read.includes('relative/config'), 'never the home folder or a relative path');
+		assert.ok(policy.filesystem.deny.includes('/Users/me/.ssh/id_ed25519'), 'a key under a readable name is still denied');
+		const off = agentSandboxPolicy({ level: 'workspace-write', network: false, providerId: 'claude-code', workspaceRoots: ['/Users/me/repo'] }, { ...host, sshReadable: readable });
+		assert.ok(!readable.some(path => off.filesystem.read.includes(path)) && off.filesystem.deny.includes('/Users/me/.ssh'), 'network off: no ssh at all');
 	});
 
 	test('read-only protects the workspace even inside temp; home and / are never roots', () => {

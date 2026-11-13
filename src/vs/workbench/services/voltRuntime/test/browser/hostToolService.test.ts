@@ -10,11 +10,12 @@ import { Event } from '../../../../../base/common/event.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IFileService } from '../../../../../platform/files/common/files.js';
+import { FileOperationError, FileOperationResult, IFileService } from '../../../../../platform/files/common/files.js';
 import { HOST_MCP_TOKEN_TTL_MS, hostMcpSessionToken, parseHostMcpSessionToken } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
 import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
 import { extensionSubject } from '../../../../../platform/voltSandbox/common/principals.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IVoltChatFileRequest, IVoltChatFileResult, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { VoltHostToolService } from '../../browser/host/hostToolService.js';
 import { dataUrlBytes, decodeDataUrl, encodeImage, scaleScreenshot } from '../../browser/host/imageCodec.js';
@@ -46,7 +47,7 @@ suite('Volt host tool service', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function setup(options: { pageUrl?: string; files?: Map<string, Uint8Array>; links?: ReadonlyMap<string, string>; onAutomate?: (name: string, args: Record<string, unknown>, page: { url?: string }) => void } = {}) {
+	function setup(options: { pageUrl?: string; files?: Map<string, Uint8Array>; links?: ReadonlyMap<string, string>; dangling?: ReadonlySet<string>; onAutomate?: (name: string, args: Record<string, unknown>, page: { url?: string }) => void } = {}) {
 		const calls: ICommandCall[] = [];
 		const page: { url?: string } = { url: options.pageUrl };
 		const commands = {
@@ -86,12 +87,38 @@ suite('Volt host tool service', () => {
 				written.set(uri.path, content.toString());
 				return {};
 			},
-			realpath: async (uri: URI) => URI.file(real(uri.path)),
+			// A dangling link (its target not made yet): realpath fails on it and below it, stat sees the link itself.
+			realpath: async (uri: URI) => {
+				if ([...options.dangling ?? []].some(link => uri.path === link || uri.path.startsWith(`${link}/`))) {
+					throw new Error(`ENOENT: ${uri.path}`);
+				}
+				return URI.file(real(uri.path));
+			},
+			stat: async (uri: URI) => {
+				if (options.dangling?.has(uri.path)) {
+					return { isSymbolicLink: true };
+				}
+				throw new FileOperationError('missing', FileOperationResult.FILE_NOT_FOUND);
+			},
 		} as unknown as IFileService;
 		const workspace = { getWorkspace: () => ({ folders: [{ uri: URI.file('/ws') }] }) } as unknown as IWorkspaceContextService;
 		const blocked = new Map<string | undefined, BrowserBlockReason>();
 		const access = { blockReason: (sessionId: string | undefined) => blocked.get(sessionId) } as unknown as IVoltBrowserAccessService;
-		const service = store.add(new VoltHostToolService(commands, files, workspace, access));
+		// The execution host's race-free file operations for sandboxed chats (SEC3-3), over the same files.
+		const chatFiles: IVoltChatFileRequest[] = [];
+		const stdio = {
+			chatFile: async (request: IVoltChatFileRequest): Promise<IVoltChatFileResult> => {
+				chatFiles.push(request);
+				const path = URI.file(request.path).path;
+				if (request.op === 'read') {
+					const bytes = options.files?.get(path) ?? (written.has(path) ? VSBuffer.fromString(written.get(path)!).buffer : undefined);
+					return bytes ? { ok: true, path, content: VSBuffer.wrap(bytes).toString() } : { ok: false, reason: `${path} does not exist`, refusal: 'missing' };
+				}
+				written.set(path, request.content ?? '');
+				return { ok: true, path, existed: false };
+			},
+		} as unknown as IVoltStdioService;
+		const service = store.add(new VoltHostToolService(commands, files, workspace, access, stdio));
 		const modes = new Map<string, VoltMode>();
 		service.setSessionResolver({ mode: id => modes.get(id), cwd: () => undefined });
 		// What the MCP bridge registers: each chat's sandbox and the folder it works in.
@@ -99,7 +126,7 @@ suite('Volt host tool service', () => {
 		const folders = new Map<string, string>();
 		service.setSandboxResolver({ settings: id => sandboxes.get(id) ?? { level: 'off', network: true }, folder: id => folders.get(id) ?? '/ws' });
 		const automated = () => calls.filter(call => call.id === AUTOMATE_BROWSER_COMMAND_ID);
-		return { service, calls, modes, automated, blocked, written, page, sandboxes, folders };
+		return { service, calls, modes, automated, blocked, written, page, sandboxes, folders, chatFiles };
 	}
 
 	/** A provider serving `names`, recording what ran. */
@@ -289,6 +316,48 @@ suite('Volt host tool service', () => {
 
 		// Unsandboxed: as before (inside the project).
 		assert.strictEqual((await run('.vscode/tasks.json')).error, undefined);
+	});
+
+	test('SEC3-2: a path through a link that does not resolve (a dangling link, its target not made yet) is refused, for reads and writes', async () => {
+		const DEV_SERVER: IVoltSandboxSettings = { ...WORKSPACE_WRITE, listenPorts: [3000] };
+		const { service, written, chatFiles } = setup({ pageUrl: 'http://localhost:3000/', dangling: new Set(['/ws/evil', '/ws/evdir', '/ws/pic.png', '/ws/.volt']) });
+		// `/ws/evil` -> ~/Library/LaunchAgents/x.plist, `/ws/evdir` -> a folder not made yet: writing follows the link out.
+		for (const path of ['evil', 'evdir/x.plist', '/ws/evil']) {
+			const refused = await service.invokeTool('browser_run', { edits: [{ path, content: '<plist/>' }] }, { sessionId: 's1', sandbox: DEV_SERVER });
+			assert.match(refused.error ?? '', /^browser_run did not start: no file was changed\. .*does not resolve/, path);
+		}
+		assert.match((await service.invokeTool('image_inspect', { path: 'pic.png' }, { sessionId: 's1', sandbox: DEV_SERVER })).error ?? '', /does not resolve/);
+		assert.match((await service.invokeTool('browser_act', { script: 'reload', save: 'x' }, { sessionId: 's1', sandbox: DEV_SERVER })).error ?? '', /^browser_act did not start: no file was changed/, 'a flow saved under a dangling .volt would follow it');
+		assert.strictEqual(written.size, 0);
+		assert.deepStrictEqual(chatFiles, []);
+	});
+
+	test('SEC3-3: a sandboxed chat\'s browser_run edits are read and written race-free by the execution host, only over the text they were made against', async () => {
+		const DEV_SERVER: IVoltSandboxSettings = { ...WORKSPACE_WRITE, listenPorts: [3000] };
+		const files = new Map([['/ws/src/app.ts', VSBuffer.fromString('const a = 1;\n').buffer]]);
+		const { service, written, chatFiles } = setup({ pageUrl: 'http://localhost:3000/', files });
+		const result = await service.invokeTool('browser_run', { edits: [{ path: 'src/app.ts', old_string: 'const a = 1;', new_string: 'const a = 2;' }, { path: 'src/new.ts', content: 'export {};' }] }, { sessionId: 's1', sandbox: DEV_SERVER });
+		assert.strictEqual(result.error, undefined);
+		assert.deepStrictEqual(chatFiles.map(request => [request.op, request.path, request.chatId, request.expected]), [
+			['read', '/ws/src/app.ts', 's1', undefined],
+			['read', '/ws/src/new.ts', 's1', undefined],
+			['write', '/ws/src/app.ts', 's1', 'const a = 1;\n'],
+			['write', '/ws/src/new.ts', 's1', undefined],
+		]);
+		assert.deepStrictEqual(chatFiles[2].sandbox, DEV_SERVER);
+		assert.ok(chatFiles[2].roots.includes('/ws'));
+		assert.strictEqual(written.get('/ws/src/app.ts'), 'const a = 2;\n');
+		// The execution host refuses (a link swapped in after the gate's check): the edit reports what was not written.
+		const stdioRefuses = { chatFile: async () => ({ ok: false, reason: '/ws/dir/a.ts goes through a symbolic link', refusal: 'symlink' }) } as unknown as IVoltStdioService;
+		const other = store.add(new VoltHostToolService({ executeCommand: async () => 'http://localhost:3000/' } as unknown as ICommandService, { realpath: async (uri: URI) => uri } as unknown as IFileService, { getWorkspace: () => ({ folders: [{ uri: URI.file('/ws') }] }) } as unknown as IWorkspaceContextService, { blockReason: () => undefined } as unknown as IVoltBrowserAccessService, stdioRefuses));
+		other.setSessionResolver({ mode: () => undefined, cwd: () => undefined });
+		other.setSandboxResolver({ settings: () => ({ level: 'off', network: true }), folder: () => '/ws' });
+		assert.match((await other.invokeTool('browser_run', { edits: [{ path: 'dir/a.ts', content: 'x' }] }, { sessionId: 's1', sandbox: DEV_SERVER })).error ?? '', /symbolic link/);
+		// A host without race-free files: refused, nothing written another way.
+		const bare = store.add(new VoltHostToolService({ executeCommand: async () => 'http://localhost:3000/' } as unknown as ICommandService, { realpath: async (uri: URI) => uri, writeFile: async () => { throw new Error('the file service must not be used'); } } as unknown as IFileService, { getWorkspace: () => ({ folders: [{ uri: URI.file('/ws') }] }) } as unknown as IWorkspaceContextService, { blockReason: () => undefined } as unknown as IVoltBrowserAccessService, {} as IVoltStdioService));
+		bare.setSessionResolver({ mode: () => undefined, cwd: () => undefined });
+		bare.setSandboxResolver({ settings: () => ({ level: 'off', network: true }), folder: () => '/ws' });
+		assert.match((await bare.invokeTool('browser_run', { edits: [{ path: 'src/a.ts', content: 'x' }] }, { sessionId: 's1', sandbox: DEV_SERVER })).error ?? '', /cannot open files safely/);
 	});
 
 	test('sandbox gate: image and page reads stay in the workspace and temp, never through a link out of it', async () => {

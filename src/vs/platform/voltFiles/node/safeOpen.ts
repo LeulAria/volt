@@ -36,7 +36,7 @@ import { verifyHelperBinary } from '../../voltHelpers/node/helperIntegrity.js';
 /** `O_NOFOLLOW_ANY` from `<sys/fcntl.h>` (macOS 11+): fail with ELOOP if any component is a symlink. */
 export const O_NOFOLLOW_ANY = 0x20000000;
 
-export type SafeOpenRefusal = 'symlink' | 'outside' | 'hardlink' | 'not-file' | 'floor' | 'missing' | 'unsupported' | 'helper' | 'io';
+export type SafeOpenRefusal = 'symlink' | 'outside' | 'hardlink' | 'not-file' | 'floor' | 'missing' | 'unsupported' | 'helper' | 'io' | 'changed';
 
 export class SafeOpenError extends Error {
 	constructor(readonly refusal: SafeOpenRefusal, message: string) {
@@ -54,6 +54,12 @@ export interface ISafeOpenRequest {
 	readonly floor?: (finalPath: string) => string | undefined;
 	/** Refuse a file with more than one link (sandboxed principals). */
 	readonly refuseHardLinks?: boolean;
+	/**
+	 * Writes: why the file's content now (undefined when the write would create it) may not be
+	 * replaced, checked on the opened file before a byte is written (an edit made against text that
+	 * has changed since), or undefined.
+	 */
+	readonly precondition?: (before: Buffer | undefined) => string | undefined;
 }
 
 export interface ISafeOpenOptions {
@@ -113,6 +119,13 @@ function checkFloor(request: ISafeOpenRequest, finalPath: string): void {
 	const why = request.floor?.(finalPath);
 	if (why) {
 		throw new SafeOpenError('floor', why);
+	}
+}
+
+function checkPrecondition(request: ISafeOpenRequest, before: Buffer | undefined): void {
+	const why = request.precondition?.(before);
+	if (why) {
+		throw new SafeOpenError('changed', why);
 	}
 }
 
@@ -268,6 +281,7 @@ async function macWrite(request: ISafeOpenRequest, parts: readonly string[], con
 		}
 		checkFloor(request, request.path);
 		const before = created ? undefined : await handle.readFile();
+		checkPrecondition(request, before);
 		await handle.truncate(0);
 		await writeAllAt(handle, content);
 		return { before, finalPath: request.path };
@@ -325,6 +339,7 @@ async function linuxWriteExisting(request: ISafeOpenRequest, content: Uint8Array
 		}
 		checkFloor(request, finalPath);
 		const before = await handle.readFile();
+		checkPrecondition(request, before);
 		await handle.truncate(0);
 		await writeAllAt(handle, content);
 		return { before, finalPath };
@@ -435,6 +450,11 @@ async function runFsd(request: ISafeOpenRequest, parts: readonly string[], conte
 	if (request.refuseHardLinks && (header.nlink ?? 1) > 1) {
 		return fail(new SafeOpenError('hardlink', `${request.path} has ${header.nlink} links; a sandboxed chat does not write a file linked from elsewhere`));
 	}
+	try {
+		checkPrecondition(request, header.created === 1 ? undefined : current);
+	} catch (err) {
+		return fail(err as SafeOpenError);
+	}
 	child.stdin.end(Buffer.concat([Buffer.from('w'), Buffer.from(content)]));
 	const code = await exited;
 	const tail = Buffer.concat(chunks).subarray(tailStart).toString('utf8').trim();
@@ -502,6 +522,7 @@ async function windowsWrite(request: ISafeOpenRequest, parts: readonly string[],
 		}
 		const finalPath = await windowsRecheck(request);
 		const before = created ? undefined : await handle.readFile();
+		checkPrecondition(request, before);
 		await handle.truncate(0);
 		await writeAllAt(handle, content);
 		return { before, finalPath };

@@ -35,6 +35,7 @@ import { EnablementState, IWorkbenchExtensionEnablementService, IWorkbenchExtens
 import { IExtensionService } from '../../../../services/extensions/common/extensions.js';
 import { VoltHostToolService } from '../../../../services/voltRuntime/browser/host/hostToolService.js';
 import { IVoltBrowserAccessService } from '../../../../services/voltRuntime/common/browserAccess.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltFeatureEnablementMirror } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IDE_GATEWAY_TOOL_NAME } from '../../../../services/voltRuntime/common/ide/ideCapabilities.js';
 import { DEV_ENVIRONMENT_FEATURE_ID, IDE_TOOL_NAMES, IDE_TOOLS } from '../../../../services/voltRuntime/common/ide/ideTools.js';
@@ -102,7 +103,7 @@ suite('Volt feature service: features without a module', () => {
 		const files = { readFile: async () => { throw new Error('missing'); } } as unknown as IFileService;
 		const workspace = { getWorkspace: () => ({ folders: [{ uri: URI.file('/ws') }] }) } as unknown as IWorkspaceContextService;
 		const access = { blockReason: () => undefined } as unknown as IVoltBrowserAccessService;
-		const tools = store.add(new RecordingHostTools(commands, files, workspace, access));
+		const tools = store.add(new RecordingHostTools(commands, files, workspace, access, {} as IVoltStdioService));
 		// Where they run, the Orchestra and IDE services serve their tools through this service; job waits are core.
 		for (const tools_ of [ORCHESTRA_TOOLS, IDE_TOOLS, JOB_WATCH_TOOLS]) {
 			store.add(tools.registerToolProvider({ tools: tools_, invoke: async name => ({ text: `ran ${name}` }) }));

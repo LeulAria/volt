@@ -20,7 +20,7 @@ import { execFileSync, spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { promises as fs, readdirSync } from 'fs';
 import * as net from 'net';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { dimensionsUsed, ISandboxRunResult } from '../../common/sandboxBackend.js';
@@ -30,6 +30,7 @@ import { AGENT_STATE_ROOT, agentSandboxPolicy, IVoltSandboxRequest } from '../..
 import { AGENT_CONFIG_NAMES, builtinProfile } from '../../common/sandboxProfiles.js';
 import { AgentStateOverlay } from '../../node/agentStateOverlay.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer } from '../../common/sandboxSchema.js';
+import { sshPrivateKeys, sshReadablePaths } from '../../node/sandboxLauncher.js';
 import { SandboxManager } from '../../node/sandboxManager.js';
 import { SandboxPolicyFiles } from '../../node/sandboxPolicyFiles.js';
 import { composeLaunchLayers } from '../../common/compile.js';
@@ -269,6 +270,136 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		assert.ok(!await exists(join(f.ws, 'hl')));
 	});
 
+	test('SSH-1, SSH-2: with the network on, an agent reads only ssh\'s configs (and what they include), known hosts and public keys; keys in any format, name, folder or link, and anything made after the launch, stay unreadable', async () => {
+		const ssh = join(f.home, '.ssh');
+		const made: string[] = [];
+		const write = async (relative: string, text: string) => {
+			const path = join(ssh, relative);
+			await fs.mkdir(join(path, '..'), { recursive: true });
+			await fs.writeFile(path, text, { mode: 0o600 });
+			made.push(path);
+			return path;
+		};
+		const keygen = async (relative: string, args: string[], fallback: string) => {
+			const path = join(ssh, relative);
+			await fs.mkdir(join(path, '..'), { recursive: true });
+			try {
+				// Throwaway keys, made here for this test only.
+				execFileSync('ssh-keygen', ['-q', '-C', 'volt-test', '-f', path, ...args], { stdio: 'ignore' });
+				made.push(path, `${path}.pub`);
+				return path;
+			} catch {
+				// No ssh-keygen (the Linux rig): the same first line, which is what Volt judges.
+				return write(`${relative}.pub`, 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl volt-test\n').then(() => write(relative, `${fallback}\nVOLTTESTKEYBODY\n`));
+			}
+		};
+		const elsewhere = join(f.root, 'kept-elsewhere');
+		const dotfiles = join(f.home, 'dotfiles');
+		await fs.mkdir(elsewhere, { recursive: true });
+		await fs.mkdir(dotfiles, { recursive: true });
+		try {
+			// Keys in every format and under names that do not say "key".
+			await keygen('id_ecdsa_pem', ['-t', 'ecdsa', '-m', 'PEM', '-N', ''], '-----BEGIN EC PRIVATE KEY-----');
+			await keygen('id_rsa_pem', ['-t', 'rsa', '-b', '1024', '-m', 'PEM', '-N', ''], '-----BEGIN RSA PRIVATE KEY-----');
+			await keygen('pkcs8', ['-t', 'ecdsa', '-m', 'PKCS8', '-N', ''], '-----BEGIN PRIVATE KEY-----');
+			await keygen('pkcs8_encrypted', ['-t', 'ecdsa', '-m', 'PKCS8', '-N', 'volt-test-passphrase'], '-----BEGIN ENCRYPTED PRIVATE KEY-----');
+			await keygen('pem_encrypted', ['-t', 'rsa', '-b', '1024', '-m', 'PEM', '-N', 'volt-test-passphrase'], '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED');
+			await keygen('github', ['-t', 'ed25519', '-N', ''], '-----BEGIN OPENSSH PRIVATE KEY-----');
+			await keygen('keys/work/deploy', ['-t', 'ed25519', '-N', ''], '-----BEGIN OPENSSH PRIVATE KEY-----');
+			await write('putty.ppk', 'PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\n');
+			await write('ssh2_key', '---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----\nComment: "volt-test"\n');
+			// A private key under a name ssh's files have (`*.pub`): judged by content, not name.
+			await write('mislabeled.pub', '-----BEGIN OPENSSH PRIVATE KEY-----\nVOLTTESTKEYBODY\n');
+			await write('notes.txt', 'a token kept next to the keys\n');
+			// What ssh needs: its config (linked from a dotfiles folder), included files (config.d, by name,
+			// by glob, outside ~/.ssh as OrbStack and Colima add), known hosts (default and named), public keys.
+			// An `Include` or `UserKnownHostsFile` naming a private key does not make it readable.
+			// (The lines naming files are in a config the ssh check below doesn't load: ssh takes `~` and
+			// a relative path's folder from the user database, which is the real home, never $HOME.)
+			await fs.writeFile(join(dotfiles, 'ssh_config'), 'Host volt-canary\n\tUser voltcanaryuser\n\tHostName 127.0.0.1\n');
+			await fs.symlink(join(dotfiles, 'ssh_config'), join(ssh, 'config'));
+			made.push(join(ssh, 'config'));
+			await write('config.d/work', 'Host volt-work\n\tUser voltworkuser\n');
+			await write('config.d/files', [
+				'Include work_config "conf/*.conf" ~/.orb/ssh/config github',
+				'Host volt-files',
+				'\tUserKnownHostsFile=~/.ssh/known_hosts_work pkcs8',
+				'\tIdentityFile ~/.ssh/keys/work/deploy',
+				'',
+			].join('\n'));
+			await write('work_config', 'Host volt-named\n\tUser voltnameduser\n');
+			await write('conf/a.conf', 'Host volt-glob\n\tUser voltglobuser\n');
+			await write('conf/b.txt', 'not matched by the glob\n');
+			await fs.mkdir(join(f.home, '.orb', 'ssh'), { recursive: true });
+			await fs.writeFile(join(f.home, '.orb', 'ssh', 'config'), 'Host volt-orb\n\tUser voltorbuser\n');
+			await write('known_hosts', 'volt-canary.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n');
+			await write('known_hosts_work', 'volt-work.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n');
+			// A key kept outside and linked in; a hard link of a key under a public key's name.
+			await fs.writeFile(join(elsewhere, 'linked_key'), '-----BEGIN OPENSSH PRIVATE KEY-----\nVOLTTESTKEYBODY\n');
+			await fs.symlink(join(elsewhere, 'linked_key'), join(ssh, 'linked'));
+			made.push(join(ssh, 'linked'));
+			await fs.link(join(ssh, 'github'), join(ssh, 'hardlink.pub'));
+			made.push(join(ssh, 'hardlink.pub'));
+
+			// What a launch computes (sandboxLauncher), on this home.
+			const host = { ...agentHost(), sshPrivateKeys: await sshPrivateKeys(ssh), sshReadable: await sshReadablePaths(ssh) };
+			const policy = agentSandboxPolicy({ level: 'workspace-write', network: true, providerId: 'claude-code', workspaceRoots: [f.ws] }, host);
+			// Made after the launch: a new key, a key dropped into config.d, a key under a public key's name.
+			await write('late_key', '-----BEGIN OPENSSH PRIVATE KEY-----\nVOLTTESTKEYBODY\n');
+			await write('config.d/late', '-----BEGIN OPENSSH PRIVATE KEY-----\nVOLTTESTKEYBODY\n');
+			await write('late.pub', '-----BEGIN OPENSSH PRIVATE KEY-----\nVOLTTESTKEYBODY\n');
+			await fs.symlink(join(ssh, 'github'), join(f.ws, 'ssh-link'));
+			made.push(join(f.ws, 'ssh-link'));
+
+			const denied = ['id_ed25519', 'id_ecdsa_pem', 'id_rsa_pem', 'pkcs8', 'pkcs8_encrypted', 'pem_encrypted', 'github', 'keys/work/deploy', 'putty.ppk', 'ssh2_key', 'mislabeled.pub', 'notes.txt', 'linked', 'hardlink.pub', 'late_key', 'config.d/late', 'late.pub', 'conf/b.txt'];
+			// Linux: bubblewrap mounts a link's target, not the link, so a linked config is not at
+			// `~/.ssh/config` there (05-limitations item 5; git over SSH has no ssh-agent on Linux anyway).
+			const readable = [...isLinux ? [] : ['config'], 'config.d/work', 'work_config', 'conf/a.conf', 'known_hosts', 'known_hosts_work', 'github.pub', 'keys/work/deploy.pub', '../.orb/ssh/config'];
+			assert.ok(host.sshReadable.includes(join(dotfiles, 'ssh_config')), 'the linked config at its real path');
+			// Probes print READABLE or DENIED, never what a file holds.
+			const probe = (label: string, path: string) => `if head -c 1 '${path}' >/dev/null 2>&1; then echo 'READABLE ${label}'; else echo 'DENIED ${label}'; fi`;
+			const result = await sh(policy, [
+				...[...denied, ...readable].map(name => probe(name, join(ssh, name))),
+				probe('ws/ssh-link', join(f.ws, 'ssh-link')),
+				probe('kept-elsewhere', join(elsewhere, 'linked_key')),
+				// File names are not secret; the listing shows at most the readable ones (Linux binds only those).
+				`echo "LISTING $(ls -a '${ssh}' 2>/dev/null | tr '\\n' ' ')"`,
+				`echo "LISTKEYS $(ls -a '${join(ssh, 'keys', 'work')}' 2>/dev/null | tr '\\n' ' ')"`,
+			].join('\n'));
+			const lines = result.stdout.trim().split('\n');
+			const verdicts = new Map(lines.filter(line => !line.startsWith('LIST')).map(line => [line.slice(line.indexOf(' ') + 1), line.slice(0, line.indexOf(' '))]));
+			for (const name of [...denied, 'ws/ssh-link', 'kept-elsewhere']) {
+				assert.strictEqual(verdicts.get(name), 'DENIED', `${name}: ${result.stdout}`);
+			}
+			const listing = (tag: string) => (lines.find(line => line.startsWith(`${tag} `)) ?? '').split(' ').slice(1).filter(Boolean);
+			// (Linux shows `keys/`: it holds a readable public key, so bubblewrap made the folder.)
+			assert.deepStrictEqual(listing('LISTING').filter(name => ['id_ed25519', 'github', 'notes.txt', 'late_key', 'pkcs8'].includes(name)), [], `the folder lists no key or note: ${listing('LISTING').join(' ')}`);
+			assert.ok(!listing('LISTKEYS').includes('deploy'), `nor a key in a subfolder: ${listing('LISTKEYS').join(' ')}`);
+			for (const name of readable) {
+				assert.strictEqual(verdicts.get(name), 'READABLE', `${name} is what ssh needs: ${result.stdout} ${result.stderr}`);
+			}
+			assert.ok(!result.stdout.includes('VOLTTESTKEYBODY') && !result.stdout.includes('PRIVATE KEY'));
+			if (isMac) {
+				// git over SSH: ssh reads its config (through the dotfiles link) and the included file. `-F`
+				// names this home's files: ssh takes `~` from the user database, never $HOME.
+				const config = await sh(policy, `ssh -F '${join(ssh, 'config')}' -G volt-canary 2>&1 | grep -i '^user '; ssh -F '${join(ssh, 'config.d', 'work')}' -G volt-work 2>&1 | grep -i '^user '`);
+				assert.match(config.stdout, /user voltcanaryuser/i, config.stdout + config.stderr);
+				assert.match(config.stdout, /user voltworkuser/i, config.stdout + config.stderr);
+			}
+		} finally {
+			for (const path of made.reverse()) {
+				await fs.rm(path, { force: true });
+			}
+			await fs.rm(join(ssh, 'keys'), { recursive: true, force: true });
+			await fs.rm(join(ssh, 'config.d'), { recursive: true, force: true });
+			await fs.rm(join(ssh, 'conf'), { recursive: true, force: true });
+			await fs.rm(join(f.home, '.orb'), { recursive: true, force: true });
+			await fs.rm(elsewhere, { recursive: true, force: true });
+			await fs.rm(dotfiles, { recursive: true, force: true });
+		}
+		await assertHostUnchanged();
+	});
+
 	test('writes outside the workspace and into protected paths are denied; the host is unchanged', async () => {
 		const attempts = [
 			`echo x > ${f.outside}/created.txt`,
@@ -296,6 +427,60 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		// the subpaths its footprint lists still are.
 		assert.ok(!await exists(join(f.home, '.claude', 'state.json')), 'the CLI folder in place');
 		assert.ok(await exists(join(f.home, 'Library', 'Caches', 'claude-cli-nodejs', 'log.txt')), `its listed state stays writable: ${agentTry.stderr}`);
+	});
+
+	test('EXEC-LATER-1: files that something unsandboxed runs later (git, editor tasks and settings, agent CLI configs and skills, hook managers) cannot be planted or changed; build files the guard reviews stay writable', async () => {
+		// Files a project already has: every backend keeps them read-only.
+		const existing = ['.vscode/tasks.json', '.claude/skills/x/SKILL.md', '.gemini/settings.json', '.codex/config.toml', '.zed/settings.json', '.helix/languages.toml', '.nvim.lua'];
+		// Planted where nothing was: macOS refuses them; bubblewrap guards only what exists (filesystem.protectNew).
+		const planted = [
+			'.git/config', '.git/hooks/pre-commit', '.git/info/attributes', '.git/config.worktree', '.git/commondir', '.git/objects/info/alternates', '.git/modules/x/config', 'sub/.git/config',
+			'.gitmodules', '.vscode/launch.json', '.vscode/settings.json', '.envrc', 'sub/.envrc', '.mcp.json', '.claude/settings.json', '.claude/settings.local.json', '.claude/commands/x.md',
+			'.claude/skills/y/SKILL.md', '.claude/skills/y/run.sh', '.gemini/commands/x.toml', '.gemini/extensions/x/gemini-extension.json', '.codex/hooks.json', '.cursor/mcp.json',
+			'.zed/tasks.json', '.helix/config.toml', '.nvimrc', '.exrc', '.husky/pre-commit', '.githooks/pre-commit', '.idea/workspace.xml', '.devcontainer/devcontainer.json',
+			'.volt/hooks.json', '.pre-commit-config.yaml', 'lefthook.yml',
+		];
+		// A case-insensitive volume: another spelling is the same file.
+		const variants = ['.GIT/config', '.Git/hooks/pre-commit', '.git/HOOKS/pre-commit', '.git/INFO/attributes', '.git/OBJECTS/info/alternates', 'sub/.GIT/config', '.GITMODULES', '.VSCode/tasks.json',
+			'.ENVRC', '.MCP.json', '.CLAUDE/settings.json', '.Claude/skills/x/SKILL.md', '.GEMINI/settings.json', '.Codex/config.toml', '.Cursor/mcp.json', '.ZED/settings.json', '.HUSKY/pre-commit', '.VOLT/hooks.json', 'LEFTHOOK.yml'];
+		// By design writable: the build-entry guard shows changes to the build files before Volt runs them,
+		// CI runs remotely after a push the user makes, and the rest name no command (05-limitations item 42).
+		const writable = ['package.json', 'Makefile', '.npmrc', '.yarnrc.yml', '.github/workflows/ci.yml', '.gitattributes', '.lfsconfig', 'sub/.vscode/tasks.json', 'app.code-workspace', 'AGENTS.md'];
+		const before = new Set([...await fs.readdir(f.ws), ...(await fs.readdir(join(f.ws, 'sub'))).map(name => `sub/${name}`)]);
+		for (const target of existing) {
+			await fs.mkdir(join(f.ws, target, '..'), { recursive: true });
+			await fs.writeFile(join(f.ws, target), 'ORIGINAL\n');
+		}
+		const attempt = (target: string) => {
+			const path = join(f.ws, target);
+			return `mkdir -p '${join(path, '..')}' 2>/dev/null; printf 'VOLTPWN\\n' >> '${path}' 2>/dev/null; true`;
+		};
+		const hasMarker = async (target: string) => (await fs.readFile(join(f.ws, target), 'utf8').catch(() => '')).includes('VOLTPWN');
+		try {
+			for (const policy of [workspace(), agent(false)]) {
+				const result = await sh(policy, [...existing, ...planted, ...isMac ? variants : [], ...writable].map(attempt).join('\n'));
+				for (const target of existing) {
+					assert.strictEqual(await fs.readFile(join(f.ws, target), 'utf8'), 'ORIGINAL\n', `${policy.name}: ${target}`);
+				}
+				for (const target of isMac ? [...planted, ...variants] : ['.git/config', '.git/hooks/pre-commit']) {
+					assert.ok(!await hasMarker(target), `${policy.name}: ${target} was planted`);
+				}
+				if (isLinux) {
+					assert.ok(result.unenforced.includes('filesystem.protectNew'), `${policy.name}: the run reports the gap`);
+				}
+				for (const target of writable) {
+					assert.ok(await hasMarker(target), `${policy.name}: ${target} stays writable: ${result.stderr}`);
+					await fs.rm(join(f.ws, target), { force: true });
+				}
+			}
+			await assertHostUnchanged();
+		} finally {
+			for (const name of [...await fs.readdir(f.ws), ...(await fs.readdir(join(f.ws, 'sub'))).map(name => `sub/${name}`)]) {
+				if (!before.has(name)) {
+					await fs.rm(join(f.ws, name), { recursive: true, force: true });
+				}
+			}
+		}
 	});
 
 	// --- Agent state (B-05, INV-17) ---------------------------------------------------------------
@@ -623,6 +808,35 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		}
 	});
 
+	test('SRV-1: a granted loopback port (the chat\'s own MCP bridge) opens only that port; Volt\'s other loopback servers (another chat\'s MCP, the agent server, a CDP/inspect port) stay unreachable, and the agent-server token stays unreadable', async () => {
+		// The chat's own MCP bridge, and three loopback servers the sandbox must not reach: another
+		// chat's MCP port, the agent server's API, an inspector port. Each counts the connections it got.
+		const own = await canaryListener();
+		const otherMcp = await canaryListener();
+		const agentServer = await canaryListener();
+		const inspector = await canaryListener();
+		const connect = (label: string, port: number) => `${PERL} -MIO::Socket::INET -e 'IO::Socket::INET->new(PeerAddr=>"127.0.0.1:${port}", Timeout=>2) and print "REACHED ${label}\\n"'`;
+		try {
+			// The chat is granted its own MCP port (as a real launch grants the loopback ports of its MCP servers).
+			const result = await sh(agent(false, 'claude-code', { loopbackPorts: [own.port] }), [
+				connect('own', own.port),
+				connect('other-mcp', otherMcp.port),
+				connect('agent-server', agentServer.port),
+				connect('inspector', inspector.port),
+				`cat '${join(f.userData, 'token')}'`,
+			].join('; '));
+			assert.ok(result.stdout.includes('REACHED own'), `the granted port is reachable: ${result.stdout} ${result.stderr}`);
+			for (const label of ['other-mcp', 'agent-server', 'inspector']) {
+				assert.ok(!result.stdout.includes(`REACHED ${label}`), `${label} is reachable through the granted port: ${result.stdout}`);
+			}
+			assert.ok(!result.stdout.includes('CANARY-AGENT-SERVER-TOKEN'), 'the agent-server token stays unreadable (F-04)');
+			assert.strictEqual(own.hits(), 1, 'only the granted port was contacted');
+			assert.strictEqual(otherMcp.hits() + agentServer.hits() + inspector.hits(), 0, 'no other Volt loopback server was contacted');
+		} finally {
+			await Promise.all([own.close(), otherMcp.close(), agentServer.close(), inspector.close()]);
+		}
+	});
+
 	test('unix sockets are unreachable unless granted, even with an open network', async () => {
 		const socket = await canaryUnixSocket(f.outside);
 		try {
@@ -867,6 +1081,127 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		}
 		assert.ok(!await exists(join(f.outside, 'canary-osascript')), result.stdout);
 		assert.ok(!await exists(join(f.outside, 'canary-launchd')), result.stdout);
+		await assertHostUnchanged();
+	});
+
+	macTest('MACOS-OUT-1: an app the agent made cannot be opened, made a URL handler or loaded as a launchd job; launchd\'s environment and the pasteboard stay the user\'s', async () => {
+		const id = `dev.volt.sbxtest${process.pid}`;
+		const scheme = `volt-sbx-${process.pid}`;
+		const label = `dev.volt.sbxjob${process.pid}`;
+		const variable = `VOLT_SBX_TEST_${process.pid}`;
+		const marker = `VOLTSBXPASTE${process.pid}`;
+		const app = join(f.ws, 'Probe.app');
+		const plist = join(f.ws, `${label}.plist`);
+		const lsregister = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
+		// An app whose only act is to leave a canary outside: launched by LaunchServices or launchd, it runs unsandboxed.
+		await fs.mkdir(join(app, 'Contents', 'MacOS'), { recursive: true });
+		await fs.writeFile(join(app, 'Contents', 'MacOS', 'probe'), `#!/bin/sh\n/usr/bin/touch '${f.outside}/canary-app'\n`, { mode: 0o755 });
+		await fs.writeFile(join(app, 'Contents', 'Info.plist'), [
+			'<?xml version="1.0" encoding="UTF-8"?>',
+			'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+			'<plist version="1.0"><dict>',
+			`<key>CFBundleExecutable</key><string>probe</string><key>CFBundleIdentifier</key><string>${id}</string>`,
+			'<key>CFBundlePackageType</key><string>APPL</string><key>LSUIElement</key><true/>',
+			`<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>${id}</string><key>CFBundleURLSchemes</key><array><string>${scheme}</string></array></dict></array>`,
+			'</dict></plist>',
+		].join('\n'));
+		await fs.writeFile(plist, [
+			'<?xml version="1.0" encoding="UTF-8"?>',
+			'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+			'<plist version="1.0"><dict>',
+			`<key>Label</key><string>${label}</string>`,
+			`<key>ProgramArguments</key><array><string>/usr/bin/touch</string><string>${f.outside}/canary-job</string></array>`,
+			'<key>RunAtLoad</key><true/>',
+			'</dict></plist>',
+		].join('\n'));
+		// What LaunchServices knows on the host: the app it would open for the scheme, the app it has for the
+		// bundle id (registered), and the user's handler records (set even before an app is registered).
+		const handlerOf = async () => {
+			const known = execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', `ObjC.import("AppKit"); var w = $.NSWorkspace.sharedWorkspace; var u = w.URLForApplicationToOpenURL($.NSURL.URLWithString("${scheme}://x")); var a = w.URLForApplicationWithBundleIdentifier("${id}"); (u.isNil() ? "none" : u.path.js) + " " + (a.isNil() ? "none" : a.path.js)`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+			const secure = join(homedir(), 'Library', 'Preferences', 'com.apple.LaunchServices', 'com.apple.launchservices.secure.plist');
+			const records = await fs.access(secure).then(() => execFileSync('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', secure], { encoding: 'utf8' }), () => '');
+			return `${known}${records.includes(scheme) ? ` RECORD ${scheme}` : ''}${records.includes(id) ? ` RECORD ${id}` : ''}`;
+		};
+		const uid = process.getuid?.() ?? 0;
+		const jxa = (code: string) => `/usr/bin/osascript -l JavaScript -e '${code}' 2>&1`;
+		try {
+			const result = await sh(agent(true), [
+				// LaunchServices: open the app, by path, by name and by bundle id; open its URL.
+				`open '${app}' 2>&1`, `open -a '${app}' 2>&1`, `open -b ${id} 2>&1`, `open '${scheme}://x' 2>&1`,
+				// Register it and make it the handler of its scheme (lsd), with no `open` at all.
+				`${lsregister} -f '${app}' 2>&1`,
+				jxa(`ObjC.import("CoreServices"); console.log("REGISTER " + $.LSRegisterURL($.NSURL.fileURLWithPath("${app}"), true))`),
+				jxa(`ObjC.import("CoreServices"); console.log("HANDLER " + $.LSSetDefaultHandlerForURLScheme($("${scheme}"), $("${id}")))`),
+				// launchd: load, bootstrap and submit a job; set a variable every app the user starts later inherits.
+				`launchctl load '${plist}' 2>&1`, `launchctl bootstrap gui/${uid} '${plist}' 2>&1`,
+				`launchctl submit -l ${label}.submit -- /usr/bin/touch '${f.outside}/canary-submit' 2>&1`,
+				`launchctl setenv ${variable} pwned 2>&1`,
+				// Apple Events to another app (refused before TCC is asked, so no prompt), and the pasteboard.
+				`/usr/bin/osascript -e 'tell application "Finder" to count windows' 2>&1`,
+				`printf ${marker} | pbcopy 2>&1`,
+			].join('; '), { timeoutMs: 60_000 });
+			await new Promise(resolve => setTimeout(resolve, 2_000));
+			for (const canary of ['canary-app', 'canary-job', 'canary-submit']) {
+				assert.ok(!await exists(join(f.outside, canary)), `${canary}: ${result.stdout}`);
+			}
+			const handler = await handlerOf();
+			assert.ok(!handler.includes('Probe.app') && !handler.includes(id), `the agent's app handles ${scheme}: ${handler} ${result.stdout}`);
+			const env = execFileSync('/bin/launchctl', ['getenv', variable], { encoding: 'utf8' }).trim();
+			assert.strictEqual(env, '', `launchd's environment was changed: ${result.stdout}`);
+			const paste = execFileSync('/usr/bin/pbpaste', { encoding: 'utf8' });
+			assert.ok(!paste.includes(marker), 'the pasteboard was written');
+			assert.ok(!/^\d+$/m.test(result.stdout), `an Apple Event reached Finder: ${result.stdout}`);
+		} finally {
+			for (const args of [['bootout', `gui/${uid}/${label}`], ['remove', label], ['remove', `${label}.submit`], ['unsetenv', variable]]) {
+				try { execFileSync('/bin/launchctl', args, { stdio: 'ignore' }); } catch { /* not there */ }
+			}
+			try { execFileSync(lsregister, ['-u', app], { stdio: 'ignore' }); } catch { /* not registered */ }
+			await fs.rm(app, { recursive: true, force: true });
+			await fs.rm(plist, { force: true });
+			for (const canary of ['canary-app', 'canary-job', 'canary-submit']) {
+				await fs.rm(join(f.outside, canary), { force: true });
+			}
+		}
+		await assertHostUnchanged();
+	});
+
+	macTest('MACOS-OUT-2: the mach services that run code for the agent outside the sandbox are unreachable (ServiceManagement, Background Task Management, login items, the LaunchServices database, Apple Events, cfprefsd, the pasteboard)', async () => {
+		// `bootstrap_look_up` succeeds only when the sandbox lets the agent reach the service: a denied
+		// mach-lookup returns a non-zero kern_return. The SMAppService/login-item/LaunchServices-database
+		// APIs are built on these, so blocking the lookups blocks the API (verified with a signed helper).
+		const probe = join(f.ws, 'mach-probe.py');
+		await fs.writeFile(probe, [
+			'import ctypes, sys',
+			"libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib')",
+			"bp = ctypes.c_uint.in_dll(libc, 'bootstrap_port')",
+			'look = libc.bootstrap_look_up',
+			'look.argtypes = [ctypes.c_uint, ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint)]',
+			'for name in sys.argv[1:]:',
+			'    port = ctypes.c_uint(0)',
+			'    kr = look(bp.value, name.encode(), ctypes.byref(port))',
+			"    print(('OPEN ' if kr == 0 else 'CLOSED ') + name)",
+			'',
+		].join('\n'));
+		// Every service these deny: registering a launch agent or login item, or the LaunchServices
+		// database that makes the agent's app a URL or document handler the host opens later.
+		const denied = [
+			'com.apple.xpc.smd', 'com.apple.xpc.loginitemregisterd', 'com.apple.backgroundtaskmanagement', 'com.apple.backgroundtaskmanagementagent',
+			'com.apple.coreservices.sharedfilelistd.xpc', 'com.apple.lsd.modifydb', 'com.apple.lsd.open', 'com.apple.coreservices.launchservicesd',
+			'com.apple.CoreServices.coreservicesd', 'com.apple.coreservices.appleevents', 'com.apple.cfprefsd.agent', 'com.apple.cfprefsd.daemon',
+			'com.apple.pasteboard.1', 'com.apple.windowserver.active',
+		];
+		// A control the agent legitimately reaches: user and group lookups. If this came back CLOSED the
+		// probe would be meaningless (every lookup failing), so the denials below would prove nothing.
+		const control = 'com.apple.system.opendirectoryd.libinfo';
+		for (const network of [false, true]) {
+			const result = await sh(agent(network), `/usr/bin/python3 '${probe}' ${[control, ...denied].join(' ')}`);
+			const verdict = new Map(result.stdout.trim().split('\n').map(line => [line.slice(line.indexOf(' ') + 1), line.slice(0, line.indexOf(' '))]));
+			assert.strictEqual(verdict.get(control), 'OPEN', `the probe works (network=${network}): ${result.stdout} ${result.stderr}`);
+			for (const name of denied) {
+				assert.strictEqual(verdict.get(name), 'CLOSED', `${name} is reachable (network=${network}): ${result.stdout}`);
+			}
+		}
+		await fs.rm(probe, { force: true });
 		await assertHostUnchanged();
 	});
 });

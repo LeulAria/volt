@@ -306,6 +306,39 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		assert.match((await open(a.port, connect(a, 'allowed.test:443'))).line, /200/, 'the owner still gets through');
 	});
 
+	test('NET-28: a chat\'s proxy credential dies with its route and rotates on the next turn; the old token never works again', async () => {
+		// One chat (subject), two turns: each turn opens its own route with its own port and token.
+		const subject: SubjectKey = 'chat:rotate';
+		const turn1 = await broker.openRoute({ principal: principal(subject), allow: ['allowed.test'], onDenial: denial => denials.push(denial) });
+		assert.match((await open(turn1.port, connect(turn1, 'allowed.test:443'))).line, /200/, 'the turn\'s own token works');
+		const port1 = turn1.port;
+		const token1 = turn1.token;
+
+		// The turn ends: the route is disposed (as a finished turn's is). Its listener closes.
+		turn1.dispose();
+		assert.ok(await until(() => broker.grantsOf(subject).length === 0), 'its session grants end');
+		// Reuse after end: the port is gone, so the dead credential reaches nothing.
+		let refused = false;
+		try {
+			const late = net.connect({ host: '127.0.0.1', port: port1 });
+			late.on('error', () => undefined);
+			await new Promise<void>((resolve, reject) => { late.once('connect', () => { late.destroy(); resolve(); }); late.once('error', () => { refused = true; resolve(); }); setTimeout(() => reject(new Error('timed out')), 3000); });
+		} catch { /* treat a hang as not-refused, asserted below */ }
+		assert.ok(refused, 'the closed route\'s port refuses new connections');
+
+		// The next turn gets a fresh route: a different port and a different token (rotation).
+		const turn2 = await broker.openRoute({ principal: principal(subject), allow: ['allowed.test'], onDenial: denial => denials.push(denial) });
+		assert.notStrictEqual(turn2.token, token1, 'the token rotated');
+		assert.notStrictEqual(turn2.port, port1, 'a fresh port');
+		// The old token presented to the new turn's route is refused (its owner is gone: a plain 407, no tokenOf).
+		const reused = await open(turn2.port, connect(turn2, 'allowed.test:443', token1));
+		assert.match(reused.line, /407/, 'the previous turn\'s token is dead on the new route');
+		assert.ok(audit.some(e => e.reason === 'auth' && e.principal === turn2.principal.id && e.tokenOf === undefined), 'refused with no surviving owner to name');
+		assert.match((await open(turn2.port, connect(turn2, 'allowed.test:443'))).line, /200/, 'the new turn\'s own token works');
+		assert.strictEqual(upstream.hits(), 2, 'only the two legitimate connections reached upstream');
+		turn2.dispose();
+	});
+
 	test('NET-13: a live grant applies to the same running client\'s next connection; approvals are CAS on the epoch', async () => {
 		const r = await route([]);
 		assert.match((await open(r.port, connect(r, 'later.test:443'))).line, /403/);

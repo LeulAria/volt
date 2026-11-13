@@ -22,6 +22,7 @@ import { VoltHostToolService } from '../../browser/host/hostToolService.js';
 import { AgentOrchestraService } from '../../browser/orchestration/agentOrchestraService.js';
 import { AgentOrchestratorService } from '../../browser/orchestration/agentOrchestratorService.js';
 import { IVoltBrowserAccessService } from '../../common/browserAccess.js';
+import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { ICloudTask } from '../../common/cloud/cloudTasks.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../common/events.js';
 import { IVoltHostToolCall } from '../../common/hostTools.js';
@@ -115,7 +116,7 @@ function newHostToolService(fileService: FileService): VoltHostToolService {
 	const stub = <T>(value: object) => value as unknown as T;
 	const workspace = stub<IWorkspaceContextService>({ getWorkspace: () => ({ folders: [{ uri: URI.file('/repo') }] }) });
 	const commands = stub<ICommandService>({ onWillExecuteCommand: Event.None, onDidExecuteCommand: Event.None, executeCommand: async () => undefined });
-	return new VoltHostToolService(commands, fileService, workspace, stub<IVoltBrowserAccessService>({ blockReason: () => undefined }));
+	return new VoltHostToolService(commands, fileService, workspace, stub<IVoltBrowserAccessService>({ blockReason: () => undefined }), stub<IVoltStdioService>({}));
 }
 
 const STUDIO: IRelayMachine = { id: 'studio', kind: 'runner', name: 'Mac Studio', online: true, lastSeenAt: Date.now(), load: { slots: 2, running: 0 }, caps: { agents: { claude: { installed: true, credentials: true } }, os: 'darwin' } };

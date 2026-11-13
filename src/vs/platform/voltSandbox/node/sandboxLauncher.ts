@@ -9,7 +9,7 @@ import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
-import { join } from '../../../base/common/path.js';
+import { dirname, isAbsolute, join, normalize } from '../../../base/common/path.js';
 import { chatLaunchView, evaluateLaunch, IAdminPolicy, ILaunchDecision, IWorkspaceRestriction, PolicyAuthorityMode, PolicySnapshot } from '../common/authority.js';
 import { composeLaunchLayers, ILaunchCompileInput, ILaunchCompileRecord, ISandboxComposition, ISandboxCompositionNote, ISandboxLayer, LaunchPolicyCache, launchCompileRecord, launchPolicyBytes } from '../common/compile.js';
 import { describeIgnoredEntries, ISandboxPolicyFilesInfo } from '../common/sandboxPolicyFiles.js';
@@ -763,18 +763,21 @@ export class VoltSandboxLauncher extends Disposable {
 		this._onViolation.fire({ tag, denial });
 	}
 
-	private hostFacts(): Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> {
+	/**
+	 * The machine facts of a launch. Most are read once; what is in `~/.ssh` is read at every launch,
+	 * so a key made after Volt started is denied to the next launch too (SSH-2).
+	 */
+	private async hostFacts(): Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> {
 		this.agentHost ??= (async () => {
 			const facts = await sandboxHostFacts();
 			// The root of the per-principal caches (see `sandboxCacheKey`); each run gets its own child.
 			const cacheRoot = join(facts.home, '.volt', 'sandbox-cache');
 			// Independent lookups, made together; the temp folders keep this order.
-			const [shared, darwinCache, cacheDir, userDataDir, keys] = await Promise.all([
+			const [shared, darwinCache, cacheDir, userDataDir] = await Promise.all([
 				Promise.all(['/tmp', '/var/tmp'].map(dir => fs.realpath(dir).catch(() => dir))),
 				facts.platform === 'darwin' ? execFileAsync('/usr/bin/getconf', ['DARWIN_USER_CACHE_DIR']).then(r => fs.realpath(r.stdout.trim()), () => undefined) : Promise.resolve(undefined),
 				fs.mkdir(cacheRoot, { recursive: true, mode: 0o700 }).then(() => fs.realpath(cacheRoot).catch(() => cacheRoot)),
 				fs.realpath(this.userDataDir).catch(() => this.userDataDir),
-				sshPrivateKeys(join(facts.home, '.ssh')),
 			]);
 			const temps = new Set<string>([facts.tmpRoot, ...shared, ...darwinCache ? [darwinCache] : []]);
 			return {
@@ -783,11 +786,13 @@ export class VoltSandboxLauncher extends Disposable {
 				tempDirs: [...temps].filter(dir => dir !== '/' && dir !== facts.home),
 				uid: process.getuid?.(),
 				userDataDir,
-				sshPrivateKeys: keys,
 				cacheDir,
 			};
 		})();
-		return this.agentHost;
+		const host = await this.agentHost;
+		const ssh = join(host.home, '.ssh');
+		const [keys, readable] = await Promise.all([sshPrivateKeys(ssh), sshReadablePaths(ssh)]);
+		return { ...host, sshPrivateKeys: keys, sshReadable: readable };
 	}
 
 }
@@ -834,29 +839,175 @@ export function supportFrom(capabilities: ISandboxBackendCapabilities): IVoltSan
 	};
 }
 
-/** Files in `~/.ssh` that hold a private key, judged by content rather than name. */
+/** A private key's first bytes: PEM and OpenSSH (`-----BEGIN ... PRIVATE KEY-----`), RFC 4716 (`---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----`), PuTTY. */
+const PRIVATE_KEY_HEAD = /-{4,5} ?BEGIN [A-Z0-9 ]*PRIVATE KEY ?-{4,5}|PuTTY-User-Key-File/;
+/** How deep and how many entries `~/.ssh` is searched for keys: folders such as `keys/work/` are common, thousands of files are not. */
+const SSH_SCAN_DEPTH = 4;
+const SSH_SCAN_ENTRIES = 2000;
+
+/**
+ * Files in `~/.ssh` (and its folders) that hold a private key, judged by content rather than name,
+ * at their real paths and as named. Read at every launch (SSH-2).
+ */
 export async function sshPrivateKeys(dir: string): Promise<string[]> {
-	const out: string[] = [];
-	const names = await fs.readdir(dir).catch(() => [] as string[]);
-	for (const name of names) {
-		const path = join(dir, name);
-		const handle = await fs.open(path, 'r').catch(() => undefined);
-		if (!handle) {
-			continue;
-		}
-		try {
-			const stat = await handle.stat();
-			if (!stat.isFile() || stat.size > 1024 * 1024) {
+	const out = new Set<string>();
+	let budget = SSH_SCAN_ENTRIES;
+	const visit = async (folder: string, depth: number): Promise<void> => {
+		const entries = await fs.readdir(folder, { withFileTypes: true }).catch(() => []);
+		for (const entry of entries) {
+			if (--budget < 0) {
+				return;
+			}
+			const path = join(folder, entry.name);
+			// A linked folder (`config.d` kept in a dotfiles repo) is searched where it points.
+			const isFolder = entry.isDirectory() || (entry.isSymbolicLink() && await fs.stat(path).then(stat => stat.isDirectory(), () => false));
+			if (isFolder) {
+				if (depth < SSH_SCAN_DEPTH) {
+					await visit(path, depth + 1);
+				}
 				continue;
 			}
-			const { buffer, bytesRead } = await handle.read(Buffer.alloc(256), 0, 256, 0);
-			const head = buffer.subarray(0, bytesRead).toString('latin1');
-			if (/-----BEGIN [A-Z ]*PRIVATE KEY-----|PuTTY-User-Key-File/.test(head)) {
-				out.push(await fs.realpath(path).catch(() => path));
+			// A link is judged by what it reaches (a key kept elsewhere and linked in).
+			if (await sshFileHead(path).then(head => head !== undefined && PRIVATE_KEY_HEAD.test(head))) {
+				out.add(path);
+				out.add(await fs.realpath(path).catch(() => path));
 			}
-		} finally {
-			await handle.close();
+		}
+	};
+	await visit(dir, 0);
+	return [...out];
+}
+
+/** The first 4 KiB of a regular file of at most 1 MiB (through links), or undefined. */
+async function sshFileHead(path: string): Promise<string | undefined> {
+	const handle = await fs.open(path, 'r').catch(() => undefined);
+	if (!handle) {
+		return undefined;
+	}
+	try {
+		const stat = await handle.stat();
+		if (!stat.isFile() || stat.size > 1024 * 1024) {
+			return undefined;
+		}
+		const { buffer, bytesRead } = await handle.read(Buffer.alloc(4096), 0, 4096, 0);
+		return buffer.subarray(0, bytesRead).toString('latin1');
+	} finally {
+		await handle.close();
+	}
+}
+
+/** How many files ssh's configs may make readable, and how deep `Include` is followed (ssh's own limit is 16). */
+const SSH_READABLE_FILES = 200;
+const SSH_INCLUDE_DEPTH = 8;
+/** The config keywords that name files ssh reads: `Include` (configs), known hosts, certificates, and keys (whose `.pub` it reads). */
+const SSH_FILE_KEYWORDS = /^\s*(include|userknownhostsfile|certificatefile|identityfile)\s*(?:=\s*|\s)(.*)$/i;
+
+/** Where an ssh config's path word points: `~/` is the home folder, a relative path is in `~/.ssh`; `%` tokens other than `%d` are not followed. */
+function sshConfigPath(word: string, dir: string): string | undefined {
+	const home = dirname(dir);
+	const path = word.replace(/^~(?=\/|$)/, home).replace(/%d/g, home);
+	if (!path || path.includes('%') || path.toLowerCase() === 'none') {
+		return undefined;
+	}
+	return isAbsolute(path) ? normalize(path) : join(dir, path);
+}
+
+/** A config line's words, `"quoted words"` kept whole, as ssh splits them. */
+function sshConfigWords(text: string): string[] {
+	return [...text.matchAll(/"([^"]*)"|(\S+)/g)].map(match => match[1] ?? match[2]).filter(word => !word.startsWith('#'));
+}
+
+/** The files an `Include` pattern names (ssh expands it with glob(3)): `*`, `?` and `[...]` per path segment. */
+async function sshGlob(pattern: string, limit: number): Promise<string[]> {
+	let paths = ['/'];
+	for (const segment of pattern.split('/').filter(Boolean)) {
+		if (!/[*?[]/.test(segment)) {
+			paths = paths.map(path => join(path, segment));
+			continue;
+		}
+		const matcher = new RegExp(`^${segment.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
+		const next: string[] = [];
+		for (const path of paths) {
+			const names = await fs.readdir(path).catch(() => [] as string[]);
+			next.push(...names.filter(name => !name.startsWith('.') && matcher.test(name)).sort().map(name => join(path, name)));
+		}
+		paths = next.slice(0, limit);
+	}
+	return paths;
+}
+
+/**
+ * What ssh reads for git over SSH when a chat's network is on (SSH-1): its config, the files in
+ * `config.d` and every file its configs `Include`, the known hosts files (the default ones and any
+ * `UserKnownHostsFile`), and the public keys and certificates (`*.pub` in `~/.ssh`, and the `.pub`
+ * and `-cert.pub` of every `IdentityFile`, plus `CertificateFile`s), each as named and at its real
+ * path (a config linked from a dotfiles folder). Files only, never folders, so nothing written into
+ * `~/.ssh` after the launch is readable, and never a file that holds a private key, whatever its
+ * name (ssh signs through the ssh-agent socket). Nothing else in `~/.ssh` is readable: not the
+ * private keys, not notes or tokens kept there. Read at every launch.
+ */
+export async function sshReadablePaths(dir: string): Promise<string[]> {
+	const out = new Set<string>();
+	const seen = new Set<string>();
+	const configs: { path: string; depth: number }[] = [];
+	const add = async (path: string, config?: number) => {
+		if (seen.has(path) || seen.size >= SSH_READABLE_FILES) {
+			return;
+		}
+		seen.add(path);
+		const real = await fs.realpath(path).catch(() => undefined);
+		const head = real !== undefined ? await sshFileHead(real) : undefined;
+		if (real === undefined || head === undefined || PRIVATE_KEY_HEAD.test(head)) {
+			return;
+		}
+		out.add(path);
+		out.add(real);
+		if (config !== undefined) {
+			configs.push({ path: real, depth: config });
+		}
+	};
+	const names = (await fs.readdir(dir).catch(() => [] as string[])).sort();
+	for (const name of names) {
+		if (name === 'config') {
+			await add(join(dir, name), 0);
+		} else if (/^known_hosts2?$/.test(name) || /\.pub$/.test(name)) {
+			await add(join(dir, name));
+		} else if (name === 'config.d') {
+			const included = (await fs.readdir(join(dir, name)).catch(() => [] as string[])).sort();
+			for (const file of included.slice(0, SSH_READABLE_FILES)) {
+				await add(join(dir, name, file), 1);
+			}
 		}
 	}
-	return out;
+	// Follow what the configs name. A config is the user's own; the sandbox can't write any of them.
+	for (let i = 0; i < configs.length; i++) {
+		const { path, depth } = configs[i];
+		const text = await fs.readFile(path, 'latin1').catch(() => '');
+		for (const line of text.slice(0, 256 * 1024).split('\n')) {
+			const match = SSH_FILE_KEYWORDS.exec(line);
+			if (!match) {
+				continue;
+			}
+			const keyword = match[1].toLowerCase();
+			for (const word of sshConfigWords(match[2])) {
+				const target = sshConfigPath(word, dir);
+				if (!target) {
+					continue;
+				}
+				if (keyword === 'include') {
+					if (depth < SSH_INCLUDE_DEPTH) {
+						for (const file of await sshGlob(target, SSH_READABLE_FILES)) {
+							await add(file, depth + 1);
+						}
+					}
+				} else if (keyword === 'identityfile') {
+					await add(`${target}.pub`);
+					await add(`${target}-cert.pub`);
+				} else {
+					await add(target);
+				}
+			}
+		}
+	}
+	return [...out];
 }
