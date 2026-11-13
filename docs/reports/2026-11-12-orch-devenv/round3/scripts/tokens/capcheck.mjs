@@ -50,7 +50,8 @@ function toolsOf(ud, chat) {
 const [cmd, ids = 'all', model = 'agent:seed-claude-code:claude-haiku-5-5'] = process.argv.slice(2);
 if (cmd === 'run') {
 	for (const task of TASKS.filter(t => ids === 'all' || ids.split(',').includes(t.id))) {
-		for (const [arm, { ud, port }] of Object.entries(ARMS)) {
+		// CAP_ARMS=after re-checks one build only (e.g. after a fix on it).
+		for (const [arm, { ud, port }] of Object.entries(ARMS).filter(([a]) => !process.env.CAP_ARMS || process.env.CAP_ARMS.split(',').includes(a))) {
 			execFileSync('git', ['-C', FOLDER, 'checkout', '-q', '--', '.']);
 			execFileSync('git', ['-C', FOLDER, 'clean', '-qfd']);
 			try {
