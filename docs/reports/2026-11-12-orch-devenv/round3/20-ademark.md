@@ -68,7 +68,31 @@ What the numbers say:
 
 ## Method
 
-__METHOD__
+- **Rig.** ADEMark `f38966f` cloned to `~/.volt-r3/ademark`; its replay server (`bench/replay/server.ts`, port 18951,
+  its own session files), its native helper (`ademark-native procs / idle / sample`) and its clock. Our runner
+  `scripts/ademark/run.ts` follows TESTS.md A1-A11 step by step; `trackA.sh` sequences the runs; `setup.sh` rebuilds the
+  rig after a reboot. Every app runs with an isolated HOME and profile, `ANTHROPIC_BASE_URL` pointed at the replay
+  server and a dummy key, and the same `claude` binary first on PATH (2.1.322 in the first pass, 2.1.323 after the
+  second reboot: Claude Code updated itself in between).
+- **Arms.** Volt dev = this branch's unbundled `out/` on a private copy of the dev Electron (the worktree's
+  `.build/electron` is shared with the user's own dev Volt). Volt 0.0.6 = a copy of `/Applications/Volt.app`. Both
+  with Claude Opus 5.5, high effort, Full access, 5 seeded threads (`replay:seed`), arena `arena/` as the project.
+- **What differs from an official run.** No `sudo purge` before A1; Ready is read from the DOM over CDP ("DOM echo":
+  the probe text is in the focused composer), not from screen pixels, because this account has no Screen Recording
+  grant for the harness; probe keys go in through CDP `Input.dispatchKeyEvent`, not CGEventPost (the user works at
+  this Mac, and CGEventPost would type into whatever is in front); Electron apps launch with
+  `--remote-debugging-port`, which the method forbids on a timed launch. DOM time is before paint and composite, so
+  our A1-A4 and A11 times are lower bounds against ADEMark's pixel times (at least one frame, ~8-17 ms, often more).
+  **A8 is not comparable at all**: ours is `keydown.timeStamp` to the first animation frame after the composer's DOM
+  changed, inside the page; ADEMark's is key post to changed pixels, which adds the OS input path, compositor and
+  display (the published field is 48-92 ms; no Electron app paints a key in 8 ms end to end).
+- **Load.** 14 cores, five agents. A test starts only when the 1-minute load is at most 14 (`run.ts` load gate); a row
+  counts as **clean** only when the 1-minute load was at most 14 both at its start and when its row was written
+  (`summarize.mjs`). The first pass (13:44-14:58) gated only the start; most of its launch rows ended with the load
+  at 15-58, so they were retaken in a second pass (`trackA.sh retake`), interleaving the two arms per repetition.
+  Overloaded rows stay in the data files and are listed apart; medians below use clean rows only.
+- **Not the ADEMark statistic.** ADEMark reports medians of 6-10 runs on an idle machine; ours are medians of the
+  clean rows, n as stated, with the range.
 
 ## Fixes on this branch
 
@@ -81,7 +105,24 @@ __METHOD__
 
 ## Not done, and why
 
-__NOTDONE__
+- **The comparison apps were not measured on this rig.** `trackA.sh others` and `run.ts` support T3 Code, Paseo,
+  Zeron, MonoCode, Claude.app and super.engineering, but two reboots (09:03 and about 15:00) and a machine at load
+  15-237 all afternoon left time for the two Volt arms only. The draft covered no comparison app, so nothing was
+  retaken for them; the comparison in this report is with ADEMark's published (official) numbers, which come from a
+  different machine and a stricter method. super.engineering was not downloaded again after the second reboot.
+- **A7 (weight with 5 streams), A9, A10, A12** were not run. **A11 scroll** (frame gaps during 20 wheel events) needs
+  CGEvent scroll and frame capture, which need the Screen Recording grant; only A11 open was taken. **A6 covered,
+  energy and package power** need a covering window and `powermetrics` (sudo); only CPU (front) and wakeups were taken.
+- **Volt 0.0.6 cannot run A8 or A11 against the replay**, and its A4 is answered by the replay's fallback `ok`: 0.0.6
+  puts Volt's lead and the prompt in one text block, so the replay server cannot tell which session it is
+  (`8e69441aa56` fixes that for the next release). The long thread could not be built in 0.0.6 for the same reason.
+- **The A/B of `75aa8a9bc00`** (focus at launch) was taken in the morning with 7 of its 8 rows ending at load 15-34: A2
+  ready median 6.4 s before vs 7.7 s after (n 4 each, ranges 4.7-8.1 and 7.3-13.3 s). That is noise under load, not a
+  measured effect either way; the fix is a correctness fix (the first keys went to the agent list) and is listed
+  without a speed claim. Raw rows: `data/ademark/ab-75aa8a9-*.jsonl`.
+- **Track B** has n 3 (dev "hi"), n 4 (0.0.6 "hi") and n 1 (each B3), short of ADEMark's 3+3 for B3; more live Opus
+  turns were not spent. B4 "obeyed" was checked in 0.0.6's arena answer only.
+- **An official run** needs the `ademark` macOS user, which only the owner can create (next section).
 
 ## What the owner must do for an official run
 
