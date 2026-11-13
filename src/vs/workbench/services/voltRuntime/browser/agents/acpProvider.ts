@@ -86,6 +86,10 @@ interface IAcpSession {
 	pendingPlan?: Extract<IVoltEvent, { type: 'plan' }>;
 	/** Sandbox warnings and denials from before a turn ran (a spawn's `partial` warning): the next turn shows them. */
 	pendingSandbox?: IVoltSandboxEvent[];
+	/** The config overlay merge of the last turn (`syncSandboxStateAfterTurn`); the next prompt waits for it. */
+	stateSync?: Promise<void>;
+	/** Notices that came after a turn ended (what that merge kept in the chat): the next turn shows them. */
+	pendingNotices?: IAcpNotice[];
 	/** Pool key of the setup this session was started with (spares are matched on it). */
 	setupKey?: string;
 	/** The host MCP servers `session/new` connected (JSON), and what they were derived from. */
@@ -271,6 +275,10 @@ const ACP_CLIENT_CAPABILITIES = {
 };
 
 const MODEL_PROBE_TIMEOUT_MS = 8000;
+/** The longest the next prompt waits for the last turn's config overlay merge (`syncSandboxStateAfterTurn`). */
+const SANDBOX_STATE_SYNC_WAIT_MS = 3_000;
+/** A merge slower than this is logged: it holds up a follow-up prompt that comes quickly. */
+const SANDBOX_STATE_SYNC_SLOW_MS = 1_000;
 const MAX_TRANSPORT_RESUMES = 2;
 const TRANSPORT_RESUME_DELAY_MS = 1500;
 
@@ -989,25 +997,43 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	/**
 	 * After a turn: what the agent changed in its config overlay goes back to the user's config only
-	 * for the allowed keys (session ids, counters); everything else is listed in the transcript.
+	 * for the allowed keys (session ids, counters); everything else is listed in the next turn.
+	 *
+	 * It runs after the turn has ended, never before its `run.end`: the merge takes a lock on the
+	 * user's own config, and every turn of a subagent that edits files waited out its 3 s cap here
+	 * before its report could go up (harness bench round 3). The next prompt of the session waits
+	 * for it (`send`), so a turn never starts while the last one's state is still being merged.
 	 */
-	private async syncSandboxState(live: IAcpSession, turn: AcpPromptTurn): Promise<void> {
+	private syncSandboxStateAfterTurn(live: IAcpSession): void {
 		if (!live.sandbox || live.sandbox.settings.level === 'off' || !this.stdio.syncSandboxState) {
 			return;
 		}
-		try {
-			const result = await raceTimeout(this.stdio.syncSandboxState(live.processId), 3_000);
-			if (result?.dropped.length) {
-				const shown = result.dropped.slice(0, 8).join(', ');
-				this.pushNotice(live, turn, {
-					severity: 'info',
-					title: 'Sandbox kept config changes in this chat',
-					description: `The agent changed ${this.label}'s own settings (${shown}${result.dropped.length > 8 ? `, and ${result.dropped.length - 8} more` : ''}). They stay in this chat's sandbox and were not applied to your ${this.label} config. Make such changes from a chat with the sandbox off, or in ${this.label} itself.`,
-				});
+		const started = Date.now();
+		const sync = (async () => {
+			try {
+				const result = await raceTimeout(this.stdio.syncSandboxState!(live.processId), SANDBOX_STATE_SYNC_WAIT_MS);
+				const took = Date.now() - started;
+				if (took >= SANDBOX_STATE_SYNC_SLOW_MS) {
+					this.logService.info(`[ACP] sandbox state sync took ${took}ms${result ? '' : ' (gave up waiting)'}`);
+				}
+				if (result?.dropped.length) {
+					const shown = result.dropped.slice(0, 8).join(', ');
+					(live.pendingNotices ??= []).push({
+						severity: 'info',
+						title: 'Sandbox kept config changes in this chat',
+						description: `The agent changed ${this.label}'s own settings (${shown}${result.dropped.length > 8 ? `, and ${result.dropped.length - 8} more` : ''}). They stay in this chat's sandbox and were not applied to your ${this.label} config. Make such changes from a chat with the sandbox off, or in ${this.label} itself.`,
+					});
+				}
+			} catch (err) {
+				this.logService.warn('[ACP] sandbox state sync failed', err);
 			}
-		} catch (err) {
-			this.logService.warn('[ACP] sandbox state sync failed', err);
-		}
+		})();
+		live.stateSync = sync;
+		void sync.finally(() => {
+			if (live.stateSync === sync) {
+				live.stateSync = undefined;
+			}
+		});
 	}
 
 	private sandboxStrategyOf(session: IAcpSession): SandboxStrategy {
@@ -1329,6 +1355,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			this.endTurn(live, previous, 'abort');
 		}
 		await live.settling;
+		await live.stateSync;
 		if (token.isCancellationRequested || live.client.isDead) {
 			yield { type: 'run.end', runId: session.id, reason: token.isCancellationRequested ? 'abort' : 'fail' };
 			return;
@@ -1355,6 +1382,11 @@ export class AcpAgentProvider implements IAgentProvider {
 		live.pendingSandbox = undefined;
 		for (const event of pendingSandbox ?? []) {
 			this.deliverSandboxEvent(live, turn, event);
+		}
+		const pendingNotices = live.pendingNotices;
+		live.pendingNotices = undefined;
+		for (const notice of pendingNotices ?? []) {
+			this.pushNotice(live, turn, notice);
 		}
 		const cancel = token.onCancellationRequested(() => this.cancelTurn(live, turn, 'user'));
 		// Not awaited at the end: once `run.end` is out, a cancelled prompt may still be settling.
@@ -1785,7 +1817,8 @@ export class AcpAgentProvider implements IAgentProvider {
 				if (usage) {
 					turn.push(usage);
 				}
-				await this.syncSandboxState(live, turn);
+				// Off the turn's path: the run ends now and the next prompt waits for the merge (see `stateSync`).
+				this.syncSandboxStateAfterTurn(live);
 				this.endTurn(live, turn, result?.stopReason === 'cancelled' || turn.userCancelled ? 'abort' : 'done');
 				return;
 			}

@@ -62,6 +62,8 @@ class FakeAgentStdio {
 	/** The stdio service's file broker for sandboxed spawns: what it was asked, and what it answers. */
 	readonly brokered: { op: 'read' | 'write'; id: string; path: string; content?: string }[] = [];
 	brokerAnswer: IVoltSandboxFileResult = { ok: true, path: '', content: 'from the broker' };
+	/** The stdio layer's merge of a sandboxed agent's config overlay after a turn (answers at once when unset). */
+	stateSync: ((id: string) => Promise<{ applied: string[]; dropped: string[] } | undefined>) | undefined;
 
 	constructor(private readonly store: Pick<DisposableStore, 'add'>) {
 		this.onDataEmitter = store.add(new Emitter());
@@ -105,6 +107,7 @@ class FakeAgentStdio {
 				this.brokered.push({ op: 'write', id, path, content });
 				return this.brokerAnswer;
 			},
+			syncSandboxState: (id: string) => this.stateSync ? this.stateSync(id) : Promise.resolve(undefined),
 		} as unknown as IVoltStdioService;
 	}
 
@@ -726,6 +729,35 @@ suite('ACP provider sandbox', () => {
 		env.agent.answerPrompt(1, { stopReason: 'end_turn' });
 		await again.done;
 		assert.deepStrictEqual(sandboxNotices(again.events), []);
+		await env.provider.dispose(handle);
+	});
+
+	test('a turn ends without waiting for its config overlay merge; the next prompt waits for it and shows what it kept', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const env = setup();
+		let finish: ((result: { applied: string[]; dropped: string[] }) => void) | undefined;
+		env.agent.stateSync = () => new Promise(resolve => finish = resolve);
+		const handle = await env.provider.start(request(SANDBOXED));
+		const cts = store.add(new CancellationTokenSource());
+		const turn = collect(env.provider.send(handle, { text: 'go', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		// Before, run.end waited for the merge (up to 3 s, on every turn of a subagent that edits files).
+		await turn.done;
+		assert.strictEqual(kinds(turn.events).at(-1), 'run.end:done');
+		assert.ok(finish, 'the merge started when the turn ended');
+
+		const again = collect(env.provider.send(handle, { text: 'again', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		assert.strictEqual(env.agent.prompts().length, 1, 'the next prompt waits for the merge');
+		finish!({ applied: [], dropped: ['theme'] });
+		await settle();
+		assert.strictEqual(env.agent.prompts().length, 2);
+		env.agent.answerPrompt(1, { stopReason: 'end_turn' });
+		await again.done;
+		assert.ok(kinds(again.events).includes('notice:Sandbox kept config changes in this chat'), kinds(again.events).join(', '));
 		await env.provider.dispose(handle);
 	});
 
