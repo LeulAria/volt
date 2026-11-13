@@ -23,6 +23,14 @@ const execFileAsync = promisify(execFile);
 /** A marker the log stream's predicate (`VOLTSBX-`) lets through, but no denial line ever carries. */
 const FLUSH_MARKER = `${SEATBELT_TAG_PREFIX}flush-`;
 
+/**
+ * The kernel's refusals (pid 0, sent by Sandbox.kext) and Volt's own flush markers (written by
+ * `logger`). The stream runs while any sandboxed process lives, so it is narrowed by sender and
+ * process before any message text is searched: a text search of every line of the unified log cost
+ * about 4 % of a core on a busy Mac, this one about 0.6 % (round 3, 2026-11-13).
+ */
+export const SEATBELT_DENIAL_PREDICATE = `(processID == 0 AND sender == "Sandbox" AND eventMessage CONTAINS "${SEATBELT_TAG_PREFIX}") OR (process == "logger" AND eventMessage CONTAINS "${FLUSH_MARKER}")`;
+
 /** The watchdog: when Volt's end of its stdin closes (Volt exited or crashed), it kills the run's process group. */
 const WATCHDOG = 'read _ ; kill -KILL -- "-$1" 2>/dev/null';
 const CONFIRM_TIMEOUT_MS = 15_000;
@@ -344,7 +352,7 @@ export class SeatbeltBackend implements ISandboxBackend {
 		// Only the kernel's own lines (pid 0, Sandbox.kext): a sandboxed process knows its tag and may
 		// write to the log (`logger`), so a line it forged would otherwise become a "Blocked" card whose
 		// "Allow Folder" widens its own sandbox. Plus Volt's own flush markers, which are never denials.
-		const child = spawn('/usr/bin/log', ['stream', '--style', 'ndjson', '--predicate', `(processID == 0 AND eventMessage CONTAINS "${SEATBELT_TAG_PREFIX}") OR eventMessage CONTAINS "${FLUSH_MARKER}"`], { stdio: ['ignore', 'pipe', 'ignore'] });
+		const child = spawn('/usr/bin/log', ['stream', '--style', 'ndjson', '--predicate', SEATBELT_DENIAL_PREDICATE], { stdio: ['ignore', 'pipe', 'ignore'] });
 		this.monitor = child;
 		let buffer = '';
 		child.stdout?.setEncoding('utf8');
