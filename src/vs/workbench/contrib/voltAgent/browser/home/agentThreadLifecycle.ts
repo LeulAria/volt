@@ -32,6 +32,14 @@ export function liftAgentHold(orchestrator: IAgentOrchestratorService, threadId:
 	return Promise.all([paused, orchestrator.dispatch({ type: 'thread.block', threadId, reason: undefined })]);
 }
 
+/**
+ * Whether {@link IAgentThreadLifecycleService.bringBack} has work to do for a chat: a hold to lift
+ * (`blocked`, the orchestrator thread's), or a settled or archived chat to bring back.
+ */
+export function needsBringBack(blocked: string | undefined, meta: Pick<IAgentSessionMeta, 'settled' | 'archived'> | undefined): boolean {
+	return isOrchHold(blocked) || !!meta?.settled || !!meta?.archived;
+}
+
 export const IAgentThreadLifecycleService = createDecorator<IAgentThreadLifecycleService>('agentThreadLifecycleService');
 
 /**
