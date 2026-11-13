@@ -1,5 +1,5 @@
 // Where a Volt run's wall time goes: Volt's own overhead on the critical path vs model + tool time.
-//   node breakdown.mjs [arm,arm] [--json]
+//   node breakdown.mjs [arm,arm] [--json | --max-load N]   (CMP_DATA=<data dir>, default data/orch/cmp)
 // From the saved traces of each run (raw/<id>.traces.json: task tree + root and child traces):
 // - preRun: Enter -> the parent's run.start (composer, checkpoint, routing);
 // - parentPrompt: run.start -> prompt written to the agent (adopt a spare or cold start, session setup);
@@ -83,8 +83,21 @@ for (const r of rows) {
 	out.push({ id: r.id, arm: r.arm, task: r.task, at: r.at, load: r.load, wallMs: r.wallMs, preRun, parentPrompt, parentSource: p0?.agentSource, childStartGaps: gaps, childSpawn: spawn, delivery, overhead, modelAndTools: r.wallMs - overhead, overheadPct: Math.round(overhead / r.wallMs * 1000) / 10, waves: waveInfo });
 }
 
+const maxLoadAt = process.argv.indexOf('--max-load');
 if (process.argv.includes('--json')) {
 	console.log(JSON.stringify(out, null, 1));
+} else if (maxLoadAt > 0) {
+	// Medians per arm and task over the timed runs (1-minute load at the start <= N).
+	const maxLoad = Number(process.argv[maxLoadAt + 1]);
+	const med = xs => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+	const timed = out.filter(o => Number(String(o.load).split(' ')[0]) <= maxLoad);
+	console.log('| Arm, task | n (timed) | Volt overhead s, median [min–max] | Share of wall, median |');
+	console.log('|---|---|---|---|');
+	for (const k of [...new Set(timed.map(o => `${o.arm} ${o.task}`))].sort()) {
+		const os = timed.filter(o => `${o.arm} ${o.task}` === k);
+		const v = os.map(o => o.overhead / 1000);
+		console.log(`| ${k} | ${os.length} | ${med(v).toFixed(1)} [${Math.min(...v).toFixed(1)}–${Math.max(...v).toFixed(1)}] | ${med(os.map(o => o.overheadPct)).toFixed(0)}% |`);
+	}
 } else {
 	const s = ms => (ms / 1000).toFixed(1);
 	console.log('| Run | Wall s | Enter→run.start | Parent agent ready | Child start gaps | Child agent ready (critical) | Report delivery | Volt overhead s (%) | Model + tools s | Waves (n: sources) |');
