@@ -8,7 +8,7 @@ import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
-import { EditBaselineTracker, reverseDiffs } from '../../browser/editBaselines.js';
+import { EditBaselineTracker, reverseDiffs, uriInsideRoot } from '../../browser/editBaselines.js';
 
 /** An in-memory disk the agent writes behind the tracker's back. */
 class FakeDisk {
@@ -82,5 +82,17 @@ suite('Edit baselines', () => {
 			{ path: 'f', oldText: 'd', newText: 'D' },
 		]), 'a\nb\nc\nd\n');
 		assert.strictEqual(typeof reverseDiffs(current, [{ path: 'f', oldText: 'x', newText: 'missing' }]), 'symbol');
+	});
+
+	test('a file an agent names by its macOS real path (/private/tmp) is inside a /tmp folder, under the folder\'s name', () => {
+		const root = URI.file('/tmp/w/t2');
+		assert.strictEqual(uriInsideRoot(URI.file('/private/tmp/w/t2/src/pricing.ts'), root, true)?.path, '/tmp/w/t2/src/pricing.ts');
+		assert.strictEqual(uriInsideRoot(URI.file('/tmp/w/t2/src/a.ts'), root, true)?.path, '/tmp/w/t2/src/a.ts');
+		assert.strictEqual(uriInsideRoot(URI.file('/tmp/w/t2/src/a.ts'), URI.file('/private/tmp/w/t2'), true)?.path, '/private/tmp/w/t2/src/a.ts');
+		assert.strictEqual(uriInsideRoot(URI.file('/private/var/folders/x/a.ts'), URI.file('/var/folders/x/'), true)?.path, '/var/folders/x/a.ts');
+		assert.strictEqual(uriInsideRoot(URI.file('/private/tmp/w/t20/a.ts'), root, true), undefined, 'a sibling folder with a longer name');
+		assert.strictEqual(uriInsideRoot(URI.file('/private/tmp/other/a.ts'), root, true), undefined);
+		assert.strictEqual(uriInsideRoot(URI.file('/private/tmp/w/t2/a.ts'), root, false), undefined, 'only macOS links /tmp into /private');
+		assert.strictEqual(uriInsideRoot(URI.file('/Users/me/.claude/plan.md'), URI.file('/Users/me/repo'), true), undefined);
 	});
 });

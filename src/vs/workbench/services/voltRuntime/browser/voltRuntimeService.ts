@@ -72,7 +72,7 @@ import { AcpAgentProvider, IAcpBackgroundTask, IAcpFileWrite, IAcpSupervisionOpt
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
 import { LOOP_NOTICE_TITLE } from '../common/harness/supervisor.js';
 import { DeepseekDirective, IDeepseekStep, IDeepseekStreamOptions, PROMPT_CACHE_KEEPALIVE_SETTING, runDeepseekLoop, watchedStream } from '../common/deepseek/loop.js';
-import { EditBaselineTracker } from './editBaselines.js';
+import { EditBaselineTracker, uriInsideRoot } from './editBaselines.js';
 import './host/hostToolService.js';
 import './memory/voltMemoryService.js';
 import { clearClaudeModelCache } from './agents/claudeCatalog.js';
@@ -5959,7 +5959,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			: posix.isAbsolute(path) || /^[a-zA-Z]:[\\/]/.test(path)
 				? root.with({ path: URI.file(path).path })
 				: joinPath(root, path.replace(/^\.\//, ''));
-		return isEqualOrParent(uri, root) ? uri : undefined;
+		return uriInsideRoot(uri, root);
 	}
 
 	private onAcpFileWrite(write: IAcpFileWrite): void {
