@@ -11,6 +11,8 @@ import { fileURLToPath } from 'url';
 const here = dirname(fileURLToPath(import.meta.url));
 const DIR = process.env.TOK_DIR ?? '/tmp/v3-tokens';
 const FOLDER = process.env.TOK_FOLDER ?? join(DIR, 'capfx');
+// CAP_PREFIX labels a round of checks (cap: the first, on the after build before AskUserQuestion went; cap2: the final build).
+const PREFIX = process.env.CAP_PREFIX ?? 'cap';
 const ARMS = { base: { ud: '/tmp/v3-tokens-ud-base', port: 9964 }, after: { ud: '/tmp/v3-tokens-ud', port: 9954 } };
 
 /** One request per family; `family` matches tool names (MCP names end with the volt tool's name). */
@@ -23,6 +25,11 @@ export const TASKS = [
 	{ id: 'scratch', family: /(^|__)scratch_draw$/, prompt: 'Sketch the request flow of src/server.ts and src/api.ts on the whiteboard.' },
 	{ id: 'browser', family: /(^|__)browser_[a-z_]+$/, prompt: 'Open https://example.com in the browser and tell me the main heading on the page.' },
 	{ id: 'threads', family: /(^|__)(thread_list|thread_search)$/, prompt: 'List my other chats in Volt and their titles.' },
+	// Base asks with Claude Code's AskUserQuestion, after with Volt's ask_question: both reach the question
+	// tray, which the runner records and skips (TOK_SKIP_QUESTIONS), so "used" also counts a tray that showed.
+	// "ask me how it should look" alone was answered in plain text on both builds (Haiku, 1 run each): "ask-mc" names multiple choice.
+	{ id: 'ask', family: /(^|__)(ask_question|AskUserQuestion)$/i, skipQuestions: true, prompt: 'I want a function that formats invoice totals as money. Before you write any code, ask me how it should look (currency, decimals, symbol position).' },
+	{ id: 'ask-mc', family: /(^|__)(ask_question|AskUserQuestion)$/i, skipQuestions: true, prompt: 'I want a function that formats invoice totals as money. Before you write any code, give me multiple-choice questions about how it should look (currency, decimals, symbol position).' },
 ];
 
 function toolsOf(ud, chat) {
@@ -47,7 +54,7 @@ if (cmd === 'run') {
 			execFileSync('git', ['-C', FOLDER, 'checkout', '-q', '--', '.']);
 			execFileSync('git', ['-C', FOLDER, 'clean', '-qfd']);
 			try {
-				const out = execFileSync('node', [join(here, 'runtok.mjs'), 'run', `cap-${arm}-${task.id}`, model, task.prompt, '1'], { env: { ...process.env, VOLT_UD: ud, VOLT_CDP: String(port), TOK_FOLDER: FOLDER, TOK_SIDE_WAIT_MS: '3000' }, encoding: 'utf8', timeout: 420_000 });
+				const out = execFileSync('node', [join(here, 'runtok.mjs'), 'run', `${PREFIX}-${arm}-${task.id}`, model, task.prompt, '1'], { env: { ...process.env, VOLT_UD: ud, VOLT_CDP: String(port), TOK_FOLDER: FOLDER, TOK_SIDE_WAIT_MS: '3000', ...(task.skipQuestions ? { TOK_SKIP_QUESTIONS: '1' } : {}) }, encoding: 'utf8', timeout: 420_000 });
 				console.log(out.trim().split('\n').at(-1).slice(0, 300));
 			} catch (err) {
 				console.log(`cap-${arm}-${task.id} failed: ${String(err.message).slice(0, 200)}`);
@@ -55,16 +62,18 @@ if (cmd === 'run') {
 		}
 	}
 } else if (cmd === 'report') {
-	const rows = readFileSync(join(DIR, 'windows.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(r => r.label.startsWith('cap-'));
+	const rows = readFileSync(join(DIR, 'windows.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(r => r.label.startsWith(`${PREFIX}-`));
 	console.log('| Family | Prompt | Base: used / tools | After: used / tools |\n|---|---|---|---|');
 	for (const task of TASKS) {
 		const cell = arm => {
-			const r = rows.filter(x => x.label === `cap-${arm}-${task.id}`).at(-1);
-			if (!r) { return 'not run'; }
-			const tools = toolsOf(ARMS[arm].ud, r.chat);
-			const used = tools.some(name => task.family.test(name));
-			const short = [...new Set(tools.map(n => n.replace(/^mcp__volt__/, 'volt:')))].join(', ');
-			return `${used ? 'yes' : 'no'} / ${short || 'none'}`;
+			const runs = rows.filter(x => x.label === `${PREFIX}-${arm}-${task.id}`);
+			if (!runs.length) { return 'not run'; }
+			return runs.map(r => {
+				const tools = toolsOf(ARMS[arm].ud, r.chat);
+				const used = tools.some(name => task.family.test(name)) || !!r.questions?.length;
+				const short = [...new Set(tools.map(n => n.replace(/^mcp__volt__/, 'volt:')))].join(', ');
+				return `${used ? 'yes' : 'no'} / ${short || 'none'}${r.questions?.length ? ` (question tray shown ${r.questions.length}x)` : ''}`;
+			}).join('<br>');
 		};
 		console.log(`| ${task.id} | ${task.prompt} | ${cell('base')} | ${cell('after')} |`);
 	}

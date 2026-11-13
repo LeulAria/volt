@@ -102,10 +102,18 @@ async function ensureProject(c) {
 	const opened = await c.evaluate(`(() => { const e = [...document.querySelectorAll('button.volt-agent-landing-pick')].filter(e => e.offsetParent && e.querySelector('.label')).at(0); if (!e) { return false; } e.click(); return true; })()`);
 	if (!opened) { throw new Error('no project picker'); }
 	await sleep(800);
-	await c.evaluate(`(() => { const i = [...document.querySelectorAll('input')].filter(e => e.offsetParent && /search projects/i.test(e.placeholder)).at(-1); i?.focus(); return !!i; })()`);
-	await c.send('Input.insertText', { text: FOLDER });
-	await sleep(1500);
-	const picked = await c.evaluate(`(() => { const r = [...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && (e.getAttribute('aria-label') ?? '').endsWith(${JSON.stringify(FOLDER)})).at(-1); r?.click(); return !!r; })()`);
+	// Rows read "<name>, <parent>" with the home folder as ~. A search by full path finds a folder Volt has
+	// not listed yet; one it lists already (a recent project) is found by its name.
+	const parent = FOLDER.slice(0, -name.length - 1);
+	const tilde = process.env.HOME && parent.startsWith(process.env.HOME) ? '~' + parent.slice(process.env.HOME.length) : parent;
+	let picked = false;
+	for (const text of [FOLDER, name]) {
+		await c.evaluate(`(() => { const i = [...document.querySelectorAll('input')].filter(e => e.offsetParent && /search projects/i.test(e.placeholder)).at(-1); i?.focus(); i?.select(); return !!i; })()`);
+		await c.send('Input.insertText', { text });
+		await sleep(1500);
+		picked = await c.evaluate(`(() => { const r = [...document.querySelectorAll('.monaco-list-row')].filter(e => { const l = e.getAttribute('aria-label') ?? ''; return e.offsetParent && (l.endsWith(${JSON.stringify(FOLDER)}) || l === ${JSON.stringify(`${name}, ${tilde}`)}); }).at(-1); r?.click(); return !!r; })()`);
+		if (picked) { break; }
+	}
 	await sleep(1500);
 	if (!picked || !await shown()) { throw new Error(`could not pick the project ${FOLDER}`); }
 }
@@ -174,9 +182,20 @@ async function run(label, model, prompt, rep = '1') {
 	if (!chat) { c.close(); throw new Error('no new chat'); }
 	const deadline = sent + 5 * 60_000;
 	let ended = false;
+	// TOK_SKIP_QUESTIONS=1 (capability check): a question tray that shows up is recorded and skipped, so the turn goes on.
+	const questions = [];
+	// TOK_FIRST_ONLY=1 (first-request size of the round-2 tasks): Stop the turn once the first model request has answered.
+	let stopped = false;
 	while (Date.now() < deadline) {
 		await sleep(1000);
+		if (process.env.TOK_SKIP_QUESTIONS === '1') {
+			const asked = await c.evaluate(`(() => { const skip = [...document.querySelectorAll('button.volt-question-pill.ghost')].filter(e => e.offsetParent).at(-1); if (!skip) { return undefined; } const tray = skip.parentElement?.parentElement; const text = (tray?.textContent ?? '').replace(/\\s+/g, ' ').trim().slice(0, 300); skip.click(); return text || '(question)'; })()`);
+			if (asked) { questions.push(asked); continue; }
+		}
 		const ev = readTrace(chat).filter(l => l.kind === 'event');
+		if (process.env.TOK_FIRST_ONLY === '1' && !stopped && ev.some(l => l.event.type === 'tool.start' || l.event.type === 'host.tool' || l.event.type === 'text.end' || l.event.type === 'text.delta')) {
+			stopped = await c.evaluate(`(() => { const e = [...document.querySelectorAll('[aria-label="Stop"], [title="Stop"]')].filter(e => e.offsetParent).at(-1); e?.click(); return !!e; })()`);
+		}
 		const starts = ev.filter(l => l.event.type === 'run.start').length;
 		const ends = ev.filter(l => l.event.type === 'run.end').length;
 		if (starts > 0 && ends >= starts) { ended = true; break; }
@@ -190,7 +209,7 @@ async function run(label, model, prompt, rep = '1') {
 	const tools = ev.filter(l => l.event.type === 'tool.start' || l.event.type === 'host.tool').map(l => l.event.name ?? l.event.title ?? l.event.type);
 	const title = await c.evaluate(`(() => document.title)()`);
 	c.close();
-	const row = { label, rep: Number(rep), model, shownModel: shown, prompt, start, sent, answeredAt, end: Date.now(), ended, chat, load, answer: answer.slice(0, 4000), tools, title };
+	const row = { label, rep: Number(rep), model, shownModel: shown, prompt, start, sent, answeredAt, end: Date.now(), ended, chat, load, answer: answer.slice(0, 4000), tools, title, ...(questions.length ? { questions } : {}), ...(stopped ? { stopped: true } : {}) };
 	appendFileSync(join(DIR, 'windows.jsonl'), JSON.stringify(row) + '\n');
 	console.log(JSON.stringify({ label, rep, chat, ms: answeredAt - sent, ended, shown, load, answer: answer.slice(0, 200), tools }));
 }
@@ -203,7 +222,10 @@ async function stop() {
 		c.close();
 	} catch { }
 	await sleep(4000);
-	const ps = execSync('ps -axo pid=,command=').toString().split('\n').filter(l => l.includes(`--user-data-dir ${UD}`) || l.includes(`--user-data-dir=${UD}`) || l.includes(`--volt-user-data-dir=${UD}`) || l.includes(UD + '/'));
+	// UD as a whole path: /tmp/v3-tokens-ud must not match the base instance's /tmp/v3-tokens-ud-base.
+	const esc = UD.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const mine = new RegExp(`(--user-data-dir[ =]|--volt-user-data-dir=)${esc}(\\s|$)|${esc}/`);
+	const ps = execSync('ps -axo pid=,command=').toString().split('\n').filter(l => mine.test(l));
 	for (const l of ps) {
 		const pid = Number(l.trim().split(/\s+/)[0]);
 		if (pid === process.pid) { continue; }
