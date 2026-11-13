@@ -70,8 +70,37 @@ export function turnNavWindowStart(total: number, capacity: number, start: numbe
  * Whether the rail has somewhere to go: a sent message off screen (or not drawn yet). With every
  * message on screen its two or three ticks read as a stray glyph in the margin, so it rests unseen.
  */
-export function turnNavHasOffscreen(inView: readonly boolean[], undrawn: number): boolean {
-	return undrawn > 0 || inView.some(shown => !shown);
+export function turnNavHasOffscreen(drawn: number, first: number, last: number, undrawn: number): boolean {
+	return undrawn > 0 || (drawn > 0 && (first !== 0 || last !== drawn - 1));
+}
+
+/**
+ * The drawn messages on screen between `top` and `bottom`, as `[first, last]` (`[-1, -1]` when
+ * none is). Their boxes come in document order, stacked down the thread, so the first one is found
+ * by bisecting and only the ones on screen are measured after it: measuring every drawn message
+ * cost a thousand layout reads per scrolled frame in a long chat.
+ */
+export function turnNavVisibleRange(count: number, rectAt: (index: number) => { readonly top: number; readonly bottom: number }, top: number, bottom: number): [number, number] {
+	let low = 0;
+	let high = count - 1;
+	let first = -1;
+	while (low <= high) {
+		const mid = (low + high) >> 1;
+		if (rectAt(mid).bottom > top) {
+			first = mid;
+			high = mid - 1;
+		} else {
+			low = mid + 1;
+		}
+	}
+	if (first < 0 || rectAt(first).top >= bottom) {
+		return [-1, -1];
+	}
+	let last = first;
+	while (last + 1 < count && rectAt(last + 1).top < bottom) {
+		last++;
+	}
+	return [first, last];
 }
 
 /**
@@ -105,6 +134,8 @@ export class AgentTurnNav extends Disposable {
 	/** The thread's height when last laid out (the window's size), read without forcing a layout. */
 	private threadHeight = 0;
 	private readonly layoutFrame = this._register(new MutableDisposable());
+	/** The exchange of each drawn sent message, kept until the transcript's nodes change. */
+	private exchangeList: HTMLElement[] | undefined;
 	private hovered: number | undefined;
 	/** Once a card has shown a reply, the next ones do at once until the pointer leaves the rail. */
 	private warm = false;
@@ -142,6 +173,11 @@ export class AgentTurnNav extends Disposable {
 		});
 		observer.observe(thread.element);
 		this._register(toDisposable(() => observer.disconnect()));
+		// A scroll reads the list every frame; a query over a long chat's tens of thousands of nodes
+		// costs more than the frame's other work, so it is redone only after nodes come or go.
+		const mutations = new (getWindow(thread.element).MutationObserver)(() => this.exchangeList = undefined);
+		mutations.observe(thread.inner, { childList: true, subtree: true });
+		this._register(toDisposable(() => mutations.disconnect()));
 		this._register(toDisposable(() => this.clearReplyTimer()));
 	}
 
@@ -253,7 +289,8 @@ export class AgentTurnNav extends Disposable {
 
 	/** Exchanges drawn so far, one per sent message: the turn and everything answering it. Tick `i` is exchange `i - skipped`. */
 	private exchanges(): HTMLElement[] {
-		return Array.from(this.thread.inner.querySelectorAll<HTMLElement>('.volt-agent-turn.user'), turn => turn.parentElement ?? turn);
+		this.exchangeList ??= Array.from(this.thread.inner.querySelectorAll<HTMLElement>('.volt-agent-turn.user'), turn => turn.parentElement ?? turn);
+		return this.exchangeList;
 	}
 
 	private scheduleSync(): void {
@@ -270,24 +307,22 @@ export class AgentTurnNav extends Disposable {
 		const viewport = this.thread.scroll.getDomNode().getBoundingClientRect();
 		const landing = viewport.top + LANDING_OFFSET;
 		const skipped = this.undrawn?.count() ?? 0;
-		let above = skipped > 0;
-		let below = false;
-		const inView: boolean[] = [];
-		let first = -1;
-		let last = -1;
-		this.exchanges().forEach((exchange, index) => {
-			const rect = exchange.getBoundingClientRect();
-			const shown = rect.bottom > viewport.top + 1 && rect.top < viewport.bottom - 1;
-			inView.push(shown);
-			if (shown) {
-				if (first < 0) {
-					first = index + skipped;
-				}
-				last = index + skipped;
+		const exchanges = this.exchanges();
+		const rects = new Map<number, DOMRect>();
+		const rectAt = (index: number) => {
+			let rect = rects.get(index);
+			if (!rect) {
+				rect = exchanges[index].getBoundingClientRect();
+				rects.set(index, rect);
 			}
-			above ||= rect.top < landing - 2;
-			below ||= rect.top > landing + 2;
-		});
+			return rect;
+		};
+		// Stacked in order: the first message has the highest top, the last the lowest.
+		const above = skipped > 0 || (exchanges.length > 0 && rectAt(0).top < landing - 2);
+		const below = exchanges.length > 0 && rectAt(exchanges.length - 1).top > landing + 2;
+		const [firstDrawn, lastDrawn] = turnNavVisibleRange(exchanges.length, rectAt, viewport.top + 1, viewport.bottom - 1);
+		const first = firstDrawn < 0 ? -1 : firstDrawn + skipped;
+		const last = lastDrawn < 0 ? -1 : lastDrawn + skipped;
 		const start = turnNavWindowStart(this.turns.length, this.ticks.length, this.windowStart, first, last);
 		if (start !== this.windowStart) {
 			this.windowStart = start;
@@ -296,13 +331,13 @@ export class AgentTurnNav extends Disposable {
 		}
 		this.ticks.forEach((tick, slot) => {
 			const index = this.windowStart + slot;
-			tick.classList.toggle('in-view', index >= first && index <= last && inView[index - skipped] === true);
+			tick.classList.toggle('in-view', first >= 0 && index >= first && index <= last);
 		});
 		const pos = this.thread.scroll.getScrollPosition();
 		const dims = this.thread.scroll.getScrollDimensions();
 		this.up.disabled = !above;
 		this.down.disabled = !below || pos.scrollTop >= dims.scrollHeight - dims.height - 1;
-		const idle = !turnNavHasOffscreen(inView, skipped);
+		const idle = !turnNavHasOffscreen(exchanges.length, firstDrawn, lastDrawn, skipped);
 		this.element.classList.toggle('idle', idle);
 		if (idle) {
 			this.hideCard();

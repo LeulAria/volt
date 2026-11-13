@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { turnNavCapacity, turnNavHasOffscreen, turnNavPreview, turnNavWindowStart } from '../../browser/editor/agentTurnNav.js';
+import { turnNavCapacity, turnNavHasOffscreen, turnNavPreview, turnNavVisibleRange, turnNavWindowStart } from '../../browser/editor/agentTurnNav.js';
 
 suite('Agent turn nav', () => {
 
@@ -29,14 +29,32 @@ suite('Agent turn nav', () => {
 	});
 
 	test('the rail rests while every sent message is on screen', () => {
-		assert.strictEqual(turnNavHasOffscreen([true, true], 0), false);
-		assert.strictEqual(turnNavHasOffscreen([], 0), false);
+		assert.strictEqual(turnNavHasOffscreen(2, 0, 1, 0), false);
+		assert.strictEqual(turnNavHasOffscreen(0, -1, -1, 0), false);
 	});
 
 	test('the rail shows once a message is off screen or not drawn yet', () => {
-		assert.strictEqual(turnNavHasOffscreen([false, true], 0), true);
-		assert.strictEqual(turnNavHasOffscreen([true, true, false], 0), true);
-		assert.strictEqual(turnNavHasOffscreen([true, true], 3), true);
+		assert.strictEqual(turnNavHasOffscreen(2, 1, 1, 0), true);
+		assert.strictEqual(turnNavHasOffscreen(3, 0, 1, 0), true);
+		assert.strictEqual(turnNavHasOffscreen(3, -1, -1, 0), true);
+		assert.strictEqual(turnNavHasOffscreen(2, 0, 1, 3), true);
+	});
+
+	test('the messages on screen are found by bisecting, measuring only a few', () => {
+		// 1,000 messages 100px tall, stacked from y=0; the view shows 450 to 750.
+		const measured = new Set<number>();
+		const rectAt = (index: number) => {
+			measured.add(index);
+			return { top: index * 100, bottom: index * 100 + 100 };
+		};
+		assert.deepStrictEqual(turnNavVisibleRange(1000, rectAt, 450, 750), [4, 7]);
+		assert.ok(measured.size < 20, `measured ${measured.size}`);
+		// Scrolled past every message, before them, or nothing drawn.
+		assert.deepStrictEqual(turnNavVisibleRange(1000, rectAt, 200_000, 200_300), [-1, -1]);
+		assert.deepStrictEqual(turnNavVisibleRange(3, index => ({ top: 500 + index * 100, bottom: 600 + index * 100 }), 0, 300), [-1, -1]);
+		assert.deepStrictEqual(turnNavVisibleRange(0, rectAt, 0, 300), [-1, -1]);
+		// One tall message covering the whole view.
+		assert.deepStrictEqual(turnNavVisibleRange(2, index => index === 0 ? { top: -5000, bottom: 5000 } : { top: 5000, bottom: 5100 }, 0, 300), [0, 0]);
 	});
 
 	test('a long chat draws as many ticks as fit in half the thread, never fewer than twelve', () => {
