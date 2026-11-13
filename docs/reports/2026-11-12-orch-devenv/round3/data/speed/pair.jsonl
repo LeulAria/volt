@@ -1,0 +1,125 @@
+{"at":"2026-11-13T06:30:06.955Z","step":"round 0 A2","gate":"timed out","waitedS":302,"load":"55.41 63.03 58.13"}
+{"at":"2026-11-13T06:30:55.319Z","round":0,"arm":"before","step":"a1","result":"{\"arm\":\"before\",\"tier\":\"relaunch\",\"n\":1,\"readyMs\":33486}"}
+{"at":"2026-11-13T06:31:37.309Z","round":0,"arm":"after","step":"a1","result":"{\"arm\":\"after\",\"tier\":\"relaunch\",\"n\":1,\"readyMs\":28306}"}
+{"at":"2026-11-13T06:37:20.630Z","step":"round 0 A3 0","gate":"timed out","waitedS":302,"load":"52.51 50.10 53.80"}
+{"at":"2026-11-13T06:37:28.711Z","round":0,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":823,\"min\":823,\"max\":823}"}
+{"at":"2026-11-13T06:37:29.625Z","round":0,"arm":"before","step":"a3","result":"failed: "}
+{"at":"2026-11-13T06:42:31.267Z","step":"round 0 A3 1","gate":"timed out","waitedS":302,"load":"31.91 49.85 53.93"}
+{"at":"2026-11-13T06:42:32.944Z","round":0,"arm":"before","step":"a3","result":"{\"arm\":\"before\",\"n\":0,\"readyMs\":null,\"min\":null,\"max\":null}"}
+{"at":"2026-11-13T06:42:39.637Z","round":0,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":953,\"min\":953,\"max\":953}"}
+{"at":"2026-11-13T06:47:40.778Z","step":"round 0 A3 2","gate":"timed out","waitedS":301,"load":"25.20 38.01 47.46"}
+{"at":"2026-11-13T06:47:45.244Z","round":0,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":210,\"min\":210,\"max\":210}"}
+{"at":"2026-11-13T06:47:45.449Z","round":0,"arm":"before","step":"a3","result":"failed: "}
+{"at":"2026-11-13T06:48:55.612Z","step":"round 0 A4 0","gate":"passed","waitedS":70,"load":"12.69 31.73 44.31"}
+{"at":"2026-11-13T06:48:55.821Z","round":0,"arm":"before","step":"a4","result":"failed: "}
+{"at":"2026-11-13T06:49:05.404Z","round":0,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":706,\"beforeRequestMs\":560,\"onScreenMs\":146}"}
+{"at":"2026-11-13T06:49:05.555Z","step":"round 0 A4 1","gate":"passed","waitedS":0,"load":"13.07 31.18 43.97"}
+{"at":"2026-11-13T06:49:16.113Z","round":0,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":1048,\"beforeRequestMs\":982,\"onScreenMs\":66}"}
+{"at":"2026-11-13T06:49:18.771Z","round":0,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":0,\"totalMs\":null,\"beforeRequestMs\":null,\"onScreenMs\":null}"}
+{"at":"2026-11-13T06:54:19.948Z","step":"round 0 A4 2","gate":"timed out","waitedS":301,"load":"58.07 40.19 44.21"}
+{"at":"2026-11-13T06:54:29.669Z","round":0,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":1,\"totalMs\":1099,\"beforeRequestMs\":1017,\"onScreenMs\":82}"}
+{"at":"2026-11-13T06:54:39.287Z","round":0,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":631,\"beforeRequestMs\":580,\"onScreenMs\":51}"}
+{"at":"2026-11-13T06:59:40.636Z","step":"round 0 A5 chat","gate":"timed out","waitedS":301,"load":"18.02 29.84 38.16"}
+{"at":"2026-11-13T07:01:41.294Z","round":0,"arm":"before","step":"a5-chat","result":"file:///Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/scripts/speed/a5.mjs:46"}
+{"at":"2026-11-13T07:01:41.304Z","round":0,"arm":"after","step":"a5-chat","result":"{\"arm\":\"after\",\"variant\":\"chat\",\"app\":2297,\"agents\":604,\"total\":2901,\"processes\":26,\"cpuApp\":5.71,\"cpuAgents\":0.99,\"load\":\"17.14 27.01 36.51\"}"}
+{"at":"2026-11-13T07:03:04.193Z","step":"round 0 A5 landing","gate":"passed","waitedS":80,"load":"13.98 23.32 33.62"}
+{"at":"2026-11-13T07:05:04.508Z","round":0,"arm":"before","step":"a5-landing","result":"{\"arm\":\"before\",\"variant\":\"landing\",\"app\":2427,\"agents\":824,\"total\":3252,\"processes\":32,\"cpuApp\":5.22,\"cpuAgents\":1.25,\"load\":\"17.98 22.82 32.73\"}"}
+{"at":"2026-11-13T07:05:04.509Z","round":0,"arm":"after","step":"a5-landing","result":"{\"arm\":\"after\",\"variant\":\"landing\",\"app\":2167,\"agents\":489,\"total\":2656,\"processes\":28,\"cpuApp\":2.83,\"cpuAgents\":0.91,\"load\":\"17.98 22.82 32.73\"}"}
+{"at":"2026-11-13T07:05:14.537Z","step":"round 0 A8 after","gate":"passed","waitedS":10,"load":"13.27 20.35 31.01"}
+{"at":"2026-11-13T07:06:00.703Z","round":0,"arm":"after","step":"a8","result":"{\"arm\":\"after\",\"at\":\"2026-11-13T07:05:14.718Z\",\"load\":\"13.27 20.35 31.01\",\"loadTyping\":\"24.95 22.35 31.41\",\"keys\":60,\"missed\":0,\"stopButtonsAfter\":1,\"frameP50\":16.7,\"frameP95\":78.2,\"frameMax\":186.1,\"paintedP50\":18.3,\"paintedP95\":109,\"paintedMax\":196.8,\"appP95MiB\":3135,\"appMedianMiB\":3024,\"agentsMedianMiB\":1034,\"csv\":\"/Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/data/speed/raw/a8-after-1794553541340.csv\"}"}
+{"at":"2026-11-13T07:08:33.665Z","step":"round 0 A8 before","gate":"passed","waitedS":140,"load":"13.42 18.97 28.35"}
+{"at":"2026-11-13T07:08:33.805Z","round":0,"arm":"before","step":"a8","result":"failed: "}
+{"at":"2026-11-13T07:11:13.828Z","step":"round 1 A2","gate":"passed","waitedS":140,"load":"13.21 20.21 27.54"}
+{"at":"2026-11-13T07:11:33.446Z","round":1,"arm":"before","step":"a1","result":"{\"arm\":\"before\",\"tier\":\"relaunch\",\"n\":1,\"readyMs\":7702}"}
+{"at":"2026-11-13T07:12:07.267Z","round":1,"arm":"after","step":"a1","result":"{\"arm\":\"after\",\"tier\":\"relaunch\",\"n\":1,\"readyMs\":21532}"}
+{"at":"2026-11-13T07:13:35.225Z","step":"round 1 A3 0","gate":"passed","waitedS":60,"load":"12.70 19.27 26.16"}
+{"at":"2026-11-13T07:13:39.190Z","round":1,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":181,\"min\":181,\"max\":181}"}
+{"at":"2026-11-13T07:13:40.433Z","round":1,"arm":"before","step":"a3","result":"{\"arm\":\"before\",\"n\":0,\"readyMs\":null,\"min\":null,\"max\":null}"}
+{"at":"2026-11-13T07:13:40.484Z","step":"round 1 A3 1","gate":"passed","waitedS":0,"load":"13.61 19.35 26.15"}
+{"at":"2026-11-13T07:13:41.846Z","round":1,"arm":"before","step":"a3","result":"{\"arm\":\"before\",\"n\":0,\"readyMs\":null,\"min\":null,\"max\":null}"}
+{"at":"2026-11-13T07:13:46.263Z","round":1,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":380,\"min\":380,\"max\":380}"}
+{"at":"2026-11-13T07:13:46.285Z","step":"round 1 A3 2","gate":"passed","waitedS":0,"load":"13.08 19.14 26.04"}
+{"at":"2026-11-13T07:13:50.683Z","round":1,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":164,\"min\":164,\"max\":164}"}
+{"at":"2026-11-13T07:13:51.897Z","round":1,"arm":"before","step":"a3","result":"{\"arm\":\"before\",\"n\":0,\"readyMs\":null,\"min\":null,\"max\":null}"}
+{"at":"2026-11-13T07:13:51.917Z","step":"round 1 A4 0","gate":"passed","waitedS":0,"load":"11.61 18.63 25.77"}
+{"at":"2026-11-13T07:14:00.586Z","round":1,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":1,\"totalMs\":310,\"beforeRequestMs\":205,\"onScreenMs\":105}"}
+{"at":"2026-11-13T07:14:09.239Z","round":1,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":244,\"beforeRequestMs\":216,\"onScreenMs\":28}"}
+{"at":"2026-11-13T07:14:09.254Z","step":"round 1 A4 1","gate":"passed","waitedS":0,"load":"10.88 18.14 25.47"}
+{"at":"2026-11-13T07:14:17.807Z","round":1,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":170,\"beforeRequestMs\":143,\"onScreenMs\":27}"}
+{"at":"2026-11-13T07:14:27.391Z","round":1,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":1,\"totalMs\":1068,\"beforeRequestMs\":839,\"onScreenMs\":229}"}
+{"at":"2026-11-13T07:15:17.518Z","step":"round 1 A4 2","gate":"passed","waitedS":50,"load":"13.69 17.91 24.84"}
+{"at":"2026-11-13T07:15:45.840Z","round":1,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":1,\"totalMs\":null,\"beforeRequestMs\":null,\"onScreenMs\":null}"}
+{"at":"2026-11-13T07:15:54.932Z","round":1,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":623,\"beforeRequestMs\":601,\"onScreenMs\":22}"}
+{"at":"2026-11-13T07:16:14.973Z","step":"round 1 A5 chat","gate":"passed","waitedS":20,"load":"13.07 17.26 24.17"}
+{"at":"2026-11-13T07:18:15.472Z","round":1,"arm":"before","step":"a5-chat","result":"file:///Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/scripts/speed/a5.mjs:46"}
+{"at":"2026-11-13T07:18:15.476Z","round":1,"arm":"after","step":"a5-chat","result":"{\"arm\":\"after\",\"variant\":\"chat\",\"app\":2187,\"agents\":682,\"total\":2863,\"processes\":29,\"cpuApp\":3.75,\"cpuAgents\":1.43,\"load\":\"20.45 18.12 23.99\"}"}
+{"at":"2026-11-13T07:20:37.420Z","step":"round 1 A5 landing","gate":"passed","waitedS":141,"load":"13.43 16.60 22.13"}
+{"at":"2026-11-13T07:22:38.103Z","round":1,"arm":"before","step":"a5-landing","result":"file:///Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/scripts/speed/a5.mjs:46"}
+{"at":"2026-11-13T07:22:38.109Z","round":1,"arm":"after","step":"a5-landing","result":"{\"arm\":\"after\",\"variant\":\"landing\",\"app\":2110,\"agents\":658,\"total\":2767,\"processes\":28,\"cpuApp\":3.37,\"cpuAgents\":2.91,\"load\":\"11.14 15.24 21.24\"}"}
+{"at":"2026-11-13T07:23:48.242Z","step":"round 1 A8 after","gate":"passed","waitedS":70,"load":"13.84 16.02 20.76"}
+{"at":"2026-11-13T07:24:31.699Z","round":1,"arm":"after","step":"a8","result":"{\"arm\":\"after\",\"at\":\"2026-11-13T07:23:48.392Z\",\"load\":\"13.84 16.02 20.76\",\"loadTyping\":\"17.34 16.56 20.81\",\"keys\":60,\"missed\":0,\"stopButtonsAfter\":1,\"frameP50\":16,\"frameP95\":57.6,\"frameMax\":81.5,\"paintedP50\":18,\"paintedP95\":59.4,\"paintedMax\":85.6,\"appP95MiB\":3106,\"appMedianMiB\":3007,\"agentsMedianMiB\":1498,\"csv\":\"/Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/data/speed/raw/a8-after-1794554652874.csv\"}"}
+{"at":"2026-11-13T07:25:53.077Z","step":"round 1 A8 before","gate":"passed","waitedS":70,"load":"13.98 16.11 20.19"}
+{"at":"2026-11-13T07:25:53.225Z","round":1,"arm":"before","step":"a8","result":"failed: "}
+{"at":"2026-11-13T07:26:55.601Z","step":"round 2 A2","gate":"passed","waitedS":50,"load":"13.76 15.92 19.86"}
+{"at":"2026-11-13T07:27:13.428Z","round":2,"arm":"before","step":"a1","result":"{\"arm\":\"before\",\"tier\":\"relaunch\",\"n\":1,\"readyMs\":6189}"}
+{"at":"2026-11-13T07:27:34.419Z","round":2,"arm":"after","step":"a1","result":"{\"arm\":\"after\",\"tier\":\"relaunch\",\"n\":1,\"readyMs\":8915}"}
+{"at":"2026-11-13T07:29:11.213Z","step":"round 2 A3 0","gate":"passed","waitedS":70,"load":"12.83 16.05 19.42"}
+{"at":"2026-11-13T07:29:15.517Z","round":2,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":279,\"min\":279,\"max\":279}"}
+{"at":"2026-11-13T07:29:19.846Z","round":2,"arm":"before","step":"a3","result":"{\"arm\":\"before\",\"n\":1,\"readyMs\":266,\"min\":266,\"max\":266}"}
+{"at":"2026-11-13T07:29:19.868Z","step":"round 2 A3 1","gate":"passed","waitedS":0,"load":"12.79 15.94 19.34"}
+{"at":"2026-11-13T07:29:23.831Z","round":2,"arm":"before","step":"a3","result":"{\"arm\":\"before\",\"n\":1,\"readyMs\":139,\"min\":139,\"max\":139}"}
+{"at":"2026-11-13T07:29:28.153Z","round":2,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":220,\"min\":220,\"max\":220}"}
+{"at":"2026-11-13T07:29:28.172Z","step":"round 2 A3 2","gate":"passed","waitedS":0,"load":"12.28 15.73 19.22"}
+{"at":"2026-11-13T07:29:32.153Z","round":2,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":167,\"min\":167,\"max\":167}"}
+{"at":"2026-11-13T07:29:36.172Z","round":2,"arm":"before","step":"a3","result":"{\"arm\":\"before\",\"n\":1,\"readyMs\":187,\"min\":187,\"max\":187}"}
+{"at":"2026-11-13T07:29:36.191Z","step":"round 2 A4 0","gate":"passed","waitedS":0,"load":"11.70 15.55 19.14"}
+{"at":"2026-11-13T07:29:45.038Z","round":2,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":1,\"totalMs\":456,\"beforeRequestMs\":378,\"onScreenMs\":78}"}
+{"at":"2026-11-13T07:29:53.534Z","round":2,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":186,\"beforeRequestMs\":161,\"onScreenMs\":25}"}
+{"at":"2026-11-13T07:29:53.551Z","step":"round 2 A4 1","gate":"passed","waitedS":0,"load":"9.83 14.88 18.81"}
+{"at":"2026-11-13T07:30:02.056Z","round":2,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":244,\"beforeRequestMs\":219,\"onScreenMs\":25}"}
+{"at":"2026-11-13T07:30:10.749Z","round":2,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":1,\"totalMs\":356,\"beforeRequestMs\":282,\"onScreenMs\":74}"}
+{"at":"2026-11-13T07:30:10.785Z","step":"round 2 A4 2","gate":"passed","waitedS":0,"load":"9.25 14.51 18.61"}
+{"at":"2026-11-13T07:30:19.534Z","round":2,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":1,\"totalMs\":382,\"beforeRequestMs\":299,\"onScreenMs\":83}"}
+{"at":"2026-11-13T07:30:28.058Z","round":2,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":257,\"beforeRequestMs\":233,\"onScreenMs\":24}"}
+{"at":"2026-11-13T07:30:28.079Z","step":"round 2 A5 chat","gate":"passed","waitedS":0,"load":"8.42 13.97 18.32"}
+{"at":"2026-11-13T07:32:28.403Z","round":2,"arm":"before","step":"a5-chat","result":"{\"arm\":\"before\",\"variant\":\"chat\",\"app\":2262,\"agents\":700,\"total\":2961,\"processes\":29,\"cpuApp\":6.3,\"cpuAgents\":1.41,\"load\":\"5.97 12.25 17.38\"}"}
+{"at":"2026-11-13T07:32:28.404Z","round":2,"arm":"after","step":"a5-chat","result":"{\"arm\":\"after\",\"variant\":\"chat\",\"app\":2304,\"agents\":716,\"total\":3019,\"processes\":29,\"cpuApp\":3.88,\"cpuAgents\":1.4,\"load\":\"5.97 12.25 17.38\"}"}
+{"at":"2026-11-13T07:32:30.665Z","step":"round 2 A5 landing","gate":"passed","waitedS":0,"load":"7.21 11.44 16.73"}
+{"at":"2026-11-13T07:34:31.006Z","round":2,"arm":"before","step":"a5-landing","result":"{\"arm\":\"before\",\"variant\":\"landing\",\"app\":2386,\"agents\":665,\"total\":3050,\"processes\":28,\"cpuApp\":18.24,\"cpuAgents\":0.69,\"load\":\"7.21 10.76 16.11\"}"}
+{"at":"2026-11-13T07:34:31.006Z","round":2,"arm":"after","step":"a5-landing","result":"{\"arm\":\"after\",\"variant\":\"landing\",\"app\":2190,\"agents\":669,\"total\":2859,\"processes\":28,\"cpuApp\":2.26,\"cpuAgents\":0.7,\"load\":\"7.21 10.76 16.11\"}"}
+{"at":"2026-11-13T07:34:31.024Z","step":"round 2 A8 after","gate":"passed","waitedS":0,"load":"6.63 9.88 15.41"}
+{"at":"2026-11-13T07:35:24.339Z","round":2,"arm":"after","step":"a8","result":"{\"arm\":\"after\",\"at\":\"2026-11-13T07:34:31.179Z\",\"load\":\"6.63 9.88 15.41\",\"loadTyping\":\"11.40 10.64 15.49\",\"keys\":60,\"missed\":0,\"stopButtonsAfter\":1,\"frameP50\":75.1,\"frameP95\":342.8,\"frameMax\":705.9,\"paintedP50\":82.6,\"paintedP95\":393.5,\"paintedMax\":748.8,\"appP95MiB\":3246,\"appMedianMiB\":3135,\"agentsMedianMiB\":1494,\"csv\":\"/Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/data/speed/raw/a8-after-1794555298214.csv\"}"}
+{"at":"2026-11-13T07:37:20.440Z","step":"round 2 A8 before","gate":"passed","waitedS":100,"load":"13.94 13.75 16.15"}
+{"at":"2026-11-13T07:38:03.844Z","round":2,"arm":"before","step":"a8","result":"{\"arm\":\"before\",\"at\":\"2026-11-13T07:37:20.608Z\",\"load\":\"13.94 13.75 16.15\",\"loadTyping\":\"12.94 13.49 15.98\",\"keys\":60,\"missed\":0,\"stopButtonsAfter\":1,\"frameP50\":10,\"frameP95\":47.4,\"frameMax\":76,\"paintedP50\":15.3,\"paintedP95\":77.6,\"paintedMax\":95.1,\"appP95MiB\":3074,\"appMedianMiB\":3005,\"agentsMedianMiB\":1405,\"csv\":\"/Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/data/speed/raw/a8-before-1794555465110.csv\"}"}
+{"at":"2026-11-13T07:38:34.670Z","step":"round 3 A2","gate":"passed","waitedS":20,"load":"13.52 13.66 15.90"}
+{"at":"2026-11-13T07:38:51.540Z","round":3,"arm":"before","step":"a1","result":"{\"arm\":\"before\",\"tier\":\"relaunch\",\"n\":1,\"readyMs\":5367}"}
+{"at":"2026-11-13T07:39:10.186Z","round":3,"arm":"after","step":"a1","result":"{\"arm\":\"after\",\"tier\":\"relaunch\",\"n\":1,\"readyMs\":6979}"}
+{"at":"2026-11-13T07:41:29.181Z","step":"round 3 A3 0","gate":"passed","waitedS":90,"load":"12.92 14.42 15.85"}
+{"at":"2026-11-13T07:41:33.289Z","round":3,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":267,\"min\":267,\"max\":267}"}
+{"at":"2026-11-13T07:41:37.604Z","round":3,"arm":"before","step":"a3","result":"{\"arm\":\"before\",\"n\":1,\"readyMs\":292,\"min\":292,\"max\":292}"}
+{"at":"2026-11-13T07:41:37.625Z","step":"round 3 A3 1","gate":"passed","waitedS":0,"load":"12.80 14.34 15.80"}
+{"at":"2026-11-13T07:41:41.994Z","round":3,"arm":"before","step":"a3","result":"{\"arm\":\"before\",\"n\":1,\"readyMs\":271,\"min\":271,\"max\":271}"}
+{"at":"2026-11-13T07:41:46.215Z","round":3,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":163,\"min\":163,\"max\":163}"}
+{"at":"2026-11-13T07:41:46.304Z","step":"round 3 A3 2","gate":"passed","waitedS":0,"load":"12.42 14.24 15.75"}
+{"at":"2026-11-13T07:41:51.872Z","round":3,"arm":"after","step":"a3","result":"{\"arm\":\"after\",\"n\":1,\"readyMs\":400,\"min\":400,\"max\":400}"}
+{"at":"2026-11-13T07:42:00.064Z","round":3,"arm":"before","step":"a3","result":"{\"arm\":\"before\",\"n\":1,\"readyMs\":470,\"min\":470,\"max\":470}"}
+{"at":"2026-11-13T07:43:20.374Z","step":"round 3 A4 0","gate":"passed","waitedS":80,"load":"13.54 15.61 16.23"}
+{"at":"2026-11-13T07:43:29.119Z","round":3,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":1,\"totalMs\":421,\"beforeRequestMs\":348,\"onScreenMs\":73}"}
+{"at":"2026-11-13T07:43:38.049Z","round":3,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":553,\"beforeRequestMs\":525,\"onScreenMs\":28}"}
+{"at":"2026-11-13T07:43:38.070Z","step":"round 3 A4 1","gate":"passed","waitedS":0,"load":"11.36 14.99 16.00"}
+{"at":"2026-11-13T07:43:46.744Z","round":3,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":278,\"beforeRequestMs\":229,\"onScreenMs\":49}"}
+{"at":"2026-11-13T07:43:58.834Z","round":3,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":1,\"totalMs\":2556,\"beforeRequestMs\":2455,\"onScreenMs\":101}"}
+{"at":"2026-11-13T07:44:38.910Z","step":"round 3 A4 2","gate":"passed","waitedS":40,"load":"12.69 15.20 16.04"}
+{"at":"2026-11-13T07:44:47.583Z","round":3,"arm":"before","step":"a4","result":"{\"arm\":\"before\",\"n\":1,\"totalMs\":344,\"beforeRequestMs\":272,\"onScreenMs\":72}"}
+{"at":"2026-11-13T07:44:56.627Z","round":3,"arm":"after","step":"a4","result":"{\"arm\":\"after\",\"n\":1,\"totalMs\":574,\"beforeRequestMs\":535,\"onScreenMs\":39}"}
+{"at":"2026-11-13T07:44:56.692Z","step":"round 3 A5 chat","gate":"passed","waitedS":0,"load":"12.14 14.94 15.93"}
+{"at":"2026-11-13T07:46:57.469Z","round":3,"arm":"before","step":"a5-chat","result":"{\"arm\":\"before\",\"variant\":\"chat\",\"app\":2279,\"agents\":677,\"total\":2957,\"processes\":29,\"cpuApp\":8.03,\"cpuAgents\":1.07,\"load\":\"18.30 17.05 16.70\"}"}
+{"at":"2026-11-13T07:46:57.471Z","round":3,"arm":"after","step":"a5-chat","result":"{\"arm\":\"after\",\"variant\":\"chat\",\"app\":2323,\"agents\":676,\"total\":2997,\"processes\":29,\"cpuApp\":4.89,\"cpuAgents\":0.92,\"load\":\"18.30 17.05 16.70\"}"}
+{"at":"2026-11-13T07:49:01.268Z","step":"round 3 A5 landing","gate":"passed","waitedS":121,"load":"13.77 16.90 16.77"}
+{"at":"2026-11-13T07:51:01.622Z","round":3,"arm":"before","step":"a5-landing","result":"{\"arm\":\"before\",\"variant\":\"landing\",\"app\":2407,\"agents\":671,\"total\":3078,\"processes\":26,\"cpuApp\":20.94,\"cpuAgents\":1.07,\"load\":\"27.68 20.16 17.98\"}"}
+{"at":"2026-11-13T07:51:01.623Z","round":3,"arm":"after","step":"a5-landing","result":"{\"arm\":\"after\",\"variant\":\"landing\",\"app\":2188,\"agents\":654,\"total\":2842,\"processes\":28,\"cpuApp\":3.49,\"cpuAgents\":0.89,\"load\":\"27.68 20.16 17.98\"}"}
+{"at":"2026-11-13T07:51:51.708Z","step":"round 3 A8 after","gate":"passed","waitedS":50,"load":"12.80 17.54 17.25"}
+{"at":"2026-11-13T07:52:59.159Z","round":3,"arm":"after","step":"a8","result":"{\"arm\":\"after\",\"at\":\"2026-11-13T07:51:51.898Z\",\"load\":\"12.80 17.54 17.25\",\"loadTyping\":\"33.48 21.71 18.75\",\"keys\":60,\"missed\":1,\"stopButtonsAfter\":1,\"frameP50\":143.4,\"frameP95\":541.9,\"frameMax\":735.6,\"paintedP50\":176.3,\"paintedP95\":667.2,\"paintedMax\":1047.1,\"appP95MiB\":3021,\"appMedianMiB\":2860,\"agentsMedianMiB\":1276,\"csv\":\"/Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/data/speed/raw/a8-after-1794556345025.csv\"}"}
+{"at":"2026-11-13T07:58:15.334Z","step":"round 3 A8 before","gate":"timed out","waitedS":301,"load":"15.39 21.36 20.43"}
+{"at":"2026-11-13T07:59:08.283Z","round":3,"arm":"before","step":"a8","result":"{\"arm\":\"before\",\"at\":\"2026-11-13T07:58:15.930Z\",\"load\":\"15.39 21.36 20.43\",\"loadTyping\":\"33.83 25.47 21.97\",\"keys\":60,\"missed\":0,\"stopButtonsAfter\":1,\"frameP50\":31.3,\"frameP95\":244.1,\"frameMax\":377.1,\"paintedP50\":47.1,\"paintedP95\":303.1,\"paintedMax\":383.1,\"appP95MiB\":3148,\"appMedianMiB\":3046,\"agentsMedianMiB\":1264,\"csv\":\"/Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/data/speed/raw/a8-before-1794556724162.csv\"}"}
+{"at":"2026-11-13T07:59:33.438Z","step":"done"}
