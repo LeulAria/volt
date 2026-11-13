@@ -20,6 +20,15 @@ export interface IAgentTurnNavTurn {
 	readonly reply: () => string | undefined;
 }
 
+/** Sent messages above the drawn exchanges (a long chat draws its older ones as the reader nears them). */
+export interface IAgentTurnNavUndrawn {
+	readonly count: () => number;
+	/** Draws them all now. */
+	readonly draw: () => void;
+	/** Draws them a frame's worth at a time, the view held still, then calls `done`; a chat switch drops it. */
+	readonly drawInFrames: (done: () => void) => void;
+}
+
 /** Resting on a tick this long opens its card down to the start of the reply. */
 const REPLY_DELAY_MS = 450;
 /** Space between ticks; many messages squeeze them into half the thread's height. */
@@ -140,7 +149,7 @@ export class AgentTurnNav extends Disposable {
 	/** Once a card has shown a reply, the next ones do at once until the pointer leaves the rail. */
 	private warm = false;
 	/** Sent messages above the drawn exchanges (a long chat draws its older ones when idle), and how to draw them now. */
-	private undrawn: { readonly count: () => number; readonly draw: () => void } | undefined;
+	private undrawn: IAgentTurnNavUndrawn | undefined;
 	private replyTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(private readonly thread: AgentThreadView) {
@@ -283,8 +292,20 @@ export class AgentTurnNav extends Disposable {
 	}
 
 	/** A chat that draws its older exchanges later says how many sent messages are not drawn yet. */
-	setUndrawn(undrawn: { readonly count: () => number; readonly draw: () => void }): void {
+	setUndrawn(undrawn: IAgentTurnNavUndrawn): void {
 		this.undrawn = undrawn;
+	}
+
+	/**
+	 * Draws the messages not drawn yet over the next frames, keeping the view still, then calls
+	 * `done` (for going to the first message). False, and `done` is not called, when all are drawn.
+	 */
+	drawUndrawnThen(done: () => void): boolean {
+		if (!this.undrawn?.count()) {
+			return false;
+		}
+		this.undrawn.drawInFrames(done);
+		return true;
 	}
 
 	/** Exchanges drawn so far, one per sent message: the turn and everything answering it. Tick `i` is exchange `i - skipped`. */

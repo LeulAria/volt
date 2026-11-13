@@ -335,6 +335,11 @@ const HEAD_DEFER_MIN_EXCHANGES = 4;
 const DRAWN_EXCHANGES_MAX = 40;
 /** What a trim leaves drawn; the gap to the max keeps a running chat from trimming on every turn. */
 const DRAWN_EXCHANGES_KEEP = 24;
+/**
+ * A frame's drawing time while the reader asked for the first message (Scroll Chat to Top): more
+ * than the 12ms a scroll gets, as nothing else moves meanwhile, yet still about 30 frames a second.
+ */
+const HEAD_JUMP_FRAME_MS = 32;
 /** Exchanges a chat parked by a switch keeps drawn while it follows its end. */
 const STASHED_DRAWN_EXCHANGES = 12;
 /** Shows the pane even if the first chat's history never finishes loading. */
@@ -1208,7 +1213,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.turnNav = this._register(new AgentTurnNav(this.threadView));
 		// Jobs the idle agent left running, under its last reply.
 		this.jobWaitRows = this._register(this.instantiationService.createInstance(AgentJobWaitRows, this.threadInner, () => this.scheduleScrollSync(this.stickToBottom)));
-		this.turnNav.setUndrawn({ count: () => this.headUsers, draw: () => this.flushDeferredHead() });
+		this.turnNav.setUndrawn({ count: () => this.headUsers, draw: () => this.flushDeferredHead(), drawInFrames: done => this.drawHeadInFrames(done) });
 		this._register(new AgentThreadSelectionActions(this.threadEl, {
 			isVisible: () => this.isVisible(),
 			onAddToChat: (text, source) => this.addChatSelection(text, this.sessionKey, source),
@@ -3414,6 +3419,33 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				this.drawHead(() => Date.now() < until);
 			}
 		});
+	}
+
+	/**
+	 * Draws every exchange still waiting above the drawn ones, {@link HEAD_JUMP_FRAME_MS} of them a
+	 * frame with the view held still, then calls `done`: "Scroll Chat to Top" in a long chat. Gliding
+	 * up while they were drawn on the way kept the view on what it showed (each drawn exchange pushes
+	 * the scroll down), so one press landed a few hundred messages up and the first message took
+	 * a press per few hundred. A chat switch (a new head generation) drops it.
+	 */
+	private drawHeadInFrames(done: () => void): void {
+		const generation = this.headGeneration;
+		const step = () => {
+			this.headScrollDraw.value = undefined;
+			if (generation !== this.headGeneration) {
+				return;
+			}
+			if (this.headEnd > 0) {
+				const until = Date.now() + HEAD_JUMP_FRAME_MS;
+				this.drawHead(() => Date.now() < until);
+			}
+			if (this.headEnd > 0) {
+				this.headScrollDraw.value = scheduleAtNextAnimationFrame(getWindow(this.threadInner), step);
+			} else {
+				done();
+			}
+		};
+		this.headScrollDraw.value = scheduleAtNextAnimationFrame(getWindow(this.threadInner), step);
 	}
 
 	/** Draws every exchange still waiting above the drawn ones, now: for find, an edit, a jump to a turn. */

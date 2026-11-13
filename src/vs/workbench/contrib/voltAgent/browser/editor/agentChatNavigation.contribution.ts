@@ -157,8 +157,16 @@ function scrollToEnd(accessor: ServicesAccessor, end: 'top' | 'bottom'): void {
 	if (!thread) {
 		return;
 	}
-	const dims = thread.scroll.getScrollDimensions();
-	threadGlide(thread.scroll, thread.element).glideTo(end === 'top' ? 0 : dims.scrollHeight - dims.height);
+	const glide = () => {
+		const dims = thread.scroll.getScrollDimensions();
+		threadGlide(thread.scroll, thread.element).glideTo(end === 'top' ? 0 : dims.scrollHeight - dims.height);
+	};
+	// A long chat draws its older messages as the reader nears them; the top is its first message,
+	// so those are drawn first (over a few frames, the view still) and the glide goes there after.
+	if (end === 'top' && AgentTurnNav.forThread(thread)?.drawUndrawnThen(glide)) {
+		return;
+	}
+	glide();
 }
 
 function stepMessage(accessor: ServicesAccessor, direction: -1 | 1): void {
