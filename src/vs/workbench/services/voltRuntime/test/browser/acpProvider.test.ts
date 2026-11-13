@@ -64,6 +64,8 @@ class FakeAgentStdio {
 	brokerAnswer: IVoltSandboxFileResult = { ok: true, path: '', content: 'from the broker' };
 	/** The stdio layer's merge of a sandboxed agent's config overlay after a turn (answers at once when unset). */
 	stateSync: ((id: string) => Promise<{ applied: string[]; dropped: string[] } | undefined>) | undefined;
+	/** Processes the provider asked to stop, in order. */
+	readonly killed: string[] = [];
 
 	constructor(private readonly store: Pick<DisposableStore, 'add'>) {
 		this.onDataEmitter = store.add(new Emitter());
@@ -97,7 +99,7 @@ class FakeAgentStdio {
 					this.autoAnswer(process, msg);
 				}
 			},
-			kill: async () => undefined,
+			kill: async (id: string) => { this.killed.push(id); },
 			which: async (command: string) => `/usr/bin/${command}`,
 			sandboxReadFile: async (id: string, path: string) => {
 				this.brokered.push({ op: 'read', id, path });
@@ -759,6 +761,27 @@ suite('ACP provider sandbox', () => {
 		await again.done;
 		assert.ok(kinds(again.events).includes('notice:Sandbox kept config changes in this chat'), kinds(again.events).join(', '));
 		await env.provider.dispose(handle);
+	});
+
+	test('closing a session right after its turn lets that turn\'s config overlay merge finish first', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const env = setup();
+		let finish: ((result: { applied: string[]; dropped: string[] }) => void) | undefined;
+		env.agent.stateSync = () => new Promise(resolve => finish = resolve);
+		const handle = await env.provider.start(request(SANDBOXED));
+		const cts = store.add(new CancellationTokenSource());
+		const turn = collect(env.provider.send(handle, { text: 'go', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		const closed = env.provider.dispose(handle);
+		await settle();
+		assert.deepStrictEqual(env.agent.killed, [], 'the process stays until the merge is done');
+		finish!({ applied: [], dropped: [] });
+		await closed;
+		assert.ok((env.agent.killed as readonly string[]).includes('p1'), 'then the session\'s process stops');
 	});
 
 	test('a spawn refused for its sandbox fails the start; nothing runs unconfined', async () => {

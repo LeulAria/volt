@@ -2029,6 +2029,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (live.turn) {
 			this.endTurn(live, live.turn, 'abort');
 		}
+		// A subagent is often closed right after its last turn: let that turn's config merge finish
+		// (it is capped at SANDBOX_STATE_SYNC_WAIT_MS) before the sandbox and its overlay go away.
+		await live.stateSync;
 		await this.stopSession(live);
 	}
 
