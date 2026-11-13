@@ -19,9 +19,9 @@ Debug, sketch, design, review and commit with them in one window. MIT licensed, 
 
 <br />
 
-<a href="docs/assets/readme/volt-demo.mp4"><img src="docs/assets/readme/volt-demo.gif" alt="Volt demo: three agents run in parallel, a breakpoint pauses on a checkout bug, an agent fixes it, then a Scratch architecture sketch, a mobile design on the canvas, a commit chart, the turn review, draft commits and the automations calendar" width="100%" /></a>
+<a href="docs/assets/readme/volt-demo.mp4"><img src="docs/assets/readme/volt-demo.gif" alt="Volt demo: three agents run in parallel, a breakpoint pauses on a checkout bug, an agent fixes it, then a Scratch architecture sketch, a mobile design on the canvas, a commit chart, the turn review, draft commits, the automations calendar and a workflow graph running in simulation" width="100%" /></a>
 
-<sub>A real session, sped up: three agents in parallel, a breakpoint, a fix, Scratch, the design canvas, charts, turn review, draft commits and automations. **[Watch the full demo (1:50)](docs/assets/readme/volt-demo.mp4)**</sub>
+<sub>A real session, sped up: three agents in parallel, a breakpoint, a fix, Scratch, the design canvas, charts, turn review, draft commits, automations and workflows. **[Watch the full demo (2:15)](docs/assets/readme/volt-demo.mp4)**</sub>
 
 <br />
 
@@ -80,7 +80,7 @@ macOS is the platform Volt is developed and tested on; Windows and Linux builds 
 | **Charts and diagrams in the chat** | Ask about your data or your repo and get interactive charts and diagrams inline, in your theme's colors. |
 | **Hunk-level review** | Every agent edit is pending until you keep or undo it, hunk by hunk. Review the last turn as one diff, or ask an agent to find issues in it. |
 | **Draft commits** | Volt groups the changes into Conventional Commits; you pick which to keep and commit them in one click. |
-| **Automations** | Agents that run on a schedule or on events from GitHub, Slack, Linear or Sentry, with a day, week and month calendar of their runs. |
+| **Automations and workflows** | Agents that run on a schedule or on events from GitHub, Slack, Linear or Sentry, with a day, week and month calendar of their runs. Chain agents, tests and git steps into a workflow on a canvas, and simulate it before it runs for real. |
 | **Git checkpoints** | Each turn is checkpointed in Git, so you can preview, restore or redo any point in a conversation. |
 | **Built-in browser with an element picker** | The agent can drive the in-app browser. You pick an element or draw an area and say what to change. |
 | **MCP** | Connect MCP servers and agents call them like built-in tools, under the same permissions. |
