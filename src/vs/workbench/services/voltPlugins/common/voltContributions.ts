@@ -203,6 +203,11 @@ export interface IVoltModuleContribution {
 	readonly commands?: readonly string[];
 	/** Setting keys, or prefixes ending in `.`. */
 	readonly settings?: readonly string[];
+	/**
+	 * Capabilities of another feature's gateway tool that are this feature's, as `tool.capability`
+	 * (`ide.http`): while it is off, calls of them are refused and the tool stays.
+	 */
+	readonly toolCapabilities?: readonly string[];
 	readonly entry?: string;
 }
 
@@ -387,6 +392,7 @@ export const VOLT_CONTRIBUTION_SCHEMAS: Readonly<Record<keyof IVoltContributes, 
 			order: { type: 'number' },
 			commands: STRINGS,
 			settings: STRINGS,
+			toolCapabilities: { type: 'array', items: { type: 'string', pattern: '^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_-]*$' } },
 			entry: { type: 'string' },
 		},
 	},

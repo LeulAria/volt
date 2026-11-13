@@ -1108,6 +1108,21 @@ export interface IVoltHostToolOwner {
 	readonly sandboxed?: boolean;
 }
 
+/**
+ * Why a call is refused when its tool, or the gateway capability it names (`ide.http`), belongs
+ * to a feature the user turned off (`setDisabledTools`); undefined when it isn't.
+ */
+export function disabledToolCallRefusal(disabled: ReadonlySet<string>, name: string, args: Readonly<Record<string, unknown>>): string | undefined {
+	if (disabled.has(name)) {
+		return `${name} belongs to a Volt feature the user turned off (Capabilities or Extensions). Do not call it again in this chat.`;
+	}
+	const capability = typeof args.capability === 'string' ? args.capability.trim() : '';
+	if (capability && disabled.has(`${name}.${capability}`)) {
+		return `${name} ${capability} belongs to a Volt feature the user turned off (Capabilities or Extensions), so nothing was run. Do not use ${name} ${capability} again in this chat.`;
+	}
+	return undefined;
+}
+
 /** The features (`VOLT_FEATURES` ids) the user turned off, by where the choice was made. */
 export interface IVoltFeatureEnablementMirror {
 	/** Disabled for every window (the extension is disabled globally). */
@@ -1128,7 +1143,9 @@ export interface IVoltHostToolService {
 	registerToolProvider(provider: IVoltHostToolProvider): IDisposable;
 	/**
 	 * Tools of the Volt features the user turned off (their built-in extensions are disabled): left
-	 * out of the list agents get and refused if called anyway.
+	 * out of the list agents get and refused if called anyway. A `tool.capability` entry (`ide.http`)
+	 * is one capability of a gateway tool another feature serves: the tool stays listed and calls of
+	 * that capability are refused. Refused before the sandbox gate, so every chat gets the same answer.
 	 */
 	setDisabledTools(names: Iterable<string>): void;
 	/**

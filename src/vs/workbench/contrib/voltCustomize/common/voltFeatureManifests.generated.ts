@@ -849,6 +849,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 				icon: 'send',
 				order: 25,
 				commands: ['volt.http.openInTools', 'volt.http.newRequest', 'volt.http.selectEnvironment', 'volt.http.refresh'],
+				toolCapabilities: ['ide.http'],
 			},
 		},
 	},

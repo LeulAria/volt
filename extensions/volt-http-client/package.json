@@ -35,6 +35,9 @@
 				"volt.http.newRequest",
 				"volt.http.selectEnvironment",
 				"volt.http.refresh"
+			],
+			"toolCapabilities": [
+				"ide.http"
 			]
 		},
 		"voltSurfaces": [

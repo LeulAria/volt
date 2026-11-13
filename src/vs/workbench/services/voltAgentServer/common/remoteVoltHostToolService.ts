@@ -7,7 +7,7 @@ import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
-import { IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFeatureEnablementMirror, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../voltRuntime/common/hostTools.js';
+import { disabledToolCallRefusal, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFeatureEnablementMirror, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../voltRuntime/common/hostTools.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { VoltMode } from '../../voltRuntime/common/modes.js';
 import { withSandboxPathRules } from '../../voltRuntime/common/sandboxPathRules.js';
@@ -197,6 +197,11 @@ export class RemoteVoltHostToolService extends Disposable implements IVoltHostTo
 
 	/** The server runs a tool one of this window's providers serves. */
 	private async invokeLocal(name: string, args: unknown, call: IRemoteHostToolCall | undefined): Promise<IVoltHostToolResult> {
+		// The server refuses these first; a server that has not heard yet is refused here too.
+		const off = disabledToolCallRefusal(this.disabledTools, name, asRecord(args));
+		if (off) {
+			return { error: off };
+		}
 		const provider = this.providerFor(name);
 		if (!provider) {
 			return { error: `This Volt window no longer serves ${name}.` };

@@ -11,6 +11,7 @@ import { CODE_INTELLIGENCE_TOOLS } from '../../../services/voltRuntime/common/co
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from '../../../services/voltRuntime/common/deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from '../../../services/voltRuntime/common/desktopTools.js';
 import { ASK_QUESTION_TOOL_NAME, AUTOMATION_TOOL_NAMES, AWAIT_ANSWERS_TOOL_NAME, BROWSER_DESIGN_TOOL_NAMES, BROWSER_TOOL_NAMES, COMMIT_PLAN_TOOL_NAMES, IMAGE_INSPECT_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, THREAD_TOOL_NAMES, VISUAL_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
+import { IDE_GATEWAY_TOOL_NAME } from '../../../services/voltRuntime/common/ide/ideCapabilities.js';
 import { IDE_TOOL_NAMES } from '../../../services/voltRuntime/common/ide/ideTools.js';
 import { JOB_WATCH_TOOL_NAMES } from '../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { MEMORY_TOOL_NAMES } from '../../../services/voltRuntime/common/memory/voltMemory.js';
@@ -78,6 +79,11 @@ export interface IVoltFeature {
 	/** `volt.usage`: the built-in extension that carries it. None: core, always on. */
 	readonly extensionId?: string;
 	readonly tools?: readonly string[];
+	/**
+	 * Capabilities of another feature's gateway tool that are this feature's, as `tool.capability`
+	 * (`ide.http`): while it is off the tool stays and calls of the capability are refused.
+	 */
+	readonly toolCapabilities?: readonly string[];
 	readonly commands?: readonly string[];
 	/** Setting keys, or prefixes ending in `.`. */
 	readonly settings?: readonly string[];
@@ -257,6 +263,8 @@ export const VOLT_FEATURES_HAND_WRITTEN: readonly IVoltFeature[] = [
 	{
 		id: 'httpClient', label: 'HTTP client', category: 'tools', icon: 'send', extensionId: 'volt.http-client',
 		description: 'Send and save requests in .http files and read the responses, from the right panel\'s + menu.',
+		// Agents reach it through the Dev environment's ide gateway.
+		toolCapabilities: [`${IDE_GATEWAY_TOOL_NAME}.http`],
 		commands: ['volt.http.openInTools', 'volt.http.newRequest', 'volt.http.selectEnvironment', 'volt.http.refresh'],
 		surfaces: ['http'],
 	},
@@ -376,6 +384,7 @@ export function voltFeatureFromManifest(manifest: IVoltPluginManifest): IVoltFea
 		...(tools ? { tools } : {}),
 		...(voltModule.commands ? { commands: [...voltModule.commands] } : {}),
 		...(voltModule.settings ? { settings: [...voltModule.settings] } : {}),
+		...(voltModule.toolCapabilities ? { toolCapabilities: [...voltModule.toolCapabilities] } : {}),
 		...(items ? { items: items.ids } : {}),
 		...(sections ? { sections: sections.ids } : {}),
 		...(surfaces ? { surfaces: surfaces.ids } : {}),
@@ -453,6 +462,15 @@ export function voltFeature(id: string): IVoltFeature | undefined {
 
 export function voltFeatureSettingMatches(feature: IVoltFeature, key: string): boolean {
 	return !!feature.settings?.some(setting => setting.endsWith('.') ? key.startsWith(setting) : key === setting);
+}
+
+/**
+ * What `IVoltHostToolService.setDisabledTools` takes while these features are off: their tools and
+ * their gateway capabilities. The window and the agent server both use it, so every chat, sandboxed
+ * or not, in either place, is refused the same calls.
+ */
+export function voltFeatureDisabledTools(off: readonly IVoltFeature[]): string[] {
+	return off.flatMap(feature => [...feature.tools ?? [], ...feature.toolCapabilities ?? []]);
 }
 
 /** `voltFeature.<id>`: the context key `IVoltFeatureService` keeps true while the feature is on. */
