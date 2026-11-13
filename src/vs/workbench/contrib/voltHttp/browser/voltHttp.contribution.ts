@@ -28,6 +28,9 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { parseHttpFile } from '../../../services/voltRuntime/common/ide/httpFile.js';
 import { openInAgentTools } from '../../voltAgent/browser/workspace/agentSurfaceHost.js';
 import { OPEN_HTTP_IN_TOOLS_COMMAND_ID } from '../../voltAgent/browser/workspace/agentSurfaceMenu.js';
+import { closeEditorsWhenVoltFeatureOff } from '../../voltCustomize/browser/voltFeatureEditors.js';
+import { IVoltFeatureService, voltFeatureOn, whileVoltFeatureOn } from '../../voltCustomize/common/voltFeatures.js';
+import { HTTP_CLIENT_FEATURE_ID } from '../common/voltHttp.js';
 import { draftFromSpec, VOLT_HTTP_EDITOR_ID, VOLT_HTTP_INPUT_ID, VoltHttpRequestEditor, VoltHttpRequestInput, VoltHttpRequestInputSerializer } from './voltHttpEditor.js';
 import { IVoltHttpService } from './voltHttpService.js';
 import { OPEN_HTTP_EXCHANGE_COMMAND_ID, OPEN_HTTP_REQUEST_COMMAND_ID, VOLT_HTTP_HISTORY_VIEW_ID, VOLT_HTTP_REQUESTS_VIEW_ID, VOLT_HTTP_VIEW_CONTAINER_ID, VoltHttpHistoryView, VoltHttpRequestsView } from './voltHttpViews.js';
@@ -54,15 +57,25 @@ const container = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContai
 	order: 20,
 	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [VOLT_HTTP_VIEW_CONTAINER_ID, { mergeViewWithContainerWhenSingleView: false }]),
 	storageId: VOLT_HTTP_VIEW_CONTAINER_ID,
-	hideIfEmpty: false,
+	// Its views go while the HTTP client feature is off, and the container with them.
+	hideIfEmpty: true,
 }, ViewContainerLocation.Sidebar);
+const httpClientOn = voltFeatureOn(HTTP_CLIENT_FEATURE_ID);
 Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([
-	{ id: VOLT_HTTP_REQUESTS_VIEW_ID, name: localize2('voltHttp.requests', "Requests"), ctorDescriptor: new SyncDescriptor(VoltHttpRequestsView), canToggleVisibility: true, canMoveView: true, order: 1 },
-	{ id: VOLT_HTTP_HISTORY_VIEW_ID, name: localize2('voltHttp.history', "History"), ctorDescriptor: new SyncDescriptor(VoltHttpHistoryView), canToggleVisibility: true, canMoveView: true, order: 2 },
+	{ id: VOLT_HTTP_REQUESTS_VIEW_ID, name: localize2('voltHttp.requests', "Requests"), ctorDescriptor: new SyncDescriptor(VoltHttpRequestsView), canToggleVisibility: true, canMoveView: true, order: 1, when: httpClientOn },
+	{ id: VOLT_HTTP_HISTORY_VIEW_ID, name: localize2('voltHttp.history', "History"), ctorDescriptor: new SyncDescriptor(VoltHttpHistoryView), canToggleVisibility: true, canMoveView: true, order: 2, when: httpClientOn },
 ], container);
+
+/** Whether the HTTP client feature (`volt.http-client`) is on; off, nothing opens a request tab. */
+function httpClientEnabled(accessor: ServicesAccessor): boolean {
+	return accessor.getIfExists(IVoltFeatureService)?.isEnabled(HTTP_CLIENT_FEATURE_ID) !== false;
+}
 
 /** Opens a request beside the chat when an agent window is in front, else in the editor. */
 async function openRequest(accessor: ServicesAccessor, input: VoltHttpRequestInput, sessionId?: string): Promise<void> {
+	if (!httpClientEnabled(accessor)) {
+		return;
+	}
 	const editorService = accessor.get(IEditorService);
 	const existing = editorService.editors.find(editor => editor instanceof VoltHttpRequestInput && editor.matches(input));
 	const target = (existing as VoltHttpRequestInput | undefined) ?? input;
@@ -99,6 +112,7 @@ registerAction2(class extends Action2 {
 			category: localize2('voltHttp.category', "HTTP Client"),
 			icon: Codicon.add,
 			f1: true,
+			precondition: httpClientOn,
 			menu: [{ id: MenuId.ViewTitle, when: ContextKeyExpr.equals('view', VOLT_HTTP_REQUESTS_VIEW_ID), group: 'navigation', order: 1 }],
 		});
 	}
@@ -173,6 +187,7 @@ registerAction2(class extends Action2 {
 			category: localize2('voltHttp.category', "HTTP Client"),
 			icon: Codicon.symbolVariable,
 			f1: true,
+			precondition: httpClientOn,
 			menu: [{ id: MenuId.ViewTitle, when: ContextKeyExpr.equals('view', VOLT_HTTP_REQUESTS_VIEW_ID), group: 'navigation', order: 2 }],
 		});
 	}
@@ -204,12 +219,13 @@ registerAction2(class extends Action2 {
 	}
 });
 
-/** "Send Request | Open in HTTP Client" above every request in a .http file. */
-class HttpCodeLens extends Disposable implements IWorkbenchContribution {
+/** "Send Request | Open in HTTP Client" above every request in a .http file, while the feature is on. */
+export class HttpCodeLens extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.voltHttpCodeLens';
-	constructor(@ILanguageFeaturesService languageFeatures: ILanguageFeaturesService) {
+	constructor(@ILanguageFeaturesService languageFeatures: ILanguageFeaturesService, @IVoltFeatureService features: IVoltFeatureService) {
 		super();
-		this._register(languageFeatures.codeLensProvider.register({ language: 'http' }, {
+		// Registering and removing the provider makes open editors ask again.
+		this._register(whileVoltFeatureOn(features, HTTP_CLIENT_FEATURE_ID, () => languageFeatures.codeLensProvider.register({ language: 'http' }, {
 			provideCodeLenses: (model: ITextModel, _token: CancellationToken): CodeLensList => {
 				const lenses: CodeLens[] = [];
 				for (const request of parseHttpFile(model.getValue()).requests) {
@@ -221,8 +237,19 @@ class HttpCodeLens extends Disposable implements IWorkbenchContribution {
 				}
 				return { lenses, dispose: () => { } };
 			},
-		}));
+		})));
 	}
 }
 
 registerWorkbenchContribution2(HttpCodeLens.ID, HttpCodeLens, WorkbenchPhase.Eventually);
+
+/** The request tabs close when the HTTP client is turned off; saved ones aren't restored while it is (the serializer). */
+export class HttpRequestTabs extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltHttpRequestTabs';
+	constructor(@IVoltFeatureService features: IVoltFeatureService, @IEditorService editorService: IEditorService) {
+		super();
+		this._register(closeEditorsWhenVoltFeatureOff(features, HTTP_CLIENT_FEATURE_ID, [VOLT_HTTP_INPUT_ID], editorService));
+	}
+}
+
+registerWorkbenchContribution2(HttpRequestTabs.ID, HttpRequestTabs, WorkbenchPhase.AfterRestored);

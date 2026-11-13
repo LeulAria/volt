@@ -82,7 +82,7 @@ import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
 import { IAgentDevicesService, IDeviceTarget, IHostDevices } from '../devices/agentDevicesService.js';
 import { OPEN_DEVICE_PREVIEW_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
 import { describeDevice } from '../../common/agentDevices.js';
-import { agentMentionBlock, IOrchestraMachine, LOCAL_MACHINE_ID, localMachine, machineMentionBlock, MENTION_COUNCIL_VALUE, MENTION_TEAM_VALUE, runnerMachine } from '../../../../services/voltRuntime/common/orchestration/orchestra.js';
+import { agentMentionBlock, IOrchestraMachine, LOCAL_MACHINE_ID, localMachine, machineMentionBlock, MENTION_COUNCIL_VALUE, MENTION_TEAM_VALUE, ORCHESTRA_FEATURE_ID, runnerMachine } from '../../../../services/voltRuntime/common/orchestration/orchestra.js';
 import { ORCH_MACHINE_CAPACITY_SETTING, parseMachineCapacity } from '../../../../services/voltRuntime/common/orchestration/machineCapacity.js';
 import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
@@ -91,6 +91,7 @@ import { IPathService } from '../../../../services/path/common/pathService.js';
 import { AgentSlashMenu, rankSlashItems } from './agentSlashMenu.js';
 import { AgentSkillHoverCard } from './agentSkillHoverCard.js';
 import { decodeVoltContextDrag, REVEAL_VOLT_PART_COMMAND_ID, VOLT_CONTEXT_MIME, voltPartIdFromContext } from '../../../voltCustomize/common/voltCustomizeContext.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 
 /** `action`: a prompt Volt sent for a button (Generate Draft Commits); the chip stands for it and `value` holds the prompt. */
 export type AgentMentionKind = 'file' | 'folder' | 'terminal' | 'chat' | 'branch' | 'browser' | 'image' | 'video' | 'mcp' | 'selection' | 'skill' | 'scratch' | 'canvas' | 'action' | 'device' | 'machine' | 'agent';
@@ -190,6 +191,11 @@ function toDisplayMention(mention: IAgentMention): IAgentDisplayMention {
 
 export { imageAttachmentsFromMentions, resourceAttachmentsFromMentions, videoFrameName } from './agentMentionImages.js';
 export type { IAgentImageAttachment } from './agentMentionImages.js';
+
+/** @ Agents and @ Machines go with the Orchestra feature's tools while `volt.orchestra` is off. */
+export function orchestraMentionsShown(features: IVoltFeatureService | undefined): boolean {
+	return features?.isEnabled(ORCHESTRA_FEATURE_ID) !== false;
+}
 
 /**
  * `[Image #1 "image.png" is saved at: /path]` for each image in a prompt, a line per video
@@ -2359,12 +2365,14 @@ export class AgentMentionController extends Disposable {
 			};
 		}
 
-		if (view === 'agents') {
+		// Orchestra off (even with its submenu open): the top level, without @ Agents and @ Machines.
+		const orchestraShown = orchestraMentionsShown(this.surfaceService(IVoltFeatureService));
+		if (view === 'agents' && orchestraShown) {
 			const agents = this.agentRows(query);
 			return { kind: 'list', rows: [back, ...(agents.length ? agents : [this.message(query ? localize('voltAgent.mention.noMatchingAgents', "No matching agents") : localize('voltAgent.mention.noAgents', "No agents connected. Sign in to a provider in Settings > Providers."))])] };
 		}
 
-		if (view === 'machines') {
+		if (view === 'machines' && orchestraShown) {
 			const machines = this.machineRows(query);
 			return {
 				kind: 'list', rows: [back, ...(machines.length ? machines : [this.message(this.machines === undefined
@@ -2376,8 +2384,10 @@ export class AgentMentionController extends Disposable {
 		const categories: AgentMentionRow[] = [
 			{ kind: 'item', id: 'files', label: localize('voltAgent.mention.files', "Files & Folders"), icon: Codicon.folder, submenu: true, run: () => this.setMenuView('files') },
 			// Who and where: agents of any provider (and a team or council of them), and the machines work can run on.
-			{ kind: 'item', id: 'agents', label: localize('voltAgent.mention.agents', "Agents"), description: localize('voltAgent.mention.agentsDetail', "Models, a team, a council"), icon: Codicon.hubot, submenu: true, run: () => this.setMenuView('agents') },
-			{ kind: 'item', id: 'machines', label: localize('voltAgent.mention.machines', "Machines"), description: localize('voltAgent.mention.machinesDetail', "Where the work runs"), icon: Codicon.server, submenu: true, run: () => this.openMachinesView() },
+			...(!orchestraShown ? [] : [
+				{ kind: 'item' as const, id: 'agents', label: localize('voltAgent.mention.agents', "Agents"), description: localize('voltAgent.mention.agentsDetail', "Models, a team, a council"), icon: Codicon.hubot, submenu: true, run: () => this.setMenuView('agents') },
+				{ kind: 'item' as const, id: 'machines', label: localize('voltAgent.mention.machines', "Machines"), description: localize('voltAgent.mention.machinesDetail', "Where the work runs"), icon: Codicon.server, submenu: true, run: () => this.openMachinesView() },
+			]),
 			...(this.surfaceService(IAgentDevicesService) ? [{ kind: 'item' as const, id: 'devices', label: localize('voltAgent.mention.devices', "Devices"), icon: Codicon.deviceMobile, submenu: true, run: () => this.openDevicesView() }] : []),
 			{ kind: 'item', id: 'computer', label: THIS_MACHINE, icon: Codicon.deviceDesktop, submenu: true, run: () => this.openComputer(undefined) },
 			{ kind: 'item', id: 'terminals', label: localize('voltAgent.mention.terminals', "Terminals"), icon: Codicon.terminal, submenu: true, run: () => this.setMenuView('terminals') },

@@ -9,7 +9,7 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { fromNow } from '../../../../../base/common/date.js';
-import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -28,6 +28,7 @@ import { ITelemetryService } from '../../../../../platform/telemetry/common/tele
 import { IThemeService } from '../../../../../platform/theme/common/themeService.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../../browser/editor.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
+import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { EditorExtensions, IEditorOpenContext, IUntypedEditorInput } from '../../../../common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorGroup } from '../../../../services/editor/common/editorGroupsService.js';
@@ -35,12 +36,15 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { ITextEditorService } from '../../../../services/textfile/common/textEditorService.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { ideCapability } from '../../../../services/voltRuntime/common/ide/ideCapabilities.js';
+import { DEV_ENVIRONMENT_FEATURE_ID } from '../../../../services/voltRuntime/common/ide/ideTools.js';
 import { IDebugService, REPL_VIEW_ID, VIEWLET_ID as DEBUG_VIEWLET_ID } from '../../../debug/common/debug.js';
 import { Markers } from '../../../markers/common/markers.js';
 import { NotebookEditorInput } from '../../../notebook/common/notebookEditorInput.js';
 import { Testing } from '../../../testing/common/constants.js';
 import { IVoltHttpService } from '../../../voltHttp/browser/voltHttpService.js';
 import { OPEN_HTTP_EXCHANGE_COMMAND_ID } from '../../../voltHttp/browser/voltHttpViews.js';
+import { closeEditorsWhenVoltFeatureOff } from '../../../voltCustomize/browser/voltFeatureEditors.js';
+import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
 import { createVoltButton } from '../chrome/voltButton.js';
 import { openInAgentTools } from '../workspace/agentSurfaceHost.js';
 import { OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
@@ -263,7 +267,8 @@ registerAction2(class extends Action2 {
 	override async run(accessor: ServicesAccessor, request?: IOpenTabRequest): Promise<void> {
 		// Remote connections and the editor capability open nothing: the first changes where the
 		// window runs, the second already shows the user the file it points at.
-		if (!request?.chatId || request.key === 'remote' || request.key === 'editor' || accessor.get(IConfigurationService).getValue<boolean>(IDE_AUTO_OPEN_SETTING) === false) {
+		if (!request?.chatId || request.key === 'remote' || request.key === 'editor' || accessor.get(IConfigurationService).getValue<boolean>(IDE_AUTO_OPEN_SETTING) === false
+			|| accessor.getIfExists(IVoltFeatureService)?.isEnabled(DEV_ENVIRONMENT_FEATURE_ID) === false) {
 			return;
 		}
 		const dismissKey = `${request.chatId}\u0000${request.key}`;
@@ -309,3 +314,14 @@ registerAction2(class extends Action2 {
 		await openBeside(accessor, input, request);
 	}
 });
+
+/** The activity tabs close when the dev environment is turned off (they are not saved, so none come back). */
+export class AgentIdeActivityTabs extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltAgentIdeActivityTabs';
+	constructor(@IVoltFeatureService features: IVoltFeatureService, @IEditorService editorService: IEditorService) {
+		super();
+		this._register(closeEditorsWhenVoltFeatureOff(features, DEV_ENVIRONMENT_FEATURE_ID, [INPUT_ID], editorService));
+	}
+}
+
+registerWorkbenchContribution2(AgentIdeActivityTabs.ID, AgentIdeActivityTabs, WorkbenchPhase.AfterRestored);

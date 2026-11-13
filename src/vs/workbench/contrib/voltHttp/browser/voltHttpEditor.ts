@@ -39,6 +39,8 @@ import { HTTP_METHODS, IHttpRequestSpec } from '../../../services/voltRuntime/co
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
+import { IVoltFeatureService } from '../../voltCustomize/common/voltFeatures.js';
+import { HTTP_CLIENT_FEATURE_ID } from '../common/voltHttp.js';
 import { IHttpExchange, IVoltHttpService } from './voltHttpService.js';
 
 export const VOLT_HTTP_EDITOR_ID = 'workbench.editor.voltHttpRequest';
@@ -242,7 +244,11 @@ export class VoltHttpRequestInputSerializer implements IEditorSerializer {
 	serialize(input: EditorInput): string | undefined {
 		return input instanceof VoltHttpRequestInput ? JSON.stringify({ draft: input.draft, source: input.source ? { uri: input.source.uri.toString(), line: input.source.line } : undefined }) : undefined;
 	}
-	deserialize(_instantiationService: IInstantiationService, raw: string): EditorInput | undefined {
+	deserialize(instantiationService: IInstantiationService, raw: string): EditorInput | undefined {
+		// A tab saved in a chat's tools comes back when that chat is shown: not while the HTTP client is off.
+		if (instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltFeatureService))?.isEnabled(HTTP_CLIENT_FEATURE_ID) === false) {
+			return undefined;
+		}
 		try {
 			const data = JSON.parse(raw) as { draft: IHttpDraft; source?: { uri: string; line: number } };
 			return new VoltHttpRequestInput({ ...emptyDraft(), ...data.draft }, data.source ? { uri: URI.parse(data.source.uri), line: data.source.line } : undefined);

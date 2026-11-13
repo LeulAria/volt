@@ -19,7 +19,7 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { HOST_MCP_TOKEN_RENEW_MS, hostMcpSessionToken, IHostMcpLease, newHostMcpLease } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFlowGrantStore, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolOwner, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, disabledToolCallRefusal, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFlowGrantStore, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolOwner, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
 import { hostToolSandboxUse, IHostToolSandboxUse, isSandboxed, ISandboxPathContext, legacyHostToolRefusal, legacySandboxCovers, readTargets, sandboxBrowserUrlRefusal, sandboxReachRefusal, sandboxRefusalMessage } from '../../common/hostToolSandbox.js';
 import { HostToolAuthority, IGateChat, IPolicyShadowDiff, PolicyAuthorityMode } from '../../common/hostToolAuthority.js';
 import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
@@ -144,15 +144,18 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 	}
 
 	private async run(name: string, args: Record<string, unknown>, requested: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
+		// A turned-off feature's tool first, before anything is looked up for the sandbox: a sandboxed
+		// chat gets the same answer as any other, never a sandbox refusal or prompt for it.
+		const off = disabledToolCallRefusal(this.disabledTools, name, args);
+		if (off) {
+			return { error: off };
+		}
 		// Calls over MCP carry no folder: a chat's tools work in its worktree or project.
 		const located = requested?.sessionId && !requested.cwd ? { ...requested, cwd: this.sessions?.cwd(requested.sessionId) } : requested;
 		// The native loop's calls carry no sandbox (MCP calls carry the one their session token names): Volt's record of the chat's counts.
 		const sandboxed = located?.source === 'native' && located.sessionId && !located.sandbox && this.sandboxes ? { ...located, sandbox: this.sandboxes.settings(located.sessionId) } : located;
 		// A sandboxed chat's providers get the gate's read and write rules, for files they find rather than files named (search results, a rename's other files).
 		const call = sandboxed && isSandboxed(sandboxed.sandbox) ? await this.withPathRules(sandboxed, sandboxed.sandbox) : sandboxed;
-		if (this.disabledTools.has(name)) {
-			return { error: `${name} belongs to a Volt feature the user turned off (Capabilities or Extensions). Do not call it again in this chat.` };
-		}
 		const confined = await this.checkSandbox(name, args, call);
 		if (confined) {
 			return confined;

@@ -15,6 +15,12 @@ import { IDE_GATEWAY_SCHEMA, IDE_GATEWAY_TOOL_NAME, ideGatewayDescription, isIde
  * call (a debugger step returns where it stopped and the locals there).
  */
 
+/**
+ * `voltModule.feature` of `extensions/volt-dev-environment`: off, these tools, the Testing view's
+ * Volt tests and the Agent Sessions view go away.
+ */
+export const DEV_ENVIRONMENT_FEATURE_ID = 'devEnvironment';
+
 export const TESTS_TOOL_NAME = 'tests';
 export const DEBUG_TOOL_NAME = 'debug';
 export const TASKS_TOOL_NAME = 'tasks';
