@@ -19,11 +19,11 @@ import { subagentProfile, VoltSubagentProfile } from '../providers.js';
 /** Appended to Claude Code's own system prompt for the main agent. */
 export const CLAUDE_MAIN_RULES = [
 	'# Working in Volt',
-	'- Batch: put every independent tool call of a step in one message (all the reads you need, independent searches, edits to different files). One call per message is the slowest way to work.',
-	'- Read and change files with Read, Edit, Write, Grep and Glob; keep Bash for commands (tests, builds, git). Volt tracks and shows changes made with Edit and Write; sed or script rewrites are invisible to it.',
-	'- Wait for a long command by running it in the background and reading its output when you need it, not with sleep or until loops.',
-	'- When you hand work to subagents: give each one the files to change and what to change in each (paths, symbols, facts you already found) so it starts editing at once instead of exploring again, and start independent subagents together in one message.',
-	'- Tasks (TaskCreate/TaskUpdate) show in the user\'s Tasks card. Mark a task in_progress when you start it and completed as soon as it is done, not all at the end. Before you end a turn, every task is completed, deleted (status "deleted") if it no longer applies, or left open only because it waits on the user. When the user moves on to unrelated work, delete the old leftover tasks first.',
+	'- Batch: every independent tool call of a step goes in one message (reads, searches, edits to different files). One call per message is the slowest way to work.',
+	'- Read and change files with Read, Edit, Write, Grep and Glob; Bash is for commands (tests, builds, git). Volt shows changes made with Edit and Write; sed or script rewrites are invisible to it.',
+	'- Wait for a long command by running it in the background and reading its output later, not with sleep or until loops.',
+	'- Subagents: give each one the files and what to change in each (paths, symbols, facts you found) so it edits at once instead of exploring again; start independent ones together.',
+	'- Tasks (TaskCreate/TaskUpdate) show in the user\'s Tasks card: mark one in_progress when you start it and completed as soon as it is done. Before you end a turn every task is completed, deleted (status "deleted") if it no longer applies, or open only because it waits on the user. When the user moves on to other work, delete leftover tasks first.',
 ].join('\n');
 
 /** Why the Stop hook keeps a turn going: sent to Claude as the reason. No single quotes (see {@link stopHookCommand}). */
@@ -101,6 +101,20 @@ export const CLAUDE_SUBAGENT_DISALLOWED_TOOLS: readonly string[] = [
 	'RemoteTrigger', 'PushNotification', 'DesignSync', 'EnterWorktree', 'ExitWorktree', 'SendMessage',
 ];
 
+/**
+ * Off for the main agent when its session has Volt's MCP server: `AskUserQuestion`'s schema is ~1.8k
+ * tokens in every request (measured 2026-11-13), and Volt's `ask_question` (deferred, loaded with
+ * ToolSearch when the agent needs to ask) puts the same multiple-choice questions in the same tray.
+ */
+export const CLAUDE_MAIN_DISALLOWED_TOOLS: readonly string[] = ['AskUserQuestion'];
+
+/**
+ * Added to {@link CLAUDE_MAIN_RULES} when AskUserQuestion is off: without a line naming it, Haiku 5.5
+ * wrote the options into its reply instead of loading the deferred ask_question (0 of 3 runs asked
+ * through the tray where AskUserQuestion did 3 of 3, capability check 2026-11-13).
+ */
+export const CLAUDE_MAIN_ASK_RULE = '- To ask the user to choose (requirements, preferences, trade-offs), load Volt\'s ask_question (ToolSearch "select:mcp__volt__ask_question") and ask with it instead of writing the options into your reply.';
+
 /** Also off for a read-only subagent: it changes no files (Volt's sandbox and plan mode hold it to that too). */
 export const CLAUDE_READONLY_SUBAGENT_DISALLOWED_TOOLS: readonly string[] = ['Edit', 'Write', 'NotebookEdit'];
 
@@ -113,6 +127,28 @@ export const CLAUDE_SUBAGENT_PLAN_MODE = 'This is a read-only task another agent
 
 /** A subagent's chat is named after its task by Volt, so Claude Code's own title request is skipped. */
 export const CLAUDE_SUBAGENT_SESSION_TITLE = 'Volt subagent';
+
+/**
+ * Volt names every chat itself (titleGeneration.ts), so a Claude Code session gets a fixed title and
+ * skips its own: without one, Claude Code asks Haiku to name each new session from its first
+ * message (1.2k-3.5k tokens, measured 2026-11-13), also for Volt's title and prediction sessions.
+ * The adapter reports it back as the session's title; Volt ignores it ({@link isClaudePlaceholderTitle}).
+ */
+export const CLAUDE_SESSION_TITLE = 'Volt chat';
+
+/** A title Volt gave a Claude Code session itself, not one worth showing. */
+export function isClaudePlaceholderTitle(title: string): boolean {
+	return title === CLAUDE_SESSION_TITLE || title === CLAUDE_SUBAGENT_SESSION_TITLE;
+}
+
+/**
+ * Options every Claude Code session Volt starts gets:
+ * - `promptSuggestions: false`: the adapter turns on Claude Code's predicted next prompt, a forked
+ *   model call after every turn but the first (the whole context again plus ~300 tokens). Volt
+ *   never shows it (its composer predicts on its own), and in Volt's long-lived prediction
+ *   session it ran after every prediction (3.4k tokens each, measured 2026-11-13).
+ */
+export const CLAUDE_SESSION_OPTIONS = { promptSuggestions: false } as const;
 
 /** Appended to Claude Code's prompt for a subagent that changes files: the main rules without the user-facing parts (Tasks card, handing work on). */
 export const CLAUDE_WORK_SUBAGENT_RULES = [
@@ -151,25 +187,27 @@ export const CLAUDE_READONLY_SUBAGENT_PROMPT = [
  * A Volt subagent's session (`subagent`) also starts lean (see {@link CLAUDE_SUBAGENT_SESSION_SETTINGS}),
  * and a read-only one on {@link CLAUDE_READONLY_SUBAGENT_PROMPT} with only Volt's MCP server
  * (`strictMcpConfig`: no user or claude.ai servers). Kept identical across sessions so a resumed
- * session is not rebuilt for a changed fingerprint.
+ * session is not rebuilt for a changed fingerprint. `voltAsks`: the session has Volt's ask_question,
+ * so the main agent goes without Claude Code's own (see {@link CLAUDE_MAIN_DISALLOWED_TOOLS}).
  */
-export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?: boolean | VoltSubagentProfile }): Record<string, unknown> {
+export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?: boolean | VoltSubagentProfile; readonly voltAsks?: boolean }): Record<string, unknown> {
 	const subagent = subagentProfile(opts?.subagent);
 	const systemPrompt = subagent === 'readonly'
 		? CLAUDE_READONLY_SUBAGENT_PROMPT
-		: { type: 'preset', preset: 'claude_code', append: subagent ? CLAUDE_WORK_SUBAGENT_RULES : CLAUDE_MAIN_RULES };
+		: { type: 'preset', preset: 'claude_code', append: subagent ? CLAUDE_WORK_SUBAGENT_RULES : opts?.voltAsks ? `${CLAUDE_MAIN_RULES}\n${CLAUDE_MAIN_ASK_RULE}` : CLAUDE_MAIN_RULES };
 	return {
 		systemPrompt,
 		claudeCode: {
 			options: {
 				// The exact model: the adapter's picker takes only its aliases (default, sonnet, haiku, ...).
 				...(model ? { model } : {}),
+				...CLAUDE_SESSION_OPTIONS,
 				...(subagent ? {
 					disallowedTools: [...CLAUDE_SUBAGENT_DISALLOWED_TOOLS, ...(subagent === 'readonly' ? CLAUDE_READONLY_SUBAGENT_DISALLOWED_TOOLS : [])],
 					planModeInstructions: CLAUDE_SUBAGENT_PLAN_MODE,
 					title: CLAUDE_SUBAGENT_SESSION_TITLE,
 					...(subagent === 'readonly' ? { strictMcpConfig: true } : {}),
-				} : {}),
+				} : { title: CLAUDE_SESSION_TITLE, ...(opts?.voltAsks ? { disallowedTools: [...CLAUDE_MAIN_DISALLOWED_TOOLS] } : {}) }),
 				settings: {
 					...(subagent ? CLAUDE_SUBAGENT_SESSION_SETTINGS : {}),
 					hooks: {

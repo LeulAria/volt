@@ -57,8 +57,9 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: TESTS_TOOL_NAME,
 		title: 'Tests',
 		group: 'ide',
-		// In the prompt, not behind Claude Code's tool search: deferred, agents picked them 1 run in 13.
-		alwaysLoad: true,
+		// Behind Claude Code's tool search (~420 tokens in every request otherwise). Agents picked the
+		// deferred IDE tools 1 run in 13 when nothing named them; the IDE guide and the per-request
+		// hint (IDE_WORK_HINTS) name it, and how to load it, on the turns that need it.
 		description: [
 			'The editor\'s test runner (the Testing view: installed test extensions plus Volt\'s runner for vitest, jest, mocha, pytest, go test and cargo test). Runs show live in the Test Explorer for the user.',
 			'op list: frameworks and tests (filter by path or query). op run: runs targets and returns pass/fail counts plus each failure with its message, expected/actual and the stack frames in the workspace;',
@@ -87,7 +88,7 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: DEBUG_TOOL_NAME,
 		title: 'Debugger',
 		group: 'ide',
-		alwaysLoad: true,
+		// Rarely needed and ~1.5k tokens: behind tool search, named in the server instructions.
 		description: [
 			'The editor\'s debugger (Debug Adapter Protocol: Node/JS/TS built in, Python, Go and others through their extensions). The user watches the session in the Run and Debug view.',
 			'op start: launch a debug session from a launch.json config (config), a file (program), or a shell command whose Node processes are debugged (command, e.g. "npm test"); breakpoints set first; waits until it pauses or ends.',
@@ -155,7 +156,7 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: IDE_GATEWAY_TOOL_NAME,
 		title: 'IDE',
 		group: 'ide',
-		alwaysLoad: true,
+		// ~1k tokens: behind tool search, named in the server instructions and the IDE lead.
 		description: ideGatewayDescription(),
 		inputSchema: IDE_GATEWAY_SCHEMA,
 		approvalInReadOnlyModes: 'acts on the workspace or its services',

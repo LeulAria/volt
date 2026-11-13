@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, CODE_QUESTIONS, IDE_TOOLS_GUIDE, IDE_TOOLS_GUIDE_SANDBOXED, IDE_WORK_HINTS, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
+import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, CODE_QUESTIONS, IDE_TOOLS_GUIDE, IDE_TOOLS_GUIDE_SANDBOXED, IDE_WORK_HINTS, LOAD_DEFERRED, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 
 suite('Volt context pack', () => {
@@ -90,6 +90,23 @@ suite('Volt context pack', () => {
 			runPlan: { kind: 'static', start: 'python3 -m http.server 8080' },
 		});
 		assert.ok(!/http\.server/.test(prompt));
+	});
+
+	test('small talk gets no lead: nothing to frame, chart or keep in the workspace; the mode contract stays', () => {
+		for (const text of ['hi', 'thanks!', 'ok']) {
+			const intent = classifyIntent(text, 'agent', { hasWorkspace: true });
+			assert.strictEqual(intent.smallTalk, true, text);
+			assert.strictEqual(buildAcpLead({ mode: 'agent', intent, visuals: true }), undefined, text);
+		}
+		const plan = buildAcpLead({ mode: 'plan', intent: classifyIntent('ok', 'plan', { hasWorkspace: true }), visuals: true });
+		assert.ok(plan?.startsWith('[Volt mode: plan]'), plan);
+		for (const text of ['what is 2+2', 'nissan kicks 2026 price dubai', 'explain the auth flow']) {
+			const intent = classifyIntent(text, 'agent', { hasWorkspace: true });
+			assert.ok(!intent.smallTalk, text);
+			const lead = buildAcpLead({ mode: 'agent', intent, visuals: true });
+			assert.ok(lead?.includes(WORKSPACE_SCOPE) && lead.includes(VISUAL_REPLIES), text);
+		}
+		assert.ok(!classifyIntent('thanks', 'agent', { hasWorkspace: true, priorLane: 'agent' }).smallTalk, 'a follow-up in coding work keeps its lane and lead');
 	});
 
 	test('building from a design image adds the render-and-compare loop, except in read-only modes', () => {
@@ -221,10 +238,13 @@ suite('Volt context pack', () => {
 	test('a question about the code gets the code-intelligence hint, a plain question does not', () => {
 		const code = classifyIntent('Which classes inject FolioService through their constructor?', 'agent');
 		assert.strictEqual(code.lane, 'chat');
-		assert.ok(buildAcpLead({ mode: 'agent', intent: code, codeIndexed: true, ideTools: true })?.includes(CODE_QUESTIONS));
+		const lead = buildAcpLead({ mode: 'agent', intent: code, codeIndexed: true, ideTools: true }) ?? '';
+		assert.ok(lead.includes(CODE_QUESTIONS));
+		assert.ok(lead.includes(LOAD_DEFERRED), 'the volt tools are deferred: the hint says how to load them');
 		assert.ok(!buildAcpLead({ mode: 'agent', intent: code })?.includes(CODE_QUESTIONS));
 		const plain = classifyIntent('how much is nissan kicks in UAE', 'agent');
-		assert.ok(!buildAcpLead({ mode: 'agent', intent: plain, codeIndexed: true, ideTools: true })?.includes(CODE_QUESTIONS));
+		const plainLead = buildAcpLead({ mode: 'agent', intent: plain, codeIndexed: true, ideTools: true }) ?? '';
+		assert.ok(!plainLead.includes(CODE_QUESTIONS) && !plainLead.includes(LOAD_DEFERRED));
 	});
 	test('a sandboxed chat is told what of the IDE runs inside its sandbox and what asks first', () => {
 		const intent = classifyIntent('add a retry to the payment webhook handler and run its tests', 'agent');
@@ -249,5 +269,11 @@ suite('Volt context pack', () => {
 		assert.deepStrictEqual(hints('Which oRPC procedures reach resolveBookingStayRent?'), []);
 		assert.deepStrictEqual(hints('why does the container keep restarting?', 'ask'), [], 'Ask mode runs nothing');
 		assert.ok(!(buildAcpLead({ mode: 'agent', intent: classifyIntent('scripts/slow.mjs is slow', 'agent') }) ?? '').includes(IDE_WORK_HINTS.profile), 'not without the volt MCP server');
+		// How to load a deferred volt tool: once, from the IDE guide in the code lanes, or from its own line.
+		const chatLead = buildAcpLead({ mode: 'agent', intent: classifyIntent('The flaky container from docker-compose.yml keeps restarting. Why?', 'agent'), ideTools: true }) ?? '';
+		assert.ok(chatLead.includes(LOAD_DEFERRED) && !chatLead.includes(IDE_TOOLS_GUIDE));
+		const codeLead = buildAcpLead({ mode: 'agent', intent: classifyIntent('add a retry to the payment webhook handler and run its tests', 'agent'), ideTools: true }) ?? '';
+		assert.ok(codeLead.includes(IDE_WORK_HINTS.tests) && codeLead.includes(IDE_TOOLS_GUIDE) && IDE_TOOLS_GUIDE.includes('ToolSearch'), codeLead);
+		assert.ok(!codeLead.includes(LOAD_DEFERRED), 'said once');
 	});
 });

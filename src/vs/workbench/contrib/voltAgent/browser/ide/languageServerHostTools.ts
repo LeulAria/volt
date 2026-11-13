@@ -28,8 +28,10 @@ import { IVoltHostFileChange, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToo
  * Names: `LANGUAGE_SERVER_TOOL_NAMES`; what they may do for a sandboxed chat: hostToolSandbox.ts.
  */
 const LANGUAGE_SERVER_TOOLS: readonly IVoltHostToolInfo[] = [
-	// Always in the prompt: behind Claude Code's tool search it went unused (02-code-intelligence.md).
-	{ name: 'code_nav', title: 'Navigated code', group: 'core', description: CODE_NAV_DESCRIPTION, inputSchema: CODE_NAV_SCHEMA, alwaysLoad: true },
+	// Behind Claude Code's tool search (~480 tokens in every request otherwise). It went unused there
+	// while the lead named it only loosely (02-code-intelligence.md); the IDE guide and CODE_QUESTIONS
+	// now give its exact name and how to load it on the turns about the code.
+	{ name: 'code_nav', title: 'Navigated code', group: 'core', description: CODE_NAV_DESCRIPTION, inputSchema: CODE_NAV_SCHEMA },
 	{ name: 'diagnostics', title: 'Read diagnostics', group: 'core', description: DIAGNOSTICS_DESCRIPTION, inputSchema: DIAGNOSTICS_SCHEMA },
 	{ name: 'code_action', title: 'Refactored code', group: 'core', description: CODE_ACTION_DESCRIPTION, inputSchema: CODE_ACTION_SCHEMA, approvalInReadOnlyModes: 'changes files' },
 ];

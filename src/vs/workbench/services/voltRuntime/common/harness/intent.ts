@@ -53,6 +53,8 @@ export interface IIntent {
 	readonly wantsGit?: boolean;
 	/** IDE tools that fit the request (a failing test, slowness, an .http file, a container, a database): one hint line each. */
 	readonly ideWork?: readonly IdeWork[];
+	/** A greeting or acknowledgement ("hi", "thanks", "ok"): a few words, no question, nothing to look up or change. */
+	readonly smallTalk?: boolean;
 }
 
 export type IdeWork = 'tests' | 'debug' | 'profile' | 'http' | 'docker' | 'db' | 'notebook' | 'rename';
@@ -171,6 +173,9 @@ const SCREENS_INTENT = /\b(?:(?:all|every|each) (?:of )?(?:the |our |my )?(?:app
 const VISUAL_EXPLANATION = /\b(?:explain|show|teach|illustrate|walk (?:me|us) through|help (?:me|us) understand|break down)\b[^.?!]{0,80}?\bvisual(?:ly)?\b|\bvisual(?:ly)?\s+(?:explain|show|illustrate|compare|break down)\b/gi;
 const UI_WORK = /\b(?:buttons?|click(?:ing|s)?|pages?|layout|ui|ux|css|styles?|styling|responsive|mobile|phones?|tablet|viewport|overflow|scroll(?:s|ing)? sideways|horizontal scroll|forms?|modal|dialog|dropdown|navbar|nav ?bar|header|footer|widget|component|frontend|front-end|accessib\w*|a11y|contrast|screen ?reader|dark mode|prototype|mock ?ups?|draft|landing page|html|in the browser|e2e|end[- ]to[- ]end|user flow|sign ?up|log ?in|checkout|loading state|empty state|error state|renders?|visual(?:ly)?)\b/i;
 
+/** At most this many words, with no question and nothing to look up, is small talk (see `IIntent.smallTalk`). */
+const SMALL_TALK_WORDS = 3;
+
 export function classifyIntent(text: string, mode: VoltMode, context: IIntentContext = {}): IIntent {
 	const raw = text.trim();
 	const signals: string[] = [];
@@ -281,6 +286,9 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		// Statements with no coding verb and no workspace anchor ("thanks", "nissan kicks uae price")
 		lane = 'chat';
 		signals.push('no-coding-signal');
+		if (words <= SMALL_TALK_WORDS && !questionShape && !hasUrl && !wantsWeb && !shape.lookup) {
+			signals.push('small-talk');
+		}
 	} else if (!wantsPreview && !mentionsTests && isFast(raw, { codingVerb, sentences, words, hasPath, conjunctions, bullets })) {
 		lane = 'fast';
 	} else {
@@ -335,6 +343,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		...(wantsLongJob ? { wantsLongJob } : {}),
 		...(wantsGit ? { wantsGit } : {}),
 		...(ideWork.length ? { ideWork } : {}),
+		...(lane === 'chat' && signals.includes('small-talk') ? { smallTalk: true } : {}),
 		shape,
 	};
 }

@@ -23,6 +23,7 @@ import { IVoltExecRequest, IVoltExecResult, IVoltStdioService } from '../../../.
 import { AgentRuntimeService } from '../../browser/voltRuntimeService.js';
 import { DEFAULT_ACP_CAPABILITIES, DEFAULT_MODEL_CAPABILITIES } from '../../common/capabilities.js';
 import { LSP_ENABLED_SETTING } from '../../common/codeIntelligence.js';
+import { IWorkspaceSnapshot, WORKSPACE_SNAPSHOT_COMMAND_ID } from '../../common/harness/workspaceContext.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../common/events.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IAgentMessage, IAgentProvider, IAgentSessionHandle, IAgentStartRequest, IModelProvider, IModelRequest, IVoltCatalogItem } from '../../common/providers.js';
@@ -293,7 +294,7 @@ suite('Agent runtime orchestration', () => {
 
 	test('a model on this machine names the chat after the run, so the title call waits behind no step', async () => {
 		const { service, model, ref, waitEnd } = await setup('model', {}, 'http://127.0.0.1:1234/v1');
-		const runId = await service.send('chat', { text: 'rename the helper', mode: 'agent', providerRef: ref });
+		const runId = await service.send('chat', { text: 'rename the date helper in utils', mode: 'agent', providerRef: ref });
 		assert.strictEqual((await waitEnd(runId)).reason, 'done');
 		await waitFor(() => model.requests.length === 2, 'the title call');
 		const [run, title] = model.requests;
@@ -326,17 +327,41 @@ suite('Agent runtime orchestration', () => {
 		assert.strictEqual(model.titlePrompts.length, 1);
 	});
 
+	test('a first message that names nothing gets no title call; the next one titles the chat from both', async () => {
+		const { service, model, history, ref, waitEnd } = await setup('model');
+		model.titles = ['Fix sidebar list jumping to top', 'Never asked'];
+		await waitEnd(await service.send('chat', { text: 'hey', mode: 'agent', providerRef: ref }));
+		await timeout(20);
+		assert.strictEqual(model.titlePrompts.length, 0, 'no model call can name "hey"');
+		await waitEnd(await service.send('chat', { text: 'the sidebar list jumps to the top when a chat finishes', mode: 'agent', providerRef: ref }));
+		await waitFor(() => history.agentTitles.length === 1, 'the title from both messages');
+		assert.ok(model.titlePrompts[0].includes('First message:\nhey\n\nLatest message:\nthe sidebar list jumps'));
+		await waitEnd(await service.send('chat', { text: 'and keep the selection too', mode: 'agent', providerRef: ref }));
+		await timeout(20);
+		assert.deepStrictEqual(history.agentTitles, ['Fix sidebar list jumping to top']);
+		assert.strictEqual(model.titlePrompts.length, 1, 'no second title call');
+	});
+
+	test('"hi" goes without the workspace summary; the next request carries it, once', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		const snapshot: IWorkspaceSnapshot = { panelOpen: true, tabs: [{ kind: 'browser', title: 'Shop', focused: true, target: 'http://localhost:3000/' }], git: { branch: 'main', changed: 1 } };
+		(service as unknown as { commandService: { executeCommand: (id: string) => Promise<unknown> } }).commandService.executeCommand = async id => id === WORKSPACE_SNAPSHOT_COMMAND_ID ? snapshot : undefined;
+		await waitEnd(await service.send('chat', { text: 'hi', mode: 'agent', providerRef: ref }));
+		await waitEnd(await service.send('chat', { text: 'the add to cart button on the shop page does nothing, fix it', mode: 'agent', providerRef: ref }));
+		await waitEnd(await service.send('chat', { text: 'and make it blue', mode: 'agent', providerRef: ref }));
+		assert.deepStrictEqual(agent.prompts.map(prompt => prompt.lead?.includes('<volt_workspace') ?? false), [false, true, false]);
+	});
+
 	test('a chat the user renamed keeps its name when a short first message is titled again', async () => {
 		const { service, model, history, ref, waitEnd } = await setup('model');
-		model.titles = ['Greeting', 'Fix sidebar list jumping to top'];
+		model.titles = ['Fix sidebar list jumping to top'];
 		await waitEnd(await service.send('chat', { text: 'hey', mode: 'agent', providerRef: ref }));
-		await waitFor(() => history.agentTitles.length === 1, 'the first title');
 		history.userTitle = 'Scroll bug';
 		await waitEnd(await service.send('chat', { text: 'the sidebar list jumps to the top when a chat finishes', mode: 'agent', providerRef: ref }));
-		await waitFor(() => model.titlePrompts.length === 2, 'the retry');
+		await waitFor(() => model.titlePrompts.length === 1, 'the title from both messages');
 		await timeout(20);
 		assert.strictEqual(history.shown, 'Scroll bug');
-		assert.deepStrictEqual(history.agentTitles, ['Greeting']);
+		assert.deepStrictEqual(history.agentTitles, []);
 	});
 
 	test('cancel then immediate resend (native): the cancelled loop cannot write into the new run', async () => {

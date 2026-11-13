@@ -147,8 +147,8 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: INSTANT_GREP_TOOL_NAME,
 		title: 'Searched code',
 		group: 'core',
-		// Agents reach for it on most code questions; behind tool search each run spent a turn loading it.
-		alwaysLoad: true,
+		// Behind Claude Code's tool search (Grep does the same job; the server instructions and the
+		// lead name it for indexed projects): in the prompt it was ~840 tokens on every request.
 		description: [
 			'Regex or literal search over the project\'s files, answered from Volt\'s local trigram index: milliseconds even in very large repos, where ripgrep re-reads every file.',
 			'Same semantics as ripgrep (honors .gitignore, case-insensitive unless case_sensitive). Results are grouped by file with line numbers.',
@@ -175,7 +175,8 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: FIND_SYMBOL_TOOL_NAME,
 		title: 'Found symbol',
 		group: 'core',
-		alwaysLoad: true,
+		// Behind Claude Code's tool search like every volt tool: the server instructions name it, and
+		// the turn's lead names it (and how to load it) when the request is about the code.
 		description: [
 			'Where functions, classes, interfaces, types, methods and constants are declared, by name, across the whole project. Instant, from Volt\'s code index; no language server needed.',
 			'match "exact" (default), "prefix", or "fuzzy" (camel-case and substring: "usrSvc" finds UserService).',
