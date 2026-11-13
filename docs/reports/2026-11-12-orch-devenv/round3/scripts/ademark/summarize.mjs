@@ -7,6 +7,9 @@ const dir = process.argv[2];
 const jsonOut = process.argv.includes('--json') ? process.argv[process.argv.indexOf('--json') + 1] : undefined;
 const FIELDS = { A1: ['window_ms', 'ready_ms'], A2: ['window_ms', 'ready_ms'], A3: ['ready_ms'], A4: ['total_ms', 'before_request_ms', 'on_screen_ms'], A5: ['app_mb', 'agents_mb', 'total_mb'], A6: ['cpu_pct_front', 'cpu_pct_total', 'wakeups_per_s'], A8: ['p50', 'p95', 'max'], A11: ['open_visible_ms', 'settled_ms'] };
 const med = xs => { const s = [...xs].sort((a, b) => a - b); const n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
+const LIMIT = Number(process.env.ADE_LOAD_MAX ?? 14);
+const endLoad = r => Number(/load averages?: ([\d.]+)/.exec(r.uptime ?? '')?.[1] ?? NaN);
+const isClean = r => !!r.load_gate?.ok && r.load_gate.load1 <= LIMIT && endLoad(r) <= LIMIT;
 const out = {};
 for (const app of readdirSync(dir)) {
 	const f = join(dir, app, 'rows.jsonl');
@@ -19,7 +22,8 @@ for (const app of readdirSync(dir)) {
 			const vals = rs.filter(r => typeof r[field] === 'number');
 			if (!vals.length) { out[`${app} ${test} ${field}`] = { n: 0, missing: rs.length }; continue; }
 			const xs = vals.map(r => r[field]);
-			const clean = vals.filter(r => r.load_gate?.ok).map(r => r[field]);
+			// Clean: the 1-minute load was at most 14 when the test started (the gate) and when its row was written (`uptime`).
+			const clean = vals.filter(isClean).map(r => r[field]);
 			const loads = vals.map(r => r.load_gate?.load1).filter(x => typeof x === 'number');
 			out[`${app} ${test} ${field}`] = {
 				median: med(xs), n: xs.length, min: Math.min(...xs), max: Math.max(...xs),
