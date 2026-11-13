@@ -87,7 +87,7 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: DEBUG_TOOL_NAME,
 		title: 'Debugger',
 		group: 'ide',
-		alwaysLoad: true,
+		// Rarely needed and ~1.5k tokens: behind tool search, named in the server instructions.
 		description: [
 			'The editor\'s debugger (Debug Adapter Protocol: Node/JS/TS built in, Python, Go and others through their extensions). The user watches the session in the Run and Debug view.',
 			'op start: launch a debug session from a launch.json config (config), a file (program), or a shell command whose Node processes are debugged (command, e.g. "npm test"); breakpoints set first; waits until it pauses or ends.',
@@ -155,7 +155,7 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: IDE_GATEWAY_TOOL_NAME,
 		title: 'IDE',
 		group: 'ide',
-		alwaysLoad: true,
+		// ~1k tokens: behind tool search, named in the server instructions and the IDE lead.
 		description: ideGatewayDescription(),
 		inputSchema: IDE_GATEWAY_SCHEMA,
 		approvalInReadOnlyModes: 'acts on the workspace or its services',
