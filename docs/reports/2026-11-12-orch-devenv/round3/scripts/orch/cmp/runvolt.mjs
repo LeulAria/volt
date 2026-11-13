@@ -38,6 +38,12 @@ const ARMS = {
 	// Round 3 (orchestration): the round-2 tree (82ae771c1d9) on today's load, then this branch with the fixes.
 	'volt-r3-base': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/ },
 	'volt-r3': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/ },
+	// The same two builds with the task's folder (/tmp/v3orch/w/<task>, Claude Code's cwd) picked as the
+	// chat's project. Without it a new chat in this profile has "No Project": it runs in a scratch folder
+	// made on the first send, so the agent the composer warmed for the chat never matches and the parent
+	// always starts cold (round 2's profile had the folder as its project; its parents came from the pool).
+	'volt-r3p-base': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, project: true },
+	'volt-r3p': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, project: true },
 	// Cursor's catalog in Volt (from its ACP model list): base ids, effort/thinking are options.
 	'volt-cursor-sonnet': { model: 'agent:seed-cursor-acp:claude-sonnet-5', sub: 'agent:seed-cursor-acp:claude-sonnet-5', label: /Sonnet 5(?!\.)/ },
 	'volt-cursor-grok': { model: 'agent:seed-cursor-acp:grok-4.7', sub: 'agent:seed-cursor-acp:grok-4.7', label: /Grok 4\.7/ },
@@ -200,13 +206,48 @@ function analyze(chat, sentAt) {
 	};
 }
 
-async function newChat(c) {
+const leaf = test => `[...document.querySelectorAll('*')].filter(e => e.offsetParent && e.childElementCount === 0 && ${test}).at(-1)`;
+
+/** Picks `folder` as the new chat's project: the project chip's search takes a path and offers "Open <name>". */
+async function pickProject(c, folder) {
+	const name = folder.split('/').at(-1);
+	const chip = await c.center(leaf(`/^(Select project|No Project|t[0-3]|t3-check|w)$/.test(e.textContent.trim()) && !e.closest('.volt-agent-primary-header-title')`));
+	if (!chip) {
+		throw new Error('no project chip');
+	}
+	await c.click(...chip);
+	for (let i = 0; i < 20 && !(await c.evaluate(`document.activeElement?.tagName === 'INPUT' && !!document.activeElement.closest('.volt-menu')`)); i++) {
+		await sleep(150);
+	}
+	await c.send('Input.insertText', { text: folder });
+	let open;
+	for (let i = 0; i < 20 && !open; i++) {
+		await sleep(200);
+		// A folder seen before is listed by its name; a new one is offered as "Open <name>".
+		open = await c.center(leaf(`['Open ${name}', '${name}'].includes(e.textContent.trim()) && !!e.closest('.volt-menu')`));
+	}
+	if (!open) {
+		const items = await c.evaluate(`[document.activeElement?.value, ...[...document.querySelectorAll('.volt-menu *')].filter(e => e.childElementCount === 0 && e.tagName !== 'STYLE').map(e => e.textContent.trim()).filter(Boolean)]`);
+		throw new Error(`no item for ${folder} in the project menu: ${JSON.stringify(items)}`);
+	}
+	await c.click(...open);
+	await sleep(800);
+	const shown = await c.evaluate(`(() => document.querySelector('.volt-agent-primary-header-project')?.textContent ?? '')()`);
+	if (shown !== name) {
+		throw new Error(`project chip says "${shown}", not ${name}`);
+	}
+}
+
+async function newChat(c, project) {
 	// New chat: the "New Chat"/"New Agent" button of the agent window.
 	const ok = await c.evaluate(`(() => { const e = [...document.querySelectorAll('[aria-label]')].find(e => e.offsetParent && /^New (Chat|Agent)/.test(e.getAttribute('aria-label'))); if (!e) { return false; } e.click(); return true; })()`);
 	if (!ok) {
 		throw new Error('no New Chat button');
 	}
 	await sleep(1500);
+	if (project) {
+		await pickProject(c, project);
+	}
 	// Measure the orchestration, not a person approving: Full access for this chat.
 	const chip = await c.center(`[...document.querySelectorAll('[aria-label^="Permissions:"], button.volt-agent-status-access')].find(e => e.offsetParent)`);
 	let access = 'unchanged';
@@ -238,7 +279,13 @@ async function run(arm, task, rep) {
 	const sessionsDir = join(USER, 'agentSessions', 'sessions');
 	mkdirSync(sessionsDir, { recursive: true });
 	const beforeSessions = new Set(readdirSync(sessionsDir));
-	const access = await newChat(c);
+	const access = await newChat(c, a.project ? `/tmp/v3orch/w/${task}` : undefined);
+	if (a.project) {
+		// The composer warms an agent for the chat's project and access as soon as they are set; a person
+		// typing these prompts takes far longer than this. The clock starts at Enter, as in every arm.
+		access.composeWaitMs = 3000;
+		await sleep(access.composeWaitMs);
+	}
 	// The new chat starts on volt.agent.defaultModel once the catalog has it: wait for the chip to say so.
 	for (let i = 0; i < 20 && !a.label.test(access.model); i++) {
 		await sleep(250);
