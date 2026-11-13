@@ -108,6 +108,13 @@ export const CLAUDE_SUBAGENT_DISALLOWED_TOOLS: readonly string[] = [
  */
 export const CLAUDE_MAIN_DISALLOWED_TOOLS: readonly string[] = ['AskUserQuestion'];
 
+/**
+ * Added to {@link CLAUDE_MAIN_RULES} when AskUserQuestion is off: without a line naming it, Haiku 5.5
+ * wrote the options into its reply instead of loading the deferred ask_question (0 of 3 runs asked
+ * through the tray where AskUserQuestion did 3 of 3, capability check 2026-11-13).
+ */
+export const CLAUDE_MAIN_ASK_RULE = '- To ask the user to choose (requirements, preferences, trade-offs), load Volt\'s ask_question (ToolSearch "select:mcp__volt__ask_question") and ask with it instead of writing the options into your reply.';
+
 /** Also off for a read-only subagent: it changes no files (Volt's sandbox and plan mode hold it to that too). */
 export const CLAUDE_READONLY_SUBAGENT_DISALLOWED_TOOLS: readonly string[] = ['Edit', 'Write', 'NotebookEdit'];
 
@@ -187,7 +194,7 @@ export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?:
 	const subagent = subagentProfile(opts?.subagent);
 	const systemPrompt = subagent === 'readonly'
 		? CLAUDE_READONLY_SUBAGENT_PROMPT
-		: { type: 'preset', preset: 'claude_code', append: subagent ? CLAUDE_WORK_SUBAGENT_RULES : CLAUDE_MAIN_RULES };
+		: { type: 'preset', preset: 'claude_code', append: subagent ? CLAUDE_WORK_SUBAGENT_RULES : opts?.voltAsks ? `${CLAUDE_MAIN_RULES}\n${CLAUDE_MAIN_ASK_RULE}` : CLAUDE_MAIN_RULES };
 	return {
 		systemPrompt,
 		claudeCode: {
