@@ -1,0 +1,49 @@
+{
+ "chat": "Long reasoning",
+ "runs": 3,
+ "load": "6.75 10.27 25.05",
+ "shownMs": {
+  "n": 3,
+  "median": 14,
+  "min": 13,
+  "max": 15
+ },
+ "settledMs": {
+  "n": 3,
+  "median": 14,
+  "min": 13,
+  "max": 15
+ },
+ "results": [
+  {
+   "shownMs": 15,
+   "settledMs": 15,
+   "chars": 222144,
+   "blocks": 1,
+   "longTaskMs": 178,
+   "maxLongTask": 100,
+   "loadBefore": 6.91,
+   "loadAfter": "6.91 10.48 25.39"
+  },
+  {
+   "shownMs": 13,
+   "settledMs": 13,
+   "chars": 222144,
+   "blocks": 1,
+   "longTaskMs": 72,
+   "maxLongTask": 72,
+   "loadBefore": 6.92,
+   "loadAfter": "6.92 10.42 25.28"
+  },
+  {
+   "shownMs": 14,
+   "settledMs": 14,
+   "chars": 222144,
+   "blocks": 1,
+   "longTaskMs": 72,
+   "maxLongTask": 72,
+   "loadBefore": 6.75,
+   "loadAfter": "6.75 10.27 25.05"
+  }
+ ]
+}
