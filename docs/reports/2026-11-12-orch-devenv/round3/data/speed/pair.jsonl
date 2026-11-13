@@ -269,3 +269,5 @@
 {"at":"2026-11-13T13:21:16.195Z","step":"round 1 A5 landing","gate":"passed","waitedS":120,"load":"13.27 16.64 51.00"}
 {"at":"2026-11-13T13:23:16.597Z","round":1,"arm":"before","step":"a5-landing","result":"{\"arm\":\"before\",\"variant\":\"landing\",\"app\":2364,\"agents\":640,\"total\":3004,\"processes\":26,\"cpuApp\":18.03,\"cpuAgents\":0.67,\"load\":\"10.66 15.33 48.17\"}"}
 {"at":"2026-11-13T13:23:16.598Z","round":1,"arm":"after","step":"a5-landing","result":"{\"arm\":\"after\",\"variant\":\"landing\",\"app\":2156,\"agents\":641,\"total\":2797,\"processes\":28,\"cpuApp\":2.61,\"cpuAgents\":0.63,\"load\":\"10.66 15.33 48.17\"}"}
+{"at":"2026-11-13T13:53:55.006Z","step":"round 1 A8 before","gate":"timed out, skipped","waitedS":1801,"load":"82.35 135.27 139.69"}
+{"at":"2026-11-13T13:54:32.000Z","step":"stopped by hand after round 1 A8 before was skipped (load 82-145): an after-only A8 would be unpaired"}
