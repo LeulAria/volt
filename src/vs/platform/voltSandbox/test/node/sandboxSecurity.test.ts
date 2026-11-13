@@ -429,6 +429,60 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		assert.ok(await exists(join(f.home, 'Library', 'Caches', 'claude-cli-nodejs', 'log.txt')), `its listed state stays writable: ${agentTry.stderr}`);
 	});
 
+	test('EXEC-LATER-1: files that something unsandboxed runs later (git, editor tasks and settings, agent CLI configs and skills, hook managers) cannot be planted or changed; build files the guard reviews stay writable', async () => {
+		// Files a project already has: every backend keeps them read-only.
+		const existing = ['.vscode/tasks.json', '.claude/skills/x/SKILL.md', '.gemini/settings.json', '.codex/config.toml', '.zed/settings.json', '.helix/languages.toml', '.nvim.lua'];
+		// Planted where nothing was: macOS refuses them; bubblewrap guards only what exists (filesystem.protectNew).
+		const planted = [
+			'.git/config', '.git/hooks/pre-commit', '.git/info/attributes', '.git/config.worktree', '.git/commondir', '.git/objects/info/alternates', '.git/modules/x/config', 'sub/.git/config',
+			'.gitmodules', '.vscode/launch.json', '.vscode/settings.json', '.envrc', 'sub/.envrc', '.mcp.json', '.claude/settings.json', '.claude/settings.local.json', '.claude/commands/x.md',
+			'.claude/skills/y/SKILL.md', '.claude/skills/y/run.sh', '.gemini/commands/x.toml', '.gemini/extensions/x/gemini-extension.json', '.codex/hooks.json', '.cursor/mcp.json',
+			'.zed/tasks.json', '.helix/config.toml', '.nvimrc', '.exrc', '.husky/pre-commit', '.githooks/pre-commit', '.idea/workspace.xml', '.devcontainer/devcontainer.json',
+			'.volt/hooks.json', '.pre-commit-config.yaml', 'lefthook.yml',
+		];
+		// A case-insensitive volume: another spelling is the same file.
+		const variants = ['.GIT/config', '.Git/hooks/pre-commit', '.git/HOOKS/pre-commit', '.git/INFO/attributes', '.git/OBJECTS/info/alternates', 'sub/.GIT/config', '.GITMODULES', '.VSCode/tasks.json',
+			'.ENVRC', '.MCP.json', '.CLAUDE/settings.json', '.Claude/skills/x/SKILL.md', '.GEMINI/settings.json', '.Codex/config.toml', '.Cursor/mcp.json', '.ZED/settings.json', '.HUSKY/pre-commit', '.VOLT/hooks.json', 'LEFTHOOK.yml'];
+		// By design writable: the build-entry guard shows changes to the build files before Volt runs them,
+		// CI runs remotely after a push the user makes, and the rest name no command (05-limitations item 36).
+		const writable = ['package.json', 'Makefile', '.npmrc', '.yarnrc.yml', '.github/workflows/ci.yml', '.gitattributes', '.lfsconfig', 'sub/.vscode/tasks.json', 'app.code-workspace', 'AGENTS.md'];
+		const before = new Set([...await fs.readdir(f.ws), ...(await fs.readdir(join(f.ws, 'sub'))).map(name => `sub/${name}`)]);
+		for (const target of existing) {
+			await fs.mkdir(join(f.ws, target, '..'), { recursive: true });
+			await fs.writeFile(join(f.ws, target), 'ORIGINAL\n');
+		}
+		const attempt = (target: string) => {
+			const path = join(f.ws, target);
+			return `mkdir -p '${join(path, '..')}' 2>/dev/null; printf 'VOLTPWN\\n' >> '${path}' 2>/dev/null; true`;
+		};
+		const hasMarker = async (target: string) => (await fs.readFile(join(f.ws, target), 'utf8').catch(() => '')).includes('VOLTPWN');
+		try {
+			for (const policy of [workspace(), agent(false)]) {
+				const result = await sh(policy, [...existing, ...planted, ...isMac ? variants : [], ...writable].map(attempt).join('\n'));
+				for (const target of existing) {
+					assert.strictEqual(await fs.readFile(join(f.ws, target), 'utf8'), 'ORIGINAL\n', `${policy.name}: ${target}`);
+				}
+				for (const target of isMac ? [...planted, ...variants] : ['.git/config', '.git/hooks/pre-commit']) {
+					assert.ok(!await hasMarker(target), `${policy.name}: ${target} was planted`);
+				}
+				if (isLinux) {
+					assert.ok(result.unenforced.includes('filesystem.protectNew'), `${policy.name}: the run reports the gap`);
+				}
+				for (const target of writable) {
+					assert.ok(await hasMarker(target), `${policy.name}: ${target} stays writable: ${result.stderr}`);
+					await fs.rm(join(f.ws, target), { force: true });
+				}
+			}
+			await assertHostUnchanged();
+		} finally {
+			for (const name of [...await fs.readdir(f.ws), ...(await fs.readdir(join(f.ws, 'sub'))).map(name => `sub/${name}`)]) {
+				if (!before.has(name)) {
+					await fs.rm(join(f.ws, name), { recursive: true, force: true });
+				}
+			}
+		}
+	});
+
 	// --- Agent state (B-05, INV-17) ---------------------------------------------------------------
 
 	test('PERS-AGENT-claude: MCP servers, settings and CLAUDE.md cannot be changed in place; the overlay keeps them out', async () => {

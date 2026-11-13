@@ -76,6 +76,12 @@ The rig (`scripts/volt-sandbox-linux-test.sh run`) also checks:
 
 28 of 28 behave as reported.
 
+## Found in the round-4 security pass (2026-11-13)
+
+| # | Sev | Finding | Fix | Covered by |
+|---|---|---|---|---|
+| R4-S1 | H | **Agent CLI and editor project configs were writable.** A sandboxed chat could add `.claude/skills/*` (a skill's `allowed-tools` pre-approves tools and it ships scripts), `.gemini/settings.json` and `.gemini/extensions` (MCP servers), `.codex/config.toml` (MCP servers, `notify`), `.zed/settings.json`/`tasks.json`, `.helix/languages.toml`, `.nvim.lua`, `.exrc`. Volt starts those CLIs unsandboxed for the project's other chats; the editors start the servers they name when the folder opens | Added to the protected root names (OS profile and the files broker) | SEC EXEC-LATER-1 (each one existing and planted, case variants, both profiles); what stays writable and why: 05-limitations item 36 |
+
 ## Verified behaviour worth knowing (macOS 26.6)
 
 - A deny-default process needs `file-read*` on `/` itself, or dyld aborts it (SIGABRT, exit 134).
