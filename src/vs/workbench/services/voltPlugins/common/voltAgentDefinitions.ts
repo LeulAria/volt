@@ -127,7 +127,7 @@ export function agentFootprintFromContribution(agent: IVoltAgentContribution, ui
 	readonly domains: readonly string[];
 	readonly envKeys?: readonly string[];
 	readonly env?: Readonly<Record<string, string>>;
-	readonly quietPaths?: { readonly processes: readonly string[]; readonly paths: readonly string[] };
+	readonly quietPaths?: { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths?: readonly string[] };
 } {
 	const state = agent.state ?? {};
 	return {
@@ -139,7 +139,7 @@ export function agentFootprintFromContribution(agent: IVoltAgentContribution, ui
 		domains: agent.apiHosts ?? [],
 		...(state.envKeys ? { envKeys: state.envKeys } : {}),
 		...(state.env ? { env: { ...state.env } } : {}),
-		...(state.quietPaths ? { quietPaths: { processes: [...state.quietPaths.processes], paths: [...state.quietPaths.paths] } } : {}),
+		...(state.quietPaths ? { quietPaths: { processes: [...state.quietPaths.processes], paths: [...state.quietPaths.paths], ...(state.quietPaths.readPaths ? { readPaths: [...state.quietPaths.readPaths] } : {}) } } : {}),
 	};
 }
 

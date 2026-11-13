@@ -124,6 +124,35 @@ suite('Volt sandbox failover: pure parts (R1)', () => {
 		assert.ok(!isQuietDenial(denial('read', '/private/var', 'ls'), home, ['/private/var/folders/x1/abc/T']));
 	});
 
+	test('DENY-QUIET-6: Grok\'s start-up scan of other CLIs and its own plugin and version files are quiet; writes into other CLIs keep their card', () => {
+		const home = '/Users/u';
+		const own = agentQuietPaths('grok', home);
+		assert.ok(own, 'Grok has quiet paths');
+		const grok = 'grok-1.0.77-macos-aarch64';
+		const denial = (kind: 'read' | 'write', target: string, process?: string): ISandboxDenial => ({ kind, target, source: 'os', ...(process ? { process } : {}) });
+		// What a sandboxed Grok turn showed as cards (live, 2026-11-13).
+		const quiet = [
+			denial('read', `${home}/.agents/skills`, grok), denial('read', `${home}/.claude/skills`, grok), denial('read', `${home}/.cursor/skills`, grok),
+			denial('read', `${home}/.claude/plugins`, grok), denial('read', `${home}/.claude.json`, grok), denial('read', `${home}/.claude/settings.json`, grok),
+			denial('read', `${home}/.claude/settings.local.json`, grok), denial('read', `${home}/.cursor/mcp.json`, grok),
+			denial('write', `${home}/.grok/bundled/.lock`, grok), denial('write', `${home}/.grok/installed-plugins/registry.lock`, grok),
+			denial('write', `${home}/.grok/version.json.WHr5lQ.tmp`, grok), denial('write', `${home}/.grok/experiments_remote_opt_out.36555.tmp`, grok),
+		];
+		for (const entry of quiet) {
+			assert.ok(isQuietDenial(entry, home, [], own), `quiet: ${entry.kind} ${entry.target}`);
+		}
+		const loud = [
+			// Planting in another CLI, even by Grok's own file tool.
+			denial('write', `${home}/.claude/skills/x/SKILL.md`, grok), denial('write', `${home}/.cursor/mcp.json`, grok), denial('write', `${home}/.claude.json`, grok),
+			// The agent's commands on the same paths, Grok's other files, a look-alike process.
+			denial('read', `${home}/.claude/skills`, 'ls'), denial('write', `${home}/.grok/bundled/.lock`, 'touch'),
+			denial('write', `${home}/.grok/settings.json`, grok), denial('read', `${home}/.ssh/config`, grok), denial('read', `${home}/.claude/skills`, 'grokker'),
+		];
+		for (const entry of loud) {
+			assert.ok(!isQuietDenial(entry, home, [], own), `card: ${entry.kind} ${entry.target} (${entry.process})`);
+		}
+	});
+
 	test('PROBE-RETRY-1: a failed probe is tried again after a while; a working one stands until its key changes', async () => {
 		let now = 0;
 		let calls = 0;

@@ -129,16 +129,20 @@ const ANCESTOR_PROBE_NAME = /^(?:\.git|\.hg|\.svn|\.gitignore|\.ignore|\.rgignor
  *   repository discovery, ignore files, the CLI scanning its surroundings) by anything but a
  *   command that lists or reads what it is told (`ls ~`, `cat ~/x`).
  * - the agent CLI's own background state outside its overlay (`own`, from its footprint's
- *   `quietPaths`), read or written by the CLI's own process, and the folders on the way to it.
+ *   `quietPaths`), read or written by the CLI's own process, and the folders on the way to it;
+ *   its `readPaths` (other CLIs' skills and settings it scans) for reads only.
  * A read by another process (the agent running `cat ~/.zshrc`), any other write, or one with no
  * process named (Linux reports none: then only the shell files count) still gets its card. The
  * caller logs quiet ones.
  */
-export function isQuietDenial(denial: ISandboxDenial, home: string, roots: readonly string[] = [], own?: { readonly processes: readonly string[]; readonly paths: readonly string[] }): boolean {
+export function isQuietDenial(denial: ISandboxDenial, home: string, roots: readonly string[] = [], own?: { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths?: readonly string[] }): boolean {
 	const process = denial.process?.replace(/^.*\//, '');
-	if (own && process !== undefined && own.processes.includes(process) && (denial.kind === 'read' || denial.kind === 'write')) {
+	// A CLI shipped as one binary per release names its process `grok-1.0.77-macos-aarch64`.
+	if (own && process !== undefined && own.processes.some(name => process === name || process.startsWith(`${name}-`)) && (denial.kind === 'read' || denial.kind === 'write')) {
 		const touched = denial.target.replace(/\/+$/, '');
-		if (own.paths.some(path => touched === path || touched.startsWith(`${path}/`) || (denial.kind === 'read' && isPathAbove(touched, path, home)))) {
+		// A file's temp siblings (`version.json.WHr5lQ.tmp`, written then renamed over it) count as the file.
+		const paths = denial.kind === 'read' ? [...own.paths, ...(own.readPaths ?? [])] : own.paths;
+		if (paths.some(path => touched === path || touched.startsWith(`${path}/`) || touched.startsWith(`${path}.`) || (denial.kind === 'read' && isPathAbove(touched, path, home)))) {
 			return true;
 		}
 	}

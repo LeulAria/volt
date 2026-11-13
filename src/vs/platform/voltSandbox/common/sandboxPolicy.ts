@@ -133,9 +133,10 @@ export interface IAgentFootprint {
 	 * Home folders the CLI reads and writes by itself outside its overlay (claude.ai's synced skills
 	 * and plugins, its locks), and the names of its own processes: still denied, but such a denial by
 	 * one of those processes is logged, never a card (the user didn't ask for it). A shell or a
-	 * command the agent runs on the same path (`cat`, `ls`) keeps its card.
+	 * command the agent runs on the same path (`cat`, `ls`) keeps its card. `readPaths` are quiet for
+	 * reads only (other CLIs' skills and settings the CLI scans at start): a write there keeps its card.
 	 */
-	readonly quietPaths?: { readonly processes: readonly string[]; readonly paths: readonly string[] };
+	readonly quietPaths?: { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths?: readonly string[] };
 	/** Environment variables the CLI reads its keys and endpoints from, copied even though they look secret. */
 	readonly envKeys?: readonly string[];
 	/** Fixed environment for a sandboxed run (turn off self-updates that would write executables). */
@@ -205,13 +206,20 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	grok: {
 		writable: ['.grok/sessions', '.grok/logs', '.grok/memory-v2', '.grok/memtrace', '.grok/grove', '.grok/downloads', '.local/state/grok'],
 		writableFiles: [
-			'.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db', '.grok/models_cache.json',
+			'.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db', '.grok/worktrees.db-wal', '.grok/worktrees.db-shm', '.grok/models_cache.json',
 			'.grok/settings_cache.json', '.grok/tip_cursor.json', '.grok/agent_id', '.grok/.config-init.lock', '.grok/managed_config.lock', '.grok/.metadata_version',
 		],
 		readable: ['.grok'],
 		credentials: ['.grok/auth.json'],
 		domains: ['x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
 		envKeys: ['XAI_API_KEY', 'GROK_API_KEY'],
+		// At every start it scans the other CLIs' skills, plugins and settings to offer them, and updates
+		// its bundled plugins and version files in place: all stay denied, without a card.
+		quietPaths: {
+			processes: ['grok'],
+			paths: ['.grok/bundled', '.grok/installed-plugins', '.grok/version.json', '.grok/experiments_remote_opt_out'],
+			readPaths: ['.agents/skills', '.claude/skills', '.claude/plugins', '.claude.json', '.claude/settings.json', '.claude/settings.local.json', '.cursor/skills', '.cursor/mcp.json'],
+		},
 	},
 	opencode: {
 		// OpenCode 2 keeps credentials and sessions in `.local/share/opencode/opencode.db` and its settings in `.config/opencode`.
@@ -341,9 +349,10 @@ export function agentQuietDomains(providerId: string): readonly string[] {
 }
 
 /** Where `providerId`'s CLI keeps background state of its own, as absolute paths (see {@link IAgentFootprint.quietPaths}). */
-export function agentQuietPaths(providerId: string, home: string): { readonly processes: readonly string[]; readonly paths: readonly string[] } | undefined {
+export function agentQuietPaths(providerId: string, home: string): { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths: readonly string[] } | undefined {
 	const own = Object.prototype.hasOwnProperty.call(AGENT_FOOTPRINTS, providerId) ? AGENT_FOOTPRINTS[providerId].quietPaths : undefined;
-	return own && home ? { processes: own.processes, paths: own.paths.map(path => `${normalizeSandboxPath(home)}/${path}`) } : undefined;
+	const absolute = (paths: readonly string[] = []) => paths.map(path => `${normalizeSandboxPath(home)}/${path}`);
+	return own && home ? { processes: own.processes, paths: absolute(own.paths), readPaths: absolute(own.readPaths) } : undefined;
 }
 
 /** `/a/b/` and `/a//b` as `/a/b`. Relative paths are returned unchanged (and later rejected). */
