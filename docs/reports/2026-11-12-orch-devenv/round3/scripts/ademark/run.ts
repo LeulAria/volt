@@ -291,7 +291,7 @@ class Cdp {
         if (idx >= 0) {
           const c = new Cdp();
           c.ws = new WebSocket(targets[idx].webSocketDebuggerUrl);
-          await new Promise((r, j) => { c.ws.addEventListener("open", r, { once: true }); c.ws.addEventListener("error", j, { once: true }); });
+          await new Promise((r, j) => { c.ws.addEventListener("open", r, { once: true }); c.ws.addEventListener("error", j, { once: true }); setTimeout(() => j(new Error("CDP open timeout")), 5000); });
           c.ws.addEventListener("message", (e) => { const m = JSON.parse(String(e.data)); if (m.id) { c.pending.get(m.id)?.(m); c.pending.delete(m.id); } });
           return c;
         }
@@ -300,8 +300,14 @@ class Cdp {
     }
     throw new Error("CDP target not found");
   }
-  send(method: string, params: any = {}): Promise<any> {
-    return new Promise((r) => { const i = ++this.id; this.pending.set(i, r); this.ws.send(JSON.stringify({ id: i, method, params })); });
+  // A send never waits forever: a page that goes away (Cmd+Q, a crash) never answers, and the run hung on that once.
+  send(method: string, params: any = {}, timeoutMs = 30_000): Promise<any> {
+    return new Promise((r) => {
+      const i = ++this.id;
+      const timer = setTimeout(() => { this.pending.delete(i); r({ error: "timeout" }); }, timeoutMs);
+      this.pending.set(i, (m) => { clearTimeout(timer); r(m); });
+      try { this.ws.send(JSON.stringify({ id: i, method, params })); } catch { clearTimeout(timer); this.pending.delete(i); r({ error: "closed" }); }
+    });
   }
   async eval<T = any>(expr: string): Promise<T | undefined> {
     const r = await this.send("Runtime.evaluate", { expression: expr, returnByValue: true });
@@ -428,8 +434,8 @@ async function quitApp(app: App): Promise<string> {
       how = "cdp cmd+q";
       try {
         const c = await Cdp.connect(app, 3000);
-        await c.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "q", code: "KeyQ", windowsVirtualKeyCode: 81, modifiers: 4 });
-        await c.send("Input.dispatchKeyEvent", { type: "keyUp", key: "q", code: "KeyQ", windowsVirtualKeyCode: 81, modifiers: 4 });
+        await c.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "q", code: "KeyQ", windowsVirtualKeyCode: 81, modifiers: 4 }, 2000);
+        await c.send("Input.dispatchKeyEvent", { type: "keyUp", key: "q", code: "KeyQ", windowsVirtualKeyCode: 81, modifiers: 4 }, 2000);
         c.close();
       } catch { /* */ }
     } else {
@@ -651,12 +657,13 @@ const reps = Number(arg("--reps", "5"));
 const start = Number(arg("--start", "1"));
 /**
  * The round-3 load rule: no timing while the 1-minute load is above 14 (five agents share this 14-core Mac). Waits up
- * to ADE_LOAD_WAIT_S (default 600 s), checking every 10 s; when the wait runs out the test runs anyway and its row
- * says so (`load_gate`), so a number taken under load is never mistaken for a clean one.
+ * to ADE_LOAD_WAIT_S (default 1800 s), checking every 10 s; when the wait runs out the test is skipped with a
+ * `skipped: load` row (ADE_LOAD_SKIP=0 runs it anyway, `load_gate.ok` false in its row, so a number taken under load
+ * is never mistaken for a clean one).
  */
 async function loadGate(): Promise<{ load1: number; waited_s: number; ok: boolean }> {
   const limit = Number(process.env.ADE_LOAD_MAX ?? 14);
-  const maxWait = Number(process.env.ADE_LOAD_WAIT_S ?? 600);
+  const maxWait = Number(process.env.ADE_LOAD_WAIT_S ?? 1800);
   const t = Date.now();
   for (;;) {
     const load1 = Number(/load averages?: ([\d.]+)/.exec(uptime())?.[1] ?? 99);
@@ -670,6 +677,7 @@ async function loadGate(): Promise<{ load1: number; waited_s: number; ok: boolea
 for (let rep = start; rep < start + reps; rep++) {
   for (const t of tests) {
     GATE = await loadGate();
+    if (!GATE.ok && process.env.ADE_LOAD_SKIP !== "0") { row({ app: app.id, test: t, rep, skipped: "load" }); continue; }
     try {
       if (t === "A1" || t === "A2") await launchTest(app, t, rep);
       else if (t === "A3") await newThreadTest(app, rep);
