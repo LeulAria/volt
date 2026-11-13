@@ -1934,7 +1934,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		// A slash command only runs when it opens the prompt, so it goes without the lead.
 		const command = /^\/([\w:-]+)(?:\s|$)/.exec(msg.text)?.[1];
 		const lead = command && live.commands?.has(command) ? undefined : msg.lead;
-		const blocks: IAcpPromptBlock[] = [{ type: 'text', text: lead ? `${lead}\n\n${msg.text}` : msg.text }];
+		// Volt's lead is its own block, so the user's words reach the model as they typed them (as Claude
+		// Code sends its reminders): gateways and replay tools that match on the user's text still see it.
+		const blocks: IAcpPromptBlock[] = lead ? [{ type: 'text', text: lead }, { type: 'text', text: msg.text }] : [{ type: 'text', text: msg.text }];
 		// `images` arrives structurally until `IAgentMessage` declares it (WP5).
 		const images = (msg as IAgentMessage & { images?: readonly IModelImage[] }).images;
 		if (live.promptImages && images?.length) {

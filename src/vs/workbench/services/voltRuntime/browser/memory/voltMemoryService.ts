@@ -74,6 +74,9 @@ export function memoryBinding(sandboxedHostsSetting: unknown, fallbackSetting: u
 
 const MUTATING_TOOLS = new Set(['memory_write', 'memory_delete', 'skill_write']);
 
+/** How long the sandboxed host's context block is used before it is read again (behind the turn). */
+const CONTEXT_FRESH_MS = 30_000;
+
 interface INote {
 	readonly memory: IVoltMemory;
 	readonly uri: URI;
@@ -106,6 +109,10 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 	private readonly userDir: URI;
 	/** Notes per scope, read once per change instead of on every turn. */
 	private readonly cache = new Map<VoltMemoryScope, { readonly dir: URI; readonly at: number; readonly value: Promise<INote[]> }>();
+	/** The sandboxed host's last context block (see {@link sandboxedContext}). */
+	private lastContext: { readonly key: string; readonly text: string | undefined; readonly at: number } | undefined;
+	private pendingContext: { readonly key: string; readonly read: Promise<string | undefined> } | undefined;
+	private contextGeneration = 0;
 
 	constructor(
 		@IFileService private readonly fileService: IFileService,
@@ -125,7 +132,12 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 			tools: VOLT_MEMORY_TOOLS,
 			invoke: (name, args, call) => this.routeTool(name, args, call),
 		}));
+		this._register(this.onDidChange(() => this.dropContext()));
 		this._register(fileService.onDidFilesChange(e => {
+			const project = this.dirFor('project');
+			if (e.affects(this.userDir) || (project && e.affects(project))) {
+				this.dropContext();
+			}
 			for (const [scope, entry] of [...this.cache]) {
 				if (e.affects(entry.dir)) {
 					this.cache.delete(scope);
@@ -139,7 +151,7 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 				}
 			}
 		}));
-		this._register(workspace.onDidChangeWorkspaceFolders(() => this.cache.delete('project')));
+		this._register(workspace.onDidChangeWorkspaceFolders(() => { this.cache.delete('project'); this.dropContext(); }));
 	}
 
 	async list(scope: VoltMemoryScope | 'all' = 'all'): Promise<readonly IVoltMemory[]> {
@@ -193,13 +205,57 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 	async context(): Promise<string | undefined> {
 		const binding = await this.binding();
 		if (binding.kind === 'sandboxed') {
-			return this.stdio.pluginContext!(MEMORY_PLUGIN_ID, this.folders(undefined));
+			return this.sandboxedContext();
 		}
 		if (binding.kind === 'refused') {
 			this.logService.warn(`[volt-memory] ${binding.reason}`);
 			return undefined;
 		}
 		return renderMemoryContext(await this.list('all'));
+	}
+
+	/**
+	 * The sandboxed host's context block is on every new agent's first prompt, and a cold host takes
+	 * about half a second to start. The last block read is used at once and read again behind the
+	 * turn once it is {@link CONTEXT_FRESH_MS} old; any change to the notes drops it.
+	 */
+	private sandboxedContext(): Promise<string | undefined> {
+		const folders = this.folders(undefined);
+		const key = JSON.stringify(folders);
+		const last = this.lastContext?.key === key ? this.lastContext : undefined;
+		if (!last || Date.now() - last.at >= CONTEXT_FRESH_MS) {
+			const read = this.readContext(key, folders);
+			if (!last) {
+				return read;
+			}
+		}
+		return Promise.resolve(last.text);
+	}
+
+	private readContext(key: string, folders: IVoltPluginFolders): Promise<string | undefined> {
+		if (this.pendingContext?.key === key) {
+			return this.pendingContext.read;
+		}
+		const generation = this.contextGeneration;
+		const read = this.stdio.pluginContext!(MEMORY_PLUGIN_ID, folders).then(text => {
+			// Notes changed while this read ran: it may hold the old ones.
+			if (generation === this.contextGeneration) {
+				this.lastContext = { key, text, at: Date.now() };
+			}
+			return text;
+		}).finally(() => {
+			if (this.pendingContext?.read === read) {
+				this.pendingContext = undefined;
+			}
+		});
+		this.pendingContext = { key, read };
+		return read;
+	}
+
+	private dropContext(): void {
+		this.lastContext = undefined;
+		this.pendingContext = undefined;
+		this.contextGeneration++;
 	}
 
 	private availability: Promise<IVoltPluginAvailability | undefined> | undefined;

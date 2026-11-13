@@ -175,8 +175,9 @@ import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { createHomeAutomationsIcon, createHomeNewChatIcon } from '../home/agentHomeIcons.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentLandingRecents } from '../home/agentLandingRecents.js';
-import { IAgentThreadLifecycleService } from '../home/agentThreadLifecycle.js';
+import { IAgentThreadLifecycleService, needsBringBack } from '../home/agentThreadLifecycle.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
+import { composerDraftShape } from './agentComposerDraft.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
@@ -865,6 +866,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	 * freezing one takes longer: a prompt still on its way lands before it is edited, moved or removed.
 	 */
 	private submitChain: Promise<unknown> = Promise.resolve();
+	/** Sends in {@link submitChain} that have not settled: a send goes out at once only when none is. */
+	private submitsInFlight = 0;
+	/** The draft's {@link composerDraftShape} at the composer's last layout. */
+	private composerLaidOutShape: string | undefined;
 	/** Per chat: queue changes whose orchestrator call has not answered yet, shown in the card at once. */
 	private readonly queueOverlays = new Map<string, AgentQueueOverlay>();
 	/**
@@ -6475,7 +6480,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (Date.now() - this.prewarmedAt > PREWARM_ON_TYPE_MS && !this.isStreaming() && this.inputEditor?.getModel()?.getValueLength()) {
 				this.prewarmAgent();
 			}
-			this.layoutInputEditor();
+			// A taller or shorter draft lays the composer out from onDidContentSizeChange below. A key that
+			// changes neither the height nor the draft's shape changes nothing to lay out: the full pass (two
+			// editor layouts and the reads around them) cost about 19 ms of every keystroke.
+			if (composerDraftShape(this.inputModel?.getValue() ?? '') !== this.composerLaidOutShape) {
+				this.layoutInputEditor();
+			}
 			this.updateInputPlaceholder();
 			this.updateSendButton();
 			this.syncUnsavedState();
@@ -7377,12 +7387,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			...(request.options ? { options: request.options } : {}),
 			...(Object.keys(host).length ? { host } : {}),
 		};
+		// The prompt goes to the agent server before the pending turn is drawn: drawing it (and the
+		// layout it forces) held the send back by a large part of Enter's task, and the server and the
+		// agent waited for that. Only when nothing has to happen first: no earlier send still on its
+		// way (prompts go out in order), no chat to bring back, no mentions to freeze.
+		const sentAtOnce = !display && this.submitsInFlight === 0 && !needsBringBack(this.orchestrator.getThread(threadId)?.blocked, this.history.get(threadId))
+			? this.orchestrator.submit(threadId, prompt, delivery, turnId)
+			: undefined;
+		sentAtOnce?.catch(() => undefined);
 		const pending = delivery !== 'queue' ? this.showPendingTurn(input, threadId, turnId, value, display, mode) : undefined;
 		// Until the orchestrator answers (a round trip to the agent server), the prompt shows where it is going.
 		const shown = pending ? undefined : this.showPendingDelivery(threadId, turnId, display ? { ...prompt, display: { text: display.text } } : prompt, display, delivery);
+		this.submitsInFlight++;
 		const submitted = this.submitChain.then(async () => {
 			await broughtBack;
-			const result = await this.orchestrator.submit(threadId, display ? { ...prompt, display: await frozen } : prompt, delivery, turnId);
+			const result = await (sentAtOnce ?? this.orchestrator.submit(threadId, display ? { ...prompt, display: await frozen } : prompt, delivery, turnId));
 			pending?.settle(result.outcome === 'started');
 			shown?.(result.outcome);
 			if (result.outcome === 'rejected') {
@@ -7395,7 +7414,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			shown?.(undefined);
 			this.logService.warn('[volt agent] sending the prompt failed', err);
 			return false;
-		});
+		}).finally(() => this.submitsInFlight--);
 		this.submitChain = submitted.then(() => undefined);
 		return submitted;
 	}
@@ -8865,6 +8884,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (!this.inputEditor) {
 			return;
 		}
+		this.composerLaidOutShape = composerDraftShape(this.inputModel?.getValue() ?? '');
 		const empty = !(this.inputModel?.getValue().trim());
 		if (empty && !this.composerZoomed && this.composerHeight !== undefined) {
 			this.composerHeight = undefined;

@@ -1450,8 +1450,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session.agentHandle && session.agentRef === item.ref && session.agentCwd === cwd && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true)) {
 			return;
 		}
-		// A new agent's first prompt says whether the project is indexed: ask now, not on the send.
+		// A new agent's first prompt says whether the project is indexed and carries the memory notes:
+		// read both now, not on the send (the notes' sandboxed host takes ~0.5 s to start).
 		void this.largeIndexedProject(this.executionRoot(session));
+		void this.memory.context().catch(() => undefined);
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
 		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox, session.subagent);
 		if (this.agentPool.has(spare.key)) {

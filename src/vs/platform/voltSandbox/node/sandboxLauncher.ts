@@ -18,7 +18,7 @@ import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
 import { IAttestation, ISandboxBackendCapabilities, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
 import { agentStatePlan } from '../common/agentState.js';
-import { AGENT_STATE_ROOT, agentSandboxPolicy, agentSandboxRefusal, IAgentSandboxHost, isAgentHousekeepingDenial, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { AGENT_STATE_ROOT, agentEndpointLoopbackPorts, agentSandboxPolicy, agentSandboxRefusal, IAgentSandboxHost, isAgentHousekeepingDenial, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
@@ -304,6 +304,11 @@ export class VoltSandboxLauncher extends Disposable {
 	 * the Authority's result is only compared; every difference is recorded either way.
 	 */
 	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest, options: { cwd?: string; hostEnv: Readonly<Record<string, string | undefined>>; env?: Readonly<Record<string, string>>; terminal?: boolean; label?: string; kind?: PrincipalKind }): Promise<ISandboxLaunch> {
+		// The model endpoint the user set for this CLI (a local gateway) is reachable like Volt's MCP server.
+		const endpointPorts = agentEndpointLoopbackPorts(request.providerId, options.hostEnv).filter(port => !request.loopbackPorts?.includes(port));
+		if (endpointPorts.length) {
+			request = { ...request, loopbackPorts: [...request.loopbackPorts ?? [], ...endpointPorts] };
+		}
 		const host = await this.hostFacts();
 		// An agent this OS's sandbox cannot hold (a random listening port on macOS): refused before
 		// anything is prepared, with the reason the chat shows next to "Turn off sandbox for this chat".

@@ -919,6 +919,17 @@ export function loopbackPort(url: string | undefined): number | undefined {
 	return Number.isInteger(port) && port > 0 && port < 65536 ? port : undefined;
 }
 
+/**
+ * Loopback ports of the model endpoint the user pointed the CLI at in their own environment
+ * (`ANTHROPIC_BASE_URL=http://127.0.0.1:4000` for a local gateway or proxy). Only the CLI's own
+ * `*_BASE_URL` keys count. Without the grant the sandboxed CLI cannot reach its model at all and
+ * retries in silence ("Thinking" forever).
+ */
+export function agentEndpointLoopbackPorts(providerId: string, hostEnv: Readonly<Record<string, string | undefined>>): number[] {
+	const keys = (footprintOf(providerId).envKeys ?? []).filter(key => key.endsWith('_BASE_URL'));
+	return ports(keys.map(key => loopbackPort(hostEnv[key])).filter((port): port is number => port !== undefined));
+}
+
 // --- Codex's own sandbox --------------------------------------------------------------------
 
 /**

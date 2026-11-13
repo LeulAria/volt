@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, getWindow, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow, isEditableElement, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { Disposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
 import { agentTooltipShortcutTokens, IAgentTooltipShortcut } from '../chrome/agentTooltip.js';
@@ -23,6 +23,14 @@ const GAP_PX = 6;
 const EDGE_PX = 8;
 
 /**
+ * Whether a selection change can show, move or hide the bar. A change while a text field has focus is the
+ * field's own caret (a key typed in the composer); with no transcript selection before it, it cannot.
+ */
+export function needsSelectionLayout(hasSelection: boolean, activeElement: Element | null): boolean {
+	return hasSelection || !activeElement || !isEditableElement(activeElement);
+}
+
+/**
  * The "Add to Chat / Add to Side Chat" bar over text selected in a chat transcript.
  * ⌘L and ⇧⌘S run the same actions while a selection is showing it.
  */
@@ -34,6 +42,8 @@ export class AgentThreadSelectionActions extends Disposable {
 	private selecting = false;
 	private text: string | undefined;
 	private range: Range | undefined;
+	/** Text in the transcript was selected at the last layout (on screen or scrolled off it). */
+	private hasSelection = false;
 
 	constructor(
 		private readonly thread: HTMLElement,
@@ -50,7 +60,14 @@ export class AgentThreadSelectionActions extends Disposable {
 		this.hide();
 
 		const win = getWindow(thread);
-		this._register(addDisposableListener(doc, 'selectionchange', () => this.scheduleLayout()));
+		// Reading the selection forces a style and layout pass. Typing in the composer changes the selection
+		// on every key and a streaming reply scrolls the thread on every frame: neither can show the bar
+		// unless text in the transcript is selected already, so neither reads it then.
+		this._register(addDisposableListener(doc, 'selectionchange', () => {
+			if (needsSelectionLayout(this.hasSelection, doc.activeElement)) {
+				this.scheduleLayout();
+			}
+		}));
 		this._register(addDisposableListener(thread, 'pointerdown', e => {
 			if (e.button === 0) {
 				this.selecting = true;
@@ -63,8 +80,8 @@ export class AgentThreadSelectionActions extends Disposable {
 				this.scheduleLayout();
 			}
 		}, true));
-		this._register(addDisposableListener(thread, 'scroll', () => this.scheduleLayout(), true));
-		this._register(addDisposableListener(win, 'resize', () => this.scheduleLayout()));
+		this._register(addDisposableListener(thread, 'scroll', () => this.hasSelection && this.scheduleLayout(), true));
+		this._register(addDisposableListener(win, 'resize', () => this.hasSelection && this.scheduleLayout()));
 		this._register(addDisposableListener(win, 'keydown', e => this.onKeyDown(e), true));
 	}
 
@@ -136,6 +153,7 @@ export class AgentThreadSelectionActions extends Disposable {
 	private layout(): void {
 		const range = this.selecting || !this.delegate.isVisible() ? undefined : this.selectedRange();
 		const text = range?.toString().trim();
+		this.hasSelection = !!text;
 		if (!range || !text) {
 			this.hide();
 			return;

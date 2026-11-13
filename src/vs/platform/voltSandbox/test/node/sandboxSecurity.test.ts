@@ -31,6 +31,7 @@ import { AGENT_CONFIG_NAMES, builtinProfile } from '../../common/sandboxProfiles
 import { AgentStateOverlay } from '../../node/agentStateOverlay.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer } from '../../common/sandboxSchema.js';
 import { SandboxManager } from '../../node/sandboxManager.js';
+import { SEATBELT_DENIAL_PREDICATE } from '../../node/seatbeltBackend.js';
 import { SandboxProxyLookup } from '../../node/sandboxProxy.js';
 import { ISandboxHostFacts, sandboxHostFacts } from '../../node/sandboxResolver.js';
 import { realSandboxAvailable } from './sandboxSuiteGate.js';
@@ -634,6 +635,10 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		].join('; '));
 		assert.ok(!result.denials.some(denial => denial.target.includes('forged-folder')), `forged: ${JSON.stringify(result.denials.filter(d => d.target.includes('forged')))}`);
 		assert.ok(result.denials.some(denial => denial.target.endsWith('real-denial.txt')), `the real refusal is reported: ${JSON.stringify(result.denials.map(d => d.target))}`);
+	});
+
+	test('LOG-STREAM-1: the denial stream is narrowed by sender and process before any text search (it runs while any sandboxed process lives)', () => {
+		assert.match(SEATBELT_DENIAL_PREDICATE, /^\(processID == 0 AND sender == "Sandbox" AND eventMessage CONTAINS "VOLTSBX-"\) OR \(process == "logger" AND eventMessage CONTAINS "VOLTSBX-flush-"\)$/);
 	});
 
 	macTest('DENIAL-FLUSH-1: a one-shot run reports its last refusal even when the workload swallows the error and exits at once', async () => {
