@@ -151,6 +151,19 @@ suite('Agent pool', () => {
 		assert.deepStrictEqual([p.has('other'), p.has('another'), p.size], [false, true, 1]);
 	});
 
+	test('a burst across two keys (editing and read-only subagents) keeps both within the burst room', async () => {
+		const agents = new FakeAgents();
+		const p = pool(1, 10_000, 3);
+		p.ensure(agents.request('parent'));
+		await flush();
+		p.ensure(agents.request('work'), { count: 2, ttlMs: 100, burst: true });
+		p.ensure(agents.request('readonly'), { count: 1, ttlMs: 100, burst: true });
+		await flush();
+		// Cap 1 + 3: the read-only spare does not push out the editing ones it was started with.
+		assert.deepStrictEqual([p.has('parent'), p.has('work'), p.has('readonly'), p.size], [true, true, true, 4]);
+		assert.deepStrictEqual(agents.disposed, []);
+	});
+
 	test('a ready spare is handed out before one still starting', async () => {
 		const agents = new FakeAgents();
 		agents.manual = true;

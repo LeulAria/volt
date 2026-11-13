@@ -41,6 +41,7 @@ import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, pickGenerationParams, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
 import { ORCH_WARM_SUBAGENTS_SETTING } from '../common/orchestration/orchestrator.js';
+import { subagentSpareKinds } from '../common/orchestration/agentTasks.js';
 import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, subagentProfile, VoltProviderState, VoltSubagentProfile } from '../common/providers.js';
@@ -5504,10 +5505,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const settings = this.getSandboxSettings(session.sessionId);
 		const sandbox: IAgentSandboxStart | undefined = settings.level === 'off' ? undefined : { settings, workspaceRoots: sandboxWorkspaceRoots(cwd, this.projectRoot(session)?.fsPath, !!session.worktreePath) };
 		// The call's roles are still streaming: an Ask or Plan chat's subagents are all read-only (see
-		// `subagentProfileForTask`); elsewhere the default role (general) works on the files.
-		const kind: VoltSubagentProfile = modePolicy(session.mode).allowWrites ? 'work' : 'readonly';
-		const spare = this.spareRequest(provider, profile, item, cwd, this.getModelOptions(item.ref), sandbox, kind);
-		this.agentPool.ensure(spare, { count: SUBAGENT_SPARES, ttlMs: SUBAGENT_SPARE_TTL_MS });
+		// `subagentProfileForTask`); elsewhere the request says whether its parts edit, read, or both.
+		let request: string | undefined;
+		for (let i = session.messages.length - 1; i >= 0 && request === undefined; i--) {
+			const message = session.messages[i];
+			if (message.role === 'user' && !message.steer) {
+				request = message.content;
+			}
+		}
+		const kinds = subagentSpareKinds(modePolicy(session.mode).allowWrites, request, SUBAGENT_SPARES);
+		for (const kind of ['work', 'readonly'] as const) {
+			if (kinds[kind]) {
+				const spare = this.spareRequest(provider, profile, item, cwd, this.getModelOptions(item.ref), sandbox, kind);
+				this.agentPool.ensure(spare, { count: kinds[kind], ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
+			}
+		}
 	}
 
 	private emit(session: ISessionState, runId: string, event: IVoltEvent): void {

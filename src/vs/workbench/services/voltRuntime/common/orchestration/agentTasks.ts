@@ -372,6 +372,30 @@ export function subagentProfileForTask(task: Pick<IOrchTask, 'role' | 'mode'>): 
 }
 
 /**
+ * The whole request is read-only: a sentence of its own ("Do not edit any file."), not one part
+ * ("Reviewer (never edits files)") or the parent ("Do not edit files yourself"), or a read-only task.
+ */
+const READ_ONLY_REQUEST = /(?:^|[.!?:]\s+|\n\s*)(?:do not|don't|never|you must not)\s+(?:edit|change|modify)\s+(?:any\s+|the\s+)?(?:files?|code)\b(?!\s+yourself)|\bread[- ]only\s+(?:task|request|audit|review|question|investigation)s?\b/i;
+/** Parts of the request that run read-only (`subagentProfileForTask`: research and review). */
+const READ_ONLY_PARTS = /\b(?:review(?:er|ers|s)?|research(?:er|ers)?|audit(?:or|s)?|investigate)\b/i;
+
+/**
+ * Which spares to start while a chat writes its delegate_task call (`prewarmSubagents`), before its
+ * tasks' roles are known: the request the chat is working on says it best. A research request in an
+ * Agent chat warmed `work` spares, and every research subagent started cold (1.2-1.4 s each on the
+ * critical path, harness bench rounds 2 and 3).
+ */
+export function subagentSpareKinds(allowWrites: boolean, request: string | undefined, total: number): { readonly work: number; readonly readonly: number } {
+	if (!allowWrites || (request && READ_ONLY_REQUEST.test(request))) {
+		return { work: 0, readonly: total };
+	}
+	if (request && total > 1 && READ_ONLY_PARTS.test(request)) {
+		return { work: total - 1, readonly: 1 };
+	}
+	return { work: total, readonly: 0 };
+}
+
+/**
  * The refusal of a `delegate_task` call without a brief. Claude Code defers MCP tools behind Tool
  * Search, so its first call may come before it loaded the schema, with no arguments at all (5.9 s
  * and a ToolSearch round trip in a measured run). Naming the arguments lets the next call be right

@@ -56,6 +56,8 @@ export interface IAgentPoolEnsureOptions {
 	readonly count?: number;
 	/** Time to live of the spares this call starts; default the pool's. */
 	readonly ttlMs?: number;
+	/** Part of a burst that spans keys (spares of one kind, and one of another): uses the burst room even for one spare. */
+	readonly burst?: boolean;
 }
 
 interface IPoolEntry {
@@ -113,7 +115,7 @@ export class AgentPool extends Disposable {
 			return;
 		}
 		const count = Math.max(1, options?.count ?? 1);
-		const cap = this.options.maxSpares + (count > 1 ? this.options.maxBurst ?? 0 : 0);
+		const cap = this.options.maxSpares + (count > 1 || options?.burst ? this.options.maxBurst ?? 0 : 0);
 		for (const entry of this.list(request.key)) {
 			if (entry.settled && !(entry.handle && request.isLive(entry.handle))) {
 				this.drop(entry);
