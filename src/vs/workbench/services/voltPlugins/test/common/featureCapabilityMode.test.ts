@@ -231,6 +231,22 @@ suite('Volt first-party ceilings enforced (M5)', () => {
 		}
 	});
 
+	test('FEAT-R4-7: the dev environment declares the task terminal output it returns and the one home file it reads, and no more of the home folder', () => {
+		const manifest = VOLT_FEATURE_MANIFESTS.find(entry => idOf(entry) === 'volt.dev-environment')!;
+		const declared = manifest.contributes?.voltCapabilities?.required ?? [];
+		// The tasks tool returns its terminal's output (ideTasks.ts); ide remote hosts reads ~/.ssh/config (remoteCapability.ts).
+		assert.ok(declared.some(entry => entry.id === 'terminals.read'));
+		assert.deepStrictEqual(declared.filter(entry => entry.id === 'files.read:home').map(entry => entry.targets), [['~/.ssh/config']]);
+		assert.deepStrictEqual(declarationsOutsideCeiling('volt.dev-environment', [{ id: 'files.read:home', targets: ['~/.ssh/config'] }]), []);
+		for (const wider of [{ id: 'files.read:home' }, { id: 'files.read:home', targets: ['~/.ssh/*'] }, { id: 'files.read:home', targets: ['~/.ssh/id_ed25519'] }]) {
+			assert.strictEqual(declarationsOutsideCeiling('volt.dev-environment', [wider]).length, 1, JSON.stringify(wider));
+		}
+		// The HTTP client and Orchestra read nothing in the home folder.
+		for (const id of ['volt.http-client', 'volt.orchestra']) {
+			assert.strictEqual(declarationsOutsideCeiling(id, [{ id: 'files.read:home', targets: ['~/.ssh/config'] }]).length, 1, id);
+		}
+	});
+
 	test('M5-ZERO-PROMPT-2: a built-in never consults consent, so it is never asked (G.12)', () => {
 		const consents: IVoltConsentStore = { state: () => { throw new Error('first party looked up consent'); } };
 		const policy = store.add(new VoltExtensionCapabilityPolicy(consents));

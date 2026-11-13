@@ -579,6 +579,17 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						reason: 'Tasks run in terminals.',
 					},
 					{
+						id: 'terminals.read',
+						class: 'medium',
+						reason: 'The tasks tool returns the output of its task\'s terminal.',
+					},
+					{
+						id: 'files.read:home',
+						class: 'critical',
+						targets: ['~/.ssh/config'],
+						reason: 'The ide gateway\'s remote capability lists the hosts in ~/.ssh/config.',
+					},
+					{
 						id: 'git.read',
 						class: 'medium',
 						reason: 'The ide gateway\'s git capability reads branches, history, blame and conflicts.',

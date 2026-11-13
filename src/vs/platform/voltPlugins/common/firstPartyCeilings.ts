@@ -40,9 +40,11 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
 	'volt.computer-use': [{ id: 'tools.register' }, { id: 'desktop.control' }, { id: 'screen.capture' }, { id: 'spawn.unsandboxed' }],
 	'volt.customize': [{ id: 'files.write', targets: ['~/.volt/customize/*'] }],
 	// Tests run in a sandboxed chat's sandbox; debug sessions, tasks and notebook kernels run on the host.
-	// The ide gateway's capabilities: git (read and write), ci (gh), http, notebooks, extensions' commands.
+	// The ide gateway's capabilities: git (read and write), ci (gh), http, notebooks, extensions' commands,
+	// remote (the hosts in ~/.ssh/config). The tasks tool returns its task terminal's output.
 	'volt.dev-environment': [
-		{ id: 'tools.register' }, { id: 'files.read:workspace' }, { id: 'files.write' }, { id: 'terminals.run' },
+		{ id: 'tools.register' }, { id: 'files.read:workspace' }, { id: 'files.write' }, { id: 'terminals.run' }, { id: 'terminals.read' },
+		{ id: 'files.read:home', targets: ['~/.ssh/config'] },
 		{ id: 'git.read' }, { id: 'git.write' }, { id: 'hosting.read' }, { id: 'net.connect' }, { id: 'net.loopback.connect:*' },
 		{ id: 'commands.execute:*' }, { id: 'spawn.unsandboxed' },
 	],
