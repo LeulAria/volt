@@ -5,7 +5,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-	ACCESS_MODES, type AccessMode, catalogItem, compactNumber, COMPOSER_MODES, type ComposerMode, ComposerDraft, type Delivery, type IconName, type IDraftStore, type IMcpServerStatus, type IPromptAttachment, type IPromptMention, modelLabel
+	ACCESS_MODES, type AccessMode, catalogItem, compactNumber, COMPOSER_MODES, type ComposerMode, ComposerDraft, DEFAULT_ACCESS_MODE, type Delivery, type IconName, type IDraftStore, type IMcpServerStatus, type IPromptAttachment, type IPromptMention, modelLabel
 } from '@volt/client-core';
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -287,7 +287,7 @@ export function Composer(props: IComposerProps) {
 	const model = catalogItem(runtime, props.modelRef);
 	const options = model?.optionDescriptors?.filter(d => d.type === 'select' && d.options?.length).slice(0, 1) ?? [];
 	const current = (props.modelRef && runtime.modelOptions?.[props.modelRef]) || {};
-	const access = ACCESS_MODES.find(a => a.id === props.accessMode) ?? ACCESS_MODES[3];
+	const access = ACCESS_MODES.find(a => a.id === (props.accessMode ?? DEFAULT_ACCESS_MODE)) ?? ACCESS_MODES[0];
 	const showStop = props.running && !sendable && !images.length && !files.length && !!props.onStop;
 
 	// A chat's composer rests as one line (+, "Send follow-up", the model's mark, mic, send) and opens

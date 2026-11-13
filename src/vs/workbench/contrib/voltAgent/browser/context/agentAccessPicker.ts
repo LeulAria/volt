@@ -82,8 +82,8 @@ function policyFileItems(info: ISandboxPolicyFilesInfo | undefined): IVoltMenuIt
 }
 
 /**
- * The chat's permissions under the composer, as in Codex: Full access, Auto, Auto-accept edits or
- * Supervised. A pick holds for this chat only; Settings keeps the default for new chats.
+ * The chat's permissions under the composer: Supervised (default), Auto-accept edits, Auto or
+ * Full access. A pick holds for this chat only; Settings keeps the default for new chats.
  */
 export class AgentAccessPicker extends Disposable {
 

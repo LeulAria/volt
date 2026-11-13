@@ -153,6 +153,9 @@ export interface ISessionSummary {
 
 export type AccessMode = 'supervised' | 'auto-accept-edits' | 'auto' | 'full-access';
 
+/** Fresh installs and new chats start here until Settings or the composer picks another mode. */
+export const DEFAULT_ACCESS_MODE: AccessMode = 'supervised';
+
 export const ACCESS_MODES: readonly { readonly id: AccessMode; readonly label: string; readonly description: string }[] = [
 	{ id: 'supervised', label: 'Supervised', description: 'Ask before edits, commands and network access.' },
 	{ id: 'auto-accept-edits', label: 'Auto-accept edits', description: 'Edit files freely; ask before commands.' },

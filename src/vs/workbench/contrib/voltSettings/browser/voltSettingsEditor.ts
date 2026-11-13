@@ -1135,7 +1135,7 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 	}
 
-	/** Full access · Auto · Accept edits · Supervised, picked like the composer's access menu. */
+	/** Supervised · Accept edits · Auto · Full access, picked like the composer's access menu. */
 	private accessModeControl(host: HTMLElement): void {
 		this.dropdown(host, ACCESS_MODE_OPTIONS.map(option => ({
 			id: option.id,
