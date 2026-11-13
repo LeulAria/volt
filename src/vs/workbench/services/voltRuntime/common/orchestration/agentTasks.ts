@@ -196,21 +196,24 @@ const MODEL_ARG = {
 	description: 'A model from list_models (id, ref or label), or "auto" (the user\'s model for this role). Default: this chat\'s model.',
 };
 
+const STRING = { type: 'string' };
+const STRINGS = { type: 'array', items: STRING };
+
 /**
- * The optional contract and run options, on the call (and as plain fields on each `tasks` entry).
- * Kept short: the whole schema is in every prompt of a top-level chat (`alwaysLoad: 'top'`), and a
- * long one made models write long payloads (2.5 KB of arguments, 7 s before the first subagent).
+ * The schemas of delegate_task, wait_tasks and message_task are in every request of a top-level
+ * chat (`alwaysLoad: 'top'`; round 3: 5.7 KB, about 2K tokens). So each says a thing once, the
+ * fields carry types only, and the options long or risky work needs are named in the description
+ * instead of typed: models write them as named, and the handler reads them as before (also on a
+ * `tasks` entry).
  */
-const CONTRACT_ARGS = {
-	goal: { type: 'string', description: 'The outcome, in a sentence.' },
-	constraints: { type: 'array', items: { type: 'string' }, description: 'What must not change.' },
-	done_when: { type: 'array', items: { type: 'string' }, description: 'Checks that prove it is done; it reports each as met or not.' },
-	verify: { type: 'array', items: { type: 'string' }, description: 'Shell commands Volt runs in its checkout when it reports done; a failure goes back to it first.' },
-	files: { type: 'array', items: { type: 'string' }, description: 'Files to read first.' },
-	scope: { type: 'array', items: { type: 'string' }, description: 'Files or folders it owns: the only ones it may change.' },
-	context: { type: 'string', enum: ['brief', 'full', 'none'], description: 'What it sees of this chat besides the brief: brief (default: the request, your plan, the other subagents), full, or none.' },
-	budget_usd: { type: 'number', description: 'Stop it past this spend (USD).' },
-	fallback_models: { type: 'array', items: { type: 'string' }, description: 'Models to retry on, in order, when its model fails (provider error, usage limit).' },
+const DELEGATE_ARGS = {
+	task: STRING,
+	title: STRING,
+	role: { enum: AGENT_TASK_ROLES },
+	after: STRINGS,
+	model: STRING,
+	previous_task_id: STRING,
+	wait: { type: 'boolean' },
 };
 
 export interface IAgentTaskToolInfo {
@@ -229,46 +232,19 @@ function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
 		title: 'Delegated task',
 		alwaysLoad: 'top',
 		description: [
-			'Run work on Volt subagents: separate chats, on any model from list_models, whose reports come back to you. Use it for independent parts in parallel, a second opinion from another model (review, research), or self-contained work; not for lookups you can do faster yourself.',
-			'Brief each like a capable colleague, in a few sentences: the files and facts you already found and exactly what to do (for edits: the paths, symbols and change), so it starts at once instead of exploring.',
-			'Several parts: ONE call with `tasks`. A part that needs others\' reports lists them in `after` (1-based positions in `tasks`, or task_ids of this chat\'s earlier tasks) and starts when they finish, with their reports added to its brief.',
-			'wait=true returns the reports in this call (it returns early when they take long, after 45 s to 4 min by agent; then call wait_tasks). Otherwise it returns at once and the reports arrive as a new message: end your turn, or call wait_tasks when you need them now.',
-			'A new round of a review after changes: delegate_task with previous_task_id (a fresh reviewer), not message_task.',
-			'goal, scope, files, constraints, done_when and verify are optional: use them for long or risky work, not for small tasks.',
+			'Run work on a Volt subagent: a separate chat whose report comes back to you. For independent parts in parallel, a second opinion or self-contained work; not quick lookups.',
+			'Brief it like a colleague: the files and facts you found, exactly what to do.',
+			'Several parts: one call each, in one message (each starts once written).',
+			'after: task_ids, or 1-based positions of this chat\'s tasks, to finish first; their reports join its brief.',
+			'Reports arrive as a message: end your turn or call wait_tasks; wait=true waits here.',
+			'role research/review: read-only. model: from list_models. previous_task_id: the next review round.',
+			'Also: models (same brief on 2-4), isolation:"worktree" (own branch), goal, scope (only files it may change), files, constraints, done_when, verify (commands run on its report), context (brief/full/none), budget_usd, fallback_models, tasks (several parts in one call).',
 		].join(' '),
 		inputSchema: {
 			type: 'object',
 			properties: {
-				task: { type: 'string', description: 'The brief, for one subagent.' },
-				tasks: {
-					type: 'array',
-					maxItems: maxPerCall,
-					description: `Up to ${maxPerCall} parts, one subagent each, instead of \`task\`. An entry takes the call's fields; fields left out use the call's values.`,
-					items: {
-						type: 'object',
-						properties: {
-							task: { type: 'string' },
-							title: { type: 'string' },
-							model: { type: 'string' },
-							role: { type: 'string', enum: AGENT_TASK_ROLES },
-							scope: { type: 'array', items: { type: 'string' } },
-							files: { type: 'array', items: { type: 'string' } },
-							done_when: { type: 'array', items: { type: 'string' } },
-							after: { type: 'array', items: { type: 'string' }, description: '1-based positions of earlier entries ("1"), or task_ids.' },
-						},
-						required: ['task'],
-					},
-				},
-				...CONTRACT_ARGS,
-				after: { type: 'array', items: { type: 'string' }, description: 'task_ids (or 1-based positions) of this chat\'s earlier tasks that must finish first.' },
-				previous_task_id: { type: 'string', description: 'The previous round\'s task_id: the new subagent gets that round\'s brief and report; your brief adds what changed since.' },
-				title: { type: 'string', description: '3-6 words.' },
-				model: MODEL_ARG,
-				models: { type: 'array', items: { type: 'string' }, description: 'The same brief on 2-4 models, a task each (independent reviews, competing designs). Instead of `model`.' },
-				role: { type: 'string', enum: AGENT_TASK_ROLES, description: 'research and review are read-only; implementation, test and design edit files; general decides from the brief.' },
-				isolation: { type: 'string', enum: ['shared', 'worktree'], description: 'shared (default): this chat\'s checkout. worktree: its own branch and checkout, for parallel edits of the same files; merge the branch it names.' },
-				wait: { type: 'boolean', description: 'Return the reports in this call (it returns early when they take long).' },
-				client_request_id: { type: 'string', description: 'Idempotency key: a retry with it returns the same task.' },
+				...DELEGATE_ARGS,
+				tasks: { type: 'array', maxItems: maxPerCall, items: { type: 'object' } },
 			},
 		},
 	};
@@ -292,14 +268,8 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 		name: WAIT_TASKS_TOOL_NAME,
 		title: 'Waited for tasks',
 		alwaysLoad: 'top',
-		description: 'Wait for delegated tasks to finish and return their reports. Waits for all of task_ids (default: every running task of this chat), or for the first one when any=true. Returns early when they take long (45 s to 4 min, by agent) even if some are still running; call it again to keep waiting, or end your turn and the reports will be delivered as a message.',
-		inputSchema: {
-			type: 'object',
-			properties: {
-				task_ids: { type: 'array', items: { type: 'string' } },
-				any: { type: 'boolean', description: 'Return as soon as one of them finishes.' },
-			},
-		},
+		description: 'Wait for delegated tasks and return their reports: all of task_ids (default: this chat\'s running tasks), or the first with any=true. Returns early after 45 s-4 min: call again, or end your turn (reports arrive as a message).',
+		inputSchema: { type: 'object', properties: { task_ids: STRINGS, any: { type: 'boolean' } } },
 	},
 	{
 		name: CANCEL_TASK_TOOL_NAME,
@@ -311,16 +281,8 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 		name: MESSAGE_TASK_TOOL_NAME,
 		title: 'Messaged task',
 		alwaysLoad: 'top',
-		description: 'Send a follow-up to a finished delegated task: it continues in the same chat with everything it already learned (answer its question, ask it to fix what review found, ask for more detail). Starts another round; the new report is delivered like the first.',
-		inputSchema: {
-			type: 'object',
-			properties: {
-				task_id: { type: 'string' },
-				message: { type: 'string' },
-				wait: { type: 'boolean', description: 'Wait for the new report in this call (it returns early when it takes long).' },
-			},
-			required: ['task_id', 'message'],
-		},
+		description: 'Follow up on a finished delegated task in its own chat, which keeps what it learned (answer it, ask for fixes). The new report arrives like the first; wait=true waits here.',
+		inputSchema: { type: 'object', properties: { task_id: STRING, message: STRING, wait: { type: 'boolean' } }, required: ['task_id', 'message'] },
 	},
 	{
 		name: HANDOFF_TOOL_NAME,
