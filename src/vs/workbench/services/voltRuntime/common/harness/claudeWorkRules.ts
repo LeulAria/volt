@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { stringHash } from '../../../../../base/common/hash.js';
 import { subagentProfile, VoltSubagentProfile } from '../providers.js';
 
 /**
@@ -115,6 +116,53 @@ export const CLAUDE_MAIN_DISALLOWED_TOOLS: readonly string[] = ['AskUserQuestion
  */
 export const CLAUDE_MAIN_ASK_RULE = '- To ask the user to choose (requirements, preferences, trade-offs), load Volt\'s ask_question (ToolSearch "select:mcp__volt__ask_question") and ask with it instead of writing the options into your reply.';
 
+/**
+ * Claude Code's own tools the main chat loads on demand instead of in every request: their schemas
+ * were 8.1k tokens of a 23.2k "hi" (Workflow 2.3k, ScheduleWakeup 2.0k, Agent 2.0k, ReportFindings
+ * 1.1k, ListAgents 0.7k; measured 2026-11-13, Opus 5.5). They stay callable: a task that needs one
+ * loads it with ToolSearch (see {@link CLAUDE_MAIN_LAZY_RULE}).
+ */
+export const CLAUDE_MAIN_LAZY_TOOLS: readonly string[] = ['Agent', 'Workflow', 'ScheduleWakeup', 'ReportFindings', 'ListAgents'];
+
+/**
+ * Added to {@link CLAUDE_MAIN_RULES} when {@link CLAUDE_MAIN_LAZY_TOOLS} load on demand. Claude Code
+ * lists a tool its hooks module deferred in no "deferred tools" message, so without this line the
+ * model would not know they exist; with their exact names one ToolSearch call loads them, and in the
+ * same message as the step's other calls it costs no extra round trip.
+ */
+export const CLAUDE_MAIN_LAZY_RULE = `- Load on demand: Agent (subagents), Workflow (multi-agent scripts, only when asked for one), ScheduleWakeup (resume later), ReportFindings (code-review findings), ListAgents (running agents). Before the first use, call ToolSearch "select:<exact names, comma-separated>" in the same message as your other first calls.`;
+
+/** The hooks module of {@link claudeLazyToolsPlugin}: Claude Code (2.1.322 and later) imports it in its hooks worker. */
+const CLAUDE_LAZY_TOOLS_MODULE = [
+	'// Volt: Claude Code tools the main chat loads with ToolSearch when a task needs them, not in every request.',
+	`const LAZY = ${JSON.stringify(CLAUDE_MAIN_LAZY_TOOLS)};`,
+	'export function register(on) {',
+	'\ton(\'tool.describe\', { tool: LAZY }, async ($, e, next) => ({ ...(await next(e)), isDeferred: true }));',
+	'}',
+	'',
+].join('\n');
+
+/**
+ * A Claude Code plugin (passed with the SDK's `plugins` option) whose hooks module defers
+ * {@link CLAUDE_MAIN_LAZY_TOOLS} behind tool search: Claude Code's own `tool.describe` event, the
+ * one mechanism it has for deferring a built-in tool (its other switches are server-side flags).
+ * Its matcher hands only those five tools to the module (one ~5 ms worker hop each, in parallel,
+ * when the tool list is built). Where hooks modules are off (`disableAllHooks`, a policy) or tool
+ * search is, the tools stay loaded as before. `name` is the folder it is written to, named after
+ * its content so a changed module gets a new folder and an unchanged one keeps the same path (a
+ * resumed session compares its options).
+ */
+export function claudeLazyToolsPlugin(): { readonly name: string; readonly files: readonly (readonly [path: string, text: string])[] } {
+	const files: [string, string][] = [
+		['.claude-plugin/plugin.json', `${JSON.stringify({ name: 'volt-lazy-tools', version: '1.0.0', description: 'Volt: Claude Code tools loaded on demand' })}\n`],
+		['hooks/hooks.json', `${JSON.stringify({ modules: ['./register.js'] })}\n`],
+		// Last: a folder that has it was written whole.
+		['hooks/register.js', CLAUDE_LAZY_TOOLS_MODULE],
+	];
+	const digest = (stringHash(JSON.stringify(files), 0) >>> 0).toString(16).padStart(8, '0');
+	return { name: `volt-lazy-tools-${digest}`, files };
+}
+
 /** Also off for a read-only subagent: it changes no files (Volt's sandbox and plan mode hold it to that too). */
 export const CLAUDE_READONLY_SUBAGENT_DISALLOWED_TOOLS: readonly string[] = ['Edit', 'Write', 'NotebookEdit'];
 
@@ -189,12 +237,16 @@ export const CLAUDE_READONLY_SUBAGENT_PROMPT = [
  * (`strictMcpConfig`: no user or claude.ai servers). Kept identical across sessions so a resumed
  * session is not rebuilt for a changed fingerprint. `voltAsks`: the session has Volt's ask_question,
  * so the main agent goes without Claude Code's own (see {@link CLAUDE_MAIN_DISALLOWED_TOOLS}).
+ * `lazyToolsPlugin`: the folder {@link claudeLazyToolsPlugin} was written to; the main agent loads
+ * {@link CLAUDE_MAIN_LAZY_TOOLS} on demand with it (a subagent goes without them anyway).
  */
-export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?: boolean | VoltSubagentProfile; readonly voltAsks?: boolean }): Record<string, unknown> {
+export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?: boolean | VoltSubagentProfile; readonly voltAsks?: boolean; readonly lazyToolsPlugin?: string }): Record<string, unknown> {
 	const subagent = subagentProfile(opts?.subagent);
+	const lazyTools = !subagent && opts?.lazyToolsPlugin ? opts.lazyToolsPlugin : undefined;
+	const mainRules = [CLAUDE_MAIN_RULES, ...(opts?.voltAsks ? [CLAUDE_MAIN_ASK_RULE] : []), ...(lazyTools ? [CLAUDE_MAIN_LAZY_RULE] : [])].join('\n');
 	const systemPrompt = subagent === 'readonly'
 		? CLAUDE_READONLY_SUBAGENT_PROMPT
-		: { type: 'preset', preset: 'claude_code', append: subagent ? CLAUDE_WORK_SUBAGENT_RULES : opts?.voltAsks ? `${CLAUDE_MAIN_RULES}\n${CLAUDE_MAIN_ASK_RULE}` : CLAUDE_MAIN_RULES };
+		: { type: 'preset', preset: 'claude_code', append: subagent ? CLAUDE_WORK_SUBAGENT_RULES : mainRules };
 	return {
 		systemPrompt,
 		claudeCode: {
@@ -207,7 +259,12 @@ export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?:
 					planModeInstructions: CLAUDE_SUBAGENT_PLAN_MODE,
 					title: CLAUDE_SUBAGENT_SESSION_TITLE,
 					...(subagent === 'readonly' ? { strictMcpConfig: true } : {}),
-				} : { title: CLAUDE_SESSION_TITLE, ...(opts?.voltAsks ? { disallowedTools: [...CLAUDE_MAIN_DISALLOWED_TOOLS] } : {}) }),
+				} : {
+					title: CLAUDE_SESSION_TITLE,
+					...(opts?.voltAsks ? { disallowedTools: [...CLAUDE_MAIN_DISALLOWED_TOOLS] } : {}),
+					// Its MCP discovery is skipped: the plugin has no servers.
+					...(lazyTools ? { plugins: [{ type: 'local', path: lazyTools, skipMcpDiscovery: true }] } : {}),
+				}),
 				settings: {
 					...(subagent ? CLAUDE_SUBAGENT_SESSION_SETTINGS : {}),
 					hooks: {

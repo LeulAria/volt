@@ -993,7 +993,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 							identity: 'claude',
 						},
 						writable: ['Library/Caches/claude-cli-nodejs', '.cache/claude-cli-nodejs'],
-						readable: ['.local/share/claude'],
+						readable: ['.local/share/claude', '.volt/claude-plugins'],
 						credentials: ['.claude/.credentials.json'],
 						tmpDirs: ['/private/tmp/claude-${uid}', '/tmp/claude-${uid}', '/private/tmp/cc-socks', '/tmp/cc-socks'],
 						env: {

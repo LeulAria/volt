@@ -127,7 +127,8 @@
 						".cache/claude-cli-nodejs"
 					],
 					"readable": [
-						".local/share/claude"
+						".local/share/claude",
+						".volt/claude-plugins"
 					],
 					"credentials": [
 						".claude/.credentials.json"
