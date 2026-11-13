@@ -177,6 +177,7 @@ import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentLandingRecents } from '../home/agentLandingRecents.js';
 import { IAgentThreadLifecycleService, needsBringBack } from '../home/agentThreadLifecycle.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
+import { composerDraftShape } from './agentComposerDraft.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
@@ -867,6 +868,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private submitChain: Promise<unknown> = Promise.resolve();
 	/** Sends in {@link submitChain} that have not settled: a send goes out at once only when none is. */
 	private submitsInFlight = 0;
+	/** The draft's {@link composerDraftShape} at the composer's last layout. */
+	private composerLaidOutShape: string | undefined;
 	/** Per chat: queue changes whose orchestrator call has not answered yet, shown in the card at once. */
 	private readonly queueOverlays = new Map<string, AgentQueueOverlay>();
 	/**
@@ -6477,7 +6480,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (Date.now() - this.prewarmedAt > PREWARM_ON_TYPE_MS && !this.isStreaming() && this.inputEditor?.getModel()?.getValueLength()) {
 				this.prewarmAgent();
 			}
-			this.layoutInputEditor();
+			// A taller or shorter draft lays the composer out from onDidContentSizeChange below. A key that
+			// changes neither the height nor the draft's shape changes nothing to lay out: the full pass (two
+			// editor layouts and the reads around them) cost about 19 ms of every keystroke.
+			if (composerDraftShape(this.inputModel?.getValue() ?? '') !== this.composerLaidOutShape) {
+				this.layoutInputEditor();
+			}
 			this.updateInputPlaceholder();
 			this.updateSendButton();
 			this.syncUnsavedState();
@@ -8876,6 +8884,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (!this.inputEditor) {
 			return;
 		}
+		this.composerLaidOutShape = composerDraftShape(this.inputModel?.getValue() ?? '');
 		const empty = !(this.inputModel?.getValue().trim());
 		if (empty && !this.composerZoomed && this.composerHeight !== undefined) {
 			this.composerHeight = undefined;
