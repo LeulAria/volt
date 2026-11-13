@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, resolveChatTaskRefs, subagentSpareKinds, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, resolveChatTaskRefs, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
 import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
@@ -74,6 +74,11 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.deepStrictEqual(subagentSpareKinds(true, 'This is a read-only audit.', 3), { work: 0, readonly: 3 });
 		assert.deepStrictEqual(subagentSpareKinds(true, '1. Writer: add formatReceipt to src/money.ts.\n2. Reviewer (never edits files): review all of src/money.ts.\nDo not edit files yourself.', 3), { work: 2, readonly: 1 }, 'one read-only part is not a read-only request');
 		assert.deepStrictEqual(subagentSpareKinds(true, 'Each subagent fixes only its own file and must not edit the tests or any other file.', 3), { work: 3, readonly: 0 });
+	});
+
+	test('a waiting task tool call of a Claude parent blocks longer', () => {
+		// Up to 4 min per call (under fetch's 5 min); other agents stay under cursor-agent's 60 s.
+		assert.deepStrictEqual([taskWaitMs(true), taskWaitMs(false)], [240_000, 45_000]);
 	});
 
 	test('the parent capsule carries the user\'s request, the plan, the latest reply and the siblings, within its budget', () => {

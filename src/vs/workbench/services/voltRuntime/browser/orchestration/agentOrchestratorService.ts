@@ -28,7 +28,7 @@ import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { retryDelay, RUN_START_RETRY } from '../../common/jobs/retryPolicy.js';
 import { normalizeVoltMode } from '../../common/modes.js';
-import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, contractFromArgs, resolveChatTaskRefs, verifyFromArgs, DELEGATE_TASK_TOOL_NAME, delegateArgsWithAliases, matchTaskModel, describeSpend, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, lintTaskBrief, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeContextLevel, normalizeTaskRole, stringListArg, subagentProfileForTask, delegateTaskMissingBrief, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, TaskContextLevel, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
+import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, contractFromArgs, resolveChatTaskRefs, verifyFromArgs, DELEGATE_TASK_TOOL_NAME, delegateArgsWithAliases, matchTaskModel, describeSpend, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, lintTaskBrief, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeContextLevel, normalizeTaskRole, stringListArg, subagentProfileForTask, delegateTaskMissingBrief, TASK_STATUS_TOOL_NAME, taskWaitMs, TaskContextLevel, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { buildParentCapsule, userRequests } from '../../common/orchestration/taskContext.js';
 import { foldSpend, ITaskSpendTracker, ITaskTokenRates, seedSpendTracker, spendUsage } from '../../common/orchestration/taskSpend.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
@@ -1664,6 +1664,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return this.configurationService.getValue<boolean>(LIMIT_STOP_CLAUDE_SETTING) !== false;
 	}
 
+	/** How long a waiting task tool call of `threadId`'s agent may block (`taskWaitMs`): longer for Claude. */
+	private waitBudget(threadId: string): number {
+		return taskWaitMs(isClaudeProvider(this.providerOf(this.runtime.getOrCreateSession(threadId).providerRef ?? this.state.threads[threadId]?.modelRef)));
+	}
+
 	private providerOf(ref: string | undefined): string | undefined {
 		return ref ? this.runtime.listCatalog().find(item => item.ref === ref)?.providerId : undefined;
 	}
@@ -2137,7 +2142,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		}
 		const id = step.decision.taskId!;
 		if (args.wait === true) {
-			await this.waitFor([id], false, TASK_WAIT_MS, token);
+			await this.waitFor([id], false, this.waitBudget(parentId), token);
 		}
 		const task = this.state.tasks[id];
 		const lines = [
@@ -2247,7 +2252,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			lines.push(`${index + 1}. ${result.error ? `not started: ${result.error}` : result.text?.split('\n')[0] ?? ''}`);
 		}
 		if (args.wait === true && ids.length) {
-			await this.waitFor(ids, false, TASK_WAIT_MS, token);
+			await this.waitFor(ids, false, this.waitBudget(parentId), token);
 		}
 		const now = Date.now();
 		const tasks = ids.map(id => this.state.tasks[id]).filter((task): task is IOrchTask => !!task);
@@ -2299,7 +2304,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			lines.push(`${model.label}: ${result.error ?? result.text?.split('\n')[0] ?? ''}`);
 		}
 		if (args.wait === true && ids.length) {
-			await this.waitFor(ids, false, TASK_WAIT_MS, token);
+			await this.waitFor(ids, false, this.waitBudget(parentId), token);
 		}
 		const now = Date.now();
 		const tasks = ids.map(id => this.state.tasks[id]).filter((task): task is IOrchTask => !!task);
@@ -2354,7 +2359,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		if (!wanted.length) {
 			return 'No delegated tasks to wait for.';
 		}
-		await this.waitFor(wanted, any, TASK_WAIT_MS, token);
+		await this.waitFor(wanted, any, this.waitBudget(threadId), token);
 		const now = Date.now();
 		const tasks = wanted.map(id => this.state.tasks[id]).filter((task): task is IOrchTask => !!task && task.parentId === threadId);
 		const finished = tasks.filter(task => isTerminalTaskState(task.state));
@@ -2426,7 +2431,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		}
 		if (wait) {
 			await timeout(50);
-			await this.waitFor([taskId], false, TASK_WAIT_MS, token);
+			await this.waitFor([taskId], false, this.waitBudget(threadId), token);
 		}
 		const current = this.state.tasks[taskId];
 		if (isTerminalTaskState(current.state)) {

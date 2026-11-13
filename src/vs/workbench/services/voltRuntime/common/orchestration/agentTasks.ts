@@ -58,6 +58,18 @@ export const MAX_TASK_DEPTH = 2;
  * and tells the agent to call again.
  */
 export const TASK_WAIT_MS = 45_000;
+/**
+ * The same budget for a Claude parent: Claude Code's MCP client waits for a tool far longer than 60 s
+ * (an HTTP call is cut at 5 min by Node's fetch). A 45 s cap made a Claude lead building for minutes
+ * call wait_tasks again and again, each a whole request on its full context (ADEMark C1-style run).
+ */
+export const TASK_WAIT_LONG_MS = 240_000;
+
+/** How long one waiting call may block: TASK_WAIT_LONG_MS for a Claude parent, TASK_WAIT_MS for any other. */
+export function taskWaitMs(longWaits: boolean): number {
+	return longWaits ? TASK_WAIT_LONG_MS : TASK_WAIT_MS;
+}
+
 /** A report longer than this is clipped in the parent's notification; the full text stays in the child chat. */
 export const TASK_RESULT_CHARS = 12_000;
 /** An upstream task's report as a dependent task receives it (`after`). */
