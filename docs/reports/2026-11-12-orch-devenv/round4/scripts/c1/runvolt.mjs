@@ -112,6 +112,28 @@ async function pickProject(c, folder) {
 	if (!picked || !await shown()) { throw new Error(`could not pick the project ${folder}`); }
 }
 
+/**
+ * The model for the chat (ADEMark's pin: Opus 5.5, high effort): a new chat starts on the last chat's model, so the
+ * picker's row is clicked; its label carries the effort the model is set to ("Opus 5.5 High").
+ */
+async function pickModel(c, rowLabel) {
+	const chipText = () => c.evaluate(`(() => [...document.querySelectorAll('.volt-agent-model')].filter(e => e.offsetParent).at(-1)?.textContent.replace(/\\s+/g, ' ').trim() ?? '')()`);
+	// The chip's model and effort are two spans with no space between them.
+	const same = text => text.replace(/\s+/g, '') === rowLabel.replace(/\s+/g, '');
+	if (same(await chipText())) { return rowLabel; }
+	await c.evaluate(`(() => { [...document.querySelectorAll('.volt-agent-model')].filter(e => e.offsetParent).at(-1)?.click(); })()`);
+	await sleep(1200);
+	const at = await c.evaluate(`(() => { const e = [...document.querySelectorAll('.monaco-list-row *')].filter(e => e.offsetParent && [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim() === ${JSON.stringify(rowLabel)})).at(0); if (!e) { return null; } const r = e.getBoundingClientRect(); return [r.x + 20, r.y + r.height / 2]; })()`);
+	if (!at) { throw new Error(`no model row ${rowLabel}`); }
+	for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
+		await c.send('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'left', clickCount: 1 });
+	}
+	await sleep(1000);
+	const shown = await chipText();
+	if (!same(shown)) { throw new Error(`model chip shows "${shown}", not "${rowLabel}"`); }
+	return shown;
+}
+
 /** What the chat shows under the composer: model, access, sandbox. */
 const chips = c => c.evaluate(`(() => ({ model: [...document.querySelectorAll('.volt-agent-model-label')].filter(e => e.offsetParent).map(e => e.textContent.trim()), access: [...document.querySelectorAll('button.volt-agent-status-access')].filter(e => e.offsetParent).map(e => e.getAttribute('aria-label') + ' / ' + (e.dataset.mode ?? '')) }))()`);
 
@@ -147,7 +169,9 @@ async function run(id) {
 	await sleep(1500);
 	await pickProject(c, repo);
 	await sleep(1000);
-	const shown = await chips(c);
+	const modelChip = await pickModel(c, opt('--model-row', 'Opus 5.5 High'));
+	const shown = { ...await chips(c), modelChip };
+	if (!shown.access.some(a => /full-access/.test(a))) { throw new Error(`access is not Full access: ${shown.access}`); }
 	const focused = await c.evaluate(`(() => { const t = [...document.querySelectorAll('textarea.inputarea')].filter(e => e.offsetParent).at(-1); if (!t) { return false; } t.focus(); return true; })()`);
 	if (!focused) { throw new Error('no composer'); }
 	await c.send('Input.insertText', { text: prompt });
@@ -284,6 +308,11 @@ if (cmd === 'launch') {
 		}
 	}
 	console.log(JSON.stringify(at));
+	c.close();
+} else if (cmd === 'pick') {
+	// Setup check: the model pick alone, nothing is sent.
+	const c = await cdp();
+	console.log(await pickModel(c, arg ?? 'Opus 5.5 High'));
 	c.close();
 } else if (cmd === 'escape') {
 	const c = await cdp();
