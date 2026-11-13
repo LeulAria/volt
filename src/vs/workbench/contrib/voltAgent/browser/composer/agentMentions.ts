@@ -192,6 +192,11 @@ function toDisplayMention(mention: IAgentMention): IAgentDisplayMention {
 export { imageAttachmentsFromMentions, resourceAttachmentsFromMentions, videoFrameName } from './agentMentionImages.js';
 export type { IAgentImageAttachment } from './agentMentionImages.js';
 
+/** @ Agents and @ Machines go with the Orchestra feature's tools while `volt.orchestra` is off. */
+export function orchestraMentionsShown(features: IVoltFeatureService | undefined): boolean {
+	return features?.isEnabled(ORCHESTRA_FEATURE_ID) !== false;
+}
+
 /**
  * `[Image #1 "image.png" is saved at: /path]` for each image in a prompt, a line per video
  * naming its stills, and `[File #1 "report.pdf" (PDF, 2.1 MB) is saved at: /path]` per attached
@@ -2377,7 +2382,7 @@ export class AgentMentionController extends Disposable {
 		const categories: AgentMentionRow[] = [
 			{ kind: 'item', id: 'files', label: localize('voltAgent.mention.files', "Files & Folders"), icon: Codicon.folder, submenu: true, run: () => this.setMenuView('files') },
 			// Who and where: agents of any provider (and a team or council of them), and the machines work can run on.
-			...(this.orchestraOff() ? [] : [
+			...(!orchestraMentionsShown(this.surfaceService(IVoltFeatureService)) ? [] : [
 				{ kind: 'item' as const, id: 'agents', label: localize('voltAgent.mention.agents', "Agents"), description: localize('voltAgent.mention.agentsDetail', "Models, a team, a council"), icon: Codicon.hubot, submenu: true, run: () => this.setMenuView('agents') },
 				{ kind: 'item' as const, id: 'machines', label: localize('voltAgent.mention.machines', "Machines"), description: localize('voltAgent.mention.machinesDetail', "Where the work runs"), icon: Codicon.server, submenu: true, run: () => this.openMachinesView() },
 			]),
@@ -2531,11 +2536,6 @@ export class AgentMentionController extends Disposable {
 	/** Settings > Canvas & Scratch turned the surface off: no way to mention it either. */
 	private surfaceOff(setting: string): boolean {
 		return this.configurationService.getValue(setting) === false;
-	}
-
-	/** The Orchestra feature (`volt.orchestra`) is off: @ Agents and @ Machines go with its tools. */
-	private orchestraOff(): boolean {
-		return this.surfaceService(IVoltFeatureService)?.isEnabled(ORCHESTRA_FEATURE_ID) === false;
 	}
 
 	/** Optional: the board and canvas services are not in every workbench (tests, the web build's slices). */

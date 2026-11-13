@@ -219,7 +219,7 @@ registerAction2(class extends Action2 {
 });
 
 /** "Send Request | Open in HTTP Client" above every request in a .http file, while the feature is on. */
-class HttpCodeLens extends Disposable implements IWorkbenchContribution {
+export class HttpCodeLens extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.voltHttpCodeLens';
 	constructor(@ILanguageFeaturesService languageFeatures: ILanguageFeaturesService, @IVoltFeatureService features: IVoltFeatureService) {
 		super();
