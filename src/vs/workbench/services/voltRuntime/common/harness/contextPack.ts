@@ -200,7 +200,12 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	const parts: string[] = [];
 	const allowWrites = modePolicy(input.mode).allowWrites;
 	const shaped = framingForShape(input.shape ?? input.intent.shape, input.intent.wantsWeb, { allowWrites });
-	if (input.intent.lane === 'chat') {
+	// "hi", "thanks": nothing to frame, chart or keep inside the workspace (~400 tokens otherwise).
+	// The mode's contract still applies ("ok" in Plan mode changes nothing).
+	const smallTalk = input.intent.smallTalk === true;
+	if (input.intent.lane === 'chat' && smallTalk) {
+		// No framing.
+	} else if (input.intent.lane === 'chat') {
 		parts.push(`[Volt] ${shaped ?? laneDefinition('chat').framing}`);
 	} else if (input.intent.lane === 'fast') {
 		parts.push(`[Volt] ${laneDefinition('fast').framing.replace(' If it turns out to be larger than it looks, call request_capabilities.', '')}`);
@@ -228,7 +233,7 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 		parts.push(`[Volt] ${input.intent.wantsPreview ? BROWSER_TESTING : BROWSER_TESTING_WHEN_NEEDED}`);
 	}
 	// A fix checked in the browser is answered in a few lines; a chart of it is one more model call.
-	if (input.visuals && input.intent.lane !== 'fast' && !(input.intent.uiWork && input.browserTools)) {
+	if (input.visuals && !smallTalk && input.intent.lane !== 'fast' && !(input.intent.uiWork && input.browserTools)) {
 		parts.push(`[Volt] ${VISUAL_REPLIES}`);
 	}
 	if (input.intent.wantsServices && modePolicy(input.mode).allowTerminal) {
@@ -272,8 +277,10 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	}
 	// Benchmarks caught agents running `rg` over the home folder and reading other tools'
 	// transcripts to chase a missing script. Keep them in the project unless asked.
-	parts.push(`[Volt] ${WORKSPACE_SCOPE}`);
-	return parts.join('\n');
+	if (!smallTalk) {
+		parts.push(`[Volt] ${WORKSPACE_SCOPE}`);
+	}
+	return parts.length ? parts.join('\n') : undefined;
 }
 
 /**

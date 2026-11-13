@@ -92,6 +92,23 @@ suite('Volt context pack', () => {
 		assert.ok(!/http\.server/.test(prompt));
 	});
 
+	test('small talk gets no lead: nothing to frame, chart or keep in the workspace; the mode contract stays', () => {
+		for (const text of ['hi', 'thanks!', 'ok']) {
+			const intent = classifyIntent(text, 'agent', { hasWorkspace: true });
+			assert.strictEqual(intent.smallTalk, true, text);
+			assert.strictEqual(buildAcpLead({ mode: 'agent', intent, visuals: true }), undefined, text);
+		}
+		const plan = buildAcpLead({ mode: 'plan', intent: classifyIntent('ok', 'plan', { hasWorkspace: true }), visuals: true });
+		assert.ok(plan?.startsWith('[Volt mode: plan]'), plan);
+		for (const text of ['what is 2+2', 'nissan kicks 2026 price dubai', 'explain the auth flow']) {
+			const intent = classifyIntent(text, 'agent', { hasWorkspace: true });
+			assert.ok(!intent.smallTalk, text);
+			const lead = buildAcpLead({ mode: 'agent', intent, visuals: true });
+			assert.ok(lead?.includes(WORKSPACE_SCOPE) && lead.includes(VISUAL_REPLIES), text);
+		}
+		assert.ok(!classifyIntent('thanks', 'agent', { hasWorkspace: true, priorLane: 'agent' }).smallTalk, 'a follow-up in coding work keeps its lane and lead');
+	});
+
 	test('building from a design image adds the render-and-compare loop, except in read-only modes', () => {
 		const prompt = 'Build design/pricing.png as a static page: index.html with plain HTML and CSS. It should match the image closely.';
 		assert.strictEqual(buildAcpLead({ mode: 'agent', intent: classifyIntent(prompt, 'agent') }), `[Volt] ${DESIGN_LOOP}\n[Volt] ${WORKSPACE_SCOPE}`);
