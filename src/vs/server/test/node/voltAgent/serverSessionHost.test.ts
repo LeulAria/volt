@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { patchDelay } from '../../../node/voltAgent/serverSessionHost.js';
+import { changeDelay, patchDelay } from '../../../node/voltAgent/serverSessionHost.js';
 
 suite('Agent server transcript patches', () => {
 
@@ -24,5 +24,14 @@ suite('Agent server transcript patches', () => {
 	test('a chat no client shows waits the background interval', () => {
 		assert.strictEqual(patchDelay(false, undefined, 1_000), 1_000);
 		assert.strictEqual(patchDelay(false, 0, 1_000), 1_000);
+	});
+
+	test('a reply\'s first words do not wait behind a usage-only patch', () => {
+		// The usage update went out 10 ms ago; nothing drawn has gone out in this turn yet.
+		assert.strictEqual(changeDelay(true, true, 990, undefined, 1_000), 0);
+		assert.strictEqual(changeDelay(true, true, 990, 900, 1_000), 0);
+		// More bookkeeping still waits the interval, and so does the next drawn change of a stream.
+		assert.strictEqual(changeDelay(false, true, 990, undefined, 1_000), 40);
+		assert.strictEqual(changeDelay(true, true, 990, 980, 1_000), 30);
 	});
 });

@@ -39,6 +39,15 @@ export function patchDelay(shown: boolean, lastFlush: number | undefined, now: n
 }
 
 /**
+ * {@link patchDelay} for one change. A change to what is drawn (`render`) counts the interval from the
+ * last patch that carried one, so the patch that carried only bookkeeping (Claude's usage update right
+ * before a reply's first words) does not hold those words back a whole interval.
+ */
+export function changeDelay(render: boolean, shown: boolean, lastFlush: number | undefined, lastRenderFlush: number | undefined, now: number): number {
+	return patchDelay(shown, render ? lastRenderFlush : lastFlush, now);
+}
+
+/**
  * A streaming patch compares only the current turn (from the last prompt on); the whole transcript
  * is compared at a turn's start and end, on a client's request, and at least this often.
  */
@@ -73,6 +82,9 @@ export class ServerSessionHost extends Disposable {
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 	/** When each chat's changes last went out: a change after a quiet spell goes out at once. */
 	private readonly flushedAt = new Map<string, number>();
+	/** When a patch with a drawn change last went out, and the chats with one waiting (see {@link changeDelay}). */
+	private readonly renderFlushedAt = new Map<string, number>();
+	private readonly renderPending = new Set<string>();
 	/** When each chat's whole transcript was last compared (see WHOLE_DIFF_INTERVAL_MS). */
 	private readonly wholeDiffAt = new Map<string, number>();
 	/** Per connection that said so (`session.watch`): the chats it shows. */
@@ -133,6 +145,8 @@ export class ServerSessionHost extends Disposable {
 				this.flush(sessionId);
 				this.tracked.delete(sessionId);
 				this.flushedAt.delete(sessionId);
+				this.renderFlushedAt.delete(sessionId);
+				this.renderPending.delete(sessionId);
 			}
 			store.dispose();
 		}));
@@ -141,7 +155,7 @@ export class ServerSessionHost extends Disposable {
 	private onChange(sessionId: string, change: IAgentSessionChange): void {
 		// 'activity' changed the messages without changing what is drawn (more reasoning): a patch carries it too.
 		if (change.kind === 'render' || change.kind === 'activity') {
-			this.schedule(sessionId);
+			this.schedule(sessionId, change.kind === 'render');
 			return;
 		}
 		// Lifecycle changes go out right after the messages they describe.
@@ -158,14 +172,23 @@ export class ServerSessionHost extends Disposable {
 		this.publish({ type: 'change', ...event });
 	}
 
-	private schedule(sessionId: string): void {
-		if (this.timers.has(sessionId)) {
-			return;
+	private schedule(sessionId: string, render = true): void {
+		if (render) {
+			this.renderPending.add(sessionId);
+		}
+		const delay = changeDelay(render, this.shown(sessionId), this.flushedAt.get(sessionId), this.renderFlushedAt.get(sessionId), Date.now());
+		const timer = this.timers.get(sessionId);
+		if (timer !== undefined) {
+			// A drawn change that may go now does not wait for a bookkeeping patch's timer.
+			if (!render || delay > 0) {
+				return;
+			}
+			clearTimeout(timer);
 		}
 		this.timers.set(sessionId, setTimeout(() => {
 			this.timers.delete(sessionId);
 			this.flush(sessionId, true);
-		}, patchDelay(this.shown(sessionId), this.flushedAt.get(sessionId), Date.now())));
+		}, delay));
 	}
 
 	/**
@@ -202,6 +225,9 @@ export class ServerSessionHost extends Disposable {
 	 */
 	private flush(sessionId: string, streaming = false): void {
 		this.flushedAt.set(sessionId, Date.now());
+		if (this.renderPending.delete(sessionId)) {
+			this.renderFlushedAt.set(sessionId, Date.now());
+		}
 		const timer = this.timers.get(sessionId);
 		if (timer !== undefined) {
 			clearTimeout(timer);
