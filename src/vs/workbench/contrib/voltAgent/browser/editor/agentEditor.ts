@@ -339,6 +339,9 @@ const DRAWN_EXCHANGES_KEEP = 24;
 const STASHED_DRAWN_EXCHANGES = 12;
 /** Shows the pane even if the first chat's history never finishes loading. */
 const RESTORE_REVEAL_TIMEOUT_MS = 1500;
+/** An "ago" label older than this reads in hours or days, so the clock redoes it only every {@link AGO_OLD_SWEEP_TICKS} ticks. */
+const AGO_OLD_MS = 60 * 60_000;
+const AGO_OLD_SWEEP_TICKS = 60;
 /** How long the background picture's fade on a new chat's first send may run (420ms in agentChatBackground.css). */
 const CHAT_BACKDROP_FADE_MS = 600;
 
@@ -1029,6 +1032,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** The card beside a `/skill` token in a sent message; made on first hover. */
 	private skillHoverCard: AgentSkillHoverCard | undefined;
 	private clockTimer: IDisposable | undefined;
+	/** Ticks of the one-second clock, so old "ago" labels are redone only every minute. */
+	private metaTicks = 0;
 	private statusRotateTimer: IDisposable | undefined;
 	private readonly statusMotion = new Map<string, { text: string; from?: string; started?: number }>();
 	/** Replies that streamed in this editor: their "Worked for" fold starts open, as Cursor's does right after a run. */
@@ -5775,7 +5780,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (!duration) {
 			duration = append(line, $('span.volt-agent-worked-duration.volt-agent-searchable'));
 		}
-		duration.textContent = formatWorkedDuration(ms);
+		const text = formatWorkedDuration(ms);
+		if (duration.textContent !== text) {
+			duration.textContent = text;
+		}
 		line.querySelector('.volt-agent-token-chip')?.remove();
 	}
 
@@ -5967,22 +5975,37 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (!this.threadInner) {
 			return;
 		}
-		tickElapsed(this.threadInner);
-		for (const el of this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-worked')) {
+		// Runs every second over every drawn exchange. Rewriting each label, even with the same text,
+		// laid a 1,000-turn chat out again every second while it sat idle; now a label is written only
+		// when its text changes, the lookups are live collections (cached until nodes change), and
+		// labels over an hour old, which change by the hour, are redone once a minute.
+		const now = Date.now();
+		const sweepOld = this.metaTicks++ % AGO_OLD_SWEEP_TICKS === 0;
+		tickElapsed(this.threadInner, now);
+		for (const el of this.threadInner.getElementsByClassName('volt-agent-worked')) {
+			if (!isHTMLElement(el)) {
+				continue;
+			}
 			const started = Number(el.dataset.startedAt);
 			if (!Number.isFinite(started)) {
 				continue;
 			}
-			const ended = el.dataset.endedAt ? Number(el.dataset.endedAt) : Date.now();
+			const ended = el.dataset.endedAt ? Number(el.dataset.endedAt) : now;
 			this.fillWorkedLine(el, ended - started);
 		}
-		for (const el of this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-ago')) {
+		for (const el of this.threadInner.getElementsByClassName('volt-agent-ago')) {
+			if (!isHTMLElement(el)) {
+				continue;
+			}
 			const when = Number(el.dataset.endedAt);
-			if (!Number.isFinite(when)) {
+			if (!Number.isFinite(when) || (!sweepOld && now - when > AGO_OLD_MS)) {
 				continue;
 			}
 			const text = el.querySelector('.volt-agent-searchable') ?? el;
-			text.textContent = dayjs(when).fromNow();
+			const label = dayjs(when).fromNow();
+			if (text.textContent !== label) {
+				text.textContent = label;
+			}
 		}
 	}
 
