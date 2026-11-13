@@ -23,12 +23,17 @@ for (const app of readdirSync(dir)) {
 			if (!vals.length) { out[`${app} ${test} ${field}`] = { n: 0, missing: rs.length }; continue; }
 			const xs = vals.map(r => r[field]);
 			// Clean: the 1-minute load was at most 14 when the test started (the gate) and when its row was written (`uptime`).
-			const clean = vals.filter(isClean).map(r => r[field]);
+			const cleanRows = vals.filter(isClean);
+			const clean = cleanRows.map(r => r[field]);
 			const loads = vals.map(r => r.load_gate?.load1).filter(x => typeof x === 'number');
+			// Load per clean sample: the 1-minute load at the test's start and when its row was written.
+			const cleanLoads = cleanRows.flatMap(r => [r.load_gate.load1, endLoad(r)]);
 			out[`${app} ${test} ${field}`] = {
 				median: med(xs), n: xs.length, min: Math.min(...xs), max: Math.max(...xs),
 				missing: rs.length - vals.length, under_load: vals.length - clean.length,
 				median_clean: clean.length ? med(clean) : null, n_clean: clean.length,
+				min_clean: clean.length ? Math.min(...clean) : null, max_clean: clean.length ? Math.max(...clean) : null,
+				load1_clean_min: cleanLoads.length ? Math.min(...cleanLoads) : null, load1_clean_max: cleanLoads.length ? Math.max(...cleanLoads) : null,
 				load1_median: med(loads),
 			};
 		}
@@ -36,6 +41,6 @@ for (const app of readdirSync(dir)) {
 }
 const fmt = x => x === null || x === undefined ? '-' : Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(1);
 for (const [k, v] of Object.entries(out)) {
-	console.log(k.padEnd(34), v.n ? `median ${fmt(v.median)} (n ${v.n}, ${fmt(v.min)}-${fmt(v.max)}), under load ${v.under_load}, load1 median ${fmt(v.load1_median)}${v.missing ? `, missing ${v.missing}` : ''}${v.n_clean ? `, clean median ${fmt(v.median_clean)} (n ${v.n_clean})` : ''}` : `no value in ${v.missing} rows`);
+	console.log(k.padEnd(34), v.n ? `median ${fmt(v.median)} (n ${v.n}, ${fmt(v.min)}-${fmt(v.max)}), under load ${v.under_load}, load1 median ${fmt(v.load1_median)}${v.missing ? `, missing ${v.missing}` : ''}${v.n_clean ? `, clean median ${fmt(v.median_clean)} (n ${v.n_clean}, ${fmt(v.min_clean)}-${fmt(v.max_clean)}, load ${fmt(v.load1_clean_min)}-${fmt(v.load1_clean_max)})` : ''}`: `no value in ${v.missing} rows`);
 }
 if (jsonOut) { writeFileSync(jsonOut, JSON.stringify(out, null, 1)); }

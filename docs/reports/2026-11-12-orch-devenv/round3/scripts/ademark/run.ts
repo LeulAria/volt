@@ -462,7 +462,10 @@ async function launchTest(app: App, test: "A1" | "A2", rep: number) {
   let readyMs: number | null = null; let typed = 0; let skipped = 0;
   let pid: number | null = null;
   const pidOf = () => (pid ??= mainPid(app));
-  if (app.electron && app.composerText) {
+  // ADE_WINDOW_ONLY=1: first window only. For apps whose isolated profile opens on a welcome or sign-in screen with no
+  // composer (T3 Code, Paseo here: no project seeded), the DOM echo can never succeed and would wait its full 60 s.
+  const echo = app.electron && !!app.composerText && !process.env.ADE_WINDOW_ONLY;
+  if (echo) {
     const r = await domEcho(app, null, pidOf, t0, 60_000, undefined, () => Cdp.connect(app, 200));
     readyMs = r.readyMs; typed = r.typed; skipped = r.skipped; r.cdp?.close();
   }
@@ -473,7 +476,7 @@ async function launchTest(app: App, test: "A1" | "A2", rep: number) {
     await clearComposer(pidOf()!, c);
     c?.close();
   }
-  row({ app: app.id, test, rep, pid: pid, window_ms: windowMs, ready_ms: readyMs, method: app.electron && app.composerText ? `dom-echo, ${KEYS} keys` : "window-only", typed, skipped, quit: quitHow, gate_quiet: gate.quiet, gate_cores: gate.cores_last });
+  row({ app: app.id, test, rep, pid: pid, window_ms: windowMs, ready_ms: readyMs, method: echo ? `dom-echo, ${KEYS} keys` : "window-only", typed, skipped, quit: quitHow, gate_quiet: gate.quiet, gate_cores: gate.cores_last });
 }
 
 /** A3: new-thread shortcut -> typing accepted in a fresh thread. */

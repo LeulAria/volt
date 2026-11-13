@@ -95,7 +95,8 @@ retake)
 	done
 	;;
 others)
-	for r in 1 2 3 4 5 6; do
+	# ADE_WINDOW_ONLY=1 (run.ts) when the apps' isolated profiles open with no composer; ADE_REPS repetitions (6).
+	for r in $(seq 1 ${ADE_REPS:-6}); do
 		for t in A1 A2; do
 			for app in ${ADE_APPS:-t3 paseo zeron monocode super claude-desktop}; do
 				$R --app $app --tests $t --reps 1 --start $r --out "$OUT/$app"
