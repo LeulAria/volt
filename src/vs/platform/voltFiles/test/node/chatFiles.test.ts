@@ -231,4 +231,29 @@ suite('Volt race-free files for a sandboxed chat\'s own tools (SEC3-3)', () => {
 		// Proves the operations ran, not only that they were refused.
 		assert.ok(writes > 0 && reads > 0, `some operations landed in the workspace (writes ${writes}, reads ${reads})`);
 	});
+
+	safeTest('SEC3-3-RACE-DEL: a folder swapped for a symlink out of the workspace while deletes run never removes a file outside', async function () {
+		this.timeout(60_000);
+		const outside = join(f.home, 'deltarget');
+		await fs.mkdir(outside);
+		// Canaries outside the workspace, named as a delete inside would name them: none may be removed.
+		for (let i = 0; i < 5; i++) {
+			await fs.writeFile(join(outside, `v${i}.txt`), 'KEEP');
+		}
+		const flipper = startFlipper(join(f.ws, 'dir'), outside);
+		flippers.push(flipper.child);
+		let deletes = 0;
+		for (let i = 0; i < RACE_OPS; i++) {
+			// Re-create the victim inside the real folder, then delete it; the flipper may have made `dir`
+			// a symlink to `outside`, where `v*.txt` are the canaries the delete must never reach.
+			await fs.mkdir(join(f.ws, 'dir'), { recursive: true }).catch(() => undefined);
+			await fs.writeFile(join(f.ws, 'dir', `v${i % 5}.txt`), 'victim').catch(() => undefined);
+			const result = await chatFileOp(request(f, 'delete', join(f.ws, 'dir', `v${i % 5}.txt`)), f.options);
+			deletes += result.ok && result.existed ? 1 : 0;
+		}
+		const flips = await flipper.flips();
+		assert.ok(flips > 100, `the flipper ran (${flips} flips)`);
+		assert.deepStrictEqual((await fs.readdir(outside)).sort(), ['v0.txt', 'v1.txt', 'v2.txt', 'v3.txt', 'v4.txt'], 'no canary outside was deleted through the swap');
+		assert.ok(deletes > 0, `some deletes landed in the workspace (${deletes})`);
+	});
 });
