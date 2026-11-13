@@ -1178,6 +1178,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// `claude -p` / `codex exec` process per subagent, started while the subagents start.
 		if (!session.titleState && userMessages.length === 1 && this.history.isSubagentSession?.(sessionId)) {
 			session.titleState = 'done';
+		} else if (!session.titleState && userMessages.length === 1 && isVagueMessage(request.text) && !attachmentNames(request).length) {
+			// "hi", "continue": a model can only answer "Quick question" (a `claude -p` call of ~1.3k
+			// tokens). The first line stays the title until the next message titles the chat from both.
+			session.titleRetry = 'due';
 		} else if (!session.titleState && userMessages.length === 1) {
 			session.titleState = 'pending';
 			session.titleRetry = isVagueMessage(request.text) ? 'due' : undefined;
