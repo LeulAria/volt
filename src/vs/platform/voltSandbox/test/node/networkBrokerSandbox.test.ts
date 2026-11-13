@@ -123,12 +123,6 @@ suite('Volt network broker through real sandboxes (NET-E2E)', function () {
 		}
 	});
 
-	setup(function () {
-		if (!available) {
-			this.skip();
-		}
-	});
-
 	teardown(async () => {
 		await Promise.all(running.splice(0).map(run => run.stop()));
 		for (const name of await fs.readdir(ws)) {
@@ -137,6 +131,13 @@ suite('Volt network broker through real sandboxes (NET-E2E)', function () {
 	});
 	// After the teardown above: the runs' listeners are disposed before the leak check.
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	// After the leak check's own setup: a skip here stops later setups but not its teardown.
+	setup(function () {
+		if (!available) {
+			this.skip();
+		}
+	});
 
 	function makeManager(): SandboxManager {
 		return new SandboxManager(undefined, {
