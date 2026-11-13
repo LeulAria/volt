@@ -16,7 +16,7 @@ import { IVoltSandboxEvent, IVoltSandboxFileResult, IVoltStdioService } from '..
 import { isSandboxUnavailableError, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IAccessDecision } from '../../common/access/accessTypes.js';
-import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent, isVoltHostToolPermission } from '../../browser/agents/acpProvider.js';
+import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent, isTitleFromLead, isVoltHostToolPermission } from '../../browser/agents/acpProvider.js';
 import { IVoltEvent } from '../../common/events.js';
 import { ACP_IDLE_TIMINGS } from '../../common/harness/acpStall.js';
 import { isAcpTurnRestartable } from '../../common/harness/sessionRetry.js';
@@ -694,6 +694,28 @@ suite('ACP provider supervision', () => {
 		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
 		await turn.done;
 		await finish(env, handle);
+	});
+
+	test('an agent title cut from the lead is dropped; a real one is kept', async () => {
+		const env = setup();
+		const handle = await env.provider.start(request());
+		const cts = store.add(new CancellationTokenSource());
+		const turn = collect(env.provider.send(handle, { text: 'replay:long-2000', mode: 'agent', lead: '[Volt] This looks like a question. Answer it directly.' }, PROFILE, cts.token));
+		await settle();
+		env.agent.update('p1', { sessionUpdate: 'session_info_update', title: '[Volt] This looks like a question...' });
+		env.agent.update('p1', { sessionUpdate: 'session_info_update', title: 'Replay long thread' });
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		assert.deepStrictEqual(turn.events.flatMap(event => event.type === 'title' ? [event.text] : []), ['Replay long thread']);
+		await finish(env, handle);
+	});
+
+	test('isTitleFromLead matches only a cut of the lead', () => {
+		assert.strictEqual(isTitleFromLead('[Volt] This looks like a question…', '[Volt] This looks like a  question. Answer it.'), true);
+		assert.strictEqual(isTitleFromLead('Fix the pagination bug', '[Volt] This looks like a question.'), false);
+		assert.strictEqual(isTitleFromLead('[Volt]', '[Volt] notes'), true);
+		assert.strictEqual(isTitleFromLead('', '[Volt] notes'), false);
 	});
 });
 

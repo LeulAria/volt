@@ -84,6 +84,8 @@ interface IAcpSession {
 	settling?: Promise<void>;
 	/** The to-do list as it changed between turns (a background subagent's TaskUpdate): the next turn starts from it. */
 	pendingPlan?: Extract<IVoltEvent, { type: 'plan' }>;
+	/** Volt's lead sent with the last prompt: an agent title cut from it is not the chat's title. */
+	lastLead?: string;
 	/** Sandbox warnings and denials from before a turn ran (a spawn's `partial` warning): the next turn shows them. */
 	pendingSandbox?: IVoltSandboxEvent[];
 	/** Pool key of the setup this session was started with (spares are matched on it). */
@@ -374,6 +376,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 		promise,
 		new Promise<T>((_, reject) => setTimeout(() => reject(new Error('ACP request timed out')), ms)),
 	]);
+}
+
+/** Whether an agent's session title is the start of Volt's lead (an agent cuts its title from the first prompt block). */
+export function isTitleFromLead(title: string, lead: string): boolean {
+	const flat = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase();
+	const head = flat(title).replace(/(\.\.\.|…)$/, '').trim();
+	return head.length >= 6 && flat(lead).startsWith(head);
 }
 
 export class AcpAgentProvider implements IAgentProvider {
@@ -1429,6 +1438,11 @@ export class AcpAgentProvider implements IAgentProvider {
 				this.pushNotice(live, turn, event);
 				continue;
 			}
+			// Claude Code titles a session from its first prompt block, which is Volt's lead when one was sent
+			// ("[Volt] This looks like a question..."): Volt's own title from the user's words stays.
+			if (event.type === 'title' && live.lastLead && isTitleFromLead(event.text, live.lastLead)) {
+				continue;
+			}
 			if (event.type === 'tool.start') {
 				turn.usedTools = true;
 				this.flushHeld(turn);
@@ -1899,6 +1913,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		// transcript and anything keyed on the prompt (ADEMark's replay server matches a whole text block)
 		// see the prompt itself, not the prompt behind Volt's notes.
 		const blocks: IAcpPromptBlock[] = lead ? [{ type: 'text', text: lead }, { type: 'text', text: msg.text }] : [{ type: 'text', text: msg.text }];
+		live.lastLead = lead;
 		// `images` arrives structurally until `IAgentMessage` declares it (WP5).
 		const images = (msg as IAgentMessage & { images?: readonly IModelImage[] }).images;
 		if (live.promptImages && images?.length) {
