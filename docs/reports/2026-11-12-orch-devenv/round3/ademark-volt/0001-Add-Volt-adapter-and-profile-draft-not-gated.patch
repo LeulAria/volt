@@ -1,0 +1,394 @@
+From 2e94ef26e9708ac0294a2e00a139c097c53e585b Mon Sep 17 00:00:00 2001
+From: LeulAria <leulsegedtariku@gmail.com>
+Date: Fri, 13 Nov 2026 09:51:03 +0400
+Subject: [PATCH] Add Volt adapter and profile (draft, not gated)
+
+---
+ ADES.md                                       |  39 ++++
+ bench/adapters/profiles/volt.json             | 190 ++++++++++++++++++
+ bench/adapters/registry.ts                    |   4 +-
+ bench/adapters/volt.ts                        |  20 ++
+ bench/test/adapters.test.ts                   |   7 +-
+ bench/test/cli.test.ts                        |   6 +-
+ .../test/tracks-a-weight-stream-plan.test.ts  |   4 +-
+ 7 files changed, 261 insertions(+), 9 deletions(-)
+ create mode 100644 bench/adapters/profiles/volt.json
+ create mode 100644 bench/adapters/volt.ts
+
+diff --git a/ADES.md b/ADES.md
+index 1d55c53..167cf6a 100644
+--- a/ADES.md
++++ b/ADES.md
+@@ -816,6 +816,44 @@ Adapter `codex-app`:
+ | `quit` | default |
+ | `processes` | unknown, find in pilot |
+ 
++### 3.18 Volt
++
++| Field | Value |
++|---|---|
++| Adapter ID | `volt` (`bench/adapters/volt.ts`) |
++| Maker, URL, license | Leul Aria, https://github.com/LeulAria/volt, MIT (a VS Code fork) |
++| Version | 0.0.6, 2026-11 (verify at freeze). Bundle `Volt.app`, bundle id `com.leularia.volt`, Electron |
++| On bench Mac | no |
++| Family | EL-SDK (Electron; agents over the Agent Client Protocol) |
++| Data to move aside | `~/Library/Application Support/Volt` (Electron profile, chats, the agent server's storage in `agentServer/`), `~/.volt` (sandbox state, worktrees, settings of Volt's own) |
++| Processes | Electron set; the agent server (the same `Electron` executable run as Node with `ELECTRON_RUN_AS_NODE=1`, entry `out/volt-agent-server-main.js`); `volt-sandbox-helper`; one `claude-agent-acp` (npx cache) per live chat with its `claude` child |
++| Claude runs via | `@agentclientprotocol/claude-agent-acp` 0.106.0 (Claude Agent SDK 0.3.322), which runs the system `claude` found on the login shell's PATH. Fetched with `npx` on first use into `~/.npm/_npx` |
++| Codex runs via | `codex-acp` over the system `codex` |
++| Adds to context | a lead block before the user's words (`[Volt]` notes and a short `<volt_workspace>` summary), the Volt MCP server's tools (host tools: browser, questions, threads, memory, render), and Claude Code's own system prompt. B2 shows the sizes |
++| Writes global config | none known (it reads `~/.claude`; Claude's config for a sandboxed chat lives under `~/.volt/sandbox/agent-state`) |
++| Pin | model Opus 5.5, effort High (factory: Medium) in the model picker; permissions Full access (factory: Supervised); sandbox factory default (workspace write) |
++| Side calls (B1) | thread title from the agent's `session_info_update`; Claude Code's own `count_tokens` calls at session start |
++| New thread (A3) | Cmd+N (a new draft in the current project, composer focused) |
++| Orchestration (C1) | subagents through Volt's `delegate_task` tool (Multitask), each in its own worktree |
++| Drive (setup) | `bin/code <folder>` CLI, the agent server's HTTP API, CDP |
++| Traps | the agent server is a launch agent that outlives a quit (A9 counts it); it lists Claude's models only when `~/.claude.json` names an account (an API-key-only login shows no Claude models); the first chat of a fresh profile installs the ACP adapter with npx |
++| Verify in pilot | composer and thread rects at 1600 x 1000 on a real screen; the C1 trigger |
++| Local only | "This Mac" in the composer's machine picker (factory). Check: the chat's machine chip reads This Mac |
++
++Adapter `volt`:
++
++| Method | How |
++|---|---|
++| `installCheck` | version and bundle SHA-256 of `/Applications/Volt.app` |
++| `reset` | default; data `~/Library/Application Support/Volt`, `~/.volt`; boot out `com.volt.agent-server.<hash>` |
++| `configure` | model Opus 5.5 High in the picker (the seed holds it), Full access (the seed holds it) |
++| `launch` | `open -a Volt` |
++| `newThread` | Cmd+N |
++| `send` | default |
++| `waitDone` | the Claude session log (cwd is the arena, or the chat's worktree) |
++| `quit` | default (Cmd+Q); the agent server keeps running by design |
++| `processes` | Electron set, the agent server and its children |
++
+ ## 4. Summary
+ 
+ | ADE | Adapter ID | Family | Drive for setup | C1 trigger | Top fairness traps |
+@@ -837,4 +875,5 @@ Adapter `codex-app`:
+ | Conductor | `conductor` | NATIVE | deep links, Accessibility | not supported | bundled CLI versions; new worktree plus setup script in A3 |
+ | Capy | `capy` | OWN | HTTP API, CDP | subagents, Captains (experimental) | own harness; no Claude subscription, API billing |
+ | Claude desktop | `claude-desktop` | FIRST | Accessibility | subagents, session messages | shares `~/.claude` with the CLI; stack unknown |
++| Volt | `volt` | EL-SDK | `bin/code` CLI, HTTP API, CDP | subagents through `delegate_task` | agent server outlives quit; Claude models need an account name |
+ | Codex app | `codex-app` | FIRST | Accessibility | multi-agent (to verify) | moved into ChatGPT desktop; most facts unknown |
+diff --git a/bench/adapters/profiles/volt.json b/bench/adapters/profiles/volt.json
+new file mode 100644
+index 0000000..dca32df
+--- /dev/null
++++ b/bench/adapters/profiles/volt.json
+@@ -0,0 +1,190 @@
++{
++  "schema": 1,
++  "ade": "volt",
++  "app": {
++    "path": "/Applications/Volt.app",
++    "version": "0.0.6",
++    "bundleSha256": "66139e8daab32c77fd50d4f1aa4dc33f1d33ea0e2402ec288cc507ca7488c4d6",
++    "processNames": [
++      "Volt",
++      "Electron",
++      "Volt Helper",
++      "Volt Helper (Renderer)",
++      "Volt Helper (GPU)",
++      "Volt Helper (Plugin)",
++      "volt-sandbox-helper"
++    ]
++  },
++  "window": {
++    "w": 1600,
++    "h": 1000
++  },
++  "calibration": {
++    "appName": "Volt",
++    "bundleId": "com.leularia.volt",
++    "composerRect": {
++      "x": 590,
++      "y": 395,
++      "w": 730,
++      "h": 90
++    },
++    "activeComposerRect": {
++      "x": 500,
++      "y": 928,
++      "w": 850,
++      "h": 60
++    },
++    "launchComposerRect": {
++      "x": 590,
++      "y": 395,
++      "w": 730,
++      "h": 90
++    },
++    "threadRect": {
++      "x": 320,
++      "y": 60,
++      "w": 900,
++      "h": 840
++    },
++    "focusClick": null,
++    "masks": [],
++    "drive": "cli",
++    "dataDirs": [
++      "~/Library/Application Support/Volt",
++      "~/.volt"
++    ],
++    "launchAgents": [
++      "com.volt.agent-server.f097d5268fa1"
++    ]
++  },
++  "login": {
++    "kind": "agent-cli",
++    "files": [],
++    "signIn": null
++  },
++  "reset": {
++    "seeds": [
++      "Library/Application Support/Volt/User/settings.json",
++      "Library/Application Support/Volt/agentServer/application.vscdb",
++      ".volt/setup-shown"
++    ],
++    "jsonKeys": []
++  },
++  "steps": {
++    "afterLaunch": [
++      {
++        "kind": "wait",
++        "ms": 3000
++      }
++    ],
++    "openProject": [
++      {
++        "kind": "run",
++        "argv": ["/Applications/Volt.app/Contents/Resources/app/bin/code", "${worktree}"],
++        "timeoutMs": 60000
++      },
++      {
++        "kind": "wait",
++        "ms": 3000
++      },
++      {
++        "kind": "keys",
++        "combo": "cmd+n"
++      },
++      {
++        "kind": "wait",
++        "ms": 1500
++      }
++    ],
++    "configure": {
++      "claude": [
++        {
++          "kind": "expectText",
++          "region": {
++            "x": 590,
++            "y": 470,
++            "w": 400,
++            "h": 40
++          },
++          "texts": [
++            "Opus 5.5",
++            "Opus 5,5"
++          ],
++          "timeoutMs": 8000
++        }
++      ],
++      "codex": []
++    },
++    "quit": []
++  },
++  "timed": {
++    "launch": [
++      {
++        "kind": "open",
++        "bundleId": "com.leularia.volt"
++      }
++    ],
++    "newThread": [
++      {
++        "kind": "keys",
++        "combo": "cmd+n"
++      }
++    ],
++    "send": [
++      {
++        "kind": "enter"
++      }
++    ],
++    "longThread": [
++      {
++        "kind": "click",
++        "point": {
++          "x": 150,
++          "y": 191
++        }
++      }
++    ],
++    "shortThread": [
++      {
++        "kind": "click",
++        "point": {
++          "x": 150,
++          "y": 237
++        }
++      }
++    ]
++  },
++  "waitDone": {
++    "cwd": "worktree",
++    "idleFallback": true
++  },
++  "processes": {
++    "vendorDirs": [
++      "~/.volt"
++    ],
++    "launchAgentLabels": [
++      "com.volt.agent-server.f097d5268fa1"
++    ],
++    "teamId": null,
++    "agentExecutables": [
++      "claude",
++      "codex",
++      "claude-agent-acp",
++      "/Users/ademark/.local/share/claude/versions/"
++    ]
++  },
++  "orchestrationTrigger": {
++    "notCalibrated": "Volt's subagents start from the delegate_task tool (the Multitask chip); the one-line trigger has not been proven on C1 in the ademark user"
++  },
++  "notes": [
++    "Draft from round 3 of Volt's own benchmark work (2026-11-13), in a normal account with an isolated HOME, not the ademark user. Rects were read from the DOM with the viewport emulated at 1600 x 1000 (the laptop screen is 1512 x 982 points), so a person must confirm them on a real 1600 x 1000 window before the gate.",
++    "composerRect and launchComposerRect: the empty draft's composer, centred (a new thread and a launch both show it). activeComposerRect: the follow-up composer at the bottom of an open thread.",
++    "Sidebar rows sort by recency, 46 pt tall from y 168: the long thread built last is the first chat row (y 191), a seed thread the second (y 237). The 'New Agent' draft row sits above them at y 123.",
++    "The seed holds the Claude agent profile with Opus 5.5 at High (volt.runtime.modelOptions in agentServer/application.vscdb), the default access mode Full access (volt.runtime.accessMode) and the first-run setup marked shown (~/.volt/setup-shown). User settings: security.workspace.trust.enabled false, volt.agent.defaultModel agent:seed-claude-code:claude-opus-5-5.",
++    "Volt lists Claude's models only when ~/.claude.json names an account (oauthAccount.emailAddress). The ademark user's subscription login has one; an API-key-only login shows no Claude models.",
++    "The agent sandbox is on by default (workspace write). Volt 0.0.6 refuses the replay server's loopback port inside it; builds after commit 6cc80c0a9bd grant the port of the CLI's *_BASE_URL. On 0.0.6 the sandbox must be off for Track A, and that is a pin to publish.",
++    "The agent server is a launch agent (com.volt.agent-server.<12 hex of sha256 of the user data folder>) that keeps running after Cmd+Q by design; A9 counts it.",
++    "waitDone idleFallback is on: a sandboxed chat runs Claude with its config under ~/.volt/sandbox/agent-state, so its session log is not under ~/.claude/projects."
++  ],
++  "agentGuide": "Cmd+N opens a new draft in the current project with its composer focused. The model chip sits under the composer text."
++}
+diff --git a/bench/adapters/registry.ts b/bench/adapters/registry.ts
+index 543bd00..9f65de1 100644
+--- a/bench/adapters/registry.ts
++++ b/bench/adapters/registry.ts
+@@ -1,4 +1,4 @@
+-// The adapter registry: one module per ADE in ADES.md 3.0-3.17 (18 adapter IDs).
++// The adapter registry: one module per ADE in ADES.md 3.0-3.18 (19 adapter IDs).
+ import type { Adapter } from "../core/contracts.ts";
+ import { bareCli } from "./bare-cli.ts";
+ import { t3code } from "./t3code.ts";
+@@ -18,6 +18,7 @@ import { conductor } from "./conductor.ts";
+ import { capy } from "./capy.ts";
+ import { claudeDesktop } from "./claude-desktop.ts";
+ import { codexApp } from "./codex-app.ts";
++import { volt } from "./volt.ts";
+ 
+ export const adapters: Record<string, Adapter> = {
+   "bare-cli": bareCli,
+@@ -38,6 +39,7 @@ export const adapters: Record<string, Adapter> = {
+   capy,
+   "claude-desktop": claudeDesktop,
+   "codex-app": codexApp,
++  volt,
+ };
+ 
+ export const ADAPTER_IDS = Object.keys(adapters);
+diff --git a/bench/adapters/volt.ts b/bench/adapters/volt.ts
+new file mode 100644
+index 0000000..e45d911
+--- /dev/null
++++ b/bench/adapters/volt.ts
+@@ -0,0 +1,20 @@
++// EL-SDK: Electron (a VS Code fork); Claude Code through the Agent Client Protocol adapter
++// `@agentclientprotocol/claude-agent-acp` (Claude Agent SDK over the system `claude`), Codex through `codex-acp` (ADES.md 3.18).
++import { profileAdapter } from "./profile.ts";
++
++export const volt = profileAdapter({
++  id: "volt",
++  name: "Volt",
++  family: "EL-SDK",
++  agents: ["claude", "codex"],
++  appName: "Volt",
++  bundleId: "com.leularia.volt",
++  // ADES.md 3.18: the app's own CLI (`bin/code <folder>`) opens the arena; CDP and the agent server's HTTP API exist too.
++  drive: "cli",
++  // ADES.md 3.18: Electron profile in ~/Library/Application Support/Volt, Volt's own data in ~/.volt.
++  dataDirs: ["~/Library/Application Support/Volt", "~/.volt"],
++  // ADES.md 3.18: the agent server runs as a launch agent named after the user data folder:
++  // com.volt.agent-server.<first 12 hex of sha256("/Users/ademark/Library/Application Support/Volt")>.
++  launchAgents: ["com.volt.agent-server.f097d5268fa1"],
++  vendorDirs: ["~/.volt"],
++});
+diff --git a/bench/test/adapters.test.ts b/bench/test/adapters.test.ts
+index ab65154..a7b19e4 100644
+--- a/bench/test/adapters.test.ts
++++ b/bench/test/adapters.test.ts
+@@ -11,13 +11,13 @@ import { benchRoot } from "../core/paths.ts";
+ 
+ const EXPECTED = [
+   "bare-cli", "t3code", "bb", "paseo", "synara", "traycer", "cloudroom", "superset", "orca", "emdash",
+-  "zeron", "diri", "monocode", "super-engineering", "conductor", "capy", "claude-desktop", "codex-app",
++  "zeron", "diri", "monocode", "super-engineering", "conductor", "capy", "claude-desktop", "codex-app", "volt",
+ ];
+ 
+ describe("registry", () => {
+-  test("lists all 18 adapter IDs from ADES.md", () => {
++  test("lists all 19 adapter IDs from ADES.md", () => {
+     expect([...ADAPTER_IDS].sort()).toEqual([...EXPECTED].sort());
+-    expect(listAdapters().length).toBe(18);
++    expect(listAdapters().length).toBe(19);
+   });
+ 
+   test("every adapter's id matches its registry key", () => {
+@@ -44,6 +44,7 @@ describe("registry", () => {
+       capy: "OWN",
+       "claude-desktop": "FIRST",
+       "codex-app": "FIRST",
++      volt: "EL-SDK",
+     };
+     for (const [id, family] of Object.entries(families)) expect(getAdapter(id).family).toBe(family);
+   });
+diff --git a/bench/test/cli.test.ts b/bench/test/cli.test.ts
+index 33def06..a20f5a9 100644
+--- a/bench/test/cli.test.ts
++++ b/bench/test/cli.test.ts
+@@ -16,11 +16,11 @@ async function runCli(args: string[]): Promise<{ code: number; stdout: string; s
+ }
+ 
+ describe("cli", () => {
+-  test("adapter list prints the 18 adapter IDs", async () => {
++  test("adapter list prints the 19 adapter IDs", async () => {
+     const { code, stdout } = await runCli(["adapter", "list"]);
+     expect(code).toBe(0);
+     const ids = stdout.trim().split("\n").map((line) => line.split(/\s+/)[0]!);
+-    expect(ids.length).toBe(18);
++    expect(ids.length).toBe(19);
+     expect(ids).toContain("t3code");
+     expect(ids).toContain("bare-cli");
+   }, 30000);
+@@ -47,7 +47,7 @@ describe("cli", () => {
+     expect(second.stdout).toBe(first.stdout);
+     const parsed = JSON.parse(first.stdout) as { seed: string; order: string[] };
+     expect(parsed.seed).toBe("test");
+-    expect(parsed.order.length).toBe(18);
++    expect(parsed.order.length).toBe(19);
+   }, 30000);
+ 
+   test("order needs a seed", async () => {
+diff --git a/bench/test/tracks-a-weight-stream-plan.test.ts b/bench/test/tracks-a-weight-stream-plan.test.ts
+index 949d382..adbf216 100644
+--- a/bench/test/tracks-a-weight-stream-plan.test.ts
++++ b/bench/test/tracks-a-weight-stream-plan.test.ts
+@@ -23,8 +23,8 @@ const PROFILE_IDS = readdirSync(PROFILES)
+   .sort();
+ 
+ describe("A7 stream plan (ADEMARK-41)", () => {
+-  test("there are 15 profiles", () => {
+-    expect(PROFILE_IDS).toHaveLength(15);
++  test("there are 16 profiles", () => {
++    expect(PROFILE_IDS).toHaveLength(16);
+   });
+ 
+   test.each(PROFILE_IDS)("%s plans at least 150 s of five streams together", (id) => {
+-- 
+2.54.0 (Apple Git-157)
+
