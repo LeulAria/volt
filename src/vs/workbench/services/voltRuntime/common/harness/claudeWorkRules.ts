@@ -89,6 +89,18 @@ export const CLAUDE_SUBAGENT_SESSION_SETTINGS = {
 } as const;
 
 /**
+ * Settings of a main chat's Claude Code session. `skillListingMaxDescChars`: every skill stays listed
+ * and callable by name, with its description cut at 400 characters (Claude Code's default is 1,536).
+ * Four of its bundled skills ran longer (dataviz 1,447, code-review 1,242, claude-api ~1,170,
+ * update-config 707); the cut saves ~1.5k tokens per request. Measured 2026-11-14 (Haiku 5.5, a task
+ * for each, 4-5 runs per arm): each skill was loaded as often at 400 as at the default; at 250 the
+ * claude-api skill was missed.
+ */
+export const CLAUDE_MAIN_SESSION_SETTINGS = {
+	skillListingMaxDescChars: 400,
+} as const;
+
+/**
  * Built-in tools a Volt subagent never uses, each a full schema in every request (Workflow 1.9k,
  * ScheduleWakeup 1.7k, AskUserQuestion 1.4k tokens) or a name in the deferred list:
  * - `Agent`: a subagent splits work with Volt's delegate_task, which is depth-limited, budgeted and
@@ -266,7 +278,7 @@ export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?:
 					...(lazyTools ? { plugins: [{ type: 'local', path: lazyTools, skipMcpDiscovery: true }] } : {}),
 				}),
 				settings: {
-					...(subagent ? CLAUDE_SUBAGENT_SESSION_SETTINGS : {}),
+					...(subagent ? CLAUDE_SUBAGENT_SESSION_SETTINGS : CLAUDE_MAIN_SESSION_SETTINGS),
 					hooks: {
 						SubagentStart: [{ hooks: [{ type: 'command', command: subagentStartHookCommand(), timeout: 10 }] }],
 						Stop: [{ hooks: [{ type: 'command', command: stopHookCommand(), timeout: 10 }] }],

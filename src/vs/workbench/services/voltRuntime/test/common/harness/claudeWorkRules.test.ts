@@ -123,6 +123,14 @@ suite('Volt Claude work rules', () => {
 		assert.strictEqual(JSON.stringify(sub), JSON.stringify(claudeWorkRulesMeta('claude-haiku-5-5', { subagent: 'work' })));
 	});
 
+	test('a main session lists every skill with descriptions cut at 400 characters; a subagent keeps its shorter cut', () => {
+		type Meta = { claudeCode: { options: { settings: Record<string, unknown> } } };
+		assert.strictEqual((claudeWorkRulesMeta('claude-opus-5-5') as Meta).claudeCode.options.settings.skillListingMaxDescChars, 400);
+		assert.strictEqual((claudeWorkRulesMeta('claude-opus-5-5', { voltAsks: true, lazyToolsPlugin: '/p' }) as Meta).claudeCode.options.settings.skillListingMaxDescChars, 400);
+		assert.strictEqual((claudeWorkRulesMeta('claude-haiku-5-5', { subagent: 'work' }) as Meta).claudeCode.options.settings.skillListingMaxDescChars, 160);
+		assert.strictEqual((claudeWorkRulesMeta('claude-haiku-5-5', { subagent: 'work' }) as Meta).claudeCode.options.settings.skillOverrides, undefined, 'no skill is hidden');
+	});
+
 	test('the lazy-tools plugin\'s hooks module defers exactly those tools and passes their descriptions on; its folder is named after its content', async () => {
 		const plugin = claudeLazyToolsPlugin();
 		assert.deepStrictEqual(plugin, claudeLazyToolsPlugin(), 'the same folder every session: a resumed session is not rebuilt');
