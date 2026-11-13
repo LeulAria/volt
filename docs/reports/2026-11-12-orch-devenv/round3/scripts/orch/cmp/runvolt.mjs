@@ -44,6 +44,8 @@ const ARMS = {
 	// always starts cold (round 2's profile had the folder as its project; its parents came from the pool).
 	'volt-r3p-base': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, project: true },
 	'volt-r3p': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, project: true },
+	// volt-r3p plus subagent agents warmed at the run's start when the request asks for subagents.
+	'volt-r3q': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, project: true },
 	// Cursor's catalog in Volt (from its ACP model list): base ids, effort/thinking are options.
 	'volt-cursor-sonnet': { model: 'agent:seed-cursor-acp:claude-sonnet-5', sub: 'agent:seed-cursor-acp:claude-sonnet-5', label: /Sonnet 5(?!\.)/ },
 	'volt-cursor-grok': { model: 'agent:seed-cursor-acp:grok-4.7', sub: 'agent:seed-cursor-acp:grok-4.7', label: /Grok 4\.7/ },

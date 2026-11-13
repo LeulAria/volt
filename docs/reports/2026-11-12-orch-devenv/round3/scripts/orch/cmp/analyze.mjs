@@ -20,7 +20,9 @@ const DATA = dirname(file);
 const armsOpt = args.includes('--arms') ? new Set(args[args.indexOf('--arms') + 1].split(',')) : undefined;
 const excludedFile = join(DATA, 'excluded.json');
 const excluded = new Set(existsSync(excludedFile) ? JSON.parse(readFileSync(excludedFile, 'utf8')).rows.map(r => `${r.id}@${r.at}`) : []);
-const rows = readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(r => !excluded.has(`${r.id}@${r.at.slice(0, 19)}`));
+// --max-load N: only runs whose 1-minute load at the start was at most N (the brief's gate is 14).
+const maxLoad = args.includes('--max-load') ? Number(args[args.indexOf('--max-load') + 1]) : Infinity;
+const rows = readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(r => !excluded.has(`${r.id}@${r.at.slice(0, 19)}`) && !(parseFloat(r.load) > maxLoad));
 const HAIKU = { input: 0.10, output: 0.50, cacheRead: 0.01, cacheWrite: 0.20 };
 const haikuArm = arm => ['cc', 'hermes', 't3'].includes(arm) || arm === 'volt' || arm.startsWith('volt-after') || arm.startsWith('volt-final') || arm.startsWith('volt-r3');
 const listCost = u => u ? ((u.input ?? 0) * HAIKU.input + (u.output ?? 0) * HAIKU.output + (u.cacheRead ?? 0) * HAIKU.cacheRead + (u.cacheWrite ?? 0) * HAIKU.cacheWrite) / 1e6 : undefined;
@@ -86,7 +88,7 @@ export function summarize(rs) {
 	};
 }
 
-const order = ['cc', 't3', 'hermes', 'volt', 'volt-after', 'volt-after-cold', 'volt-after2', 'volt-final', 'volt-final-fix', 'volt-r3-base', 'volt-r3', 'cursor-sonnet', 'volt-cursor-sonnet', 'volt-cursor-sonnet-after', 'cursor-grok', 'volt-cursor-grok', 'volt-cursor-grok-after'];
+const order = ['cc', 't3', 'hermes', 'volt', 'volt-after', 'volt-after-cold', 'volt-after2', 'volt-final', 'volt-final-fix', 'volt-r3-base', 'volt-r3', 'volt-r3p-base', 'volt-r3p', 'volt-r3q', 'cursor-sonnet', 'volt-cursor-sonnet', 'volt-cursor-sonnet-after', 'cursor-grok', 'volt-cursor-grok', 'volt-cursor-grok-after'];
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	const out = [];
 	const json = {};

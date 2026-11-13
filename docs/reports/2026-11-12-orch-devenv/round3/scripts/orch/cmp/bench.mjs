@@ -6,7 +6,7 @@ import { appendFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 const here = dirname(fileURLToPath(import.meta.url));
-const ALL = ['cc', 'hermes', 'cursor-sonnet', 'cursor-grok', 'volt', 't3', 'volt-cursor-sonnet', 'volt-cursor-grok', 'volt-r3-base', 'volt-r3', 'volt-r3p-base', 'volt-r3p'];
+const ALL = ['cc', 'hermes', 'cursor-sonnet', 'cursor-grok', 'volt', 't3', 'volt-cursor-sonnet', 'volt-cursor-grok', 'volt-r3-base', 'volt-r3', 'volt-r3p-base', 'volt-r3p', 'volt-r3q'];
 // Round 3 A/B: the base build (82ae771c1d9, worktree volt-e3-orch-base) and the fixed build run side by
 // side in their own test instances; each arm's runs go to its own instance.
 const ARM_ENV = {
@@ -14,6 +14,7 @@ const ARM_ENV = {
 	'volt-r3': { VOLT_UD: '/tmp/v3-orch-ud', VOLT_EXT: '/tmp/v3-orch-ext', VOLT_CDP: '9955' },
 	'volt-r3p-base': { VOLT_UD: '/tmp/v3-orch-base-ud', VOLT_EXT: '/tmp/v3-orch-base-ext', VOLT_CDP: '9981' },
 	'volt-r3p': { VOLT_UD: '/tmp/v3-orch-ud', VOLT_EXT: '/tmp/v3-orch-ext', VOLT_CDP: '9955' },
+	'volt-r3q': { VOLT_UD: '/tmp/v3-orch-ud', VOLT_EXT: '/tmp/v3-orch-ext', VOLT_CDP: '9955' },
 };
 // The brief: no timing while the 1-minute load is above LOAD_MAX (14 cores). Wait up to LOAD_WAIT_MIN,
 // then run anyway; every row carries the load at its start, so such a run is marked as under load.

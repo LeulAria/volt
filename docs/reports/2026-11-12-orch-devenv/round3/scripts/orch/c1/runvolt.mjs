@@ -78,7 +78,7 @@ if (!ok) {
 }
 await sleep(1500);
 // The project: the picker's search takes a path and offers "Open <folder>".
-const chip = await c.center(c.leaf(`/^(Select project|w|arena-base|cli-|volt-)/.test(e.textContent.trim()) && e.closest('.volt-agent-landing, .monaco-workbench')`));
+const chip = await c.center(c.leaf(`/^(Select project|No Project|w|t[0-3]|t3-check|arena-base|cli-|volt-)/.test(e.textContent.trim()) && !e.closest(".volt-agent-primary-header-title") && e.closest('.volt-agent-landing, .monaco-workbench')`));
 await c.click(...chip);
 await sleep(600);
 await c.send('Input.insertText', { text: repo });
