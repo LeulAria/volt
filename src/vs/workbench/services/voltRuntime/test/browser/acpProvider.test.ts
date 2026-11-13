@@ -682,6 +682,19 @@ suite('ACP provider supervision', () => {
 		await turn.done;
 		await finish(env, handle);
 	});
+
+	test('the lead goes out as its own block before the prompt, which stays as typed', async () => {
+		const env = setup();
+		const handle = await env.provider.start(request());
+		const cts = store.add(new CancellationTokenSource());
+		const turn = collect(env.provider.send(handle, { text: 'replay:hi', mode: 'agent', lead: '[Volt] framing' }, PROFILE, cts.token));
+		await settle();
+		const prompt = env.agent.written.find(entry => entry.msg.method === 'session/prompt');
+		assert.deepStrictEqual(prompt?.msg.params?.prompt, [{ type: 'text', text: '[Volt] framing' }, { type: 'text', text: 'replay:hi' }]);
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		await finish(env, handle);
+	});
 });
 
 suite('ACP provider sandbox', () => {
