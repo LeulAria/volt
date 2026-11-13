@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, resolveChatTaskRefs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
 import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
@@ -53,6 +53,16 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.ok(notes[0].startsWith('no done_when'));
 		assert.ok(notes[1].startsWith('no files named'));
 		assert.ok(lintTaskBrief('Check it.', 'research', undefined, undefined, 'none')[0].includes('context is none'));
+	});
+
+	test('a single-task call names this chat\'s earlier tasks by position, as a `tasks` call does', () => {
+		const tasks = [{ id: 't-aaaaaa' }, { id: 't-bbbbbb' }];
+		assert.deepStrictEqual(resolveChatTaskRefs(['1'], tasks), ['t-aaaaaa'], 'a reviewer started after its writer: after ["1"]');
+		assert.deepStrictEqual(resolveChatTaskRefs([2, 't-cccccc'], tasks), ['t-bbbbbb', 't-cccccc'], 'numbers and task ids together');
+		assert.deepStrictEqual(resolveChatTaskRefs('1', tasks), ['t-aaaaaa'], 'one string');
+		assert.deepStrictEqual(resolveChatTaskRefs(['3'], tasks), ['3'], 'a position with no task is left for the decider to refuse');
+		assert.deepStrictEqual(resolveChatTaskRefs(['1', 't-aaaaaa'], tasks), ['t-aaaaaa'], 'one task named twice waits once');
+		assert.deepStrictEqual(resolveChatTaskRefs(undefined, tasks), []);
 	});
 
 	test('the parent capsule carries the user\'s request, the plan, the latest reply and the siblings, within its budget', () => {

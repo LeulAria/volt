@@ -102,6 +102,23 @@ export function stringListArg(value: unknown, max = 24, chars = 600): string[] {
 		.slice(0, max);
 }
 
+/**
+ * `after` of a delegate_task call that starts one task: task_ids, or 1-based positions of this
+ * chat's own tasks in the order it started them ("1" is its first task). Models write a writer,
+ * then its reviewer in a second call with `after: ["1"]`, as they would inside one `tasks` call;
+ * that was refused ("not a task of this chat"), and the parent then waited for the writer itself
+ * and started the reviewer a turn later. A position with no task stays as given (the decider
+ * refuses it with the list of tasks).
+ */
+export function resolveChatTaskRefs(value: unknown, chatTasks: readonly { readonly id: string }[]): string[] {
+	const items = typeof value === 'string' || typeof value === 'number' ? [value] : Array.isArray(value) ? value : [];
+	const refs = items
+		.map(item => typeof item === 'number' && Number.isInteger(item) ? String(item) : typeof item === 'string' ? item.trim().slice(0, 40) : '')
+		.filter(Boolean)
+		.slice(0, 16);
+	return [...new Set(refs.map(ref => /^\d+$/.test(ref) ? chatTasks[Number(ref) - 1]?.id ?? ref : ref))];
+}
+
 /** At most this many `verify` commands per task: they run one after another before every report. */
 export const MAX_VERIFY_COMMANDS = 6;
 

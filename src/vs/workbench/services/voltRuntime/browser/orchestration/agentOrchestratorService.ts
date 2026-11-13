@@ -28,7 +28,7 @@ import { IAgentHistoryService } from '../../common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../common/hostTools.js';
 import { retryDelay, RUN_START_RETRY } from '../../common/jobs/retryPolicy.js';
 import { normalizeVoltMode } from '../../common/modes.js';
-import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, contractFromArgs, verifyFromArgs, DELEGATE_TASK_TOOL_NAME, delegateArgsWithAliases, matchTaskModel, describeSpend, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, lintTaskBrief, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeContextLevel, normalizeTaskRole, stringListArg, subagentProfileForTask, delegateTaskMissingBrief, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, TaskContextLevel, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
+import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, buildTaskPrompt, CANCEL_TASK_TOOL_NAME, contractFromArgs, resolveChatTaskRefs, verifyFromArgs, DELEGATE_TASK_TOOL_NAME, delegateArgsWithAliases, matchTaskModel, describeSpend, describeTask, HANDOFF_TOOL_NAME, isLiveTaskState, isTerminalTaskState, lintTaskBrief, LIST_MODELS_TOOL_NAME, MESSAGE_TASK_TOOL_NAME, modeForTaskRole, newTaskId, normalizeContextLevel, normalizeTaskRole, stringListArg, subagentProfileForTask, delegateTaskMissingBrief, TASK_STATUS_TOOL_NAME, TASK_WAIT_MS, TaskContextLevel, titleFromBrief, WAIT_TASKS_TOOL_NAME } from '../../common/orchestration/agentTasks.js';
 import { buildParentCapsule, userRequests } from '../../common/orchestration/taskContext.js';
 import { foldSpend, ITaskSpendTracker, ITaskTokenRates, seedSpendTracker, spendUsage } from '../../common/orchestration/taskSpend.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
@@ -2062,7 +2062,9 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const given = verifyFromArgs(args);
 		const verify = given.length ? given : previous?.verify ?? [];
 		const scope = stringListArg(args.scope, 40, 300);
-		const after = stringListArg(args.after, 16, 40);
+		// A call of its own may name this chat's earlier tasks by position; positions inside one `tasks`
+		// call were already resolved by delegateBatch.
+		const after = single ? stringListArg(args.after, 16, 40) : resolveChatTaskRefs(args.after, this.tasksOf(parentId));
 		const contextLevel = normalizeContextLevel(args.context);
 		const budgetUsd = typeof args.budget_usd === 'number' && Number.isFinite(args.budget_usd) && args.budget_usd > 0 ? args.budget_usd : undefined;
 		const root = parent ? this.state.threads[parent.rootId] : undefined;
