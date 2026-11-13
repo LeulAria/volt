@@ -13,7 +13,7 @@ for (const app of readdirSync(dir)) {
 	if (!existsSync(f)) { continue; }
 	const rows = readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
 	for (const [test, fields] of Object.entries(FIELDS)) {
-		const rs = rows.filter(r => r.test === test && !r.error && !r.skipped);
+		const rs = rows.filter(r => r.test === test && !r.error && r.skipped !== 'load'); // `skipped` is also the count of probe keys not sent
 		if (!rs.length) { continue; }
 		for (const field of fields) {
 			const vals = rs.filter(r => typeof r[field] === 'number');
