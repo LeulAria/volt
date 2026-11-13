@@ -64,7 +64,7 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 			'op list: frameworks and tests (filter by path or query). op run: runs targets and returns pass/fail counts plus each failure with its message, expected/actual and the stack frames in the workspace;',
 			'targets are files, folders, file:line (the test at that line) or test names; omit targets to run everything; failed: true reruns the last failures.',
 			'op results: the last run again, or one test\'s full messages and output (target).',
-			'Prefer it over running the test command in shell: it targets single tests, returns structured failures and is visible to the user.',
+			'Prefer it over running the test command in shell: it targets single tests, returns structured failures and is visible to the user. Tests it does not cover (node --test, a custom npm test script) run in the shell.',
 			'In a sandboxed chat a run first asks the user (it runs outside the sandbox); the test command in shell runs inside the sandbox without asking.',
 		].join(' '),
 		inputSchema: {
