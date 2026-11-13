@@ -4797,10 +4797,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * or it changed, so an unchanged window costs nothing; workspace_status has the details. The
 	 * window answers within a bounded time or the turn goes without.
 	 */
-	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle): Promise<string | undefined> {
+	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle, intent: IIntent): Promise<string | undefined> {
 		// A subagent reports to another agent, not to the user looking at the window (and the window's
-		// answer is a round trip on its first prompt's path).
-		if (session.subagent) {
+		// answer is a round trip on its first prompt's path). "hi" or "thanks" needs no workspace
+		// either (~160 tokens): nothing is marked sent, so the next real request carries it.
+		if (session.subagent || intent.smallTalk) {
 			return undefined;
 		}
 		// A busy window answers late: this turn goes without, and the next one sends it (nothing was marked sent).
@@ -5014,7 +5015,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						// The turn primer (first turn only): the relevant files and the app open in the chat's browser.
 						attempt === 0 ? timed('primer', this.turnPrimer(session, run, request, intent)) : undefined,
 						timed('context', this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused, indexed)),
-						timed('workspace', this.workspaceLead(session, handle)),
+						timed('workspace', this.workspaceLead(session, handle, intent)),
 						// The retriever's deadline is soft (searches already running finish): cut it here.
 						retrieval ? timed('retrieval', raceTimeout(retrieval, AGENT_RETRIEVAL_DEADLINE_MS)) : undefined,
 					]);

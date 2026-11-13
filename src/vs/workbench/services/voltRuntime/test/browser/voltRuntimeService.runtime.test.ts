@@ -23,6 +23,7 @@ import { IVoltExecRequest, IVoltExecResult, IVoltStdioService } from '../../../.
 import { AgentRuntimeService } from '../../browser/voltRuntimeService.js';
 import { DEFAULT_ACP_CAPABILITIES, DEFAULT_MODEL_CAPABILITIES } from '../../common/capabilities.js';
 import { LSP_ENABLED_SETTING } from '../../common/codeIntelligence.js';
+import { IWorkspaceSnapshot, WORKSPACE_SNAPSHOT_COMMAND_ID } from '../../common/harness/workspaceContext.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../common/events.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IAgentMessage, IAgentProvider, IAgentSessionHandle, IAgentStartRequest, IModelProvider, IModelRequest, IVoltCatalogItem } from '../../common/providers.js';
@@ -339,6 +340,16 @@ suite('Agent runtime orchestration', () => {
 		await timeout(20);
 		assert.deepStrictEqual(history.agentTitles, ['Fix sidebar list jumping to top']);
 		assert.strictEqual(model.titlePrompts.length, 1, 'no second title call');
+	});
+
+	test('"hi" goes without the workspace summary; the next request carries it, once', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		const snapshot: IWorkspaceSnapshot = { panelOpen: true, tabs: [{ kind: 'browser', title: 'Shop', focused: true, target: 'http://localhost:3000/' }], git: { branch: 'main', changed: 1 } };
+		(service as unknown as { commandService: { executeCommand: (id: string) => Promise<unknown> } }).commandService.executeCommand = async id => id === WORKSPACE_SNAPSHOT_COMMAND_ID ? snapshot : undefined;
+		await waitEnd(await service.send('chat', { text: 'hi', mode: 'agent', providerRef: ref }));
+		await waitEnd(await service.send('chat', { text: 'the add to cart button on the shop page does nothing, fix it', mode: 'agent', providerRef: ref }));
+		await waitEnd(await service.send('chat', { text: 'and make it blue', mode: 'agent', providerRef: ref }));
+		assert.deepStrictEqual(agent.prompts.map(prompt => prompt.lead?.includes('<volt_workspace') ?? false), [false, true, false]);
 	});
 
 	test('a chat the user renamed keeps its name when a short first message is titled again', async () => {
