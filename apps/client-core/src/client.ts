@@ -3,9 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { type IConnectionStatus, type IWebSocketLike, type IWelcomeEvent, VoltConnection } from './connection';
+import { defaultCreateSocket, type IConnectionStatus, type IWebSocketLike, type IWelcomeEvent, VoltConnection } from './connection';
 import { TerminalStream } from './terminals';
-import { chooseRoute, type ISavedEnvironment, wsUrl } from './environments';
+import { chooseRoute, createRouteSocket, type IRoute, type ISavedEnvironment, refreshDeviceToken, TOKEN_REFRESH_WHEN_LEFT_MS, tokenNeedsRefresh, wsUrl } from './environments';
 import { KeyedNotifier, type Unsubscribe } from './events';
 import { fileUri } from './format';
 import { newChatId, uuid } from './ids';
@@ -37,6 +37,8 @@ export interface IClientOptions {
 	readonly createSocket?: (url: string) => IWebSocketLike;
 	/** Where to connect; default: the best saved route that answers as this environment. */
 	readonly resolveBaseUrl?: () => Promise<string>;
+	/** The environment changed (its token was refreshed): save it. */
+	readonly onDidChangeEnvironment?: (environment: ISavedEnvironment) => void;
 	readonly log?: (message: string) => void;
 }
 
@@ -148,7 +150,8 @@ const PENDING_EXPIRY_MS = 3 * 60_000;
  */
 export class VoltClient {
 
-	readonly environment: ISavedEnvironment;
+	/** Replaced when its token is refreshed. */
+	environment: ISavedEnvironment;
 	readonly connection: VoltConnection;
 	private readonly notifier = new KeyedNotifier();
 	private cols: Collections = {};
@@ -185,15 +188,18 @@ export class VoltClient {
 
 	constructor(private readonly options: IClientOptions) {
 		this.environment = options.environment;
+		let route: IRoute | undefined;
 		this.connection = new VoltConnection({
 			resolveUrl: async () => {
-				const base = options.resolveBaseUrl ? await options.resolveBaseUrl() : (await chooseRoute(this.environment)).baseUrl;
-				this.baseUrl = base;
-				return wsUrl(base);
+				route = options.resolveBaseUrl ? { baseUrl: await options.resolveBaseUrl(), kind: 'public' } : await chooseRoute(this.environment);
+				this.baseUrl = route.baseUrl;
+				await this.refreshTokenIfDue(route);
+				return wsUrl(route.baseUrl);
 			},
-			token: options.environment.token,
+			token: () => this.environment.token,
 			client: { kind: options.clientKind, id: options.clientId, topics: CLIENT_TOPICS },
-			...(options.createSocket ? { createSocket: options.createSocket } : {}),
+			// The network listener's route carries its certificate's pin: its socket must check it.
+			createSocket: url => createRouteSocket(url, options.resolveBaseUrl ? undefined : route?.pin, options.createSocket ?? defaultCreateSocket),
 			...(options.log ? { log: options.log } : {}),
 		});
 		this.status = { connection: this.connection.status, live: false, ready: false };
@@ -205,6 +211,34 @@ export class VoltClient {
 	}
 
 	//#region Lifecycle
+
+	/**
+	 * Device tokens expire (30 days); before the socket opens, one with less than half its life
+	 * left is traded for the next one, which the app saves. A server that answers 401 removed
+	 * this device, which the socket's hello then reports; any other failure keeps the token for
+	 * the next attempt.
+	 */
+	private async refreshTokenIfDue(route: IRoute): Promise<void> {
+		const env = this.environment;
+		if (env.role === 'owner' && env.deviceId === 'owner') {
+			// The server's own token (Volt's "open in browser" link) doesn't expire.
+			return;
+		}
+		if (!tokenNeedsRefresh(env)) {
+			return;
+		}
+		try {
+			const next = await refreshDeviceToken(route, env.token);
+			this.environment = { ...env, token: next.token, tokenExpiresAt: next.expiresAt };
+			this.options.onDidChangeEnvironment?.(this.environment);
+		} catch (err) {
+			if (err instanceof RemoteError && err.code === 'http_404') {
+				// An older server: its tokens don't expire. Not asked again for a day.
+				this.environment = { ...env, tokenExpiresAt: Date.now() + TOKEN_REFRESH_WHEN_LEFT_MS + 24 * 60 * 60 * 1000 };
+			}
+			this.options.log?.(`[volt] could not refresh the device token: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
 
 	async start(): Promise<void> {
 		await this.loadCache();

@@ -8,14 +8,17 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IRequestService } from '../../../../../platform/request/common/request.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { ISearchService } from '../../../search/common/search.js';
+import { IChatExec } from '../../common/execContext.js';
 import { FileLedger } from '../../common/harness/fileLedger.js';
 import { IVoltHostToolService } from '../../common/hostTools.js';
 import { IVoltTool } from '../../common/tools/tool.js';
 import { createBrowserTools } from './browserTool.js';
 import { createCodeIndexNav } from './codeIndexNav.js';
 import { createCodeTools, ICodeIntelHost } from './codeTools.js';
-import { createFileTools, IToolDocuments } from './fileTools.js';
+import { createFileTools, IFileToolHost, IToolDocuments, writeComputedEdit } from './fileTools.js';
+import { fileToolSandbox } from './sandboxedFiles.js';
 import { createGitTools } from './gitTools.js';
+import { createIdeTools } from './ideTools.js';
 import { createMetaTools, IMetaToolHost } from './metaTools.js';
 import { VoltSearch } from '../search/voltSearch.js';
 import { createSearchTools, ISearchIndex } from './searchTools.js';
@@ -45,6 +48,8 @@ export interface IBuiltinToolServices {
 	readonly rtkExclusions?: () => readonly string[];
 	readonly spillDir?: () => string | undefined;
 	readonly onLog?: (path: string) => void;
+	/** Whose chat the shell and git tools run for, and its sandbox. */
+	readonly exec: () => IChatExec;
 }
 
 /**
@@ -52,20 +57,34 @@ export interface IBuiltinToolServices {
  * neither the order nor a description may change between requests of one conversation.
  */
 export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] {
+	// The chat's sandbox at each call: a sandboxed chat's file and search tools get the host-tool gate's rules (SEC3-1).
+	const sandbox = () => fileToolSandbox(services.exec(), services.hostTools, services.stdio, services.root());
+	const files: IFileToolHost = {
+		fileService: services.fileService,
+		root: services.root,
+		readRoots: services.readRoots,
+		ledger: services.ledger,
+		documents: services.documents,
+		rulesFor: services.rulesFor,
+		sandbox,
+	};
 	return [
-		...createFileTools({
-			fileService: services.fileService,
-			root: services.root,
-			readRoots: services.readRoots,
-			ledger: services.ledger,
-			documents: services.documents,
-			rulesFor: services.rulesFor,
+		...createFileTools(files),
+		...createSearchTools(services.search, services.root, () => {
+			const confined = sandbox();
+			return confined ? { readRefusal: path => confined.refusal(URI.file(path), 'read') } : undefined;
 		}),
-		...createSearchTools(services.search, services.root),
-		...(services.codeIntel ? createCodeTools(services.codeIntel, services.root, services.codeIndex ? createCodeIndexNav(services.codeIndex) : undefined) : []),
-		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools, rtk: services.rtk, rtkExclusions: services.rtkExclusions }),
+		...(services.codeIntel ? createCodeTools(
+			services.codeIntel,
+			services.root,
+			services.codeIndex ? createCodeIndexNav(services.codeIndex) : undefined,
+			// Language server edits are written like edit_file's: open buffers, ledger, change set.
+			(change, ctx) => writeComputedEdit(files, change.uri, change.before, change.after, ctx),
+		) : []),
+		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools, rtk: services.rtk, rtkExclusions: services.rtkExclusions, exec: services.exec }),
 		...createTerminalTools(services.hostTools),
-		...createGitTools(services.stdio, services.root),
+		...createIdeTools(services.hostTools),
+		...createGitTools(services.stdio, services.root, services.exec),
 		...createWebTools(services.requestService),
 		...createBrowserTools(services.hostTools),
 		...createMetaTools(services.meta),

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
-import { parseAgentLine, toolSummary } from '../src/runner/agents.mjs';
+import { codexSandboxArgs, parseAgentLine, runnerAgentEnv, toolSummary } from '../src/runner/agents.mjs';
 import { LoadSampler } from '../src/runner/load.mjs';
 import { Runner } from '../src/runner/runner.mjs';
 import { startRelayServer } from '../src/server.mjs';
@@ -36,6 +36,29 @@ describe('agent stream parsing', () => {
 	test('tool summary picks the meaningful field', () => {
 		assert.equal(toolSummary({ command: 'npm   test' }), 'npm test');
 		assert.equal(toolSummary(undefined), '');
+	});
+});
+
+describe('agent launch (B-06)', () => {
+	test('the agent gets an allow-listed environment: never the runner\'s secrets or another agent\'s key', () => {
+		const host = {
+			PATH: '/usr/bin', HOME: '/home/runner', LANG: 'C.UTF-8', LC_ALL: 'C', HTTPS_PROXY: 'http://proxy:3128',
+			VOLT_RELAY_ENROLL_KEY: 'enrol-secret', VOLT_RELAY_TOKEN: 'relay-token', VOLT_RELAY_ADMIN_TOKEN: 'admin', VOLT_RUNNER_GIT_PUSH: '1',
+			ANTHROPIC_API_KEY: 'sk-ant', OPENAI_API_KEY: 'sk-openai', AWS_SECRET_ACCESS_KEY: 'aws', GITHUB_TOKEN: 'gh',
+		};
+		assert.deepEqual(runnerAgentEnv('claude', host), { PATH: '/usr/bin', HOME: '/home/runner', LANG: 'C.UTF-8', LC_ALL: 'C', HTTPS_PROXY: 'http://proxy:3128', ANTHROPIC_API_KEY: 'sk-ant' });
+		assert.deepEqual(runnerAgentEnv('codex', host), { PATH: '/usr/bin', HOME: '/home/runner', LANG: 'C.UTF-8', LC_ALL: 'C', HTTPS_PROXY: 'http://proxy:3128', OPENAI_API_KEY: 'sk-openai' });
+		assert.deepEqual(Object.keys(runnerAgentEnv('unknown', host)).filter(name => /KEY|TOKEN|SECRET/.test(name)), []);
+	});
+
+	test('Codex keeps its own sandbox on Linux and macOS; off only on Windows or by the operator\'s explicit choice', () => {
+		for (const platform of ['linux', 'darwin']) {
+			const args = codexSandboxArgs(platform, {});
+			assert.ok(!args.includes('--dangerously-bypass-approvals-and-sandbox'), platform);
+			assert.deepEqual(args.slice(0, 2), ['--sandbox', 'workspace-write']);
+		}
+		assert.deepEqual(codexSandboxArgs('linux', { VOLT_RUNNER_CODEX_SANDBOX: 'off' }), ['--dangerously-bypass-approvals-and-sandbox']);
+		assert.deepEqual(codexSandboxArgs('win32', {}), ['--dangerously-bypass-approvals-and-sandbox']);
 	});
 });
 

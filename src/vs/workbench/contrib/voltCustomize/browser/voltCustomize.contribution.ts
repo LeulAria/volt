@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
+import type { IAdminPolicy } from '../../../../platform/voltSandbox/common/authority.js';
 import '../common/voltCustomizeConfiguration.js';
 import { $, addDisposableListener } from '../../../../base/browser/dom.js';
 import { IAction, Separator, toAction } from '../../../../base/common/actions.js';
@@ -47,11 +49,24 @@ import { closeAgentToolEditor, openInAgentTools, revealAgentToolEditor, shownAge
 import { REVEAL_VOLT_PART_COMMAND_ID } from '../common/voltCustomizeContext.js';
 import { IVoltFeatureService } from '../common/voltFeatures.js';
 import { VoltFeatureService } from './voltFeatureService.js';
+import { IVoltPluginService } from '../../../services/voltPlugins/common/voltApi.js';
+import { VoltPluginService } from './voltPluginService.js';
+import { IVoltExtensionApiService } from '../../../services/voltPlugins/common/voltExtensionApi.js';
+import { VoltExtensionApiService } from './voltExtensionApiService.js';
+import { IVoltFeatureModuleService } from './voltFeatureModules.js';
+import { registerVoltFeatureModuleEditors, VoltFeatureModuleService } from './voltFeatureModuleService.js';
+import { VOLT_FEATURE_MODULES } from './voltFeatureModuleTable.js';
 
 registerSingleton(IVoltSlotService, VoltSlotService, InstantiationType.Delayed);
+// The `vscode.volt` API's main-thread half (`MainThreadVolt`); created on an extension's first call.
+registerSingleton(IVoltExtensionApiService, VoltExtensionApiService, InstantiationType.Delayed);
 // Eager: it sets the `voltFeature.*` context keys and takes turned-off features' tools away at startup.
 registerSingleton(IVoltFeatureService, VoltFeatureService, InstantiationType.Eager);
 registerSingleton(IVoltCustomizeService, VoltCustomizeService, InstantiationType.Eager);
+registerSingleton(IVoltPluginService, VoltPluginService, InstantiationType.Delayed);
+// Eager: it stands in for the commands of feature modules that aren't loaded yet. Loads none itself.
+registerSingleton(IVoltFeatureModuleService, new SyncDescriptor(VoltFeatureModuleService, [VOLT_FEATURE_MODULES], false));
+registerVoltFeatureModuleEditors(VOLT_FEATURE_MODULES);
 
 export const CUSTOMIZE_VOLT_SECTION = 'customizeVolt';
 const OPEN_VOLT_SETTINGS = 'workbench.action.openVoltSettings';
@@ -294,6 +309,76 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 
 registerWorkbenchContribution2(VoltLookCssContribution.ID, VoltLookCssContribution, WorkbenchPhase.BlockRestore);
 registerWorkbenchContribution2(VoltPlaygroundTitleContribution.ID, VoltPlaygroundTitleContribution, WorkbenchPhase.AfterRestored);
+
+/** Reads Volt's contribution points once the window is idle, so a manifest's problems show on its extension. */
+class VoltPluginsContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltPlugins';
+	constructor(@IVoltPluginService _plugins: IVoltPluginService) { }
+}
+registerWorkbenchContribution2(VoltPluginsContribution.ID, VoltPluginsContribution, WorkbenchPhase.Eventually);
+
+/** Puts the stubs for not-yet-loaded feature modules' commands in before anything can run them. */
+class VoltFeatureModulesContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltFeatureModules';
+	constructor(@IVoltFeatureModuleService _modules: IVoltFeatureModuleService) { }
+}
+registerWorkbenchContribution2(VoltFeatureModulesContribution.ID, VoltFeatureModulesContribution, WorkbenchPhase.BlockRestore);
+
+/** Once the window has restored, the modules that serve agents (their tools) load: `activation: 'startup'`. */
+class VoltFeatureModulesStartupContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltFeatureModulesStartup';
+	constructor(@IVoltFeatureModuleService modules: IVoltFeatureModuleService) {
+		modules.startupFinished();
+	}
+}
+registerWorkbenchContribution2(VoltFeatureModulesStartupContribution.ID, VoltFeatureModulesStartupContribution, WorkbenchPhase.AfterRestored);
+
+/** Lists each extension's Volt capabilities (and the user's consent) on its page once the window is idle. */
+class VoltExtensionApiContribution implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltExtensionApi';
+	constructor(@IVoltExtensionApiService extensionApi: IVoltExtensionApiService) {
+		void extensionApi.policy;
+	}
+}
+registerWorkbenchContribution2(VoltExtensionApiContribution.ID, VoltExtensionApiContribution, WorkbenchPhase.Eventually);
+
+/**
+ * The execution host's managed (admin) policy for the window's own gates: the extension API and
+ * the host-tool gate judge by it as the launcher, plugin hosts and the network broker do. Read at
+ * start and followed while Volt runs (the host re-reads it every minute and sends each change);
+ * unreadable means third parties get nothing (fail closed).
+ */
+class VoltManagedPolicyContribution extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltManagedPolicy';
+	constructor(
+		@IVoltStdioService stdio: IVoltStdioService,
+		@IVoltExtensionApiService extensionApi: IVoltExtensionApiService,
+		@IVoltHostToolService hostTools: IVoltHostToolService,
+	) {
+		super();
+		if (!stdio.managedPolicy) {
+			return;
+		}
+		const apply = (policy: IAdminPolicy) => {
+			extensionApi.setManagedPolicy?.(policy);
+			hostTools.setManagedPolicy?.(policy);
+		};
+		// A change that arrives before the first read answers is newer than that answer.
+		let changed = false;
+		if (stdio.onDidChangeManagedPolicy) {
+			this._register(stdio.onDidChangeManagedPolicy(policy => {
+				changed = true;
+				apply(policy);
+			}));
+		}
+		void stdio.managedPolicy().catch((): IAdminPolicy => ({ unreadable: true })).then(policy => {
+			if (!changed) {
+				apply(policy);
+			}
+		});
+	}
+}
+registerWorkbenchContribution2(VoltManagedPolicyContribution.ID, VoltManagedPolicyContribution, WorkbenchPhase.BlockRestore);
 registerWorkbenchContribution2(VoltPlaygroundDevtoolsContribution.ID, VoltPlaygroundDevtoolsContribution, WorkbenchPhase.AfterRestored);
 
 // --- Commands ----------------------------------------------------------------------------------
@@ -309,7 +394,7 @@ const category = localize2('voltCustomize.category', "Volt");
 
 registerAction2(class TogglePlaygroundModeAction extends Action2 {
 	constructor() {
-		super({ id: TOGGLE_PLAYGROUND_MODE, title: localize2('voltPlayground.toggleMode', "Toggle Playground Develop / Preview"), category, f1: true });
+		super({ id: TOGGLE_PLAYGROUND_MODE, visibility: 'public', title: localize2('voltPlayground.toggleMode', "Toggle Playground Develop / Preview"), category, f1: true });
 	}
 	run(accessor: ServicesAccessor): void {
 		const customize = accessor.get(IVoltCustomizeService);
@@ -322,7 +407,7 @@ registerAction2(class TogglePlaygroundModeAction extends Action2 {
 /** A part chip clicked in a chat: the devtools open (Develop) on that part. */
 registerAction2(class RevealVoltPartAction extends Action2 {
 	constructor() {
-		super({ id: REVEAL_VOLT_PART_COMMAND_ID, title: localize2('voltDevtools.revealTitle', "Show Part in Customize Devtools"), category, f1: false });
+		super({ id: REVEAL_VOLT_PART_COMMAND_ID, visibility: 'public', title: localize2('voltDevtools.revealTitle', "Show Part in Customize Devtools"), category, f1: false });
 	}
 	run(accessor: ServicesAccessor, id?: unknown): void {
 		if (typeof id !== 'string') {
@@ -352,7 +437,7 @@ registerAction2(class RevealVoltPartAction extends Action2 {
 
 registerAction2(class PopOutPreviewAction extends Action2 {
 	constructor() {
-		super({ id: POP_OUT_PREVIEW, title: localize2('voltPlayground.popOutTitle', "Open Playground Preview in New Window"), category, f1: true });
+		super({ id: POP_OUT_PREVIEW, visibility: 'public', title: localize2('voltPlayground.popOutTitle', "Open Playground Preview in New Window"), category, f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<void> {
 		return accessor.get(IVoltCustomizeService).openPreviewWindow();
@@ -361,7 +446,7 @@ registerAction2(class PopOutPreviewAction extends Action2 {
 
 registerAction2(class CustomizeVoltAction extends Action2 {
 	constructor() {
-		super({ id: 'volt.customize.open', title: localize2('voltCustomize.open', "Customize Volt"), category, f1: true });
+		super({ id: 'volt.customize.open', visibility: 'public', title: localize2('voltCustomize.open', "Customize Volt"), category, f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<unknown> {
 		return accessor.get(ICommandService).executeCommand(OPEN_VOLT_SETTINGS, CUSTOMIZE_VOLT_SECTION);
@@ -372,6 +457,7 @@ registerAction2(class ResetCustomizationsAction extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.customize.reset',
+			visibility: 'internal',
 			title: localize2('voltCustomize.reset', "Reset Customizations"),
 			category,
 			f1: true,
@@ -406,7 +492,7 @@ async function pickEntry(accessor: ServicesAccessor, kind: 'layout' | 'look'): P
 
 registerAction2(class SelectLayoutAction extends Action2 {
 	constructor() {
-		super({ id: 'volt.customize.selectLayout', title: localize2('voltCustomize.selectLayout', "Switch Layout…"), category, f1: true });
+		super({ id: 'volt.customize.selectLayout', visibility: 'public', title: localize2('voltCustomize.selectLayout', "Switch Layout…"), category, f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<void> {
 		return pickEntry(accessor, 'layout');
@@ -415,7 +501,7 @@ registerAction2(class SelectLayoutAction extends Action2 {
 
 registerAction2(class SelectLookAction extends Action2 {
 	constructor() {
-		super({ id: 'volt.customize.selectLook', title: localize2('voltCustomize.selectLook', "Switch Look…"), category, f1: true });
+		super({ id: 'volt.customize.selectLook', visibility: 'public', title: localize2('voltCustomize.selectLook', "Switch Look…"), category, f1: true });
 	}
 	run(accessor: ServicesAccessor): Promise<void> {
 		return pickEntry(accessor, 'look');
@@ -424,7 +510,7 @@ registerAction2(class SelectLookAction extends Action2 {
 
 registerAction2(class OpenCustomizeGuideAction extends Action2 {
 	constructor() {
-		super({ id: 'volt.customize.openGuide', title: localize2('voltCustomize.openGuide', "Open Customize Folder Guide (AGENTS.md)"), category, f1: true });
+		super({ id: 'volt.customize.openGuide', visibility: 'public', title: localize2('voltCustomize.openGuide', "Open Customize Folder Guide (AGENTS.md)"), category, f1: true });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const customize = accessor.get(IVoltCustomizeService);
@@ -437,7 +523,7 @@ registerAction2(class OpenCustomizeGuideAction extends Action2 {
 
 registerAction2(class OpenPlaygroundAction extends Action2 {
 	constructor() {
-		super({ id: OPEN_PLAYGROUND, title: localize2('voltCustomize.openPlayground', "Open Customize Playground"), category, f1: true });
+		super({ id: OPEN_PLAYGROUND, visibility: 'public', title: localize2('voltCustomize.openPlayground', "Open Customize Playground"), category, f1: true });
 	}
 	/** `folder` reopens an existing draft; without it a new draft is made. */
 	async run(accessor: ServicesAccessor, folder?: unknown): Promise<void> {
@@ -491,7 +577,7 @@ async function currentDraft(accessor: ServicesAccessor) {
 
 registerAction2(class ApplyPlaygroundAction extends Action2 {
 	constructor() {
-		super({ id: APPLY_PLAYGROUND, title: localize2('voltPlayground.applyTitle', "Apply Playground to My Volt"), category, f1: false });
+		super({ id: APPLY_PLAYGROUND, visibility: 'internal', title: localize2('voltPlayground.applyTitle', "Apply Playground to My Volt"), category, f1: false });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const customize = accessor.get(IVoltCustomizeService);
@@ -508,7 +594,7 @@ registerAction2(class ApplyPlaygroundAction extends Action2 {
 
 registerAction2(class InstallPlaygroundAction extends Action2 {
 	constructor() {
-		super({ id: INSTALL_PLAYGROUND, title: localize2('voltPlayground.installTitle', "Install Playground as Extension"), category, f1: false });
+		super({ id: INSTALL_PLAYGROUND, visibility: 'internal', title: localize2('voltPlayground.installTitle', "Install Playground as Extension"), category, f1: false });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const customize = accessor.get(IVoltCustomizeService);
@@ -530,7 +616,7 @@ registerAction2(class InstallPlaygroundAction extends Action2 {
 
 registerAction2(class DiscardPlaygroundAction extends Action2 {
 	constructor() {
-		super({ id: DISCARD_PLAYGROUND, title: localize2('voltPlayground.discardTitle', "Discard Playground"), category, f1: false });
+		super({ id: DISCARD_PLAYGROUND, visibility: 'internal', title: localize2('voltPlayground.discardTitle', "Discard Playground"), category, f1: false });
 	}
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const fileService = accessor.get(IFileService);

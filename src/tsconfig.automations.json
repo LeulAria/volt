@@ -11,6 +11,7 @@
 		"./vs/workbench/contrib/voltAgent/common/workflows/**/*.ts",
 		"./vs/workbench/contrib/voltAgent/test/*/workflow*.test.ts",
 		"./vs/workbench/contrib/voltAgent/browser/automations/**/*.ts",
+		"./vs/workbench/contrib/voltAutomations/**/*.ts",
 		"./vs/workbench/contrib/voltAgent/browser/workflows/**/*.ts"
 	],
 	"exclude": []

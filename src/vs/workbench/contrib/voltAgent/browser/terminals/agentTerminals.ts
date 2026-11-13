@@ -83,25 +83,59 @@ class WindowTerminalProcess implements IManagedTerminalProcess {
 	readonly onClosed: Event<void>;
 	readonly ready: Promise<void>;
 
-	constructor(private readonly instance: ITerminalInstance) {
+	constructor(
+		private readonly instance: ITerminalInstance,
+		/** A sandboxed terminal: confirms its sandbox from outside and resolves with the go line; `end` kills its whole sandbox. */
+		private readonly sandbox?: { readonly confirm: (pid: number) => Promise<string>; readonly end: () => Promise<void> },
+	) {
 		// As data arrives from the process, before xterm parses it: no lag behind the pty, view or no view.
 		this.onData = instance.onWillData;
 		this.onExit = Event.map(instance.onExit, (code): IManagedTerminalExit => typeof code === 'object' && code
 			? { code: code.code ?? 1, error: code.message }
 			: { code: typeof code === 'number' ? code : instance.exitCode });
 		this.onClosed = Event.map(instance.onDisposed, () => undefined);
-		this.ready = instance.processReady;
+		this.ready = sandbox ? this.confirmSandbox(sandbox) : instance.processReady;
+		if (sandbox) {
+			Event.once(instance.onExit)(() => void sandbox.end());
+			Event.once(instance.onDisposed)(() => void sandbox.end());
+		}
 	}
+
+	/** The shell starts only after the sandbox is confirmed: Volt types the go line, and nothing before it. */
+	private async confirmSandbox(sandbox: { readonly confirm: (pid: number) => Promise<string>; readonly end: () => Promise<void> }): Promise<void> {
+		await this.instance.processReady;
+		const pid = this.instance.processId;
+		if (!pid) {
+			void sandbox.end();
+			throw new Error('The terminal has no process to confirm its sandbox for.');
+		}
+		let go: string;
+		try {
+			go = await sandbox.confirm(pid);
+		} catch (err) {
+			this.kill();
+			throw err;
+		}
+		this.confirmed = true;
+		await this.instance.sendText(go, false);
+	}
+
+	private confirmed = false;
 
 	get viewable(): boolean {
 		return !this.instance.isDisposed;
 	}
 
 	sendText(text: string, enter: boolean): Promise<void> {
+		if (this.sandbox && !this.confirmed) {
+			// Nothing reaches a sandboxed terminal before its go line.
+			return this.ready.then(() => this.sendText(text, enter), () => undefined);
+		}
 		return this.instance.isDisposed ? Promise.resolve() : this.instance.sendText(text, enter);
 	}
 
 	kill(): void {
+		void this.sandbox?.end();
 		if (!this.instance.isDisposed) {
 			this.instance.dispose(TerminalExitReason.Extension);
 		}
@@ -116,10 +150,18 @@ class WindowTerminalBackend implements IManagedTerminalBackend {
 		private readonly terminalEditorService: ITerminalEditorService,
 		private readonly profileService: ITerminalProfileService,
 		private readonly onInstance: (id: string, instance: ITerminalInstance) => void,
+		private readonly stdio: IVoltStdioService,
 	) { }
 
 	async spawn(launch: IManagedTerminalLaunch): Promise<IManagedTerminalProcess> {
 		const shell = await this.shell();
+		if (launch.exec.sandbox) {
+			return this.spawnSandboxed(shell.file, shell.args(launch.command), launch);
+		}
+		if (launch.exec.context.sandboxed) {
+			// A sandboxed chat's terminal without its sandbox: refused, never started outside it.
+			throw new Error(localize('voltAgent.terminal.noSandbox', "{0} was not started: this chat runs in Volt's sandbox, and the terminal came without it.", launch.label));
+		}
 		const config: IShellLaunchConfig = {
 			name: launch.label,
 			executable: shell.file,
@@ -138,6 +180,56 @@ class WindowTerminalBackend implements IManagedTerminalBackend {
 		this.terminalEditorService.resolveResource(instance);
 		this.onInstance(launch.id, instance);
 		return new WindowTerminalProcess(instance);
+	}
+
+	/**
+	 * A sandboxed chat's terminal (spec F.6) in this window's pty host: the main process prepares
+	 * the sandbox and the launcher that carries its control channels as FIFOs, the terminal starts
+	 * that launcher with exactly the sandbox's environment, and the shell starts only once the main
+	 * process confirmed the sandbox. Every failure refuses the terminal.
+	 */
+	private async spawnSandboxed(file: string, args: string[], launch: IManagedTerminalLaunch): Promise<IManagedTerminalProcess> {
+		const stdio = this.stdio;
+		if (isWindows || !stdio.prepareSandboxedTerminal || !stdio.confirmSandboxedTerminal || !stdio.endSandboxedTerminal) {
+			throw new Error(localize('voltAgent.terminal.cannotSandbox', "{0} was not started: terminals cannot run in Volt's sandbox here.", launch.label));
+		}
+		const prepared = await stdio.prepareSandboxedTerminal({
+			id: launch.id,
+			file,
+			args,
+			cwd: launch.cwd,
+			env: { ...launch.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+			sandbox: launch.exec.sandbox!,
+			context: launch.exec.context,
+		}).catch(err => {
+			throw new Error(localize('voltAgent.terminal.sandboxRefused', "{0} was not started: {1}", launch.label, err instanceof Error ? err.message : String(err)));
+		});
+		const config: IShellLaunchConfig = {
+			name: launch.label,
+			executable: prepared.file,
+			args: [...prepared.args],
+			cwd: prepared.cwd,
+			// The sandbox's environment and nothing else (plus the mark that makes it the agent's).
+			env: { ...prepared.env, [AGENT_TERMINAL_ENV]: '1' },
+			strictEnv: true,
+			waitOnExit: code => code
+				? `\r\n\u001b[2m${localize('voltAgent.terminal.exitedCode', "{0} exited with code {1}", launch.label, code)}\u001b[0m`
+				: `\r\n\u001b[2m${localize('voltAgent.terminal.finished', "{0} finished", launch.label)}\u001b[0m`,
+			isTransient: true,
+		};
+		let instance: ITerminalInstance;
+		try {
+			instance = this.instanceService.createInstance(config, TerminalLocation.Editor);
+		} catch (err) {
+			await stdio.endSandboxedTerminal(launch.id).catch(() => undefined);
+			throw err;
+		}
+		this.terminalEditorService.resolveResource(instance);
+		this.onInstance(launch.id, instance);
+		return new WindowTerminalProcess(instance, {
+			confirm: pid => stdio.confirmSandboxedTerminal!(launch.id, pid),
+			end: () => stdio.endSandboxedTerminal!(launch.id).catch(() => undefined),
+		});
 	}
 
 	/** A POSIX shell for the agent's command lines; fish and friends fall back to zsh or bash. */
@@ -179,9 +271,10 @@ export class AgentTerminalsService extends Disposable implements IAgentTerminals
 		@IWorkspaceContextService workspaceContext: IWorkspaceContextService,
 		@IAgentRuntimeService runtime: IAgentRuntimeService,
 		@IFileService private readonly fileService: IFileService,
+		@IVoltStdioService stdio: IVoltStdioService,
 	) {
 		super();
-		const backend = new WindowTerminalBackend(instanceService, terminalEditorService, profileService, (id, instance) => this.instances.set(id, instance));
+		const backend = new WindowTerminalBackend(instanceService, terminalEditorService, profileService, (id, instance) => this.instances.set(id, instance), stdio);
 		this.core = this._register(new ManagedTerminals(backend, runtime, fileService, () => workspaceContext.getWorkspace().folders[0]?.uri.fsPath));
 		this.onDidChange = this.core.onDidChange;
 		this._register(this.core.onDidChange(chatId => this.showStarted(chatId)));

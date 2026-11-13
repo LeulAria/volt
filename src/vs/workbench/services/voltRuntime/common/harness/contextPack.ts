@@ -54,6 +54,8 @@ export interface IContextPackInput {
 	readonly browserTools?: boolean;
 	/** The agent gets Volt's commit review (propose_commits, rename_branch) through the volt MCP server. */
 	readonly commitReview?: boolean;
+	/** The agent gets the editor's language servers, tests, debugger and tasks (code_nav, tests, debug...) through the volt MCP server. */
+	readonly ideTools?: boolean;
 }
 
 export interface IEnvironmentFacts {
@@ -240,6 +242,9 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	if (input.codeIndexed && input.intent.lane !== 'chat' && input.intent.lane !== 'fast') {
 		parts.push(`[Volt] ${INDEXED_SEARCH}`);
 	}
+	if (input.ideTools && input.intent.lane !== 'chat') {
+		parts.push(`[Volt] ${IDE_TOOLS_GUIDE}`);
+	}
 	for (const gallery of galleryHints(input)) {
 		parts.push(`[Volt] ${gallery}`);
 	}
@@ -309,6 +314,8 @@ export const WATCH_LONG_JOBS = `When you end your turn while a job the user wait
  */
 /** Committing and naming the branch go through the user: Volt's commit review, then a question for the branch name. */
 export const COMMIT_REVIEW = 'To commit, group the changes into commits with Conventional Commits messages (type(scope): summary, e.g. feat(cart): apply discount at checkout), one commit when they are one change or belong together and several only where they are separate changes, and make them with git commit. Call propose_commits from the volt MCP server instead only when the user asks to review the commits first (draft commits, /draft-commit, "split them for me to review"); a plain "commit", "commit and push" or "commit and open a PR" is not that. A worktree starts on a placeholder branch (volt/ and 8 hex characters). Before pushing it or opening a pull request from it, ask the user what to call it with ask_question (one question, 4 names you suggest as type/short-kebab-summary, e.g. feat/cart-discounts or fix/login-redirect; they can type their own), then call rename_branch with the answer; never rename it with git yourself. Push with git as usual afterwards.';
+
+export const IDE_TOOLS_GUIDE = 'The volt MCP server gives you the editor itself: code_nav (op inspect: a symbol\'s type, definition with body, references and implementations in one call; callers/callees; supertypes/subtypes; workspace_symbols) answered by the language servers on the user\'s live buffers, diagnostics (type/lint errors in a second after an edit), code_action (rename, organize imports, quick fixes across files), tests (run one test by file:line; structured failures; the user sees the run in the Test Explorer) and debug (breakpoints, step, variables, evaluate, watch: each step returns the new state); ide reaches the rest of the editor by capability (editor highlights, git staging/conflicts/blame, notebooks, docker, k8s, CI logs, HTTP requests, CPU profiles, analyzers, coverage; op help lists arguments). Prefer them to grep-and-read for symbol questions and to raw test commands.';
 
 export const INDEXED_SEARCH = 'This project is indexed: search code with instant_grep (regex or literal, the same results as rg), find symbol declarations with find_symbol, and find files by a fuzzy name with find_files, all from the volt MCP server. They answer in milliseconds where Grep, rg and find re-read every file.';
 

@@ -41,6 +41,7 @@ export class VoltAiEditAction extends Action2 {
 	constructor(private readonly recentEditsProvider: () => RecentEditsTracker) {
 		super({
 			id: VOLT_AI_EDIT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltPrediction.aiEdit', "Volt: AI Edit"),
 			category: Categories.View,
 			f1: true,

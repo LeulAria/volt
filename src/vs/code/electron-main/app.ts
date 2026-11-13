@@ -81,6 +81,7 @@ import { NativeURLService } from '../../platform/url/common/urlService.js';
 import { ElectronURLListener } from '../../platform/url/electron-main/electronUrlListener.js';
 import { IWebviewManagerService } from '../../platform/webview/common/webviewManagerService.js';
 import { WebviewMainService } from '../../platform/webview/electron-main/webviewMainService.js';
+import { WebviewEgressRegistry } from '../../platform/webview/common/voltWebviewEgress.js';
 import { isFolderToOpen, isWorkspaceToOpen, IWindowOpenable } from '../../platform/window/common/window.js';
 import { getAllWindowsExcludingOffscreen, IWindowsMainService, OpenContext } from '../../platform/windows/electron-main/windows.js';
 import { ICodeWindow } from '../../platform/window/electron-main/window.js';
@@ -142,7 +143,11 @@ import { IVoltSkillsDirectoryService, VOLT_SKILLS_DIRECTORY_CHANNEL_NAME } from 
 import { VoltSkillsDirectoryMainService } from '../../platform/voltMarketplace/electron-main/voltSkillsDirectoryMainService.js';
 import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
-import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME } from '../../platform/voltBrowser/common/voltBrowser.js';
+import { IVoltHttpTransport, VOLT_HTTP_TRANSPORT_CHANNEL_NAME } from '../../platform/voltHttp/common/voltHttpTransport.js';
+import { VoltHttpTransportMainService } from '../../platform/voltHttp/electron-main/voltHttpTransportMain.js';
+import { RequestChannel } from '../../platform/request/common/requestIpc.js';
+import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME, VOLT_BROWSER_PARTITION } from '../../platform/voltBrowser/common/voltBrowser.js';
+import { guardBrowserPartition, onGuestWindowOpen, onWillAttachWebview } from '../../platform/voltBrowser/electron-main/browserGuestGuard.js';
 import { VoltBrowserMainService } from '../../platform/voltBrowser/electron-main/voltBrowserMainService.js';
 import { IVoltBadgeService, VOLT_BADGE_CHANNEL_NAME } from '../../platform/voltBadge/common/voltBadge.js';
 import { VoltBadgeMainService } from '../../platform/voltBadge/electron-main/voltBadgeMainService.js';
@@ -166,6 +171,32 @@ import { IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME } from '../../platform/vol
 import { VoltSpeechMainService } from '../../platform/voltSpeech/electron-main/voltSpeechMainService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
 
+/** The URLs of a request's frame and its ancestors, innermost first; undefined without a frame. */
+function frameUrls(frame: WebFrameMain | null | undefined): string[] | undefined {
+	if (!frame) {
+		return undefined;
+	}
+	const urls: string[] = [];
+	try {
+		for (let current: WebFrameMain | null = frame; current; current = current.parent) {
+			urls.push(current.url);
+		}
+	} catch {
+		// A frame disposed mid-walk: what was read still ties the request to its webview.
+	}
+	return urls;
+}
+
+/** A request URL for the log: origin and whether there was a path, never the path or query. */
+function redactedRequestUrl(url: string): string {
+	try {
+		const parsed = new URL(url);
+		return `${parsed.protocol}//${parsed.host}${parsed.pathname.length > 1 ? '/...' : '/'}`;
+	} catch {
+		return '(not a URL)';
+	}
+}
+
 /** The windows a request may come from: the ones open and the one loading for the next New Window. */
 function withSpareWindow(windowsMainService: IWindowsMainService): ICodeWindow[] {
 	const spare = windowsMainService.getSpareWindow();
@@ -186,6 +217,9 @@ export class CodeApplication extends Disposable {
 	private windowsMainService: IWindowsMainService | undefined;
 	private auxiliaryWindowsMainService: IAuxiliaryWindowsMainService | undefined;
 	private nativeHostMainService: INativeHostMainService | undefined;
+
+	/** Volt: sandboxed extensions' webviews and the hosts they may reach (spec I.10), judged by the session dispatcher below. */
+	private readonly webviewEgress = new WebviewEgressRegistry();
 
 	constructor(
 		private readonly mainProcessNodeIpcServer: NodeIPCServer,
@@ -257,6 +291,9 @@ export class CodeApplication extends Disposable {
 			return false;
 		});
 
+		// Volt: the in-app browser's shared partition; per-chat ones get the same on first attach (B-37)
+		guardBrowserPartition(VOLT_BROWSER_PARTITION);
+
 		//#endregion
 
 		//#region Request filtering
@@ -322,7 +359,18 @@ export class CodeApplication extends Disposable {
 			return false;
 		};
 
+		// The one onBeforeRequest listener of the windows' session (Electron keeps one per event):
+		// besides VS Code's checks it ties every request to the webview it came from (Volt, I.10)
 		session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+			// The frame chain is walked only while a sandboxed extension's webview is shown.
+			if (this.webviewEgress.hasSandboxedWebviews) {
+				const egress = this.webviewEgress.verdict(details.webContentsId, { url: details.url, frames: frameUrls(details.frame), referrer: details.referrer });
+				if (!egress.allow) {
+					this.logService.warn(`[volt webview] blocked ${details.method} ${redactedRequestUrl(details.url)}${egress.origin ? ` from webview ${egress.origin}` : ''}: ${egress.reason}`);
+					return callback({ cancel: true });
+				}
+			}
+
 			const uri = URI.parse(details.url);
 			if (uri.scheme === Schemas.vscodeWebview) {
 				if (!isAllowedWebviewRequest(uri, details)) {
@@ -476,6 +524,16 @@ export class CodeApplication extends Disposable {
 
 				event.preventDefault();
 			});
+
+			// Volt: a <webview> attaches only in an in-app browser partition, without preload or Node (B-37)
+			contents.on('will-attach-webview', (event, webPreferences, params) => onWillAttachWebview(event, webPreferences, params, this.logService));
+
+			// Volt: in-app browser pages open web links in the user's browser and nothing else:
+			// no OS protocol handlers, and no about:blank window with the workbench's preload (B-37)
+			if (contents.getType() === 'webview') {
+				contents.setWindowOpenHandler(details => onGuestWindowOpen(contents, details.url, url => this.nativeHostMainService?.openExternal(undefined, url), this.logService));
+				return;
+			}
 
 			// All Windows: only allow about:blank auxiliary windows to open
 			// For all other URLs, delegate to the OS.
@@ -1117,6 +1175,9 @@ export class CodeApplication extends Disposable {
 		// Volt in-app folder picker
 		services.set(IVoltFsBrowseService, new SyncDescriptor(VoltFsBrowseService, undefined, false /* proxied to other processes */));
 
+		// Volt HTTP client: requests leave from here, so no page CORS check applies
+		services.set(IVoltHttpTransport, new SyncDescriptor(VoltHttpTransportMainService, undefined, true));
+
 		// Volt in-app browser (session data, color scheme emulation)
 		services.set(IVoltBrowserService, new SyncDescriptor(VoltBrowserMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltDevicesService, new SyncDescriptor(VoltDevicesMainService, undefined, false /* proxied to other processes */));
@@ -1141,7 +1202,7 @@ export class CodeApplication extends Disposable {
 		services.set(IVoltEditorImportService, new SyncDescriptor(VoltEditorImportService, undefined, true));
 
 		// Webview Manager
-		services.set(IWebviewManagerService, new SyncDescriptor(WebviewMainService));
+		services.set(IWebviewManagerService, new SyncDescriptor(WebviewMainService, [this.webviewEgress]));
 
 		// Menubar
 		services.set(IMenubarMainService, new SyncDescriptor(MenubarMainService));
@@ -1329,6 +1390,9 @@ export class CodeApplication extends Disposable {
 		// Volt in-app folder picker
 		const voltFsBrowseChannel = ProxyChannel.fromService(accessor.get(IVoltFsBrowseService), disposables);
 		mainProcessElectronServer.registerChannel(VOLT_FS_BROWSE_CHANNEL_NAME, voltFsBrowseChannel);
+
+		// Volt HTTP client (the request editor's and agents' `ide http` sends)
+		mainProcessElectronServer.registerChannel(VOLT_HTTP_TRANSPORT_CHANNEL_NAME, new RequestChannel(accessor.get(IVoltHttpTransport) as VoltHttpTransportMainService));
 
 		// Volt in-app browser
 		const voltBrowserChannel = ProxyChannel.fromService(accessor.get(IVoltBrowserService), disposables);

@@ -12,6 +12,8 @@ import { MainThreadConfigurationShape, MainContext, ExtHostContext, IConfigurati
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { ConfigurationTarget, IConfigurationService, IConfigurationOverrides } from '../../../platform/configuration/common/configuration.js';
 import { IEnvironmentService } from '../../../platform/environment/common/environment.js';
+import { IExtensionService } from '../../services/extensions/common/extensions.js';
+import { voltConfigurationWriteRefusal, voltIsSandboxed } from '../../services/extensions/common/voltExtensionSandbox.js';
 
 @extHostNamedCustomer(MainContext.MainThreadConfiguration)
 export class MainThreadConfiguration implements MainThreadConfigurationShape {
@@ -19,10 +21,11 @@ export class MainThreadConfiguration implements MainThreadConfigurationShape {
 	private readonly _configurationListener: IDisposable;
 
 	constructor(
-		extHostContext: IExtHostContext,
+		private readonly extHostContext: IExtHostContext,
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
 		@IEnvironmentService private readonly _environmentService: IEnvironmentService,
+		@IExtensionService private readonly extensionService: IExtensionService,
 	) {
 		const proxy = extHostContext.getProxy(ExtHostContext.ExtHostConfiguration);
 
@@ -56,6 +59,12 @@ export class MainThreadConfiguration implements MainThreadConfigurationShape {
 	}
 
 	private writeConfiguration(target: ConfigurationTarget | null, key: string, value: unknown, overrides: IConfigurationOverrides, scopeToLanguage: boolean | undefined): Promise<void> {
+		// Volt (B-09): the settings that decide where extensions run, and a sandboxed extension's reach.
+		const hostedSandboxed = this.extensionService.extensions.filter(extension => this.extHostContext.hostsExtension(extension.identifier.value) && voltIsSandboxed(this.configurationService, extension));
+		const refusal = voltConfigurationWriteRefusal(key, hostedSandboxed);
+		if (refusal) {
+			return Promise.reject(new Error(refusal));
+		}
 		target = target !== null && target !== undefined ? target : this.deriveConfigurationTarget(key, overrides);
 		const configurationValue = this.configurationService.inspect(key, overrides);
 		switch (target) {

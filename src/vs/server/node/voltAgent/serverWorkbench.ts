@@ -13,7 +13,7 @@ import { Event } from '../../../base/common/event.js';
 import { parse as parseJsonc } from '../../../base/common/json.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
 import { FileAccess } from '../../../base/common/network.js';
-import { dirname, join, normalize, sep } from '../../../base/common/path.js';
+import { dirname, isAbsolute, join, normalize, sep } from '../../../base/common/path.js';
 import { IServerChannel, ProxyChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { IConfigurationService } from '../../../platform/configuration/common/configuration.js';
 import { parseArgs } from '../../../platform/environment/node/argv.js';
@@ -21,6 +21,7 @@ import { ILogService } from '../../../platform/log/common/log.js';
 import product from '../../../platform/product/common/product.js';
 import { RemoteAgentConnectionContext } from '../../../platform/remote/common/remoteAgentEnvironment.js';
 import { IAgentServerAuth } from '../../../platform/voltAgentServer/common/protocolServer.js';
+import { IVoltExtensionHostTicket, VOLT_EXTHOST_TICKET_QUERY } from '../../../platform/voltAgentServer/common/protocol.js';
 import { VOLT_FS_BROWSE_CHANNEL_NAME } from '../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../../platform/voltGit/common/voltGit.js';
@@ -28,11 +29,12 @@ import { IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME } from '../../../pl
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
-import { IVoltExecRequest, IVoltStdioSpawnOptions, VOLT_STDIO_CHANNEL_NAME } from '../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltExecRequest, IVoltSandboxedMcpRequest, IVoltStdioSpawnOptions, VOLT_STDIO_CHANNEL_NAME } from '../../../platform/voltStdio/common/voltStdio.js';
 import { VoltStdioService } from '../../../platform/voltStdio/node/voltStdioService.js';
 import { VOLT_USAGE_CHANNEL_NAME } from '../../../platform/voltUsage/common/voltUsage.js';
 import { VoltUsageService } from '../../../platform/voltUsage/node/voltUsageService.js';
 import type { IServerAPI, IServerEmbedder } from '../remoteExtensionHostAgentServer.js';
+import { ServerExtensionSandbox } from './serverExtensionSandbox.js';
 import { ServerParsedArgs, serverOptions } from '../serverEnvironmentService.js';
 import type { SocketServer } from '../serverServices.js';
 
@@ -44,6 +46,8 @@ export const WORKBENCH_SESSION_PATH = '/api/workbench/session';
 const SESSION_COOKIE = 'volt-session';
 const CONNECTION_TOKEN_COOKIE = 'vscode-tkn';
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
+/** A session token with less than this left is renewed on the next page load. */
+const SESSION_RENEW_WITHIN_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** The checkout in dev, the app's Resources/app when packaged. */
 const APP_ROOT = dirname(FileAccess.asFileUri('').fsPath);
@@ -58,8 +62,10 @@ export interface IServerWorkbenchOptions {
 	readonly serverDir: string;
 	readonly label: string;
 	readonly environmentId: () => string;
-	/** Whose device token this is; undefined once revoked. */
+	/** Whose device token this is; undefined once revoked or expired. */
 	readonly authorize: (token: string) => IAgentServerAuth | undefined;
+	/** The device's next token (the session cookie is renewed with it before it expires). */
+	readonly refresh?: (token: string) => Promise<{ readonly token: string; readonly expiresAt: number } | undefined>;
 	readonly resolveEnv: () => Promise<NodeJS.ProcessEnv>;
 	readonly git: IVoltGitService;
 	/** The code index (instant grep) the agents here use; the browser's settings page shows it. */
@@ -70,7 +76,15 @@ export interface IServerWorkbenchOptions {
 	readonly usage?: VoltUsageService;
 	/** The agent server's pull request service, shared with paired phones' git screens. */
 	readonly pullRequests?: IVoltPullRequestService;
+	/**
+	 * The agent server's stdio service, whose T2 plugin hosts (Memory) browser windows share: one
+	 * host per plugin on this machine-side process, not one more for the workbench (H.6).
+	 */
+	readonly plugins?: VoltStdioService;
 }
+
+/** The stdio channel's T2 plugin calls and event (`IVoltStdioService`). */
+const PLUGIN_COMMANDS: ReadonlySet<string> = new Set(['pluginAvailability', 'invokePluginTool', 'pluginContext', 'pluginStatus', 'restartPlugin']);
 
 /**
  * Volt's workbench in the browser, as code-server does it: VS Code's own server (remote extension
@@ -85,6 +99,8 @@ export class ServerWorkbench extends Disposable {
 
 	private server: Promise<IServerAPI> | undefined;
 	private connectionToken: Promise<string> | undefined;
+	/** The remote connection's sockets, by the device whose cookie opened them. */
+	private readonly sockets = new Map<Socket, string>();
 	private readonly isBuilt = !process.env['VSCODE_DEV'];
 
 	constructor(
@@ -117,14 +133,25 @@ export class ServerWorkbench extends Disposable {
 			res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('This Volt build does not include the browser workbench.');
 			return true;
 		}
-		if (!this.signedIn(req)) {
+		const signedIn = this.signedInAuth(req);
+		const pageLoad = req.method === 'GET' && /text\/html/.test(req.headers.accept ?? '');
+		if (!signedIn) {
 			// A page load goes through the sign-in page (pairing or the local session), which comes back here.
-			if (req.method === 'GET' && /text\/html/.test(req.headers.accept ?? '')) {
+			if (pageLoad) {
 				res.writeHead(302, { Location: `/?next=${encodeURIComponent(url.pathname + url.search)}`, 'Cache-Control': 'no-store' }).end();
 			} else {
 				res.writeHead(401, { 'Content-Type': 'text/plain' }).end('Sign in to Volt first.');
 			}
 			return true;
+		}
+		// Past half its life, a page load renews the session's token and reloads with the new cookie
+		// (the page hands it to the agent socket), so a browser in use never runs into the expiry.
+		if (pageLoad && signedIn.auth.expiresAt && this.options.refresh && signedIn.auth.expiresAt - Date.now() < SESSION_RENEW_WITHIN_MS) {
+			const next = await this.options.refresh(signedIn.token).catch(() => undefined);
+			if (next) {
+				res.writeHead(302, { Location: url.pathname + url.search, 'Cache-Control': 'no-store', 'Set-Cookie': sessionCookie(req, next.token) }).end();
+				return true;
+			}
 		}
 		// The workbench's own files: served here, compressed and (in a release) cached for good.
 		const staticFiles = this.staticFiles(url.pathname);
@@ -157,15 +184,83 @@ export class ServerWorkbench extends Disposable {
 		return true;
 	}
 
+	/**
+	 * P6: a single-use ticket (a minute) the desktop app's sandboxed extension hosts connect with,
+	 * in place of a browser's session cookie. Only the server's own token gets one (agentServerMain).
+	 */
+	async issueExtensionHostTicket(extensionsDir?: string): Promise<IVoltExtensionHostTicket> {
+		if (extensionsDir) {
+			await this.addLocalExtensionsDir(extensionsDir);
+		}
+		const now = Date.now();
+		for (const [ticket, expiresAt] of this.tickets) {
+			if (expiresAt <= now) {
+				this.tickets.delete(ticket);
+			}
+		}
+		const ticket = randomBytes(24).toString('base64url');
+		const expiresAt = now + 60_000;
+		this.tickets.set(ticket, expiresAt);
+		return { ticket, connectionToken: await this.ensureConnectionToken(), globalStorageHome: join(this.options.serverDir, 'workbench', 'data', 'User', 'globalStorage'), expiresAt };
+	}
+
+	private readonly tickets = new Map<string, number>();
+
+	/**
+	 * P6: extension folders of desktop apps on this computer (their main process names its own when
+	 * it asks for a ticket, with the server's token). Their opted-in extensions are found there: the
+	 * host's policy reads only that one extension's folder. An absolute, existing folder, by its real path.
+	 */
+	private readonly localExtensionsDirs = new Set<string>();
+
+	private async addLocalExtensionsDir(dir: string): Promise<void> {
+		if (!isAbsolute(dir) || this.localExtensionsDirs.size >= 8) {
+			return;
+		}
+		const real = await fs.realpath(dir).catch(() => undefined);
+		if (real && (await fs.stat(real).catch(() => undefined))?.isDirectory()) {
+			this.localExtensionsDirs.add(real);
+		}
+	}
+
+	private consumeTicket(ticket: string): boolean {
+		const expiresAt = this.tickets.get(ticket);
+		this.tickets.delete(ticket);
+		return expiresAt !== undefined && expiresAt > Date.now();
+	}
+
 	/** The remote connection's sockets (management, extension host, terminals). False for any other path. */
 	handleUpgrade(req: http.IncomingMessage, socket: Socket): boolean {
 		const url = new URL(req.url ?? '/', 'http://localhost');
+		const ticket = url.searchParams.get(VOLT_EXTHOST_TICKET_QUERY);
+		if (ticket !== null && (url.pathname === WORKBENCH_BASE_PATH || url.pathname.startsWith(`${WORKBENCH_BASE_PATH}/`))) {
+			// The desktop app's sandboxed extension host (P6): its ticket stands in for the session
+			// cookie, once, from this computer only. The workbench server's own handshake still checks
+			// its connection token.
+			const remote = req.socket.remoteAddress ?? '';
+			if (!this.available || !this.consumeTicket(ticket) || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)) {
+				socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+				return true;
+			}
+			this.ensureServer().then(server => server.handleUpgrade(req, socket), err => {
+				this.logService.error('[volt agent server] the workbench server failed to start', err);
+				socket.destroy();
+			});
+			return true;
+		}
 		if (url.pathname !== WORKBENCH_BASE_PATH && !url.pathname.startsWith(`${WORKBENCH_BASE_PATH}/`)) {
 			return false;
 		}
-		if (!this.available || !this.signedIn(req) || !sameOrigin(req)) {
+		const signedIn = this.signedInAuth(req);
+		if (!this.available || !signedIn || !sameOrigin(req)) {
 			socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
 			return true;
+		}
+		// Remembered by device, so its connections close when the device is removed or expires.
+		const deviceId = signedIn.auth.deviceId;
+		if (deviceId) {
+			this.sockets.set(socket, deviceId);
+			socket.once('close', () => this.sockets.delete(socket));
 		}
 		this.ensureServer().then(server => server.handleUpgrade(req, socket), err => {
 			this.logService.error('[volt agent server] the workbench server failed to start', err);
@@ -174,26 +269,49 @@ export class ServerWorkbench extends Disposable {
 		return true;
 	}
 
+	/** Closes the workbench connections of devices that are no longer paired or whose token expired. */
+	closeInactive(isActive: (deviceId: string) => boolean): number {
+		let closed = 0;
+		for (const [socket, deviceId] of this.sockets) {
+			if (!isActive(deviceId)) {
+				this.sockets.delete(socket);
+				socket.destroy();
+				closed++;
+			}
+		}
+		return closed;
+	}
+
 	/** Whether the request carries a paired device's session cookie (the sign-in page sends it on). */
 	signedIn(req: http.IncomingMessage): boolean {
-		return !!this.signedInToken(req);
+		return !!this.signedInAuth(req);
 	}
 
 	/** The paired device's token from the session cookie, while that device is still paired. */
 	private signedInToken(req: http.IncomingMessage): string | undefined {
+		return this.signedInAuth(req)?.token;
+	}
+
+	private signedInAuth(req: http.IncomingMessage): { readonly token: string; readonly auth: IAgentServerAuth } | undefined {
 		const token = readCookie(req, SESSION_COOKIE);
-		return token && this.options.authorize(token) ? token : undefined;
+		const auth = token ? this.options.authorize(token) : undefined;
+		return token && auth ? { token, auth } : undefined;
 	}
 
 	private async handleSession(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-		const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+		const secure = isSecure(req) ? '; Secure' : '';
+		// Signing in or out changes state: only this server's own page may do it (an Origin is required).
+		if (!sameOrigin(req)) {
+			res.writeHead(403, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'forbidden' }));
+			return;
+		}
 		if (req.method === 'DELETE') {
 			// The connection token cookies older builds set (the page gets its token from its configuration).
 			const tokenCookies = ['/', WORKBENCH_BASE_PATH].map(path => `${CONNECTION_TOKEN_COOKIE}=; Path=${path}; SameSite=Lax; Max-Age=0${secure}`);
 			res.writeHead(204, { 'Set-Cookie': [`${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`, ...tokenCookies] }).end();
 			return;
 		}
-		if (req.method !== 'POST' || !sameOrigin(req)) {
+		if (req.method !== 'POST') {
 			res.writeHead(405, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'method_not_allowed' }));
 			return;
 		}
@@ -210,7 +328,7 @@ export class ServerWorkbench extends Disposable {
 		res.writeHead(200, {
 			'Content-Type': 'application/json',
 			'Cache-Control': 'no-store',
-			'Set-Cookie': `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${secure}`,
+			'Set-Cookie': sessionCookie(req, token),
 		}).end(JSON.stringify({ path: `${WORKBENCH_BASE_PATH}/` }));
 		// Warm the server while the browser follows the link.
 		void this.ensureServer().catch(() => undefined);
@@ -303,11 +421,21 @@ export class ServerWorkbench extends Disposable {
 		const embedder: IServerEmbedder = {
 			registerChannels: socketServer => this.registerChannels(socketServer),
 			webConfiguration: req => this.webConfiguration(req),
+			// P2/P6: opted-in extensions run alone in sandboxed hosts, under the same supervisor as this server's other hosts.
+			extensionHostSandbox: new ServerExtensionSandbox(() => this.stdio().sandboxedExtensionHosts(), { bootstrapFork: FileAccess.asFileUri('bootstrap-fork').fsPath, home: homedir(), localExtensionDirs: () => [...this.localExtensionsDirs] }, this.logService),
 		};
 		const server = await createServer(null, args, dataDir, embedder);
 		this._register(toDisposable(() => server.dispose()));
 		return server;
 	}
+
+	/** Processes the workbench windows start, sandboxed or not (sandboxed extension hosts too). */
+	private stdio(): WorkbenchStdioService {
+		this._stdio ??= this._register(new WorkbenchStdioService(this.logService, this.configurationService, this.options.userDataDir));
+		return this._stdio;
+	}
+
+	private _stdio: WorkbenchStdioService | undefined;
 
 	/** Volt's machine-side services, for the workbench windows (the desktop gets them from its main process). */
 	private registerChannels(socketServer: SocketServer<RemoteAgentConnectionContext>): void {
@@ -315,7 +443,7 @@ export class ServerWorkbench extends Disposable {
 		const { resolveEnv, git, codeIndex, userDataDir } = this.options;
 
 		// Each window's processes stop when its connection goes, as a desktop window's do when it closes.
-		const stdio = store.add(new WorkbenchStdioService(this.logService, this.configurationService, userDataDir));
+		const stdio = this.stdio();
 		const owners = new WeakMap<RemoteAgentConnectionContext, string>();
 		let nextOwner = 0;
 		const ownerOf = (ctx: RemoteAgentConnectionContext) => {
@@ -332,7 +460,7 @@ export class ServerWorkbench extends Disposable {
 				stdio.release(owner);
 			}
 		}));
-		socketServer.registerChannel(VOLT_STDIO_CHANNEL_NAME, stdioChannel(stdio, ownerOf, store));
+		socketServer.registerChannel(VOLT_STDIO_CHANNEL_NAME, stdioChannel(stdio, ownerOf, store, this.options.plugins));
 
 		socketServer.registerChannel(VOLT_GIT_CHANNEL_NAME, ProxyChannel.fromService(git, store));
 		if (codeIndex) {
@@ -398,16 +526,30 @@ class WorkbenchStdioService extends VoltStdioService {
 	}
 }
 
-/** As the desktop's channel: `spawn` and `exec` record the window, and output goes only to it. */
-function stdioChannel(service: WorkbenchStdioService, ownerOf: (ctx: RemoteAgentConnectionContext) => string, store: DisposableStore): IServerChannel<RemoteAgentConnectionContext> {
+/**
+ * As the desktop's channel: `spawn` and `exec` record the window, and output goes only to it. T2
+ * plugin calls go to `plugins` (the agent server's stdio service) when given.
+ */
+export function stdioChannel(service: VoltStdioService, ownerOf: (ctx: RemoteAgentConnectionContext) => string, store: DisposableStore, plugins?: VoltStdioService): IServerChannel<RemoteAgentConnectionContext> {
 	const proxied = ProxyChannel.fromService(service, store);
+	const pluginsProxied = plugins ? ProxyChannel.fromService(plugins, store) : undefined;
 	return {
 		call<T>(ctx: RemoteAgentConnectionContext, command: string, arg?: unknown, token?: CancellationToken): Promise<T> {
+			if (pluginsProxied && PLUGIN_COMMANDS.has(command)) {
+				return pluginsProxied.call<T>(ctx, command, arg, token);
+			}
 			if (command === 'spawn') {
 				return service.spawnFor(ownerOf(ctx), (arg as [IVoltStdioSpawnOptions])[0]) as Promise<unknown> as Promise<T>;
 			}
 			if (command === 'exec') {
 				return service.execFor(ownerOf(ctx), (arg as [IVoltExecRequest])[0]) as Promise<unknown> as Promise<T>;
+			}
+			if (command === 'spawnSandboxedMcp') {
+				return service.spawnSandboxedMcpFor(ownerOf(ctx), (arg as [IVoltSandboxedMcpRequest])[0]) as Promise<unknown> as Promise<T>;
+			}
+			if ((command === 'approveSandboxDenial' || command === 'refuseSandboxDenial') && service.ownerOf((arg as [string])[0]) !== ownerOf(ctx)) {
+				// A client answers only its own agents' denials.
+				return Promise.resolve((command === 'approveSandboxDenial' ? { ok: false, epoch: 0, reason: 'not this client\'s agent' } : false) as T);
 			}
 			return proxied.call<T>(ctx, command, arg, token);
 		},
@@ -417,6 +559,9 @@ function stdioChannel(service: WorkbenchStdioService, ownerOf: (ctx: RemoteAgent
 			}
 			if (event === 'onExit') {
 				return Event.filter(service.onExit, e => service.ownerOf(e.id) === ownerOf(ctx)) as Event<unknown> as Event<T>;
+			}
+			if (pluginsProxied && event === 'onDidChangePlugins') {
+				return pluginsProxied.listen<T>(ctx, event, arg);
 			}
 			return proxied.listen<T>(ctx, event, arg);
 		},
@@ -481,11 +626,24 @@ function withCookie(header: string | undefined, name: string, value: string): st
 	return [...others, `${name}=${value}`].join('; ');
 }
 
-/** Requests from another site's page (which would carry the cookies) are refused. */
+/** Over TLS here (the network listener), or behind a tunnel that terminates HTTPS. */
+function isSecure(req: http.IncomingMessage): boolean {
+	return !!(req.socket as Socket & { encrypted?: boolean }).encrypted || req.headers['x-forwarded-proto'] === 'https';
+}
+
+function sessionCookie(req: http.IncomingMessage, token: string): string {
+	return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${isSecure(req) ? '; Secure' : ''}`;
+}
+
+/**
+ * Requests from another site's page (which would carry the cookies) are refused, and so are
+ * requests with no Origin at all: browsers always send one on these routes, other programs don't,
+ * and a missing Origin is never taken for this server's own page.
+ */
 function sameOrigin(req: http.IncomingMessage): boolean {
 	const origin = req.headers.origin;
 	if (!origin) {
-		return true;
+		return false;
 	}
 	try {
 		return new URL(origin).host === req.headers.host;

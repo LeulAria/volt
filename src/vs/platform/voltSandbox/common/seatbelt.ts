@@ -3,94 +3,521 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ISandboxPlan } from './sandboxPolicy.js';
+import { GIT_WRITABLE_REGEX } from './sandboxProfiles.js';
+import { IResolvedPattern, IResolvedSandboxPolicy } from './sandboxResolved.js';
+
+/**
+ * Seatbelt (SBPL) profiles from a resolved policy. Every path reaches the profile through
+ * `sbplString` or `regexBody` (`sbplRegex`), never raw, and the profile text is the only input to
+ * `sandbox-exec -p`. Rules are evaluated last-match-wins, so each section narrows the one before.
+ *
+ * Verified on macOS 26.6 (see docs/security/sandbox/03-security-findings.md):
+ * - a deny-default process needs read access to `/` itself, or dyld aborts it (SIGABRT);
+ * - `(deny signal (target others))` does not stop signals; `(deny signal)` then
+ *   `(allow signal (target same-sandbox))` does;
+ * - under `(allow default)`, `defaults write` lands through cfprefsd even when the preferences
+ *   folder is write-denied, so the cfprefsd lookup is denied;
+ * - denying the network also stops DNS (mDNSResponder is reached through a unix socket);
+ * - hard links into a read-denied folder are refused; case variants of a denied path are denied.
+ */
 
 /** Codex hard-codes this path rather than searching PATH, in case a copy there was tampered with. */
 export const SANDBOX_EXEC_PATH = '/usr/bin/sandbox-exec';
 
-/** Every Volt denial carries this prefix plus the spawn's tag, so `log stream` can attribute it. */
+/** Every Volt denial carries this prefix plus the run's tag, so `log stream` can attribute it. */
 export const SEATBELT_TAG_PREFIX = 'VOLTSBX-';
 
-/** Device files every process writes (terminals, /dev/null, dtrace helpers Node and git open). */
-const DEVICE_WRITES = '#"^/dev/(null|zero|tty|ttys[0-9]+|ptmx|dtracehelper|fd/[0-9]+|stdout|stderr|stdin|random|urandom)$"';
+/**
+ * Device files every process reads or writes (its controlling terminal as `/dev/tty`, /dev/null,
+ * the dtrace helper Node and git open). Never `/dev/ttys*`: those are the user's other terminals,
+ * whose input a sandbox could read (a sudo password) or write to (B-26). A terminal the run was
+ * given arrives as an inherited fd, which needs no path.
+ */
+const DEVICE_FILES = '#"^/dev/(null|zero|tty|ptmx|dtracehelper|fd/[0-9]+|stdout|stderr|stdin|random|urandom)$"';
 
-/** A string literal for SBPL: backslashes and quotes escaped. */
+/** Every terminal device by path: denied in every profile, the allow-default one included. */
+const TERMINAL_DEVICES = '#"^/dev/ttys[0-9]+$"';
+
+/** mDNSResponder: DNS for every process, reached as a unix socket. Only allowed with an open network. */
+export const MDNS_SOCKET = '/private/var/run/mDNSResponder';
+
+/** Mach services that run code or act for us outside the sandbox. Denied even with system services on (J.1). */
+const ESCAPE_SERVICES = [
+	'com.apple.coreservices.appleevents',
+	// LaunchServices: opens apps and documents for us (`lsopen` is denied as an operation too).
+	'com.apple.CoreServices.coreservicesd',
+	// Synthetic keyboard and mouse input to other apps (Volt itself may hold Accessibility).
+	'com.apple.windowserver.active',
+	'com.apple.pasteboard.1',
+	// Write preferences of any app for us, past the file write rules (Terminal startup commands).
+	'com.apple.cfprefsd.agent',
+	'com.apple.cfprefsd.daemon',
+	// Persistence that runs code at login, outside the sandbox: SMAppService.register and SMJobBless
+	// go through the ServiceManagement daemon and Background Task Management; login items and launch
+	// agents through loginitemregisterd and the shared file list. `launchctl load`/`submit` are
+	// refused and `job-creation` is denied as an operation too, but these XPC paths bypass both.
+	'com.apple.xpc.smd',
+	'com.apple.xpc.loginitemregisterd',
+	'com.apple.backgroundtaskmanagement',
+	'com.apple.backgroundtaskmanagementagent',
+	'com.apple.backgroundtaskmanagement.agent',
+	'com.apple.coreservices.sharedfilelistd.xpc',
+	// The LaunchServices database: registering an app and making it the handler of a URL scheme or a
+	// document type, which the host opens later. `lsopen` denies opening through LS; these deny the
+	// writes that would set the agent's app up as a handler first.
+	'com.apple.lsd.modifydb',
+	'com.apple.lsd.open',
+	'com.apple.coreservices.launchservicesd',
+];
+
+/** DNS lookups outside the broker: denied unless the network is open (B-31, J.1 "DNS"). */
+const DNS_SERVICES = ['com.apple.dnssd.service'];
+
+/** A string literal for SBPL: backslashes and quotes escaped (string literals honour `\"`; regex literals do not). */
 export function sbplString(value: string): string {
+	if (/[\u0000-\u001f\u007f]/.test(value)) {
+		throw new Error('A control character cannot be expressed in a Seatbelt profile');
+	}
 	return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
+/**
+ * Regex source matching `value` literally; with `caseInsensitive`, letters match either case.
+ * A `"` cannot be escaped inside an SBPL `#"…"` literal (it ends the literal: verified on macOS
+ * 26.6), so a path containing one is refused rather than risk profile injection. The resolver
+ * refuses such paths first; this is the second line.
+ */
+function regexBody(value: string, caseInsensitive: boolean): string {
+	let out = '';
+	for (const ch of value) {
+		if (ch === '"' || ch.charCodeAt(0) < 0x20 || ch === '\u007f') {
+			throw new Error('A path with a double quote or a control character cannot be expressed in a Seatbelt profile');
+		}
+		if (caseInsensitive && /[a-z]/i.test(ch) && ch.toLowerCase() !== ch.toUpperCase()) {
+			out += `[${ch.toLowerCase()}${ch.toUpperCase()}]`;
+		} else if (/[.*+?^${}()|[\]\\]/.test(ch)) {
+			out += `\\${ch}`;
+		} else {
+			out += ch;
+		}
+	}
+	return out;
+}
+
 /** A regex literal for SBPL matching `value` exactly (and, with `suffix`, what follows it). */
-export function sbplRegex(value: string, suffix = ''): string {
-	const escaped = value.replace(/[.*+?^${}()|[\]\\/]/g, ch => ch === '/' ? '/' : `\\${ch}`);
-	return `#"^${escaped.replace(/"/g, '\\"')}${suffix}$"`;
+export function sbplRegex(value: string, suffix = '', caseInsensitive = false): string {
+	return `#"^${regexBody(value, caseInsensitive)}${suffix}$"`;
 }
 
 /**
- * The Seatbelt profile for one agent process tree.
- *
- * The base is `(allow default)`, as Gemini CLI's original whole-process profiles were: an agent
- * CLI needs the Keychain, launchd, fonts and much more, and a deny-default profile written for
- * single shell commands (Codex, srt) breaks them. What it closes is what matters for an agent:
- * - every write outside the plan's folders, and writes to code that runs later outside the
- *   sandbox (git hooks and config, shell rc files, the CLI's own hook and MCP configs);
- * - reads of cloud and signing credentials;
- * - outbound network except loopback when the chat's network is off (the agent then reaches its
- *   API through Volt's filtering proxy);
- * - the escape hatches: Apple Events (Terminal / Finder `do shell script`), LaunchServices `open`,
- *   and launchd job submission run code outside the sandbox.
- * Each deny carries `(with message "<tag>")`, which lands in the unified log with the path.
+ * `sandbox-exec` rejects a string or regex literal longer than 1023 bytes (measured on macOS 26.6);
+ * merged regexes stay under this.
  */
-export function buildSeatbeltProfile(plan: ISandboxPlan, tag: string): string {
-	const message = `(with message ${sbplString(`${SEATBELT_TAG_PREFIX}${tag}`)})`;
-	const lines: string[] = [
-		'(version 1)',
-		`; Volt agent sandbox (${plan.level}, network ${plan.network === 'all' ? 'on' : 'via proxy'})`,
-		'(allow default)',
-		'',
-		'; Writes: only the plan\'s folders and files.',
-		`(deny file-write* ${message})`,
-	];
-	const allow: string[] = [`(regex ${DEVICE_WRITES})`];
-	for (const path of plan.writableSubpaths) {
-		allow.push(`(subpath ${sbplString(path)})`);
-	}
-	for (const file of plan.writableFiles) {
-		allow.push(`(literal ${sbplString(file)})`);
-		allow.push(`(regex ${sbplRegex(file, '\\.(lock|tmp|backup|bak|swp)[^/]*')})`);
-	}
-	lines.push(`(allow file-write*\n\t${allow.join('\n\t')})`);
-	if (plan.denyWriteSubpaths.length || plan.denyWriteFiles.length) {
-		const deny = [
-			...plan.denyWriteSubpaths.map(path => `(subpath ${sbplString(path)})`),
-			...plan.denyWriteFiles.map(path => `(literal ${sbplString(path)})`),
-		];
-		lines.push('', '; Never writable: runs later outside the sandbox.', `(deny file-write* ${message}\n\t${deny.join('\n\t')})`);
-	}
-	if (plan.denyReadSubpaths.length) {
-		lines.push('', '; Credentials.', `(deny file-read* ${message}\n\t${plan.denyReadSubpaths.map(path => `(subpath ${sbplString(path)})`).join('\n\t')})`);
-	}
-	lines.push(
-		'',
-		'; Escape hatches: these run code outside the sandbox.',
-		`(deny appleevent-send ${message})`,
-		`(deny mach-lookup ${message} (global-name "com.apple.coreservices.appleevents"))`,
-		`(deny lsopen ${message})`,
-	);
-	if (plan.network === 'proxy') {
-		lines.push(
-			'',
-			'; Network off: loopback only (Volt\'s proxy, Volt\'s MCP server, local dev servers).',
-			`(deny network-outbound ${message})`,
-			'(allow network-outbound (remote ip "localhost:*"))',
-			'(allow network-outbound (remote unix-socket))',
-		);
-	}
-	return lines.join('\n') + '\n';
+const MAX_LITERAL = 1000;
+
+/**
+ * A path regex `^<prefix><suffix>$`: `prefix` a literal path (matched in either case with
+ * `caseInsensitive`), `suffix` regex source. Regexes of one rule with the same suffix are merged
+ * into one alternation (`mergeFilters`): `sandbox-exec` spends about a millisecond compiling each
+ * regex filter whatever its length, so an agent profile of a few hundred `.env`-style denies took
+ * most of a second to start (04-performance.md).
+ */
+interface IPathRegex {
+	readonly prefix: string;
+	readonly suffix: string;
+	readonly caseInsensitive: boolean;
 }
 
-/** `sandbox-exec -p <profile> -- <command> <args>`. */
-export function seatbeltCommand(profile: string, command: string, args: readonly string[]): { command: string; args: string[] } {
-	return { command: SANDBOX_EXEC_PATH, args: ['-p', profile, '--', command, ...args] };
+/** A rule's filter: profile text as is, or a path regex to merge. */
+type SeatbeltFilter = string | IPathRegex;
+
+/**
+ * Whether `<prefix><suffix>` already matches everything `<prefix>/<more><suffix>` does, so a
+ * prefix below another one in the same group adds nothing: true when the suffix starts with
+ * `(/.*)?` (the path and everything below it) or `/(.*` + `/)?` (a name at any depth below it).
+ */
+function coversBelow(suffix: string): boolean {
+	return suffix.startsWith('(/.*)?') || suffix.startsWith('/(.*/)?');
+}
+
+/** ASCII letters fold to lower case when the regex matches either case (as `regexBody` does). */
+function foldKey(ch: string, caseInsensitive: boolean): string {
+	return caseInsensitive && /[a-z]/i.test(ch) ? ch.toLowerCase() : ch;
+}
+
+/** One character of a literal: its key in a prefix tree (`foldKey`) and its regex source (`regexBody`). */
+interface ILiteralChar {
+	readonly key: string;
+	readonly text: string;
+}
+
+/** `value` as literal characters, escaped once (a merge builds several prefix trees over them). */
+function literalChars(value: string, caseInsensitive: boolean): ILiteralChar[] {
+	return [...value].map(ch => ({ key: foldKey(ch, caseInsensitive), text: regexBody(ch, caseInsensitive) }));
+}
+
+interface ITrieNode {
+	end: boolean;
+	readonly children: Map<string, { readonly text: string; readonly node: ITrieNode }>;
+}
+
+/**
+ * Regex source matching exactly the given literal strings, as a prefix tree: `/a/bc` and `/a/bd`
+ * become `/a/b(c|d)`. The same language as `(v1|v2|…)`, shorter, so more fit in one literal.
+ */
+function literalAlternation(values: readonly (readonly ILiteralChar[])[]): string {
+	const root: ITrieNode = { end: false, children: new Map() };
+	for (const value of values) {
+		let node = root;
+		for (const { key, text } of value) {
+			let next = node.children.get(key);
+			if (!next) {
+				next = { text, node: { end: false, children: new Map() } };
+				node.children.set(key, next);
+			}
+			node = next.node;
+		}
+		node.end = true;
+	}
+	const emit = (node: ITrieNode): string => {
+		const branches = [...node.children.keys()].sort().map(key => {
+			const child = node.children.get(key)!;
+			return child.text + emit(child.node);
+		});
+		if (!branches.length) {
+			return '';
+		}
+		if (node.end) {
+			return `(${branches.join('|')})?`;
+		}
+		return branches.length === 1 ? branches[0] : `(${branches.join('|')})`;
+	};
+	return emit(root);
+}
+
+/**
+ * A rule's filters with duplicates dropped and path regexes merged: each group of regexes with
+ * the same suffix becomes as few `(regex …)` filters as fit under the literal limit, at the place
+ * of the group's first member. A rule's filters are alternatives, so the merged regex matches
+ * exactly the paths one of its members did (SB-EQ-1 checks this under `sandbox-exec`).
+ */
+function mergeFilters(filters: readonly SeatbeltFilter[]): string[] {
+	const out: (string | IPathRegex[])[] = [];
+	const seen = new Set<string>();
+	const groups = new Map<string, IPathRegex[]>();
+	for (const filter of filters) {
+		if (typeof filter === 'string') {
+			if (!seen.has(filter)) {
+				seen.add(filter);
+				out.push(filter);
+			}
+			continue;
+		}
+		const key = `${filter.caseInsensitive ? 'i' : 's'}${filter.suffix}`;
+		let group = groups.get(key);
+		if (!group) {
+			group = [];
+			groups.set(key, group);
+			out.push(group);
+		}
+		group.push(filter);
+	}
+	return out.flatMap(item => typeof item === 'string' ? [item] : groupRegexes(item));
+}
+
+/**
+ * Merged groups by their exact input: suffix, case mode and the set of prefixes (the merge sorts
+ * and dedupes them, so their order does not matter). Most of a launch's groups (credentials, the
+ * `.env` patterns of every root) are the same on every launch; a run's own folders miss.
+ */
+const mergedGroups = new Map<string, readonly string[]>();
+const MERGED_GROUPS_KEPT = 256;
+
+function groupRegexes(group: readonly IPathRegex[]): readonly string[] {
+	const { suffix, caseInsensitive } = group[0];
+	// Paths never hold control characters (the resolver refuses them), so these separators are unambiguous.
+	const key = `${caseInsensitive ? 'i' : 's'}\u0001${suffix}\u0001${[...new Set(group.map(filter => filter.prefix))].sort().join('\u0000')}`;
+	const known = mergedGroups.get(key);
+	if (known) {
+		mergedGroups.delete(key);
+		mergedGroups.set(key, known);
+		return known;
+	}
+	const merged = Object.freeze(mergeGroup(group));
+	mergedGroups.set(key, merged);
+	if (mergedGroups.size > MERGED_GROUPS_KEPT) {
+		mergedGroups.delete(mergedGroups.keys().next().value!);
+	}
+	return merged;
+}
+
+function mergeGroup(group: readonly IPathRegex[]): string[] {
+	const { suffix, caseInsensitive } = group[0];
+	const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+	const below = coversBelow(suffix);
+	// Shortest first, so a prefix is only dropped for one already kept.
+	const sorted = [...new Set(group.map(filter => filter.prefix))]
+		.map(prefix => {
+			const chars = literalChars(prefix, caseInsensitive);
+			return { chars, folded: chars.map(ch => ch.key).join('') };
+		})
+		.sort((a, b) => a.folded.length - b.folded.length || compare(a.folded, b.folded));
+	const kept: { readonly chars: readonly ILiteralChar[]; readonly folded: string }[] = [];
+	const keptFolded = new Set<string>();
+	const hasKeptParent = (folded: string) => {
+		// Every `<parent>/` that starts `folded`, the root (an empty prefix) included.
+		for (let i = folded.indexOf('/'); i !== -1; i = folded.indexOf('/', i + 1)) {
+			if (keptFolded.has(folded.slice(0, i))) {
+				return true;
+			}
+		}
+		return false;
+	};
+	for (const entry of sorted) {
+		if (keptFolded.has(entry.folded) || (below && hasKeptParent(entry.folded))) {
+			continue;
+		}
+		keptFolded.add(entry.folded);
+		kept.push(entry);
+	}
+	// Neighbours in path order share the longest prefixes.
+	const prefixes = kept.sort((a, b) => compare(a.folded, b.folded)).map(entry => entry.chars);
+	const literal = (from: number, to: number) => `^${to - from === 1 ? prefixes[from].map(ch => ch.text).join('') : literalAlternation(prefixes.slice(from, to))}${suffix}$`;
+	// Each chunk takes as many prefixes as fit; a prefix tree only grows as strings are added, so
+	// the largest fitting chunk is found by doubling then bisection, each probe about the chunk's
+	// size. A single prefix that does not fit stays alone.
+	const fits = (from: number, to: number) => literal(from, to).length <= MAX_LITERAL;
+	const out: string[] = [];
+	for (let from = 0; from < prefixes.length;) {
+		let lo = from + 1;
+		let step = 1;
+		while (lo + step <= prefixes.length && fits(from, lo + step)) {
+			lo += step;
+			step *= 2;
+		}
+		let hi = Math.min(prefixes.length, lo + step - 1);
+		while (lo < hi) {
+			const mid = (lo + hi + 1) >> 1;
+			if (fits(from, mid)) {
+				lo = mid;
+			} else {
+				hi = mid - 1;
+			}
+		}
+		out.push(`(regex #"${literal(from, lo)}")`);
+		from = lo;
+	}
+	return out;
+}
+
+/** `(rule\n\tfilter\n\tfilter)`, filters merged. */
+function rule(head: string, filters: readonly SeatbeltFilter[]): string {
+	return `(${head}\n\t${mergeFilters(filters).join('\n\t')})`;
+}
+
+/**
+ * `<root>/(…/)?a/b` and everything below it. Patterns with the same root share one filter
+ * (`<root>/(…/)?(a/b|c)(/.*)?`), whose roots then merge like any path regex.
+ */
+function patternFilters(patterns: readonly IResolvedPattern[], caseInsensitive: boolean): IPathRegex[] {
+	const byRoot = new Map<string, Set<string>>();
+	for (const pattern of patterns) {
+		const names = byRoot.get(pattern.root) ?? new Set<string>();
+		names.add(pattern.names.join('/'));
+		byRoot.set(pattern.root, names);
+	}
+	return [...byRoot].map(([root, names]) => ({
+		prefix: root === '/' ? '' : root,
+		// Never empty, never optional as a whole: a plain concatenation or one group.
+		suffix: `/(.*/)?${literalAlternation([...names].map(name => literalChars(name, caseInsensitive)))}(/.*)?`,
+		caseInsensitive,
+	}));
+}
+
+/**
+ * A path and everything below it. On a case-insensitive volume (the macOS default) a different
+ * spelling reaches the same file, so denies match either case; allows stay exact, which can only
+ * refuse more.
+ */
+function subpathFilter(path: string, caseInsensitive: boolean): SeatbeltFilter {
+	if (!caseInsensitive || !/[a-z]/i.test(path)) {
+		return `(subpath ${sbplString(path)})`;
+	}
+	return { prefix: path, suffix: '(/.*)?', caseInsensitive: true };
+}
+
+/** One `subpathFilter` as profile text (for a filter nested in another). */
+function subpathText(path: string, caseInsensitive: boolean): string {
+	const filter = subpathFilter(path, caseInsensitive);
+	return typeof filter === 'string' ? filter : mergeFilters([filter])[0];
+}
+
+export interface ISeatbeltProfileOptions {
+	readonly tag: string;
+	/** Volt's filtering proxy on the host loopback (network `proxy`). */
+	readonly proxyPort?: number;
+}
+
+/** The SBPL profile for one run. */
+export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: ISeatbeltProfileOptions): string {
+	const message = `(with message ${sbplString(`${SEATBELT_TAG_PREFIX}${options.tag}`)})`;
+	const ci = true;
+	const out: string[] = ['(version 1)', `; Volt sandbox: ${policy.name.replace(/[^\w .-]/g, '')}${policy.systemServices ? ' (system services)' : ''}`];
+
+	if (policy.systemServices) {
+		// Agent CLIs need the Keychain, launchd lookups and much more: allow by default, then deny what matters.
+		out.push('(allow default)');
+	} else {
+		out.push(
+			`(deny default ${message})`,
+			'(allow process-exec process-fork)',
+			// dyld reads the root folder itself before anything runs.
+			'(allow file-read* (literal "/"))',
+			'(allow file-read-metadata)',
+			'(allow sysctl-read)',
+			// User and group lookups (whoami, git, ssh), the system logger, power assertions.
+			'(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.logger") (global-name "com.apple.PowerManagement.control"))',
+			// Python's multiprocessing semaphores.
+			'(allow ipc-posix-sem)',
+			'(allow pseudo-tty)',
+			'(allow file-read* file-write* file-ioctl (literal "/dev/ptmx") (literal "/dev/tty"))',
+			`(allow file-read* file-write-data file-ioctl (regex ${DEVICE_FILES}))`,
+		);
+	}
+
+	// Processes: only this sandbox's own may be signalled or inspected.
+	out.push(`(deny signal ${message})`, '(allow signal (target same-sandbox))');
+	if (!policy.systemServices) {
+		out.push('(allow process-info* (target same-sandbox))');
+	}
+
+	// Reads.
+	if (policy.readAll) {
+		out.push('(allow file-read*)');
+	} else {
+		if (policy.systemServices) {
+			out.push(`(deny file-read* ${message})`, '(allow file-read* (literal "/"))', '(allow file-read-metadata)');
+		}
+		const read = [...policy.read, ...policy.unixSockets].map(path => `(subpath ${sbplString(path)})`);
+		if (read.length) {
+			out.push(rule('allow file-read*', read));
+		}
+	}
+
+	// Writes: everything else is denied (by default, or explicitly with system services on).
+	if (policy.systemServices) {
+		out.push(`(deny file-write* ${message})`);
+	}
+	const write: SeatbeltFilter[] = [
+		`(regex ${DEVICE_FILES})`,
+		...policy.write.map(path => `(subpath ${sbplString(path)})`),
+		...policy.writeFiles.flatMap((file): SeatbeltFilter[] => [`(literal ${sbplString(file)})`, { prefix: file, suffix: '\\.(lock|tmp|backup|bak|swp)[^/]*', caseInsensitive: false }]),
+	];
+	out.push(rule('allow file-read* file-write*', write));
+
+	// `.git` as an allow list (B-03): read-only except what commits, merges, rebases and fetches
+	// write. Name patterns, so a `commondir`, hook or config created later is covered as well, and
+	// the `.git` entry itself cannot be replaced, moved or removed.
+	if (policy.gitDirs.length) {
+		const git = (suffix: string): IPathRegex[] => policy.gitDirs.map(dir => dir.anyDepth
+			? { prefix: dir.root === '/' ? '' : dir.root, suffix: `/(.*/)?${regexBody('.git', ci)}${suffix}`, caseInsensitive: ci }
+			: { prefix: dir.root, suffix, caseInsensitive: ci });
+		const worktree = '(worktrees/[^/]+/)?';
+		out.push(
+			rule(`deny file-write* ${message}`, git('(/.*)?')),
+			rule('allow file-write*', [...git(`/${worktree}${GIT_WRITABLE_REGEX.dirs}(/.*)?`), ...git(`/${worktree}${GIT_WRITABLE_REGEX.files}`)]),
+			rule(`deny file-write* ${message}`, git(`/${worktree}${GIT_WRITABLE_REGEX.readonlyObjects}`)),
+		);
+	}
+
+	// Protected: readable, never writable, even inside a writable folder.
+	const protect = [
+		...policy.protect.map(path => subpathFilter(path, ci)),
+		...patternFilters(policy.protectPatterns, ci),
+	];
+	if (protect.length) {
+		out.push(rule(`deny file-write* ${message}`, protect));
+	}
+	// A new repository brings its own config and hooks: no `.git` entry may be created below a workspace.
+	if (policy.newRepositoryGuard.length) {
+		out.push(rule(`deny file-write-create ${message}`, policy.newRepositoryGuard.map(root => ({ prefix: root, suffix: `/(.*/)?${regexBody('.git', ci)}`, caseInsensitive: ci }))));
+	}
+
+	// Denied: neither readable nor writable, last so nothing above re-allows it.
+	const deny = [
+		...policy.deny.map(path => subpathFilter(path, ci)),
+		...patternFilters(policy.denyPatterns, ci),
+		// Other runs' folders and other principals' caches: everything below the root but our own.
+		...(policy.isolated ?? []).map(({ root, keep }) => `(require-all ${subpathText(root, ci)} (require-not (subpath ${sbplString(keep)})))`),
+	];
+	if (deny.length) {
+		out.push(rule(`deny file-read* file-write* ${message}`, deny));
+	}
+	// Other terminals, whatever the base: their input and output belong to the user (B-26).
+	out.push(`(deny file-read* file-write* file-ioctl ${message} (regex ${TERMINAL_DEVICES}))`);
+
+	// Network.
+	if (policy.network.mode === 'host') {
+		if (!policy.systemServices) {
+			out.push(
+				'(allow network* system-socket)',
+				// DNS, certificate checks and proxy settings for an open network.
+				'(allow mach-lookup (global-name "com.apple.dnssd.service") (global-name "com.apple.trustd") (global-name "com.apple.trustd.agent") (global-name "com.apple.SystemConfiguration.configd") (global-name "com.apple.SystemConfiguration.DNSConfiguration"))',
+			);
+		}
+	} else {
+		if (policy.systemServices) {
+			out.push(`(deny network* ${message})`);
+		}
+		const ports = [...(options.proxyPort ? [options.proxyPort] : []), ...policy.network.loopbackPorts];
+		if (ports.length) {
+			out.push('(allow system-socket)', `(allow network-outbound\n\t${[...new Set(ports)].map(port => `(remote ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`);
+		}
+		if (policy.network.listen) {
+			// Listening only. Connecting to loopback stays limited to the ports above: an
+			// unauthenticated local service (Redis `CONFIG SET dir`) is a way to write files outside.
+			out.push('(allow system-socket)', '(allow network-bind network-inbound (local ip "localhost:*"))');
+		}
+	}
+
+	// Listening (B-30): only the granted ports, so a sandbox cannot squat an OAuth callback or a dev
+	// server's port, or serve pages for the in-app browser. With an open network everything else is
+	// allowed, so TCP binds are denied explicitly; in the other modes the default already denies them.
+	// Verified on macOS 26.6: only a `tcp` bind deny with an `ip` inbound deny can be re-allowed per
+	// port; UDP sockets (Node's dgram binds before sending) stay usable through the udp inbound allow.
+	if (!policy.network.listen) {
+		if (policy.network.mode === 'host') {
+			out.push(`(deny network-bind ${message} (local tcp "*:*"))`, `(deny network-inbound ${message} (local ip "*:*"))`, '(allow network-inbound (local udp "*:*"))');
+		}
+		const listenPorts = [...new Set(policy.network.listenPorts ?? [])].filter(port => Number.isInteger(port) && port > 0 && port < 65536);
+		if (listenPorts.length) {
+			out.push('(allow system-socket)', `(allow network-bind network-inbound\n\t${listenPorts.map(port => `(local ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`);
+		}
+	}
+
+	// Unix sockets: none but the granted ones (and DNS with an open network), whatever the mode.
+	out.push(`(deny network-outbound ${message} (remote unix-socket))`);
+	const sockets = [...policy.unixSockets, ...(policy.network.mode === 'host' ? [MDNS_SOCKET] : [])];
+	if (sockets.length) {
+		out.push(`(allow network-outbound\n\t${sockets.map(socket => `(remote unix-socket (path-literal ${sbplString(socket)}))`).join('\n\t')})`);
+	}
+	if (policy.network.mode !== 'host') {
+		// The system resolver is a DNS channel past the proxy (exfiltration in names): closed even
+		// when a granted socket list or the allow-default base would reach it.
+		out.push(`(deny network-outbound ${message} (remote unix-socket (path-literal ${sbplString(MDNS_SOCKET)})))`);
+		if (policy.systemServices) {
+			out.push(`(deny mach-lookup ${message}\n\t${DNS_SERVICES.map(name => `(global-name ${sbplString(name)})`).join('\n\t')})`);
+		}
+	}
+
+	// Escape hatches: these run code or act for us outside the sandbox.
+	out.push(
+		`(deny appleevent-send ${message})`,
+		`(deny lsopen ${message})`,
+		`(deny job-creation ${message})`,
+		`(deny mach-lookup ${message}\n\t${ESCAPE_SERVICES.map(name => `(global-name ${sbplString(name)})`).join('\n\t')})`,
+	);
+	return out.join('\n') + '\n';
 }
 
 export interface ISeatbeltViolation {
@@ -133,3 +560,32 @@ export function parseSeatbeltLogLine(line: string): ISeatbeltViolation | undefin
 		tag: match[5],
 	};
 }
+
+/** File descriptors of the launch protocol (F.5), in `extraStdio` order from fd 3. */
+export const SEATBELT_FDS = { status: 3, go: 4 } as const;
+
+/**
+ * The prologue that runs inside the sandbox before the workload (F.5): sets limits, runs the
+ * canary (the run's sentinel credential must be unreadable), writes `ready` with its pid and the
+ * canary's result to fd 3, then blocks on fd 4 for the go byte. Volt sends `g` and a newline (and closes the
+ * pipe) only after it attested this very process from outside with `sandbox_check`; any other
+ * byte, EOF (Volt gone or refusing) or nothing at all means the workload never runs: exit 125.
+ * The ready line is informational: an unsandboxed process can write the same text. Constant
+ * text: values arrive as positional arguments only.
+ * Arguments: <cpu seconds|-> <file size in 512-byte blocks|-> <open files|-> <user processes|-> <sentinel> <command> <args...>
+ * `user processes` is RLIMIT_NPROC, which macOS counts across all of the user's processes: the
+ * backend passes the user's count at launch plus the run's limit, which bounds a fork bomb until
+ * the fork watchdog kills it (RES-MAC-2).
+ */
+export const SEATBELT_PROLOGUE = [
+	'c=$1 f=$2 n=$3 u=$4 s=$5; shift 5',
+	'[ "$c" = - ] || ulimit -t "$c" || exit 125',
+	'[ "$f" = - ] || ulimit -f "$f" || exit 125',
+	'[ "$n" = - ] || ulimit -n "$n" || exit 125',
+	'[ "$u" = - ] || ulimit -u "$u" || exit 125',
+	'l=; { read -r l < "$s"; } 2>/dev/null; if [ -n "$l" ]; then k=open; else k=denied; fi',
+	'printf "volt-sandbox-ready %s cred=%s\\n" "$$" "$k" >&3 || exit 125',
+	'exec 3>&-',
+	'g=; read -r g <&4; exec 4<&-; [ "$g" = g ] || exit 125',
+	'exec "$@"',
+].join('\n');

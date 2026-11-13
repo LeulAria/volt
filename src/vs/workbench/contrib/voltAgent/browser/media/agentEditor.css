@@ -5863,6 +5863,28 @@ pre.volt-agent-searchable {
 	display: inline-flex;
 }
 
+/* The sandbox level after the label while the chat is sandboxed (agentAccessPicker.ts). */
+.volt-agent-status-access .sandbox {
+	display: inline-flex;
+	align-items: center;
+	opacity: 0.8;
+}
+
+.volt-agent-status-access .sandbox.hidden {
+	display: none;
+}
+
+.volt-agent-status-access .sandbox .volt-agent-svg-icon,
+.volt-agent-status-access .sandbox .volt-agent-svg-icon svg {
+	display: block;
+	width: 13px;
+	height: 13px;
+}
+
+.volt-agent-status-access .sandbox svg :is(path, rect, circle) {
+	stroke-width: 1.5;
+}
+
 .volt-agent-status-access .icon .volt-agent-svg-icon,
 .volt-agent-status-access .icon .volt-agent-svg-icon svg {
 	display: block;
@@ -8487,6 +8509,10 @@ pre.volt-agent-searchable {
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.branch:not(.file-icon):not(.folder-icon)::before { content: '\ea68'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.scratch:not(.file-icon):not(.folder-icon)::before { content: '\ebaf'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.canvas:not(.file-icon):not(.folder-icon)::before { content: '\eb5c'; }
+/* A phone or simulator, a machine the work runs on, an agent (or a team or council) the user named. */
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.device:not(.file-icon):not(.folder-icon)::before { content: '\eadb'; }
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.machine:not(.file-icon):not(.folder-icon)::before { content: '\eb50'; }
+:is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.agent:not(.file-icon):not(.folder-icon)::before { content: '\eb08'; }
 /* A button's prompt (Generate Draft Commits): the commit icon. */
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.action:not(.file-icon):not(.folder-icon)::before { content: '\eafc'; }
 :is(.volt-agent-monaco, .volt-agent-inline-mention) .volt-agent-mention-icon.browser::before {

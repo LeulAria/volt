@@ -5,13 +5,11 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { bwrapArgs, landlockArgs } from '../../common/landlock.js';
 import { denialKindForOperation, denialsInOutput, describeDenial, folderToAllow, isNoiseDenial } from '../../common/sandboxDenials.js';
-import { agentApiDomains, codexSandboxValue, domainAllowed, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxEnv, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
-import { buildSeatbeltProfile, parseSeatbeltLogLine, sbplRegex, sbplString, seatbeltCommand } from '../../common/seatbelt.js';
+import { agentApiDomains, codexSandboxValue, domainAllowed, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
+import { parseSeatbeltLogLine, sbplRegex, sbplString } from '../../common/seatbelt.js';
 
 const MAC: ISandboxHostInfo = { platform: 'darwin', home: '/Users/me', tmpdir: '/private/var/folders/ab/xyz/T', darwinUserCacheDir: '/private/var/folders/ab/xyz/C', uid: 501 };
-const LINUX: ISandboxHostInfo = { platform: 'linux', home: '/home/me', tmpdir: '/tmp', uid: 1000 };
 
 function request(overrides: Partial<IVoltSandboxRequest> = {}): IVoltSandboxRequest {
 	return { level: 'workspace-write', network: true, providerId: 'claude-code', workspaceRoots: ['/Users/me/repo'], ...overrides };
@@ -28,9 +26,10 @@ suite('Volt sandbox policy', () => {
 		assert.strictEqual(normalizeSandboxLevel(undefined), 'off');
 	});
 
-	test('cursor: the CLI may save its own settings (cli-config.json) but not its hooks or MCP config', () => {
+	test('cursor: its settings (cli-config.json, with command allow lists) are saved in the chat\'s overlay, never in place (B-05)', () => {
 		const plan = resolveSandboxPlan({ ...request(), providerId: 'cursor-acp' }, MAC);
-		assert.ok(planAllowsWrite(plan, `${MAC.home}/.cursor/cli-config.json`), 'choosing a model rewrites it');
+		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/cli-config.json`), 'it holds permissions.allow');
+		assert.ok(planAllowsWrite(plan, `${MAC.home}/.volt/sandbox/agent-state/chat/cursor-acp/config/cli-config.json`), 'choosing a model rewrites the overlay copy');
 		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/hooks.json`));
 		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/mcp.json`));
 	});
@@ -42,10 +41,13 @@ suite('Volt sandbox policy', () => {
 		assert.ok(planAllowsWrite(plan, '/private/tmp/x'));
 		assert.ok(planAllowsWrite(plan, '/tmp/x'), 'the /tmp alias of /private/tmp');
 		assert.ok(planAllowsWrite(plan, '/private/var/folders/ab/xyz/T/node-123'));
-		assert.ok(planAllowsWrite(plan, '/Users/me/.claude/projects/p/s.jsonl'));
-		assert.ok(planAllowsWrite(plan, '/Users/me/.claude.json'));
-		assert.ok(planAllowsWrite(plan, '/Users/me/.claude.json.tmp.123.abc'), 'atomic write sibling');
-		assert.ok(planAllowsWrite(plan, '/Users/me/.npm/_cacache/x'));
+		// B-05: Claude Code's state is a per-chat overlay; its MCP servers in ~/.claude.json are never writable in place.
+		assert.ok(planAllowsWrite(plan, '/Users/me/.volt/sandbox/agent-state/chat/claude-code/config/projects/p/s.jsonl'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/.claude/projects/p/s.jsonl'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/.claude.json'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/.claude.json.tmp.123.abc'), 'nor its atomic write sibling');
+		assert.ok(planAllowsWrite(plan, '/Users/me/Library/Caches/claude-cli-nodejs/log.txt'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/.npm/_npx/x/node_modules/.bin/adapter'), 'shared caches hold code Volt runs later');
 		assert.ok(!planAllowsWrite(plan, '/Users/me/notes.txt'));
 		assert.ok(!planAllowsWrite(plan, '/Users/me/repo-other/a'), 'a sibling folder with the same prefix');
 		assert.ok(!planAllowsWrite(plan, '/Users/me/.claude.jsonx'));
@@ -79,7 +81,7 @@ suite('Volt sandbox policy', () => {
 		assert.ok(!planAllowsWrite(plan, '/Users/me/repo/a.ts'));
 		assert.ok(planAllowsWrite(plan, '/Users/me/scratch/out.txt'));
 		assert.ok(planAllowsWrite(plan, '/private/tmp/x'));
-		assert.ok(planAllowsWrite(plan, '/Users/me/.claude/sessions/x'));
+		assert.ok(planAllowsWrite(plan, '/Users/me/.volt/sandbox/agent-state/chat/claude-code/config/sessions/x'), 'the agent\'s own state (its overlay)');
 	});
 
 	test('read-only holds for a workspace inside temp', () => {
@@ -97,17 +99,26 @@ suite('Volt sandbox policy', () => {
 
 	test('agent footprints keep each CLI working', () => {
 		const cursor = resolveSandboxPlan(request({ providerId: 'cursor-acp' }), MAC);
-		assert.ok(planAllowsWrite(cursor, '/Users/me/.cursor/projects/x/state.json'));
-		assert.ok(planAllowsWrite(cursor, '/Users/me/.local/share/cursor-agent/versions/x'));
+		assert.ok(planAllowsWrite(cursor, '/Users/me/.volt/sandbox/agent-state/chat/cursor-acp/config/projects/x/state.json'), 'its project data lives in the overlay');
+		assert.ok(!planAllowsWrite(cursor, '/Users/me/.cursor/projects/x/mcp-approvals.json'), 'never in place: MCP approvals live there');
+		assert.ok(planAllowsWrite(cursor, '/Users/me/.cursor/auth.json'), 'its own login refresh');
+		assert.ok(!planAllowsWrite(cursor, '/Users/me/.local/share/cursor-agent/versions/x'), 'the CLI\'s own binaries');
 		assert.ok(!planAllowsWrite(cursor, '/Users/me/.cursor/mcp.json'));
 		const grok = resolveSandboxPlan(request({ providerId: 'grok' }), MAC);
 		assert.ok(planAllowsWrite(grok, '/Users/me/.grok/sessions/x'));
+		assert.ok(!planAllowsWrite(grok, '/Users/me/.grok/config.toml'));
+		assert.ok(!planAllowsWrite(grok, '/Users/me/.grok/installed-plugins/x'));
 		const opencode = resolveSandboxPlan(request({ providerId: 'opencode' }), MAC);
 		assert.ok(planAllowsWrite(opencode, '/Users/me/.local/share/opencode/storage/x'));
-		assert.ok(planAllowsWrite(opencode, '/Users/me/.cache/opencode/models.json'));
+		assert.ok(!planAllowsWrite(opencode, '/Users/me/.local/share/opencode/bin/x'), 'its own binaries');
+		assert.ok(!planAllowsWrite(opencode, '/Users/me/.cache/opencode/models.json'), 'caches are redirected to a sandbox-only folder');
 		assert.ok(!planAllowsWrite(opencode, '/Users/me/.config/opencode/opencode.json'));
+		const gemini = resolveSandboxPlan(request({ providerId: 'antigravity' }), MAC);
+		assert.ok(!planAllowsWrite(gemini, '/Users/me/.gemini/settings.json'), 'MCP servers and hooks');
+		assert.ok(!planAllowsWrite(gemini, '/Users/me/.gemini/tmp/bin/rg'), 'a binary the CLI runs later');
+		assert.ok(planAllowsWrite(gemini, '/Users/me/.gemini/tmp/abc/chats/x.json'));
 		const unknown = resolveSandboxPlan(request({ providerId: 'mystery-acp' }), MAC);
-		assert.ok(planAllowsWrite(unknown, '/Users/me/.mystery/state'));
+		assert.ok(!planAllowsWrite(unknown, '/Users/me/.mystery/state'), 'B-05: an unknown CLI gets no writable home state');
 		assert.ok(!planAllowsWrite(unknown, '/Users/me/.claude/x'), 'another agent\'s state is not shared');
 	});
 
@@ -136,9 +147,11 @@ suite('Volt sandbox policy', () => {
 		assert.ok(agentApiDomains('codex').includes('chatgpt.com'));
 	});
 
-	test('strategy: Codex keeps its own sandbox for workspace-write, everything else is wrapped', () => {
-		assert.strictEqual(sandboxStrategy('codex', 'workspace-write', 'darwin'), 'native');
+	test('strategy: every agent is wrapped at every sandboxed level, Codex included (B-10, D-16)', () => {
+		assert.strictEqual(sandboxStrategy('codex', 'workspace-write', 'darwin'), 'wrap');
+		assert.strictEqual(sandboxStrategy('codex', 'workspace-write', 'linux'), 'wrap');
 		assert.strictEqual(sandboxStrategy('codex', 'read-only', 'darwin'), 'wrap');
+		assert.strictEqual(codexSandboxValue('sandbox', 'workspace-write', sandboxStrategy('codex', 'workspace-write', 'darwin')), 'danger-full-access', 'its own sandbox off inside Volt\'s');
 		assert.strictEqual(sandboxStrategy('claude-code', 'workspace-write', 'darwin'), 'wrap');
 		assert.strictEqual(sandboxStrategy('claude-code', 'workspace-write', 'linux'), 'wrap');
 		assert.strictEqual(sandboxStrategy('claude-code', 'off', 'darwin'), 'none');
@@ -147,18 +160,6 @@ suite('Volt sandbox policy', () => {
 		assert.deepStrictEqual(nativeSandboxOffArgs('claude-code'), []);
 	});
 
-	test('environment routes HTTP through the proxy only when network is off', () => {
-		const off = resolveSandboxPlan(request({ network: false }), MAC);
-		const env = sandboxEnv(off, 'http://127.0.0.1:5000', 'tag1');
-		assert.strictEqual(env.HTTPS_PROXY, 'http://127.0.0.1:5000');
-		assert.strictEqual(env.https_proxy, 'http://127.0.0.1:5000');
-		assert.ok(env.NO_PROXY.includes('127.0.0.1'));
-		assert.strictEqual(env.VOLT_SANDBOX, 'workspace-write');
-		assert.strictEqual(env.VOLT_SANDBOX_NETWORK_DISABLED, '1');
-		const on = sandboxEnv(resolveSandboxPlan(request(), MAC), undefined, 'tag1');
-		assert.strictEqual(on.HTTPS_PROXY, undefined);
-		assert.strictEqual(on.VOLT_SANDBOX_NETWORK_DISABLED, undefined);
-	});
 
 	test('paths', () => {
 		assert.ok(isPathInside('/a/b/c', '/a/b'));
@@ -168,36 +169,15 @@ suite('Volt sandbox policy', () => {
 	});
 });
 
-suite('Volt sandbox Seatbelt profile', () => {
+suite('Volt sandbox Seatbelt helpers', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	test('denies writes by default, then allows the plan, then re-denies dangerous paths', () => {
-		const profile = buildSeatbeltProfile(resolveSandboxPlan(request(), MAC), 'abc123');
-		const denyAll = profile.indexOf('(deny file-write* (with message "VOLTSBX-abc123"))');
-		const allow = profile.indexOf('(allow file-write*');
-		const denyHooks = profile.indexOf('(subpath "/Users/me/repo/.git/hooks")');
-		assert.ok(denyAll > 0 && allow > denyAll && denyHooks > allow, 'order matters: the last matching rule wins');
-		assert.ok(profile.startsWith('(version 1)'));
-		assert.ok(profile.includes('(allow default)'));
-		assert.ok(profile.includes('(subpath "/Users/me/repo")'));
-		assert.ok(profile.includes('(literal "/Users/me/.claude.json")'));
-		assert.ok(profile.includes('(deny lsopen'));
-		assert.ok(profile.includes('(deny appleevent-send'));
-		assert.ok(profile.includes('(subpath "/Users/me/.aws")'));
-		assert.ok(!profile.includes('network-outbound'), 'network on: untouched');
-	});
-
-	test('network off allows loopback only', () => {
-		const profile = buildSeatbeltProfile(resolveSandboxPlan(request({ network: false }), MAC), 't');
-		assert.ok(profile.includes('(deny network-outbound (with message "VOLTSBX-t"))'));
-		assert.ok(profile.includes('(allow network-outbound (remote ip "localhost:*"))'));
-	});
 
 	test('quoting', () => {
 		assert.strictEqual(sbplString('/a "b"\\c'), '"/a \\"b\\"\\\\c"');
 		assert.strictEqual(sbplRegex('/Users/me/.claude.json', '\\.lock'), '#"^/Users/me/\\.claude\\.json\\.lock$"');
-		assert.deepStrictEqual(seatbeltCommand('(version 1)', 'claude', ['-p']), { command: '/usr/bin/sandbox-exec', args: ['-p', '(version 1)', '--', 'claude', '-p'] });
+		assert.strictEqual(sbplRegex('/a/.git', '', true), '#"^/[aA]/\\.[gG][iI][tT]$"', 'case-insensitive form for denies');
 	});
 
 	test('kernel log lines are parsed and attributed by tag', () => {
@@ -210,33 +190,6 @@ suite('Volt sandbox Seatbelt profile', () => {
 	});
 });
 
-suite('Volt sandbox Linux', () => {
-
-	ensureNoDisposablesAreLeakedInTestSuite();
-
-	test('Landlock helper arguments', () => {
-		const plan = resolveSandboxPlan(request({ workspaceRoots: ['/home/me/repo'], network: false }), LINUX);
-		const args = landlockArgs(plan, [4000, 5000]);
-		const pairs = (flag: string) => args.flatMap((arg, i) => arg === flag ? [args[i + 1]] : []);
-		assert.ok(pairs('--rw').includes('/home/me/repo'));
-		assert.ok(pairs('--rw').includes('/tmp'));
-		assert.ok(pairs('--rw').includes('/dev'));
-		assert.ok(!pairs('--rw').includes('/private/tmp'), 'no macOS aliases on Linux');
-		assert.ok(pairs('--protect').includes('/home/me/repo/.git/hooks'));
-		assert.ok(pairs('--hide').includes('/home/me/.aws'));
-		assert.ok(args.includes('--restrict-net'));
-		assert.deepStrictEqual(pairs('--connect'), ['4000', '5000']);
-		const open = landlockArgs(resolveSandboxPlan(request({ workspaceRoots: ['/home/me/repo'] }), LINUX), [4000]);
-		assert.ok(!open.includes('--restrict-net'));
-	});
-
-	test('bubblewrap fallback binds the plan', () => {
-		const args = bwrapArgs(resolveSandboxPlan(request({ workspaceRoots: ['/home/me/repo'] }), LINUX));
-		assert.deepStrictEqual(args.slice(0, 3), ['--ro-bind', '/', '/']);
-		assert.ok(args.join(' ').includes('--bind-try /home/me/repo /home/me/repo'));
-		assert.ok(args.join(' ').includes('--ro-bind-try /home/me/repo/.git/hooks /home/me/repo/.git/hooks'));
-	});
-});
 
 suite('Volt sandbox denials', () => {
 

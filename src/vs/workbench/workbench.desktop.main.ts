@@ -182,21 +182,25 @@ import './contrib/voltAgent/browser/pullRequests/agentPullRequests.contribution.
 import './contrib/voltAgent/browser/trajectory/agentTrajectory.contribution.js';
 import './contrib/voltAgent/browser/runGroups/agentRunGroups.contribution.js';
 import './contrib/voltAgent/browser/orchestration/agentThreadToolService.js';
+import './services/voltRuntime/browser/orchestration/agentOrchestraService.js';
 import './contrib/voltAgent/browser/orchestration/agentWorkspaceMover.js';
 import './contrib/voltAgent/browser/orchestration/agentMoveChat.contribution.js';
 import './services/voltRuntime/electron-browser/voltGit.contribution.js';
-import './contrib/voltCodeIntelligence/electron-browser/voltCodeIntelligence.contribution.js';
+import './services/voltRuntime/electron-browser/codeIntelligence.contribution.js';
 import './services/voltRuntime/electron-browser/voltUsage.contribution.js';
 import './services/voltRuntime/electron-browser/voltAccounts.contribution.js';
 import './services/voltRuntime/electron-browser/voltSkillsDirectory.contribution.js';
 import './services/voltRuntime/electron-browser/voltRelay.contribution.js';
 import './contrib/voltProjects/electron-browser/voltProjects.contribution.js';
+// Volt HTTP client sends from the main process (replaces the window's transport)
+import './contrib/voltHttp/electron-browser/voltHttpTransport.contribution.js';
 // Volt window scopes (a New Window keeps its chats and projects until it closes)
 import './services/voltWindowScope/electron-browser/voltWindowScopeService.js';
 import './contrib/voltAgent/electron-browser/agentOpenInNewWindow.contribution.js';
 // Volt agent server client (after the agent services it can replace)
 import './contrib/voltAgent/electron-browser/agentServerClient.contribution.js';
 import './contrib/voltAgent/electron-browser/agentComputerName.contribution.js';
+import './contrib/voltAgent/electron-browser/agentMachineCapacity.contribution.js';
 
 // Volt dev hot reload (VSCODE_DEV only)
 import './contrib/voltAgent/electron-browser/voltDevReload.contribution.js';

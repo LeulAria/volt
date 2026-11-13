@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,45 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "playgrounds",
+			"label": "Playgrounds",
+			"description": "Throwaway pages agents build and check outside the project.",
+			"category": "tools",
+			"icon": "beaker",
+			"order": 20
+		},
+		"voltTools": [
+			{
+				"name": "playground_create",
+				"class": "safe"
+			},
+			{
+				"name": "playground_update",
+				"class": "safe"
+			},
+			{
+				"name": "playground_list",
+				"class": "safe"
+			},
+			{
+				"name": "playground_delete",
+				"class": "safe"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "net.listen:*",
+					"class": "high",
+					"reason": "Serves draft pages over loopback."
+				}
+			]
+		}
+	}
 }

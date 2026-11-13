@@ -225,6 +225,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.diagnostics.writeHeapSnapshots',
+			visibility: 'internal',
 			title: localize2('voltDiagnostics.writeHeapSnapshots', "Write Heap Snapshots to Logs Folder"),
 			category: Categories.Developer,
 			f1: true,

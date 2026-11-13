@@ -1,0 +1,73 @@
+{
+	"name": "volt-hello",
+	"displayName": "Hello Volt",
+	"description": "An example Volt extension: a tool agents can call to remember facts, and a turn counter.",
+	"version": "0.0.1",
+	"publisher": "volt-examples",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.105.0",
+		"volt": "^1.0.0"
+	},
+	"main": "./out/extension.js",
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"enabledApiProposals": [
+		"volt"
+	],
+	"contributes": {
+		"commands": [
+			{
+				"command": "volt-hello.chats",
+				"title": "Hello Volt: Show Latest Chats"
+			}
+		],
+		"voltTools": [
+			{
+				"name": "hello_remember",
+				"class": "persists",
+				"title": "Remembered with Hello",
+				"description": "Remember a fact for every later Volt chat. Use it when the user says to remember something.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"fact": {
+							"type": "string",
+							"description": "The fact, in one or two sentences."
+						}
+					},
+					"required": [
+						"fact"
+					]
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				}
+			],
+			"optional": [
+				{
+					"id": "agents.read:any",
+					"class": "medium",
+					"reason": "Counts your chats' turns and reads how many notes Volt keeps."
+				},
+				{
+					"id": "agents.context",
+					"class": "high",
+					"reason": "hello_remember saves the facts you ask it to keep."
+				}
+			]
+		}
+	},
+	"scripts": {
+		"compile": "tsc -p ."
+	},
+	"devDependencies": {
+		"typescript": "^5.9.0"
+	}
+}

@@ -42,6 +42,7 @@ registerAction2(class OpenAgentInNewWindowAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.openInNewWindow', "Open Chat in New Window"),
 			f1: false,
 		});

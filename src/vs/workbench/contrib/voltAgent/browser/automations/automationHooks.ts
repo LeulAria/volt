@@ -75,6 +75,7 @@ registerAction2(class ConnectVoltRelayAction extends Action2 {
 	constructor() {
 		super({
 			id: VOLT_RELAY_CONNECT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltRelay.connectCommand', "Connect to Volt Relay…"),
 			category: localize2('voltAgent.category', "Agent"),
 			f1: true,
@@ -90,6 +91,7 @@ registerAction2(class DisconnectVoltRelayAction extends Action2 {
 	constructor() {
 		super({
 			id: VOLT_RELAY_DISCONNECT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltRelay.disconnectCommand', "Disconnect from Volt Relay"),
 			category: localize2('voltAgent.category', "Agent"),
 			f1: true,

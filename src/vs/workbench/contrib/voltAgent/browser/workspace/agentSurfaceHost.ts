@@ -63,7 +63,7 @@ import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } 
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
 import { AgentFilesSidebar, AgentFilesSidebarView, filesSidebarTabs, filesSidebarViewCommandId } from './agentFilesSidebar.js';
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
-import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_HTTP_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
@@ -409,6 +409,18 @@ export function closeAgentToolEditor(editor: EditorInput): boolean {
 	}
 	void located.group.closeEditor(target);
 	return true;
+}
+
+/** Closes the tabs `matches` picks in every live chat's tools area, on screen or not. */
+export function closeAgentToolEditorsWhere(matches: (editor: EditorInput) => boolean): void {
+	for (const entry of toolParts.values()) {
+		for (const group of entry.part.groups) {
+			const closing = group.editors.filter(matches);
+			if (closing.length) {
+				void group.closeEditors(closing);
+			}
+		}
+	}
 }
 
 /**
@@ -2487,6 +2499,9 @@ export class AgentSurfaceHost extends Disposable {
 			case 'workflows':
 				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, this.sessionId));
 				return;
+			case 'http':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_HTTP_IN_TOOLS_COMMAND_ID, this.sessionId));
+				return;
 			case 'sideChat':
 				void this.openSideChat();
 				return;
@@ -2572,6 +2587,7 @@ registerAction2(class OpenAgentToolsAddMenuAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_TOOLS_ADD_MENU_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.toolsAdd', "Open in Tools"),
 			icon: Codicon.add,
 			f1: false,
@@ -2592,6 +2608,7 @@ registerAction2(class ShowAgentFilesAction extends Action2 {
 	constructor() {
 		super({
 			id: SHOW_AGENT_FILES_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.tools.showFiles', "Show Files in Tools"),
 			f1: true,
 			precondition: LayoutModeContext.isEqualTo('agent'),
@@ -2608,6 +2625,7 @@ registerAction2(class ShowAgentSourceControlAction extends Action2 {
 	constructor() {
 		super({
 			id: SHOW_AGENT_SCM_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.tools.showScm', "Show Source Control in Tools"),
 			f1: true,
 			precondition: LayoutModeContext.isEqualTo('agent'),
@@ -2624,6 +2642,7 @@ registerAction2(class ShowAgentRelatedChatsAction extends Action2 {
 	constructor() {
 		super({
 			id: SHOW_AGENT_RELATED_CHATS_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.tools.showRelatedChats', "Show Related Chats in Tools"),
 			f1: true,
 			precondition: LayoutModeContext.isEqualTo('agent'),
@@ -2654,6 +2673,7 @@ registerAction2(class ToggleAgentToolsFullScreenAction extends Action2 {
 	constructor() {
 		super({
 			id: TOGGLE_TOOLS_FULLSCREEN_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.tools.toggleFullScreen', "Toggle Tools Full Screen"),
 			f1: true,
 			precondition: LayoutModeContext.isEqualTo('agent'),
@@ -2682,6 +2702,7 @@ for (const item of agentSurfaceMenuItems()) {
 		constructor() {
 			super({
 				id: surfaceOpenCommandId(item.id),
+				visibility: 'public',
 				title: localize2('voltAgent.tools.openSurface', "Open {0} in Right Panel", item.label),
 				category: localize2('voltAgent.category', "Agent"),
 				f1: true,
@@ -2717,6 +2738,7 @@ filesSidebarTabs().forEach((tab, index) => {
 		constructor() {
 			super({
 				id: filesSidebarViewCommandId(tab.id),
+				visibility: 'public',
 				title: localize2('voltAgent.tools.showSidebarTab', "Show {0} in Right Sidebar", tab.label),
 				category: localize2('voltAgent.category', "Agent"),
 				f1: true,
@@ -2740,6 +2762,7 @@ registerAction2(class ToggleAgentToolsPanelAction extends Action2 {
 	constructor() {
 		super({
 			id: TOGGLE_TOOLS_PANEL_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.tools.togglePanel', "Toggle Right Panel"),
 			f1: true,
 			precondition: LayoutModeContext.isEqualTo('agent'),
@@ -2842,7 +2865,7 @@ CommandsRegistry.registerCommand(EDIT_IN_AGENT_TOOLS_COMMAND_ID, async (accessor
 		await Event.toPromise(input.onWillDispose);
 	}
 	return true;
-});
+}, 'exported:ui.contribute');
 
 /**
  * The Explorer's Open in Browser for an .html file: a browser tab in the tools of the chat on screen
@@ -2852,6 +2875,7 @@ registerAction2(class OpenHtmlInBrowserAction extends Action2 {
 	constructor() {
 		super({
 			id: 'volt.explorer.openInBrowser',
+			visibility: 'internal',
 			title: localize2('voltAgent.openInBrowser', "Open in Browser"),
 			menu: {
 				id: MenuId.ExplorerContext,

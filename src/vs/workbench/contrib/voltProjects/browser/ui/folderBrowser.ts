@@ -275,8 +275,12 @@ export class FolderBrowser extends Disposable {
 		if (row?.kind === 'folder') {
 			return row.entry.path;
 		}
-		// A typed name that matches no folder adds nothing, not the folder it is typed in.
-		return this.searching || browseLeaf(this.input.value) ? undefined : this.dir ? stripTrailing(this.dir) : undefined;
+		// A typed name that matches no folder adds nothing, not the folder it is typed in; nor does a
+		// folder that is still being listed, or that could not be listed (a typed path that does not exist).
+		if (this.searching || browseLeaf(this.input.value) || !this.listing || this.listing.error) {
+			return undefined;
+		}
+		return this.dir ? stripTrailing(this.dir) : undefined;
 	}
 
 	get currentFolder(): string {
@@ -375,7 +379,7 @@ export class FolderBrowser extends Disposable {
 		this.acceptWhenListed = false;
 		if (target) {
 			this.options.onAccept(target);
-		} else if (!this.searching && browseLeaf(this.input.value)) {
+		} else if (!this.searching && (browseLeaf(this.input.value) || !this.listing)) {
 			// Enter right after pasting or typing a path: its folder is still being listed.
 			this.acceptWhenListed = !this.listing || this.renderedGeneration !== this.renderGeneration;
 		}

@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,88 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.fx",
+			"label": "FX",
+			"description": "FX models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 100
+		},
+		"voltAgents": [
+			{
+				"id": "fx",
+				"label": "fx",
+				"order": 100,
+				"binary": "fx",
+				"versionArgs": [
+					"--version"
+				],
+				"args": [
+					"acp"
+				],
+				"earlyAccess": true,
+				"authProbe": "fx",
+				"login": [
+					"fx",
+					"login"
+				],
+				"apiHosts": [
+					"fx.sh",
+					"*.fx.sh",
+					"ai-gateway.vercel.sh",
+					"vercel.com",
+					"*.vercel.com",
+					"chatgpt.com",
+					"*.chatgpt.com",
+					"api.openai.com",
+					"auth.openai.com",
+					"x.ai",
+					"*.x.ai",
+					"grok.com",
+					"*.grok.com"
+				],
+				"state": {
+					"writable": [
+						".fx/sessions",
+						".fx/backups",
+						".fx/diagnostics",
+						".fx/file-index"
+					],
+					"writableFiles": [
+						".fx/history.jsonl",
+						".fx/history.lock",
+						".fx/auth.lock",
+						".fx/settings.lock",
+						".fx/auth.json"
+					],
+					"readable": [
+						".fx"
+					],
+					"credentials": [
+						".fx/auth.json",
+						".fx/mcp-credentials"
+					],
+					"envKeys": [
+						"AI_GATEWAY_API_KEY",
+						"OPENAI_API_KEY",
+						"XAI_API_KEY"
+					]
+				},
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:fx",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

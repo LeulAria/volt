@@ -40,6 +40,10 @@ import { BrowserCommentCard } from './browserCommentCard.js';
 import { IBrowserComment, IBrowserCommentInit, IBrowserCommentMessage, IBrowserCommentRef, IVoltBrowserComments, REVEAL_BROWSER_ELEMENT_COMMAND_ID } from './browserCommentStore.js';
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { buildTaskPrompt, newTaskId, titleFromBrief } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
+import { isSandboxed } from '../../../../services/voltRuntime/common/hostToolSandbox.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { ISandboxBrowserRules, sandboxBrowserPartition } from '../../../../../platform/voltBrowser/common/sandboxBrowser.js';
+import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { BATCH_EDITS_STORAGE_KEY, IVoltAnnotationItem, VoltAnnotationsSendButton } from '../chrome/voltAnnotations.js';
 import { BrowserAgentComposer } from './browserComposer.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
@@ -607,6 +611,10 @@ export class VoltBrowserView extends Disposable {
 	private dock: BrowserAgentDock | undefined;
 	private errorEl!: HTMLElement;
 	private webview: IVoltWebview | undefined;
+	/** The browser profile of the current `<webview>` (see `profileFor`). */
+	private partition = VOLT_BROWSER_PARTITION;
+	/** A sandboxed profile's rules are in place in the main process (always true for the shared profile). */
+	private profileReady: Promise<boolean> = Promise.resolve(true);
 	private readonly webviewListeners = this._register(new DisposableStore());
 	private guestReady = false;
 	private dockToneBusy = false;
@@ -1405,6 +1413,67 @@ export class VoltBrowserView extends Disposable {
 		return this.dock?.chatModelRef() ?? this.orchestrator.getThread(sessionId)?.modelRef;
 	}
 
+	/**
+	 * The browser profile this tab's pages use: the user's shared one, or, for a tab of a sandboxed
+	 * chat (beside it, or the agent's own), the chat's signed-out profile with its network rules (B-16).
+	 */
+	private profileFor(): { readonly partition: string; readonly rules?: ISandboxBrowserRules } {
+		const owner = this.input.agentOwner ?? this.ownerSession();
+		if (!owner || isWeb) {
+			return { partition: VOLT_BROWSER_PARTITION };
+		}
+		let sandbox: IVoltSandboxSettings | undefined;
+		let chat = owner;
+		try {
+			const runtime = this.instantiationService.invokeFunction(accessor => accessor.get(IAgentRuntimeService));
+			chat = runtime.chatFor(owner);
+			sandbox = runtime.getSandboxSettings(chat);
+		} catch {
+			// No runtime here: the user's own tab.
+		}
+		if (!isSandboxed(sandbox)) {
+			return { partition: VOLT_BROWSER_PARTITION };
+		}
+		return {
+			partition: sandboxBrowserPartition(chat),
+			rules: { network: sandbox.network, allowedDomains: [...sandbox.allowedDomains ?? []], listenPorts: [...sandbox.listenPorts ?? []] },
+		};
+	}
+
+	/** Sends a sandboxed profile's rules to the main process; its pages load only once they are in place. */
+	private applyProfile(profile: { readonly partition: string; readonly rules?: ISandboxBrowserRules }): void {
+		if (!profile.rules) {
+			this.profileReady = Promise.resolve(true);
+			return;
+		}
+		const service = this.browserService();
+		this.profileReady = service ? service.setSandboxBrowserRules(profile.partition, profile.rules).then(() => true, () => false) : Promise.resolve(false);
+	}
+
+	/**
+	 * Before an agent drives this tab: the tab must use its chat's profile. A tab whose chat became
+	 * sandboxed after it opened (or the other way) starts its page again in the right profile.
+	 */
+	async ensureChatProfile(): Promise<void> {
+		const profile = this.profileFor();
+		if (!this.webview || isWeb) {
+			return;
+		}
+		if (profile.partition !== this.partition) {
+			const url = this.guestUrl() ?? this.browserInput().url;
+			this.closeDevTools();
+			this.webviewListeners.clear();
+			this.webview.remove();
+			this.webview = undefined;
+			this.guestReady = false;
+			this.ensureWebview(url && url !== 'about:blank' ? url : undefined);
+		} else {
+			// The chat's rules may have changed (a host allowed, a port granted).
+			this.applyProfile(profile);
+		}
+		await this.profileReady;
+	}
+
 	private ensureWebview(initialUrl?: string): IVoltWebview {
 		if (this.webview) {
 			return this.webview;
@@ -1413,7 +1482,10 @@ export class VoltBrowserView extends Disposable {
 		const webview = (isWeb ? createBrowserFrame(this.container.ownerDocument) : this.container.ownerDocument.createElement('webview')) as IVoltWebview;
 		webview.className = 'volt-browser-frame';
 		webview.setAttribute('allowpopups', 'true');
-		webview.setAttribute('partition', VOLT_BROWSER_PARTITION);
+		const profile = this.profileFor();
+		this.partition = profile.partition;
+		this.applyProfile(profile);
+		webview.setAttribute('partition', profile.partition);
 		webview.setAttribute('webpreferences', 'allowRunningInsecureContent, javascript=yes');
 		webview.setAttribute('useragent', this.userAgent);
 		webview.setAttribute('src', 'about:blank');
@@ -1568,7 +1640,7 @@ export class VoltBrowserView extends Disposable {
 		}
 		const href = sanitizeBrowserUrl(url) ?? url;
 		this.guestIdle = false;
-		this.callGuest(() => {
+		const load = () => this.callGuest(() => {
 			if (typeof webview.loadURL === 'function') {
 				void Promise.resolve(webview.loadURL(href)).catch(() => {
 					// ERR_ABORTED is normal when a load is replaced or the editor reloads.
@@ -1576,6 +1648,21 @@ export class VoltBrowserView extends Disposable {
 				return;
 			}
 			webview.setAttribute('src', href);
+		});
+		if (this.partition === VOLT_BROWSER_PARTITION) {
+			load();
+			return;
+		}
+		// A sandboxed chat's profile refuses everything until its rules are in place.
+		void this.profileReady.then(ready => {
+			if (this.webview !== webview) {
+				return;
+			}
+			if (ready) {
+				load();
+			} else {
+				this.showError(localize('voltBrowser.sandboxProfile', "This chat runs in Volt's sandbox, and its browser could not get the sandbox's network rules, so nothing was loaded."));
+			}
 		});
 	}
 
@@ -2002,7 +2089,7 @@ export class VoltBrowserView extends Disposable {
 		const host = this.container.ownerDocument.createElement('webview') as IVoltWebview;
 		host.className = 'volt-browser-devtools-frame';
 		// The same partition as the page: the main process only docks in-app browser views.
-		host.setAttribute('partition', VOLT_BROWSER_PARTITION);
+		host.setAttribute('partition', this.partition);
 		host.setAttribute('src', 'about:blank');
 		pane.appendChild(host);
 		this.stage.insertAdjacentElement('afterend', pane);
@@ -3916,7 +4003,7 @@ class VoltBrowserViews extends Disposable implements IVoltBrowserViews {
 
 registerSingleton(IVoltBrowserViews, VoltBrowserViews, InstantiationType.Delayed);
 
-CommandsRegistry.registerCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, (accessor, payload: string) => accessor.get(IVoltBrowserViews).revealElement(payload));
+CommandsRegistry.registerCommand(REVEAL_BROWSER_ELEMENT_COMMAND_ID, (accessor, payload: string) => accessor.get(IVoltBrowserViews).revealElement(payload), 'internal');
 
 /** The editor pane for a browser tab: a slot the tab's `VoltBrowserView` is laid over. */
 export class VoltBrowserEditor extends EditorPane {

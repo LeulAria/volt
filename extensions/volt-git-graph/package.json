@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,53 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "gitGraph",
+			"label": "Git Graph",
+			"description": "The Git Graph tab, file and line history.",
+			"category": "workspace",
+			"icon": "git-commit",
+			"order": 50,
+			"commands": [
+				"volt.gitGraph.open",
+				"volt.gitGraph.openInTools",
+				"volt.gitGraph.fileHistory",
+				"volt.gitGraph.lineHistory"
+			],
+			"settings": [
+				"volt.gitGraph."
+			],
+			"entry": "voltGitGraph"
+		},
+		"voltSurfaces": [
+			{
+				"id": "gitGraph",
+				"label": "Git Graph"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "git.read",
+					"class": "medium"
+				},
+				{
+					"id": "git.write",
+					"class": "high",
+					"reason": "Checkout, branch and cherry-pick from the graph."
+				},
+				{
+					"id": "git.push",
+					"class": "high",
+					"reason": "Push, sync and publish from the graph's toolbar."
+				},
+				{
+					"id": "agents.send",
+					"class": "medium",
+					"reason": "Ask an agent about a commit."
+				}
+			]
+		}
+	}
 }

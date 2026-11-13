@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,68 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "codeIntelligence",
+			"entry": "voltCodeIntelligence",
+			"label": "Code intelligence",
+			"description": "Volt's code index (instant grep, symbol and file search) and the editor's language servers (navigation, diagnostics, refactors) for agents.",
+			"category": "workspace",
+			"icon": "symbol-class",
+			"order": 40,
+			"settings": [
+				"volt.codeIntelligence."
+			]
+		},
+		"voltTools": [
+			{
+				"name": "instant_grep",
+				"class": "reads"
+			},
+			{
+				"name": "find_symbol",
+				"class": "reads"
+			},
+			{
+				"name": "find_files",
+				"class": "reads"
+			},
+			{
+				"name": "code_nav",
+				"class": "reads"
+			},
+			{
+				"name": "diagnostics",
+				"class": "reads"
+			},
+			{
+				"name": "code_action",
+				"class": "writes"
+			}
+		],
+		"voltSettingsPages": [
+			{
+				"id": "codeIntelligence",
+				"label": "Code Intelligence"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "files.read:workspace",
+					"class": "low",
+					"reason": "Indexes and searches the chat's project."
+				},
+				{
+					"id": "files.write",
+					"class": "medium",
+					"reason": "code_action applies language-server refactors (rename, format, fixes) to the project."
+				}
+			]
+		}
+	}
 }

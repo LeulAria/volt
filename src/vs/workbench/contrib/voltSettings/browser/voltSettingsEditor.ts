@@ -12,7 +12,7 @@ import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scro
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { isMacintosh } from '../../../../base/common/platform.js';
-import { DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
 import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
@@ -59,23 +59,26 @@ import { renderProjectsSection, renderStorageSection } from '../../voltSetup/bro
 import { clampWorktreeMaxCount, clampWorktreeMaxSizeGB, WORKTREE_MAX_COUNT_SETTING, WORKTREE_MAX_SIZE_GB_SETTING } from '../../voltSetup/common/worktreeLimits.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { AppearancePage, ISettingsPageKit } from './appearancePage.js';
-import { CodeIntelligencePage } from './codeIntelligencePage.js';
 import { GitPage } from './gitPage.js';
 import { CustomizeVoltPage } from './customizeVoltPage.js';
 import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
-import { DevicesPage } from './devicesPage.js';
-import type { VoltConnectionKind } from './addDeviceModal.js';
+import { ISandboxWorkloadsKit, SandboxWorkloadsSection } from '../../voltSecurity/browser/sandboxWorkloadsSection.js';
+import { AccessPageSection } from '../../voltSecurity/browser/accessPage.js';
+import { PermissionsSummarySection } from '../../voltSecurity/browser/permissionsSummary.js';
+import { IDevicesPage, IDevicesPageHost, IVoltRemoteDevicesModule, REMOTE_DEVICES_FEATURE_ID, VoltConnectionKind } from '../../voltRemoteDevices/common/voltRemoteDevices.js';
+import { OrchestrationPage } from './orchestrationPage.js';
 import { createSettingsIcon } from './settingsIcons.js';
-import { AgentUsagePage } from '../../voltAgent/browser/usage/agentUsagePage.js';
+import { USAGE_FEATURE_ID, USAGE_SECTION_ID } from '../../voltUsage/common/voltUsage.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createAccessIcon } from '../../voltAgent/browser/chrome/accessIcons.js';
 import { createVoltDropdown, IVoltDropdownOption } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/agentTitlebarHeader.js';
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
-import { AgentCustomizeEditor, AgentCustomizeEditorInput } from '../../voltAgent/browser/customize/agentCustomizeEditor.js';
-import { AutomationsEditor, AutomationsEditorInput } from '../../voltAgent/browser/automations/automationsEditor.js';
+import { AUTOMATIONS_FEATURE_ID, IVoltAutomationsModule } from '../../voltAutomations/common/voltAutomations.js';
+import { IVoltEmbeddedEditorPage, IVoltFeatureModule, IVoltFeatureModuleService, IVoltFeatureSettingsPage } from '../../voltCustomize/browser/voltFeatureModules.js';
+import { IVoltSkillsModule, SKILLS_FEATURE_ID } from '../../voltSkills/common/voltSkills.js';
 import { createHomeAutomationsIcon } from '../../voltAgent/browser/home/agentHomeIcons.js';
 import { IVoltFeatureService } from '../../voltCustomize/common/voltFeatures.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
@@ -91,7 +94,7 @@ import { SettingsThemeList } from './settingsThemeList.js';
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
 /** Volt's own pages, then every registered setting by category (`cat:`), Extensions included. */
-type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
+type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'access' | 'connected' | 'devices' | 'orchestration' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
 type CatalogSection = `cat:${string}`;
 
 function isCatalogSection(section: string): section is CatalogSection {
@@ -127,8 +130,10 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'canvas', label: localize('voltSettings.canvasScratch', "Canvas & Scratch"), icon: Codicon.symbolColor, group: 1 },
 	{ id: 'beta', label: localize('voltSettings.betaPage', "Beta"), icon: Codicon.beaker, group: 1 },
 	{ id: 'security', label: localize('voltSettings.security', "Security"), icon: Codicon.shield, group: 2 },
+	{ id: 'access', label: localize('voltSettings.access', "Access"), icon: Codicon.key, group: 2 },
 	{ id: 'connected', label: localize('voltSettings.connectedAgents', "Connected agents"), icon: Codicon.link, group: 2 },
 	{ id: 'devices', label: localize('voltSettings.devices', "Devices"), icon: Codicon.deviceMobile, group: 2 },
+	{ id: 'orchestration', label: localize('voltSettings.orchestration', "Orchestration"), icon: Codicon.organization, group: 2 },
 	{ id: 'projects', label: localize('voltSettings.projects', "Projects"), icon: Codicon.repo, group: 2 },
 	{ id: 'git', label: localize('voltSettings.git', "Git & PRs"), icon: Codicon.gitPullRequest, group: 2 },
 	{ id: 'worktrees', label: localize('voltSettings.worktrees', "Worktrees"), icon: Codicon.repoForked, group: 2 },
@@ -217,18 +222,22 @@ export class VoltSettingsEditor extends EditorPane {
 	private providers!: ProvidersPage;
 	private appearance!: AppearancePage;
 	private connectedAgents!: ConnectedAgentsPage;
-	private devices!: DevicesPage;
-	/** Made on first visit and kept, so its data and range survive leaving the page. */
-	private usage: AgentUsagePage | undefined;
+	/** Devices is the Remote devices module's page: made when the module loads, dropped when it unloads. */
+	private devices: IDevicesPage | undefined;
+	private devicesHost!: IDevicesPageHost;
+	/** Add Device asked for before the module loaded. */
+	private devicesPendingAdd: { readonly kind?: VoltConnectionKind } | undefined;
+	/** Made on first visit and kept, so its data and range survive leaving the page; dropped when its module unloads. */
+	private readonly usage = this._register(new MutableDisposable<IVoltFeatureSettingsPage>());
 	/**
 	 * Skills & Plugins: the agent's Customize page, hosted in place of the settings pages so the
 	 * nav stays. Made on first visit and kept, like Usage.
 	 */
 	private customizeHost!: HTMLElement;
-	private customizePane: AgentCustomizeEditor | undefined;
+	private customizePage!: VoltSettingsModulePage<IVoltSkillsModule>;
 	/** Automations: the agent's Automations page, hosted here like Skills & Plugins. */
 	private automationsHost!: HTMLElement;
-	private automationsPane: AutomationsEditor | undefined;
+	private automationsPage!: VoltSettingsModulePage<IVoltAutomationsModule>;
 	/** Every registered setting by category: VS Code's settings editor model, sorted for the nav. */
 	private catalogModel: Settings2EditorModel | undefined;
 	private catalog: ISettingsCatalogCategory[] = [];
@@ -271,9 +280,16 @@ export class VoltSettingsEditor extends EditorPane {
 		@IPreferencesService private readonly preferencesService: IPreferencesService,
 		@ILogService private readonly logService: ILogService,
 		@IVoltFeatureService private readonly features: IVoltFeatureService,
+		@IVoltFeatureModuleService private readonly modules: IVoltFeatureModuleService,
 	) {
 		super(VoltSettingsEditor.ID, group, telemetryService, themeService, storageService);
 		this.voltPages = this.voltPageLinks();
+		// A module that unloads takes its page with it; one loaded again draws a fresh one.
+		this._register(this.modules.onDidChange(feature => {
+			if (feature === USAGE_FEATURE_ID && !this.modules.isActive(feature)) {
+				this.usage.clear();
+			}
+		}));
 		// A feature turned on or off adds or takes away its pages; a page on screen that went away
 		// gives way to General.
 		this._register(this.features.onDidChange(() => {
@@ -407,6 +423,12 @@ export class VoltSettingsEditor extends EditorPane {
 		customizeResize.observe(this.customizeHost);
 		this.automationsHost = append(this.body, $('.volt-settings-automations'));
 		customizeResize.observe(this.automationsHost);
+		// Both pages are feature modules' (Skills & Plugins, Automations): they load with the module on first visit.
+		const modules = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltFeatureModuleService));
+		this.customizePage = this._register(new VoltSettingsModulePage<IVoltSkillsModule>(modules, this.logService, SKILLS_FEATURE_ID, this.customizeHost,
+			module => module.createEmbeddedPage(this.customizeHost, this.group), () => this.isVisible() && this.section === 'customize'));
+		this.automationsPage = this._register(new VoltSettingsModulePage<IVoltAutomationsModule>(modules, this.logService, AUTOMATIONS_FEATURE_ID, this.automationsHost,
+			module => module.createEmbeddedPage(this.automationsHost, this.group), () => this.isVisible() && this.section === 'automations'));
 		this._register(toDisposable(() => customizeResize.disconnect()));
 		this.createSidebarSash();
 		this._register(this.layoutService.onDidLayoutMainContainer(() => this.syncSidebarWidth()));
@@ -441,7 +463,7 @@ export class VoltSettingsEditor extends EditorPane {
 			inputBoxStyles: () => this.inputBoxStyles(),
 			rerender: () => this.renderContent(),
 		});
-		this.devices = new DevicesPage(this.instantiationService, {
+		this.devicesHost = {
 			store: this.renderStore,
 			target: () => this.target,
 			sectionLabel: label => this.sectionLabel(label),
@@ -449,7 +471,7 @@ export class VoltSettingsEditor extends EditorPane {
 			settingRow: (parent, title, desc, render) => this.settingRow(parent, title, desc, render),
 			empty: text => this.empty(text),
 			rerender: () => this.renderContent(),
-		});
+		};
 		this._register(this.connectedAgents.onDidChange(() => {
 			if (this.section === 'connected') {
 				this.renderContent();
@@ -483,7 +505,7 @@ export class VoltSettingsEditor extends EditorPane {
 			this.layoutService.mainContainer.classList.add('volt-settings-open');
 			this.layoutService.mainContainer.appendChild(this.container);
 			this.syncSidebarWidth();
-			this.usage?.setVisible(this.section === 'usage');
+			this.usage.value?.setVisible(this.section === 'usage');
 			if (this.section === 'customize') {
 				this.showCustomize();
 			} else if (this.section === 'automations') {
@@ -492,9 +514,9 @@ export class VoltSettingsEditor extends EditorPane {
 			this.scheduleScrollSync();
 			return;
 		}
-		this.usage?.setVisible(false);
-		this.customizePane?.setVisible(false);
-		this.automationsPane?.setVisible(false);
+		this.usage.value?.setVisible(false);
+		this.customizePage?.hide();
+		this.automationsPage?.hide();
 		this.container.classList.remove('volt-settings-overlay');
 		this.layoutService.mainContainer.classList.remove('volt-settings-open');
 		this.container.remove();
@@ -617,7 +639,12 @@ export class VoltSettingsEditor extends EditorPane {
 			section = 'devices';
 			// With Devices off, setSection opens General instead.
 			if (this.features.isOn('section', 'devices')) {
-				this.devices.requestAddDevice(add[1] as VoltConnectionKind | undefined);
+				const kind = add[1] as VoltConnectionKind | undefined;
+				if (this.devices) {
+					this.devices.requestAddDevice(kind);
+				} else {
+					this.devicesPendingAdd = { kind };
+				}
 				if (this.section === 'devices') {
 					this.renderContent();
 					return;
@@ -712,17 +739,17 @@ export class VoltSettingsEditor extends EditorPane {
 		const generation = this.renderGeneration;
 		let pending: Promise<unknown> | undefined;
 		if (this.section !== 'usage') {
-			this.usage?.setVisible(false);
+			this.usage.value?.setVisible(false);
 		}
 		// Skills & Plugins has its own search, header and scrolling: it takes the page area itself.
 		this.container.classList.toggle('volt-settings-customize-open', this.section === 'customize');
 		if (this.section !== 'customize') {
-			this.customizePane?.setVisible(false);
+			this.customizePage?.hide();
 		}
 		// So does Automations.
 		this.container.classList.toggle('volt-settings-automations-open', this.section === 'automations');
 		if (this.section !== 'automations') {
-			this.automationsPane?.setVisible(false);
+			this.automationsPage?.hide();
 		}
 		// A settings category is a list beside an inspector, in place of the page. Volt's pages draw
 		// where the inspector would, with Volt's list (which links them) kept beside them.
@@ -746,7 +773,7 @@ export class VoltSettingsEditor extends EditorPane {
 				this.renderGeneral();
 				break;
 			case 'usage':
-				this.renderUsage();
+				pending = this.renderUsage();
 				break;
 			case 'appearance':
 				pending = this.renderAppearance();
@@ -767,7 +794,7 @@ export class VoltSettingsEditor extends EditorPane {
 				this.renderTab();
 				break;
 			case 'codeIntelligence':
-				this.renderCodeIntelligence();
+				pending = this.renderModulePage(this.section);
 				break;
 			case 'canvas':
 				this.renderCanvasScratch();
@@ -777,6 +804,9 @@ export class VoltSettingsEditor extends EditorPane {
 				break;
 			case 'security':
 				this.renderSecurity();
+				break;
+			case 'access':
+				this.renderAccess();
 				break;
 			case 'connected': {
 				this.pageHead(
@@ -793,7 +823,25 @@ export class VoltSettingsEditor extends EditorPane {
 					localize('voltSettings.devicesLead', "Phones and browsers that reach this computer's chats, files and terminals: pair a new one, rename or remove the others."),
 				);
 				const generation = this.renderGeneration;
-				pending = this.devices.render(() => generation === this.renderGeneration && this.section === 'devices').finally(() => this.scheduleScrollSync());
+				pending = this.renderDevices(() => generation === this.renderGeneration && this.section === 'devices').finally(() => this.scheduleScrollSync());
+				break;
+			}
+			case 'orchestration': {
+				this.pageHead(
+					localize('voltSettings.orchestration', "Orchestration"),
+					localize('voltSettings.orchestrationLead', "Teams of agents from any provider, councils that decide together, and the machines their work runs on. Ask in any chat: \"spawn 20 agents, half Claude and half Codex\", \"@Council review this design\", \"@build-server run the tests\"."),
+				);
+				const generation = this.renderGeneration;
+				const page = new OrchestrationPage(this.instantiationService, {
+					store: this.renderStore,
+					target: () => this.target,
+					sectionLabel: label => this.sectionLabel(label),
+					settingsGroup: () => this.settingsGroup(),
+					settingRow: (parent, title, desc, render) => this.settingRow(parent, title, desc, render),
+					stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+					rerender: () => this.renderContent(),
+				});
+				pending = page.render(() => generation === this.renderGeneration && this.section === 'orchestration').finally(() => this.scheduleScrollSync());
 				break;
 			}
 			case 'projects':
@@ -852,62 +900,78 @@ export class VoltSettingsEditor extends EditorPane {
 		});
 	}
 
-	private renderUsage(): void {
+	private renderUsage(): Promise<void> | undefined {
 		this.pageHead(
 			localize('voltSettings.usage', "Usage"),
 			localize('voltSettings.usageLead', "What your agents cost at API prices, the tokens they used, and how much of each plan's limits is left."),
 		);
-		// The model dialog centers over the whole settings overlay, not the tall scrolled page.
-		this.usage ??= this._register(this.instantiationService.createInstance(AgentUsagePage, () => this.container));
-		this.target.appendChild(this.usage.element);
-		this.usage.setVisible(this.isVisible());
+		const show = (page: IVoltFeatureSettingsPage) => {
+			this.target.appendChild(page.element);
+			page.setVisible(this.isVisible());
+		};
+		if (this.usage.value) {
+			show(this.usage.value);
+			return undefined;
+		}
+		// The page is the Usage feature's (contrib/voltUsage), loaded on the first visit. The model
+		// dialog centers over the whole settings overlay, not the tall scrolled page.
+		const generation = this.renderGeneration;
+		return this.modules.part('settingsPage', USAGE_SECTION_ID).then(part => {
+			if (!part || this._store.isDisposed) {
+				return;
+			}
+			this.usage.value ??= part.create(this.instantiationService, () => this.container);
+			if (generation === this.renderGeneration && this.section === 'usage') {
+				show(this.usage.value);
+				this.scheduleScrollSync();
+			}
+		});
 	}
 
-	/** Shows the hosted Customize page, making it on first visit. */
+	/** Devices: loads the Remote devices module on first visit, then draws its page. */
+	private async renderDevices(isCurrent: () => boolean): Promise<void> {
+		if (!this.devices) {
+			const modules = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltFeatureModuleService));
+			const module = await modules.activate<IVoltFeatureModule & IVoltRemoteDevicesModule>(REMOTE_DEVICES_FEATURE_ID);
+			if (!module || !isCurrent()) {
+				return;
+			}
+			if (!this.devices) {
+				const page = this.devices = module.createDevicesPage(this.instantiationService, this.devicesHost);
+				const unloaded = this._register(modules.onDidChange(feature => {
+					if (feature === REMOTE_DEVICES_FEATURE_ID && !modules.isActive(feature)) {
+						unloaded.dispose();
+						if (this.devices === page) {
+							this.devices = undefined;
+						}
+					}
+				}));
+				if (this.devicesPendingAdd) {
+					page.requestAddDevice(this.devicesPendingAdd.kind);
+					this.devicesPendingAdd = undefined;
+				}
+			}
+		}
+		await this.devices.render(isCurrent);
+	}
+
+	/** Shows the hosted Skills & Plugins page, making it on first visit. */
 	private showCustomize(): void {
-		if (!this.isVisible()) {
-			return;
+		if (this.isVisible()) {
+			this.customizePage.show();
 		}
-		let pane = this.customizePane;
-		if (!pane) {
-			pane = this.customizePane = this._register(this.instantiationService.createInstance(AgentCustomizeEditor, this.group));
-			pane.create(this.customizeHost);
-			pane.setVisible(true);
-			const input = this._register(new AgentCustomizeEditorInput());
-			void pane.setInput(input, undefined, {}, CancellationToken.None).then(() => this.layoutCustomize());
-		} else {
-			pane.setVisible(true);
-		}
-		this.layoutCustomize();
 	}
 
 	private layoutCustomize(): void {
-		const host = this.customizeHost;
-		if (this.customizePane && this.section === 'customize' && host.isConnected && host.clientWidth && host.clientHeight) {
-			this.customizePane.layout(new Dimension(host.clientWidth, host.clientHeight));
-		}
-		const automations = this.automationsHost;
-		if (this.automationsPane && this.section === 'automations' && automations.isConnected && automations.clientWidth && automations.clientHeight) {
-			this.automationsPane.layout(new Dimension(automations.clientWidth, automations.clientHeight));
-		}
+		this.customizePage?.layout();
+		this.automationsPage?.layout();
 	}
 
 	/** Shows the hosted Automations page, making it on first visit. */
 	private showAutomations(): void {
-		if (!this.isVisible()) {
-			return;
+		if (this.isVisible()) {
+			this.automationsPage.show();
 		}
-		let pane = this.automationsPane;
-		if (!pane) {
-			pane = this.automationsPane = this._register(this.instantiationService.createInstance(AutomationsEditor, this.group));
-			pane.create(this.automationsHost);
-			pane.setVisible(true);
-			const input = this._register(new AutomationsEditorInput());
-			void pane.setInput(input, undefined, {}, CancellationToken.None).then(() => this.layoutCustomize());
-		} else {
-			pane.setVisible(true);
-		}
-		this.layoutCustomize();
 	}
 
 	private get target(): HTMLElement {
@@ -1411,19 +1475,31 @@ export class VoltSettingsEditor extends EditorPane {
 		pill.textContent = label;
 	}
 
-	/** Instant grep's code index and the language servers agents use (codeIntelligencePage.ts). */
-	private renderCodeIntelligence(): void {
-		this.instantiationService.createInstance(CodeIntelligencePage, {
-			store: this.renderStore,
-			pageHead: (title, lead) => void this.pageHead(title, lead),
-			sectionLabel: label => this.sectionLabel(label),
-			settingsGroup: () => this.settingsGroup(),
-			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
-			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
-			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
-			rerender: () => this.renderContent(),
-			isCurrent: () => this.section === 'codeIntelligence',
-		}).render();
+	/**
+	 * A page a feature module draws with the editor's rows (Code Intelligence: instant grep's code
+	 * index and the language servers agents use, contrib/voltCodeIntelligence). Its module loads on
+	 * the first visit if it hasn't yet.
+	 */
+	private renderModulePage(section: SettingsSection): Promise<void> {
+		const generation = this.renderGeneration;
+		const store = this.renderStore;
+		return this.modules.part('settingsKitPage', section).then(part => {
+			if (!part || generation !== this.renderGeneration || this.section !== section || store.isDisposed) {
+				return;
+			}
+			part.render(this.instantiationService, {
+				store,
+				pageHead: (title, lead) => void this.pageHead(title, lead),
+				sectionLabel: label => this.sectionLabel(label),
+				settingsGroup: () => this.settingsGroup(),
+				settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+				toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+				stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+				rerender: () => this.renderContent(),
+				isCurrent: () => this.section === section,
+			});
+			this.scheduleScrollSync();
+		});
 	}
 
 	/** Scratch and the design canvas: on/off, new boards, drawing style, history (canvasScratchPage.ts). */
@@ -1666,6 +1742,26 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 	}
 
+	/** Settings, Access (sandbox P4): every subject's permissions, revocable, and the history (contrib/voltSecurity). */
+	private renderAccess(): void {
+		this.pageHead(
+			localize('voltSettings.access', "Access"),
+			localize('voltSettings.accessLead', "What extensions, Volt's built-in features and chats may do beyond their sandbox, and what they did lately."),
+		);
+		this.instantiationService.createInstance(AccessPageSection, this.securityKit('access')).render();
+	}
+
+	/** What the Security and Access sections draw with. */
+	private securityKit(section: SettingsSection): ISandboxWorkloadsKit {
+		return {
+			store: this.renderStore,
+			sectionLabel: label => this.sectionLabel(label),
+			sectionHint: text => void (append(this.target, $('.volt-settings-section-hint')).textContent = text),
+			settingsGroup: () => this.settingsGroup(),
+			isCurrent: () => this.section === section,
+		};
+	}
+
 	private renderSecurity(): void {
 		this.pageHead(
 			localize('voltSettings.security', "Security"),
@@ -1677,6 +1773,11 @@ export class VoltSettingsEditor extends EditorPane {
 			localize('voltSettings.secrets', "Secrets"),
 			localize('voltSettings.securityBody', "API keys are stored in OS secret storage, never in settings.json."),
 		);
+
+		// Every sandboxed process with its attestation, policy and resources (contrib/voltSecurity).
+		this.instantiationService.createInstance(SandboxWorkloadsSection, this.securityKit('security')).render();
+		// What holds permissions and what was denied lately, in one line; the Access page has the rest (P4).
+		this.instantiationService.createInstance(PermissionsSummarySection, this.securityKit('security'), () => this.setSection('access')).render();
 
 		this.sectionLabel(localize('voltSettings.projectRules', "Project rules"));
 		append(this.target, $('.volt-settings-section-hint')).textContent = localize('voltSettings.projectRulesDesc', "Explicit deny rules still win under Full access. Format: action resource effect.");
@@ -1859,4 +1960,68 @@ function describeLidClosedMode(state: IAwakeState | undefined): string {
 		parts.push(localize('voltSettings.lidLastError', "Last problem: {0}", state.lastError));
 	}
 	return parts.join(' ');
+}
+
+/**
+ * A page a feature module draws in Volt Settings (Skills & Plugins, Automations): made with the
+ * module on first visit and kept; it goes when the module unloads (the extension was disabled), and
+ * the next visit loads it again.
+ */
+class VoltSettingsModulePage<M> extends Disposable {
+
+	private page: IVoltEmbeddedEditorPage | undefined;
+	private loading = false;
+
+	constructor(
+		private readonly modules: IVoltFeatureModuleService,
+		private readonly logService: ILogService,
+		private readonly feature: string,
+		private readonly host: HTMLElement,
+		private readonly create: (module: M) => IVoltEmbeddedEditorPage,
+		/** Whether the page is the one showing. */
+		private readonly showing: () => boolean,
+	) {
+		super();
+		this._register(modules.onDidChange(feature => {
+			if (feature === this.feature && !modules.isActive(feature)) {
+				this.page = undefined;
+			}
+		}));
+		this._register(toDisposable(() => this.page?.dispose()));
+	}
+
+	show(): void {
+		if (this.page) {
+			this.page.setVisible(true);
+			this.layout();
+			return;
+		}
+		if (this.loading) {
+			return;
+		}
+		this.loading = true;
+		this.modules.activate<IVoltFeatureModule & M>(this.feature).then(module => {
+			this.loading = false;
+			if (!module || this.page || this._store.isDisposed) {
+				return;
+			}
+			this.page = this.create(module);
+			this.page.setVisible(this.showing());
+			this.layout();
+		}, error => {
+			this.loading = false;
+			this.logService.error(`[volt settings] the ${this.feature} page did not load`, error);
+		});
+	}
+
+	hide(): void {
+		this.page?.setVisible(false);
+	}
+
+	layout(): void {
+		const host = this.host;
+		if (this.page && this.showing() && host.isConnected && host.clientWidth && host.clientHeight) {
+			this.page.layout(host.clientWidth, host.clientHeight);
+		}
+	}
 }

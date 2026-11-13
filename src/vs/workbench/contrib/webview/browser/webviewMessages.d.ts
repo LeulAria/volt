@@ -54,6 +54,8 @@ interface UpdateContentEvent {
 	};
 	state: any;
 	cspSource: string;
+	/** Volt: the CSP core writes for an extension's webview, added in front of the page's own (spec I.10). */
+	cspFloor: string | undefined;
 	confirmBeforeClose: string;
 }
 

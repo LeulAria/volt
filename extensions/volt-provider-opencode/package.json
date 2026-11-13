@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,101 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.opencode",
+			"label": "OpenCode",
+			"description": "OpenCode and OpenCode Go models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 50
+		},
+		"voltAgents": [
+			{
+				"id": "opencode",
+				"label": "OpenCode",
+				"order": 50,
+				"binary": "opencode",
+				"fallbackBinaries": [
+					"opencode2"
+				],
+				"versionArgs": [
+					"--version"
+				],
+				"args": [
+					"acp"
+				],
+				"authProbe": "opencode",
+				"login": [
+					"opencode",
+					"auth",
+					"login"
+				],
+				"apiHosts": [
+					"opencode.ai",
+					"*.opencode.ai",
+					"models.dev",
+					"api.anthropic.com",
+					"api.openai.com",
+					"openrouter.ai",
+					"*.openrouter.ai",
+					"generativelanguage.googleapis.com",
+					"api.x.ai",
+					"api.deepseek.com",
+					"api.moonshot.ai",
+					"api.z.ai"
+				],
+				"state": {
+					"writable": [
+						".local/share/opencode/storage",
+						".local/share/opencode/snapshot",
+						".local/share/opencode/log",
+						".local/state/opencode",
+						".local/share/oh-my-opencode",
+						".claude/transcripts"
+					],
+					"writableFiles": [
+						".local/share/opencode/auth.json",
+						".local/share/opencode/opencode.db",
+						".local/share/opencode/opencode.db-wal",
+						".local/share/opencode/opencode.db-shm",
+						".local/share/opencode/opencode.db-journal"
+					],
+					"readable": [
+						".local/share/opencode",
+						".config/opencode",
+						".opencode",
+						".omo"
+					],
+					"credentials": [
+						".local/share/opencode/auth.json",
+						".local/share/opencode/opencode.db"
+					],
+					"envKeys": [
+						"ANTHROPIC_API_KEY",
+						"OPENAI_API_KEY",
+						"OPENROUTER_API_KEY",
+						"GEMINI_API_KEY",
+						"XAI_API_KEY",
+						"DEEPSEEK_API_KEY",
+						"MOONSHOT_API_KEY",
+						"ZAI_API_KEY",
+						"OPENCODE_API_KEY"
+					]
+				},
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:opencode",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

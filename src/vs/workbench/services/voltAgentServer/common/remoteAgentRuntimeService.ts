@@ -17,8 +17,11 @@ import { VoltMode } from '../../voltRuntime/common/modes.js';
 import { IProviderProfile, IProviderProfileDraft } from '../../voltRuntime/common/profiles.js';
 import { IAgentDetectResult, IModelMessage, IVoltCatalogItem, IVoltProviderStatus } from '../../voltRuntime/common/providers.js';
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from '../../voltRuntime/common/questions.js';
-import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
-import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
+import type { IVoltMcpApprovalRecord } from '../../voltRuntime/common/harness/mcpApprovals.js';
+import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import type { VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { chatExec, IChatExec } from '../../voltRuntime/common/execContext.js';
 import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../../voltRuntime/common/session.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
@@ -431,6 +434,11 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 		return this.summary(sessionId)?.sandbox ?? this.getDefaultSandboxSettings();
 	}
 
+	/** The server holds the chat; this window knows its checkout, not the main repository a worktree links to. */
+	chatExec(sessionId: string, reason: VoltExecReason, providerId?: string): IChatExec {
+		return chatExec(sessionId, this.getSandboxSettings(sessionId), sandboxWorkspaceRoots(this.workingFolder(sessionId), undefined, false), reason, providerId);
+	}
+
 	setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void> {
 		return this.client.call('runtime.setSandboxSettings', sessionId, settings);
 	}
@@ -492,6 +500,22 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 
 	listMcpServers(root: URI | undefined): Promise<readonly IVoltMcpServerStatus[]> {
 		return this.client.call('runtime.listMcpServers', root);
+	}
+
+	listMcpApprovalRequests(sessionId: string, providerRef: string | undefined, mode: VoltMode): Promise<readonly IVoltMcpApprovalRequest[]> {
+		return this.client.call('runtime.listMcpApprovalRequests', sessionId, providerRef, mode);
+	}
+
+	decideMcpServer(root: URI, name: string, digest: string, allow: boolean): Promise<void> {
+		return this.client.call('runtime.decideMcpServer', root, name, digest, allow);
+	}
+
+	listMcpApprovals(): Promise<readonly IVoltMcpApprovalRecord[]> {
+		return this.client.call('runtime.listMcpApprovals');
+	}
+
+	revokeMcpApproval(realRoot: string, name?: string): Promise<void> {
+		return this.client.call('runtime.revokeMcpApproval', realRoot, name);
 	}
 
 	generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number; readonly slot?: 'title' | 'git' }): Promise<string | undefined> {

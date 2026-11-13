@@ -182,6 +182,10 @@ export interface IAgentProvider {
 	dispose(session: IAgentSessionHandle): Promise<void>;
 	setRunContext?(session: IAgentSessionHandle, context: { sessionId: string; runId: string; mode: VoltMode }): void;
 	applyAccessPolicy?(session: IAgentSessionHandle, policy: ICompiledPolicy): Promise<void>;
+	/** "Allow host" for the running agent: its sandbox's proxy lets these hosts through from the next connection, without a restart. */
+	allowSandboxDomains?(session: IAgentSessionHandle, domains: readonly string[]): Promise<void>;
+	/** The execution host's id of the running agent's process: what a denial card's approval names (P4). */
+	sandboxProcessId?(session: IAgentSessionHandle): string | undefined;
 	/** The agent advertised the slash command `/name` for this session. */
 	supportsCommand?(session: IAgentSessionHandle, name: string): boolean;
 	/** The running turn takes messages without stopping (ACP `_session/steering`). */

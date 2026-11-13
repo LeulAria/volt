@@ -500,6 +500,7 @@ export class ServerTextModelService implements Partial<ITextModelService> {
 export const serverTextFileService = {
 	files: {
 		get: () => undefined,
+		models: [],
 		onDidSave: Event.None,
 	},
 };

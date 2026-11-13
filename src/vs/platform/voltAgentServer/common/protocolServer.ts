@@ -35,7 +35,17 @@ export interface IAgentServerAuth {
 	readonly role: AgentServerRole;
 	/** The paired device the token was issued to. */
 	readonly deviceId?: string;
+	/** What the token may do; the server's own token and owner sessions may do everything. */
+	readonly scopes?: readonly AgentServerTokenScope[];
+	/** When the token stops working unless it is refreshed (`/api/auth/refresh`). */
+	readonly expiresAt?: number;
 }
+
+/**
+ * `agent`: the socket and the browser workbench (chats, files, terminals). `usage`: only another
+ * machine's read of this one's usage (`/api/usage`).
+ */
+export type AgentServerTokenScope = 'agent' | 'usage';
 
 export interface IAgentServerClientInfo {
 	readonly connectionId: number;

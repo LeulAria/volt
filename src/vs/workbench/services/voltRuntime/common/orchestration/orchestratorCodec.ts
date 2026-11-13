@@ -334,6 +334,7 @@ function parseThread(value: unknown): IOrchThread | undefined {
 		...optional('moving', parseMove(thread.moving)),
 		...optional('lastMove', parseMoveResult(thread.lastMove)),
 		...optional('spend', parseSpend(thread.spend)),
+		...(num(thread.maxChildren) ? { maxChildren: Math.max(1, Math.floor(thread.maxChildren as number)) } : {}),
 	};
 }
 
@@ -446,5 +447,8 @@ function parseTask(value: unknown): IOrchTask | undefined {
 		...(num(task.budgetUsd) !== undefined ? { budgetUsd: task.budgetUsd as number } : {}),
 		...optional('fallbacks', parseModelChoices(task.fallbacks)),
 		...(Array.isArray(task.failedOn) && task.failedOn.length ? { failedOn: task.failedOn.filter((label): label is string => typeof label === 'string') } : {}),
+		...(Array.isArray(task.blind) && task.blind.length ? { blind: task.blind.filter((id): id is string => typeof id === 'string') } : {}),
+		...(str(task.team) ? { team: task.team as string } : {}),
+		...(task.quiet === true ? { quiet: true } : {}),
 	};
 }

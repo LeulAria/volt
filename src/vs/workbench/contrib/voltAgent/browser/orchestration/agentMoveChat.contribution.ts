@@ -30,6 +30,7 @@ registerAction2(class MoveAgentChatAction extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_MOVE_CHAT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.moveChat', "Move Chat to Worktree…"),
 			category: localize2('volt', "Volt"),
 			f1: true,

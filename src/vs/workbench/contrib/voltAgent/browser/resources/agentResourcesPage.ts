@@ -9,8 +9,8 @@ import { localize } from '../../../../../nls.js';
 import { AgentResourceGroupId, AgentResourceIconShapes, agentResourceGroup } from '../../common/agentResources.js';
 import { IAgentResource } from './agentResourcesService.js';
 
-/** Opens Agent Resources; args: a section id, and the folder it is about (a chat's worktree). */
-export const OPEN_AGENT_RESOURCES_COMMAND_ID = 'volt.agent.openAgentResources';
+/** Opens Agent Resources; args: a section id, and the folder it is about. The page is a module (contrib/voltAgentResources). */
+export { OPEN_AGENT_RESOURCES_COMMAND_ID } from '../../../voltAgentResources/common/voltAgentResources.js';
 
 /** The section that manages a group's files. */
 export function agentResourcesSectionFor(group: AgentResourceGroupId): AgentResourcesSectionId {

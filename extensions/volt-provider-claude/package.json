@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -22,5 +23,158 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "provider.claude",
+			"label": "Claude",
+			"description": "Claude Code and Anthropic API models in the model picker and Providers & Models.",
+			"category": "providers",
+			"icon": "hubot",
+			"order": 10
+		},
+		"voltAgents": [
+			{
+				"id": "claude",
+				"provider": "claude-code",
+				"label": "Claude",
+				"order": 20,
+				"binary": "claude",
+				"versionArgs": [
+					"--version"
+				],
+				"args": [],
+				"acpAdapter": {
+					"command": "claude-agent-acp",
+					"package": "@agentclientprotocol/claude-agent-acp@0.81.2"
+				},
+				"env": {
+					"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"
+				},
+				"authProbe": "claude",
+				"login": [
+					"claude",
+					"auth",
+					"login"
+				],
+				"apiHosts": [
+					"api.anthropic.com",
+					"*.anthropic.com",
+					"claude.ai",
+					"*.claude.ai",
+					"claude.com",
+					"*.claude.com",
+					"sentry.io",
+					"*.sentry.io"
+				],
+				"state": {
+					"configOverlay": "CLAUDE_CONFIG_DIR",
+					"configHome": ".claude",
+					"link": [
+						"settings.json",
+						"settings.local.json",
+						"CLAUDE.md",
+						"agents",
+						"commands",
+						"skills",
+						"hooks",
+						"plugins",
+						"output-styles",
+						"rules",
+						"keybindings.json",
+						"statusline.sh"
+					],
+					"seed": [
+						{
+							"name": ".claude.json",
+							"from": "home:.claude.json",
+							"mergeBack": [
+								"numStartups",
+								"tipsHistory",
+								"promptQueueUseCount",
+								"projects.*.lastSessionId",
+								"projects.*.lastCost",
+								"projects.*.lastAPIDuration",
+								"projects.*.lastAPIDurationWithoutRetries",
+								"projects.*.lastToolDuration",
+								"projects.*.lastDuration",
+								"projects.*.lastLinesAdded",
+								"projects.*.lastLinesRemoved",
+								"projects.*.lastTotalInputTokens",
+								"projects.*.lastTotalOutputTokens",
+								"projects.*.lastTotalCacheCreationInputTokens",
+								"projects.*.lastTotalCacheReadInputTokens",
+								"projects.*.lastTotalWebSearchRequests",
+								"projects.*.lastModelUsage",
+								"projects.*.lastSessionMetrics",
+								"projects.*.exampleFiles",
+								"projects.*.exampleFilesGeneratedAt",
+								"projects.*.hasCompletedProjectOnboarding",
+								"projects.*.projectOnboardingSeenCount"
+							]
+						}
+					],
+					"secureStorage": {
+						"env": "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+						"file": ".credentials.json",
+						"freshness": [
+							"claudeAiOauth",
+							"expiresAt"
+						],
+						"identity": "claude"
+					},
+					"writable": [
+						"Library/Caches/claude-cli-nodejs",
+						".cache/claude-cli-nodejs"
+					],
+					"readable": [
+						".local/share/claude"
+					],
+					"credentials": [
+						".claude/.credentials.json"
+					],
+					"tmpDirs": [
+						"/private/tmp/claude-${uid}",
+						"/tmp/claude-${uid}",
+						"/private/tmp/cc-socks",
+						"/tmp/cc-socks"
+					],
+					"env": {
+						"DISABLE_AUTOUPDATER": "1"
+					},
+					"quietPaths": {
+						"processes": [
+							"claude"
+						],
+						"paths": [
+							".claude/skills/synced",
+							".claude/plugins",
+							".local/state/claude"
+						]
+					},
+					"envKeys": [
+						"ANTHROPIC_API_KEY",
+						"ANTHROPIC_AUTH_TOKEN",
+						"ANTHROPIC_BASE_URL",
+						"ANTHROPIC_MODEL",
+						"CLAUDE_CODE_OAUTH_TOKEN",
+						"CLAUDE_CONFIG_DIR",
+						"CLAUDE_CODE_USE_BEDROCK",
+						"CLAUDE_CODE_USE_VERTEX"
+					]
+				},
+				"models": {
+					"source": "acp"
+				}
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "secrets.use:claude",
+					"class": "high",
+					"reason": "The provider's sign-in or API key."
+				}
+			]
+		}
+	}
 }

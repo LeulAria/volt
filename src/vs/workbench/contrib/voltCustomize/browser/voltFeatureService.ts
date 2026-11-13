@@ -14,7 +14,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { EnablementState, IWorkbenchExtensionEnablementService, IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
-import { IVoltFeatureService, VOLT_FEATURES, voltFeature, voltFeatureOwning, VoltFeaturePart } from '../common/voltFeatures.js';
+import { IVoltFeatureService, VOLT_FEATURES, voltFeature, voltFeatureContextKey, voltFeatureDisabledTools, voltFeatureOwning, VoltFeaturePart } from '../common/voltFeatures.js';
 
 /**
  * A feature is off when the user disabled its built-in extension (globally or for this workspace). An extension that isn't there at all (a build that doesn't ship it) leaves its
@@ -31,6 +31,8 @@ export class VoltFeatureService extends Disposable implements IVoltFeatureServic
 	readonly onDidChange = this._onDidChange.event;
 
 	private disabled: ReadonlySet<string>;
+	/** Of `disabled`, the features turned off only for this workspace. */
+	private disabledInWorkspace: ReadonlySet<string> = new Set();
 	private readonly contextKeys = new Map<string, IContextKey<boolean>>();
 	private readonly recompute = this._register(new RunOnceScheduler(() => void this.read(), 50));
 
@@ -48,7 +50,7 @@ export class VoltFeatureService extends Disposable implements IVoltFeatureServic
 		this.disabled = new Set(VOLT_FEATURES.filter(feature => feature.extensionId && globallyDisabled.some(id => areSameExtensions(id, { id: feature.extensionId! }))).map(feature => feature.id));
 		for (const feature of VOLT_FEATURES) {
 			// `voltFeature.usage`: for when clauses on menus and commands.
-			this.contextKeys.set(feature.id, new RawContextKey<boolean>(`voltFeature.${feature.id}`, true).bindTo(contextKeyService));
+			this.contextKeys.set(feature.id, new RawContextKey<boolean>(voltFeatureContextKey(feature.id), true).bindTo(contextKeyService));
 		}
 		this.apply();
 		this._register(this.enablement.onEnablementChanged(() => this.recompute.schedule()));
@@ -96,6 +98,7 @@ export class VoltFeatureService extends Disposable implements IVoltFeatureServic
 		try {
 			const extensions = await this.featureExtensions();
 			const disabled = new Set<string>();
+			const workspace = new Set<string>();
 			for (const [featureId, local] of extensions) {
 				// Only the user's choice turns a feature off, not a state the environment puts the
 				// extension in (an untrusted workspace, a remote window's extension kind).
@@ -103,10 +106,15 @@ export class VoltFeatureService extends Disposable implements IVoltFeatureServic
 				if (state === EnablementState.DisabledGlobally || state === EnablementState.DisabledWorkspace) {
 					disabled.add(featureId);
 				}
+				if (state === EnablementState.DisabledWorkspace) {
+					workspace.add(featureId);
+				}
 			}
-			if (disabled.size !== this.disabled.size || [...disabled].some(id => !this.disabled.has(id))) {
-				this.disabled = disabled;
-				this.apply();
+			const changed = disabled.size !== this.disabled.size || [...disabled].some(id => !this.disabled.has(id));
+			this.disabled = disabled;
+			this.disabledInWorkspace = workspace;
+			this.apply();
+			if (changed) {
 				this._onDidChange.fire();
 			}
 		} catch (error) {
@@ -118,6 +126,11 @@ export class VoltFeatureService extends Disposable implements IVoltFeatureServic
 		for (const [featureId, key] of this.contextKeys) {
 			key.set(!this.disabled.has(featureId));
 		}
-		this.hostTools.setDisabledTools(VOLT_FEATURES.filter(feature => this.disabled.has(feature.id)).flatMap(feature => feature.tools ?? []));
+		this.hostTools.setDisabledTools(voltFeatureDisabledTools(VOLT_FEATURES.filter(feature => this.disabled.has(feature.id))));
+		// The agent server's own tools too (customize.md 6.1d): it keeps the global choice while no window is open.
+		this.hostTools.mirrorFeatureEnablement({
+			global: [...this.disabled].filter(id => !this.disabledInWorkspace.has(id)),
+			workspace: [...this.disabledInWorkspace],
+		});
 	}
 }

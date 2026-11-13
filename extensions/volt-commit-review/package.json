@@ -6,7 +6,8 @@
 	"publisher": "volt",
 	"license": "MIT",
 	"engines": {
-		"vscode": "*"
+		"vscode": "*",
+		"volt": "^1.0.0"
 	},
 	"categories": [
 		"Other"
@@ -21,5 +22,50 @@
 			"supported": true
 		}
 	},
-	"contributes": {}
+	"contributes": {
+		"voltModule": {
+			"feature": "commitReview",
+			"label": "Commit review",
+			"description": "Agents propose commits for the user to review, and name a worktree's branch.",
+			"category": "workspace",
+			"icon": "git-compare",
+			"order": 70,
+			"entry": "voltCommitReview"
+		},
+		"voltTools": [
+			{
+				"name": "propose_commits",
+				"class": "safe"
+			},
+			{
+				"name": "await_commits",
+				"class": "safe"
+			},
+			{
+				"name": "rename_branch",
+				"class": "escapes"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "git.read",
+					"class": "medium"
+				},
+				{
+					"id": "git.write",
+					"class": "high"
+				},
+				{
+					"id": "spawn.unsandboxed",
+					"class": "critical",
+					"reason": "rename_branch runs git (and its hooks) on the host."
+				}
+			]
+		}
+	}
 }

@@ -8,6 +8,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { RTK_COMMAND_ENV, RTK_WRAPPER, wantsRtk } from '../../common/codeIntelligence.js';
+import { IChatExec } from '../../common/execContext.js';
 import { IVoltHostToolService } from '../../common/hostTools.js';
 import { isLongRunningCommand, TERMINAL_START_TOOL_NAME } from '../../common/terminalTools.js';
 import { pickBoolean, pickNumber, pickString } from '../../common/tools/args.js';
@@ -39,6 +40,8 @@ export interface IShellToolHost {
 	readonly rtk?: () => boolean;
 	/** Commands RTK must leave alone (Settings > Code Intelligence), by their first words. */
 	readonly rtkExclusions?: () => readonly string[];
+	/** Whose chat runs the command: a sandboxed chat's commands run in its sandbox, with its rules (B-06). */
+	readonly exec: () => IChatExec;
 }
 
 export function createShellTools(host: IShellToolHost): IVoltTool[] {
@@ -173,9 +176,11 @@ async function runShell(host: IShellToolHost, args: unknown, ctx: IToolContext):
 	// RTK picks the compact form of the command, if it has one: inside the same shell call on
 	// POSIX; on Windows by asking it first without a shell (cmd would splice the command into its
 	// own syntax), then running what it answers.
+	const exec = host.exec();
 	const wantsCompact = !!host.rtk?.() && wantsRtk(command, host.rtkExclusions?.());
 	const viaWrapper = wantsCompact && !isWindows;
-	const rewritten = wantsCompact && isWindows ? await rtkRewrite(host.stdio, command, cwd) : undefined;
+	// The Windows rewrite asks RTK outside any shell; a sandboxed chat's command never goes through that.
+	const rewritten = wantsCompact && isWindows && !exec.sandbox ? await rtkRewrite(host.stdio, command, cwd) : undefined;
 	let result: IVoltExecResult;
 	try {
 		result = await host.stdio.exec({
@@ -189,6 +194,7 @@ async function runShell(host: IShellToolHost, args: unknown, ctx: IToolContext):
 			...(!background && (explicitTimeout === undefined || explicitTimeout > YIELD_AFTER_MS) ? { yieldAfterMs: YIELD_AFTER_MS } : {}),
 			inlineChars: INLINE_CHARS,
 			spillDir: host.spillDir?.(),
+			...exec,
 		});
 	} catch (err) {
 		return fail(err instanceof Error ? err.message : String(err));
@@ -198,8 +204,18 @@ async function runShell(host: IShellToolHost, args: unknown, ctx: IToolContext):
 	if (result.logPath) {
 		host.onLog?.(result.logPath);
 	}
+	// What the chat's sandbox stopped: the chat shows its Volt Guard card, as for an agent CLI's own
+	// commands. No broker record goes with it (the card's "Allow" changes the chat's settings, which
+	// the next command reads).
+	for (const { denialId: _id, epoch: _epoch, ...denial } of result.sandboxDenials ?? []) {
+		ctx.emit?.({ type: 'sandbox.denial', denial });
+	}
 	const seconds = (result.durationMs / 1000).toFixed(1);
 	const output = result.combined.trim() || '(no output)';
+	if (result.refused) {
+		// Nothing ran: the chat's sandbox refused it (or it came without it). An error, never an exit status (FAIL-NATIVE-1).
+		return fail(`$ ${command}\n${result.combined.trim() || result.refused.reason}\n[not run: refused by Volt's sandbox (${result.refused.kind})]`);
+	}
 	let status: string;
 	if (result.running && !background) {
 		status = `[still running after ${seconds}s as job ${id}; output so far is above. Keep working, or job_wait (id, until, timeout_ms) for it; job_output reads more, job_stop stops it]`;

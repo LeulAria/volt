@@ -12,6 +12,7 @@ import { delimiter, dirname, join, relative, sep } from '../../../base/common/pa
 import { isWindows } from '../../../base/common/platform.js';
 import { IVoltFffStatus } from '../common/voltCodeIndex.js';
 import { FFF_VERSION, fffAsset, parseFffFindFiles, parseFffVersion } from '../common/fff.js';
+import { HelperIntegrity, helperIntegrity } from '../../voltHelpers/node/helperIntegrity.js';
 
 /** A warm FFF answers in 1-5 ms; anything slower than this is broken or overloaded. */
 const CALL_TIMEOUT_MS = 2_500;
@@ -206,7 +207,20 @@ export class FffEngine {
 		private readonly toolsDir: string,
 		private readonly log: (message: string) => void,
 		private readonly timeouts: IFffTimeouts = DEFAULT_TIMEOUTS,
+		private readonly integrity: HelperIntegrity = helperIntegrity(),
 	) { }
+
+	/**
+	 * Volt's own install runs only while it is the pinned release (checked before every run, B-14).
+	 * A binary the user set in settings or put on PATH is the user's own tool and runs as it is.
+	 */
+	private async refusal(found: { path: string; managed: boolean }): Promise<string | undefined> {
+		if (!found.managed) {
+			return undefined;
+		}
+		const verdict = await this.integrity.verify('fff', found.path);
+		return verdict.ok ? undefined : `refused: ${verdict.reason}`;
+	}
 
 	private get fffDir(): string {
 		return join(this.toolsDir, 'fff');
@@ -266,6 +280,10 @@ export class FffEngine {
 			status = { ...base, state: fffAsset(process.platform, process.arch) ? 'missing' : 'unsupported' };
 		} else {
 			try {
+				const refused = await this.refusal(found);
+				if (refused) {
+					throw new Error(refused);
+				}
 				status = { ...base, state: 'ready', path: found.path, managed: found.managed, version: await this.version(found.path) };
 			} catch (err) {
 				status = { ...base, state: 'error', path: found.path, managed: found.managed, error: err instanceof Error ? err.message : String(err) };
@@ -296,6 +314,12 @@ export class FffEngine {
 			const status = await this.status(settingPath);
 			if (status.state !== 'ready' || !status.path) {
 				return { kind: 'skipped', reason: status.state === 'error' ? `FFF unusable: ${status.error}` : 'FFF not installed' };
+			}
+			// The status is cached for a minute: check the binary again right before it starts.
+			const refused = await this.refusal({ path: status.path, managed: !!status.managed });
+			if (refused) {
+				this.versionCache = undefined;
+				return { kind: 'skipped', reason: `FFF unusable: ${refused}` };
 			}
 			process?.dispose();
 			this.processes.delete(base);

@@ -65,7 +65,7 @@ CommandsRegistry.registerCommand(OPEN_CONNECTED_AGENTS_COMMAND_ID, async accesso
 	await accessor.get(ICommandService).executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID);
 	const pane = editorService.activeEditorPane as unknown as { showSection?: (id: string) => void } | undefined;
 	pane?.showSection?.('connected');
-});
+}, 'public');
 
 /**
  * Serves Volt's orchestrator tools to outside agents through the main process's OAuth MCP

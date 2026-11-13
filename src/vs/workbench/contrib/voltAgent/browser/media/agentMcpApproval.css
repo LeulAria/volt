@@ -1,0 +1,119 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Project MCP server approval card above the composer: the worktree setup card's opaque surface
+ * (never see-through or blurred over the window, volt-transparent-window skill). */
+.volt-mcp-approval {
+	width: 100%;
+	max-width: 728px;
+	margin: 0 auto 6px;
+	box-sizing: border-box;
+	padding: 8px 10px 10px;
+	border-radius: 12px;
+	background: #222222;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	color: var(--vscode-foreground);
+	font-size: 12.5px;
+}
+
+.monaco-workbench.vs .volt-mcp-approval,
+.monaco-workbench.hc-light .volt-mcp-approval {
+	background: #ececec;
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+.volt-mcp-approval.hidden {
+	display: none;
+}
+
+.volt-mcp-approval-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 22px;
+	min-width: 0;
+}
+
+.volt-mcp-approval-mark {
+	display: flex;
+}
+
+.volt-mcp-approval-mark .codicon {
+	font-size: 14px;
+}
+
+.volt-mcp-approval-title {
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-mcp-approval-detail {
+	margin-left: auto;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	white-space: nowrap;
+}
+
+.volt-mcp-approval-lead {
+	margin: 4px 0 8px 22px;
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+	line-height: 1.4;
+}
+
+.volt-mcp-approval-section {
+	margin-bottom: 4px;
+	font-weight: 500;
+}
+
+.volt-mcp-approval-changes {
+	margin: 0 0 8px 22px;
+}
+
+.volt-mcp-approval-change {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+	padding: 1px 0;
+}
+
+.volt-mcp-approval-arrow {
+	display: flex;
+	align-self: center;
+	opacity: 0.6;
+}
+
+.volt-mcp-approval-before {
+	text-decoration: line-through;
+	opacity: 0.7;
+}
+
+.volt-mcp-approval-spec {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 3px 12px;
+	margin: 0 0 10px 22px;
+}
+
+.volt-mcp-approval-label {
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	white-space: nowrap;
+}
+
+.volt-mcp-approval-value,
+.volt-mcp-approval-before,
+.volt-mcp-approval-after {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+}
+
+.volt-mcp-approval-actions {
+	display: flex;
+	gap: 6px;
+	margin-left: 22px;
+}

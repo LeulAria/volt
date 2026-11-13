@@ -11,7 +11,7 @@ import { IConfigurationService } from '../../configuration/common/configuration.
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMainService.js';
 import { ILogService } from '../../log/common/log.js';
-import { IVoltExecRequest, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
+import { IVoltExecRequest, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalRequest, IVoltStdioSpawnOptions } from '../common/voltStdio.js';
 import { VoltStdioService } from '../node/voltStdioService.js';
 
 /** {@link VoltStdioService} for windows: a window's agent processes stop when it reloads or closes. */
@@ -53,6 +53,20 @@ export function createVoltStdioChannel(service: VoltStdioMainService, disposable
 			}
 			if (command === 'exec') {
 				return service.execFor(ctx, (arg as [IVoltExecRequest])[0]) as Promise<unknown> as Promise<T>;
+			}
+			if (command === 'spawnSandboxedMcp') {
+				return service.spawnSandboxedMcpFor(ctx, (arg as [IVoltSandboxedMcpRequest])[0]) as Promise<unknown> as Promise<T>;
+			}
+			if (command === 'prepareSandboxedTerminal') {
+				return service.prepareSandboxedTerminalFor(ctx, (arg as [IVoltSandboxedTerminalRequest])[0]) as Promise<unknown> as Promise<T>;
+			}
+			if (command === 'allowSandboxDomains' && service.ownerOf((arg as [string])[0]) !== ctx) {
+				// A window widens only its own agents' network, never another window's or one no window started.
+				return Promise.resolve(undefined as T);
+			}
+			if ((command === 'approveSandboxDenial' || command === 'refuseSandboxDenial') && service.ownerOf((arg as [string])[0]) !== ctx) {
+				// A window answers only its own agents' denials.
+				return Promise.resolve((command === 'approveSandboxDenial' ? { ok: false, epoch: 0, reason: 'not this window\'s agent' } : false) as T);
 			}
 			return proxied.call<T>(ctx, command, arg, cancellationToken);
 		},

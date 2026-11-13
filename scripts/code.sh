@@ -47,6 +47,12 @@ function code() {
 		DISABLE_TEST_EXTENSION=""
 	fi
 
+	# The macOS sandbox backend's native helper (.build/volt-helpers, pinned for the session in the
+	# unsigned helpers developer mode); without it sandboxed chats are refused.
+	if [[ "$OSTYPE" == "darwin"* ]]; then
+		node build/volt/sandbox-helper/build.mjs >/dev/null || true
+	fi
+
 	# macOS: run as its own app so the mic and speech permissions are Volt's, not the terminal's.
 	# Not from Desktop, Documents or Downloads: there a disclaimed Volt has no folder access of its
 	# own and dies with "EPERM: operation not permitted, uv_cwd". VOLT_DISCLAIM=1 forces it anyway

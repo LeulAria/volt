@@ -20,6 +20,7 @@ import { RemoteAgentConnectionContext } from './remoteAgentEnvironment.js';
 import { RemoteAuthorityResolverError, RemoteConnection } from './remoteAuthorityResolver.js';
 import { IRemoteSocketFactoryService } from './remoteSocketFactoryService.js';
 import { ISignService } from '../../sign/common/sign.js';
+import { IVoltSandboxedHostStartParams, sandboxRefusalMessage } from '../../voltSandbox/common/extensionHostSandbox.js';
 
 const RECONNECT_TIMEOUT = 30 * 1000 /* 30s */;
 
@@ -351,17 +352,21 @@ export interface IRemoteExtensionHostStartParams {
 	break?: boolean;
 	port?: number | null;
 	env?: { [key: string]: string | null };
+	/** Volt (P2, P6): run this host alone in the OS sandbox, for one extension. */
+	voltSandbox?: IVoltSandboxedHostStartParams;
 }
 
 interface IExtensionHostConnectionResult {
 	protocol: PersistentProtocol;
 	debugPort?: number;
+	/** Volt: the server confirmed the host runs alone in the sandbox (`startArguments.voltSandbox`). */
+	voltSandboxed?: boolean;
 }
 
 async function doConnectRemoteAgentExtensionHost(options: ISimpleConnectionOptions, startArguments: IRemoteExtensionHostStartParams, timeoutCancellationToken: CancellationToken): Promise<IExtensionHostConnectionResult> {
-	const { protocol, firstMessage } = await connectToRemoteExtensionHostAgentAndReadOneMessage<{ debugPort?: number }>(options, ConnectionType.ExtensionHost, startArguments, timeoutCancellationToken);
+	const { protocol, firstMessage } = await connectToRemoteExtensionHostAgentAndReadOneMessage<{ debugPort?: number; voltSandboxed?: boolean }>(options, ConnectionType.ExtensionHost, startArguments, timeoutCancellationToken);
 	const debugPort = firstMessage && firstMessage.debugPort;
-	return { protocol, debugPort };
+	return { protocol, debugPort, voltSandboxed: firstMessage?.voltSandboxed === true };
 }
 
 export interface ITunnelConnectionStartParams {
@@ -422,6 +427,18 @@ export async function connectRemoteAgentManagement(options: IConnectionOptions, 
 }
 
 export async function connectRemoteAgentExtensionHost(options: IConnectionOptions, startArguments: IRemoteExtensionHostStartParams): Promise<ExtensionHostPersistentConnection> {
+	if (startArguments.voltSandbox) {
+		// Volt (P2, P6): one attempt, and a refusal is the extension's, never the window's connection
+		// failing. A server that ignored the request (not Volt's) started an ordinary host: it gets
+		// no init data, so the extension never loads unsandboxed.
+		const simpleOptions = await resolveConnectionOptions(options, generateUuid(), null);
+		const { protocol, debugPort, voltSandboxed } = await doConnectRemoteAgentExtensionHost(simpleOptions, startArguments, CancellationToken.None);
+		if (!voltSandboxed) {
+			safeDisposeProtocolAndSocket(protocol);
+			throw new Error(sandboxRefusalMessage('server', 'This server can\'t run an extension in a sandbox (it is not a Volt server, or an older one).'));
+		}
+		return new ExtensionHostPersistentConnection(options, startArguments, simpleOptions.reconnectionToken, protocol, debugPort);
+	}
 	return createInitialConnection(
 		options,
 		async (simpleOptions) => {

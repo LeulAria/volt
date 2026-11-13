@@ -92,7 +92,7 @@ interface ISourcePick extends IQuickPickItem {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: IMPORT_BROWSER_COOKIES_COMMAND_ID, title: localize2('voltCookies.command', "Import Browser Cookies into Preview Browser…"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: IMPORT_BROWSER_COOKIES_COMMAND_ID, visibility: 'internal', title: localize2('voltCookies.command', "Import Browser Cookies into Preview Browser…"), category: localize2('volt', "Volt"), f1: true });
 	}
 
 	async run(accessor: ServicesAccessor): Promise<void> {

@@ -25,7 +25,17 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { IWorkbenchLayoutService } from '../../../services/layout/browser/layoutService.js';
 import { IAgentHistoryService } from '../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
-import { DEVICE_REMOTE_HOSTS_SETTING } from '../common/agentDevices.js';
+import { parse as parseJson } from '../../../../base/common/json.js';
+import { joinPath } from '../../../../base/common/resources.js';
+import { URI } from '../../../../base/common/uri.js';
+import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
+import { IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
+import { DEVICE_REMOTE_HOSTS_SCHEMA, DEVICE_REMOTE_HOSTS_SETTING, parseRemoteHosts, workspaceRemoteHosts } from '../common/agentDevices.js';
 import { AgentDevicesService, IAgentDevicesService } from '../browser/devices/agentDevicesService.js';
 import { DEVICE_EDITOR_ID, DeviceFloat, DevicePreviewEditor, DevicePreviewEditorInput, DevicePreviewEditorInputSerializer } from '../browser/devices/deviceEditor.js';
 import { agentIdeScope, onDidChangeAgentIdeScope } from '../browser/workspace/agentIdeWorkspace.js';
@@ -38,7 +48,8 @@ import './voltWindowCapture.js';
 
 registerMainProcessRemoteService(IVoltDevicesService, VOLT_DEVICES_CHANNEL_NAME);
 registerMainProcessRemoteService(IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME);
-registerMainProcessRemoteService(IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME);
+// The desktop engines can always try: `isAvailable` is answered here, not sent to a main process that has no such method.
+registerMainProcessRemoteService(IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME, { proxyOptions: { properties: new Map([['isAvailable', undefined]]) } });
 registerSingleton(IAgentDevicesService, AgentDevicesService, InstantiationType.Delayed);
 
 export const OPEN_DEVICE_PREVIEW_COMMAND_ID = 'volt.devices.openPreview';
@@ -48,25 +59,106 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	title: localize('voltDevices.configTitle', "Volt Devices"),
 	type: 'object',
 	properties: {
-		[DEVICE_REMOTE_HOSTS_SETTING]: {
-			type: 'array',
-			default: [],
-			markdownDescription: localize('voltDevices.remoteHosts', "Other machines whose iOS simulators and Android emulators Volt (and its agents) can use, reached with `ssh` using keys (no passwords). Each needs Xcode and/or the Android SDK. Example: `[{ \"name\": \"Mac mini\", \"host\": \"me@mac-mini.local\" }]`."),
-			items: {
-				type: 'object',
-				properties: {
-					name: { type: 'string', description: localize('voltDevices.host.name', "Name shown in Volt.") },
-					host: { type: 'string', description: localize('voltDevices.host.host', "host, user@host or user@host:port") },
-					user: { type: 'string' },
-					port: { type: 'number' },
-					identityFile: { type: 'string', description: localize('voltDevices.host.identity', "Private key file (ssh -i).") },
-					androidSdk: { type: 'string', description: localize('voltDevices.host.sdk', "Android SDK folder on that machine, if not ~/Library/Android/sdk or on its PATH.") },
-				},
-				required: ['host'],
-			},
-		},
+		[DEVICE_REMOTE_HOSTS_SETTING]: DEVICE_REMOTE_HOSTS_SCHEMA,
 	},
 });
+
+const REMOTE_HOSTS_NOTICE_KEY = 'volt.devices.remoteHostsWorkspaceNotice';
+
+/**
+ * `volt.devices.remoteHosts` is read from user settings only (B-36): a repository could otherwise
+ * point Volt's ssh and scp at a machine of its choosing. A workspace that still sets it gets one
+ * notice per workspace that shows where it pointed, and can copy the entries to user settings
+ * after the user has seen them (B-AP-5). Nothing is copied without that click.
+ */
+class VoltRemoteHostsScopeNotice extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltRemoteHostsScopeNotice';
+
+	constructor(
+		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
+		@IFileService private readonly fileService: IFileService,
+		@INotificationService private readonly notificationService: INotificationService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IStorageService private readonly storageService: IStorageService,
+	) {
+		super();
+		void this.check();
+	}
+
+	private async check(): Promise<void> {
+		if (this.storageService.getBoolean(REMOTE_HOSTS_NOTICE_KEY, StorageScope.WORKSPACE, false)) {
+			return;
+		}
+		const workspace = this.workspaceContextService.getWorkspace();
+		const found: unknown[] = [];
+		const read = async (resource: URI, pick: (parsed: unknown) => unknown) => {
+			const content = await this.fileService.readFile(resource).catch(() => undefined);
+			const entries = content ? workspaceRemoteHosts(pick(parseJson(content.value.toString()))) : undefined;
+			found.push(...(entries ?? []));
+		};
+		for (const folder of workspace.folders) {
+			await read(joinPath(folder.uri, '.vscode', 'settings.json'), parsed => parsed);
+		}
+		if (workspace.configuration) {
+			await read(workspace.configuration, parsed => parsed && typeof parsed === 'object' ? (parsed as { settings?: unknown }).settings : undefined);
+		}
+		const valid = found.filter(entry => parseRemoteHosts([entry]).length === 1);
+		if (!found.length || this._store.isDisposed) {
+			return;
+		}
+		const destinations = parseRemoteHosts(valid).map(host => host.ssh ? `${host.ssh.user ? `${host.ssh.user}@` : ''}${host.ssh.host}${host.ssh.port ? `:${host.ssh.port}` : ''}` : host.label);
+		const dismiss = () => this.storageService.store(REMOTE_HOSTS_NOTICE_KEY, true, StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		const actions = valid.length ? [{
+			label: localize('voltDevices.remoteHosts.copy', "Copy to User Settings"),
+			run: () => {
+				const current = this.configurationService.inspect<unknown[]>(DEVICE_REMOTE_HOSTS_SETTING).userValue;
+				const existing = Array.isArray(current) ? current : [];
+				const known = new Set(parseRemoteHosts(existing).map(host => host.ssh?.host));
+				const added = valid.filter(entry => !known.has(parseRemoteHosts([entry])[0]?.ssh?.host));
+				void this.configurationService.updateValue(DEVICE_REMOTE_HOSTS_SETTING, [...existing, ...added], ConfigurationTarget.USER);
+				dismiss();
+			},
+		}] : [];
+		this.notificationService.prompt(
+			Severity.Warning,
+			destinations.length
+				? localize('voltDevices.remoteHosts.workspace', "This workspace's settings list remote device hosts ({0}). Volt now reads volt.devices.remoteHosts from your user settings only, so it will not connect to them unless you copy them there.", destinations.join(', '))
+				: localize('voltDevices.remoteHosts.workspaceInvalid', "This workspace's settings list remote device hosts that Volt ignores: volt.devices.remoteHosts is read from your user settings only, and these entries are not valid."),
+			[...actions, { label: localize('voltDevices.remoteHosts.ignore', "Ignore"), run: dismiss }],
+		);
+	}
+}
+
+registerWorkbenchContribution2(VoltRemoteHostsScopeNotice.ID, VoltRemoteHostsScopeNotice, WorkbenchPhase.Eventually);
+
+/**
+ * A build from sources may compile Volt's native helpers at runtime and runs them unsigned (the
+ * unsigned helpers developer mode, see helperIntegrity.ts). The status bar says so for as long as
+ * the window runs; packaged builds run only the signed helpers in their bundle and show nothing.
+ */
+class VoltUnsignedHelpersBadge extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltUnsignedHelpersBadge';
+
+	constructor(
+		@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
+		@IStatusbarService statusbarService: IStatusbarService,
+	) {
+		super();
+		if (environmentService.isBuilt) {
+			return;
+		}
+		const text = localize('voltHelpers.unsigned', "Unsigned helpers");
+		this._register(statusbarService.addEntry({
+			name: text,
+			text: `$(unverified) ${text}`,
+			ariaLabel: text,
+			tooltip: localize('voltHelpers.unsignedTooltip', "Developer mode: Volt runs from sources, so its native helpers (speech, desktop control) may be compiled here and are not signed. Packaged builds run only signed helpers from the app bundle, checked before every launch."),
+			kind: 'warning',
+		}, VoltUnsignedHelpersBadge.ID, StatusbarAlignment.LEFT, -1000));
+	}
+}
+
+registerWorkbenchContribution2(VoltUnsignedHelpersBadge.ID, VoltUnsignedHelpersBadge, WorkbenchPhase.AfterRestored);
 
 Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
 	EditorPaneDescriptor.create(DevicePreviewEditor, DEVICE_EDITOR_ID, localize('voltDevices.editorLabel', "Devices")),
@@ -164,7 +256,7 @@ registerWorkbenchContribution2(VoltDevicesContribution.ID, VoltDevicesContributi
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: OPEN_DEVICE_PREVIEW_COMMAND_ID, title: localize2('voltDevices.open', "Open Device Preview (iOS Simulator / Android Emulator)"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: OPEN_DEVICE_PREVIEW_COMMAND_ID, visibility: 'internal', title: localize2('voltDevices.open', "Open Device Preview (iOS Simulator / Android Emulator)"), category: localize2('volt', "Volt"), f1: true });
 	}
 
 	/**

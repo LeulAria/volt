@@ -65,7 +65,8 @@ export class ServerGit extends Disposable {
 		this._register(protocol.registerMethods('git', {
 			status: (_ctx, root) => this.status(String(root ?? '')),
 			commit: (_ctx, root, message, options) => this.commit(String(root ?? ''), String(message ?? ''), (options ?? {}) as { paths?: string[]; newBranch?: string }),
-			push: (_ctx, root) => this.withFolder(String(root ?? ''), folder => this.pullRequests.push({ folder })),
+			// The remote user's own Push: their pre-push hooks run (after the build-entry review on the desktop).
+			push: (_ctx, root) => this.withFolder(String(root ?? ''), folder => this.pullRequests.push({ folder, runHooks: true })),
 			pull: (_ctx, root) => this.withFolder(String(root ?? ''), folder => this.pullRequests.pull(folder)),
 			createBranch: (_ctx, root, name) => this.createBranch(String(root ?? ''), String(name ?? '')),
 		}));

@@ -115,6 +115,33 @@ export function createWorktreeIcon(): HTMLElement {
 	return el;
 }
 
+/** Volt Guard's shield, drawn on the card a sandbox refusal shows in the transcript. Square caps, as drawn. */
+export function createVoltGuardIcon(): HTMLElement {
+	const el = $('span.volt-agent-svg-icon.volt-guard');
+	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('width', '16');
+	svg.setAttribute('height', '16');
+	svg.setAttribute('aria-hidden', 'true');
+	const group = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'g');
+	group.setAttribute('fill', 'none');
+	group.setAttribute('stroke', 'currentColor');
+	group.setAttribute('stroke-linecap', 'square');
+	group.setAttribute('stroke-miterlimit', '2');
+	group.setAttribute('stroke-width', '1');
+	for (const d of [
+		'm11.65 2.88l.35-.131l.35.131l6.5 2.4l.652.244l-.002.696v5.28c0 4.75-3.25 8.25-7.5 9.75c-4.25-1.5-7.5-5-7.5-9.75V6.22l-.002-.696l.652-.244Z',
+		'm7.45 12.09l9.35-4.28l.45-.21v3l-.45.21l-8.6 3.93l-.45.21l-.14-.48l-.47-1.69L7 12.3zm2.05 4.96l7.7-3.6',
+	]) {
+		const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+		path.setAttribute('d', d);
+		group.appendChild(path);
+	}
+	svg.appendChild(group);
+	el.appendChild(svg);
+	return el;
+}
+
 export type SandboxIconId = 'off' | 'workspace-write' | 'read-only' | 'network';
 
 /** The Sandbox rows of the same menu, in the same set. */

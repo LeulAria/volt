@@ -42,6 +42,8 @@ import { AgentScratchFolders } from '../workspace/agentScratchProject.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAutomationRunHost } from './automationCommands.js';
+import { chatSandboxScope, confineChatSandbox } from '../../../../services/voltRuntime/common/access/chatSandbox.js';
+import { stricterSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxInheritance.js';
 
 /** Status and tool updates are batched into one write; a run's start is written at once. */
 const SAVE_DELAY_MS = 400;
@@ -401,7 +403,9 @@ export class AutomationService extends Disposable implements IAutomationService 
 			updatedAt: now,
 			createdBy: this.creator(),
 			...(input.createdByAgent ? { createdByAgent: true } : {}),
+			...(input.createdByExtension ? { createdByExtension: input.createdByExtension } : {}),
 			...(input.sourceThreadId ? { sourceThreadId: input.sourceThreadId } : {}),
+			...(input.sandbox && input.sandbox.level !== 'off' ? { sandbox: input.sandbox } : {}),
 			nextRuns: {},
 			runs: [],
 			runCount: 0,
@@ -820,6 +824,15 @@ export class AutomationService extends Disposable implements IAutomationService 
 		});
 		const modelRef = automation.modelRef ?? (automation.sourceThreadId ? this.orchestrator.getThread(automation.sourceThreadId)?.modelRef : undefined);
 		const host: IAutomationRunHost = { scheduled: { id: automation.id, title: automation.name, runId: run.id, ...(origin.provider !== 'schedule' && origin.provider !== 'manual' ? { webhook: true } : {}) } };
+		// Made or changed by a sandboxed chat: the run is confined at least as tightly (older automations: their source chat's sandbox).
+		const floor = automation.sandbox ?? (automation.createdByAgent && automation.sourceThreadId ? this.runtime.getSandboxSettings(automation.sourceThreadId) : undefined);
+		// The run writes its folder only when the chat that made the automation may write it (INV-11); with
+		// that chat gone its folders are unknown, and a confined run is read-only (fails closed).
+		const realpath = (path: string) => this.fileService.realpath(URI.file(path)).then(real => real?.fsPath);
+		await confineChatSandbox(this.runtime, threadId, floor, floor ? {
+			caller: automation.sourceThreadId && this.history.get(automation.sourceThreadId) ? await chatSandboxScope(this.runtime, automation.sourceThreadId, realpath) : {},
+			child: await chatSandboxScope(this.runtime, threadId, realpath),
+		} : undefined);
 		await onThread(threadId);
 		const result = await this.orchestrator.submit(threadId, {
 			text,
@@ -1199,7 +1212,7 @@ export class AutomationService extends Disposable implements IAutomationService 
 				if ('error' in patch) {
 					return { error: patch.error };
 				}
-				const created = await this.create({ ...patch, enabled: args.enabled !== false && !!patch.triggers?.length, createdByAgent: true, ...(threadId ? { sourceThreadId: threadId } : {}) });
+				const created = await this.create({ ...patch, enabled: args.enabled !== false && !!patch.triggers?.length, createdByAgent: true, ...(threadId ? { sourceThreadId: threadId, sandbox: this.runtime.getSandboxSettings(threadId) } : {}) });
 				return { text: `Created ${created.id}${created.enabled ? '' : ' (inactive: give it a schedule, or add event triggers on the Automations page)'}.\n${describeForAgent(created)}` };
 			}
 			case 'update': {
@@ -1210,7 +1223,13 @@ export class AutomationService extends Disposable implements IAutomationService 
 				if ('error' in patch) {
 					return { error: patch.error };
 				}
-				const updated = await this.update(target.id, patch);
+				let updated = await this.update(target.id, patch);
+				const sandbox = threadId ? this.runtime.getSandboxSettings(threadId) : undefined;
+				if (sandbox && sandbox.level !== 'off') {
+					// A sandboxed chat changed what it runs: from now on its runs are confined at least as tightly as that chat.
+					updated = this.mutate(target.id, automation => ({ ...automation, sandbox: stricterSandboxSettings(automation.sandbox ?? sandbox, sandbox) })) ?? updated;
+					await this.changed(true);
+				}
 				return { text: `Updated ${target.id}.\n${describeForAgent(updated!)}` };
 			}
 			case 'delete':

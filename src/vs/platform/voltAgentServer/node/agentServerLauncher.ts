@@ -8,8 +8,9 @@ import { promises as fs } from 'fs';
 import * as http from 'http';
 import { homedir, networkInterfaces } from 'os';
 import { dirname, join, sep } from '../../../base/common/path.js';
-import { IAgentServerRuntimeInfo } from '../common/protocol.js';
+import { IAgentServerRuntimeInfo, IVoltExtensionHostTicket, IVoltLocalLink, VOLT_EXTHOST_TICKET_PATH, VOLT_LOCAL_LINK_PATH } from '../common/protocol.js';
 import { IVoltAgentServerEndpoint } from '../common/agentServerService.js';
+import { childEnvFromHost } from '../../voltHelpers/common/childEnv.js';
 import { agentServerPaths, IAgentServerPaths, isProcessAlive, readAgentServerRuntime, readAgentServerToken } from './agentServerFiles.js';
 import { installLaunchdJob, restartLaunchdJob, uninstallLaunchdJob } from './launchd.js';
 
@@ -29,6 +30,21 @@ export function localNetworkAddress(): string | undefined {
 		}
 	}
 	return candidates.find(ip => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip)) ?? candidates[0];
+}
+
+/**
+ * The server's command line. `--disable-sigusr1` keeps SIGUSR1 from opening an inspector, which any
+ * same-user process could otherwise send to take over the server (B-19, HOST-SIG-1; verified on
+ * Electron 37's Node 22.19 under `ELECTRON_RUN_AS_NODE`). A build from sources keeps the signal
+ * for debugging when `VOLT_AGENT_SERVER_INSPECT=1` is set.
+ */
+export function agentServerProgram(electronPath: string, entry: string, userDataDir: string, network: boolean, env: NodeJS.ProcessEnv = process.env): string[] {
+	const debuggable = !!env['VSCODE_DEV'] && env['VOLT_AGENT_SERVER_INSPECT'] === '1';
+	const program = [electronPath, ...(debuggable ? [] : ['--disable-sigusr1']), entry, '--user-data-dir', userDataDir];
+	if (network) {
+		program.push('--host', '0.0.0.0');
+	}
+	return program;
 }
 
 export interface IAgentServerLauncherOptions {
@@ -160,10 +176,7 @@ export class AgentServerLauncher {
 	}
 
 	private async start(): Promise<void> {
-		const program = [this.options.electronPath, this.entry, '--user-data-dir', this.paths.userDataDir];
-		if (await this.networkAccess()) {
-			program.push('--host', '0.0.0.0');
-		}
+		const program = agentServerProgram(this.options.electronPath, this.entry, this.paths.userDataDir, await this.networkAccess());
 		// The compile cache halves a warm start (the server strips it from what it runs, see agentServerMain).
 		const env: Record<string, string> = { ELECTRON_RUN_AS_NODE: '1', HOME: process.env.HOME ?? '', NODE_COMPILE_CACHE: this.paths.compileCacheDir };
 		if (process.env['VSCODE_DEV']) {
@@ -182,7 +195,9 @@ export class AgentServerLauncher {
 		this.options.log(`[volt agent server] starting ${this.paths.label} as a detached process`);
 		await fs.mkdir(dirname(this.paths.logFile), { recursive: true });
 		const log = await fs.open(this.paths.logFile, 'a');
-		const child = spawn(program[0], program.slice(1), { env: { ...process.env, ...env }, cwd: this.appRoot, detached: true, stdio: ['ignore', log.fd, log.fd] });
+		// The app's own environment minus its plumbing and secrets: the main process's IPC socket
+		// (`VSCODE_IPC_HOOK`) must not reach the server or anything it starts (B-38).
+		const child = spawn(program[0], program.slice(1), { env: { ...childEnvFromHost(process.env), ...env }, cwd: this.appRoot, detached: true, stdio: ['ignore', log.fd, log.fd] });
 		child.unref();
 		await log.close();
 	}
@@ -252,7 +267,8 @@ export class AgentServerLauncher {
 
 	private probe(info: IAgentServerRuntimeInfo, token: string): Promise<boolean> {
 		return new Promise(resolve => {
-			const req = http.get({ host: info.host === '0.0.0.0' ? '127.0.0.1' : info.host, port: info.port, path: '/health', headers: { Authorization: `Bearer ${token}` }, timeout: 2_000 }, res => {
+			// `port` is plain HTTP on loopback whatever else the server listens on (network devices use `tlsPort`).
+			const req = http.get({ host: info.host === 'localhost' ? 'localhost' : '127.0.0.1', port: info.port, path: '/health', headers: { Authorization: `Bearer ${token}` }, timeout: 2_000 }, res => {
 				res.resume();
 				resolve(res.statusCode === 200);
 			});
@@ -283,16 +299,94 @@ export class AgentServerLauncher {
 		}
 		const network = info.host !== '127.0.0.1';
 		const host = network ? '127.0.0.1' : info.host;
-		const lan = network ? localNetworkAddress() : undefined;
 		return {
 			url: `ws://${host}:${info.port}/ws`,
 			token,
 			port: info.port,
 			pid: info.pid,
-			webUrl: `http://${host}:${info.port}/#token=${token}`,
+			// No token in it: a browser signs in with a one-time link ({@link createLocalWebLink}) or a pairing code.
+			webUrl: `http://${host}:${info.port}/`,
 			network,
-			pairingUrl: lan ? `http://${lan}:${info.port}/#token=${token}` : undefined,
 		};
+	}
+
+	/**
+	 * P6: a one-time ticket the desktop's sandboxed extension host connects to the workbench server
+	 * with, plus where to connect. Made with the server's own token over loopback, like a sign-in link.
+	 */
+	async createExtensionHostTicket(extensionsDir?: string): Promise<IVoltExtensionHostTicket & { readonly port: number }> {
+		const info = await this.ensureRunning().then(() => this.healthy());
+		const token = await readAgentServerToken(this.paths);
+		if (!info || !token) {
+			throw new Error('The Volt agent server is not running.');
+		}
+		const host = info.host === 'localhost' ? 'localhost' : '127.0.0.1';
+		// The app's own extension folder: an extension installed the normal way is found there (P6).
+		const body = extensionsDir ? JSON.stringify({ extensionsDir }) : '';
+		const ticket = await new Promise<IVoltExtensionHostTicket>((resolve, reject) => {
+			const req = http.request(`http://${host}:${info.port}${VOLT_EXTHOST_TICKET_PATH}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)) }, timeout: 5_000 }, res => {
+				let body = '';
+				res.setEncoding('utf8');
+				res.on('data', chunk => body += chunk);
+				res.on('end', () => {
+					try {
+						const parsed = JSON.parse(body) as Partial<IVoltExtensionHostTicket>;
+						if (res.statusCode === 200 && typeof parsed.ticket === 'string' && typeof parsed.connectionToken === 'string' && typeof parsed.globalStorageHome === 'string') {
+							resolve({ ticket: parsed.ticket, connectionToken: parsed.connectionToken, globalStorageHome: parsed.globalStorageHome, expiresAt: Number(parsed.expiresAt) });
+							return;
+						}
+					} catch {
+						// below
+					}
+					reject(new Error(res.statusCode === 404 ? 'This Volt agent server can\'t run sandboxed extensions (it is older, or has no workbench).' : `The Volt agent server refused an extension host ticket (${res.statusCode}).`));
+				});
+			});
+			req.on('error', reject);
+			req.on('timeout', () => req.destroy(new Error('The Volt agent server did not answer.')));
+			req.end(body);
+		});
+		return { ...ticket, port: info.port };
+	}
+
+	/**
+	 * A link that signs this computer's browser in once: `http://127.0.0.1:<port><path>#local=<nonce>`.
+	 * The nonce is single use and valid for a minute, and only a holder of the server's own token
+	 * (this app, `npx volt-run`) can make one. A server from before nonces gets the plain address.
+	 */
+	async createLocalWebLink(path = '/'): Promise<string> {
+		const info = await this.ensureRunning().then(() => this.healthy());
+		const token = await readAgentServerToken(this.paths);
+		if (!info || !token) {
+			throw new Error('The Volt agent server is not running.');
+		}
+		const base = `http://${info.host === 'localhost' ? 'localhost' : '127.0.0.1'}:${info.port}`;
+		const link = await new Promise<IVoltLocalLink | undefined>((resolve, reject) => {
+			const req = http.request(`${base}${VOLT_LOCAL_LINK_PATH}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Length': '0' }, timeout: 5_000 }, res => {
+				let body = '';
+				res.setEncoding('utf8');
+				res.on('data', chunk => body += chunk);
+				res.on('end', () => {
+					if (res.statusCode === 404) {
+						resolve(undefined);
+						return;
+					}
+					try {
+						const parsed = JSON.parse(body) as Partial<IVoltLocalLink>;
+						if (res.statusCode === 200 && typeof parsed.nonce === 'string') {
+							resolve({ nonce: parsed.nonce, expiresAt: Number(parsed.expiresAt) });
+							return;
+						}
+					} catch {
+						// below
+					}
+					reject(new Error(`The Volt agent server refused a sign-in link (${res.statusCode}).`));
+				});
+			});
+			req.on('error', reject);
+			req.on('timeout', () => req.destroy(new Error('The Volt agent server did not answer.')));
+			req.end();
+		});
+		return link ? `${base}${path}#local=${link.nonce}` : `${base}${path}`;
 	}
 }
 

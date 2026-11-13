@@ -112,7 +112,7 @@ import { InlineCommentController } from '../review/inlineCommentController.js';
 import '../../common/agentWorkflowSettings.js';
 import '../automations/automations.contribution.js';
 import '../workflows/workflows.contribution.js';
-import '../gitGraph/gitGraph.contribution.js';
+import '../workspace/voltAgentWindowService.js';
 import '../scratchBoard/scratchBoard.contribution.js';
 import './agentWorkflowCommands.js';
 
@@ -313,6 +313,7 @@ registerAction2(class OpenAgentChangesAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_CHANGES_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.openChanges', "Open Agent Changes"),
 			category: Categories.View,
 			f1: false,
@@ -370,6 +371,7 @@ registerAction2(class NewAgentAction extends Action2 {
 	constructor() {
 		super({
 			id: NEW_AGENT_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.newAgent', "New Agent"),
 			category: Categories.View,
 			f1: true,
@@ -417,6 +419,7 @@ registerAction2(class OpenBrowserAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_BROWSER_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.openBrowser', "Open Browser"),
 			category: Categories.View,
 			f1: true,
@@ -493,6 +496,7 @@ registerAction2(class CaptureBrowserSnapshotAction extends Action2 {
 	constructor() {
 		super({
 			id: CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.captureBrowserSnapshot', "Capture Browser Snapshot"),
 			f1: false,
 		});
@@ -543,6 +547,7 @@ registerAction2(class MaximizeChatAction extends Action2 {
 	constructor() {
 		super({
 			id: 'workbench.action.maximizeChat',
+			visibility: 'public',
 			title: localize2('voltAgent.maximizeChat', "Maximize Chat"),
 			category: Categories.View,
 			f1: true,
@@ -571,6 +576,7 @@ registerAction2(class AddRepositoryAction extends Action2 {
 	constructor() {
 		super({
 			id: 'workbench.action.addRepository',
+			visibility: 'internal',
 			title: localize2('voltAgent.addRepository', "Add Repository"),
 			category: Categories.View,
 			f1: false,
@@ -654,6 +660,7 @@ registerAction2(class AddSelectionToAgentAction extends Action2 {
 	constructor() {
 		super({
 			id: ADD_SELECTION_TO_AGENT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.addToChat', "Add to Chat"),
 			category: Categories.View,
 			f1: true,
@@ -684,6 +691,7 @@ registerAction2(class CommentSelectionAction extends Action2 {
 	constructor() {
 		super({
 			id: INLINE_COMMENT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.comment', "Comment"),
 			category: Categories.View,
 			f1: true,
@@ -711,6 +719,7 @@ registerAction2(class CloseInlineCommentAction extends Action2 {
 	constructor() {
 		super({
 			id: INLINE_COMMENT_CLOSE_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.closeComment', "Close Inline Comment"),
 			precondition: CONTEXT_INLINE_COMMENT_VISIBLE,
 			keybinding: {
@@ -733,6 +742,7 @@ registerAction2(class KeepInlineCommentAction extends Action2 {
 	constructor() {
 		super({
 			id: INLINE_COMMENT_KEEP_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.keepCommentEdit', "Keep Inline Edit"),
 			precondition: CONTEXT_INLINE_COMMENT_HAS_PREVIEW,
 			keybinding: {
@@ -755,6 +765,7 @@ registerAction2(class UndoInlineCommentAction extends Action2 {
 	constructor() {
 		super({
 			id: INLINE_COMMENT_UNDO_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.undoCommentEdit', "Undo Inline Edit"),
 			precondition: CONTEXT_INLINE_COMMENT_HAS_PREVIEW,
 			keybinding: {
@@ -842,6 +853,7 @@ registerAction2(class AddExplorerSelectionToAgentAction extends Action2 {
 	constructor() {
 		super({
 			id: ADD_EXPLORER_SELECTION_TO_AGENT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.addToChat', "Add to Chat"),
 			category: Categories.View,
 			keybinding: {
@@ -870,6 +882,7 @@ registerAction2(class AddFileToAgentAction extends Action2 {
 	constructor() {
 		super({
 			id: ADD_FILE_TO_AGENT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.addFileToChat', "Add File to Volt Chat"),
 			category: Categories.View,
 			f1: true,
@@ -890,6 +903,7 @@ registerAction2(class AddFileToNewAgentAction extends Action2 {
 	constructor() {
 		super({
 			id: ADD_FILE_TO_NEW_AGENT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.addFileToNewChat', "Add File to New Volt Chat"),
 			category: Categories.View,
 			f1: true,
@@ -1024,6 +1038,7 @@ registerAction2(class OpenAgentSidePanelAction extends Action2 {
 	constructor() {
 		super({
 			id: OPEN_AGENT_SIDE_PANEL_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.openSidePanel', "Toggle Agents Side Bar"),
 			category: Categories.View,
 			f1: true,
@@ -1100,6 +1115,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_SUBMIT_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltAgent.submit', "Send Agent Prompt"),
 			precondition: CONTEXT_IN_AGENT_INPUT,
 			keybinding: [
@@ -1125,6 +1141,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_FIND_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.find', "Find in Agent"),
 			precondition: agentEditorFocused,
 			keybinding: {
@@ -1143,6 +1160,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_FIND_HIDE_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.hideFind', "Hide Find in Agent"),
 			precondition: agentEditorFocused,
 			keybinding: {
@@ -1161,6 +1179,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_FIND_NEXT_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.findNext', "Find Next in Agent"),
 			precondition: agentEditorFocused,
 			keybinding: [
@@ -1187,6 +1206,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_FIND_PREVIOUS_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.findPrevious', "Find Previous in Agent"),
 			precondition: agentEditorFocused,
 			keybinding: [
@@ -1213,6 +1233,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_FIND_TOGGLE_REGEX_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.toggleFindRegex', "Toggle Find Regex in Agent"),
 			precondition: agentEditorFocused,
 			keybinding: {
@@ -1233,6 +1254,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_FIND_TOGGLE_WHOLE_WORD_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.toggleFindWholeWord', "Toggle Find Whole Word in Agent"),
 			precondition: agentEditorFocused,
 			keybinding: {
@@ -1253,6 +1275,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: AGENT_FIND_TOGGLE_CASE_COMMAND_ID,
+			visibility: 'public',
 			title: localize2('voltAgent.toggleFindCaseSensitive', "Toggle Find Case Sensitive in Agent"),
 			precondition: agentEditorFocused,
 			keybinding: {

@@ -1,0 +1,152 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Security page: sandboxed processes, a list with square rows edge to edge in a settings group. */
+.volt-security-workloads .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-security-workloads .monaco-list-row:not([data-index="0"]) {
+	border-top: 1px solid var(--volt-settings-border);
+	box-sizing: border-box;
+}
+
+/* Same padding as a settings row. The list sets line-height to the row height; reset it. */
+.volt-security-workload {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 100%;
+	padding: 0 16px;
+	box-sizing: border-box;
+	min-width: 0;
+	line-height: normal;
+}
+
+.volt-security-workload-icon {
+	display: flex;
+	flex: none;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-security-workload.broken .volt-security-workload-icon,
+.volt-security-workload.partial .volt-security-workload-icon {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-security-workload-copy {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.volt-security-workload-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-security-workload-title {
+	font-size: 13px;
+	line-height: 1.3;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-security-workload-state {
+	flex: none;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-security-workload-meta {
+	font-size: 12px;
+	line-height: 1.4;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-security-workload-actions {
+	display: flex;
+	flex: none;
+}
+
+.volt-security-empty {
+	padding: 12px 16px;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* Access page (accessPage.ts): a grant sits under its subject, indented by its padding only. */
+.volt-access-grant {
+	padding-left: 44px;
+}
+
+.volt-access-history.denied .volt-security-workload-icon {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-security-workload-actions[hidden] {
+	display: none;
+}
+
+/* Security page: the permissions line (permissionsSummary.ts), outside a list. */
+.volt-security-permissions {
+	height: auto;
+	min-height: 52px;
+	padding-top: 10px;
+	padding-bottom: 10px;
+}
+
+.volt-security-permissions .volt-security-workload-meta {
+	white-space: normal;
+}
+
+/* Install sheet (installSheet.ts): a list of class headers and capabilities, edge to edge. */
+.volt-install-sheet .volt-extension-consent-content .head {
+	padding-bottom: 14px;
+}
+
+.volt-install-sheet-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-install-sheet-group,
+.volt-install-sheet-capability {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 2px;
+	height: 100%;
+	min-width: 0;
+	line-height: normal;
+}
+
+.volt-install-sheet-group .title {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-install-sheet-group .outcome,
+.volt-install-sheet-capability .detail {
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-install-sheet-capability .title {
+	font-size: 13px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}

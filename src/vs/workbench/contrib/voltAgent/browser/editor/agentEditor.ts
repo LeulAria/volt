@@ -14,7 +14,11 @@ import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
-import { IVoltSandboxSettings, withAllowedDomain, withWritableRoot } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IVoltSandboxSettings, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { folderGrantError } from '../../../../../platform/voltSandbox/common/sandboxInheritance.js';
+import { IPathService } from '../../../../services/path/common/pathService.js';
+import { IWorkbenchEnvironmentService } from '../../../../services/environment/common/environmentService.js';
+import { isSandboxRefusedMessage, sandboxRefusedReason } from '../../../../services/voltRuntime/common/access/sandboxRefusal.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
@@ -91,10 +95,11 @@ import { parseWorktreeList } from '../../../../services/voltRuntime/common/orche
 import { showAgentMoveMenu } from '../orchestration/agentMoveMenu.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IVoltProject, IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
-import { createAccessIcon } from '../chrome/accessIcons.js';
+import { createAccessIcon, createVoltGuardIcon } from '../chrome/accessIcons.js';
 import { AgentAccessPicker } from '../context/agentAccessPicker.js';
 import { AgentTerminalChips } from '../terminals/agentTerminalChips.js';
 import { AgentWatchedTaskCard } from '../terminals/agentWatchedTaskCard.js';
+import { AgentIdeCard } from '../ide/agentIdeCard.js';
 import { IAgentTerminalsService } from '../terminals/agentTerminals.js';
 import { mountAgentQuickOpenActions } from '../chrome/agentViewSidebars.js';
 import { agentMessagePlainText, formatContextTokens, IContextUsageInput, resolveModelContextWindow } from '../context/agentContextUsage.js';
@@ -113,6 +118,8 @@ import { IQuickInputService } from '../../../../../platform/quickinput/common/qu
 import { IVoltMemoryService, MEMORY_BODY_LIMIT, memoryDescriptionFromReply } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { OPEN_RUN_GROUP_COMMAND_ID } from '../runGroups/agentRunGroupCommands.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
+import { IVoltTrustService } from '../../../../services/voltTrust/common/voltTrust.js';
+import { renderSandboxDenialCard } from './sandboxDenialCard.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { EditorPane } from '../../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext } from '../../../../common/editor.js';
@@ -149,9 +156,11 @@ import { AgentComposerQueue, IAgentComposerQueueState, IAgentQueueEditContent, I
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentJobWaitRows } from '../jobs/agentJobWaitRows.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
-import { AgentCommitPlanTray } from '../pullRequests/agentCommitPlanTray.js';
-import { IAgentCommitPlanService } from '../pullRequests/agentCommitPlanService.js';
+import { AgentComposerTraySlot } from '../composer/agentComposerTraySlot.js';
+import { COMMIT_REVIEW_FEATURE_ID, ICommitReviewModule } from '../../../voltCommitReview/common/voltCommitReview.js';
+import { IVoltFeatureModule, IVoltFeatureModuleService } from '../../../voltCustomize/browser/voltFeatureModules.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
+import { AgentMcpApprovalCard } from '../composer/agentMcpApprovalCard.js';
 import { AgentLimitChip } from '../composer/agentLimitChip.js';
 import { AgentVoiceDictation } from '../composer/agentVoiceDictation.js';
 import { AgentDictationText } from '../composer/agentDictationText.js';
@@ -810,7 +819,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private tasksCard: AgentTasksCard | undefined;
 	private questionTray!: AgentQuestionTray;
 	/** The commits the agent proposed (propose_commits), docked above the composer while the user reviews them. */
-	private commitPlanTray: AgentCommitPlanTray | undefined;
+	/** The commit review's card and chip, while its module (volt.commit-review) is loaded. */
+	private commitReviewSlot: AgentComposerTraySlot | undefined;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
 	private readonly freshText = new FreshTextTracker();
@@ -827,6 +837,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** The chat's servers and watchers, as chips at the top. */
 	private terminalChips: AgentTerminalChips | undefined;
 	private watchedTaskCard: AgentWatchedTaskCard | undefined;
+	private ideCard: AgentIdeCard | undefined;
 	private readonly runGroupBarStore = this._register(new MutableDisposable());
 	/** Compact context was clicked and its turn has not started yet. */
 	private compactRequested = false;
@@ -845,6 +856,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** The user armed (true) or disarmed (false) "Compact first" for the next send; undefined: the default (armed for old, large chats). */
 	private compactFirst: boolean | undefined;
 	private worktreeSetupCard: AgentWorktreeSetupCard | undefined;
+	private mcpApprovalCard: AgentMcpApprovalCard | undefined;
 	private limitChip: AgentLimitChip | undefined;
 	private waitingForClone: string | undefined;
 	/**
@@ -1377,13 +1389,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// A subagent's chat says whose it is and how it is doing: a chip at the start of the row above the composer.
 		const subagentChip = this.subagentBar = $('button.volt-agent-composer-chip.volt-agent-subagent-bar.hidden');
 		(subagentChip as HTMLButtonElement).type = 'button';
-		// The commit review is opened and closed by the commit plan service (desktop only, like pull requests);
-		// shrunk, it is a chip in the row above the composer.
-		if (this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentCommitPlanService))) {
-			this.commitPlanTray = this._register(this.instantiationService.createInstance(AgentCommitPlanTray, { onLayout: () => this.layoutInputEditor() }));
-		}
+		// The commit review is opened and closed by its module (desktop only, like pull requests), which
+		// fills this slot while it is loaded; shrunk, it is a chip in the row above the composer.
+		this.commitReviewSlot = this._register(this.instantiationService.createInstance(AgentComposerTraySlot, COMMIT_REVIEW_FEATURE_ID, () => this.layoutInputEditor()));
 		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
-			...(this.commitPlanTray ? { commitReview: this.commitPlanTray.rowChip } : {}),
+			commitReview: this.commitReviewSlot.chip,
 			agentRun: { element: subagentChip, get visible() { return !subagentChip.classList.contains('hidden'); }, onDidChange: this.onDidChangeSubagentChip.event },
 			onChangesClick: () => void this.openSessionChanges(),
 			onTerminalClick: () => this.surfaceHost.openTerminal(),
@@ -1407,6 +1417,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// Long builds Volt watches for the agent (task_watch): their state and latest output.
 		this.watchedTaskCard = this._register(this.instantiationService.createInstance(AgentWatchedTaskCard, () => this.layoutInputEditor()));
 		append(this.composerEl, this.watchedTaskCard.element);
+		// What the agent runs in the IDE (tests, debug sessions, tasks): state, details, Open/Stop.
+		this.ideCard = this._register(this.instantiationService.createInstance(AgentIdeCard, () => this.layoutInputEditor()));
+		append(this.composerEl, this.ideCard.element);
 		append(this.composerEl, this.composerQueue.agentsElement);
 		// The same run status chip the browser's dock shows ("Waiting for approval", "Worked 2m").
 		this._register(this.onDidChangeDock(() => this.syncStatusChip()));
@@ -1428,10 +1441,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				prepare: source => answerFiles.prepare(source),
 			},
 		}));
-		if (this.commitPlanTray) {
-			append(this.composerEl, this.commitPlanTray.element);
-		}
 		append(this.composerEl, this.questionTray.element);
+		this.commitReviewSlot?.mount(this.composerEl, this.questionTray.element);
 		this._register(this.runtime.onDidChangeQuestions(sessionId => {
 			if (sessionId === this.sessionKey) {
 				this.syncQuestionTray();
@@ -1461,6 +1472,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			onDidChangeHeight: () => this.layoutInputEditor(),
 		}));
 		append(this.composerEl, this.worktreeSetupCard.element);
+		// A repository's own MCP servers wait here for the user's approval before they can start.
+		this.mcpApprovalCard = this._register(this.instantiationService.createInstance(AgentMcpApprovalCard, {
+			onDidDecide: () => this.prewarmAgent(),
+			onDidChangeHeight: () => this.layoutInputEditor(),
+		}));
+		append(this.composerEl, this.mcpApprovalCard.element);
 		append(this.composerEl, this.composerQueue.element);
 		// The chips (run status, terminals, Changes) always sit last, right on top of the text area.
 		append(this.composerEl, this.composerChips.element);
@@ -5344,8 +5361,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		tray.setAttribute('role', 'status');
 		const head = append(tray, $('.volt-agent-run-tray-head'));
 		const icon = append(head, $('span.volt-agent-run-tray-icon'));
-		icon.appendChild(renderIcon(Codicon.shield));
-		this.setSearchableText(append(head, $('span.volt-agent-run-tray-title')), localize('voltAgent.sandbox.title', "Blocked by the sandbox"));
+		icon.appendChild(createVoltGuardIcon());
+		this.setSearchableText(append(head, $('span.volt-agent-run-tray-title')), localize('voltAgent.sandbox.title', "Volt Guard"));
 		const dismiss = append(head, $('button.volt-agent-run-tray-dismiss')) as HTMLButtonElement;
 		dismiss.type = 'button';
 		dismiss.setAttribute('aria-label', localize('voltAgent.tray.dismiss', "Dismiss"));
@@ -5361,15 +5378,29 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (running) {
 			return;
 		}
-		const row = append(tray, $('.volt-agent-run-tray-actions'));
 		const settings = this.runtime.getSandboxSettings(this.sessionKey);
-		if (denial.kind === 'network') {
-			this.appendTrayButton(row, localize('voltAgent.sandbox.allowHost', "Allow {0}", denial.target), localize('voltAgent.sandbox.allowHost.hint', "Let this chat reach {0} through the sandbox", denial.target), 'primary', () => this.retrySandboxed(withAllowedDomain(settings, denial.target)));
-		} else if (denial.kind === 'write') {
-			const folder = denial.target.slice(0, denial.target.lastIndexOf('/')) || '/';
-			this.appendTrayButton(row, localize('voltAgent.sandbox.allowFolder', "Allow folder"), localize('voltAgent.sandbox.allowFolder.hint', "Let this chat write in {0}", folder), 'primary', () => this.retrySandboxed(withWritableRoot(settings, folder)));
-		}
-		this.appendTrayButton(row, localize('voltAgent.sandbox.outside', "Run outside sandbox"), localize('voltAgent.sandbox.outside.hint', "Turn the sandbox off for this chat and retry the step"), 'secondary', () => this.retrySandboxed({ ...settings, level: 'off' }));
+		const folder = denial.target.slice(0, denial.target.lastIndexOf('/')) || '/';
+		// The denial card (P4): Skip / Allow for This Chat / Allow by the broker's record, budget-aware; Off only typed.
+		renderSandboxDenialCard(tray, {
+			denial,
+			chatId: this.sessionKey,
+			trust: this.instantiationService.invokeFunction(accessor => accessor.get(IVoltTrustService)),
+			processId: () => this.runtime.sandboxProcessId?.(this.sessionKey),
+			dismiss: () => {
+				message.blockState[`tr:dismiss:${partId}`] = { expanded: true };
+				this.rerenderExchangeOf(message);
+			},
+			retry: () => this.continueTurn(
+				localize('voltAgent.sandbox.retry.prompt', "The sandbox blocked your last step. Its settings have changed; retry that step now."),
+				localize('voltAgent.sandbox.retry.display', "Retry")),
+			// Without the broker's record (the legacy proxy) the host joins the chat's allowed hosts, as
+			// before. A denial read from a command's output gets no grant button (B-34).
+			...(denial.kind === 'network' && !denial.denialId && denial.source === 'proxy' ? { allowHostSetting: () => this.retrySandboxed(withAllowedDomain(settings, denial.target)) } : {}),
+			// The agent picks the path, so the folder is checked before it is granted (home, system, credentials, .git).
+			...(denial.kind === 'write' && denial.source !== 'output' ? { allowFolder: () => void this.allowSandboxFolder(tray, settings, folder) } : {}),
+			runOutside: () => this.retrySandboxed({ ...settings, level: 'off' }),
+			openAccess: () => void this.commandService.executeCommand(OPEN_VOLT_SETTINGS_COMMAND_ID, 'access'),
+		}, this.threadListeners);
 	}
 
 	private sandboxDetail(denial: ISandboxDenial): string {
@@ -5379,6 +5410,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			case 'launch': return localize('voltAgent.sandbox.launch', "Opening {0} was blocked", denial.target);
 			default: return localize('voltAgent.sandbox.write', "Writing {0} was blocked", denial.target);
 		}
+	}
+
+	/** "Allow folder": granted and retried, or refused with the reason shown in the tray. */
+	private async allowSandboxFolder(tray: HTMLElement, settings: IVoltSandboxSettings, folder: string): Promise<void> {
+		const { home, userDataDir } = await this.instantiationService.invokeFunction(async accessor => ({
+			home: (await accessor.get(IPathService).userHome({ preferLocal: true })).fsPath,
+			userDataDir: dirname(accessor.get(IWorkbenchEnvironmentService).userRoamingDataHome.fsPath),
+		}));
+		const session = this.runtime.getOrCreateSession(this.sessionKey);
+		const workspaceRoots = sandboxWorkspaceRoots(this.runtime.workingFolder(this.sessionKey), this.sessionContext.rootFor(this.sessionKey)?.fsPath, !!session.worktreePath);
+		const refusal = folderGrantError(folder, { home, workspaceRoots, userDataDir });
+		if (!refusal) {
+			this.retrySandboxed(withWritableRoot(settings, folder));
+			return;
+		}
+		if (!tray.isConnected) {
+			return;
+		}
+		tray.querySelector('.volt-agent-run-tray-refusal')?.remove();
+		const note = append(tray, $('.volt-agent-run-tray-detail.volt-agent-run-tray-refusal'));
+		note.setAttribute('role', 'alert');
+		this.setSearchableText(note, localize('voltAgent.sandbox.allowFolder.refused', "Not allowed: {0}", refusal));
 	}
 
 	private retrySandboxed(settings: IVoltSandboxSettings): void {
@@ -5469,6 +5522,26 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (retrySubagent) {
 			this.appendTrayButton(row, retrySubagent.label, retrySubagent.tooltip, 'primary', retrySubagent.run);
 		}
+		this.appendSandboxRefusedActions(row, message);
+	}
+
+	/**
+	 * The agent was refused its sandbox (none on this machine, or one it cannot enforce): Volt never
+	 * runs it unconfined on its own. The user can turn the sandbox off for this chat, then try again.
+	 */
+	private appendSandboxRefusedActions(row: HTMLElement, message: IAgentAssistantMessage): void {
+		const failure = message.failure?.message ?? '';
+		if (!isSandboxRefusedMessage(failure) || message !== this.messages.at(-1) || this.isStreaming()) {
+			return;
+		}
+		const settings = this.runtime.getSandboxSettings(this.sessionKey);
+		if (settings.level !== 'off') {
+			this.appendTrayButton(row, localize('voltAgent.sandbox.turnOff', "Turn off sandbox for this chat"), localize('voltAgent.sandbox.turnOff.hint', "The agent then runs without OS confinement: {0}", sandboxRefusedReason(failure)), 'primary', () => {
+				void this.runtime.setSandboxSettings(this.sessionKey, { ...settings, level: 'off' }).then(() => this.rerenderExchangeOf(message));
+			});
+			return;
+		}
+		this.appendTrayButton(row, localize('voltAgent.tryAgain', "Try again"), localize('voltAgent.sandbox.tryAgain.hint', "Send this prompt again; the sandbox is off for this chat now"), 'primary', () => this.retryLastTurn());
 	}
 
 	/**
@@ -5552,8 +5625,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** Cursor's "Try again": the newest prompt runs again in place of the turn that failed or stopped. */
 	/** A Draft Commits turn the user stopped leaves no trace: its prompt and its stopped reply go too. */
 	private removeStoppedDraft(): void {
-		const commitPlans = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentCommitPlanService));
-		if (!commitPlans?.takeStoppedDraft(this.sessionKey)) {
+		// Only a loaded commit review has drafts (Draft Commits loads it).
+		const commitReview = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltFeatureModuleService).getActive<IVoltFeatureModule & ICommitReviewModule>(COMMIT_REVIEW_FEATURE_ID));
+		if (!commitReview?.plans.takeStoppedDraft(this.sessionKey)) {
 			return;
 		}
 		const index = findLastIdx(this.messages, message => message.kind === 'user');
@@ -8421,8 +8495,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 
 	private syncQueueStack(): void {
 		this.syncQuestionTray();
-		this.commitPlanTray?.setSession(this.sessionKey);
+		this.commitReviewSlot?.setSession(this.sessionKey);
 		this.watchedTaskCard?.setChat(this.sessionKey ? this.runtime.chatFor(this.sessionKey) : undefined);
+		this.ideCard?.setChat(this.sessionKey ? this.runtime.chatFor(this.sessionKey) : undefined);
 		if (!this.composerQueue) {
 			return;
 		}
@@ -8869,6 +8944,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// One pane shows every agent tab: the banner follows the tab's project.
 		this.renderCloneBanner();
 		this.worktreeSetupCard?.setChat(this.sessionKey);
+		this.refreshMcpApprovals();
 		this.limitChip?.render();
 		this.ensureInputEditor();
 		this.restoreInputState(input);
@@ -8982,6 +9058,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// The turn's workspace summary (its git status) is read now too, so the send finds it ready.
 		void this.commandService.executeCommand(WORKSPACE_SNAPSHOT_COMMAND_ID, this.sessionKey).catch(() => undefined);
 		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
+		this.refreshMcpApprovals();
+	}
+
+	/** The chat's project MCP servers waiting for approval, for the model and mode the composer would send with. */
+	private refreshMcpApprovals(): void {
+		this.mcpApprovalCard?.refresh(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
 	}
 
 	override clearInput(): void {

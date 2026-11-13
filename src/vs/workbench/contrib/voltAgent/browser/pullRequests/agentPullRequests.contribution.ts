@@ -38,8 +38,6 @@ import { agentToolsSessionOnScreen, showAgentFilesSidebar } from '../workspace/a
 import { LayoutModeContext } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { AgentGitActionsService, IAgentGitActionsService } from './agentGitActionsService.js';
-import { AgentCommitPlanService, IAgentCommitPlanService } from './agentCommitPlanService.js';
-import { COMMIT_PLAN_CONTENT_SCHEME, COMMIT_PLAN_HEAD_SCHEME, CommitPlanContentProvider, CommitPlanDiffSourceResolver, CommitPlanHeadContentProvider } from './agentCommitPlanTray.js';
 import { parseBlobUri, PR_BLOB_SCHEME, PrBlobContentProvider, PrDiffSourceResolver } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditor } from './agentPullRequestEditor.js';
 import { AGENT_PULL_REQUEST_EDITOR_ID, AGENT_PULL_REQUEST_SCHEME, AgentPullRequestEditorInput, AgentPullRequestEditorInputSerializer, parsePullRequestUri } from './agentPullRequestEditorInput.js';
@@ -64,16 +62,7 @@ export const VOLT_COMMIT_MESSAGES_CONTEXT = new RawContextKey<boolean>('voltComm
 registerSingleton(IAgentPullRequestService, AgentPullRequestService, InstantiationType.Delayed);
 registerSingleton(IAgentGitActionsService, AgentGitActionsService, InstantiationType.Delayed);
 registerSingleton(IAgentPrReviewService, AgentPullRequestReviewService, InstantiationType.Delayed);
-registerSingleton(IAgentCommitPlanService, AgentCommitPlanService, InstantiationType.Delayed);
-
-/** Starts the commit review with the workbench, so agents have propose_commits and rename_branch from the first turn. */
-class AgentCommitPlanContribution {
-
-	static readonly ID = 'workbench.contrib.voltAgentCommitPlan';
-
-	constructor(@IAgentCommitPlanService _plans: IAgentCommitPlanService) { }
-}
-registerWorkbenchContribution2(AgentCommitPlanContribution.ID, AgentCommitPlanContribution, WorkbenchPhase.AfterRestored);
+// The commit review (propose_commits, rename_branch) is the volt.commit-review module (contrib/voltCommitReview).
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.pullRequests',
@@ -168,10 +157,7 @@ class AgentPullRequestResolversContribution extends Disposable {
 		super();
 		VOLT_COMMIT_MESSAGES_CONTEXT.bindTo(contextKeyService).set(true);
 		this._register(multiDiffSourceResolverService.registerResolver(instantiationService.createInstance(PrDiffSourceResolver)));
-		this._register(multiDiffSourceResolverService.registerResolver(instantiationService.createInstance(CommitPlanDiffSourceResolver)));
 		this._register(textModelService.registerTextModelContentProvider(PR_BLOB_SCHEME, instantiationService.createInstance(PrBlobContentProvider)));
-		this._register(textModelService.registerTextModelContentProvider(COMMIT_PLAN_HEAD_SCHEME, instantiationService.createInstance(CommitPlanHeadContentProvider)));
-		this._register(textModelService.registerTextModelContentProvider(COMMIT_PLAN_CONTENT_SCHEME, this._register(instantiationService.createInstance(CommitPlanContentProvider))));
 		this._register(editorResolverService.registerEditor(
 			`${AGENT_PULL_REQUEST_SCHEME}:**/**`,
 			{ id: AGENT_PULL_REQUEST_EDITOR_ID, label: localize('voltPr.editorLabel', "Pull Request"), priority: RegisteredEditorPriority.builtin },
@@ -214,7 +200,7 @@ function chatFor(accessor: ServicesAccessor, sessionId: unknown): string | undef
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: OPEN_PULL_REQUEST_COMMAND_ID, title: localize2('voltPr.openCommand', "Open Pull Request"), f1: false });
+		super({ id: OPEN_PULL_REQUEST_COMMAND_ID, visibility: 'public', title: localize2('voltPr.openCommand', "Open Pull Request"), f1: false });
 	}
 	override async run(accessor: ServicesAccessor, target: { url?: string; host?: string; owner?: string; name?: string; number?: number } | string | undefined, sessionId?: string): Promise<void> {
 		const url = typeof target === 'string' ? target : target?.url;
@@ -228,7 +214,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: OPEN_CHAT_PULL_REQUEST_COMMAND_ID, title: localize2('voltPr.openChat', "Open the Chat's Pull Request"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequest });
+		super({ id: OPEN_CHAT_PULL_REQUEST_COMMAND_ID, visibility: 'public', title: localize2('voltPr.openChat', "Open the Chat's Pull Request"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequest });
 	}
 	override async run(accessor: ServicesAccessor, sessionId?: string): Promise<void> {
 		const pullRequests = accessor.get(IAgentPullRequestService);
@@ -250,7 +236,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: CREATE_PULL_REQUEST_COMMAND_ID, title: localize2('voltPr.createCommand', "Create Pull Request"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequestCreate });
+		super({ id: CREATE_PULL_REQUEST_COMMAND_ID, visibility: 'internal', title: localize2('voltPr.createCommand', "Create Pull Request"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequestCreate });
 	}
 	override async run(accessor: ServicesAccessor, sessionId?: string): Promise<void> {
 		const pullRequests = accessor.get(IAgentPullRequestService);
@@ -266,7 +252,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: SHOW_PULL_REQUESTS_COMMAND_ID, title: localize2('voltPr.showList', "Show Pull Requests"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequest });
+		super({ id: SHOW_PULL_REQUESTS_COMMAND_ID, visibility: 'public', title: localize2('voltPr.showList', "Show Pull Requests"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequest });
 	}
 	override async run(accessor: ServicesAccessor, sessionId?: string): Promise<void> {
 		const chat = typeof sessionId === 'string' ? sessionId : visibleChatSession(accessor);
@@ -287,7 +273,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: OPEN_PULL_REQUESTS_PAGE_COMMAND_ID, title: localize2('voltPr.openPage', "Show Pull Requests Dashboard"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequest });
+		super({ id: OPEN_PULL_REQUESTS_PAGE_COMMAND_ID, visibility: 'public', title: localize2('voltPr.openPage', "Show Pull Requests Dashboard"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.gitPullRequest });
 	}
 	/** A page in the main panel, like Usage; opened from a chat it shows that chat's repository. */
 	override async run(accessor: ServicesAccessor, sessionId?: unknown): Promise<void> {
@@ -310,7 +296,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: LINK_PULL_REQUEST_COMMAND_ID, title: localize2('voltPr.linkCommand', "Link Pull Request to Chat"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.link });
+		super({ id: LINK_PULL_REQUEST_COMMAND_ID, visibility: 'internal', title: localize2('voltPr.linkCommand', "Link Pull Request to Chat"), category: localize2('volt', "Volt"), f1: true, icon: Codicon.link });
 	}
 	override async run(accessor: ServicesAccessor, sessionId?: string, target?: string): Promise<void> {
 		const pullRequests = accessor.get(IAgentPullRequestService);
@@ -341,7 +327,7 @@ registerAction2(class extends Action2 {
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: SIGN_IN_HOST_COMMAND_ID, title: localize2('voltPr.signInCommand', "Sign In to a Code Host"), category: localize2('volt', "Volt"), f1: true });
+		super({ id: SIGN_IN_HOST_COMMAND_ID, visibility: 'internal', title: localize2('voltPr.signInCommand', "Sign In to a Code Host"), category: localize2('volt', "Volt"), f1: true });
 	}
 	/** `kind` skips the question of what kind of host it is (Settings > Git & PRs asks for one). Resolves true when signed in. */
 	override async run(accessor: ServicesAccessor, kind?: unknown): Promise<boolean> {
@@ -389,6 +375,7 @@ registerAction2(class extends Action2 {
 	constructor() {
 		super({
 			id: GENERATE_COMMIT_MESSAGE_COMMAND_ID,
+			visibility: 'internal',
 			title: localize2('voltPr.generateCommit', "Generate Commit Message"),
 			icon: Codicon.sparkle,
 			f1: false,
@@ -428,7 +415,7 @@ registerAction2(class extends Action2 {
  */
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ id: FIX_PR_SELECTION_COMMAND_ID, title: localize2('voltPr.fixSelection', "Fix This with Agent"), f1: false });
+		super({ id: FIX_PR_SELECTION_COMMAND_ID, visibility: 'internal', title: localize2('voltPr.fixSelection', "Fix This with Agent"), f1: false });
 	}
 	override async run(accessor: ServicesAccessor, resource: unknown, range?: { startLineNumber: number; endLineNumber: number; endColumn?: number }): Promise<void> {
 		const blob = URI.isUri(resource) ? parseBlobUri(resource) : undefined;

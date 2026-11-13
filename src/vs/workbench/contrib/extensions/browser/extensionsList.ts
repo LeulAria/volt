@@ -25,6 +25,7 @@ import { IContextMenuService } from '../../../../platform/contextview/browser/co
 import { HoverPosition } from '../../../../base/browser/ui/hover/hoverWidget.js';
 import { IActionViewItemOptions } from '../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { extensionVerifiedPublisherIconColor, verifiedPublisherIcon } from '../../../services/extensionManagement/common/extensionsIcons.js';
+import { VoltSandboxStatusWidget } from './voltExtensionSandbox.js';
 
 const EXTENSION_LIST_ELEMENT_HEIGHT = 72;
 
@@ -83,6 +84,7 @@ export class Renderer implements IPagedRenderer<IExtension, ITemplateData> {
 		const ratings = append(header, $('span.ratings'));
 		const syncIgnore = append(header, $('span.sync-ignored'));
 		const extensionKindIndicator = append(header, $('span'));
+		const voltSandboxStatus = append(header, $('span'));
 		const activationStatus = append(header, $('span.activation-status'));
 		const description = append(details, $('.description.ellipsis'));
 		const footer = append(details, $('.footer'));
@@ -142,6 +144,8 @@ export class Renderer implements IPagedRenderer<IExtension, ITemplateData> {
 			this.instantiationService.createInstance(InstallCountWidget, installCount, true),
 			this.instantiationService.createInstance(RatingsWidget, ratings, true),
 			this.instantiationService.createInstance(ExtensionKindIndicatorWidget, extensionKindIndicator, true),
+			// Volt (P2): opted into the sandbox, and how that is going.
+			this.instantiationService.createInstance(VoltSandboxStatusWidget, voltSandboxStatus),
 		];
 		const extensionContainers: ExtensionContainers = this.instantiationService.createInstance(ExtensionContainers, [...actions, ...widgets]);
 

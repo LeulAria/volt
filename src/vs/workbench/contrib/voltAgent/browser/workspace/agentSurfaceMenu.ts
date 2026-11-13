@@ -23,6 +23,8 @@ export const OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID = 'voltAgent.automations.openI
 
 /** Registered in automations.contribution.ts: the workflow library beside the chat, as an Automations tab. */
 export const OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID = 'voltAgent.workflows.openInTools';
+/** The HTTP client's request editor beside the chat (registered in voltHttp.contribution.ts). */
+export const OPEN_HTTP_IN_TOOLS_COMMAND_ID = 'volt.http.openInTools';
 
 /** Lucide workflow: two cards joined by an elbow (the Workflows tab and its + menu row). */
 export const WORKFLOWS_ICON_SHAPES: SvgIconShapes = [
@@ -31,8 +33,8 @@ export const WORKFLOWS_ICON_SHAPES: SvgIconShapes = [
 	['rect', { x: 13, y: 13, width: 8, height: 8, rx: 2 }],
 ];
 
-/** Registered in gitGraph/gitGraph.contribution.ts, which imports this host: the repository's commit graph as a tab. */
-export const OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID = 'volt.gitGraph.openInTools';
+/** The Git Graph module's (contrib/voltGitGraph): the repository's commit graph as a tab. */
+export { OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID } from '../../../voltGitGraph/common/voltGitGraph.js';
 
 /** Lucide git-graph (AriaIcons): two branches off a trunk, the Git Graph tab and its + menu row. */
 export const GIT_GRAPH_ICON_SHAPES: SvgIconShapes = [
@@ -94,7 +96,7 @@ const DEVICE_ICON_SHAPES: SvgIconShapes = [
 export const SIDE_CHAT_ICON_PATH = 'M7 7H15M7 11H11M5 3H19C20.1046 3 21 3.89543 21 5V15C21 16.1046 20.1046 17 19 17H16L12.3536 20.6464C12.1583 20.8417 11.8417 20.8417 11.6464 20.6464L8 17H5C3.89543 17 3 16.1046 3 15V5C3 3.89543 3.89543 3 5 3Z';
 
 /** Right-rail / tab-bar + menu rows that open an agent surface. */
-export type AgentSurfaceMenuActionId = 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'gitGraph' | 'scratch' | 'canvas' | 'automations' | 'workflows' | 'sideChat';
+export type AgentSurfaceMenuActionId = 'file' | 'terminal' | 'browser' | 'device' | 'changes' | 'gitGraph' | 'scratch' | 'canvas' | 'automations' | 'workflows' | 'http' | 'sideChat';
 
 /** Each row's own command, registered in agentSurfaceHost.ts: opens it in the right panel of the chat on screen. */
 export function surfaceOpenCommandId(id: AgentSurfaceMenuActionId): string {
@@ -116,6 +118,7 @@ export const SURFACE_OPEN_KEYS: Readonly<Record<AgentSurfaceMenuActionId, KeyCod
 	canvas: KeyCode.KeyV,
 	automations: KeyCode.KeyA,
 	workflows: KeyCode.KeyW,
+	http: KeyCode.KeyH,
 	sideChat: KeyCode.KeyN,
 };
 
@@ -204,6 +207,12 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 			svgPath: WORKFLOWS_ICON_SHAPES,
 		},
 		{
+			// The HTTP client: send and save requests (.http files), see responses.
+			id: 'http',
+			label: localize('voltAgent.surfaceMenu.http', "HTTP Client"),
+			icon: Codicon.send,
+		},
+		{
 			id: 'sideChat',
 			label: localize('voltAgent.surfaceMenu.sideChat', "New Side Chat"),
 			icon: Codicon.commentDiscussion,
@@ -234,6 +243,7 @@ export function surfaceKindForMenuAction(id: AgentSurfaceMenuActionId): 'file' |
 			return 'canvas';
 		case 'automations':
 		case 'workflows':
+		case 'http':
 			return 'automations';
 		case 'sideChat':
 			return 'chat';

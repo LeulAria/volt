@@ -13,12 +13,14 @@ import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { worktreeSetupExec } from '../../../../services/voltRuntime/common/execContext.js';
 import { IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentOrchestratorService, IOrchPrompt } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
@@ -68,8 +70,11 @@ import {
 } from '../../../../services/voltRuntime/common/runGroups/worktreeSetup.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { stashTurnDisplay } from '../orchestration/agentTurnDisplays.js';
+import { reviewBuildEntries } from '../review/buildEntryReview.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { confineChatSandbox } from '../../../../services/voltRuntime/common/access/chatSandbox.js';
+import { IVoltSandboxSettings, sandboxWorkspaceRoots } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 
 const STORE_VERSION = 1;
 /** Why a run's chat is held: its worktree or setup is not ready. */
@@ -103,6 +108,8 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 	/** The run's last snapshot, so an unchanged worktree reuses it instead of writing a new commit. */
 	private readonly lastSnapshot = new Map<string, { readonly commit: string; readonly tree: string }>();
 	private readonly lastStatus = new Map<string, RunStatus>();
+	/** The build-entry review per repository, shared by the runs that start together. */
+	private readonly setupReviews = new Map<string, Promise<boolean>>();
 	private persistTimer: ReturnType<typeof setTimeout> | undefined;
 	private persisting: Promise<void> = Promise.resolve();
 	private readonly storeFile: URI;
@@ -241,18 +248,26 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		this._onDidChange.fire(group.id);
 		// Each run starts on its own: one failing never holds back or rolls back the others.
 		for (const run of group.runs) {
-			void this.launch(group.id, run.id, request.liveDisplay).catch(err => this.failSetup(group.id, run.id, err));
+			void this.launch(group.id, run.id, request.liveDisplay, request.sandbox, request.sandboxRoots).catch(err => this.failSetup(group.id, run.id, err));
 		}
 		return group;
 	}
 
 	/** The run's chat: bound to the project, held by a block with its prompt queued, then its worktree. */
-	private async launch(groupId: string, runId: string, liveDisplay: unknown): Promise<void> {
+	private async launch(groupId: string, runId: string, liveDisplay: unknown, sandbox: IVoltSandboxSettings | undefined, sandboxRoots: readonly string[] | undefined): Promise<void> {
 		// Registered before the first await, so Stop finds the run's setup however early it comes.
 		const token: ISetupToken = { cancelled: false };
 		this.setups.set(runId, token);
 		const group = this.groups.get(groupId)!;
 		const run = group.runs.find(candidate => candidate.id === runId)!;
+		// Started by a sandboxed chat: the run's chat is confined at least as tightly before its prompt is
+		// queued, and writes its worktree (a checkout of the repository) only when that chat may write the
+		// repository (INV-11, as thread_launch judges a new worktree).
+		const repoRoot = await this.fileService.realpath(URI.file(group.repoRoot)).then(real => real?.fsPath ?? group.repoRoot, () => group.repoRoot);
+		await confineChatSandbox(this.runtime, runId, sandbox, sandbox ? {
+			caller: sandboxRoots ? { roots: sandboxRoots } : {},
+			child: { roots: sandboxWorkspaceRoots(repoRoot, repoRoot, true) },
+		} : undefined);
 		const project = this.projectFor(group);
 		if (project) {
 			attachSessionToProject(this.sessionContext, this.workspace, this.history, runId, project);
@@ -304,13 +319,15 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 			this.history.open(runId).setMeta({ worktreePath: path, worktreeBranch: run.branch, model: run.model.label });
 			this.throwIfCancelled(token);
 
-			const config = await this.readSetupConfig(path, group.repoRoot);
+			const config = await this.readSetupConfig(group.repoRoot);
 			if (config) {
 				const steps: IRunSetupStep[] = config.steps.map((command, index) => {
 					const previous = run.setup.steps[index];
 					return index < fromStep && previous?.state === 'done' ? previous : { command, state: 'pending' };
 				});
 				this.updateRun(groupId, runId, current => ({ ...current, setup: { ...current.setup, state: 'running', source: config.source, steps } }));
+				await this.reviewSetupFiles(group.repoRoot, path);
+				this.throwIfCancelled(token);
 				await this.runSetup(groupId, runId, config, path, fromStep, token);
 			}
 			this.throwIfCancelled(token);
@@ -347,30 +364,49 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		}
 	}
 
-	/** `.volt/worktrees.json`, else Cursor's `.cursor/worktrees.json`; the worktree's copy first, then the checkout's. */
-	private async readSetupConfig(worktreePath: string, repoRoot: string): Promise<IWorktreeSetupConfig | undefined> {
+	/**
+	 * `.volt/worktrees.json`, else Cursor's `.cursor/worktrees.json`, from the project checkout only:
+	 * a branch's own copy is never read, or a sandboxed agent could commit setup commands that run
+	 * outside its sandbox.
+	 */
+	private async readSetupConfig(repoRoot: string): Promise<IWorktreeSetupConfig | undefined> {
 		const platform = isWindows ? 'windows' : 'unix';
-		for (const folder of [worktreePath, repoRoot]) {
-			for (const source of WORKTREE_SETUP_FILES) {
-				const file = setupFileIn(folder, source);
-				let text: string;
-				try {
-					text = (await this.fileService.readFile(URI.file(file))).value.toString();
-				} catch {
-					continue;
-				}
-				const parsed = parseWorktreeSetup(text, source, dirname(file), platform);
-				switch (parsed.kind) {
-					case 'none':
-						return undefined;
-					case 'error':
-						throw new Error(parsed.error);
-					case 'config':
-						return parsed.config;
-				}
+		for (const source of WORKTREE_SETUP_FILES) {
+			const file = setupFileIn(repoRoot, source);
+			let text: string;
+			try {
+				text = (await this.fileService.readFile(URI.file(file))).value.toString();
+			} catch {
+				continue;
+			}
+			const parsed = parseWorktreeSetup(text, source, dirname(file), platform);
+			switch (parsed.kind) {
+				case 'none':
+					return undefined;
+				case 'error':
+					throw new Error(parsed.error);
+				case 'config':
+					return parsed.config;
 			}
 		}
 		return undefined;
+	}
+
+	/**
+	 * I.6: files that run code (setup files, package scripts, hooks) a sandboxed agent changed in the
+	 * repository wait for the user's review before setup runs them. The runs of a group share one review.
+	 */
+	private async reviewSetupFiles(repoRoot: string, worktreePath: string): Promise<void> {
+		let review = this.setupReviews.get(repoRoot);
+		if (!review) {
+			// The agent server has no dialogs: there the review can't happen, so changed files refuse setup.
+			const dialogs = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IDialogService));
+			review = reviewBuildEntries(dialogs, this.stdio, [repoRoot, worktreePath], 'setup').finally(() => this.setupReviews.delete(repoRoot));
+			this.setupReviews.set(repoRoot, review);
+		}
+		if (!await review) {
+			throw new Error('Setup did not run: files that run code changed while an agent worked in this repository, and they were not trusted.');
+		}
 	}
 
 	/** One shell for every step (Cursor's semantics), progress read from its step markers. */
@@ -419,7 +455,12 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 			background: true,
 			backgroundWaitMs: 400,
 			inlineChars: 20_000,
+			// The run's chat sandbox, with its rules: setup runs the branch's install scripts (B-06).
+			...worktreeSetupExec(runId, this.runtime.getSandboxSettings(runId), group.repoRoot, worktreePath),
 		});
+		if (first.refused) {
+			throw new Error(`Setup did not run: ${first.refused.reason}`);
+		}
 		output = first.combined;
 		let running = first.running;
 		let exitCode = first.exitCode;

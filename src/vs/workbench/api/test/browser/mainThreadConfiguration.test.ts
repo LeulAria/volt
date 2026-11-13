@@ -16,6 +16,7 @@ import { IConfigurationService, ConfigurationTarget } from '../../../../platform
 import { WorkspaceService } from '../../../services/configuration/browser/configurationService.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 
 suite('MainThreadConfiguration', function () {
 
@@ -60,6 +61,7 @@ suite('MainThreadConfiguration', function () {
 		instantiationService.stub(IEnvironmentService, {
 			isBuilt: false
 		});
+		instantiationService.stub(IExtensionService, { extensions: [] });
 	});
 
 	teardown(() => {

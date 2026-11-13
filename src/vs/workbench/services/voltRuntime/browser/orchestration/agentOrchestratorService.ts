@@ -8,6 +8,7 @@ import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
@@ -29,7 +30,8 @@ import { AgentTaskRole, agentTaskTools, bareTaskToolName, buildTaskFollowUp, bui
 import { buildParentCapsule, userRequests } from '../../common/orchestration/taskContext.js';
 import { foldSpend, ITaskSpendTracker, ITaskTokenRates, seedSpendTracker, spendUsage } from '../../common/orchestration/taskSpend.js';
 import { harnessFailure, harnessSubagentCall, isAsyncLaunchResult } from '../../common/orchestration/harnessSubagents.js';
-import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, IOrchModelChoice, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_KEEP_WORKING_SETTING, ORCH_ROLE_MODELS_SETTING, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, orchHoldReason, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, emptyOrchState, IAgentOrchestratorService, IOrchChange, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimits, IOrchMove, IOrchTurn, IOrchPrompt, IOrchState, IOrchSpawnOutcome, IOrchSubmitResult, IOrchTask, IOrchThread, IOrchTurnHost, IOrchWorkspaceMover, IOrchModelChoice, ORCH_BUDGET_TOKENS_SETTING, ORCH_BUDGET_USD_SETTING, ORCH_KEEP_WORKING_SETTING, ORCH_ROLE_MODELS_SETTING, ORCH_MAX_PARALLEL_SETTING, ORCH_MAX_PARALLEL_TOTAL_SETTING, ORCH_MAX_PER_CALL_SETTING, ORCH_MAX_TEAM_AGENTS_SETTING, ORCH_RESUME_AFTER_RESTART_SETTING, ORCHESTRATOR_STATE_VERSION, orchHoldReason, OrchCommandBody, OrchDelivery, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, readOrchLimits } from '../../common/orchestration/orchestrator.js';
+import { ORCH_MACHINE_CAPACITY_SETTING } from '../../common/orchestration/machineCapacity.js';
 import { ILimitSignal, isClaudeProvider, isRealAnswer, LIMIT_AUTO_RESUME_SETTING, LIMIT_STOP_CLAUDE_SETTING, limitDueAt, limitFromError, limitFromNotice, limitFromReply, mergeLimitSignals } from '../../common/orchestration/limitRecovery.js';
 import { extractRoot, IOrchIndex, IOrchRootSnapshot, isRootLive, mergeRoot, rootIdsOf } from '../../common/orchestration/orchestratorCodec.js';
 import { isRescueTurnId, rescueDueAt, rescueWaits } from '../../common/orchestration/rescue.js';
@@ -41,9 +43,14 @@ import { DurableClaims } from '../jobs/durableClaims.js';
 import { BEACON_TTL_MS, WorkbenchBeacons } from '../jobs/workbenchBeacons.js';
 import { OrchestratorStore } from './orchestratorStore.js';
 import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../common/orchestration/orchestratorQueries.js';
+import { CHAT_SANDBOX_PLATFORM, chatSandboxScope, confineChatSandbox, handoffSandboxRefusal } from '../../common/access/chatSandbox.js';
+import { chatInSubtree, sandboxReachRefusal } from '../../common/hostToolSandbox.js';
+import { SandboxStrategy, sandboxStrategy, VoltSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 
 /** Models one delegate_task call may run the same brief on. */
 const MAX_FAN_OUT = 4;
+/** Upstream reports a blind task labels (a council round reviews at most this many answers). */
+const MAX_UPSTREAM_BLIND = 16;
 /** A cancelled run that does not report its end within this long is settled by Volt. */
 const CANCEL_SETTLE_MS = 6_000;
 /** How long a run's final save gets to mark the chat's record done before Volt settles it itself. */
@@ -162,7 +169,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	constructor(
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-		@IFileService fileService: IFileService,
+		@IFileService private readonly fileService: IFileService,
 		@IEnvironmentService environmentService: IEnvironmentService,
 		@ILogService private readonly logService: ILogService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
@@ -222,7 +229,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 				this.scheduleRescueTick();
 			}
-			if (e.affectsConfiguration(ORCH_MAX_PARALLEL_SETTING) || e.affectsConfiguration(ORCH_MAX_PARALLEL_TOTAL_SETTING) || e.affectsConfiguration(ORCH_MAX_PER_CALL_SETTING)) {
+			if (e.affectsConfiguration(ORCH_MAX_PARALLEL_SETTING) || e.affectsConfiguration(ORCH_MAX_PARALLEL_TOTAL_SETTING) || e.affectsConfiguration(ORCH_MAX_PER_CALL_SETTING) || e.affectsConfiguration(ORCH_MACHINE_CAPACITY_SETTING) || e.affectsConfiguration(ORCH_MAX_TEAM_AGENTS_SETTING)) {
 				const perCall = this.limits.spawnsPerCall;
 				this.limits = this.readLimits();
 				if (this.limits.spawnsPerCall !== perCall) {
@@ -333,11 +340,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		this.apply({ type: 'limit.configure', threadId, auto });
 	}
 
-	async notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean }): Promise<IOrchSubmitResult> {
+	async notify(threadId: string, prompt: IOrchPrompt, turnId: string, options?: { readonly interrupt?: boolean; readonly steer?: boolean }): Promise<IOrchSubmitResult> {
 		await this.ensureThreadLoaded(threadId);
 		this.describeThread(threadId, undefined);
 		// The turn id doubles as the command id, so a retried wake-up is acknowledged, not sent twice.
-		const step = this.apply({ type: 'thread.notify', threadId, turnId, prompt, ...(options?.interrupt ? { interrupt: true } : {}) }, `notify:${turnId}`);
+		const step = this.apply({ type: 'thread.notify', threadId, turnId, prompt, ...(options?.interrupt ? { interrupt: true } : {}), ...(options?.steer ? { steer: true } : {}) }, `notify:${turnId}`);
 		const outcome = step.decision.outcome;
 		return outcome ? { outcome } : { outcome: 'rejected', ...(step.decision.rejected ? { reason: step.decision.rejected } : {}) };
 	}
@@ -1016,6 +1023,16 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				}
 			}
 			const thread = this.state.threads[threadId];
+			if (thread?.parentId) {
+				// A subagent (a team member, a council seat, a delegated task) is never confined less than the chat
+				// that delegated to it (every turn: the parent's may have tightened), writes its folder only when the
+				// parent may write it too, and never runs on an agent sandboxed more weakly than the parent's (INV-11).
+				const refused = await this.confineChild(threadId, thread.parentId, turn.prompt.modelRef);
+				if (refused) {
+					this.apply({ type: 'dispatch.failed', threadId, turnId: turn.id, error: `Not started: ${refused} Its parent chat runs in Volt's sandbox; give the task a model that runs in it.` });
+					return;
+				}
+			}
 			if (thread?.taskId && thread.parentId && turn.kind === 'brief') {
 				await host.prepareChild?.(threadId, thread.parentId);
 			}
@@ -1040,6 +1057,33 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				this.dispatching.delete(threadId);
 			}
 		}
+	}
+
+	/**
+	 * Confines a subagent's chat at least as tightly as its parent's (`confineChatSandbox`, INV-11),
+	 * with both agents' strategies and real folders. Returns why it may not run at all (its agent would
+	 * be sandboxed more weakly than the parent's); nothing is stored then, and its turn must not start.
+	 */
+	private async confineChild(threadId: string, parentId: string, modelRef?: string): Promise<string | undefined> {
+		const floor = this.runtime.getSandboxSettings(parentId);
+		if (floor.level === 'off') {
+			return undefined;
+		}
+		const realpath = (path: string) => this.fileService.realpath(URI.file(path)).then(real => real?.fsPath);
+		const strategy = (chatId: string, ref: string | undefined) => {
+			const providerId = this.providerOfRef(ref ?? this.state.threads[chatId]?.modelRef ?? this.runtime.getOrCreateSession(chatId).providerRef);
+			return providerId ? { strategy: this.agentSandboxStrategy(providerId, floor.level) } : {};
+		};
+		const decision = await confineChatSandbox(this.runtime, threadId, floor, {
+			caller: { ...await chatSandboxScope(this.runtime, parentId, realpath), ...strategy(parentId, undefined) },
+			child: { ...await chatSandboxScope(this.runtime, threadId, realpath), ...strategy(threadId, modelRef) },
+		});
+		return decision.refused;
+	}
+
+	/** How `providerId`'s agent is sandboxed at `level` on this machine (a seam for tests). */
+	protected agentSandboxStrategy(providerId: string, level: VoltSandboxLevel): SandboxStrategy {
+		return sandboxStrategy(providerId, level, CHAT_SANDBOX_PLATFORM);
 	}
 
 	/**
@@ -1071,7 +1115,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		}
 		if (!delivered) {
 			// The run ended first or the agent refused: the message is not lost, it goes first in the queue.
-			this.apply({ type: 'steer.failed', threadId: effect.threadId, steerId: effect.steerId, prompt: effect.prompt, ...(effect.taskIds ? { taskIds: effect.taskIds } : {}) });
+			this.apply({ type: 'steer.failed', threadId: effect.threadId, steerId: effect.steerId, prompt: effect.prompt, ...(effect.taskIds ? { taskIds: effect.taskIds } : {}), ...(effect.notification ? { notification: true } : {}) });
 		}
 	}
 
@@ -1144,6 +1188,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				worktreePath: created.path,
 				branch: created.branch,
 				isCancelled: () => isTerminalTaskState(this.state.tasks[taskId]?.state ?? 'cancelled'),
+				sandbox: this.runtime.getSandboxSettings(task.childId),
 			});
 			this.apply({ type: 'task.worktree', taskId, path: created.path, branch: created.branch });
 		} catch (err) {
@@ -1655,15 +1700,19 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 					return { text: this.listModels(threadId) };
 				case DELEGATE_TASK_TOOL_NAME:
 					// Taken first: a call refused below must not leave its id for the next call's row.
-					return await this.delegate(threadId, args, token, this.takeDelegateCall(threadId));
-				case TASK_STATUS_TOOL_NAME:
-					return { text: this.taskStatus(threadId, typeof args.task_id === 'string' ? args.task_id : undefined) };
+					return await this.delegate(threadId, withoutOrchestraFields(args), token, this.takeDelegateCall(threadId));
+				case TASK_STATUS_TOOL_NAME: {
+					const foreign = typeof args.task_id === 'string' ? this.foreignTaskRefusal(threadId, args.task_id, name) : undefined;
+					return foreign ? { error: foreign } : { text: this.taskStatus(threadId, typeof args.task_id === 'string' ? args.task_id : undefined) };
+				}
 				case WAIT_TASKS_TOOL_NAME:
 					return { text: await this.waitTasks(threadId, Array.isArray(args.task_ids) ? args.task_ids.filter((id): id is string => typeof id === 'string') : undefined, args.any === true, token) };
 				case CANCEL_TASK_TOOL_NAME:
 					return this.cancelTask(threadId, String(args.task_id ?? ''), typeof args.reason === 'string' ? args.reason : undefined);
-				case MESSAGE_TASK_TOOL_NAME:
-					return await this.messageTask(threadId, String(args.task_id ?? ''), String(args.message ?? ''), args.wait === true, token);
+				case MESSAGE_TASK_TOOL_NAME: {
+					const foreign = this.foreignTaskRefusal(threadId, String(args.task_id ?? ''), name);
+					return foreign ? { error: foreign } : await this.messageTask(threadId, String(args.task_id ?? ''), String(args.message ?? ''), args.wait === true, token);
+				}
 				case HANDOFF_TOOL_NAME:
 					return this.handoff(threadId, args);
 			}
@@ -1673,6 +1722,22 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return { error: `Unknown tool ${name}` };
 	}
 
+	/**
+	 * A sandboxed chat reads and messages only the tasks of its own subtree (its subagents and theirs):
+	 * another chat's task reports to that chat (its result needs agents.read:other), and a follow-up
+	 * would prompt a chat confined only by its own parent (INV-11). Team rosters and boards name
+	 * teammates' tasks, so a member could otherwise reach its siblings through task_status and
+	 * message_task. Undefined when the call may go on (an unknown task fails on its own).
+	 */
+	private foreignTaskRefusal(threadId: string, taskId: string, name: string): string | undefined {
+		const task = this.state.tasks[taskId.trim()];
+		const settings = this.runtime.getSandboxSettings(threadId);
+		if (!task || settings.level === 'off' || chatInSubtree(threadId, task.parentId, id => this.state.threads[id]?.parentId)) {
+			return undefined;
+		}
+		return sandboxReachRefusal(name, 'reads-other', [`${task.title} [${task.id}]`], settings);
+	}
+
 	private listModels(threadId: string): string {
 		const current = this.state.threads[threadId]?.modelRef ?? this.runtime.getOrCreateSession(threadId).providerRef;
 		const items = this.runtime.listCatalog().filter(item => item.enabled);
@@ -1680,7 +1745,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return lines.length ? ['Models Volt can run a task on (pass the `model` value):', ...lines].join('\n') : 'No models are connected.';
 	}
 
-	private resolveModel(value: unknown): { readonly ref: string; readonly label: string } | undefined {
+	private resolveModel(value: unknown): { readonly ref: string; readonly label: string; readonly providerId: string } | undefined {
 		if (typeof value !== 'string' || !value.trim()) {
 			return undefined;
 		}
@@ -1694,7 +1759,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		if (!match) {
 			throw new Error(`No connected model matches "${value}". Call list_models for the exact values.`);
 		}
-		return { ref: match.ref, label: match.label };
+		return { ref: match.ref, label: match.label, providerId: match.providerId };
 	}
 
 	/**
@@ -1834,7 +1899,21 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return next?.callId;
 	}
 
-	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, toolCallId: string | undefined, single = false): Promise<IVoltHostToolResult> {
+	async spawnTasks(parentId: string, entries: readonly Record<string, unknown>[], token: CancellationToken): Promise<readonly IOrchSpawnOutcome[]> {
+		await this.ensureThreadLoaded(parentId);
+		const outcomes: IOrchSpawnOutcome[] = [];
+		for (const entry of entries) {
+			try {
+				const result = await this.delegate(parentId, { ...entry, tasks: undefined, models: undefined, wait: false }, token, undefined, true);
+				outcomes.push(result.error ? { error: result.error } : { taskId: result.taskId, reused: result.reused });
+			} catch (err) {
+				outcomes.push({ error: err instanceof Error ? err.message : String(err) });
+			}
+		}
+		return outcomes;
+	}
+
+	private async delegate(parentId: string, args: Record<string, unknown>, token: CancellationToken, toolCallId: string | undefined, single = false): Promise<IVoltHostToolResult & { readonly taskId?: string; readonly reused?: boolean }> {
 		if (Array.isArray(args.tasks) && args.tasks.length && !single) {
 			return this.delegateBatch(parentId, args, args.tasks, token, toolCallId);
 		}
@@ -1879,6 +1958,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const title = typeof args.title === 'string' && args.title.trim() ? args.title.trim().slice(0, 80) : previous?.title ?? titleFromBrief(brief);
 		const taskId = newTaskId(id => !!this.state.tasks[id]);
 		const depth = (parent?.depth ?? 0) + 1;
+		// Orchestra spawns (teams, councils) tag the task and may anonymize its upstream reports.
+		const team = typeof args.team === 'string' && args.team.trim() ? args.team.trim() : undefined;
+		const blind = stringListArg(args.blind, MAX_UPSTREAM_BLIND, 40);
+		const quiet = args.quiet === true;
 		const step = this.apply({
 			type: 'task.spawn',
 			spawn: {
@@ -1900,6 +1983,9 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				...(after.length ? { after } : {}),
 				...(budgetUsd !== undefined ? { budgetUsd } : {}),
 				...(fallbacks.length ? { fallbacks } : {}),
+				...(team ? { team } : {}),
+				...(blind.length ? { blind } : {}),
+				...(quiet ? { quiet: true } : {}),
 				childPrompt: {
 					text: buildTaskPrompt(brief, {
 						parentTitle: parent?.title,
@@ -1911,7 +1997,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 						...(scope.length ? { scope } : {}),
 						capsule: this.parentCapsule(parentId, contextLevel),
 						...(requestLeftUsd !== undefined || budgetUsd !== undefined ? { budget: { ...(requestLeftUsd !== undefined ? { requestLeftUsd } : {}), ...(budgetUsd !== undefined ? { taskUsd: budgetUsd } : {}) } } : {}),
-						...(after.length ? { after } : {}),
+						// A blind reviewer is not told which tasks it reviews (task_status would unmask them).
+						...(after.length && !blind.length ? { after } : {}),
 					}),
 					display: { text: brief, brief: true },
 					mode,
@@ -1923,6 +2010,12 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			return { error: step.decision.rejected };
 		}
 		const id = step.decision.taskId!;
+		const childId = this.state.tasks[id]?.childId;
+		if (!step.decision.reused && childId) {
+			// Confined now, so its chat's Access shows the parent's sandbox while it waits its turn; its
+			// turns are confined again before they start (startTurn), and that one decides.
+			await this.confineChild(childId, parentId, model?.ref).catch(err => this.logService.warn('[volt orchestrator] confining a new subagent failed', err));
+		}
 		if (args.wait === true) {
 			await this.waitFor([id], false, TASK_WAIT_MS, token);
 		}
@@ -1942,7 +2035,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		} else {
 			lines.push('Its report is delivered to this chat as a new message when it finishes; you may end your turn. Call wait_tasks only if you need the result before you can continue.');
 		}
-		return { text: lines.join('\n') };
+		return { text: lines.join('\n'), taskId: id, ...(step.decision.reused ? { reused: true } : {}) };
 	}
 
 	/**
@@ -2109,10 +2202,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const now = Date.now();
 		if (taskId) {
 			const task = this.state.tasks[taskId];
-			if (!task) {
+			const caller = this.state.threads[threadId];
+			const own = caller?.taskId ? this.state.tasks[caller.taskId] : undefined;
+			// Another chat's task stays private, and a blind reviewer cannot unmask the answers it judges.
+			if (!task || (task.parentId !== threadId && task.rootId !== caller?.rootId) || own?.blind?.includes(task.id) || (own?.blind && task.team && task.team === own.team)) {
 				return `No task ${taskId}.`;
 			}
-			if (isTerminalTaskState(task.state)) {
+			if (task.parentId === threadId && isTerminalTaskState(task.state)) {
 				this.apply({ type: 'task.ack', taskIds: [task.id] });
 			}
 			return describeTask(task, now, { includeResult: true });
@@ -2137,7 +2233,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		}
 		await this.waitFor(wanted, any, TASK_WAIT_MS, token);
 		const now = Date.now();
-		const tasks = wanted.map(id => this.state.tasks[id]).filter((task): task is IOrchTask => !!task);
+		const tasks = wanted.map(id => this.state.tasks[id]).filter((task): task is IOrchTask => !!task && task.parentId === threadId);
 		const finished = tasks.filter(task => isTerminalTaskState(task.state));
 		if (finished.length) {
 			this.apply({ type: 'task.ack', taskIds: finished.map(task => task.id) });
@@ -2216,10 +2312,19 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		return { text: `Sent the follow-up to ${taskId}.\n${describeTask(current, Date.now(), { includeResult: true })}` };
 	}
 
+	private providerOfRef(ref: string | undefined): string | undefined {
+		return ref ? this.runtime.listCatalog().find(item => item.ref === ref)?.providerId : undefined;
+	}
+
 	private handoff(threadId: string, args: Record<string, unknown>): IVoltHostToolResult {
 		const model = this.resolveModel(args.model);
 		if (!model) {
 			return { error: 'handoff needs a `model` from list_models.' };
+		}
+		// The chat keeps its sandbox; the agent it moves to may not be sandboxed more weakly (B-10, INV-11).
+		const refusal = handoffSandboxRefusal(this.runtime.getSandboxSettings(threadId), this.providerOfRef(this.state.threads[threadId]?.modelRef ?? this.runtime.getOrCreateSession(threadId).providerRef), model.providerId, model.label);
+		if (refusal) {
+			return { error: refusal };
 		}
 		const brief = typeof args.brief === 'string' ? args.brief.trim() : '';
 		const step = this.apply({ type: 'thread.handoff', threadId, to: model.ref, toLabel: model.label, by: 'agent', ...(brief ? { brief } : {}), ...(typeof args.reason === 'string' && args.reason.trim() ? { reason: args.reason.trim() } : {}) });
@@ -2234,6 +2339,22 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 function isRunLive(status: string): boolean {
 	return status === 'running' || status === 'queued' || status === 'waiting';
+}
+
+/**
+ * delegate_task's arguments without the fields only the orchestra sets (`spawnTasks`): a team id
+ * lifts the per-turn spawn cap to the team cap and skips the repeat guard, `quiet` keeps reports
+ * from the chat, `blind` hides upstream tasks. An agent never sets them for itself.
+ */
+function withoutOrchestraFields(args: Record<string, unknown>): Record<string, unknown> {
+	if (args.team === undefined && args.blind === undefined && args.quiet === undefined) {
+		return args;
+	}
+	const rest = { ...args };
+	delete rest.team;
+	delete rest.blind;
+	delete rest.quiet;
+	return rest;
 }
 
 /** The contract and run fields a `tasks` entry may set for itself (others come from the call). */

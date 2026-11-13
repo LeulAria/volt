@@ -46,7 +46,10 @@ import { ExtensionHostKind, ExtensionRunningPreference, IExtensionHostKindPicker
 import { IExtensionHostManager } from '../common/extensionHostManagers.js';
 import { ExtensionHostExitCode } from '../common/extensionHostProtocol.js';
 import { IExtensionManifestPropertiesService } from '../common/extensionManifestPropertiesService.js';
-import { ExtensionRunningLocation, LocalProcessRunningLocation, LocalWebWorkerRunningLocation } from '../common/extensionRunningLocation.js';
+import { ExtensionRunningLocation, isVoltSandboxedRunningLocation, LocalProcessRunningLocation, LocalWebWorkerRunningLocation } from '../common/extensionRunningLocation.js';
+import { IVoltExtensionSandboxService } from '../common/voltExtensionSandbox.js';
+import { voltHeldByKillSwitch, VoltRefusedExtensionHost, voltSandboxedExtension, voltSandboxedRemoteDataProvider } from '../common/voltSandboxedExtensionHosts.js';
+import { createVoltServerExtensionHost } from './voltServerExtensionHost.js';
 import { ExtensionRunningLocationTracker, filterExtensionDescriptions } from '../common/extensionRunningLocationTracker.js';
 import { ExtensionHostExtensions, ExtensionHostStartup, IExtensionHost, IExtensionService, WebWorkerExtHostConfigValue, toExtension, webWorkerExtHostConfig } from '../common/extensions.js';
 import { ExtensionsProposedApi } from '../common/extensionsProposedApi.js';
@@ -159,7 +162,9 @@ export class NativeExtensionService extends AbstractExtensionService implements 
 
 		super._onExtensionHostCrashed(extensionHost, code, signal);
 
-		if (extensionHost.kind === ExtensionHostKind.LocalProcess) {
+		// Volt: a sandboxed extension's host is local to the extension but runs on the agent server; it
+		// restarts alone (super), never with every local extension host.
+		if (extensionHost.kind === ExtensionHostKind.LocalProcess && !this._isVoltSandboxedHost(extensionHost)) {
 			if (code === ExtensionHostExitCode.VersionMismatch) {
 				this._notificationService.prompt(
 					Severity.Error,
@@ -535,9 +540,23 @@ class NativeExtensionHostFactory implements IExtensionHostFactory {
 		this._webWorkerExtHostEnablement = determineLocalWebWorkerExtHostEnablement(environmentService, configurationService);
 	}
 
+	// Volt (P2, P6): asked for when a sandboxed host is made, not at construction (the factory is made with `new`).
+	private get _voltExtensionSandboxService(): IVoltExtensionSandboxService { return this._instantiationService.invokeFunction(accessor => accessor.get(IVoltExtensionSandboxService)); }
+	private get _voltWorkspaceContextService(): IWorkspaceContextService { return this._instantiationService.invokeFunction(accessor => accessor.get(IWorkspaceContextService)); }
+	private get _voltWorkspaceTrustService(): IWorkspaceTrustManagementService { return this._instantiationService.invokeFunction(accessor => accessor.get(IWorkspaceTrustManagementService)); }
+
 	public createExtensionHost(runningLocations: ExtensionRunningLocationTracker, runningLocation: ExtensionRunningLocation, isInitialStart: boolean): IExtensionHost | null {
+		// Volt (P8): the kill switch holds a sandboxed extension (tier `ask`); it never starts unsandboxed in its place.
+		const held = voltHeldByKillSwitch(this._instantiationService.invokeFunction(accessor => accessor.get(IConfigurationService)), runningLocations, runningLocation, this._getExtensionRegistrySnapshotWhenReady, () => this._voltExtensionSandboxService);
+		if (held) {
+			return held;
+		}
 		switch (runningLocation.kind) {
 			case ExtensionHostKind.LocalProcess: {
+				if (isVoltSandboxedRunningLocation(runningLocation)) {
+					// Volt (P6): an opted-in Node extension runs in the local agent server's sandbox, never here.
+					return createVoltServerExtensionHost(this._instantiationService, runningLocations, runningLocation, this._getExtensionRegistrySnapshotWhenReady);
+				}
 				const startup = (
 					isInitialStart
 						? ExtensionHostStartup.EagerManualStart
@@ -546,6 +565,13 @@ class NativeExtensionHostFactory implements IExtensionHostFactory {
 				return this._instantiationService.createInstance(NativeLocalProcessExtensionHost, runningLocation, startup, this._createLocalProcessExtensionHostDataProvider(runningLocations, isInitialStart, runningLocation));
 			}
 			case ExtensionHostKind.LocalWebWorker: {
+				if (isVoltSandboxedRunningLocation(runningLocation)) {
+					// Volt: a browser-only extension can't run in a sandbox of its own yet (T3-web, D-13): it stays off and says why.
+					return new VoltRefusedExtensionHost(runningLocation, async () => {
+						const extension = voltSandboxedExtension(runningLocations, runningLocation, (await this._getExtensionRegistrySnapshotWhenReady()).extensions);
+						return extension && { extensionId: extension.identifier.value, code: 'browser-only', reason: nls.localize('voltSandbox.browserOnly', "It runs only in the browser part of Volt, which can't sandbox one extension yet.") };
+					}, this._voltExtensionSandboxService);
+				}
 				if (this._webWorkerExtHostEnablement !== LocalWebWorkerExtHostEnablement.Disabled) {
 					const startup = this._webWorkerExtHostEnablement === LocalWebWorkerExtHostEnablement.Lazy ? ExtensionHostStartup.LazyAutoStart : ExtensionHostStartup.EagerManualStart;
 					return this._instantiationService.createInstance(WebWorkerExtensionHost, runningLocation, startup, this._createWebWorkerExtensionHostDataProvider(runningLocations, runningLocation));
@@ -555,7 +581,14 @@ class NativeExtensionHostFactory implements IExtensionHostFactory {
 			case ExtensionHostKind.Remote: {
 				const remoteAgentConnection = this._remoteAgentService.getConnection();
 				if (remoteAgentConnection) {
-					return this._instantiationService.createInstance(RemoteExtensionHost, runningLocation, this._createRemoteExtensionHostDataProvider(runningLocations, remoteAgentConnection.remoteAuthority));
+					const provider = this._createRemoteExtensionHostDataProvider(runningLocations, remoteAgentConnection.remoteAuthority, runningLocation);
+					if (isVoltSandboxedRunningLocation(runningLocation)) {
+						// Volt (P2): one opted-in extension, alone in the server's sandbox.
+						return this._instantiationService.createInstance(RemoteExtensionHost, runningLocation, voltSandboxedRemoteDataProvider(provider, runningLocations, runningLocation, this._getExtensionRegistrySnapshotWhenReady, {
+							sandbox: this._voltExtensionSandboxService, context: this._voltWorkspaceContextService, trust: this._voltWorkspaceTrustService,
+						}, true));
+					}
+					return this._instantiationService.createInstance(RemoteExtensionHost, runningLocation, provider);
 				}
 				return null;
 			}
@@ -606,7 +639,7 @@ class NativeExtensionHostFactory implements IExtensionHostFactory {
 		};
 	}
 
-	private _createRemoteExtensionHostDataProvider(runningLocations: ExtensionRunningLocationTracker, remoteAuthority: string): IRemoteExtensionHostDataProvider {
+	private _createRemoteExtensionHostDataProvider(runningLocations: ExtensionRunningLocationTracker, remoteAuthority: string, desiredRunningLocation: ExtensionRunningLocation): IRemoteExtensionHostDataProvider {
 		return {
 			remoteAuthority: remoteAuthority,
 			getInitData: async (): Promise<IRemoteExtensionHostInitData> => {
@@ -617,7 +650,8 @@ class NativeExtensionHostFactory implements IExtensionHostFactory {
 					throw new Error('Cannot provide init data for remote extension host!');
 				}
 
-				const myExtensions = runningLocations.filterByExtensionHostKind(snapshot.extensions, ExtensionHostKind.Remote);
+				// Volt: this host's own extensions; a sandboxed extension's host is another location.
+				const myExtensions = runningLocations.filterByRunningLocation(snapshot.extensions, desiredRunningLocation);
 				const extensions = new ExtensionHostExtensions(snapshot.versionId, snapshot.extensions, myExtensions.map(extension => extension.identifier));
 
 				return {

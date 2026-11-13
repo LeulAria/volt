@@ -34,6 +34,7 @@ export interface ICodeIndexWorker {
 
 interface IManifestSummary {
 	readonly root?: string;
+	readonly optionsKey?: string;
 	readonly updatedAt?: number;
 	readonly lastUsedAt?: number;
 	readonly stats?: { readonly files: number; readonly bytes: number; readonly symbols: number; readonly diskBytes: number };
@@ -42,6 +43,11 @@ interface IManifestSummary {
 function normalizeRoot(root: string): string {
 	const path = normalize(root);
 	return path.length > 1 && path.endsWith(sep) ? path.slice(0, -1) : path;
+}
+
+/** The engine's key of a folder's confined index (a sandboxed chat's; `IVoltCodeIndexOptions.confined`). */
+function confinedKey(root: string): string {
+	return `${root}\0confined`;
 }
 
 export class CodeIndexEngine implements ICodeIndexWorker {
@@ -77,10 +83,12 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 	}
 
 	private index(root: string, options: IVoltCodeIndexOptions | undefined): RootIndex {
-		const key = normalizeRoot(root);
+		const path = normalizeRoot(root);
+		// A sandboxed chat's index lives beside the shared one (its own folder on disk), never replacing it.
+		const key = options?.confined ? confinedKey(path) : path;
 		let index = this.roots.get(key);
 		if (!index) {
-			index = new RootIndex(key, this.dirFor(key), options ?? {}, () => this.fireChange(), this.log);
+			index = new RootIndex(path, this.dirFor(key), options ?? {}, () => this.fireChange(), this.log);
 			this.roots.set(key, index);
 			void this.evictFromDisk().catch(err => this.log(`[code index] cleanup failed: ${err}`));
 		} else if (options && optionsKey(options) !== index.key) {
@@ -114,7 +122,8 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 		const index = this.index(request.root, request.options);
 		const started = Date.now();
 		let fffSkipped: string | undefined;
-		if (request.fff !== 'off') {
+		// FFF follows its own rules for links; a sandboxed chat's search never runs it.
+		if (request.fff !== 'off' && !request.options?.confined) {
 			const root = normalizeRoot(request.root);
 			const found = await this.fff.findFiles(root, request.query, request.limit, request.fffPath);
 			if (found.kind === 'results') {
@@ -157,11 +166,14 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 		}
 		const out = new Map<string, IVoltCodeIndexStatus>();
 		for (const index of this.roots.values()) {
-			out.set(index.root, index.status());
+			// The settings page lists each folder once: its shared index.
+			if (!index.confined) {
+				out.set(index.root, index.status());
+			}
 		}
 		for (const name of await fs.readdir(this.dataDir).catch(() => [] as string[])) {
 			const summary = await this.readSummary(join(this.dataDir, name));
-			if (summary?.root && !out.has(summary.root)) {
+			if (summary?.root && !out.has(summary.root) && !summary.optionsKey?.includes('"c":true')) {
 				out.set(summary.root, await this.diskStatus(summary.root, join(this.dataDir, name)));
 			}
 		}
@@ -197,13 +209,15 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 	}
 
 	async remove(root?: string): Promise<void> {
-		const roots = root ? [normalizeRoot(root)] : [...this.roots.keys()];
+		const roots = root ? [normalizeRoot(root), confinedKey(normalizeRoot(root))] : [...this.roots.keys()];
 		for (const key of roots) {
 			await this.roots.get(key)?.dispose();
 			this.roots.delete(key);
 		}
 		if (root) {
-			await fs.rm(this.dirFor(normalizeRoot(root)), { recursive: true, force: true });
+			for (const key of roots) {
+				await fs.rm(this.dirFor(key), { recursive: true, force: true });
+			}
 		} else {
 			await fs.rm(this.dataDir, { recursive: true, force: true });
 		}

