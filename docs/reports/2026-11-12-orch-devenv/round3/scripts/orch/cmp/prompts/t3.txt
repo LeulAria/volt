@@ -1,0 +1,6 @@
+Benchmark task in /tmp/v3orch/w/t3. SPEC.md specifies src/money.ts. Do it with a writer subagent and a reviewer subagent:
+1. Writer: add formatReceipt to src/money.ts as SPEC.md says. Change nothing else unless the reviewer asks.
+2. Reviewer (never edits files): review all of src/money.ts against every example in SPEC.md (it may run node to check them) and list concrete problems, or say APPROVED.
+3. If the reviewer found problems, the writer fixes exactly those, then the reviewer checks again. Repeat until APPROVED (at most 3 rounds).
+{{DELEGATION}}
+Do not edit files yourself. Final reply, one line: the number of review rounds and the reviewer's last verdict.

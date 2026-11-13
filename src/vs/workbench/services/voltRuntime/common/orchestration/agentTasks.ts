@@ -58,6 +58,18 @@ export const MAX_TASK_DEPTH = 2;
  * and tells the agent to call again.
  */
 export const TASK_WAIT_MS = 45_000;
+/**
+ * The same budget for a Claude parent: Claude Code's MCP client waits for a tool far longer than 60 s
+ * (an HTTP call is cut at 5 min by Node's fetch). A 45 s cap made a Claude lead building for minutes
+ * call wait_tasks again and again, each a whole request on its full context (ADEMark C1-style run).
+ */
+export const TASK_WAIT_LONG_MS = 240_000;
+
+/** How long one waiting call may block: TASK_WAIT_LONG_MS for a Claude parent, TASK_WAIT_MS for any other. */
+export function taskWaitMs(longWaits: boolean): number {
+	return longWaits ? TASK_WAIT_LONG_MS : TASK_WAIT_MS;
+}
+
 /** A report longer than this is clipped in the parent's notification; the full text stays in the child chat. */
 export const TASK_RESULT_CHARS = 12_000;
 /** An upstream task's report as a dependent task receives it (`after`). */
@@ -100,6 +112,23 @@ export function stringListArg(value: unknown, max = 24, chars = 600): string[] {
 		.filter((item): item is string => typeof item === 'string' && !!item.trim())
 		.map(item => item.trim().slice(0, chars))
 		.slice(0, max);
+}
+
+/**
+ * `after` of a delegate_task call that starts one task: task_ids, or 1-based positions of this
+ * chat's own tasks in the order it started them ("1" is its first task). Models write a writer,
+ * then its reviewer in a second call with `after: ["1"]`, as they would inside one `tasks` call;
+ * that was refused ("not a task of this chat"), and the parent then waited for the writer itself
+ * and started the reviewer a turn later. A position with no task stays as given (the decider
+ * refuses it with the list of tasks).
+ */
+export function resolveChatTaskRefs(value: unknown, chatTasks: readonly { readonly id: string }[]): string[] {
+	const items = typeof value === 'string' || typeof value === 'number' ? [value] : Array.isArray(value) ? value : [];
+	const refs = items
+		.map(item => typeof item === 'number' && Number.isInteger(item) ? String(item) : typeof item === 'string' ? item.trim().slice(0, 40) : '')
+		.filter(Boolean)
+		.slice(0, 16);
+	return [...new Set(refs.map(ref => /^\d+$/.test(ref) ? chatTasks[Number(ref) - 1]?.id ?? ref : ref))];
 }
 
 /** At most this many `verify` commands per task: they run one after another before every report. */
@@ -164,20 +193,24 @@ export function bareTaskToolName(name: string | undefined): AgentTaskToolName | 
 
 const MODEL_ARG = {
 	type: 'string',
-	description: 'Model to run it on: a `model` value from list_models (exact id or ref, or a label such as "Claude Opus 5.5"), or "auto" for the model the user set for this role. Omit to use this chat\'s model.',
+	description: 'A model from list_models (id, ref or label), or "auto" (the user\'s model for this role). Default: this chat\'s model.',
 };
 
-/** The handoff contract and run options, the same for one task and for each `tasks` entry. */
+/**
+ * The optional contract and run options, on the call (and as plain fields on each `tasks` entry).
+ * Kept short: the whole schema is in every prompt of a top-level chat (`alwaysLoad: 'top'`), and a
+ * long one made models write long payloads (2.5 KB of arguments, 7 s before the first subagent).
+ */
 const CONTRACT_ARGS = {
-	goal: { type: 'string', description: 'The outcome you want, in a sentence or two (what is true when the work is done).' },
-	constraints: { type: 'array', items: { type: 'string' }, description: 'Rules the work must keep: what must not change, APIs to keep, style to follow.' },
-	done_when: { type: 'array', items: { type: 'string' }, description: 'The checks that prove it is done (a test that passes, a type-check, what the page shows). The subagent checks each one and reports met or not met.' },
-	verify: { type: 'array', items: { type: 'string' }, description: 'Shell commands that prove the work (a test file, a type-check, a build), run by Volt itself in the subagent\'s checkout when it reports done. A failure goes back to the subagent with the output before you hear from it, so its report arrives verified. Fast, targeted commands (each at most 10 minutes); any agent and model is held to them.' },
-	files: { type: 'array', items: { type: 'string' }, description: 'Files to read before starting (paths), so it does not explore to find them.' },
-	scope: { type: 'array', items: { type: 'string' }, description: 'Files or folders this task owns: the only ones it may change. Volt flags two tasks claiming the same paths.' },
-	context: { type: 'string', enum: ['brief', 'full', 'none'], description: 'How much of this chat the subagent gets besides your brief. brief (default): the user\'s request, your plan and latest reply, and what the other subagents are doing. full: more of the conversation. none: only your brief (an unbiased second opinion).' },
-	budget_usd: { type: 'number', description: 'Stop this task when it has spent this much (US dollars, at list price when the agent does not report a cost).' },
-	fallback_models: { type: 'array', items: { type: 'string' }, description: 'Models to retry on, in order, when the task fails on its model (provider error, usage limit). The retry gets the same brief.' },
+	goal: { type: 'string', description: 'The outcome, in a sentence.' },
+	constraints: { type: 'array', items: { type: 'string' }, description: 'What must not change.' },
+	done_when: { type: 'array', items: { type: 'string' }, description: 'Checks that prove it is done; it reports each as met or not.' },
+	verify: { type: 'array', items: { type: 'string' }, description: 'Shell commands Volt runs in its checkout when it reports done; a failure goes back to it first.' },
+	files: { type: 'array', items: { type: 'string' }, description: 'Files to read first.' },
+	scope: { type: 'array', items: { type: 'string' }, description: 'Files or folders it owns: the only ones it may change.' },
+	context: { type: 'string', enum: ['brief', 'full', 'none'], description: 'What it sees of this chat besides the brief: brief (default: the request, your plan, the other subagents), full, or none.' },
+	budget_usd: { type: 'number', description: 'Stop it past this spend (USD).' },
+	fallback_models: { type: 'array', items: { type: 'string' }, description: 'Models to retry on, in order, when its model fails (provider error, usage limit).' },
 };
 
 export interface IAgentTaskToolInfo {
@@ -185,6 +218,8 @@ export interface IAgentTaskToolInfo {
 	readonly title: string;
 	readonly description: string;
 	readonly inputSchema: object;
+	/** `top`: in the prompt of top-level chats, not behind the tool search (`IVoltHostToolInfo.alwaysLoad`). */
+	readonly alwaysLoad?: 'top';
 }
 
 /** delegate_task, with `tasks` taking at most `maxPerCall` entries (the user's setting). */
@@ -192,60 +227,48 @@ function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
 	return {
 		name: DELEGATE_TASK_TOOL_NAME,
 		title: 'Delegated task',
+		alwaysLoad: 'top',
 		description: [
-			'Run one task on a Volt subagent: a separate chat, on any model from list_models, that starts with your brief plus a short digest of this chat (the user\'s request, your plan, what other subagents do). Use it to work in parallel (several independent tasks at once), to get a second opinion from a different model (review, research), or to give a self-contained piece of work to a model better suited to it.',
-			'Write the brief like a hand-off to a capable colleague: the relevant files and facts you already found, and what to do with them. Fill the contract: `goal` (the outcome), `scope` (files it owns and may change), `files` (files to read first), `constraints`, and `done_when` (the checks that prove it is done; it reports each as met or not met). For work that edits code, name the files to change and what to change in each (paths, symbols, line numbers you saw), so the subagent can start editing at once instead of exploring again. Do not delegate trivial lookups you can do faster yourself.',
-			'To run several parts at once, start them all in ONE call with `tasks` (one entry per part, each with its own complete brief) instead of one call per part. A part that needs another part\'s result names it in `after` (that part\'s 1-based position in `tasks`, or a task_id): it starts once those finish, with their reports added to its brief. The reports of the parts of one call reach this chat together, once all of them have finished.',
-			'Returns a task_id at once (wait=false, the default). Several tasks run in parallel. When a task finishes its report is delivered to this chat as a new message, so after starting tasks you may end your turn instead of polling; call wait_tasks only when you need the results before you can continue in this turn. task_status reads progress and spend. Subagent spend counts against the user\'s budget for this request; a task over its budget is stopped.',
-			'Review rounds: for each new round of a review (or any work you send back after changes), call delegate_task again with previous_task_id set to the last round and a fresh client_request_id (keep that id when you retry the same round). Do not use message_task for a new round: a fresh subagent reviews the current code without the previous reviewer\'s assumptions. Tasks and their reports survive a Volt restart.',
+			'Run work on Volt subagents: separate chats, on any model from list_models, whose reports come back to you. Use it for independent parts in parallel, a second opinion from another model (review, research), or self-contained work; not for lookups you can do faster yourself.',
+			'Brief each like a capable colleague, in a few sentences: the files and facts you already found and exactly what to do (for edits: the paths, symbols and change), so it starts at once instead of exploring.',
+			'Several parts: ONE call with `tasks`. A part that needs others\' reports lists them in `after` (1-based positions in `tasks`, or task_ids of this chat\'s earlier tasks) and starts when they finish, with their reports added to its brief.',
+			'wait=true returns the reports in this call (it returns early when they take long, after 45 s to 4 min by agent; then call wait_tasks). Otherwise it returns at once and the reports arrive as a new message: end your turn, or call wait_tasks when you need them now.',
+			'A new round of a review after changes: delegate_task with previous_task_id (a fresh reviewer), not message_task.',
+			'goal, scope, files, constraints, done_when and verify are optional: use them for long or risky work, not for small tasks.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',
 			properties: {
-				task: { type: 'string', description: 'The complete brief for the subagent. Give `task` for one subagent, or `tasks` for several.' },
+				task: { type: 'string', description: 'The brief, for one subagent.' },
 				tasks: {
 					type: 'array',
 					maxItems: maxPerCall,
-					description: `Start up to ${maxPerCall} subagents in one call, one entry per part of the work. Each entry takes the same fields as a single task (task, title, model, role, isolation, goal, scope, files, constraints, done_when, verify, context, budget_usd, fallback_models) plus \`after\`; fields left out use this call's top-level values. Use instead of \`task\`.`,
+					description: `Up to ${maxPerCall} parts, one subagent each, instead of \`task\`. An entry takes the call's fields; fields left out use the call's values.`,
 					items: {
 						type: 'object',
 						properties: {
-							task: { type: 'string', description: 'The complete brief for this subagent.' },
-							title: { type: 'string', description: 'A short title shown in Volt (3-6 words).' },
-							model: MODEL_ARG,
+							task: { type: 'string' },
+							title: { type: 'string' },
+							model: { type: 'string' },
 							role: { type: 'string', enum: AGENT_TASK_ROLES },
-							isolation: { type: 'string', enum: ['shared', 'worktree'] },
-							...CONTRACT_ARGS,
-							after: { type: 'array', items: { type: 'string' }, description: 'Parts that must finish first: 1-based positions of earlier entries in `tasks` ("1", "2"), or task_ids. Their reports are added to this part\'s brief when it starts.' },
+							scope: { type: 'array', items: { type: 'string' } },
+							files: { type: 'array', items: { type: 'string' } },
+							done_when: { type: 'array', items: { type: 'string' } },
+							after: { type: 'array', items: { type: 'string' }, description: '1-based positions of earlier entries ("1"), or task_ids.' },
 						},
 						required: ['task'],
 					},
 				},
 				...CONTRACT_ARGS,
-				after: { type: 'array', items: { type: 'string' }, description: 'task_ids of this chat\'s tasks that must finish first; their reports are added to the brief when this one starts.' },
-				previous_task_id: {
-					type: 'string',
-					description: 'Start the next round of earlier work as a new task: the task_id of the previous round (e.g. a second review after you fixed what the first review found). Volt gives the new subagent that round\'s brief and report; your `task` should add what changed since, your responses to its findings, and the objections still open.',
-				},
-				title: { type: 'string', description: 'A short title shown in Volt (3-6 words).' },
+				after: { type: 'array', items: { type: 'string' }, description: 'task_ids (or 1-based positions) of this chat\'s earlier tasks that must finish first.' },
+				previous_task_id: { type: 'string', description: 'The previous round\'s task_id: the new subagent gets that round\'s brief and report; your brief adds what changed since.' },
+				title: { type: 'string', description: '3-6 words.' },
 				model: MODEL_ARG,
-				models: {
-					type: 'array',
-					items: { type: 'string' },
-					description: 'Run the same brief on 2-4 models at once, one task each (independent reviews, competing designs, a second opinion from another vendor). Each report comes back on its own. Use instead of `model`.',
-				},
-				role: {
-					type: 'string',
-					enum: AGENT_TASK_ROLES,
-					description: 'research and review run read-only and report back; implementation, test and design may edit files; general decides from the brief.',
-				},
-				isolation: {
-					type: 'string',
-					enum: ['shared', 'worktree'],
-					description: 'shared (default, use it unless two tasks would edit the same files): works in this chat\'s checkout, so its edits land where the user sees them. worktree: works on a new git branch in its own checkout so parallel edits cannot collide; its edits do not reach this checkout until you merge that branch (the report names it).',
-				},
-				wait: { type: 'boolean', description: 'Wait for the result in this call (up to about 45 s, then call wait_tasks). Default false.' },
-				client_request_id: { type: 'string', description: 'Optional idempotency key: a retry with the same key returns the same task instead of starting another.' },
+				models: { type: 'array', items: { type: 'string' }, description: 'The same brief on 2-4 models, a task each (independent reviews, competing designs). Instead of `model`.' },
+				role: { type: 'string', enum: AGENT_TASK_ROLES, description: 'research and review are read-only; implementation, test and design edit files; general decides from the brief.' },
+				isolation: { type: 'string', enum: ['shared', 'worktree'], description: 'shared (default): this chat\'s checkout. worktree: its own branch and checkout, for parallel edits of the same files; merge the branch it names.' },
+				wait: { type: 'boolean', description: 'Return the reports in this call (it returns early when they take long).' },
+				client_request_id: { type: 'string', description: 'Idempotency key: a retry with it returns the same task.' },
 			},
 		},
 	};
@@ -268,7 +291,8 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 	{
 		name: WAIT_TASKS_TOOL_NAME,
 		title: 'Waited for tasks',
-		description: 'Wait for delegated tasks to finish and return their reports. Waits for all of task_ids (default: every running task of this chat), or for the first one when any=true. Returns after about 45 s even if some are still running; call it again to keep waiting, or end your turn and the reports will be delivered as a message.',
+		alwaysLoad: 'top',
+		description: 'Wait for delegated tasks to finish and return their reports. Waits for all of task_ids (default: every running task of this chat), or for the first one when any=true. Returns early when they take long (45 s to 4 min, by agent) even if some are still running; call it again to keep waiting, or end your turn and the reports will be delivered as a message.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -286,13 +310,14 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 	{
 		name: MESSAGE_TASK_TOOL_NAME,
 		title: 'Messaged task',
+		alwaysLoad: 'top',
 		description: 'Send a follow-up to a finished delegated task: it continues in the same chat with everything it already learned (answer its question, ask it to fix what review found, ask for more detail). Starts another round; the new report is delivered like the first.',
 		inputSchema: {
 			type: 'object',
 			properties: {
 				task_id: { type: 'string' },
 				message: { type: 'string' },
-				wait: { type: 'boolean', description: 'Wait for the new report in this call (up to about 45 s).' },
+				wait: { type: 'boolean', description: 'Wait for the new report in this call (it returns early when it takes long).' },
 			},
 			required: ['task_id', 'message'],
 		},
@@ -352,6 +377,68 @@ export function modeForTaskRole(role: AgentTaskRole, requested: VoltMode | undef
 /** How a delegated task's agent starts (`VoltSubagentProfile`): read-only for research, review and tasks in Ask or Plan mode. */
 export function subagentProfileForTask(task: Pick<IOrchTask, 'role' | 'mode'>): VoltSubagentProfile {
 	return task.role === 'research' || task.role === 'review' || task.mode === 'ask' || task.mode === 'plan' ? 'readonly' : 'work';
+}
+
+/**
+ * The whole request is read-only: a sentence of its own ("Do not edit any file."), not one part
+ * ("Reviewer (never edits files)") or the parent ("Do not edit files yourself"), or a read-only task.
+ */
+const READ_ONLY_REQUEST = /(?:^|[.!?:]\s+|\n\s*)(?:do not|don't|never|you must not)\s+(?:edit|change|modify)\s+(?:any\s+|the\s+)?(?:files?|code)\b(?!\s+yourself)|\bread[- ]only\s+(?:task|request|audit|review|question|investigation)s?\b/i;
+/** Parts of the request that run read-only (`subagentProfileForTask`: research and review). */
+const READ_ONLY_PARTS = /\b(?:review(?:er|ers|s)?|research(?:er|ers)?|audit(?:or|s)?|investigate)\b/i;
+
+/**
+ * Which spares to start while a chat writes its delegate_task call (`prewarmSubagents`), before its
+ * tasks' roles are known: the request the chat is working on says it best. A research request in an
+ * Agent chat warmed `work` spares, and every research subagent started cold (1.2-1.4 s each on the
+ * critical path, harness bench rounds 2 and 3).
+ */
+export function subagentSpareKinds(allowWrites: boolean, request: string | undefined, total: number): { readonly work: number; readonly readonly: number } {
+	if (!allowWrites || (request && READ_ONLY_REQUEST.test(request))) {
+		return { work: 0, readonly: total };
+	}
+	if (request && total > 1 && READ_ONLY_PARTS.test(request)) {
+		return { work: total - 1, readonly: 1 };
+	}
+	return { work: total, readonly: 0 };
+}
+
+/** Words of a request that asks for subagents outright (`requestAsksForSubagents`). */
+const ASKS_FOR_SUBAGENTS = /\b(?:sub-?agents?|delegate_task|delegate\s+(?:it|them|this|these|each(?:\s+\w+)?|the\s+\w+)\s+to|(?:parallel|separate)\s+agents?|agents?\s+in\s+parallel)\b/i;
+
+/**
+ * True when the request itself asks for subagents ("with three subagents", "use delegate_task"):
+ * their spares can start with the run instead of when the delegate_task call starts streaming.
+ * Since delegate_task is loaded up front (no tool search first), that call starts about 3-5 s
+ * before the tasks exist, less than an agent takes to start on a busy machine.
+ */
+export function requestAsksForSubagents(request: string | undefined): boolean {
+	return !!request && ASKS_FOR_SUBAGENTS.test(request);
+}
+
+/**
+ * What goes up as a subagent's report: its final message (the text after its last tool call), as
+ * its brief says, not the notes it wrote between tool calls (`whole`). A final message that is not
+ * the report (a "Done." after one last check, with the "## Outcome" report written before that
+ * call) does not replace it: then the report runs from the last "## Outcome" heading. Undefined:
+ * the whole reply is the report.
+ */
+export function subagentReport(whole: string, final: string): string | undefined {
+	const text = whole.trim();
+	const last = final.trim();
+	if (!last || last === text) {
+		return undefined;
+	}
+	const outcome = /^#{1,3}\s*Outcome\b/gm;
+	if (outcome.test(last)) {
+		return last;
+	}
+	let from = -1;
+	outcome.lastIndex = 0;
+	for (let match = outcome.exec(text); match; match = outcome.exec(text)) {
+		from = match.index;
+	}
+	return from < 0 ? last : from === 0 ? undefined : text.slice(from);
 }
 
 /**
@@ -474,12 +561,15 @@ function contractLines(contract: ITaskContract | undefined, scope: readonly stri
  */
 function reportFormat(role: AgentTaskRole, checks: boolean): string {
 	const verification = checks
-		? '"## Verification" (each done_when check: met or not met, with the command you ran or what you saw)'
-		: '"## Verification" (how you checked your work: commands run and their result, or what you read)';
+		? '"## Verification" (each done_when check: met or not met, and how you know)'
+		: '"## Verification" (one line: what you ran or read to check it)';
 	const middle = EDITING_ROLES.has(role)
-		? '"## Changes" (each file you changed and what changed; "None" if nothing)'
+		? '"## Changes" (each file you changed and what changed, a line each; "None" if nothing)'
 		: '"## Findings" (what you found, with file paths and line numbers)';
-	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Use these headings: "## Outcome" (done, partly done or blocked, in one or two sentences), ${middle}, ${verification}, "## Open issues" (what is left, risks, anything you were unsure of; "None" if nothing).`;
+	// Short on purpose: the parent reads every report in each of its later requests, and a report is
+	// output the subagent writes on the critical path (round-3 bench: reports of 1.3-3.4 KB that
+	// restated the brief and every check took 2-5 s to write).
+	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Keep it as short as the facts allow: no restating the brief, no narration. Use these headings: "## Outcome" (done, partly done or blocked, in one sentence), ${middle}, ${verification}, and "## Open issues" only when something is left or uncertain.`;
 }
 
 /**
@@ -492,7 +582,9 @@ export function lintTaskBrief(brief: string, role: AgentTaskRole, contract: ITas
 	const words = brief.trim().split(/\s+/).filter(Boolean).length;
 	const editing = EDITING_ROLES.has(role) && role !== 'general';
 	const namesFiles = !!scope?.length || !!contract?.files?.length || /[\w-]+\/[\w./-]+|\b[\w-]+\.(?:ts|tsx|js|jsx|mjs|css|scss|html|json|md|py|go|rs|java|kt|swift|rb|php|cs|c|cc|cpp|h|vue|svelte|sql|yml|yaml|toml)\b/.test(brief);
-	if (editing && !contract?.doneWhen?.length) {
+	// A brief that names its files is specific enough to finish on: asking for done_when on every small
+	// edit only made the next call's arguments longer.
+	if (editing && !contract?.doneWhen?.length && !namesFiles) {
 		notes.push('no done_when: the subagent decides on its own when it is finished. Name the checks that prove the work (a test, a type-check, what the page shows).');
 	}
 	if (editing && !namesFiles) {

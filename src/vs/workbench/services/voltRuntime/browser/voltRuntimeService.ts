@@ -41,6 +41,7 @@ import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, pickGenerationParams, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
 import { ORCH_WARM_SUBAGENTS_SETTING } from '../common/orchestration/orchestrator.js';
+import { requestAsksForSubagents, subagentReport, subagentSpareKinds } from '../common/orchestration/agentTasks.js';
 import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, subagentProfile, VoltProviderState, VoltSubagentProfile } from '../common/providers.js';
@@ -312,7 +313,7 @@ interface IParkedAgent {
 }
 
 type AgentTurnResult =
-	| { readonly kind: 'end'; readonly reason: 'done' | 'abort' | 'fail'; readonly assistant: string; readonly incomplete?: 'steps' }
+	| { readonly kind: 'end'; readonly reason: 'done' | 'abort' | 'fail'; readonly assistant: string; readonly incomplete?: 'steps'; /** The text after the turn's last tool call: a subagent's report. */ readonly final: string }
 	| { readonly kind: 'restart' }
 	| { readonly kind: 'stale' };
 
@@ -4999,6 +5000,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						return;
 					}
 					run.metrics.mark('agentReady');
+					if (requestAsksForSubagents(request.text)) {
+						// The subagents are one model request away: their agents start now, not when the call streams.
+						this.prewarmSubagents(session);
+					}
 					provider.setRunContext?.(handle, { sessionId: session.sessionId, runId: run.runId, mode: request.mode });
 					const handoff = this.contextHandoff(session, item, reused);
 					if (handoff && !reused) {
@@ -5046,6 +5051,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						continue;
 					}
 					turns.push(first.assistant);
+					let final = first.final;
 					let reason = first.reason;
 					let incomplete = first.incomplete;
 					// The agent wants to stop. Volt's checks may send it back once per reason. A run cut at its
@@ -5064,6 +5070,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 							break;
 						}
 						turns.push(next.assistant);
+						final = next.final || final;
 						reason = next.reason;
 						incomplete = next.incomplete;
 					}
@@ -5073,7 +5080,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					const assistant = turns.filter(text => text.trim()).join('\n\n');
 					const agentActivity = this.runActivity(run);
 					if (assistant || agentActivity) {
-						session.messages.push({ role: 'assistant', content: assistant, model: item.label, ...(agentActivity ? { activity: agentActivity } : {}) });
+						// A subagent's report is its final message, as its brief says: not the notes it wrote between tool calls.
+						const report = session.subagent ? subagentReport(assistant, final) : undefined;
+						session.messages.push({ role: 'assistant', content: assistant, model: item.label, ...(agentActivity ? { activity: agentActivity } : {}), ...(report ? { report } : {}) });
 					}
 					session.agentSynced = session.messages.length;
 					if (voltCompaction && reason === 'done' && assistant.trim()) {
@@ -5120,6 +5129,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private async agentTurn(session: ISessionState, run: IRunState, provider: IAgentProvider, handle: IAgentSessionHandle, profile: IProviderProfile, item: IVoltCatalogItem, message: IAgentMessage, mayRestart: boolean): Promise<AgentTurnResult> {
 		const token = run.cancel.token;
 		let assistant = '';
+		// Where the text after the last tool call starts in `assistant` (undefined: no text since).
+		let finalFrom: number | undefined;
 		let textId: string | undefined;
 		let restart = false;
 		let reason: 'done' | 'abort' | 'fail' | undefined;
@@ -5160,8 +5171,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					if (textId !== undefined && event.id !== textId && assistant && !assistant.endsWith('\n')) {
 						assistant += '\n\n';
 					}
+					if (finalFrom === undefined) {
+						finalFrom = assistant.length;
+					}
 					textId = event.id;
 					assistant += event.delta;
+				}
+				if (event.type === 'tool.start') {
+					finalFrom = undefined;
 				}
 				if (event.type === 'title' && session.agentJoinedLate === handle) {
 					// Codex titled a handed-off chat "<conversation_so_far> This conversation started...".
@@ -5183,7 +5200,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return { kind: 'restart' };
 		}
 		trace.end(reason ?? 'done');
-		return { kind: 'end', reason: reason ?? 'done', assistant, ...(incomplete ? { incomplete } : {}) };
+		return { kind: 'end', reason: reason ?? 'done', assistant, final: finalFrom === undefined ? '' : assistant.slice(finalFrom).trim(), ...(incomplete ? { incomplete } : {}) };
 	}
 
 	/** A warm spare when one fits (or is about to), otherwise a cold start bound to this chat. */
@@ -5509,10 +5526,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const settings = this.getSandboxSettings(session.sessionId);
 		const sandbox: IAgentSandboxStart | undefined = settings.level === 'off' ? undefined : { settings, workspaceRoots: sandboxWorkspaceRoots(cwd, this.projectRoot(session)?.fsPath, !!session.worktreePath) };
 		// The call's roles are still streaming: an Ask or Plan chat's subagents are all read-only (see
-		// `subagentProfileForTask`); elsewhere the default role (general) works on the files.
-		const kind: VoltSubagentProfile = modePolicy(session.mode).allowWrites ? 'work' : 'readonly';
-		const spare = this.spareRequest(provider, profile, item, cwd, this.getModelOptions(item.ref), sandbox, kind);
-		this.agentPool.ensure(spare, { count: SUBAGENT_SPARES, ttlMs: SUBAGENT_SPARE_TTL_MS });
+		// `subagentProfileForTask`); elsewhere the request says whether its parts edit, read, or both.
+		let request: string | undefined;
+		for (let i = session.messages.length - 1; i >= 0 && request === undefined; i--) {
+			const message = session.messages[i];
+			if (message.role === 'user' && !message.steer) {
+				request = message.content;
+			}
+		}
+		const kinds = subagentSpareKinds(modePolicy(session.mode).allowWrites, request, SUBAGENT_SPARES);
+		for (const kind of ['work', 'readonly'] as const) {
+			if (kinds[kind]) {
+				const spare = this.spareRequest(provider, profile, item, cwd, this.getModelOptions(item.ref), sandbox, kind);
+				this.agentPool.ensure(spare, { count: kinds[kind], ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
+			}
+		}
 	}
 
 	private emit(session: ISessionState, runId: string, event: IVoltEvent): void {

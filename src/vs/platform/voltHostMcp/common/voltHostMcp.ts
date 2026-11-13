@@ -20,6 +20,12 @@ export interface IVoltHostMcpToolInfo {
 	readonly aliases?: readonly string[];
 	/** MCP tool `_meta`, listed as is (e.g. `anthropic/alwaysLoad`). */
 	readonly _meta?: Readonly<Record<string, unknown>>;
+	/**
+	 * `_meta` goes only into a full listing (a top-level chat). A listing for a subset (`?groups=`, a
+	 * Volt subagent) has the tool without it: e.g. delegate_task is always loaded for the chat that
+	 * delegates, and stays behind the tool search for subagents, which rarely delegate.
+	 */
+	readonly metaInFullListOnly?: boolean;
 }
 
 /** Where agents reach a window's server, and the secret their bearer tokens derive from. */

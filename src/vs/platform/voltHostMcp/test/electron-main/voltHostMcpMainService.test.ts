@@ -53,6 +53,7 @@ const INIT = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVe
 const TOOLS = [
 	{ name: 'ask_question', description: 'q', inputSchema: { type: 'object' }, group: 'core', _meta: { 'anthropic/alwaysLoad': true } },
 	{ name: 'browser_snapshot', description: 's', inputSchema: { type: 'object' }, group: 'browser' },
+	{ name: 'delegate_task', description: 'd', inputSchema: { type: 'object' }, group: 'tasks', _meta: { 'anthropic/alwaysLoad': true }, metaInFullListOnly: true },
 ];
 
 suite('Volt host MCP server', () => {
@@ -271,8 +272,12 @@ suite('Volt host MCP server', () => {
 			const endpoint = await service.start('w2', TOOLS);
 			const auth = (groups?: string[]) => ({ Authorization: `Bearer ${hostMcpSessionToken(endpoint.token, 'chat 1', groups)}` });
 			const list = async (suffix: string, groups?: string[]) => (JSON.parse((await post(`${endpoint.url}/chat%201${suffix}`, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, auth(groups))).body) as IRpcReply).result.tools;
-			assert.deepStrictEqual((await list('')).map(tool => tool.name), ['ask_question', 'browser_snapshot']);
+			assert.deepStrictEqual((await list('')).map(tool => tool.name), ['ask_question', 'browser_snapshot', 'delegate_task']);
 			assert.deepStrictEqual((await list('?groups=core', ['core'])).map(tool => tool.name), ['ask_question']);
+			// delegate_task is always loaded for a top-level chat (full list), and behind the tool search for a subagent (groups).
+			const subagent = await list('?groups=core,tasks', ['core', 'tasks']);
+			assert.deepStrictEqual(subagent.map(tool => [tool.name, tool._meta?.['anthropic/alwaysLoad']]), [['ask_question', true], ['delegate_task', undefined]]);
+			assert.ok(subagent.every(tool => !('metaInFullListOnly' in tool)), 'the flag stays internal');
 			assert.ok((await list('')).every(tool => tool.group === undefined), 'groups stay internal');
 			// The server instructions follow the groups: a subagent handed core, tasks and image reads only about those.
 			const instructions = async (suffix: string, groups?: string[]) => (JSON.parse((await post(`${endpoint.url}/chat%201${suffix}`, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }, auth(groups))).body) as { result: { instructions: string } }).result.instructions;
@@ -286,7 +291,7 @@ suite('Volt host MCP server', () => {
 			assert.ok(lean.length < all.length / 3);
 			// Claude Code sends them in every request of every chat: keep the whole set short.
 			assert.ok(all.length < 2200, `${all.length} chars`);
-			assert.deepStrictEqual((await list('')).map(tool => tool._meta?.['anthropic/alwaysLoad']), [true, undefined], 'a tool\'s _meta is listed, so Claude Code keeps it out of its tool search');
+			assert.deepStrictEqual((await list('')).map(tool => tool._meta?.['anthropic/alwaysLoad']), [true, undefined, true], 'a tool\'s _meta is listed, so Claude Code keeps it out of its tool search');
 
 			const called = await post(`${endpoint.url}/chat%201`, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'browser_snapshot', arguments: { interactive: true } } }, auth());
 			assert.strictEqual((JSON.parse(called.body) as IRpcReply).result.content[0].text, 'ran browser_snapshot');

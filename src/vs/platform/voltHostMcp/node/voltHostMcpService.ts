@@ -277,7 +277,15 @@ export class VoltHostMcpService extends Disposable implements IVoltHostMcpServic
 			case 'ping':
 				return ok(id, {});
 			case 'tools/list':
-				return ok(id, { tools: this.toolsFor(serverId, groups).map(({ group: _group, aliases: _aliases, ...tool }) => tool) });
+				return ok(id, {
+					tools: this.toolsFor(serverId, groups).map(({ group: _group, aliases: _aliases, metaInFullListOnly, ...tool }) => {
+						if (groups && metaInFullListOnly) {
+							const { _meta: _dropped, ...rest } = tool;
+							return rest;
+						}
+						return tool;
+					}),
+				});
 			case 'tools/call': {
 				const params = (message.params ?? {}) as { name?: string; arguments?: unknown };
 				const name = params.name ?? '';

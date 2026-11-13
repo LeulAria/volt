@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, requestAsksForSubagents, resolveChatTaskRefs, subagentReport, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
 import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
@@ -38,8 +38,9 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.ok(text.includes('this task may spend up to $2.00; the subagents of this request have $12.50 left'));
 		assert.ok(text.includes('This task waited for t-aaaaaa'));
 		assert.ok(text.indexOf('<parent_context>') < text.indexOf('<task>'), 'the digest comes before the brief');
-		assert.ok(text.trimEnd().endsWith('"## Open issues" (what is left, risks, anything you were unsure of; "None" if nothing).'), 'the report format is the last thing it reads');
+		assert.ok(text.trimEnd().endsWith('and "## Open issues" only when something is left or uncertain.'), 'the report format is the last thing it reads');
 		assert.ok(text.includes('"## Changes"') && text.includes('each done_when check: met or not met'));
+		assert.ok(text.includes('Keep it as short as the facts allow'), 'reports are short: the parent rereads each in every later request');
 
 		const review = buildTaskPrompt('Review it.', { role: 'review', depth: 1, isolation: 'shared', scope: ['src/header/'] });
 		assert.ok(review.includes('"## Findings"'));
@@ -53,6 +54,65 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.ok(notes[0].startsWith('no done_when'));
 		assert.ok(notes[1].startsWith('no files named'));
 		assert.ok(lintTaskBrief('Check it.', 'research', undefined, undefined, 'none')[0].includes('context is none'));
+		// A brief that names its file is specific enough: no push for done_when (it only made the next payload longer).
+		assert.deepStrictEqual(lintTaskBrief('Add formatReceipt to src/money.ts as SPEC.md says.', 'implementation', undefined, undefined, 'brief'), []);
+	});
+
+	test('a single-task call names this chat\'s earlier tasks by position, as a `tasks` call does', () => {
+		const tasks = [{ id: 't-aaaaaa' }, { id: 't-bbbbbb' }];
+		assert.deepStrictEqual(resolveChatTaskRefs(['1'], tasks), ['t-aaaaaa'], 'a reviewer started after its writer: after ["1"]');
+		assert.deepStrictEqual(resolveChatTaskRefs([2, 't-cccccc'], tasks), ['t-bbbbbb', 't-cccccc'], 'numbers and task ids together');
+		assert.deepStrictEqual(resolveChatTaskRefs('1', tasks), ['t-aaaaaa'], 'one string');
+		assert.deepStrictEqual(resolveChatTaskRefs(['3'], tasks), ['3'], 'a position with no task is left for the decider to refuse');
+		assert.deepStrictEqual(resolveChatTaskRefs(['1', 't-aaaaaa'], tasks), ['t-aaaaaa'], 'one task named twice waits once');
+		assert.deepStrictEqual(resolveChatTaskRefs(undefined, tasks), []);
+	});
+
+	test('the spares warmed for a delegate_task call follow the request: read-only, editing, or both', () => {
+		assert.deepStrictEqual(subagentSpareKinds(true, 'Answer four questions about src. Do not edit any file.', 3), { work: 0, readonly: 3 });
+		assert.deepStrictEqual(subagentSpareKinds(true, 'Fix the three bugs with three subagents. Each subagent fixes only its own file.', 3), { work: 3, readonly: 0 });
+		assert.deepStrictEqual(subagentSpareKinds(true, 'A writer adds formatReceipt; a reviewer (never edits files) checks it. Do not edit files yourself.', 3), { work: 2, readonly: 1 }, 'the parent not editing does not make the work read-only');
+		assert.deepStrictEqual(subagentSpareKinds(false, 'Fix it.', 3), { work: 0, readonly: 3 }, 'an Ask or Plan chat delegates read-only work only');
+		assert.deepStrictEqual(subagentSpareKinds(true, undefined, 3), { work: 3, readonly: 0 });
+		assert.deepStrictEqual(subagentSpareKinds(true, 'This is a read-only audit.', 3), { work: 0, readonly: 3 });
+		assert.deepStrictEqual(subagentSpareKinds(true, '1. Writer: add formatReceipt to src/money.ts.\n2. Reviewer (never edits files): review all of src/money.ts.\nDo not edit files yourself.', 3), { work: 2, readonly: 1 }, 'one read-only part is not a read-only request');
+		assert.deepStrictEqual(subagentSpareKinds(true, 'Each subagent fixes only its own file and must not edit the tests or any other file.', 3), { work: 3, readonly: 0 });
+	});
+
+	test('a request that asks for subagents outright warms their agents with the run', () => {
+		for (const text of ['Fix the three bugs with three subagents.', 'Use Volt\'s delegate_task: ONE call with four tasks.', 'Do it with a writer sub-agent and a reviewer.', 'Run two agents in parallel on it.', 'Delegate each file to its own agent.']) {
+			assert.strictEqual(requestAsksForSubagents(text), true, text);
+		}
+		for (const text of [undefined, '', 'Reply with exactly: OK', 'Fix the failing test in src/pricing.ts.', 'Run the tests in parallel.', 'What is a user agent string?']) {
+			assert.strictEqual(requestAsksForSubagents(text), false, String(text));
+		}
+	});
+
+	test('a waiting task tool call of a Claude parent blocks longer', () => {
+		// Up to 4 min per call (under fetch's 5 min); other agents stay under cursor-agent's 60 s.
+		assert.deepStrictEqual([taskWaitMs(true), taskWaitMs(false)], [240_000, 45_000]);
+	});
+
+	test('delegate_task, wait_tasks and message_task are always loaded in top-level chats, and delegate_task stays short', () => {
+		const byName = new Map<string, (typeof AGENT_TASK_TOOLS)[number]>(AGENT_TASK_TOOLS.map(tool => [tool.name, tool]));
+		for (const name of ['delegate_task', 'wait_tasks', 'message_task']) {
+			assert.strictEqual(byName.get(name)?.alwaysLoad, 'top', name);
+		}
+		assert.strictEqual(byName.get('task_status')?.alwaysLoad, undefined);
+		const delegate = byName.get('delegate_task')!;
+		// In every request of a top-level chat now: about 1.2k tokens (it was 9.6k characters behind the tool search).
+		assert.ok(JSON.stringify({ description: delegate.description, input_schema: delegate.inputSchema }).length < 5_000);
+	});
+
+	test('a subagent\'s report is its final message, unless that message is not the report', () => {
+		const notes = 'Reading pricing.ts first.';
+		const report = '## Outcome\nDone.\n\n## Changes\n- src/pricing.ts: pct / 100';
+		assert.strictEqual(subagentReport(`${notes}\n\n${report}`, report), report, 'notes between tool calls stay out of the report');
+		assert.strictEqual(subagentReport(report, report), undefined, 'the whole reply is the report');
+		assert.strictEqual(subagentReport(`${notes}\n\n${report}\n\nAll tests pass.`, 'All tests pass.'), `${report}\n\nAll tests pass.`, 'a last line after one more check does not drop the report written before it');
+		assert.strictEqual(subagentReport(`${report}\n\nAll tests pass.`, 'All tests pass.'), undefined);
+		assert.strictEqual(subagentReport(`${notes}\n\nFixed it: pct / 100.`, 'Fixed it: pct / 100.'), 'Fixed it: pct / 100.', 'no report headings: the final message');
+		assert.strictEqual(subagentReport(notes, ''), undefined, 'no text after the last tool call: the whole reply');
 	});
 
 	test('the parent capsule carries the user\'s request, the plan, the latest reply and the siblings, within its budget', () => {
