@@ -74,6 +74,14 @@ Call and type hierarchies and workspace symbols come from workbench contribution
 intelligence contribution sets them with `setCodeIntelHierarchy`. The agent server forwards
 every new op to the window that has the file's folder open.
 
+Language servers are on by default (`volt.codeIntelligence.lsp.enabled`), for a project the user
+opened whether or not it is one of the window's folders (the agent window has none). A chat's own
+worktree checkout (`~/.volt/worktrees/...`) is the deliberate exception: its language servers are
+opt-in (`volt.codeIntelligence.lsp.worktrees`, "Enable LSPs for Worktrees", off by default, as in
+Cursor), because each checkout loads another copy of the project into the language server. There,
+and when language servers are off, `diagnostics` and `code_action` say which setting applies and
+what to run instead, and `code_nav` answers from the code index (`lspPolicy`, DEV-LSP-1).
+
 ### Testing
 
 `tests` works on every test controller: installed extensions plus `VoltTestController`, which is
@@ -82,7 +90,10 @@ registered with `ITestService` like an extension's controller would be.
 - **Discovery** is static: test files are found by glob and parsed for
   describe/it/test, pytest classes and functions, `func TestX` and `#[test]` in mods. Project
   code never runs during discovery. Files are re-parsed on change, and a file a test extension
-  already covers is dropped (`volt.testing.runner`: auto / always / off).
+  already covers is dropped (`volt.testing.runner`: auto / always / off). Besides the window's
+  folders, the calling chat's folder is discovered before `tests` lists or runs
+  (`voltTestRoots`), so a chat's project outside the window's folders (the agent window has
+  none) gets its tests (DEV-LIVE-1).
 - **Runs** use the project's runner with a machine-readable report: vitest/jest JSON, mocha
   JSON, JUnit for pytest, `go test -json`, libtest text. Output streams into the run's terminal.
   Outcomes, messages, expected/actual and stack frames become real `LiveTestResult` entries, so
@@ -116,6 +127,26 @@ run code. `IVoltTool.readOnly(args)` lets read-only ops (`list`, `results`, `sta
 `output`, breakpoint `list`) run without approval. Running ops go through the chat's access mode
 like any command. For ACP agents, `approvalInReadOnlyModes` does the same through the host tool
 gate.
+
+### Sandboxed chats
+
+A chat in Volt's sandbox (docs/security/sandbox) uses the same tools, but each is classified op by
+op in `HOST_TOOL_SANDBOX_CLASSES` (every `ide` op carries its class in `ideCapabilities.ts`), and
+what would run outside the sandbox is refused with what to do instead. Programs an op starts run
+in the chat's sandbox, as the chat, never as Volt.
+
+| Tool | In a sandboxed chat |
+| --- | --- |
+| `tests` | Volt's runner only, its command in the chat's sandbox; the report goes to the chat's temp folder and is read through the gate's read rule. A test extension's tests are not run (its extension host is outside the sandbox): run them with the shell tool. Lists only tests in files the chat may read and shows only its own results. A run the sandbox refused reads "Not run (sandbox)", not failed; the Debug profile starts nothing. |
+| `debug`, `tasks` | Starting, attaching, resuming, stepping, evaluating, watches, conditional breakpoints and logpoints, and `tasks run` are refused: the debugger and task terminals run outside the sandbox. Listing tasks, plain breakpoints, and reading the state, variables and output of sessions and tasks the chat itself started still work (`ide/ideSandbox.ts`). |
+| `code_nav`, `diagnostics`, `code_action` | Answers cut to files the chat may read; an edit is refused whole unless every file it changes is one the sandbox lets it write. Language servers themselves run outside the sandbox (05-limitations item 36). |
+| `ide` gateway | Programs (docker, kubectl, gh, analyzers, profilers) run through the chat's shell in its sandbox, git through `runChatGit`; a chat without a folder runs nothing. Notebook kernels, `remote exec`/`hosts` and `extensions run` are refused, by the gate and again by the gateway (DEV-SBX-18). |
+| `ide http` | See "HTTP client" below: the chat's network rules apply to each send. |
+| `watch_job` | The check runs in the asking turn's sandbox. |
+
+Tests: `contrib/voltAgent/test/browser/agentIdeSandbox.test.ts` (DEV-SBX-4..11, 18),
+`contrib/voltCodeIntelligence/test/browser/codeIntelConfinement.test.ts` (DEV-SBX-12, 13, 16,
+DEV-LSP-1), `contrib/voltHttp/test/browser/voltHttpSandbox.test.ts` (DEV-SBX-14, 15, 17).
 
 ## The `ide` gateway: every other capability behind one tool
 
@@ -167,8 +198,23 @@ and components with the agents:
   - CodeLens "Send Request | Open in HTTP Client" in `.http` files
   - the agent window's "+" menu ("HTTP Client", Ctrl+Option+H), opening beside the chat
   - the IDE editor area
-- **Transport:** requests go through `IRequestService` (node, so no CORS, with the proxy settings).
-  `Basic user:pass` is encoded on the wire.
+- **Transport (`IVoltHttpTransport`):**
+  - desktop: the main process sends (`platform/voltHttp/electron-main`, Electron's `net` over the
+    `voltHttpTransport` channel), outside any page: no CORS check (a local API without CORS
+    headers answers), every response header comes back (`Set-Cookie`, custom ones) and no
+    `Origin` is added; the user's proxy settings and system certificates apply (DEV-LIVE-3)
+  - web workbench: the window's request service (its fetch), so the server must allow the page's
+    origin
+  - `Basic user:pass` is encoded on the wire
+- **Agents:** `ide http list`/`send` use the request files and environments of the calling chat's
+  folder, also outside the window's folders (watched, up to 8 such folders; DEV-LIVE-2).
+- **Sandboxed chats:** before anything is sent, the URL that goes out (variables filled in) is
+  judged by the chat's network rules (the in-app browser's: allowed hosts, granted loopback ports).
+  Redirects are not followed: the main process asks `net` for manual redirects and returns the 3xx
+  with its `location`, never requesting it (DEV-SBX-19); a browser fetch's opaque redirect is
+  explained. Only request and environment files the chat may read are used, named responses are
+  kept per chat (never the user's login token), and an environment picked for a send applies to
+  that send only. The check is on the host name (05-limitations item 37).
 
 ## Tabs that open themselves
 
@@ -219,6 +265,9 @@ registries, compose), and the agent's `docker` capability talks to the same daem
   static discovery for all four languages, command building, all five report formats, stack
   parsing, the read-only gate, the gateway specs, four coverage formats, CPU profile summaries and
   the `.http` parser (variables, chaining, environments, serialization).
+- Sandboxed chats: the suites listed under "Sandboxed chats" above, plus
+  `platform/voltHttp/test/electron-main/voltHttpTransportMain.test.ts` (DEV-LIVE-3, DEV-SBX-19:
+  the main-process transport against real local servers).
 - tsgo, eslint and hygiene are clean on every touched file.
 - **Not yet verified at runtime:** none of the window-side adapters, the HTTP client UI, the
   sessions view or the Container Tools download has run in the app. The first runtime pass should
