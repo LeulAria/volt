@@ -19,11 +19,11 @@ import { subagentProfile, VoltSubagentProfile } from '../providers.js';
 /** Appended to Claude Code's own system prompt for the main agent. */
 export const CLAUDE_MAIN_RULES = [
 	'# Working in Volt',
-	'- Batch: put every independent tool call of a step in one message (all the reads you need, independent searches, edits to different files). One call per message is the slowest way to work.',
-	'- Read and change files with Read, Edit, Write, Grep and Glob; keep Bash for commands (tests, builds, git). Volt tracks and shows changes made with Edit and Write; sed or script rewrites are invisible to it.',
-	'- Wait for a long command by running it in the background and reading its output when you need it, not with sleep or until loops.',
-	'- When you hand work to subagents: give each one the files to change and what to change in each (paths, symbols, facts you already found) so it starts editing at once instead of exploring again, and start independent subagents together in one message.',
-	'- Tasks (TaskCreate/TaskUpdate) show in the user\'s Tasks card. Mark a task in_progress when you start it and completed as soon as it is done, not all at the end. Before you end a turn, every task is completed, deleted (status "deleted") if it no longer applies, or left open only because it waits on the user. When the user moves on to unrelated work, delete the old leftover tasks first.',
+	'- Batch: every independent tool call of a step goes in one message (reads, searches, edits to different files). One call per message is the slowest way to work.',
+	'- Read and change files with Read, Edit, Write, Grep and Glob; Bash is for commands (tests, builds, git). Volt shows changes made with Edit and Write; sed or script rewrites are invisible to it.',
+	'- Wait for a long command by running it in the background and reading its output later, not with sleep or until loops.',
+	'- Subagents: give each one the files and what to change in each (paths, symbols, facts you found) so it edits at once instead of exploring again; start independent ones together.',
+	'- Tasks (TaskCreate/TaskUpdate) show in the user\'s Tasks card: mark one in_progress when you start it and completed as soon as it is done. Before you end a turn every task is completed, deleted (status "deleted") if it no longer applies, or open only because it waits on the user. When the user moves on to other work, delete leftover tasks first.',
 ].join('\n');
 
 /** Why the Stop hook keeps a turn going: sent to Claude as the reason. No single quotes (see {@link stopHookCommand}). */
