@@ -523,12 +523,15 @@ function contractLines(contract: ITaskContract | undefined, scope: readonly stri
  */
 function reportFormat(role: AgentTaskRole, checks: boolean): string {
 	const verification = checks
-		? '"## Verification" (each done_when check: met or not met, with the command you ran or what you saw)'
-		: '"## Verification" (how you checked your work: commands run and their result, or what you read)';
+		? '"## Verification" (each done_when check: met or not met, and how you know)'
+		: '"## Verification" (one line: what you ran or read to check it)';
 	const middle = EDITING_ROLES.has(role)
-		? '"## Changes" (each file you changed and what changed; "None" if nothing)'
+		? '"## Changes" (each file you changed and what changed, a line each; "None" if nothing)'
 		: '"## Findings" (what you found, with file paths and line numbers)';
-	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Use these headings: "## Outcome" (done, partly done or blocked, in one or two sentences), ${middle}, ${verification}, "## Open issues" (what is left, risks, anything you were unsure of; "None" if nothing).`;
+	// Short on purpose: the parent reads every report in each of its later requests, and a report is
+	// output the subagent writes on the critical path (round-3 bench: reports of 1.3-3.4 KB that
+	// restated the brief and every check took 2-5 s to write).
+	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Keep it as short as the facts allow: no restating the brief, no narration. Use these headings: "## Outcome" (done, partly done or blocked, in one sentence), ${middle}, ${verification}, and "## Open issues" only when something is left or uncertain.`;
 }
 
 /**
@@ -541,7 +544,9 @@ export function lintTaskBrief(brief: string, role: AgentTaskRole, contract: ITas
 	const words = brief.trim().split(/\s+/).filter(Boolean).length;
 	const editing = EDITING_ROLES.has(role) && role !== 'general';
 	const namesFiles = !!scope?.length || !!contract?.files?.length || /[\w-]+\/[\w./-]+|\b[\w-]+\.(?:ts|tsx|js|jsx|mjs|css|scss|html|json|md|py|go|rs|java|kt|swift|rb|php|cs|c|cc|cpp|h|vue|svelte|sql|yml|yaml|toml)\b/.test(brief);
-	if (editing && !contract?.doneWhen?.length) {
+	// A brief that names its files is specific enough to finish on: asking for done_when on every small
+	// edit only made the next call's arguments longer.
+	if (editing && !contract?.doneWhen?.length && !namesFiles) {
 		notes.push('no done_when: the subagent decides on its own when it is finished. Name the checks that prove the work (a test, a type-check, what the page shows).');
 	}
 	if (editing && !namesFiles) {

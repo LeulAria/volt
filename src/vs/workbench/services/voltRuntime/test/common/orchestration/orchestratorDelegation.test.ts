@@ -38,8 +38,9 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.ok(text.includes('this task may spend up to $2.00; the subagents of this request have $12.50 left'));
 		assert.ok(text.includes('This task waited for t-aaaaaa'));
 		assert.ok(text.indexOf('<parent_context>') < text.indexOf('<task>'), 'the digest comes before the brief');
-		assert.ok(text.trimEnd().endsWith('"## Open issues" (what is left, risks, anything you were unsure of; "None" if nothing).'), 'the report format is the last thing it reads');
+		assert.ok(text.trimEnd().endsWith('and "## Open issues" only when something is left or uncertain.'), 'the report format is the last thing it reads');
 		assert.ok(text.includes('"## Changes"') && text.includes('each done_when check: met or not met'));
+		assert.ok(text.includes('Keep it as short as the facts allow'), 'reports are short: the parent rereads each in every later request');
 
 		const review = buildTaskPrompt('Review it.', { role: 'review', depth: 1, isolation: 'shared', scope: ['src/header/'] });
 		assert.ok(review.includes('"## Findings"'));
@@ -53,6 +54,8 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.ok(notes[0].startsWith('no done_when'));
 		assert.ok(notes[1].startsWith('no files named'));
 		assert.ok(lintTaskBrief('Check it.', 'research', undefined, undefined, 'none')[0].includes('context is none'));
+		// A brief that names its file is specific enough: no push for done_when (it only made the next payload longer).
+		assert.deepStrictEqual(lintTaskBrief('Add formatReceipt to src/money.ts as SPEC.md says.', 'implementation', undefined, undefined, 'brief'), []);
 	});
 
 	test('a single-task call names this chat\'s earlier tasks by position, as a `tasks` call does', () => {
