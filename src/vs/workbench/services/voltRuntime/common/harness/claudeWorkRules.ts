@@ -101,6 +101,13 @@ export const CLAUDE_SUBAGENT_DISALLOWED_TOOLS: readonly string[] = [
 	'RemoteTrigger', 'PushNotification', 'DesignSync', 'EnterWorktree', 'ExitWorktree', 'SendMessage',
 ];
 
+/**
+ * Off for the main agent when its session has Volt's MCP server: `AskUserQuestion`'s schema is ~1.8k
+ * tokens in every request (measured 2026-11-13), and Volt's `ask_question` (deferred, loaded with
+ * ToolSearch when the agent needs to ask) puts the same multiple-choice questions in the same tray.
+ */
+export const CLAUDE_MAIN_DISALLOWED_TOOLS: readonly string[] = ['AskUserQuestion'];
+
 /** Also off for a read-only subagent: it changes no files (Volt's sandbox and plan mode hold it to that too). */
 export const CLAUDE_READONLY_SUBAGENT_DISALLOWED_TOOLS: readonly string[] = ['Edit', 'Write', 'NotebookEdit'];
 
@@ -173,9 +180,10 @@ export const CLAUDE_READONLY_SUBAGENT_PROMPT = [
  * A Volt subagent's session (`subagent`) also starts lean (see {@link CLAUDE_SUBAGENT_SESSION_SETTINGS}),
  * and a read-only one on {@link CLAUDE_READONLY_SUBAGENT_PROMPT} with only Volt's MCP server
  * (`strictMcpConfig`: no user or claude.ai servers). Kept identical across sessions so a resumed
- * session is not rebuilt for a changed fingerprint.
+ * session is not rebuilt for a changed fingerprint. `voltAsks`: the session has Volt's ask_question,
+ * so the main agent goes without Claude Code's own (see {@link CLAUDE_MAIN_DISALLOWED_TOOLS}).
  */
-export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?: boolean | VoltSubagentProfile }): Record<string, unknown> {
+export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?: boolean | VoltSubagentProfile; readonly voltAsks?: boolean }): Record<string, unknown> {
 	const subagent = subagentProfile(opts?.subagent);
 	const systemPrompt = subagent === 'readonly'
 		? CLAUDE_READONLY_SUBAGENT_PROMPT
@@ -192,7 +200,7 @@ export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?:
 					planModeInstructions: CLAUDE_SUBAGENT_PLAN_MODE,
 					title: CLAUDE_SUBAGENT_SESSION_TITLE,
 					...(subagent === 'readonly' ? { strictMcpConfig: true } : {}),
-				} : { title: CLAUDE_SESSION_TITLE }),
+				} : { title: CLAUDE_SESSION_TITLE, ...(opts?.voltAsks ? { disallowedTools: [...CLAUDE_MAIN_DISALLOWED_TOOLS] } : {}) }),
 				settings: {
 					...(subagent ? CLAUDE_SUBAGENT_SESSION_SETTINGS : {}),
 					hooks: {

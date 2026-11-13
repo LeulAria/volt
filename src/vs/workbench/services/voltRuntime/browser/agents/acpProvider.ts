@@ -787,13 +787,14 @@ export class AcpAgentProvider implements IAgentProvider {
 	/**
 	 * `_meta` for `session/new` and `session/resume`: a text-only session's prompt, or for every
 	 * other Claude Code session Volt's working rules (batched steps, file tools, no polling) for
-	 * the main agent and, through a SubagentStart hook, for each subagent it starts.
+	 * the main agent and, through a SubagentStart hook, for each subagent it starts. `voltAsks`: the
+	 * session has Volt's ask_question.
 	 */
-	private sessionMeta(req: IAgentStartRequest): Record<string, unknown> | undefined {
+	private sessionMeta(req: IAgentStartRequest, voltAsks: boolean): Record<string, unknown> | undefined {
 		if (req.textOnly) {
 			return this.textOnlyMeta(req);
 		}
-		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req), { subagent: subagentProfile(req.subagent) }) : undefined;
+		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req), { subagent: subagentProfile(req.subagent), voltAsks }) : undefined;
 	}
 
 	/**
@@ -883,15 +884,17 @@ export class AcpAgentProvider implements IAgentProvider {
 			const groups = hostToolOptions(req)?.groups;
 			const mcpServers = req.textOnly ? [] : this.hostMcpServers(req.sessionId, capabilities, groups);
 			hostMcp = req.textOnly ? undefined : { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers), ...(groups ? { groups } : {}) };
+			// Volt's ask_question reaches the same question tray as Claude's AskUserQuestion: with it, the built-in goes.
+			const voltAsks = mcpServers.length > 0 && (!groups || groups.includes('core'));
 			if (resume) {
 				if (!initialized.agentCapabilities?.sessionCapabilities?.resume) {
 					throw new Error('the agent cannot resume sessions');
 				}
-				const meta = this.sessionMeta(req);
+				const meta = this.sessionMeta(req, voltAsks);
 				const resumed = await client.request<Partial<ISessionNewResponse>>('session/resume', { sessionId: resume, cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 				created = { ...resumed, sessionId: resumed?.sessionId ?? resume };
 			} else {
-				const meta = this.sessionMeta(req);
+				const meta = this.sessionMeta(req, voltAsks);
 				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 			}
 			step();

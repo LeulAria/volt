@@ -80,7 +80,7 @@ export interface IVoltHostMcpService {
  * description carries the rest (all parts: 5.3k characters, 1,342 tokens in a request until 2026-11-13; now about 2k).
  */
 const HOST_MCP_INSTRUCTIONS: readonly { readonly groups: readonly string[]; readonly text: string; readonly onlyWithout?: string }[] = [
-	{ groups: ['core'], text: 'Volt tools (deferred: load with ToolSearch). Code: find_symbol (declarations), code_nav (references, callers, implementations), instant_grep (indexed rg), find_files: one call for several Grep/Read rounds. workspace_status: what the user has open (tabs, simulator, browser, terminals, git). ask_question: questions to the user.' },
+	{ groups: ['core'], text: 'Volt tools (deferred: load with ToolSearch). Code: find_symbol (declarations), code_nav (references, callers, implementations), instant_grep (indexed rg), find_files: one call for several Grep/Read rounds. workspace_status: what the user has open (tabs, simulator, browser, terminals, git). ask_question: multiple-choice questions to the user.' },
 	{ groups: ['ide'], text: 'tests runs tests with structured failures; debug sets breakpoints and reads variables; ide does http, db, docker, profiling and more.' },
 	{ groups: ['browser'], text: 'browser_* drive the in-app browser: browser_act runs a multi-step check in one call, browser_run edits files then checks, browser_status lists pages and dev servers; mock, emulate, audit. playground_create serves throwaway pages. Not Playwright, headless Chrome or `python -m http.server`.' },
 	{ groups: ['devices'], text: 'device_snapshot/device_act drive iOS simulators and Android emulators.' },
