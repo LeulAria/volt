@@ -22,6 +22,7 @@ below. The first chat ("So in this branch i want you to merge main…") had its 
 | 06 | [06-agent-to-agent.md](06-agent-to-agent.md) | Teams, councils and subagents compared with Claude Code's own |
 | P | [parallel/](parallel/README.md) | The first chat's review: orchestrator micro-bench, code intelligence A/B on a hotel PMS, sandbox attack matrix |
 | R2 | [round2/](round2/README.md) | Round 2 (2026-11-12/13): benchmark against Hermes Agent, Claude Code, Cursor and T3 Code; round 1's open items; UI sweep |
+| R3 | [round3/](round3/README.md) | Round 3 (2026-11-13): ADEMark method next to the published field, app speed, long threads, tokens, orchestration vs Claude Code |
 
 ## Headline numbers
 
