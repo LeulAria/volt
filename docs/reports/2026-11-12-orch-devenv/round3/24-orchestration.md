@@ -2,7 +2,7 @@
 
 Branch `e3/orch` (worktree `volt-e3-orch`, base `82ae771c1d9`), 2026-11-13. Round 2: [`../round2/10-harness-benchmark.md`](../round2/10-harness-benchmark.md), [`../round2/11-orchestrator.md`](../round2/11-orchestrator.md).
 
-Status: in progress (written as it goes).
+Status: in progress (written as it goes; the project-mode runs below are still being taken).
 
 Task names: this report keeps round 2's names (the brief counts from 1): **t0** "Reply OK", **t1** 3 research
 subagents + a synthesis subagent, **t2** 3 parallel bug fixes + `npm test`, **t3** writer + reviewer.
