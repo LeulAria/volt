@@ -181,7 +181,7 @@ import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitatio
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
 import { setShownAgentChat, shownAgentChat } from './agentShownChat.js';
-import { deferredHeadStart } from './agentThreadWindow.js';
+import { deferredHeadStart, keepExchangeHeights } from './agentThreadWindow.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
 import { agentTurnScope, messageFileChangesSignature } from '../review/agentSessionChanges.js';
@@ -3966,6 +3966,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.resetDeferredHead();
 		this.dropStashedThread(input.sessionId);
 		parkVisualFrames(this.threadInner, this.visualParking);
+		keepExchangeHeights(this.threadInner);
 		const elements = this.threadInner.getElementsByTagName('*').length;
 		const nodes = this.threadInner.ownerDocument.createDocumentFragment();
 		nodes.append(...this.threadInner.childNodes);

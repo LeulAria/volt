@@ -28,6 +28,8 @@ const STEP_MIN = 3;
 const RAIL_WIDTH = 16;
 /** A revealed message lands this far below the top edge, as the first one sits at rest. */
 const LANDING_OFFSET = 8;
+/** Ticks never drop below this many, however short the thread is. */
+const TICKS_MIN = 12;
 
 /** The rail of each thread, so keyboard commands can step through its messages. */
 const navs = new WeakMap<AgentThreadView, AgentTurnNav>();
@@ -36,6 +38,32 @@ const navs = new WeakMap<AgentThreadView, AgentTurnNav>();
 export function turnNavPreview(markdown: string, max = 280): string {
 	const plain = renderAsPlaintext({ value: markdown.slice(0, max * 4) }).replace(/\s+/g, ' ').trim();
 	return plain.length > max ? `${plain.slice(0, max).trimEnd()}…` : plain;
+}
+
+/**
+ * How many ticks the rail draws for a thread `height` px tall: as many as fit in half of it at the
+ * smallest step. A longer chat gets a window of that many ticks around the messages in view, not
+ * a tick per message (a thousand of them ran far past the thread and restyled the window on every switch).
+ */
+export function turnNavCapacity(height: number): number {
+	return Math.max(TICKS_MIN, Math.floor(Math.max(0, height) * 0.5 / STEP_MIN));
+}
+
+/**
+ * The first message the rail's window of `capacity` ticks shows, out of `total`. It stays at
+ * `start` while the messages in view (`first` to `last`, -1 when none is drawn) are inside it,
+ * and otherwise moves so they sit in its middle; with none in view it shows the last messages.
+ */
+export function turnNavWindowStart(total: number, capacity: number, start: number, first: number, last: number): number {
+	const max = Math.max(0, total - capacity);
+	if (first < 0) {
+		return max;
+	}
+	if (first >= start && last < start + capacity && start <= max) {
+		return start;
+	}
+	const middle = Math.floor((first + Math.min(last, first + capacity - 1)) / 2);
+	return Math.min(max, Math.max(0, middle - Math.floor(capacity / 2)));
 }
 
 /**
@@ -69,7 +97,14 @@ export class AgentTurnNav extends Disposable {
 	private readonly glide: ThreadGlide;
 	private readonly syncFrame = this._register(new MutableDisposable());
 	private turns: readonly IAgentTurnNavTurn[] = [];
+	/** The drawn ticks: tick `i` stands for message `windowStart + i`. */
 	private ticks: HTMLButtonElement[] = [];
+	private windowStart = 0;
+	/** The label each tick carries now, so a redraw sets only those that changed. */
+	private tickLabels: string[] = [];
+	/** The thread's height when last laid out (the window's size), read without forcing a layout. */
+	private threadHeight = 0;
+	private readonly layoutFrame = this._register(new MutableDisposable());
 	private hovered: number | undefined;
 	/** Once a card has shown a reply, the next ones do at once until the pointer leaves the rail. */
 	private warm = false;
@@ -101,25 +136,62 @@ export class AgentTurnNav extends Disposable {
 		}));
 		// A wheel or drag during the glide hands the scroll back to the user.
 		this._register(addDisposableListener(thread.element, 'wheel', () => this.glide.cancel(), { passive: true }));
-		const observer = new (getWindow(thread.element).ResizeObserver)(() => this.layout());
+		const observer = new (getWindow(thread.element).ResizeObserver)(entries => {
+			this.threadHeight = entries.at(-1)?.contentRect.height ?? this.threadHeight;
+			this.layout();
+		});
 		observer.observe(thread.element);
 		this._register(toDisposable(() => observer.disconnect()));
 		this._register(toDisposable(() => this.clearReplyTimer()));
 	}
 
-	/** One tick per sent message, in order; call after the transcript is rendered. */
+	/**
+	 * The sent messages, in order; call after the transcript is rendered. The rail is laid out in
+	 * the next frame, with the thread's own layout, not forced in the middle of drawing it.
+	 */
 	setTurns(turns: readonly IAgentTurnNavTurn[]): void {
+		const changed = turns.length !== this.turns.length;
 		this.turns = turns;
-		if (this.ticks.length !== turns.length) {
+		const count = Math.min(turns.length, turnNavCapacity(this.threadHeight || getWindow(this.element).innerHeight));
+		if (changed) {
+			// A different chat: its rail starts at its last messages (sync moves it to what is in view).
+			this.windowStart = Math.max(0, turns.length - count);
+		}
+		this.drawTicks(count);
+		this.scheduleLayout();
+	}
+
+	/** `count` ticks from {@link windowStart}, reusing the drawn ones; only changed labels are set. */
+	private drawTicks(count: number): void {
+		if (this.ticks.length !== count) {
 			this.hideCard();
-			this.ticks = turns.map((_, index) => this.tick(index));
+			while (this.ticks.length < count) {
+				this.ticks.push(this.tick(this.ticks.length));
+			}
+			this.ticks.length = count;
+			this.tickLabels.length = Math.min(this.tickLabels.length, count);
 			this.ticksEl.replaceChildren(...this.ticks);
 		}
-		turns.forEach((turn, index) => this.ticks[index].setAttribute('aria-label', localize('voltAgent.turnNav.goTo', "Go to message: {0}", turn.prompt)));
-		this.layout();
+		for (let index = 0; index < count; index++) {
+			const prompt = this.turns[this.windowStart + index]?.prompt ?? '';
+			if (this.tickLabels[index] !== prompt) {
+				this.tickLabels[index] = prompt;
+				this.ticks[index].setAttribute('aria-label', localize('voltAgent.turnNav.goTo', "Go to message: {0}", prompt));
+			}
+		}
+	}
+
+	private scheduleLayout(): void {
+		if (!this.layoutFrame.value) {
+			this.layoutFrame.value = scheduleAtNextAnimationFrame(getWindow(this.element), () => {
+				this.layoutFrame.clear();
+				this.layout();
+			});
+		}
 	}
 
 	layout(): void {
+		this.layoutFrame.clear();
 		const threadRect = this.thread.element.getBoundingClientRect();
 		// The rail lives in the room left of the transcript column: the sent card's edge, as the
 		// turn itself can bleed to the thread's edge while pinned. Read from the last exchange, which
@@ -133,7 +205,13 @@ export class AgentTurnNav extends Disposable {
 			this.hideCard();
 			return;
 		}
-		const step = Math.max(STEP_MIN, Math.min(STEP_MAX, Math.floor(threadRect.height * 0.5 / this.turns.length)));
+		this.threadHeight = threadRect.height;
+		const count = Math.min(this.turns.length, turnNavCapacity(threadRect.height));
+		if (count !== this.ticks.length) {
+			this.windowStart = Math.min(this.windowStart, Math.max(0, this.turns.length - count));
+			this.drawTicks(count);
+		}
+		const step = Math.max(STEP_MIN, Math.min(STEP_MAX, Math.floor(threadRect.height * 0.5 / count)));
 		this.element.style.setProperty('--volt-turn-nav-step', `${step}px`);
 		this.element.style.left = `${Math.max(2, Math.floor((gutter - RAIL_WIDTH) / 2))}px`;
 		this.sync();
@@ -154,15 +232,16 @@ export class AgentTurnNav extends Disposable {
 		return button;
 	}
 
-	private tick(index: number): HTMLButtonElement {
+	/** Tick `slot` of the window: it stands for whichever message the window puts there. */
+	private tick(slot: number): HTMLButtonElement {
 		const tick = $('button.tick') as HTMLButtonElement;
 		tick.type = 'button';
 		append(tick, $('span.line'));
-		tick.addEventListener('mouseenter', () => this.showCard(index));
+		tick.addEventListener('mouseenter', () => this.showCard(this.windowStart + slot));
 		tick.addEventListener('click', e => {
 			e.preventDefault();
 			e.stopPropagation();
-			this.reveal(index);
+			this.reveal(this.windowStart + slot);
 		});
 		return tick;
 	}
@@ -194,13 +273,30 @@ export class AgentTurnNav extends Disposable {
 		let above = skipped > 0;
 		let below = false;
 		const inView: boolean[] = [];
+		let first = -1;
+		let last = -1;
 		this.exchanges().forEach((exchange, index) => {
 			const rect = exchange.getBoundingClientRect();
 			const shown = rect.bottom > viewport.top + 1 && rect.top < viewport.bottom - 1;
 			inView.push(shown);
-			this.ticks[index + skipped]?.classList.toggle('in-view', shown);
+			if (shown) {
+				if (first < 0) {
+					first = index + skipped;
+				}
+				last = index + skipped;
+			}
 			above ||= rect.top < landing - 2;
 			below ||= rect.top > landing + 2;
+		});
+		const start = turnNavWindowStart(this.turns.length, this.ticks.length, this.windowStart, first, last);
+		if (start !== this.windowStart) {
+			this.windowStart = start;
+			this.hideCard();
+			this.drawTicks(this.ticks.length);
+		}
+		this.ticks.forEach((tick, slot) => {
+			const index = this.windowStart + slot;
+			tick.classList.toggle('in-view', index >= first && index <= last && inView[index - skipped] === true);
 		});
 		const pos = this.thread.scroll.getScrollPosition();
 		const dims = this.thread.scroll.getScrollDimensions();
@@ -259,7 +355,7 @@ export class AgentTurnNav extends Disposable {
 		}
 		this.clearReplyTimer();
 		this.hovered = index;
-		this.ticks.forEach((tick, i) => tick.classList.toggle('hovered', i === index));
+		this.ticks.forEach((tick, slot) => tick.classList.toggle('hovered', this.windowStart + slot === index));
 		this.cardPrompt.textContent = turn.prompt || localize('voltAgent.turnNav.untitled', "Message");
 		this.cardReply.textContent = '';
 		this.card.classList.remove('with-reply');
@@ -286,7 +382,7 @@ export class AgentTurnNav extends Disposable {
 
 	/** Beside the tick, centered on it, and kept inside the thread. */
 	private placeCard(index: number): void {
-		const tick = this.ticks[index];
+		const tick = this.ticks[index - this.windowStart];
 		if (!tick) {
 			return;
 		}
