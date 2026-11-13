@@ -24,6 +24,20 @@ const PATCH_INTERVAL_MS = 50;
  * still go out at once, and a chat is brought up to date the moment a client shows it.
  */
 const BACKGROUND_PATCH_INTERVAL_MS = 1000;
+
+/**
+ * How long a chat's change waits before it goes out. A shown chat whose last patch is at least
+ * {@link PATCH_INTERVAL_MS} old sends at once (the next task, so the changes of one data chunk go
+ * together): a reply's first words reach the screen without waiting a whole interval, and a stream
+ * still sends at most one patch per interval. Chats no client shows wait the background interval.
+ */
+export function patchDelay(shown: boolean, lastFlush: number | undefined, now: number): number {
+	if (!shown) {
+		return BACKGROUND_PATCH_INTERVAL_MS;
+	}
+	return lastFlush === undefined ? 0 : Math.max(0, PATCH_INTERVAL_MS - (now - lastFlush));
+}
+
 /**
  * A streaming patch compares only the current turn (from the last prompt on); the whole transcript
  * is compared at a turn's start and end, on a client's request, and at least this often.
@@ -57,6 +71,8 @@ export class ServerSessionHost extends Disposable {
 	private readonly tracked = new Map<string, ITracked>();
 	private readonly held = new Map<string, IHeld>();
 	private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+	/** When each chat's changes last went out: a change after a quiet spell goes out at once. */
+	private readonly flushedAt = new Map<string, number>();
 	/** When each chat's whole transcript was last compared (see WHOLE_DIFF_INTERVAL_MS). */
 	private readonly wholeDiffAt = new Map<string, number>();
 	/** Per connection that said so (`session.watch`): the chats it shows. */
@@ -116,6 +132,7 @@ export class ServerSessionHost extends Disposable {
 			if (this.tracked.get(sessionId) === tracked) {
 				this.flush(sessionId);
 				this.tracked.delete(sessionId);
+				this.flushedAt.delete(sessionId);
 			}
 			store.dispose();
 		}));
@@ -148,7 +165,7 @@ export class ServerSessionHost extends Disposable {
 		this.timers.set(sessionId, setTimeout(() => {
 			this.timers.delete(sessionId);
 			this.flush(sessionId, true);
-		}, this.shown(sessionId) ? PATCH_INTERVAL_MS : BACKGROUND_PATCH_INTERVAL_MS));
+		}, patchDelay(this.shown(sessionId), this.flushedAt.get(sessionId), Date.now())));
 	}
 
 	/**
@@ -184,6 +201,7 @@ export class ServerSessionHost extends Disposable {
 	 * only the current turn, unless the whole transcript was last compared a while ago.
 	 */
 	private flush(sessionId: string, streaming = false): void {
+		this.flushedAt.set(sessionId, Date.now());
 		const timer = this.timers.get(sessionId);
 		if (timer !== undefined) {
 			clearTimeout(timer);
