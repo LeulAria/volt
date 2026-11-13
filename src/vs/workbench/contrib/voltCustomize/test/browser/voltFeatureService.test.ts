@@ -6,7 +6,7 @@
 // The window's half of turning a feature without a module off (customize.md 6.1d): the user
 // disables `volt.orchestra`, `volt.dev-environment` or `volt.http-client` in Extensions; the feature
 // service takes its tools from the window's agents (and tells the agent server), and its Settings
-// page, views, Command Palette entries, mentions and "+" menu entry go with it. On again, all come
+// page, views, open tabs, Command Palette entries, mentions and "+" menu entry go with it. On again, all come
 // back. The agent server's half is FEAT-ORCH-3 / FEAT-IDE-3 / FEAT-HTTP-3 in serverFeatureEnablement.test.ts.
 
 import assert from 'assert';
@@ -45,7 +45,12 @@ import type { IIdeCapabilityContext } from '../../../voltAgent/browser/ide/capab
 import { visibleSurfaceMenuItems } from '../../../voltAgent/browser/workspace/agentSurfaceAddMenu.js';
 // The views and commands under test register themselves when imported, as in the window.
 import '../../../voltAgent/browser/ide/agentIdeSessionsView.js';
-import { HttpCodeLens } from '../../../voltHttp/browser/voltHttp.contribution.js';
+import { HttpCodeLens, HttpRequestTabs } from '../../../voltHttp/browser/voltHttp.contribution.js';
+import { draftFromSpec, VOLT_HTTP_INPUT_ID, VoltHttpRequestInput, VoltHttpRequestInputSerializer } from '../../../voltHttp/browser/voltHttpEditor.js';
+import { AgentIdeActivityInput, AgentIdeActivityTabs } from '../../../voltAgent/browser/ide/agentIdeActivityEditor.js';
+import { parseHttpFile } from '../../../../services/voltRuntime/common/ide/httpFile.js';
+import { IEditorService } from '../../../../services/editor/common/editorService.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { HTTP_CLIENT_OFF, whileHttpClientOn } from '../../../voltHttp/browser/voltHttpFeature.js';
 import { VOLT_HTTP_HISTORY_VIEW_ID, VOLT_HTTP_REQUESTS_VIEW_ID } from '../../../voltHttp/browser/voltHttpViews.js';
 import { HTTP_CLIENT_FEATURE_ID, HTTP_CLIENT_SURFACE_ID } from '../../../voltHttp/common/voltHttp.js';
@@ -134,6 +139,16 @@ suite('Volt feature service: features without a module', () => {
 		return item.when;
 	};
 
+	/** Tabs open in the editor area, of these editor types; `closed` lists the types closed. */
+	const openTabs = (typeIds: readonly string[]) => {
+		const closed: string[] = [];
+		const service = {
+			getEditors: () => typeIds.map(typeId => ({ editor: { typeId }, groupId: 1 })),
+			closeEditors: async (editors: readonly { editor: { typeId: string } }[]) => { closed.push(...editors.map(entry => entry.editor.typeId)); return true; },
+		} as unknown as IEditorService;
+		return { service, closed };
+	};
+
 	test('FEAT-ORCH-2: volt.orchestra off: its tools leave the window\'s agents, Settings > Orchestration, Measure and @ Agents / @ Machines go, the agent server is told; on again, all come back', async () => {
 		// Off at startup, from the global list, before the installed extensions are read.
 		const { features, tools, matches, served } = setup(['volt.orchestra']);
@@ -158,8 +173,10 @@ suite('Volt feature service: features without a module', () => {
 		assert.strictEqual(orchestraMentionsShown(undefined), true);
 	});
 
-	test('FEAT-IDE-2: volt.dev-environment off: tests, debug, tasks and ide leave the window\'s agents, the Agent Sessions view and the Testing view\'s Volt tests go; on again, all come back', async () => {
+	test('FEAT-IDE-2: volt.dev-environment off: tests, debug, tasks and ide leave the window\'s agents, the Agent Sessions view, the Testing view\'s Volt tests and the open activity tabs go; on again, all come back', async () => {
 		const { features, tools, matches, served } = setup();
+		const tabs = openTabs([AgentIdeActivityInput.TypeID, 'workbench.editors.files.fileEditorInput']);
+		store.add(new AgentIdeActivityTabs(features, tabs.service));
 		// What the Testing view's Volt tests controller gate (agentIdeService.ts) keeps, with the real service.
 		const controllers: string[] = [];
 		const gate = whileVoltFeatureOn(features, DEV_ENVIRONMENT_FEATURE_ID, () => {
@@ -176,17 +193,28 @@ suite('Volt feature service: features without a module', () => {
 		assert.deepStrictEqual(await served(JOB_WATCH_TOOL_NAMES), { listed: [...JOB_WATCH_TOOL_NAMES], ran: [...JOB_WATCH_TOOL_NAMES] }, 'job waits are core');
 		assert.strictEqual(matches(view(AGENT_SESSIONS_VIEW_ID).when), false, 'the Agent Sessions view');
 		assert.deepStrictEqual(controllers, ['made', 'disposed'], 'the Volt tests controller is gone');
+		assert.deepStrictEqual(tabs.closed, [AgentIdeActivityInput.TypeID], 'the activity tabs close, other tabs stay');
 		assert.deepStrictEqual(tools.mirrored.at(-1), { global: [DEV_ENVIRONMENT_FEATURE_ID], workspace: [] });
 
 		await features.setEnabled(DEV_ENVIRONMENT_FEATURE_ID, true);
+		assert.deepStrictEqual(tabs.closed, [AgentIdeActivityInput.TypeID], 'turning it on closes nothing');
 		assert.deepStrictEqual(await served(IDE_TOOL_NAMES), { listed: [...IDE_TOOL_NAMES], ran: [...IDE_TOOL_NAMES] });
 		assert.strictEqual(matches(view(AGENT_SESSIONS_VIEW_ID).when), true);
 		assert.deepStrictEqual(controllers, ['made', 'disposed', 'made']);
 		gate.dispose();
 	});
 
-	test('FEAT-HTTP-2: volt.http-client off: the + menu entry, the Requests and History views, its Command Palette entries and the .http CodeLens go, and ide http sends nothing; on again, all come back', async () => {
+	test('FEAT-HTTP-2: volt.http-client off: the + menu entry, the Requests and History views, its Command Palette entries, the .http CodeLens and the request tabs (open or saved) go, and ide http sends nothing; on again, all come back', async () => {
 		const { features, tools, matches, served } = setup();
+		const tabs = openTabs([VOLT_HTTP_INPUT_ID, 'workbench.editors.files.fileEditorInput']);
+		store.add(new HttpRequestTabs(features, tabs.service));
+		const instantiation = { invokeFunction: (fn: (accessor: unknown) => unknown) => fn({ getIfExists: () => features }) } as unknown as IInstantiationService;
+		const savedTab = new VoltHttpRequestInputSerializer().serialize(store.add(new VoltHttpRequestInput(draftFromSpec(parseHttpFile('GET http://localhost:1/health').requests[0]), undefined)))!;
+		const restore = () => {
+			const input = new VoltHttpRequestInputSerializer().deserialize(instantiation, savedTab);
+			return input ? store.add(input) : undefined;
+		};
+		assert.ok(restore() instanceof VoltHttpRequestInput);
 		const configuration = new TestConfigurationService();
 		const languageFeatures = new LanguageFeaturesService();
 		store.add(new HttpCodeLens(languageFeatures, features));
@@ -211,6 +239,8 @@ suite('Volt feature service: features without a module', () => {
 		assert.strictEqual(languageFeatures.codeLensProvider.has(httpFile), false, 'the CodeLens');
 		assert.deepStrictEqual(await http.invoke('send', { method: 'GET', url: 'http://localhost:1' }, ctx), { text: HTTP_CLIENT_OFF, isError: true });
 		assert.deepStrictEqual(sent, ['send'], 'nothing was sent while it was off');
+		assert.deepStrictEqual(tabs.closed, [VOLT_HTTP_INPUT_ID], 'the request tabs close, other tabs stay');
+		assert.strictEqual(restore(), undefined, 'a request tab saved in a chat\'s tools is not restored');
 		// It serves no tool of its own: the ide gateway (Dev environment) stays, and so does every other tool.
 		assert.deepStrictEqual(tools.listTools().map(tool => tool.name), toolsBefore);
 		assert.deepStrictEqual((await served([IDE_GATEWAY_TOOL_NAME])).ran, [IDE_GATEWAY_TOOL_NAME]);
@@ -223,6 +253,8 @@ suite('Volt feature service: features without a module', () => {
 		assert.strictEqual(matches(palette('volt.http.newRequest')), true);
 		assert.strictEqual(languageFeatures.codeLensProvider.has(httpFile), true);
 		assert.deepStrictEqual(await http.invoke('send', { method: 'GET', url: 'http://localhost:1' }, ctx), { text: 'HTTP/1.1 200 OK' });
+		assert.ok(restore() instanceof VoltHttpRequestInput);
+		assert.deepStrictEqual(tabs.closed, [VOLT_HTTP_INPUT_ID]);
 	});
 
 	test('FEAT-IDE-4: Container Tools is a VS Code built-in that came with the dev environment, not a Volt feature', async () => {

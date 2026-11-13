@@ -411,6 +411,18 @@ export function closeAgentToolEditor(editor: EditorInput): boolean {
 	return true;
 }
 
+/** Closes the tabs `matches` picks in every live chat's tools area, on screen or not. */
+export function closeAgentToolEditorsWhere(matches: (editor: EditorInput) => boolean): void {
+	for (const entry of toolParts.values()) {
+		for (const group of entry.part.groups) {
+			const closing = group.editors.filter(matches);
+			if (closing.length) {
+				void group.closeEditors(closing);
+			}
+		}
+	}
+}
+
 /**
  * The browser tab the agent of `sessionId` drives: the one showing in its tools area, else the
  * most recent browser tab there. Undefined until the chat's tools area holds a browser.

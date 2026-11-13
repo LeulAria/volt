@@ -2365,12 +2365,14 @@ export class AgentMentionController extends Disposable {
 			};
 		}
 
-		if (view === 'agents') {
+		// Orchestra off (even with its submenu open): the top level, without @ Agents and @ Machines.
+		const orchestraShown = orchestraMentionsShown(this.surfaceService(IVoltFeatureService));
+		if (view === 'agents' && orchestraShown) {
 			const agents = this.agentRows(query);
 			return { kind: 'list', rows: [back, ...(agents.length ? agents : [this.message(query ? localize('voltAgent.mention.noMatchingAgents', "No matching agents") : localize('voltAgent.mention.noAgents', "No agents connected. Sign in to a provider in Settings > Providers."))])] };
 		}
 
-		if (view === 'machines') {
+		if (view === 'machines' && orchestraShown) {
 			const machines = this.machineRows(query);
 			return {
 				kind: 'list', rows: [back, ...(machines.length ? machines : [this.message(this.machines === undefined
@@ -2382,7 +2384,7 @@ export class AgentMentionController extends Disposable {
 		const categories: AgentMentionRow[] = [
 			{ kind: 'item', id: 'files', label: localize('voltAgent.mention.files', "Files & Folders"), icon: Codicon.folder, submenu: true, run: () => this.setMenuView('files') },
 			// Who and where: agents of any provider (and a team or council of them), and the machines work can run on.
-			...(!orchestraMentionsShown(this.surfaceService(IVoltFeatureService)) ? [] : [
+			...(!orchestraShown ? [] : [
 				{ kind: 'item' as const, id: 'agents', label: localize('voltAgent.mention.agents', "Agents"), description: localize('voltAgent.mention.agentsDetail', "Models, a team, a council"), icon: Codicon.hubot, submenu: true, run: () => this.setMenuView('agents') },
 				{ kind: 'item' as const, id: 'machines', label: localize('voltAgent.mention.machines', "Machines"), description: localize('voltAgent.mention.machinesDetail', "Where the work runs"), icon: Codicon.server, submenu: true, run: () => this.openMachinesView() },
 			]),

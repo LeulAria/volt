@@ -28,6 +28,7 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { parseHttpFile } from '../../../services/voltRuntime/common/ide/httpFile.js';
 import { openInAgentTools } from '../../voltAgent/browser/workspace/agentSurfaceHost.js';
 import { OPEN_HTTP_IN_TOOLS_COMMAND_ID } from '../../voltAgent/browser/workspace/agentSurfaceMenu.js';
+import { closeEditorsWhenVoltFeatureOff } from '../../voltCustomize/browser/voltFeatureEditors.js';
 import { IVoltFeatureService, voltFeatureOn, whileVoltFeatureOn } from '../../voltCustomize/common/voltFeatures.js';
 import { HTTP_CLIENT_FEATURE_ID } from '../common/voltHttp.js';
 import { draftFromSpec, VOLT_HTTP_EDITOR_ID, VOLT_HTTP_INPUT_ID, VoltHttpRequestEditor, VoltHttpRequestInput, VoltHttpRequestInputSerializer } from './voltHttpEditor.js';
@@ -241,3 +242,14 @@ export class HttpCodeLens extends Disposable implements IWorkbenchContribution {
 }
 
 registerWorkbenchContribution2(HttpCodeLens.ID, HttpCodeLens, WorkbenchPhase.Eventually);
+
+/** The request tabs close when the HTTP client is turned off; saved ones aren't restored while it is (the serializer). */
+export class HttpRequestTabs extends Disposable implements IWorkbenchContribution {
+	static readonly ID = 'workbench.contrib.voltHttpRequestTabs';
+	constructor(@IVoltFeatureService features: IVoltFeatureService, @IEditorService editorService: IEditorService) {
+		super();
+		this._register(closeEditorsWhenVoltFeatureOff(features, HTTP_CLIENT_FEATURE_ID, [VOLT_HTTP_INPUT_ID], editorService));
+	}
+}
+
+registerWorkbenchContribution2(HttpRequestTabs.ID, HttpRequestTabs, WorkbenchPhase.AfterRestored);
