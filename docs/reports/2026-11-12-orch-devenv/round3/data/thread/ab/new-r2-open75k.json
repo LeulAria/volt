@@ -1,0 +1,49 @@
+{
+ "chat": "Long thread 75k|Turn 1: keep reading the modules",
+ "marker": "LAST",
+ "cold": false,
+ "copies": false,
+ "runs": 3,
+ "load": "9.25 9.81 22.25",
+ "settled": {
+  "n": 3,
+  "median": 13.2,
+  "min": 13.2,
+  "max": 13.6
+ },
+ "firstVisible": {
+  "n": 3,
+  "median": 13.2,
+  "min": 13.2,
+  "max": 13.6
+ },
+ "results": [
+  {
+   "settled": 13.600000001111766,
+   "firstVisible": 13.600000001111766,
+   "frames": 119,
+   "longTaskMs": 0,
+   "maxGap": 25,
+   "loadBefore": 8.42,
+   "loadAfter": "8.42 9.69 22.43"
+  },
+  {
+   "settled": 13.19999999999709,
+   "firstVisible": 13.19999999999709,
+   "frames": 119,
+   "longTaskMs": 0,
+   "maxGap": 25,
+   "loadBefore": 7.91,
+   "loadAfter": "9.28 9.82 22.33"
+  },
+  {
+   "settled": 13.199999999633292,
+   "firstVisible": 13.199999999633292,
+   "frames": 119,
+   "longTaskMs": 0,
+   "maxGap": 17,
+   "loadBefore": 9.25,
+   "loadAfter": "9.25 9.81 22.25"
+  }
+ ]
+}
