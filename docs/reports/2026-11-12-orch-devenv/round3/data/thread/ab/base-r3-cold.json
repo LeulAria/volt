@@ -1,0 +1,67 @@
+{
+ "chat": "Cold 41k <run>",
+ "marker": "LONGTHREAD-END long41k",
+ "cold": false,
+ "copies": true,
+ "runs": 5,
+ "load": "8.57 19.48 52.18",
+ "settled": {
+  "n": 5,
+  "median": 138.5,
+  "min": 131.4,
+  "max": 183
+ },
+ "firstVisible": {
+  "n": 5,
+  "median": 62.8,
+  "min": 39.7,
+  "max": 91.4
+ },
+ "results": [
+  {
+   "settled": 180.5,
+   "firstVisible": 88.90000000000146,
+   "frames": 134,
+   "longTaskMs": 85,
+   "maxGap": 83,
+   "loadBefore": 8.55,
+   "loadAfter": "8.55 20.02 52.94"
+  },
+  {
+   "settled": 183.00000000074215,
+   "firstVisible": 91.4000000007436,
+   "frames": 134,
+   "longTaskMs": 81,
+   "maxGap": 83,
+   "loadBefore": 8.55,
+   "loadAfter": "9.31 19.99 52.74"
+  },
+  {
+   "settled": 138.50000000074215,
+   "firstVisible": 62.80000000074506,
+   "frames": 130,
+   "longTaskMs": 61,
+   "maxGap": 67,
+   "loadBefore": 9.31,
+   "loadAfter": "9.31 19.99 52.74"
+  },
+  {
+   "settled": 131.40000000037253,
+   "firstVisible": 39.70000000037544,
+   "frames": 128,
+   "longTaskMs": 78,
+   "maxGap": 83,
+   "loadBefore": 8.88,
+   "loadAfter": "8.88 19.72 52.45"
+  },
+  {
+   "settled": 133.9000000007436,
+   "firstVisible": 51.50000000074215,
+   "frames": 129,
+   "longTaskMs": 62,
+   "maxGap": 75,
+   "loadBefore": 8.57,
+   "loadAfter": "8.57 19.48 52.18"
+  }
+ ]
+}
