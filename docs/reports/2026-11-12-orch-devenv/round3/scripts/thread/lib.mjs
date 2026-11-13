@@ -25,6 +25,15 @@ export async function connect(port, match = /workbench/) {
 			}
 		}
 	});
+	ws.addEventListener('close', e => {
+		if (pending.size) {
+			console.error(`cdp socket closed (${e.code} ${e.reason}) with ${pending.size} calls pending`);
+			process.exit(3);
+		}
+	});
+	// A keepalive so Node never sees an empty event loop while a call waits on a busy renderer.
+	const keepalive = setInterval(() => { }, 1000);
+	ws.addEventListener('close', () => clearInterval(keepalive));
 	const send = (method, params = {}) => new Promise(r => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
 	const evaluate = async (expression, awaitPromise = true) => {
 		const r = await send('Runtime.evaluate', { expression, awaitPromise, returnByValue: true });
