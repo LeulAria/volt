@@ -13,8 +13,11 @@ const since = opts.since ? Date.parse(opts.since) : -Infinity;
 const until = opts.until ? Date.parse(opts.until) : Infinity;
 const maxLoad = opts.maxload ? Number(opts.maxload) : Infinity;
 const load1 = r => Math.max(...[r.load, r.loadTyping].filter(Boolean).map(l => Number(String(l).split(/\s+/)[0])));
+// An A5 row without `domNodes` was sampled while the instance's window could not be reached over CDP (the
+// workbench was gone: 7 processes, no agents), so it does not weigh a running Volt and is left out.
+const valid = (name, r) => name !== 'a5.jsonl' || typeof r.domNodes === 'number';
 const rows = name => (existsSync(join(DATA, name)) ? readFileSync(join(DATA, name), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) : [])
-	.filter(r => Date.parse(r.at) >= since && Date.parse(r.at) <= until);
+	.filter(r => Date.parse(r.at) >= since && Date.parse(r.at) <= until && valid(name, r));
 const metrics = [
 	['A2 relaunch to typing (dev build), ms', 'a1.jsonl', r => r.readyMs],
 	['A2 part after the module load, ms', 'a1.jsonl', r => r.afterModuleLoadMs],
