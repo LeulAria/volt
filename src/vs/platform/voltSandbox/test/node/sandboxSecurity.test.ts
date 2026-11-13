@@ -808,6 +808,35 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		}
 	});
 
+	test('SRV-1: a granted loopback port (the chat\'s own MCP bridge) opens only that port; Volt\'s other loopback servers (another chat\'s MCP, the agent server, a CDP/inspect port) stay unreachable, and the agent-server token stays unreadable', async () => {
+		// The chat's own MCP bridge, and three loopback servers the sandbox must not reach: another
+		// chat's MCP port, the agent server's API, an inspector port. Each counts the connections it got.
+		const own = await canaryListener();
+		const otherMcp = await canaryListener();
+		const agentServer = await canaryListener();
+		const inspector = await canaryListener();
+		const connect = (label: string, port: number) => `${PERL} -MIO::Socket::INET -e 'IO::Socket::INET->new(PeerAddr=>"127.0.0.1:${port}", Timeout=>2) and print "REACHED ${label}\\n"'`;
+		try {
+			// The chat is granted its own MCP port (as a real launch grants the loopback ports of its MCP servers).
+			const result = await sh(agent(false, 'claude-code', { loopbackPorts: [own.port] }), [
+				connect('own', own.port),
+				connect('other-mcp', otherMcp.port),
+				connect('agent-server', agentServer.port),
+				connect('inspector', inspector.port),
+				`cat '${join(f.userData, 'token')}'`,
+			].join('; '));
+			assert.ok(result.stdout.includes('REACHED own'), `the granted port is reachable: ${result.stdout} ${result.stderr}`);
+			for (const label of ['other-mcp', 'agent-server', 'inspector']) {
+				assert.ok(!result.stdout.includes(`REACHED ${label}`), `${label} is reachable through the granted port: ${result.stdout}`);
+			}
+			assert.ok(!result.stdout.includes('CANARY-AGENT-SERVER-TOKEN'), 'the agent-server token stays unreadable (F-04)');
+			assert.strictEqual(own.hits(), 1, 'only the granted port was contacted');
+			assert.strictEqual(otherMcp.hits() + agentServer.hits() + inspector.hits(), 0, 'no other Volt loopback server was contacted');
+		} finally {
+			await Promise.all([own.close(), otherMcp.close(), agentServer.close(), inspector.close()]);
+		}
+	});
+
 	test('unix sockets are unreachable unless granted, even with an open network', async () => {
 		const socket = await canaryUnixSocket(f.outside);
 		try {
