@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { denialKindForOperation, denialsInOutput, describeDenial, folderToAllow, isNoiseDenial } from '../../common/sandboxDenials.js';
-import { agentApiDomains, codexSandboxValue, domainAllowed, isAgentHousekeepingDenial, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
+import { agentApiDomains, agentEndpointLoopbackPorts, codexSandboxValue, domainAllowed, isAgentHousekeepingDenial, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
 import { parseSeatbeltLogLine, sbplRegex, sbplString } from '../../common/seatbelt.js';
 import { protectedEditTarget } from '../../common/sandboxProfiles.js';
 import { isUserFacingDenial } from '../../common/sandboxWorkloads.js';
@@ -368,5 +368,14 @@ suite('Volt sandbox: edits through the window and host warnings (e2e review)', (
 		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist' }));
 		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/Users/me/.CFUserTextEncoding' }));
 		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/dev/dtracehelper' }));
+	});
+
+	test('a local model endpoint in the CLI\'s own base URL key is a loopback grant', () => {
+		assert.deepStrictEqual(agentEndpointLoopbackPorts('claude-code', { ANTHROPIC_BASE_URL: 'http://127.0.0.1:18952' }), [18952]);
+		assert.deepStrictEqual(agentEndpointLoopbackPorts('codex', { OPENAI_BASE_URL: 'http://localhost:4000/v1' }), [4000]);
+		// Remote endpoints, other CLIs' keys and unrelated variables grant nothing.
+		assert.deepStrictEqual(agentEndpointLoopbackPorts('claude-code', { ANTHROPIC_BASE_URL: 'https://gateway.example.com' }), []);
+		assert.deepStrictEqual(agentEndpointLoopbackPorts('claude-code', { OPENAI_BASE_URL: 'http://127.0.0.1:4000' }), []);
+		assert.deepStrictEqual(agentEndpointLoopbackPorts('claude-code', { HTTP_PROXY: 'http://127.0.0.1:8080' }), []);
 	});
 });
