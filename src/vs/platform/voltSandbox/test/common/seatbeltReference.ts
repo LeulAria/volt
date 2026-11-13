@@ -35,6 +35,17 @@ const ESCAPE_SERVICES = [
 	// Write preferences of any app for us, past the file write rules (Terminal startup commands).
 	'com.apple.cfprefsd.agent',
 	'com.apple.cfprefsd.daemon',
+	// Persistence run at login outside the sandbox: SMAppService/SMJobBless, login items, launch agents.
+	'com.apple.xpc.smd',
+	'com.apple.xpc.loginitemregisterd',
+	'com.apple.backgroundtaskmanagement',
+	'com.apple.backgroundtaskmanagementagent',
+	'com.apple.backgroundtaskmanagement.agent',
+	'com.apple.coreservices.sharedfilelistd.xpc',
+	// The LaunchServices database: making the agent's app a URL or document handler the host opens.
+	'com.apple.lsd.modifydb',
+	'com.apple.lsd.open',
+	'com.apple.coreservices.launchservicesd',
 ];
 
 /** DNS lookups outside the broker: denied unless the network is open (B-31, J.1 "DNS"). */

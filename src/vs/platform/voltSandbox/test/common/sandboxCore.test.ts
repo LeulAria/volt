@@ -289,7 +289,10 @@ suite('Volt sandbox Seatbelt profile', () => {
 		const denySocket = agentProxy.indexOf('(deny network-outbound (with message "VOLTSBX-d") (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))');
 		assert.ok(denySocket > allowSocket, 'even a granted socket list cannot reopen DNS');
 		assert.ok(agentProxy.includes('(global-name "com.apple.dnssd.service")'), 'the allow-default base denies the DNS service');
-		for (const name of ['com.apple.cfprefsd.daemon', 'com.apple.CoreServices.coreservicesd', 'com.apple.coreservices.appleevents', 'com.apple.pasteboard.1']) {
+		for (const name of ['com.apple.cfprefsd.daemon', 'com.apple.CoreServices.coreservicesd', 'com.apple.coreservices.appleevents', 'com.apple.pasteboard.1',
+			// Persistence and the LaunchServices database: run code at login, or make the agent's app a handler.
+			'com.apple.xpc.smd', 'com.apple.xpc.loginitemregisterd', 'com.apple.backgroundtaskmanagement', 'com.apple.backgroundtaskmanagementagent',
+			'com.apple.coreservices.sharedfilelistd.xpc', 'com.apple.lsd.modifydb', 'com.apple.lsd.open', 'com.apple.coreservices.launchservicesd']) {
 			assert.ok(agentProxy.includes(`(global-name "${name}")`), name);
 		}
 		const agentHost = buildSeatbeltProfile({ ...RESOLVED, readAll: true, systemServices: true, network: { ...RESOLVED.network, mode: 'host' } }, { tag: 'h' });

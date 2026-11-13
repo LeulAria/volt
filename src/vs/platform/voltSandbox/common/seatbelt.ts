@@ -52,6 +52,22 @@ const ESCAPE_SERVICES = [
 	// Write preferences of any app for us, past the file write rules (Terminal startup commands).
 	'com.apple.cfprefsd.agent',
 	'com.apple.cfprefsd.daemon',
+	// Persistence that runs code at login, outside the sandbox: SMAppService.register and SMJobBless
+	// go through the ServiceManagement daemon and Background Task Management; login items and launch
+	// agents through loginitemregisterd and the shared file list. `launchctl load`/`submit` are
+	// refused and `job-creation` is denied as an operation too, but these XPC paths bypass both.
+	'com.apple.xpc.smd',
+	'com.apple.xpc.loginitemregisterd',
+	'com.apple.backgroundtaskmanagement',
+	'com.apple.backgroundtaskmanagementagent',
+	'com.apple.backgroundtaskmanagement.agent',
+	'com.apple.coreservices.sharedfilelistd.xpc',
+	// The LaunchServices database: registering an app and making it the handler of a URL scheme or a
+	// document type, which the host opens later. `lsopen` denies opening through LS; these deny the
+	// writes that would set the agent's app up as a handler first.
+	'com.apple.lsd.modifydb',
+	'com.apple.lsd.open',
+	'com.apple.coreservices.launchservicesd',
 ];
 
 /** DNS lookups outside the broker: denied unless the network is open (B-31, J.1 "DNS"). */

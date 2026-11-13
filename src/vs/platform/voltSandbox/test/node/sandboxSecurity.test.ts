@@ -20,7 +20,7 @@ import { execFileSync, spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { promises as fs, readdirSync } from 'fs';
 import * as net from 'net';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { dimensionsUsed, ISandboxRunResult } from '../../common/sandboxBackend.js';
@@ -1052,6 +1052,127 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		}
 		assert.ok(!await exists(join(f.outside, 'canary-osascript')), result.stdout);
 		assert.ok(!await exists(join(f.outside, 'canary-launchd')), result.stdout);
+		await assertHostUnchanged();
+	});
+
+	macTest('MACOS-OUT-1: an app the agent made cannot be opened, made a URL handler or loaded as a launchd job; launchd\'s environment and the pasteboard stay the user\'s', async () => {
+		const id = `dev.volt.sbxtest${process.pid}`;
+		const scheme = `volt-sbx-${process.pid}`;
+		const label = `dev.volt.sbxjob${process.pid}`;
+		const variable = `VOLT_SBX_TEST_${process.pid}`;
+		const marker = `VOLTSBXPASTE${process.pid}`;
+		const app = join(f.ws, 'Probe.app');
+		const plist = join(f.ws, `${label}.plist`);
+		const lsregister = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
+		// An app whose only act is to leave a canary outside: launched by LaunchServices or launchd, it runs unsandboxed.
+		await fs.mkdir(join(app, 'Contents', 'MacOS'), { recursive: true });
+		await fs.writeFile(join(app, 'Contents', 'MacOS', 'probe'), `#!/bin/sh\n/usr/bin/touch '${f.outside}/canary-app'\n`, { mode: 0o755 });
+		await fs.writeFile(join(app, 'Contents', 'Info.plist'), [
+			'<?xml version="1.0" encoding="UTF-8"?>',
+			'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+			'<plist version="1.0"><dict>',
+			`<key>CFBundleExecutable</key><string>probe</string><key>CFBundleIdentifier</key><string>${id}</string>`,
+			'<key>CFBundlePackageType</key><string>APPL</string><key>LSUIElement</key><true/>',
+			`<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>${id}</string><key>CFBundleURLSchemes</key><array><string>${scheme}</string></array></dict></array>`,
+			'</dict></plist>',
+		].join('\n'));
+		await fs.writeFile(plist, [
+			'<?xml version="1.0" encoding="UTF-8"?>',
+			'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+			'<plist version="1.0"><dict>',
+			`<key>Label</key><string>${label}</string>`,
+			`<key>ProgramArguments</key><array><string>/usr/bin/touch</string><string>${f.outside}/canary-job</string></array>`,
+			'<key>RunAtLoad</key><true/>',
+			'</dict></plist>',
+		].join('\n'));
+		// What LaunchServices knows on the host: the app it would open for the scheme, the app it has for the
+		// bundle id (registered), and the user's handler records (set even before an app is registered).
+		const handlerOf = async () => {
+			const known = execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', `ObjC.import("AppKit"); var w = $.NSWorkspace.sharedWorkspace; var u = w.URLForApplicationToOpenURL($.NSURL.URLWithString("${scheme}://x")); var a = w.URLForApplicationWithBundleIdentifier("${id}"); (u.isNil() ? "none" : u.path.js) + " " + (a.isNil() ? "none" : a.path.js)`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+			const secure = join(homedir(), 'Library', 'Preferences', 'com.apple.LaunchServices', 'com.apple.launchservices.secure.plist');
+			const records = await fs.access(secure).then(() => execFileSync('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', secure], { encoding: 'utf8' }), () => '');
+			return `${known}${records.includes(scheme) ? ` RECORD ${scheme}` : ''}${records.includes(id) ? ` RECORD ${id}` : ''}`;
+		};
+		const uid = process.getuid?.() ?? 0;
+		const jxa = (code: string) => `/usr/bin/osascript -l JavaScript -e '${code}' 2>&1`;
+		try {
+			const result = await sh(agent(true), [
+				// LaunchServices: open the app, by path, by name and by bundle id; open its URL.
+				`open '${app}' 2>&1`, `open -a '${app}' 2>&1`, `open -b ${id} 2>&1`, `open '${scheme}://x' 2>&1`,
+				// Register it and make it the handler of its scheme (lsd), with no `open` at all.
+				`${lsregister} -f '${app}' 2>&1`,
+				jxa(`ObjC.import("CoreServices"); console.log("REGISTER " + $.LSRegisterURL($.NSURL.fileURLWithPath("${app}"), true))`),
+				jxa(`ObjC.import("CoreServices"); console.log("HANDLER " + $.LSSetDefaultHandlerForURLScheme($("${scheme}"), $("${id}")))`),
+				// launchd: load, bootstrap and submit a job; set a variable every app the user starts later inherits.
+				`launchctl load '${plist}' 2>&1`, `launchctl bootstrap gui/${uid} '${plist}' 2>&1`,
+				`launchctl submit -l ${label}.submit -- /usr/bin/touch '${f.outside}/canary-submit' 2>&1`,
+				`launchctl setenv ${variable} pwned 2>&1`,
+				// Apple Events to another app (refused before TCC is asked, so no prompt), and the pasteboard.
+				`/usr/bin/osascript -e 'tell application "Finder" to count windows' 2>&1`,
+				`printf ${marker} | pbcopy 2>&1`,
+			].join('; '), { timeoutMs: 60_000 });
+			await new Promise(resolve => setTimeout(resolve, 2_000));
+			for (const canary of ['canary-app', 'canary-job', 'canary-submit']) {
+				assert.ok(!await exists(join(f.outside, canary)), `${canary}: ${result.stdout}`);
+			}
+			const handler = await handlerOf();
+			assert.ok(!handler.includes('Probe.app') && !handler.includes(id), `the agent's app handles ${scheme}: ${handler} ${result.stdout}`);
+			const env = execFileSync('/bin/launchctl', ['getenv', variable], { encoding: 'utf8' }).trim();
+			assert.strictEqual(env, '', `launchd's environment was changed: ${result.stdout}`);
+			const paste = execFileSync('/usr/bin/pbpaste', { encoding: 'utf8' });
+			assert.ok(!paste.includes(marker), 'the pasteboard was written');
+			assert.ok(!/^\d+$/m.test(result.stdout), `an Apple Event reached Finder: ${result.stdout}`);
+		} finally {
+			for (const args of [['bootout', `gui/${uid}/${label}`], ['remove', label], ['remove', `${label}.submit`], ['unsetenv', variable]]) {
+				try { execFileSync('/bin/launchctl', args, { stdio: 'ignore' }); } catch { /* not there */ }
+			}
+			try { execFileSync(lsregister, ['-u', app], { stdio: 'ignore' }); } catch { /* not registered */ }
+			await fs.rm(app, { recursive: true, force: true });
+			await fs.rm(plist, { force: true });
+			for (const canary of ['canary-app', 'canary-job', 'canary-submit']) {
+				await fs.rm(join(f.outside, canary), { force: true });
+			}
+		}
+		await assertHostUnchanged();
+	});
+
+	macTest('MACOS-OUT-2: the mach services that run code for the agent outside the sandbox are unreachable (ServiceManagement, Background Task Management, login items, the LaunchServices database, Apple Events, cfprefsd, the pasteboard)', async () => {
+		// `bootstrap_look_up` succeeds only when the sandbox lets the agent reach the service: a denied
+		// mach-lookup returns a non-zero kern_return. The SMAppService/login-item/LaunchServices-database
+		// APIs are built on these, so blocking the lookups blocks the API (verified with a signed helper).
+		const probe = join(f.ws, 'mach-probe.py');
+		await fs.writeFile(probe, [
+			'import ctypes, sys',
+			"libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib')",
+			"bp = ctypes.c_uint.in_dll(libc, 'bootstrap_port')",
+			'look = libc.bootstrap_look_up',
+			'look.argtypes = [ctypes.c_uint, ctypes.c_char_p, ctypes.POINTER(ctypes.c_uint)]',
+			'for name in sys.argv[1:]:',
+			'    port = ctypes.c_uint(0)',
+			'    kr = look(bp.value, name.encode(), ctypes.byref(port))',
+			"    print(('OPEN ' if kr == 0 else 'CLOSED ') + name)",
+			'',
+		].join('\n'));
+		// Every service these deny: registering a launch agent or login item, or the LaunchServices
+		// database that makes the agent's app a URL or document handler the host opens later.
+		const denied = [
+			'com.apple.xpc.smd', 'com.apple.xpc.loginitemregisterd', 'com.apple.backgroundtaskmanagement', 'com.apple.backgroundtaskmanagementagent',
+			'com.apple.coreservices.sharedfilelistd.xpc', 'com.apple.lsd.modifydb', 'com.apple.lsd.open', 'com.apple.coreservices.launchservicesd',
+			'com.apple.CoreServices.coreservicesd', 'com.apple.coreservices.appleevents', 'com.apple.cfprefsd.agent', 'com.apple.cfprefsd.daemon',
+			'com.apple.pasteboard.1', 'com.apple.windowserver.active',
+		];
+		// A control the agent legitimately reaches: user and group lookups. If this came back CLOSED the
+		// probe would be meaningless (every lookup failing), so the denials below would prove nothing.
+		const control = 'com.apple.system.opendirectoryd.libinfo';
+		for (const network of [false, true]) {
+			const result = await sh(agent(network), `/usr/bin/python3 '${probe}' ${[control, ...denied].join(' ')}`);
+			const verdict = new Map(result.stdout.trim().split('\n').map(line => [line.slice(line.indexOf(' ') + 1), line.slice(0, line.indexOf(' '))]));
+			assert.strictEqual(verdict.get(control), 'OPEN', `the probe works (network=${network}): ${result.stdout} ${result.stderr}`);
+			for (const name of denied) {
+				assert.strictEqual(verdict.get(name), 'CLOSED', `${name} is reachable (network=${network}): ${result.stdout}`);
+			}
+		}
+		await fs.rm(probe, { force: true });
 		await assertHostUnchanged();
 	});
 });
