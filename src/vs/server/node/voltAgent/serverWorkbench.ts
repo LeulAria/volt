@@ -15,7 +15,7 @@ import { Event } from '../../../base/common/event.js';
 import { parse as parseJsonc } from '../../../base/common/json.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
 import { FileAccess } from '../../../base/common/network.js';
-import { dirname, join, normalize, sep } from '../../../base/common/path.js';
+import { dirname, extname, join, normalize, sep } from '../../../base/common/path.js';
 import { IServerChannel, ProxyChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { IConfigurationService } from '../../../platform/configuration/common/configuration.js';
 import { parseArgs } from '../../../platform/environment/node/argv.js';
@@ -47,6 +47,7 @@ import { VOLT_USAGE_CHANNEL_NAME } from '../../../platform/voltUsage/common/volt
 import { VoltUsageService } from '../../../platform/voltUsage/node/voltUsageService.js';
 import type { IServerAPI, IServerEmbedder } from '../remoteExtensionHostAgentServer.js';
 import { ServerExtensionSandbox } from './serverExtensionSandbox.js';
+import { COMPRESSIBLE } from './serverCompression.js';
 import { ServerParsedArgs, serverOptions } from '../serverEnvironmentService.js';
 import type { SocketServer } from '../serverServices.js';
 
@@ -166,7 +167,7 @@ export class ServerWorkbench extends Disposable {
 			}
 		}
 		// The workbench's own files: served here, compressed and (in a release) cached for good.
-		const staticFiles = this.staticFiles(url.pathname);
+		const staticFiles = this.staticFiles(url.pathname) ?? this.builtinExtensionFile(url, req);
 		if (staticFiles && (req.method === 'GET' || req.method === 'HEAD')) {
 			if (staticFiles === 'forbidden') {
 				res.writeHead(403).end();
@@ -360,6 +361,22 @@ export class ServerWorkbench extends Disposable {
 			return [file, join(APP_ROOT, 'node_modules.asar', rest), join(APP_ROOT, 'node_modules.asar.unpacked', rest)];
 		}
 		return [file];
+	}
+
+	/**
+	 * A built-in extension's text file the workbench itself reads (`vscode-remote-resource` under the
+	 * app's own extensions), served like the static files: compressed. VS Code's server sends them as
+	 * they are, so a phone's first launch downloaded the icon theme's 451 KB of JSON. Requests from
+	 * another origin (the web worker extension host) still go to VS Code's server, which answers
+	 * them with the CORS headers they need.
+	 */
+	private builtinExtensionFile(url: URL, req: http.IncomingMessage): readonly string[] | undefined {
+		const path = url.searchParams.get('path');
+		if (!/^\/code\/[^/]+\/vscode-remote-resource$/.test(url.pathname) || req.headers.origin || !path?.startsWith('/')) {
+			return undefined;
+		}
+		const file = normalize(path);
+		return file.startsWith(join(APP_ROOT, 'extensions') + sep) && COMPRESSIBLE.has(extname(file)) ? [file] : undefined;
 	}
 
 	//#endregion
