@@ -1,0 +1,53 @@
+{
+ "branch": "main",
+ "shipped": 5,
+ "groups": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true,
+  "Integration": true
+ },
+ "handoff": 4,
+ "handoffDetail": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true
+ },
+ "npmTest": {
+  "status": 0,
+  "summary": ""
+ },
+ "files": {
+  "w1-limiter": {
+   "pass": true,
+   "failed": []
+  },
+  "w1-api": {
+   "pass": true,
+   "failed": []
+  },
+  "w2-dates": {
+   "pass": true,
+   "failed": []
+  },
+  "w3-cursor": {
+   "pass": true,
+   "failed": []
+  },
+  "w4-create": {
+   "pass": true,
+   "failed": []
+  },
+  "w4-idempotency": {
+   "pass": true,
+   "failed": []
+  },
+  "integration": {
+   "pass": true,
+   "failed": []
+  }
+ },
+ "report": "W1 | w1-rate-limiter | ADM-W1-7NOIVE\nW2 | w2-timezone-drift | ADM-W2-57JYD2\nW3 | w3-cursor-pagination | ADM-W3-3J3ROC\nW4 | w4-idempotent-create | ADM-W4-BYA2FU"
+}
