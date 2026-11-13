@@ -187,8 +187,11 @@ export interface IVoltHostToolInfo {
 	 * Listed to MCP clients as always loaded (`_meta` `anthropic/alwaysLoad`): Claude Code then puts
 	 * it in the prompt instead of behind its tool search, where agents rarely look. For the few tools
 	 * that answer questions agents otherwise answer worse with their own tools (code_nav).
+	 * `top`: only for top-level chats (a full tool listing); Volt subagents (a `groups` subset) get it
+	 * behind the tool search. delegate_task: a top-level chat that delegates paid a Tool Search round
+	 * trip (2-3 s and a whole request) before its first call (harness bench, round 3).
 	 */
-	readonly alwaysLoad?: boolean;
+	readonly alwaysLoad?: boolean | 'top';
 	/**
 	 * Set by a window on the tools it lends the agent server: its provider has no `needsApproval`,
 	 * so the server does not ask the window before each call. A busy window that answered that

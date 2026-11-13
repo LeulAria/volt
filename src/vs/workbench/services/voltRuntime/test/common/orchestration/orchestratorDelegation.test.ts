@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, resolveChatTaskRefs, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, resolveChatTaskRefs, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
 import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
@@ -79,6 +79,17 @@ suite('Volt orchestrator: handoff contract and context', () => {
 	test('a waiting task tool call of a Claude parent blocks longer', () => {
 		// Up to 4 min per call (under fetch's 5 min); other agents stay under cursor-agent's 60 s.
 		assert.deepStrictEqual([taskWaitMs(true), taskWaitMs(false)], [240_000, 45_000]);
+	});
+
+	test('delegate_task, wait_tasks and message_task are always loaded in top-level chats, and delegate_task stays short', () => {
+		const byName = new Map<string, (typeof AGENT_TASK_TOOLS)[number]>(AGENT_TASK_TOOLS.map(tool => [tool.name, tool]));
+		for (const name of ['delegate_task', 'wait_tasks', 'message_task']) {
+			assert.strictEqual(byName.get(name)?.alwaysLoad, 'top', name);
+		}
+		assert.strictEqual(byName.get('task_status')?.alwaysLoad, undefined);
+		const delegate = byName.get('delegate_task')!;
+		// In every request of a top-level chat now: about 1.2k tokens (it was 9.6k characters behind the tool search).
+		assert.ok(JSON.stringify({ description: delegate.description, input_schema: delegate.inputSchema }).length < 5_000);
 	});
 
 	test('the parent capsule carries the user\'s request, the plan, the latest reply and the siblings, within its budget', () => {
