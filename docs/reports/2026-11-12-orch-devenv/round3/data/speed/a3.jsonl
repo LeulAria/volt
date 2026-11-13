@@ -36,3 +36,15 @@
 {"arm":"after","rep":0,"at":"2026-11-13T07:41:42.160Z","load":"12.80 14.34 15.80","readyMs":163,"domMs":149,"probesTyped":2,"readyText":"ad"}
 {"arm":"after","rep":0,"at":"2026-11-13T07:41:46.942Z","load":"12.42 14.24 15.75","readyMs":400,"domMs":386,"probesTyped":3,"readyText":"de"}
 {"arm":"before","rep":0,"at":"2026-11-13T07:41:53.593Z","load":"21.08 15.99 16.35","readyMs":470,"domMs":456,"probesTyped":3,"readyText":"de"}
+{"arm":"after","rep":0,"at":"2026-11-13T10:16:48.147Z","load":"12.41 18.81 24.48","readyMs":207,"domMs":192,"probesTyped":3,"readyText":"de"}
+{"arm":"before","rep":0,"at":"2026-11-13T10:16:52.510Z","load":"13.26 18.88 24.47","readyMs":352,"domMs":346,"probesTyped":3,"readyText":"de"}
+{"arm":"before","rep":0,"at":"2026-11-13T10:17:37.003Z","load":"12.90 18.14 23.92","readyMs":223,"domMs":207,"probesTyped":3,"readyText":"de"}
+{"arm":"after","rep":0,"at":"2026-11-13T10:17:41.738Z","load":"13.23 18.12 23.88","readyMs":240,"domMs":225,"probesTyped":3,"readyText":"de"}
+{"arm":"after","rep":0,"at":"2026-11-13T10:19:46.173Z","load":"13.74 17.45 22.88","readyMs":262,"domMs":247,"probesTyped":3,"readyText":"de"}
+{"arm":"before","rep":0,"at":"2026-11-13T10:19:50.491Z","load":"12.96 17.23 22.77","readyMs":220,"domMs":214,"probesTyped":3,"readyText":"de"}
+{"arm":"before","rep":0,"at":"2026-11-13T10:36:40.804Z","load":"13.44 16.98 19.27","readyMs":147,"domMs":140,"probesTyped":2,"readyText":"ad"}
+{"arm":"after","rep":0,"at":"2026-11-13T10:36:44.929Z","load":"13.88 17.01 19.26","readyMs":214,"domMs":199,"probesTyped":3,"readyText":"de"}
+{"arm":"after","rep":0,"at":"2026-11-13T10:40:50.612Z","load":"13.61 27.74 24.89","readyMs":154,"domMs":141,"probesTyped":3,"readyText":"de"}
+{"arm":"before","rep":0,"at":"2026-11-13T10:40:54.546Z","load":"12.84 27.34 24.76","readyMs":180,"domMs":169,"probesTyped":3,"readyText":"de"}
+{"arm":"before","rep":0,"at":"2026-11-13T10:40:58.514Z","load":"12.84 27.34 24.76","readyMs":103,"domMs":97,"probesTyped":2,"readyText":"ad"}
+{"arm":"after","rep":0,"at":"2026-11-13T10:41:02.367Z","load":"12.61 27.06 24.68","readyMs":167,"domMs":154,"probesTyped":3,"readyText":"de"}
