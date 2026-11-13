@@ -6,6 +6,11 @@
 import { Disposable, DisposableMap, DisposableStore, IDisposable, toDisposable } from '../../base/common/lifecycle.js';
 import { Event, Emitter } from '../../base/common/event.js';
 import { EventType, addDisposableListener, getClientArea, size, IDimension, isAncestorUsingFlowTo, computeScreenAwareSize, getActiveDocument, getWindows, getActiveWindow, isActiveDocument, getWindow, getWindowId, getActiveElement, Dimension } from '../../base/browser/dom.js';
+import { getVoltLayoutInsets, isVoltCompact } from '../../base/browser/ui/voltMobile/voltViewport.js';
+import { openVoltSurface } from '../../base/browser/ui/voltMobile/voltSurfaces.js';
+import { renderIcon } from '../../base/browser/ui/iconLabel/iconLabels.js';
+import { Codicon } from '../../base/common/codicons.js';
+import { localize } from '../../nls.js';
 import { onDidChangeFullscreen, isFullscreen, isWCOEnabled } from '../../base/browser/browser.js';
 import { isWindows, isLinux, isMacintosh, isWeb, isIOS } from '../../base/common/platform.js';
 import { EditorInputCapabilities, GroupIdentifier, isResourceEditorInput, IUntypedEditorInput, pathsToEditors } from '../common/editor.js';
@@ -279,6 +284,9 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	private agentColumnWidth: number | undefined;
 	private agentColumnRestore: number | undefined;
 	private readonly agentDrawerOpenStore = this._register(new DisposableStore());
+	/** Volt: on a phone the primary side bar is a full-screen page over the window, not a column of the grid. */
+	private sideBarPageMode = false;
+	private readonly sideBarPageStore = this._register(new DisposableStore());
 	private editorPartView!: ISerializableView;
 	private statusBarPartView!: ISerializableView;
 
@@ -1791,12 +1799,19 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			this.logService.trace(`Layout#layout, height: ${this._mainContainerDimension.height}, width: ${this._mainContainerDimension.width}`);
 
 			this.updateAgentDrawerMode();
+			this.updateSideBarPageMode();
 
 			size(this.mainContainer, this._mainContainerDimension.width, this._mainContainerDimension.height);
 
-			// Layout the grid widget
-			this.workbenchGrid.layout(this._mainContainerDimension.width, this._mainContainerDimension.height);
+			// Layout the grid widget. Volt: on a phone it stays clear of the safe areas and the bottom
+			// navigation (voltViewport.ts); the main container keeps the whole window for overlays.
+			const insets = getVoltLayoutInsets();
+			this.workbenchGrid.layout(
+				Math.max(0, this._mainContainerDimension.width - insets.left - insets.right),
+				Math.max(0, this._mainContainerDimension.height - insets.top - insets.bottom)
+			);
 			this.stampAgentGridWrappers();
+			this.layoutSideBarPage();
 			if (this.agentColumnRestore !== undefined) {
 				const width = this.agentColumnRestore;
 				this.agentColumnRestore = undefined;
@@ -1844,6 +1859,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		};
 		mark(this.titleBarPartView?.element, 'volt-grid-titlebar');
 		mark(this.auxiliaryBarPartView?.element, 'volt-grid-auxiliarybar', 'volt-grid-has-auxiliarybar');
+		mark(this.sideBarPartView?.element, 'volt-grid-sidebar');
 	}
 
 	isMainEditorLayoutCentered(): boolean {
@@ -2013,7 +2029,8 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	private setSideBarHidden(hidden: boolean): void {
 		// Agent layout docks the primary side bar on the right, where Source Control, Explorer and
 		// the like open as an empty column: it stays closed until the window is back in IDE layout.
-		if (!hidden && this.getSideBarPosition() === Position.RIGHT) {
+		// On a phone it is a page over the window instead (voltWorkbenchMobile.css), in either layout.
+		if (!hidden && this.getSideBarPosition() === Position.RIGHT && !this.sideBarPageMode) {
 			return;
 		}
 
@@ -2047,9 +2064,64 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			}
 		}
 
-		// Propagate to grid
-		this.workbenchGrid.setViewVisible(this.sideBarPartView, !hidden);
+		// Propagate to grid. A page floats over the window, so it never takes room from the editor.
+		this.workbenchGrid.setViewVisible(this.sideBarPartView, !hidden && !this.sideBarPageMode);
+		if (this.sideBarPageMode) {
+			this.setSideBarPageOpen(!hidden);
+		}
 	}
+
+	//#region Volt: the primary side bar as a page on a phone
+
+	private updateSideBarPageMode(): void {
+		const page = isVoltCompact();
+		if (page === this.sideBarPageMode) {
+			return;
+		}
+		this.sideBarPageMode = page;
+		this.mainContainer.classList.toggle('volt-sidebar-page-mode', page);
+		const visible = this.isVisible(Parts.SIDEBAR_PART);
+		this.workbenchGrid.setViewVisible(this.sideBarPartView, visible && !page);
+		this.setSideBarPageOpen(visible && page);
+	}
+
+	private setSideBarPageOpen(open: boolean): void {
+		const root = this.mainContainer;
+		if (open === root.classList.contains('volt-sidebar-page-open')) {
+			this.layoutSideBarPage();
+			return;
+		}
+		this.sideBarPageStore.clear();
+		root.classList.toggle('volt-sidebar-page-open', open);
+		if (!open) {
+			return;
+		}
+		// The system Back, Escape and the page's own Back close the side bar.
+		this.sideBarPageStore.add(openVoltSurface({ dismiss: () => this.setSideBarHidden(true), dismissible: true }));
+		const part = this.sideBarPartView.element;
+		const back = part.ownerDocument.createElement('button');
+		back.type = 'button';
+		back.className = 'volt-sidebar-page-back volt-touch-icon';
+		back.setAttribute('aria-label', localize('voltSidebarPageBack', "Close Side Bar"));
+		back.appendChild(renderIcon(Codicon.chevronLeft));
+		part.appendChild(back);
+		this.sideBarPageStore.add(toDisposable(() => back.remove()));
+		this.sideBarPageStore.add(addDisposableListener(back, EventType.CLICK, () => this.setSideBarHidden(true)));
+		this.stampAgentGridWrappers();
+		this.layoutSideBarPage();
+	}
+
+	private layoutSideBarPage(): void {
+		if (!this.sideBarPageMode || !this.mainContainer.classList.contains('volt-sidebar-page-open')) {
+			return;
+		}
+		const insets = getVoltLayoutInsets();
+		const width = Math.max(0, this._mainContainerDimension.width - insets.left - insets.right);
+		const height = Math.max(0, this._mainContainerDimension.height - insets.top - insets.bottom);
+		this.sideBarPartView.layout(width, height, insets.top, insets.left);
+	}
+
+	//#endregion
 
 	private hasViews(id: string): boolean {
 		const viewContainer = this.viewDescriptorService.getViewContainerById(id);

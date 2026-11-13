@@ -63,13 +63,14 @@ import { AgentChangesEditorInput, isAgentChangesDiffFor, openAgentChangesDiff } 
 import { AgentChangesScope } from '../review/agentSessionChanges.js';
 import { AgentFilesSidebar, AgentFilesSidebarView, filesSidebarTabs, filesSidebarViewCommandId } from './agentFilesSidebar.js';
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
-import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
+import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_HTTP_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
 import { IAgentChatView, IAgentSurface, IAgentWorkspaceService } from './agentWorkspace.js';
 import { SHOW_AGENT_SCM_COMMAND_ID } from '../../common/agentGitActions.js';
 import { AGENT_RUN_SHOW_IN_VOLT_SETTING, isLocalPageUrl } from '../../common/agentRunSettings.js';
+import { getVoltLayoutInsets } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 
 export { chooseAgentBrowserSurfaceMount, type AgentBrowserSurfaceMount } from './agentBrowserMount.js';
 export { shouldHideAgentQuickOpenRail, surfaceKindForMenuAction, agentSurfaceMenuItems } from './agentSurfaceMenu.js';
@@ -1737,13 +1738,15 @@ export class AgentSurfaceHost extends Disposable {
 		const box = this.container.getBoundingClientRect();
 		this.releaseTitlebar();
 		this.area.classList.add('over-chat');
-		const height = Math.max(0, Math.round(root.bottom - box.top));
-		this.setAreaBounds(root.left, box.top, root.width, height);
+		// Clear of the safe areas and the phone's bottom navigation, as the grid is.
+		const insets = getVoltLayoutInsets();
+		const height = Math.max(0, Math.round(root.bottom - insets.bottom - box.top));
+		this.setAreaBounds(root.left + insets.left, box.top, root.width - insets.left - insets.right, height);
 		this.mountTitleButtons(entry);
 		this.partsHost.style.removeProperty('top');
 		this.partsHost.style.left = '0px';
 		this.announceVisibility();
-		const width = Math.round(root.width);
+		const width = Math.round(root.width - insets.left - insets.right);
 		const partWidth = width - this.layoutFilesSidebar(entry, width, height);
 		if (partWidth > 0 && height > 0) {
 			entry.part.layout(partWidth, height, 0, 0);
@@ -2486,6 +2489,9 @@ export class AgentSurfaceHost extends Disposable {
 				return;
 			case 'workflows':
 				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, this.sessionId));
+				return;
+			case 'http':
+				void this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService).executeCommand(OPEN_HTTP_IN_TOOLS_COMMAND_ID, this.sessionId));
 				return;
 			case 'sideChat':
 				void this.openSideChat();

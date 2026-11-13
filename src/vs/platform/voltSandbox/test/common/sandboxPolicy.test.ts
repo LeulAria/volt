@@ -7,7 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { bwrapArgs, landlockArgs } from '../../common/landlock.js';
 import { denialKindForOperation, denialsInOutput, describeDenial, folderToAllow, isNoiseDenial } from '../../common/sandboxDenials.js';
-import { agentApiDomains, codexSandboxValue, domainAllowed, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxEnv, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
+import { agentApiDomains, attenuateSandbox, chatSandboxRequest, codexSandboxValue, domainAllowed, ISandboxHostInfo, isPathInside, isSecretEnvName, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxEnv, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, scrubSandboxEnv, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
 import { buildSeatbeltProfile, parseSeatbeltLogLine, sbplRegex, sbplString, seatbeltCommand } from '../../common/seatbelt.js';
 
 const MAC: ISandboxHostInfo = { platform: 'darwin', home: '/Users/me', tmpdir: '/private/var/folders/ab/xyz/T', darwinUserCacheDir: '/private/var/folders/ab/xyz/C', uid: 501 };
@@ -185,7 +185,8 @@ suite('Volt sandbox Seatbelt profile', () => {
 		assert.ok(profile.includes('(deny lsopen'));
 		assert.ok(profile.includes('(deny appleevent-send'));
 		assert.ok(profile.includes('(subpath "/Users/me/.aws")'));
-		assert.ok(!profile.includes('network-outbound'), 'network on: untouched');
+		assert.ok(!profile.includes('(remote ip "localhost:*")'), 'network on: not limited to loopback');
+		assert.deepStrictEqual(profile.split('\n').filter(line => line.includes('network-outbound')).length, 1, 'network on: only the container engine sockets are closed');
 	});
 
 	test('network off allows loopback only', () => {
@@ -307,5 +308,64 @@ suite('Volt sandbox denials', () => {
 		assert.strictEqual(codexSandboxValue('model', 'gpt-5', 'wrap'), 'gpt-5');
 		assert.strictEqual(codexSandboxValue('sandbox', true, 'wrap'), true);
 		assert.strictEqual(codexSandboxValue('sandbox', 'read-only', 'none'), 'read-only');
+	});
+
+	test('sandboxed processes do not inherit credentials, but keep their model key and the SSH agent', () => {
+		const env = {
+			PATH: '/usr/bin', HOME: '/Users/me', SSH_AUTH_SOCK: '/tmp/agent.sock', MONKEY_COUNT: '3',
+			GITHUB_TOKEN: 'ghp_x', GH_TOKEN: 'gho_x', AWS_SECRET_ACCESS_KEY: 's', AWS_PROFILE: 'prod', DATABASE_URL: 'postgres://u:p@h/db',
+			STRIPE_SECRET_KEY: 'sk', NPM_TOKEN: 'n', MY_SERVICE_PASSWORD: 'pw', VSCODE_GIT_ASKPASS_MAIN: '/x',
+			ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o', OPENROUTER_API_KEY: 'r', UNSET: undefined,
+		};
+		const { env: out, dropped } = scrubSandboxEnv(env, 'claude-code');
+		assert.deepStrictEqual(dropped, ['AWS_PROFILE', 'AWS_SECRET_ACCESS_KEY', 'DATABASE_URL', 'GH_TOKEN', 'GITHUB_TOKEN', 'MY_SERVICE_PASSWORD', 'NPM_TOKEN', 'STRIPE_SECRET_KEY']);
+		for (const name of ['PATH', 'HOME', 'SSH_AUTH_SOCK', 'MONKEY_COUNT', 'VSCODE_GIT_ASKPASS_MAIN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY']) {
+			assert.ok(name in out, name);
+		}
+		assert.ok(!('UNSET' in out));
+		assert.deepStrictEqual(scrubSandboxEnv({ GITHUB_TOKEN: 'x' }, 'codex', ['GITHUB_TOKEN']).dropped, [], 'a caller can keep a variable on purpose');
+		const bedrock = scrubSandboxEnv({ CLAUDE_CODE_USE_BEDROCK: '1', AWS_SECRET_ACCESS_KEY: 's', AWS_REGION: 'us-east-1' }, 'claude-code');
+		assert.deepStrictEqual(bedrock.dropped, [], 'Claude Code on Bedrock keeps the AWS credentials it runs on');
+		assert.deepStrictEqual(scrubSandboxEnv({ CLAUDE_CODE_USE_BEDROCK: '1', AWS_SECRET_ACCESS_KEY: 's' }, 'codex').dropped, ['AWS_SECRET_ACCESS_KEY']);
+		assert.ok(!isSecretEnvName('SSH_AUTH_SOCK'));
+		assert.ok(isSecretEnvName('SENTRY_AUTH_TOKEN'));
+	});
+
+	test('instruction files and hooks other tools run later are never writable', () => {
+		const plan = resolveSandboxPlan(request(), MAC);
+		assert.ok(!planAllowsWrite(plan, '/Users/me/repo/.husky/pre-commit'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/repo/.envrc'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/.claude/CLAUDE.md'), 'read into every later Claude Code session');
+		assert.ok(planAllowsWrite(plan, '/Users/me/.claude/projects/p/s.jsonl'), 'its own state still is');
+		assert.ok(!planAllowsWrite(resolveSandboxPlan(request({ providerId: 'codex' }), MAC), '/Users/me/.codex/AGENTS.md'));
+	});
+
+	test('container engine sockets are closed at every network setting', () => {
+		for (const network of [true, false]) {
+			const plan = resolveSandboxPlan(request({ network }), MAC);
+			assert.ok(plan.denyUnixSockets.includes('/var/run/docker.sock'));
+			assert.ok(plan.denyUnixSockets.includes('/private/var/run/docker.sock'), 'the /private alias Seatbelt resolves to');
+			assert.ok(plan.denyUnixSockets.includes('/Users/me/.orbstack/run/docker.sock'));
+			const profile = buildSeatbeltProfile(plan, 'tag');
+			const deny = profile.indexOf('(remote unix-socket (path-literal "/var/run/docker.sock"))');
+			assert.ok(deny > 0, 'denied in the profile');
+			assert.ok(deny > profile.lastIndexOf('(allow network-outbound (remote unix-socket))'), 'after the loopback allow, so it wins');
+		}
+		assert.ok(resolveSandboxPlan(request(), LINUX).denyUnixSockets.includes('/run/user/1000/docker.sock'), 'rootless Docker');
+	});
+
+	test('a subagent is never confined less than its parent', () => {
+		const off: IVoltSandboxSettings = { level: 'off', network: true };
+		const parent: IVoltSandboxSettings = { level: 'workspace-write', network: false, extraWritableRoots: ['/Users/me/out'], allowedDomains: ['api.example.com', '*.github.com'] };
+		assert.strictEqual(attenuateSandbox(off, off), off, 'an unconfined parent leaves the child as it is');
+		assert.deepStrictEqual(attenuateSandbox(off, parent), { level: 'workspace-write', network: false, extraWritableRoots: ['/Users/me/out'], allowedDomains: ['api.example.com', '*.github.com'] });
+		const child: IVoltSandboxSettings = { level: 'read-only', network: true, extraWritableRoots: ['/Users/me/out/sub', '/Users/me/elsewhere'], allowedDomains: ['api.github.com', 'evil.com'] };
+		assert.deepStrictEqual(attenuateSandbox(child, parent), { level: 'read-only', network: false, extraWritableRoots: ['/Users/me/out/sub'], allowedDomains: ['api.github.com'] });
+		assert.strictEqual(attenuateSandbox({ level: 'workspace-write', network: true }, { level: 'read-only', network: true }).level, 'read-only');
+	});
+
+	test('commands run for a chat use its sandbox, or none when it has none', () => {
+		assert.strictEqual(chatSandboxRequest({ level: 'off', network: true }, ['/Users/me/repo']), undefined);
+		assert.deepStrictEqual(chatSandboxRequest({ level: 'read-only', network: false, allowedDomains: ['x.dev'] }, ['/Users/me/repo']), { level: 'read-only', network: false, providerId: 'volt', workspaceRoots: ['/Users/me/repo'], allowedDomains: ['x.dev'] });
 	});
 });

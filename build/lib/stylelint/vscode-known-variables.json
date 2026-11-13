@@ -1416,6 +1416,24 @@
 		"--wf-radius",
 		"--wf-red",
 		"--wf-run-dash",
-		"--wf-shadow"
+		"--wf-shadow",
+		"--volt-http-get",
+		"--volt-http-post",
+		"--volt-http-put",
+		"--volt-http-patch",
+		"--volt-http-delete",
+		"--volt-http-muted",
+		"--volt-http-line",
+		"--volt-bottom-bar",
+		"--volt-exit",
+		"--volt-inset-bottom",
+		"--volt-keyboard",
+		"--volt-mobile-nav-count",
+		"--volt-mobile-nav-height",
+		"--volt-safe-bottom",
+		"--volt-safe-left",
+		"--volt-safe-right",
+		"--volt-safe-top",
+		"--volt-spring"
 	]
 }

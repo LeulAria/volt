@@ -113,6 +113,7 @@ import '../../common/agentWorkflowSettings.js';
 import '../automations/automations.contribution.js';
 import '../workflows/workflows.contribution.js';
 import '../gitGraph/gitGraph.contribution.js';
+import '../profiler/profiler.contribution.js';
 import '../scratchBoard/scratchBoard.contribution.js';
 import './agentWorkflowCommands.js';
 

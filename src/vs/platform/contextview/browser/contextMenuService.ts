@@ -17,6 +17,18 @@ import { ITelemetryService } from '../../telemetry/common/telemetry.js';
 import { ContextMenuHandler, IContextMenuHandlerOptions } from './contextMenuHandler.js';
 import { IContextMenuMenuDelegate, IContextMenuService, IContextViewService } from './contextView.js';
 
+/**
+ * Volt: shows a context menu some other way (a bottom sheet on a phone, voltMobileContextMenu.ts).
+ * Returns false to leave it to the anchored menu.
+ */
+export type ContextMenuPresenter = (delegate: IContextMenuDelegate) => boolean;
+
+let contextMenuPresenter: ContextMenuPresenter | undefined;
+
+export function setContextMenuPresenter(presenter: ContextMenuPresenter | undefined): void {
+	contextMenuPresenter = presenter;
+}
+
 export class ContextMenuService extends Disposable implements IContextMenuService {
 
 	declare readonly _serviceBrand: undefined;
@@ -57,14 +69,17 @@ export class ContextMenuService extends Disposable implements IContextMenuServic
 
 		delegate = ContextMenuMenuDelegate.transform(delegate, this.menuService, this.contextKeyService);
 
-		this.contextMenuHandler.showContextMenu({
+		const shown: IContextMenuDelegate = {
 			...delegate,
 			onHide: (didCancel) => {
 				delegate.onHide?.(didCancel);
 
 				this._onDidHideContextMenu.fire();
 			}
-		});
+		};
+		if (!contextMenuPresenter?.(shown)) {
+			this.contextMenuHandler.showContextMenu(shown);
+		}
 		ModifierKeyEmitter.getInstance().resetKeyStatus();
 		this._onDidShowContextMenu.fire();
 	}

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isLiveTaskState, ITaskContract } from './agentTasks.js';
-import { IOrchConflict, IOrchEventEnvelope, IOrchLimitPark, IOrchModelChoice, IOrchMove, IOrchMoveResult, IOrchQueueItem, IOrchRescue, IOrchSpend, IOrchState, IOrchTask, IOrchTaskUsage, IOrchThread, IOrchTurn, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
+import { IOrchConflict, IOrchEventEnvelope, IOrchLimitPark, IOrchModelChoice, IOrchMove, IOrchMoveResult, IOrchQueueItem, IOrchRescue, IOrchSpend, IOrchState, IOrchTask, IOrchTaskUsage, IOrchThread, IOrchTurn, IOrchVerification, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
 
 /**
  * Orchestration is persisted per root chat: the chat, its subagents' chats and their tasks in one
@@ -334,6 +334,7 @@ function parseThread(value: unknown): IOrchThread | undefined {
 		...optional('moving', parseMove(thread.moving)),
 		...optional('lastMove', parseMoveResult(thread.lastMove)),
 		...optional('spend', parseSpend(thread.spend)),
+		...(num(thread.maxChildren) ? { maxChildren: Math.max(1, Math.floor(thread.maxChildren as number)) } : {}),
 	};
 }
 
@@ -446,5 +447,25 @@ function parseTask(value: unknown): IOrchTask | undefined {
 		...(num(task.budgetUsd) !== undefined ? { budgetUsd: task.budgetUsd as number } : {}),
 		...optional('fallbacks', parseModelChoices(task.fallbacks)),
 		...(Array.isArray(task.failedOn) && task.failedOn.length ? { failedOn: task.failedOn.filter((label): label is string => typeof label === 'string') } : {}),
+		...(Array.isArray(task.blind) && task.blind.length ? { blind: task.blind.filter((id): id is string => typeof id === 'string') } : {}),
+		...(str(task.team) ? { team: task.team as string } : {}),
+		...(task.quiet === true ? { quiet: true } : {}),
+		...(Array.isArray(task.verify) && task.verify.some(item => typeof item === 'string') ? { verify: task.verify.filter((command): command is string => typeof command === 'string') } : {}),
+		...optional('verification', parseVerification(task.verification)),
+	};
+}
+
+const VERIFICATION_STATES = new Set(['running', 'passed', 'failed', 'skipped']);
+
+function parseVerification(value: unknown): IOrchVerification | undefined {
+	const verification = value as Record<string, unknown> | undefined;
+	if (!verification || typeof verification !== 'object' || !VERIFICATION_STATES.has(verification.state as string) || num(verification.round) === undefined || num(verification.at) === undefined) {
+		return undefined;
+	}
+	return {
+		round: verification.round as number,
+		state: verification.state as IOrchVerification['state'],
+		at: verification.at as number,
+		...(str(verification.summary) ? { summary: verification.summary as string } : {}),
 	};
 }

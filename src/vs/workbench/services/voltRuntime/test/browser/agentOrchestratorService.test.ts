@@ -12,6 +12,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { FileService } from '../../../../../platform/files/common/fileService.js';
 import { InMemoryFileSystemProvider } from '../../../../../platform/files/common/inMemoryFilesystemProvider.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
+import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { AgentOrchestratorService } from '../../browser/orchestration/agentOrchestratorService.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../common/events.js';
 import { IVoltHostToolProvider } from '../../common/hostTools.js';
@@ -37,6 +38,9 @@ class FakeRuntime {
 	canSteer() { return false; }
 	steer() { return false; }
 	chatFor(id: string) { return id; }
+	readonly sandboxes = new Map<string, IVoltSandboxSettings>();
+	getSandboxSettings(id: string): IVoltSandboxSettings { return this.sandboxes.get(id) ?? { level: 'off', network: true }; }
+	async setSandboxSettings(id: string, settings: IVoltSandboxSettings) { this.sandboxes.set(id, settings); }
 	getModelOptions() { return {}; }
 	rememberWorktree() { }
 	getOrCreateSession(threadId: string) {
@@ -118,6 +122,7 @@ suite('Agent orchestrator service', () => {
 			stub({ run: async () => undefined, needsRetry: () => false }),
 			stub({ onWillShutdown: () => toDisposable(() => undefined) }),
 			stub({ invokeFunction: () => undefined }),
+			stub({ exec: async () => ({ exitCode: 0, stdout: '', stderr: '', combined: '', timedOut: false }), cancelExec: async () => undefined }),
 		));
 		await service.whenReady;
 		const host = new FakeHost(runtime);
@@ -212,6 +217,36 @@ suite('Agent orchestrator service', () => {
 		assert.strictEqual(wake?.threadId, 'parent');
 		assert.strictEqual(wake?.turn.kind, 'notification');
 		assert.ok(wake?.turn.prompt.text.includes('README written: 40 lines.'));
+	});
+
+	test('a subagent of a sandboxed chat starts no less sandboxed than its parent', async () => {
+		const { service, runtime, host, tool } = await setup();
+		runtime.sandboxes.set('parent', { level: 'read-only', network: false, allowedDomains: ['api.example.com'] });
+		await service.submit('parent', { text: 'audit it' }, 'auto', 'p1');
+		await settle();
+		await tool('parent', 'delegate_task', { task: 'Audit the API', role: 'implementation' });
+		await settle();
+		const task = service.tasksOf('parent')[0];
+		assert.ok(host.started.some(request => request.threadId === task.childId), 'its brief started');
+		assert.deepStrictEqual(runtime.sandboxes.get(task.childId!), { level: 'read-only', network: false, allowedDomains: ['api.example.com'] }, 'set before its agent process starts');
+	});
+
+	test('a subagent\'s checks run in its checkout before its report wakes the parent', async () => {
+		const { service, runtime, host, tool } = await setup();
+		await service.submit('parent', { text: 'fix it' }, 'auto', 'p1');
+		await settle();
+		await tool('parent', 'delegate_task', { task: 'Fix a.ts', verify: ['npm test -- a'] });
+		await settle();
+		const task = service.tasksOf('parent')[0];
+		runtime.finish('parent', 'Delegated.');
+		await settle();
+		runtime.finish(task.childId!, 'Fixed a.ts.');
+		await settle();
+		const wake = host.started.at(-1);
+		assert.strictEqual(wake?.threadId, 'parent');
+		assert.ok(wake?.turn.prompt.text.includes('Fixed a.ts.'));
+		assert.ok(wake?.turn.prompt.text.includes('Volt verification'), 'the report says the checks passed');
+		assert.strictEqual(service.getTask(task.id)?.verification?.state, 'passed');
 	});
 
 	test('wait_tasks returns the report as soon as the subagent finishes, and it is not delivered again', async () => {

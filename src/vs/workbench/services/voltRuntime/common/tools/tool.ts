@@ -64,6 +64,11 @@ export interface IVoltTool {
 	 * with no time cap. pi-durable's `replay: "safe"` subagent tool.
 	 */
 	readonly resumable?: boolean;
+	/**
+	 * Whether this call only reads state (a tool whose ops mix reading and running, like tests or
+	 * debug). Such calls are allowed without asking, like the read-only terminal tools.
+	 */
+	readonly readOnly?: (args: unknown) => boolean;
 	/** Hard ceiling for one call. The call's signal is aborted when it passes. */
 	readonly timeoutMs?: number;
 	execute(args: unknown, ctx: IToolContext): Promise<IToolResult>;

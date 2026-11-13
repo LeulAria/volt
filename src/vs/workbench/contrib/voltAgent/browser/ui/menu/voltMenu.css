@@ -471,9 +471,81 @@
 /* A touch screen: rows a finger can hit (voltMenu.ts adds COARSE_ROW_EXTRA to their heights). */
 .volt-menu.coarse .volt-menu-row,
 .volt-menu.coarse .volt-menu-message {
-	height: 40px;
+	height: 44px;
 }
 
 .volt-menu.coarse .volt-menu-row.two-line {
-	height: 56px;
+	height: 60px;
+}
+
+/*
+ * In a bottom sheet (a phone, voltMenu.ts showVoltMenuSheet): the menu fills the sheet's width with
+ * the sheet's own surface, and a submenu slides over the list behind a Back row.
+ */
+.volt-menu-host.in-sheet {
+	margin-top: 0;
+	min-height: 100%;
+}
+
+.volt-menu.in-sheet {
+	width: 100%;
+	max-width: none;
+	background: transparent;
+	box-shadow: none;
+	border: 0;
+	border-radius: 0;
+}
+
+.volt-menu-host.in-sheet > .volt-menu-flyout {
+	inset: 0;
+	left: 0 !important;
+	top: 0 !important;
+	z-index: 1;
+	background: var(--vscode-editorWidget-background, var(--vscode-menu-background));
+	animation: volt-menu-sheet-push 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes volt-menu-sheet-push {
+	from {
+		transform: translate3d(24px, 0, 0);
+		opacity: 0;
+	}
+}
+
+.volt-mobile-reduced-motion .volt-menu-host.in-sheet > .volt-menu-flyout {
+	animation: none;
+}
+
+.volt-menu-sheet-back {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	height: 44px;
+	padding: 0 12px;
+	border: 0;
+	border-bottom: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-widget-border, transparent));
+	background: none;
+	color: inherit;
+	font: inherit;
+	font-weight: 600;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-menu-sheet-back > .label {
+	flex: 1;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-menu.in-sheet .volt-menu-search {
+	min-height: 44px;
+}
+
+/* Shortcut hints mean nothing on a phone; the row keeps its room for the label. A prompt's "Change" stays. */
+.volt-menu.in-sheet .volt-menu-row:not(.volt-menu-destination) .volt-menu-keybinding {
+	display: none;
 }

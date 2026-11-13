@@ -1,0 +1,303 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.volt-profiler {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-editor-foreground);
+	font-size: 12px;
+}
+
+.volt-profiler-toolbar {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px 12px;
+	min-height: 36px;
+	padding: 6px 12px;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--vscode-editorWidget-border, transparent);
+}
+
+.volt-profiler-title {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1 1 200px;
+	min-width: 0;
+}
+
+.volt-profiler-title .name {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-profiler-title .facts {
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-profiler-controls {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.volt-profiler-search {
+	height: 24px;
+	width: 180px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border-radius: 6px;
+	border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border, transparent));
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font: inherit;
+	outline: none;
+}
+
+.volt-profiler-search:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-profiler-body {
+	display: flex;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.volt-profiler-main {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.volt-profiler-overview,
+.volt-profiler-canvas {
+	display: block;
+	flex: 0 0 auto;
+}
+
+.volt-profiler-overview {
+	cursor: crosshair;
+	border-bottom: 1px solid var(--vscode-editorWidget-border, transparent);
+}
+
+.volt-profiler-canvas {
+	outline: none;
+	cursor: default;
+}
+
+.volt-profiler-canvas:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-profiler-table {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.volt-profiler-tooltip {
+	position: absolute;
+	display: none;
+	z-index: 5;
+	max-width: 420px;
+	padding: 6px 8px;
+	border-radius: 6px;
+	pointer-events: none;
+	background: var(--vscode-editorHoverWidget-background);
+	color: var(--vscode-editorHoverWidget-foreground);
+	border: 1px solid var(--vscode-editorHoverWidget-border, transparent);
+	box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+	line-height: 1.45;
+}
+
+.volt-profiler-tooltip strong {
+	display: block;
+	word-break: break-all;
+}
+
+.volt-profiler-tooltip div {
+	color: var(--vscode-descriptionForeground);
+	word-break: break-all;
+}
+
+.volt-profiler-hint {
+	position: absolute;
+	right: 10px;
+	bottom: 6px;
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.75;
+	pointer-events: none;
+	text-align: right;
+}
+
+.volt-profiler-message {
+	position: absolute;
+	inset: 0;
+	z-index: 6;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+	background: var(--vscode-editor-background);
+}
+
+/* Side panel: the selected function, its callers and callees, the agent's notes. */
+
+.volt-profiler-side {
+	flex: 0 0 300px;
+	width: 300px;
+	box-sizing: border-box;
+	padding: 0 12px 12px;
+	overflow-x: hidden;
+	overflow-y: auto;
+	border-left: 1px solid var(--vscode-editorWidget-border, transparent);
+}
+
+.volt-profiler-side-head {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+	padding: 12px 0 8px;
+}
+
+.volt-profiler-side-name {
+	font-size: 13px;
+	font-weight: 600;
+	word-break: break-all;
+}
+
+.volt-profiler-side-detail {
+	color: var(--vscode-descriptionForeground);
+	line-height: 1.4;
+}
+
+.volt-profiler-side-link {
+	color: var(--vscode-textLink-foreground);
+	cursor: pointer;
+	word-break: break-all;
+}
+
+.volt-profiler-side-link:hover {
+	text-decoration: underline;
+}
+
+.volt-profiler-chip {
+	padding: 1px 6px;
+	border-radius: 9px;
+	font-size: 11px;
+	background: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+}
+
+.volt-profiler-stats {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 2px 12px;
+	padding-bottom: 8px;
+}
+
+.volt-profiler-stat {
+	display: contents;
+}
+
+.volt-profiler-stat .label {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-profiler-stat .value {
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-profiler-side-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding-bottom: 10px;
+}
+
+.volt-profiler-side-title {
+	padding: 10px 0 4px;
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--vscode-descriptionForeground);
+}
+
+/* Lists run edge to edge (the side panel's padding is cancelled), square, in the theme's colors. */
+
+.volt-profiler-list {
+	margin: 0 -12px;
+}
+
+.volt-profiler-table .volt-profiler-list {
+	margin: 0;
+}
+
+.volt-profiler-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-profiler-row {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 22px;
+	padding: 0 12px;
+	overflow: hidden;
+}
+
+.volt-profiler-row-bar {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	background: var(--vscode-charts-orange);
+	opacity: 0.14;
+	pointer-events: none;
+}
+
+.volt-profiler-row-value,
+.volt-profiler-row-label,
+.volt-profiler-row-detail {
+	position: relative;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-profiler-row-value {
+	flex: 0 0 auto;
+	min-width: 70px;
+	font-variant-numeric: tabular-nums;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-profiler-row-label {
+	flex: 0 1 auto;
+}
+
+.volt-profiler-row-detail {
+	flex: 1 1 auto;
+	color: var(--vscode-descriptionForeground);
+}

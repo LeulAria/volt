@@ -3,10 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { buildTaskNotification, describeSpend, formatTokens, formatUsd, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay, withUpstreamReports } from './agentTasks.js';
+import { buildTaskNotification, describeSpend, formatTokens, formatUsd, isLiveTaskState, isTerminalTaskState, taskNotificationDisplay, verifyFailedText, withUpstreamReports, withVerification } from './agentTasks.js';
 import { isRetryableFailure, isTransientFailure } from '../jobs/retryPolicy.js';
 import { LIMIT_CANARY_WAIT_MS, LIMIT_RESUME_TEXT, LIMIT_STAGGER_MS, limitAutoResumes, limitDueAt, limitResumeDisplay } from './limitRecovery.js';
-import { DEFAULT_ORCH_LIMITS, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchRescue, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchTaskUsage, IOrchThread, IOrchTurn, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
+import { DEFAULT_ORCH_LIMITS, ORCH_LIMIT_MAX, IOrchEventEnvelope, IOrchLimitAccount, IOrchLimitPark, IOrchLimits, IOrchPrompt, IOrchQueueItem, IOrchRescue, IOrchState, IOrchTask, IOrchTaskSpawn, IOrchTaskUsage, IOrchThread, IOrchTurn, IOrchVerification, OrchCommand, OrchEffect, OrchEvent, OrchOutcome, OrchRestartResume, OrchTaskState, nextQueued } from './orchestrator.js';
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
 import { MAX_STALE_PLAN_ROUNDS, MAX_STEP_CONTINUATIONS, planContinuationCount, planContinueText, planTurnId, stepLimitContinueText, RESCUE_STAGGER_MS, rescueDueAt, rescueLabel, rescueResumeText, rescueTurnId, rescueWaits } from './rescue.js';
 import { normalizeVoltMode } from '../modes.js';
@@ -86,7 +86,7 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 		case 'thread.submit':
 			return decideSubmit(state, command.threadId, { id: command.turnId, prompt: command.prompt, at: command.at }, command.delivery, !!command.canSteer);
 		case 'thread.notify':
-			return decideNotify(state, command.threadId, { id: command.turnId, prompt: command.prompt, at: command.at, kind: 'notification' }, limits, !!command.interrupt);
+			return decideNotify(state, command.threadId, { id: command.turnId, prompt: command.prompt, at: command.at, kind: 'notification' }, limits, !!command.interrupt, !!command.steer);
 		case 'thread.block': {
 			const thread = state.threads[command.threadId];
 			if (!thread) {
@@ -212,7 +212,8 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			if (thread.queue.some(item => item.id === command.steerId) || thread.active?.id === command.steerId) {
 				return { events: [] };
 			}
-			return { events: [{ type: 'queue.added', threadId: thread.id, item: { id: command.steerId, prompt: command.prompt, at: command.at }, head: true }] };
+			// A message from another agent that did not get in stays a notification: it must not run as the user's prompt.
+			return { events: [{ type: 'queue.added', threadId: thread.id, item: { id: command.steerId, prompt: command.prompt, at: command.at, ...(command.notification ? { kind: 'notification' as const } : {}) }, head: true }] };
 		}
 		case 'run.settled':
 			return decideRunSettled(state, command.threadId, { runId: command.runId, turnId: command.turnId }, command.outcome, command.at, command.error, command.reply, false, command.limit, command.account, limits, { openPlan: command.openPlan, stepLimit: command.stepLimit, worked: command.worked });
@@ -272,6 +273,8 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			events.push({ type: 'queue.added', threadId: task.childId, item });
 			return { events, taskId: task.id };
 		}
+		case 'task.verified':
+			return decideVerified(state, command, limits);
 		case 'task.ack': {
 			const ids = command.taskIds.filter(id => {
 				const task = state.tasks[id];
@@ -457,6 +460,14 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 				return { events: [], rejected: 'The chat cannot run right now.' };
 			}
 			return { events: [resumeLimited(state, thread, command.at, true)], outcome: 'started' };
+		}
+		case 'thread.children': {
+			const thread = state.threads[command.threadId];
+			if (!thread) {
+				return { events: [] };
+			}
+			const maxRunning = command.maxRunning === undefined || !Number.isFinite(command.maxRunning) ? undefined : Math.max(1, Math.min(ORCH_LIMIT_MAX.runningTotal, Math.floor(command.maxRunning)));
+			return thread.maxChildren === maxRunning ? { events: [] } : { events: [{ type: 'thread.children', threadId: thread.id, maxRunning }] };
 		}
 		case 'limit.configure': {
 			const thread = state.threads[command.threadId];
@@ -710,7 +721,7 @@ function decideSubmit(state: IOrchState, threadId: string, item: ISubmitItem, de
  * A notification never interrupts: it starts when the chat is idle and otherwise waits at the end
  * of the queue. A chat that keeps waking itself with no user turn between is left for the user.
  */
-function decideNotify(state: IOrchState, threadId: string, item: ISubmitItem, limits: IOrchLimits, interrupt = false): IOrchDecision {
+function decideNotify(state: IOrchState, threadId: string, item: ISubmitItem, limits: IOrchLimits, interrupt = false, steer = false): IOrchDecision {
 	const events: OrchEvent[] = [];
 	let thread = state.threads[threadId];
 	if (!thread) {
@@ -732,6 +743,10 @@ function decideNotify(state: IOrchState, threadId: string, item: ISubmitItem, li
 		return { events: [], rejected: `The chat woke itself ${limits.maxWakeups} times in a row; it waits for the user.` };
 	}
 	const active = thread.active;
+	if (steer && active?.steerable && active.phase === 'running' && !thread.inputs.length && !thread.queue.some(queued => queued.id === item.id)) {
+		events.push({ type: 'turn.steered', threadId: thread.id, turnId: active.id, prompt: item.prompt, steerId: item.id, notification: true });
+		return { events, outcome: 'steered' };
+	}
 	if (interrupt && active && thread.pause === 'user') {
 		// Stopping the turn would only leave this waiting behind the user's pause.
 		return { events: [], rejected: 'The user paused this chat\'s queue, so its turn is not stopped for a message. Send it with mode "queue" to wait in the queue until they resume it.' };
@@ -1046,7 +1061,10 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 	const task = thread.taskId ? state.tasks[thread.taskId] : undefined;
 	if (task && (task.state === 'running' || task.state === 'waiting')) {
 		const continues = outcome === 'done' && !!nextQueued(thread) && !thread.pause;
-		if (!continues) {
+		// It says it is done and has checks: Volt runs them before the report goes up (the task keeps running).
+		if (!continues && outcome === 'done' && !superseded && task.source === 'volt' && task.verify?.length && !thread.pause) {
+			events.push({ type: 'task.verifying', taskId: task.id, round: (task.verification?.round ?? 0) + 1, at, ...(reply !== undefined ? { result: reply } : {}) });
+		} else if (!continues) {
 			events.push({
 				type: 'task.settled',
 				taskId: task.id,
@@ -1074,6 +1092,43 @@ function decideRunSettled(state: IOrchState, threadId: string, match: { readonly
 	}
 	return { events };
 }
+
+/**
+ * Volt's run of a subagent's checks came back. Passed or skipped: the report goes up with the
+ * result. Failed: the subagent gets the output and fixes it in the same chat (the task keeps its
+ * slot), until `maxVerifyRounds`; then the report goes up saying the checks still fail, and the
+ * parent decides. A result for an earlier round, or for a task stopped meanwhile, changes nothing.
+ */
+function decideVerified(state: IOrchState, command: Extract<OrchCommand, { type: 'task.verified' }>, limits: IOrchLimits): IOrchDecision {
+	const task = state.tasks[command.taskId];
+	if (!task || task.verification?.state !== 'running' || task.verification.round !== command.round || (task.state !== 'running' && task.state !== 'waiting')) {
+		return { events: [] };
+	}
+	const verification: IOrchVerification = { round: command.round, state: command.outcome, summary: command.summary.slice(0, VERIFY_SUMMARY_CHARS), at: command.at };
+	const events: OrchEvent[] = [{ type: 'task.verification', taskId: task.id, verification }];
+	const child = task.childId ? state.threads[task.childId] : undefined;
+	if (command.outcome === 'failed' && command.round < limits.maxVerifyRounds && child && !child.pause && !child.active) {
+		events.push(
+			{ type: 'task.updated', taskId: task.id, activity: 'Fixing what Volt\'s checks found' },
+			{
+				type: 'queue.added',
+				threadId: child.id,
+				item: {
+					id: `${task.id}-v${command.round}`,
+					prompt: { text: verifyFailedText(verification.summary ?? '', command.round, limits.maxVerifyRounds), display: { text: `Volt's checks failed (round ${command.round} of ${limits.maxVerifyRounds}): fix and report again`, notification: true } },
+					at: command.at,
+					kind: 'followup',
+				},
+			},
+		);
+		return { events };
+	}
+	events.push({ type: 'task.settled', taskId: task.id, state: 'completed', at: command.at, result: withVerification(task.result, verification) });
+	return { events };
+}
+
+/** What a check run may add to a report: the failing output's tail, not a full log. */
+const VERIFY_SUMMARY_CHARS = 4_000;
 
 /**
  * A subagent's round failed on its model (a provider error, a usage limit, a model that is not
@@ -1132,7 +1187,7 @@ function decideSpawn(state: IOrchState, command: Extract<OrchCommand, { type: 't
 	// The same brief to the same model while the first is still working: hand back that one.
 	const brief = normalizeBrief(spawn.brief);
 	const duplicate = Object.values(state.tasks).find(task => task.parentId === parent!.id && task.source === 'volt' && isLiveTaskState(task.state)
-		&& (task.modelRef ?? '') === (spawn.modelRef ?? '') && normalizeBrief(task.brief) === brief);
+		&& (task.modelRef ?? '') === (spawn.modelRef ?? '') && (task.team ?? '') === (spawn.team ?? '') && normalizeBrief(task.brief) === brief);
 	if (duplicate) {
 		return { events: [], taskId: duplicate.id, reused: true };
 	}
@@ -1192,6 +1247,10 @@ function decideSpawn(state: IOrchState, command: Extract<OrchCommand, { type: 't
 		...(spawn.after?.length ? { after: [...new Set(spawn.after)] } : {}),
 		...(spawn.budgetUsd !== undefined && spawn.budgetUsd > 0 ? { budgetUsd: spawn.budgetUsd } : {}),
 		...(spawn.fallbacks?.length ? { fallbacks: spawn.fallbacks } : {}),
+		...(spawn.blind?.length ? { blind: [...spawn.blind] } : {}),
+		...(spawn.team ? { team: spawn.team } : {}),
+		...(spawn.quiet ? { quiet: true } : {}),
+		...(spawn.verify?.length ? { verify: [...spawn.verify] } : {}),
 	};
 	const child = newThread(spawn.childId, command.at, parent, {
 		title: spawn.title,
@@ -1248,8 +1307,13 @@ function delegationLoop(state: IOrchState, parent: IOrchThread, spawn: IOrchTask
 	}
 	const turnId = parent.active?.id;
 	if (turnId) {
-		const thisTurn = Object.values(state.tasks).filter(task => task.parentId === parent.id && task.source === 'volt' && task.parentTurnId === turnId).length;
-		if (thisTurn >= limits.maxSpawnsPerTurn) {
+		// Team members are what the user asked for (a swarm, a council): their own, larger cap.
+		const team = !!spawn.team;
+		const thisTurn = Object.values(state.tasks).filter(task => task.parentId === parent.id && task.source === 'volt' && task.parentTurnId === turnId && !!task.team === team).length;
+		if (team && thisTurn >= limits.maxTeamAgents) {
+			return `This turn already started ${thisTurn} team members, the most one request may (setting volt.orchestra.maxAgentsPerRequest). Wait for their reports, or tell the user the limit can be raised.`;
+		}
+		if (!team && thisTurn >= limits.maxSpawnsPerTurn) {
 			return `This turn already started ${thisTurn} subagents. Wait for their reports (wait_tasks, or end your turn and they arrive as messages) or do the rest yourself before delegating more.`;
 		}
 	}
@@ -1258,6 +1322,10 @@ function delegationLoop(state: IOrchState, parent: IOrchThread, spawn: IOrchTask
 		return round > limits.maxRounds
 			? `This work already went ${round - 1} rounds (latest ${previous.id}). Do not delegate another round: tell the user what is still open and let them decide.`
 			: undefined;
+	}
+	if (spawn.team) {
+		// A team or council asks the same of many members on purpose; its own cap bounds it.
+		return undefined;
 	}
 	const repeats = Object.values(state.tasks)
 		.filter(task => task.parentId === parent.id && task.source === 'volt' && isTerminalTaskState(task.state) && sameBrief(task.brief, spawn.brief))
@@ -1332,6 +1400,18 @@ function decideRecover(state: IOrchState, at: number, resume: OrchRestartResume,
 			push([{ type: 'move.finished', threadId: thread.id, result: { id: current.moving.id, at, ok: false, label: current.moving.label, by: current.moving.by, error: 'Volt restarted while the chat was moving. Check both checkouts with git status before moving it again.' } }]);
 		}
 		const task = current.taskId ? next.tasks[current.taskId] : undefined;
+		if (task && !current.active && task.verification?.state === 'running' && (task.state === 'running' || task.state === 'waiting')) {
+			// Volt stopped while it ran the task's checks: they run again (the report waits in `result`),
+			// unless nothing may continue on its own; then the report goes up saying they did not finish.
+			if (resume !== 'off') {
+				push([{ type: 'task.verifying', taskId: task.id, round: task.verification.round, at }]);
+				continued.add(task.id);
+			} else {
+				const verification = { round: task.verification.round, state: 'skipped' as const, summary: 'Volt restarted before its checks finished, so they did not run. Run them before relying on the report.', at };
+				push([{ type: 'task.verification', taskId: task.id, verification }, { type: 'task.settled', taskId: task.id, state: 'completed', at, result: withVerification(task.result, verification) }]);
+			}
+			continue;
+		}
 		const keepsGoing = continuesAfterRestart(current, task, resume, limits);
 		if (current.active) {
 			// A resume of a usage-limit park parks again (decideRunSettled) and goes at the next tick.
@@ -1700,7 +1780,10 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 			continue;
 		}
 		const broken = upstream.filter(dep => dep.state !== 'completed');
-		if (broken.length) {
+		// A team's later stage (a council's reviews and verdict) goes on without a member that failed,
+		// as long as one report came in; its brief says which are missing.
+		const tolerated = !!task.team && broken.length < upstream.length;
+		if (broken.length && !tolerated) {
 			const reason = `Not started: it waited for ${broken.map(dep => `${dep.id} "${dep.title}" (${dep.state})`).join(', ')}. Fix or rerun that work, then delegate this again.`;
 			for (const event of decideTaskCancel(next, task.id, at, reason, 'failed').events) {
 				push(event);
@@ -1711,14 +1794,16 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 		if (running.length >= limits.runningTotal) {
 			break;
 		}
-		if (running.filter(other => other.parentId === task.parentId).length >= limits.runningPerParent) {
+		// The user's "N at a time" for a large spawn replaces the per-chat limit for that chat.
+		const perParent = next.threads[task.parentId]?.maxChildren ?? limits.runningPerParent;
+		if (running.filter(other => other.parentId === task.parentId).length >= perParent) {
 			continue;
 		}
 		// Its brief gets the reports it waited for, once (a later round's queue has no brief left).
 		const child = upstream.length && task.childId ? next.threads[task.childId] : undefined;
 		const brief = child?.queue.find(item => item.id === `${task.id}-r1`);
 		if (child && brief) {
-			push({ type: 'queue.updated', threadId: child.id, itemId: brief.id, prompt: { ...brief.prompt, text: withUpstreamReports(brief.prompt.text, upstream) } });
+			push({ type: 'queue.updated', threadId: child.id, itemId: brief.id, prompt: { ...brief.prompt, text: withUpstreamReports(brief.prompt.text, upstream, task.blind ? { pool: task.blind, seed: task.id } : undefined) } });
 		}
 		push({ type: 'task.started', taskId: task.id, at });
 	}
@@ -1733,7 +1818,7 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 		if (steering) {
 			if (steering.steerable && steering.phase === 'running' && !current.inputs.length) {
 				const finished = Object.values(next.tasks)
-					.filter(child => child.parentId === current!.id && child.source === 'volt' && child.delivery === 'pending' && isTerminalTaskState(child.state))
+					.filter(child => child.parentId === current!.id && isDeliverable(next, child))
 					.sort(byEnded);
 				if (finished.length) {
 					const ids = finished.map(child => child.id);
@@ -1773,7 +1858,7 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 			continue;
 		}
 		const task = current.taskId ? next.tasks[current.taskId] : undefined;
-		if (task && isTerminalTaskState(task.state) && hasPendingReports(next, current.id)) {
+		if (task && isTerminalTaskState(task.state) && Object.values(next.tasks).some(child => child.parentId === current.id && isDeliverable(next, child))) {
 			// A subagent that finished while its own subagents still ran wakes up for their reports
 			// and reports again: another round of its task. (Stopping a subagent stops its children,
 			// so a stopped one only hears from a child someone explicitly resumed.)
@@ -1788,16 +1873,17 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 		if (task && (task.state === 'queued' || isTerminalTaskState(task.state))) {
 			continue;
 		}
-		if (task && task.source === 'volt' && !current.queue.length && !hasPendingReports(next, current.id)) {
+		if (task && task.source === 'volt' && !current.queue.length && !hasPendingReports(next, current.id) && task.verification?.state !== 'running') {
 			// Its brief or follow-ups were removed before they ran: nothing is left to do.
 			push({ type: 'task.settled', taskId: task.id, state: 'cancelled', at, error: 'Its prompt was removed before it ran.' });
 			continue;
 		}
 		const finished = Object.values(next.tasks)
-			.filter(child => child.parentId === current.id && child.source === 'volt' && child.delivery === 'pending' && isTerminalTaskState(child.state))
+			.filter(child => child.parentId === current.id && isDeliverable(next, child))
 			.sort(byEnded);
 		if (finished.length) {
-			if ((current.wakeups ?? 0) >= limits.maxWakeups) {
+			// A whole team's reports arrive once per team, so they never count as a wake-up loop.
+			if ((current.wakeups ?? 0) >= limits.maxWakeups && !finished.every(child => child.team)) {
 				// Reports keep waking the chat with no user turn between: let the user decide, or (keep
 				// working) go on after a back-off that grows until the user's next turn.
 				push({ type: 'queue.paused', threadId: current.id, reason: 'wakeups' });
@@ -1849,9 +1935,11 @@ function scheduleRound(state: IOrchState, at: number, limits: IOrchLimits, seq: 
 		if (excess <= 0) {
 			continue;
 		}
+		// A report a task still waits for (`after`) stays, or that task would start without it.
+		const awaited = new Set(Object.values(next.tasks).filter(task => !isTerminalTaskState(task.state)).flatMap(task => task.after ?? []));
 		const prunable = finished.filter(task => {
 			const child = task.childId ? next.threads[task.childId] : undefined;
-			return !child || (!child.active && !child.queue.length && !child.pause && !Object.values(next.tasks).some(other => other.parentId === child.id));
+			return !awaited.has(task.id) && (!child || (!child.active && !child.queue.length && !child.pause && !Object.values(next.tasks).some(other => other.parentId === child.id)));
 		}).sort(byEnded);
 		const pruned = prunable.slice(0, excess);
 		excess -= pruned.length;
@@ -1890,7 +1978,7 @@ export function effectsFor(events: readonly OrchEvent[], state: IOrchState): Orc
 				break;
 			}
 			case 'turn.steered':
-				effects.push({ kind: 'steer', threadId: event.threadId, turnId: event.turnId, prompt: event.prompt, steerId: event.steerId, ...(event.taskIds ? { taskIds: event.taskIds } : {}) });
+				effects.push({ kind: 'steer', threadId: event.threadId, turnId: event.turnId, prompt: event.prompt, steerId: event.steerId, ...(event.taskIds ? { taskIds: event.taskIds } : {}), ...(event.notification ? { notification: true } : {}) });
 				break;
 			case 'turn.cancelling': {
 				const thread = state.threads[event.threadId];
@@ -1918,7 +2006,12 @@ export function effectsFor(events: readonly OrchEvent[], state: IOrchState): Orc
 			case 'task.settled':
 			case 'task.waiting':
 			case 'task.restarted':
+			case 'task.verification':
 				changed.add(event.taskId);
+				break;
+			case 'task.verifying':
+				changed.add(event.taskId);
+				effects.push({ kind: 'verifyTask', taskId: event.taskId, round: event.round });
 				break;
 			case 'move.started':
 				if (state.threads[event.threadId]?.moving?.id === event.move.id) {
@@ -1950,6 +2043,18 @@ export function effectsFor(events: readonly OrchEvent[], state: IOrchState): Orc
 
 function hasPendingReports(state: IOrchState, threadId: string): boolean {
 	return Object.values(state.tasks).some(task => task.parentId === threadId && task.source === 'volt' && task.delivery === 'pending' && isTerminalTaskState(task.state));
+}
+
+/**
+ * The report goes to its parent now. A team member's waits for the rest of its team, so a team of
+ * 30 wakes its lead once with every report instead of 30 times (the lead reads progress on the
+ * board meanwhile).
+ */
+export function isDeliverable(state: IOrchState, task: IOrchTask): boolean {
+	if (task.source !== 'volt' || task.delivery !== 'pending' || !isTerminalTaskState(task.state)) {
+		return false;
+	}
+	return !task.team || !Object.values(state.tasks).some(other => other.team === task.team && other.parentId === task.parentId && !isTerminalTaskState(other.state));
 }
 
 export function liveChildren(state: IOrchState, threadId: string): IOrchTask[] {

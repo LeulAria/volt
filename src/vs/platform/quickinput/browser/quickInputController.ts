@@ -36,6 +36,7 @@ import { TriStateCheckbox } from '../../../base/browser/ui/toggle/toggle.js';
 import { defaultCheckboxStyles } from '../../theme/browser/defaultStyles.js';
 import { QuickInputTreeController } from './tree/quickInputTreeController.js';
 import { QuickTree } from './tree/quickTree.js';
+import { isVoltCompact } from '../../../base/browser/ui/voltMobile/voltViewport.js';
 
 const $ = dom.$;
 
@@ -45,6 +46,10 @@ type QuickInputViewState = {
 	readonly top?: number;
 	readonly left?: number;
 };
+
+/** Volt: on a phone, what the picker's sheet keeps for itself above its list (title, input, grabber, gap above). */
+const QUICK_INPUT_COMPACT_CHROME = 136;
+const QUICK_INPUT_COMPACT_MIN_LIST = 132;
 
 export class QuickInputController extends Disposable {
 	private static readonly MAX_WIDTH = 600; // Max total width of quick input widget
@@ -798,6 +803,20 @@ export class QuickInputController extends Disposable {
 	private updateLayout() {
 		if (this.ui && this.isVisible()) {
 			const style = this.ui.container.style;
+			// Volt: a phone shows the picker as a bottom sheet across the screen (voltMobileWorkbench.css).
+			const compact = isVoltCompact();
+			this.ui.container.classList.toggle('volt-compact', compact);
+			if (compact) {
+				style.width = '';
+				style.top = '';
+				style.left = '';
+				this.ui.inputBox.layout();
+				// The room above the keyboard, less the sheet's title, input and grabber.
+				const room = Math.max(QUICK_INPUT_COMPACT_MIN_LIST, (this.dimension?.height ?? 0) - QUICK_INPUT_COMPACT_CHROME);
+				this.ui.list.layout(room);
+				this.ui.tree.layout(room);
+				return;
+			}
 			const width = Math.min(this.dimension!.width * 0.62 /* golden cut */, QuickInputController.MAX_WIDTH);
 			style.width = width + 'px';
 

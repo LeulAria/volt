@@ -8,6 +8,7 @@
 // hover. On a phone the title bar keeps the chat's own controls and moves the rest into a "…"
 // menu, and the agents drawer closes with a swipe to the left.
 
+import './mobile/voltMobileWorkbench.contribution.js';
 import { $, addDisposableListener, getWindow } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';

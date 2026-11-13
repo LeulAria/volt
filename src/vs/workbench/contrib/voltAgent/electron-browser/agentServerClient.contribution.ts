@@ -3,7 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -19,7 +18,6 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { registerMainProcessRemoteService } from '../../../../platform/ipc/electron-browser/services.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { Schemas } from '../../../../base/common/network.js';
 import { INativeHostService } from '../../../../platform/native/common/native.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
@@ -30,13 +28,6 @@ import { IWebSocketLike } from '../../../../platform/voltAgentServer/common/conn
 import { WORKBENCH_TOPICS } from '../../../../platform/voltAgentServer/common/protocol.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
-import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
-import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
-import { IFileService } from '../../../../platform/files/common/files.js';
-import { IMarkerService } from '../../../../platform/markers/common/markers.js';
-import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
-import { lspAllowedFor } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltBrowserAccessService } from '../../../services/voltRuntime/common/browserAccess.js';
 import { IHostService } from '../../../services/host/browser/host.js';
 import { AGENT_SERVER_ENABLED_SETTING, AgentServerClient, agentServerEnabled, IAgentServerClientService } from '../../../services/voltAgentServer/common/agentServerClient.js';
@@ -62,7 +53,6 @@ import { IVoltSessionContextService } from '../../../services/voltRuntime/common
 import { setAgentSessionControlFactory } from '../browser/editor/agentEditorInput.js';
 import { RemoteAgentSessionControl } from '../browser/editor/remoteAgentSessionControl.js';
 import { AgentCheckpointService, IAgentCheckpointService } from '../browser/review/agentCheckpointService.js';
-import { IAgentEditsService } from '../browser/review/agentEditsService.js';
 import { RemoteAgentCheckpointService } from '../browser/review/remoteAgentCheckpointService.js';
 import { AgentTerminalsService, IAgentTerminalsService } from '../browser/terminals/agentTerminals.js';
 import { RemoteAgentTerminalsService } from '../browser/terminals/remoteAgentTerminals.js';
@@ -73,18 +63,10 @@ import { RemoteVoltRelayService } from '../../../services/voltAgentServer/common
 import { WindowAgentRunGroupService } from '../browser/runGroups/agentRunGroupWindowService.js';
 import { RemoteAgentRunGroupService } from '../browser/runGroups/remoteAgentRunGroupService.js';
 import { IAgentRunGroupService } from '../../../services/voltRuntime/common/runGroups/runGroups.js';
-import { IAgentSurfaceDraft, IAgentWorkspaceService } from '../browser/workspace/agentWorkspace.js';
-import { AgentEditsJournalEntry } from '../common/agentEditsJournal.js';
-import { ResourceMap, ResourceSet } from '../../../../base/common/map.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
+import { AgentServerWindow, DESKTOP_FILE_NAMES } from '../browser/remote/agentServerWindow.js';
 import { showRemoteControlIntro } from '../browser/remote/voltRemoteIntro.js';
-import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
-import { IWorkingCopyService } from '../../../services/workingCopy/common/workingCopyService.js';
-import { PROJECT_SETTINGS_STORAGE_KEY } from '../../voltSetup/common/projectSettings.js';
-
-/** Unsaved documents larger than this stay out of the agent server's view (agents read the file on disk). */
-const MAX_SHARED_DOCUMENT_CHARS = 4_000_000;
 
 registerMainProcessRemoteService(IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME);
 
@@ -179,16 +161,13 @@ setAgentSessionControlFactory((input, instantiationService) => instantiationServ
 const WINDOW_COMMANDS = AGENT_SERVER_WINDOW_COMMANDS;
 
 /**
- * What a window does for the agent server: the things only a window can (the in-app browser,
- * opening a preview), handing over provider keys once, applying the edits journal to the
- * Keep/Undo review, and reconnecting at once when the Mac wakes or the network comes back.
+ * What a desktop window does for the agent server on top of every window's part (AgentServerWindow):
+ * the things only the desktop can (the in-app browser), handing over provider keys once, and
+ * reconnecting at once when the Mac wakes.
  */
 class AgentServerClientContribution extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'workbench.contrib.voltAgentServerClient';
-
-	private readonly appliedEdits = new Set<string>();
-	private applyingEdits = false;
 
 	constructor(
 		@IConfigurationService configurationService: IConfigurationService,
@@ -196,6 +175,7 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 	) {
 		super();
 		if (agentServerEnabled(configurationService)) {
+			this._register(instantiationService.createInstance(AgentServerWindow, { files: DESKTOP_FILE_NAMES, projectSettingsFromServer: false }));
 			instantiationService.invokeFunction(accessor => this.start(accessor));
 		}
 	}
@@ -203,20 +183,10 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 	private start(accessor: ServicesAccessor): void {
 		const client = accessor.get(IAgentServerClientService);
 		const commands = accessor.get(ICommandService);
-		const workspace = accessor.get(IAgentWorkspaceService);
 		const secrets = accessor.get(ISecretStorageService);
-		const edits = accessor.get(IAgentEditsService);
-		const notifications = accessor.get(INotificationService);
 		const nativeHost = accessor.get(INativeHostService);
 		const logService = accessor.get(ILogService);
-		// The window's own copies of these services read the server; make them now so they listen from the first snapshot.
-		accessor.get(IAgentRuntimeService);
-		accessor.get(IVoltHostToolService);
 
-		this._register(client.registerHandler('surface.open', (sessionId, draft, reuse) => {
-			workspace.openSurface(String(sessionId), draft as IAgentSurfaceDraft, !!reuse);
-			return true;
-		}));
 		this._register(client.registerHandler('command.execute', (id, ...args) => {
 			if (typeof id !== 'string' || !WINDOW_COMMANDS.has(id)) {
 				throw new Error(`This window does not run ${String(id)} for the agent server.`);
@@ -224,9 +194,6 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 			// Cancellation stays on the server; a token does not cross the socket.
 			return commands.executeCommand(id, ...args.map(arg => withoutToken(arg)));
 		}));
-		this.serveCodeIntel(client, accessor, logService);
-		this.shareDocuments(client, accessor);
-		this.shareProjectSettings(client, accessor, logService);
 		const browserAccess = accessor.get(IVoltBrowserAccessService);
 		const sendBrowserChoices = () => client.call('browserAccess.setChoices', browserAccess.chatChoices()).catch(err => logService.warn('[volt agent server] could not send the browser access choices', err));
 		this._register(browserAccess.onDidChange(() => void sendBrowserChoices()));
@@ -236,152 +203,13 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 		this._register(client.onDidResync(() => {
 			void sendBrowserChoices();
 			void this.handOverKeys(client, secrets, logService);
-			this.applyEdits(client, edits, logService);
 		}));
-		const editsScheduler = this._register(new RunOnceScheduler(() => this.applyEdits(client, edits, logService), 0));
-		this._register(client.onDidChangeCollection(e => {
-			if (e.col === 'edits') {
-				editsScheduler.schedule();
-			}
-		}));
-		const pendingScheduler = this._register(new RunOnceScheduler(() => client.send('edits.setPending', edits.getPendingFiles().map(file => ({ uri: file.uri, sessionId: file.sessionId }))), 200));
-		this._register(edits.onDidChange(() => pendingScheduler.schedule()));
-		this._register(edits.onDidResolve(resolution => client.send('edits.resolved', resolution)));
-		this._register(client.onServerEvent(event => {
-			const notice = event as { kind?: string; severity?: Severity; message?: string };
-			if (notice.kind === 'notification' && notice.message) {
-				notifications.notify({ severity: notice.severity ?? Severity.Info, message: notice.message });
-			}
-		}));
-		this._register(client.connection.onDidFail(failure => logService.error(`[volt agent server] connection refused (${failure.code}): ${failure.reason}`)));
 		// After sleep the socket may look open but be dead (or the server may have gone): reconnect
 		// now instead of after a backoff, then resume or resync. The server is started again if needed.
 		this._register(nativeHost.onDidResumeOS(() => {
 			logService.info('[volt agent server] the system woke up; reconnecting');
 			client.connection.reconnect();
 		}));
-		const online = () => {
-			logService.info('[volt agent server] the network is back; reconnecting');
-			client.connection.reconnect();
-		};
-		globalThis.addEventListener?.('online', online);
-		this._register({ dispose: () => globalThis.removeEventListener?.('online', online) });
-	}
-
-	/**
-	 * Agents in the server ask this window's language servers (go to definition, references,
-	 * outline, diagnostics). Worktrees outside this window's folders follow Settings > Code Intelligence.
-	 */
-	private serveCodeIntel(client: IAgentServerClientService, accessor: ServicesAccessor, logService: ILogService): void {
-		const configuration = accessor.get(IConfigurationService);
-		const workspace = accessor.get(IWorkspaceContextService);
-		// The server sends a file's queries to the window that has its folder open.
-		const sendFolders = () => client.call('codeIntel.setFolders', workspace.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.file).map(folder => folder.uri.fsPath))
-			.catch(err => logService.trace('[volt agent server] could not send this window\'s folders', err));
-		this._register(workspace.onDidChangeWorkspaceFolders(() => void sendFolders()));
-		this._register(client.onDidResync(() => void sendFolders()));
-		if (client.isReady) {
-			void sendFolders();
-		}
-		const host = this._register(new CodeIntelHost(accessor.get(IMarkerService), accessor.get(ITextModelService), accessor.get(ILanguageFeaturesService), accessor.get(IFileService)));
-		host.setLspPolicy(uri => lspAllowedFor(configuration, !workspace.isInsideWorkspace(uri)));
-		const allowed = (uri: unknown): uri is URI => URI.isUri(uri) && host.lspAllowed(uri);
-		this._register(client.registerHandler('codeIntel.noteWrite', uri => {
-			if (URI.isUri(uri)) {
-				host.noteWrite(uri);
-			}
-			return true;
-		}));
-		this._register(client.registerHandler('codeIntel.errorCounts', uri => URI.isUri(uri) ? [...host.errorCounts(uri)] : []));
-		this._register(client.registerHandler('codeIntel.newErrors', (uri, baseline) =>
-			allowed(uri) ? host.newErrors(uri, new Map(Array.isArray(baseline) ? baseline as [string, number][] : [])) : []));
-		this._register(client.registerHandler('codeIntel.diagnostics', (uris, severity) => {
-			const list = Array.isArray(uris) ? uris.filter(allowed) : undefined;
-			if (Array.isArray(uris) && uris.length && !list?.length) {
-				throw new Error('Language servers are off for this checkout (Settings > Code Intelligence), so the editor has no diagnostics for it. Run the project\'s type checker or linter instead.');
-			}
-			return host.diagnostics(list?.length ? list : undefined, severity === 'warning' || severity === 'all' ? severity : 'error');
-		}));
-		const position = (line: unknown, column: unknown) => Number.isInteger(line) && Number.isInteger(column) && (line as number) >= 1 && (column as number) >= 1;
-		this._register(client.registerHandler('codeIntel.definitions', (uri, line, column) => allowed(uri) && position(line, column) ? host.definitions(uri, line as number, column as number) : []));
-		this._register(client.registerHandler('codeIntel.references', (uri, line, column) => allowed(uri) && position(line, column) ? host.references(uri, line as number, column as number) : []));
-		this._register(client.registerHandler('codeIntel.symbols', uri => allowed(uri) ? host.symbols(uri) : []));
-	}
-
-	/**
-	 * Agents in the server read what the user sees: this window's unsaved changes go to the server as
-	 * they happen, and an agent's edit to such a file lands in the buffer here (and saves) instead of
-	 * behind it on disk.
-	 */
-	private shareDocuments(client: IAgentServerClientService, accessor: ServicesAccessor): void {
-		const textFiles = accessor.get(ITextFileService);
-		const workingCopies = accessor.get(IWorkingCopyService);
-		/** Unsaved documents the server has, by the version it has. */
-		const sent = new ResourceMap<number>();
-		const send = (reset: boolean) => {
-			if (!client.isReady) {
-				return;
-			}
-			const changes: [URI, string | null][] = [];
-			const dirty = new ResourceSet();
-			for (const model of textFiles.files.models) {
-				const text = model.textEditorModel;
-				if (model.resource.scheme !== Schemas.file || !model.isDirty() || !text || text.getValueLength() > MAX_SHARED_DOCUMENT_CHARS) {
-					continue;
-				}
-				dirty.add(model.resource);
-				const version = text.getAlternativeVersionId();
-				if (!reset && sent.get(model.resource) === version) {
-					continue;
-				}
-				sent.set(model.resource, version);
-				changes.push([model.resource, text.getValue()]);
-			}
-			for (const uri of [...sent.keys()]) {
-				if (!dirty.has(uri)) {
-					sent.delete(uri);
-					changes.push([uri, null]);
-				}
-			}
-			if (reset) {
-				client.send('documents.reset');
-			}
-			if (changes.length) {
-				client.send('documents.update', changes);
-			}
-		};
-		const soon = this._register(new RunOnceScheduler(() => send(false), 300));
-		this._register(workingCopies.onDidChangeDirty(() => soon.schedule()));
-		this._register(workingCopies.onDidChangeContent(() => soon.schedule()));
-		this._register(client.onDidResync(() => {
-			sent.clear();
-			send(true);
-		}));
-		if (client.isReady) {
-			send(true);
-		}
-		this._register(client.registerHandler('documents.writeOpen', async (uri, text) => {
-			const model = URI.isUri(uri) && typeof text === 'string' ? textFiles.files.get(uri) : undefined;
-			const editor = model?.textEditorModel;
-			if (!model || !editor || typeof text !== 'string') {
-				return false;
-			}
-			editor.pushEditOperations([], [{ range: editor.getFullModelRange(), text }], () => null);
-			await model.save();
-			return true;
-		}));
-	}
-
-	/** Project Settings > Environment applies to what the server runs: it gets this window's settings when they change. */
-	private shareProjectSettings(client: IAgentServerClientService, accessor: ServicesAccessor, logService: ILogService): void {
-		const storage = accessor.get(IStorageService);
-		const send = () => client.call('projectSettings.set', storage.get(PROJECT_SETTINGS_STORAGE_KEY, StorageScope.APPLICATION, '{}'))
-			.catch(err => logService.warn('[volt agent server] could not send the project settings', err));
-		this._register(storage.onDidChangeValue(StorageScope.APPLICATION, PROJECT_SETTINGS_STORAGE_KEY, this._store)(() => void send()));
-		this._register(client.onDidResync(() => void send()));
-		if (client.isReady) {
-			void send();
-		}
 	}
 
 	/** The desktop keeps provider keys encrypted for this app; the server gets the ones it lacks. */
@@ -399,38 +227,6 @@ class AgentServerClientContribution extends Disposable implements IWorkbenchCont
 		if (Object.keys(keys).length) {
 			await client.call('secrets.importMissing', keys).catch(err => logService.warn('[volt agent server] could not hand over provider keys', err));
 		}
-	}
-
-	/** Applies new journal entries in order, then tells the server they are done. */
-	private applyEdits(client: IAgentServerClientService, edits: IAgentEditsService, logService: ILogService): void {
-		if (this.applyingEdits) {
-			return;
-		}
-		const entries = client.mirror.entries<AgentEditsJournalEntry>('edits')
-			.filter(([id]) => !this.appliedEdits.has(id))
-			.sort(([a], [b]) => a.localeCompare(b));
-		if (!entries.length) {
-			return;
-		}
-		this.applyingEdits = true;
-		void (async () => {
-			const done: string[] = [];
-			for (const [id, entry] of entries) {
-				try {
-					await edits.applyJournalEntry(entry);
-				} catch (err) {
-					logService.warn('[volt agent server] could not apply an edits journal entry', err);
-				}
-				this.appliedEdits.add(id);
-				done.push(id);
-			}
-			client.send('edits.ack', done);
-		})().finally(() => {
-			this.applyingEdits = false;
-			if (client.mirror.entries('edits').some(([id]) => !this.appliedEdits.has(id))) {
-				this.applyEdits(client, edits, logService);
-			}
-		});
 	}
 }
 

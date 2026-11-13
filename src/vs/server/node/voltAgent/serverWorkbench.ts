@@ -3,11 +3,13 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { execFile } from 'child_process';
 import { randomBytes } from 'crypto';
-import { existsSync, promises as fs } from 'fs';
+import { existsSync, promises as fs, readdirSync } from 'fs';
 import type * as http from 'http';
 import type { Socket } from 'net';
-import { homedir } from 'os';
+import { cpus, homedir, hostname, totalmem } from 'os';
+import { promisify } from 'util';
 import { CancellationToken } from '../../../base/common/cancellation.js';
 import { Event } from '../../../base/common/event.js';
 import { parse as parseJsonc } from '../../../base/common/json.js';
@@ -20,16 +22,25 @@ import { parseArgs } from '../../../platform/environment/node/argv.js';
 import { ILogService } from '../../../platform/log/common/log.js';
 import product from '../../../platform/product/common/product.js';
 import { RemoteAgentConnectionContext } from '../../../platform/remote/common/remoteAgentEnvironment.js';
+import { VOLT_ACCOUNTS_CHANNEL_NAME } from '../../../platform/voltAccounts/common/voltAccounts.js';
+import { VoltAccountsService } from '../../../platform/voltAccounts/node/voltAccountsService.js';
 import { IAgentServerAuth } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { VOLT_FS_BROWSE_CHANNEL_NAME } from '../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../../platform/voltGit/common/voltGit.js';
 import { IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME } from '../../../platform/voltCodeIndex/common/voltCodeIndex.js';
+import { VOLT_EDITOR_IMPORT_CHANNEL_NAME } from '../../../platform/voltEditorImport/common/voltEditorImport.js';
+import { VoltEditorImportService } from '../../../platform/voltEditorImport/node/voltEditorImportService.js';
+import { VOLT_SKILLS_DIRECTORY_CHANNEL_NAME } from '../../../platform/voltMarketplace/common/voltMarketplace.js';
+import { VoltSkillsDirectoryService } from '../../../platform/voltMarketplace/node/voltSkillsDirectoryService.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
 import { IVoltExecRequest, IVoltStdioSpawnOptions, VOLT_STDIO_CHANNEL_NAME } from '../../../platform/voltStdio/common/voltStdio.js';
 import { VoltStdioService } from '../../../platform/voltStdio/node/voltStdioService.js';
+import { VOLT_STORAGE_CHANNEL_NAME } from '../../../platform/voltStorage/common/voltStorage.js';
+import { IVoltStorageLayout } from '../../../platform/voltStorage/common/voltStorageRules.js';
+import { VoltStorageService } from '../../../platform/voltStorage/node/voltStorageService.js';
 import { VOLT_USAGE_CHANNEL_NAME } from '../../../platform/voltUsage/common/voltUsage.js';
 import { VoltUsageService } from '../../../platform/voltUsage/node/voltUsageService.js';
 import type { IServerAPI, IServerEmbedder } from '../remoteExtensionHostAgentServer.js';
@@ -343,7 +354,21 @@ export class ServerWorkbench extends Disposable {
 			hostSettings: () => this.configurationService.getValue(VOLT_SOURCE_CONTROL_HOSTS_SETTING),
 		}));
 		socketServer.registerChannel(VOLT_PULL_REQUEST_CHANNEL_NAME, ProxyChannel.fromService(pullRequests, store));
-		socketServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, ProxyChannel.fromService(this.options.usage ?? new VoltUsageService(resolveEnv, this.logService, join(userDataDir, 'volt-usage')), store));
+		const usage = this.options.usage ?? new VoltUsageService(resolveEnv, this.logService, join(userDataDir, 'volt-usage'));
+		socketServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, ProxyChannel.fromService(usage, store));
+		// The same saved Claude accounts as the desktop (one store per machine). Automatic switching
+		// stays with the desktop's main process, so two processes never switch at once.
+		const accounts = store.add(new VoltAccountsService({ autoSwitch: false }, this.configurationService, this.logService, usage));
+		socketServer.registerChannel(VOLT_ACCOUNTS_CHANNEL_NAME, ProxyChannel.fromService(accounts, store));
+		socketServer.registerChannel(VOLT_SKILLS_DIRECTORY_CHANNEL_NAME, ProxyChannel.fromService(new VoltSkillsDirectoryService(), store));
+		socketServer.registerChannel(VOLT_STORAGE_CHANNEL_NAME, ProxyChannel.fromService(new VoltStorageService(storageLayout(userDataDir), resolveEnv, this.logService, {
+			// The desktop app has these open while it runs; only it can clear them.
+			chromiumCache: desktopClears,
+			codeCache: desktopClears,
+			browserCache: desktopClears,
+			browserData: desktopClears,
+		}), store));
+		socketServer.registerChannel(VOLT_EDITOR_IMPORT_CHANNEL_NAME, ProxyChannel.fromService(new VoltEditorImportService(this.logService), store));
 	}
 
 	/**
@@ -375,7 +400,17 @@ export class ServerWorkbench extends Disposable {
 			productConfiguration: productForWeb(),
 			// The desktop's remote button: the icon alone, the computer in its tooltip.
 			windowIndicator: { label: '$(remote)', tooltip: `Volt on ${this.options.label}` },
-			voltAgentServer: { environmentId: this.options.environmentId(), wsPath: '/ws', deviceToken: this.signedInToken(req), userHome: homedir() },
+			voltAgentServer: {
+				environmentId: this.options.environmentId(),
+				wsPath: '/ws',
+				deviceToken: this.signedInToken(req),
+				userHome: homedir(),
+				// The desktop's user data dir: the agent server's log is under it.
+				userDataDir: this.options.userDataDir,
+				// What the desktop reads from its main process: the title bar's machine name, and the
+				// memory and cores Settings > Orchestration sizes agent runs by.
+				machine: { name: await computerName(), totalMemMb: totalmem() / (1024 * 1024), cpus: cpus().length || 1, cpuModel: cpus()[0]?.model?.trim(), platform: process.platform, arch: process.arch },
+			},
 		};
 	}
 
@@ -389,6 +424,45 @@ export class ServerWorkbench extends Disposable {
 	}
 
 	//#endregion
+}
+
+/** The name the computer goes by (the Mac's Sharing name), as the desktop's main process reads it. */
+async function computerName(): Promise<string> {
+	if (process.platform === 'darwin') {
+		try {
+			const { stdout } = await promisify(execFile)('/usr/sbin/scutil', ['--get', 'ComputerName'], { timeout: 2000 });
+			if (stdout.trim()) {
+				return stdout.trim();
+			}
+		} catch {
+			// The host name below.
+		}
+	}
+	return (process.env['COMPUTERNAME'] || hostname()).trim();
+}
+
+const desktopClears = () => Promise.reject(new Error('The Volt desktop app clears this (it is open while Volt runs). Use Settings > Storage there.'));
+
+/**
+ * The desktop's folders, for Settings > Storage. The log folder in use is the newest one (the
+ * desktop's current session); it is read each time, since the desktop may have restarted since.
+ */
+function storageLayout(userDataDir: string): IVoltStorageLayout {
+	const logs = join(userDataDir, 'logs');
+	return {
+		userDataPath: userDataDir,
+		userRoamingPath: join(userDataDir, 'User'),
+		get logsSessionPath() {
+			try {
+				const sessions = readdirSync(logs, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+				return join(logs, sessions.at(-1) ?? '');
+			} catch {
+				return logs;
+			}
+		},
+		worktreesRoot: join(homedir(), '.volt', 'worktrees'),
+		commit: product.commit,
+	};
 }
 
 /** {@link VoltStdioService} for workbench windows: what a window started stops with it. */
