@@ -12,11 +12,13 @@ import { ResourceMap } from '../../../../base/common/map.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { isEqualOrParent, joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
+import { IRequestContext, IRequestOptions } from '../../../../base/parts/request/common/request.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { createDecorator, IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IRequestService } from '../../../../platform/request/common/request.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { IVoltHttpTransport } from '../../../../platform/voltHttp/common/voltHttpTransport.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { QueryBuilder } from '../../../services/search/common/queryBuilder.js';
 import { ISearchService } from '../../../services/search/common/search.js';
@@ -101,8 +103,9 @@ export interface IVoltHttpService {
 /**
  * The HTTP client's one state, shared by the HTTP view, the request editor and the agents' `ide
  * http` capability: the workspace's request files, environments, earlier responses (for
- * `{{login.response.body.$.token}}`) and history. Requests go out through the editor's request
- * service (node, so no CORS, with the user's proxy settings).
+ * `{{login.response.body.$.token}}`) and history. Requests go out through `IVoltHttpTransport`: the
+ * main process in the desktop app (no CORS, every response header, the user's proxy settings), the
+ * window's request service in the web workbench.
  */
 export class VoltHttpService extends Disposable implements IVoltHttpService {
 
@@ -128,7 +131,7 @@ export class VoltHttpService extends Disposable implements IVoltHttpService {
 	private _environment: string | undefined;
 
 	constructor(
-		@IRequestService private readonly requestService: IRequestService,
+		@IVoltHttpTransport private readonly transport: IVoltHttpTransport,
 		@IFileService private readonly fileService: IFileService,
 		@ISearchService private readonly searchService: ISearchService,
 		@IWorkspaceContextService private readonly workspace: IWorkspaceContextService,
@@ -285,7 +288,7 @@ export class VoltHttpService extends Disposable implements IVoltHttpService {
 		}
 		const started = performance.now();
 		try {
-			const context = await this.requestService.request({ type: method, url, headers: headerRecord, ...(body !== undefined && method !== 'GET' && method !== 'HEAD' ? { data: body } : {}), timeout: timeoutMs, followRedirects, disableCache: true }, token);
+			const context = await this.transport.request({ type: method, url, headers: headerRecord, ...(body !== undefined && method !== 'GET' && method !== 'HEAD' ? { data: body } : {}), timeout: timeoutMs, followRedirects, disableCache: true }, token);
 			if (!followRedirects && !context.res.statusCode) {
 				// A browser's fetch answers a redirect it may not follow with an opaque response: no status, headers or location.
 				return { error: 'The server answered with a redirect, which is not followed for a sandboxed chat, and this window cannot see where it points. Send the request to the URL it should go to: its host is judged by the chat\'s network rules.' };
@@ -371,4 +374,17 @@ const STATUS_TEXT: Readonly<Record<number, string>> = {
 	500: 'Internal Server Error', 501: 'Not Implemented', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout',
 };
 
+/**
+ * The web workbench's transport: the window's request service (its fetch, so the server must allow
+ * the page's origin). The desktop app replaces it with the main process's (electron-browser).
+ */
+export class WindowHttpTransport implements IVoltHttpTransport {
+	declare readonly _serviceBrand: undefined;
+	constructor(@IRequestService private readonly requestService: IRequestService) { }
+	request(options: IRequestOptions, token: CancellationToken): Promise<IRequestContext> {
+		return this.requestService.request(options, token);
+	}
+}
+
+registerSingleton(IVoltHttpTransport, WindowHttpTransport, InstantiationType.Delayed);
 registerSingleton(IVoltHttpService, VoltHttpService, InstantiationType.Delayed);

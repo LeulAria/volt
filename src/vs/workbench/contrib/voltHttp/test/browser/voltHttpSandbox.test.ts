@@ -17,8 +17,8 @@ import { FileService } from '../../../../../platform/files/common/fileService.js
 import { InMemoryFileSystemProvider } from '../../../../../platform/files/common/inMemoryFilesystemProvider.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
-import { IRequestService } from '../../../../../platform/request/common/request.js';
 import { InMemoryStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IVoltHttpTransport } from '../../../../../platform/voltHttp/common/voltHttpTransport.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
@@ -63,7 +63,7 @@ suite('Volt HTTP client for agents', () => {
 				const { status, headers, body } = respond(options);
 				return { res: { headers, statusCode: status }, stream: bufferToStream(VSBuffer.fromString(body)) };
 			},
-		} as unknown as IRequestService;
+		} as unknown as IVoltHttpTransport;
 		const storage = store.add(new InMemoryStorageService());
 		const http = store.add(new VoltHttpService(requests, fileService, search, workspace, storage, instantiation));
 		return { http, write, sent, fileService };
@@ -171,7 +171,7 @@ suite('Volt HTTP client for agents', () => {
 		assert.match(hidden.text, /^GET https:\/\/api\.example\.com\/old: The server answered with a redirect, which is not followed for a sandboxed chat, and this window cannot see where it points\. Send the request to the URL it should go to/);
 		assert.deepStrictEqual(opaque.sent.map(options => options.followRedirects), [0]);
 
-		// A transport that hands back the redirect itself (Node's): shown, with the location to send next.
+		// A transport that hands back the redirect itself (the desktop app's, from the main process): shown, with the location to send next.
 		const node = setup(() => ({ status: 302, headers: { location: 'http://127.0.0.1:6379/' }, body: '' }));
 		const shown = await new HttpCapability(node.http).invoke('send', { method: 'GET', url: 'https://api.example.com/old' }, offline);
 		assert.match(shown.text, /^GET https:\/\/api\.example\.com\/old\n302 Found .*\n\(Not followed: this chat runs in Volt's sandbox\. Send the location to follow it; its host is judged by the chat's network rules\.\)\nlocation: http:\/\/127\.0\.0\.1:6379\//);
