@@ -51,7 +51,10 @@ net.createServer(client => {
 	sockets.add(server);
 	const close = () => { sockets.delete(client); sockets.delete(server); client.destroy(); server.destroy(); };
 	client.on('close', close);
-	server.on('close', close);
+	// The server closes its side as soon as it has handed over the last byte (or after its keep-alive
+	// timeout), long before the paced bytes reach the client: the client side ends once they have
+	// ('end' in pipe), so a large response is never cut off.
+	server.on('close', () => sockets.delete(server));
 	server.on('error', close);
 	pipe(client, server, 'up');
 	pipe(server, client, 'down');
