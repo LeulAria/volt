@@ -20,6 +20,11 @@ import { TerminalCommandTracker } from './terminalCommandTracker.js';
 
 /** A composer longer than this is a pasted log or file, not a sentence being typed. */
 const MAX_DRAFT_CHARS = 20_000;
+/**
+ * A draft shorter than this ("hi", "ok", "fix") gives the model nothing to continue: no model call,
+ * only the local guesses. Each call is ~2.7k tokens of the chat's context (measured 2026-11-13).
+ */
+const MIN_MODEL_DRAFT_CHARS = 6;
 /** Until the settings say otherwise: the pause before the model is asked. */
 const DEFAULT_DELAY_MS = 300;
 /** A clipboard copied this recently rides along; an older one only when the draft names something in it. */
@@ -103,7 +108,11 @@ export class VoltComposerCompletionsProvider extends Disposable implements Inlin
 			return this.list(position, guess.text, true);
 		}
 		// Each keystroke restarts the pause; the model is asked once the typing stops.
-		this.pause.schedule(Math.max(0, settings.composerDelayMs));
+		if (draft.trim().length >= MIN_MODEL_DRAFT_CHARS) {
+			this.pause.schedule(Math.max(0, settings.composerDelayMs));
+		} else {
+			this.pause.cancel();
+		}
 		// Not forward-stable: the editor would keep showing it over the model's answer.
 		return guess ? this.list(position, guess.text, false) : undefined;
 	}
