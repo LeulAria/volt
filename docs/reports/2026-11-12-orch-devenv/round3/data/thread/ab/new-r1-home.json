@@ -1,0 +1,41 @@
+{
+ "mode": "home",
+ "chat": "Long thread 45k",
+ "runs": 3,
+ "load": "13.37 11.65 7.82",
+ "toTop": {
+  "n": 3,
+  "median": 1567.6,
+  "min": 615,
+  "max": 40709.2
+ },
+ "results": [
+  {
+   "toTop": 40709.199999999255,
+   "firstVisible": 40150.79999999925,
+   "gapsOver33": 65,
+   "maxGap": 2292,
+   "longTaskMs": 39909,
+   "loadBefore": 11.74,
+   "loadAfter": "27.13 11.44 7.09"
+  },
+  {
+   "toTop": 614.999999999447,
+   "firstVisible": 598.2999999994354,
+   "gapsOver33": 7,
+   "maxGap": 58,
+   "longTaskMs": 166,
+   "loadBefore": 11.9,
+   "loadAfter": "11.90 11.31 7.66"
+  },
+  {
+   "toTop": 1567.5999999992491,
+   "firstVisible": 1445.9999999992433,
+   "gapsOver33": 18,
+   "maxGap": 185,
+   "longTaskMs": 1143,
+   "loadBefore": 12.79,
+   "loadAfter": "13.37 11.65 7.82"
+  }
+ ]
+}

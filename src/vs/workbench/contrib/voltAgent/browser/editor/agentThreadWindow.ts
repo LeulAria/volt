@@ -28,3 +28,21 @@ export function deferredHeadStart(length: number, starts: (index: number) => boo
 	}
 	return 0;
 }
+
+/**
+ * An exchange off screen keeps the height it last had on screen only while it stays in the
+ * document (content-visibility: auto in agentEditor.css): a thread parked and shown again came back
+ * with every exchange at the 600px placeholder and settled over the next frames, moving the
+ * scrollbar. Before the thread leaves, each exchange's height goes into its own placeholder.
+ */
+export function keepExchangeHeights(inner: HTMLElement): void {
+	const exchanges = inner.children;
+	for (let index = 0; index < exchanges.length - 1; index++) {
+		const exchange = exchanges[index] as HTMLElement;
+		// Fractional: a rounded height came back a few pixels off and moved the end of the thread.
+		const height = exchange.getBoundingClientRect().height;
+		if (height > 0) {
+			exchange.style.containIntrinsicSize = `auto ${height}px`;
+		}
+	}
+}

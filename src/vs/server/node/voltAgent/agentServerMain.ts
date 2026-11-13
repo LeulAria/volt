@@ -6,7 +6,6 @@
 import { randomBytes } from 'crypto';
 import { promises as fs } from 'fs';
 import type * as http from 'http';
-import * as zlib from 'zlib';
 import type { Socket } from 'net';
 import { hostname } from 'os';
 import minimist from 'minimist';
@@ -140,6 +139,7 @@ import { handleSignIn } from './serverSignIn.js';
 import { ServerTunnels } from './serverTunnels.js';
 import { ServerWorkbench } from './serverWorkbench.js';
 import { ServerRender } from './serverRender.js';
+import { COMPRESSIBLE, CompressedCopies, preferredEncoding } from './serverCompression.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
@@ -173,6 +173,7 @@ function parseArgs(argv: string[]): IServerArgs {
 export async function main(argv: string[]): Promise<void> {
 	const args = parseArgs(argv);
 	const paths = agentServerPaths(args.userDataDir);
+	compressedCopies = new CompressedCopies(join(paths.dir, 'compressed'));
 	// The compile cache its launcher set is for this process: agents, terminals and dev servers started here don't write to it.
 	if (process.env['NODE_COMPILE_CACHE'] === paths.compileCacheDir) {
 		delete process.env['NODE_COMPILE_CACHE'];
@@ -738,37 +739,10 @@ const MIME: Record<string, string> = {
 	'.scm': 'text/plain; charset=utf-8',
 };
 
-/** Text assets worth compressing; the web IDE's editor bundle shrinks to about a quarter. */
-const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg', '.map', '.webmanifest', '.ttf', '.otf', '.txt', '.wasm', '.scm']);
-/**
- * Files this big get a faster brotli level: quality 7 takes about 4 s on the workbench's 21 MB
- * bundle, quality 4 about 1 s for a copy a tenth larger.
- */
-const LARGE_FILE_BYTES = 1024 * 1024;
-/** Compressed copies of the served files, by path and modification time (the app is a few MB). `ready` once made. */
-const compressed = new Map<string, { readonly mtime: number; readonly data: Promise<Buffer>; ready?: Buffer }>();
+/** Compressed copies of the served files (the app is a few MB); main() gives it a disk cache. */
+let compressedCopies = new CompressedCopies(undefined);
 /** Requests that came in through a tunnel: from loopback, but not from this computer's browser. */
 const tunnelRequests = new WeakSet<http.IncomingMessage>();
-
-function preferredEncoding(header: string | string[] | undefined): 'br' | 'gzip' | undefined {
-	const value = Array.isArray(header) ? header.join(',') : header ?? '';
-	return /\bbr\b/.test(value) ? 'br' : /\bgzip\b/.test(value) ? 'gzip' : undefined;
-}
-
-function compressedCopy(file: string, mtime: number, encoding: 'br' | 'gzip'): { readonly data: Promise<Buffer>; readonly ready?: Buffer } {
-	const key = `${encoding}:${file}`;
-	const hit = compressed.get(key);
-	if (hit && hit.mtime === mtime) {
-		return hit;
-	}
-	const data = fs.readFile(file).then(contents => new Promise<Buffer>((resolve, reject) => encoding === 'br'
-		? zlib.brotliCompress(contents, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: contents.length > LARGE_FILE_BYTES ? 4 : 7, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: contents.length } }, (err, out) => err ? reject(err) : resolve(out))
-		: zlib.gzip(contents, { level: contents.length > LARGE_FILE_BYTES ? 5 : 7 }, (err, out) => err ? reject(err) : resolve(out))));
-	const entry: { readonly mtime: number; readonly data: Promise<Buffer>; ready?: Buffer } = { mtime, data };
-	compressed.set(key, entry);
-	data.then(out => entry.ready = out, () => compressed.delete(key));
-	return entry;
-}
 
 /** This computer's own browser: over loopback, not through a tunnel. */
 function fromThisComputer(req: http.IncomingMessage): boolean {
@@ -926,10 +900,12 @@ async function sendFile(req: http.IncomingMessage, res: http.ServerResponse, ser
 		let data: Buffer | undefined;
 		const encoding = COMPRESSIBLE.has(extname(served)) && stat.size > 1024 ? preferredEncoding(req.headers['accept-encoding']) : undefined;
 		if (encoding) {
-			const copy = compressedCopy(served, stat.mtimeMs, encoding);
+			// Another device (a phone over Wi-Fi or a tunnel) gets a large file's smallest copy once it is made.
+			const local = fromThisComputer(req);
+			const copy = compressedCopies.copy(served, stat.mtimeMs, encoding, !local);
 			// Over loopback compressing only costs time (seconds for the workbench's bundle on a fresh
 			// server): this computer's browser gets the file as it is until the copy is made.
-			if (copy.ready || !fromThisComputer(req)) {
+			if (copy.ready || !local) {
 				data = copy.ready ?? await copy.data;
 				headers['Content-Encoding'] = encoding;
 			}

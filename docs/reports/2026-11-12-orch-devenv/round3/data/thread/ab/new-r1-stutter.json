@@ -1,0 +1,54 @@
+{
+ "mode": "stutter",
+ "chat": "Long thread A11 (seeded)",
+ "runs": 5,
+ "load": "12.71 55.52 131.49",
+ "gapsOver33": {
+  "n": 5,
+  "median": 0,
+  "min": 0,
+  "max": 4
+ },
+ "results": [
+  {
+   "gapsOver33": 4,
+   "maxGap": 110,
+   "frames": 80,
+   "longTaskMs": 110,
+   "loadBefore": 13.91,
+   "loadAfter": "13.91 79.19 152.83"
+  },
+  {
+   "gapsOver33": 0,
+   "maxGap": 17,
+   "frames": 45,
+   "longTaskMs": 0,
+   "loadBefore": 13.15,
+   "loadAfter": "13.15 58.53 134.33"
+  },
+  {
+   "gapsOver33": 0,
+   "maxGap": 19,
+   "frames": 46,
+   "longTaskMs": 0,
+   "loadBefore": 13.94,
+   "loadAfter": "13.94 57.94 133.67"
+  },
+  {
+   "gapsOver33": 0,
+   "maxGap": 16,
+   "frames": 44,
+   "longTaskMs": 0,
+   "loadBefore": 13.64,
+   "loadAfter": "13.64 56.43 132.25"
+  },
+  {
+   "gapsOver33": 0,
+   "maxGap": 16,
+   "frames": 41,
+   "longTaskMs": 0,
+   "loadBefore": 12.71,
+   "loadAfter": "12.71 55.52 131.49"
+  }
+ ]
+}

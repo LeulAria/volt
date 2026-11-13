@@ -182,7 +182,7 @@ import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitatio
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
 import { setShownAgentChat, shownAgentChat } from './agentShownChat.js';
-import { deferredHeadStart } from './agentThreadWindow.js';
+import { deferredHeadStart, keepExchangeHeights } from './agentThreadWindow.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
 import { agentTurnScope, messageFileChangesSignature } from '../review/agentSessionChanges.js';
@@ -336,10 +336,18 @@ const HEAD_DEFER_MIN_EXCHANGES = 4;
 const DRAWN_EXCHANGES_MAX = 40;
 /** What a trim leaves drawn; the gap to the max keeps a running chat from trimming on every turn. */
 const DRAWN_EXCHANGES_KEEP = 24;
+/**
+ * A frame's drawing time while the reader asked for the first message (Scroll Chat to Top): more
+ * than the 12ms a scroll gets, as nothing else moves meanwhile, yet still about 30 frames a second.
+ */
+const HEAD_JUMP_FRAME_MS = 32;
 /** Exchanges a chat parked by a switch keeps drawn while it follows its end. */
 const STASHED_DRAWN_EXCHANGES = 12;
 /** Shows the pane even if the first chat's history never finishes loading. */
 const RESTORE_REVEAL_TIMEOUT_MS = 1500;
+/** An "ago" label older than this reads in hours or days, so the clock redoes it only every {@link AGO_OLD_SWEEP_TICKS} ticks. */
+const AGO_OLD_MS = 60 * 60_000;
+const AGO_OLD_SWEEP_TICKS = 60;
 /** How long the background picture's fade on a new chat's first send may run (420ms in agentChatBackground.css). */
 const CHAT_BACKDROP_FADE_MS = 600;
 
@@ -1034,6 +1042,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** The card beside a `/skill` token in a sent message; made on first hover. */
 	private skillHoverCard: AgentSkillHoverCard | undefined;
 	private clockTimer: IDisposable | undefined;
+	/** Ticks of the one-second clock, so old "ago" labels are redone only every minute. */
+	private metaTicks = 0;
 	private statusRotateTimer: IDisposable | undefined;
 	private readonly statusMotion = new Map<string, { text: string; from?: string; started?: number }>();
 	/** Replies that streamed in this editor: their "Worked for" fold starts open, as Cursor's does right after a run. */
@@ -1208,7 +1218,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.turnNav = this._register(new AgentTurnNav(this.threadView));
 		// Jobs the idle agent left running, under its last reply.
 		this.jobWaitRows = this._register(this.instantiationService.createInstance(AgentJobWaitRows, this.threadInner, () => this.scheduleScrollSync(this.stickToBottom)));
-		this.turnNav.setUndrawn({ count: () => this.headUsers, draw: () => this.flushDeferredHead() });
+		this.turnNav.setUndrawn({ count: () => this.headUsers, draw: () => this.flushDeferredHead(), drawInFrames: done => this.drawHeadInFrames(done) });
 		this._register(new AgentThreadSelectionActions(this.threadEl, {
 			isVisible: () => this.isVisible(),
 			onAddToChat: (text, source) => this.addChatSelection(text, this.sessionKey, source),
@@ -3416,6 +3426,33 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		});
 	}
 
+	/**
+	 * Draws every exchange still waiting above the drawn ones, {@link HEAD_JUMP_FRAME_MS} of them a
+	 * frame with the view held still, then calls `done`: "Scroll Chat to Top" in a long chat. Gliding
+	 * up while they were drawn on the way kept the view on what it showed (each drawn exchange pushes
+	 * the scroll down), so one press landed a few hundred messages up and the first message took
+	 * a press per few hundred. A chat switch (a new head generation) drops it.
+	 */
+	private drawHeadInFrames(done: () => void): void {
+		const generation = this.headGeneration;
+		const step = () => {
+			this.headScrollDraw.value = undefined;
+			if (generation !== this.headGeneration) {
+				return;
+			}
+			if (this.headEnd > 0) {
+				const until = Date.now() + HEAD_JUMP_FRAME_MS;
+				this.drawHead(() => Date.now() < until);
+			}
+			if (this.headEnd > 0) {
+				this.headScrollDraw.value = scheduleAtNextAnimationFrame(getWindow(this.threadInner), step);
+			} else {
+				done();
+			}
+		};
+		this.headScrollDraw.value = scheduleAtNextAnimationFrame(getWindow(this.threadInner), step);
+	}
+
 	/** Draws every exchange still waiting above the drawn ones, now: for find, an edit, a jump to a turn. */
 	private flushDeferredHead(): void {
 		if (this.headEnd > 0) {
@@ -3971,6 +4008,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.resetDeferredHead();
 		this.dropStashedThread(input.sessionId);
 		parkVisualFrames(this.threadInner, this.visualParking);
+		keepExchangeHeights(this.threadInner);
 		const elements = this.threadInner.getElementsByTagName('*').length;
 		const nodes = this.threadInner.ownerDocument.createDocumentFragment();
 		nodes.append(...this.threadInner.childNodes);
@@ -5779,7 +5817,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (!duration) {
 			duration = append(line, $('span.volt-agent-worked-duration.volt-agent-searchable'));
 		}
-		duration.textContent = formatWorkedDuration(ms);
+		const text = formatWorkedDuration(ms);
+		if (duration.textContent !== text) {
+			duration.textContent = text;
+		}
 		line.querySelector('.volt-agent-token-chip')?.remove();
 	}
 
@@ -5971,22 +6012,37 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (!this.threadInner) {
 			return;
 		}
-		tickElapsed(this.threadInner);
-		for (const el of this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-worked')) {
+		// Runs every second over every drawn exchange. Rewriting each label, even with the same text,
+		// laid a 1,000-turn chat out again every second while it sat idle; now a label is written only
+		// when its text changes, the lookups are live collections (cached until nodes change), and
+		// labels over an hour old, which change by the hour, are redone once a minute.
+		const now = Date.now();
+		const sweepOld = this.metaTicks++ % AGO_OLD_SWEEP_TICKS === 0;
+		tickElapsed(this.threadInner, now);
+		for (const el of this.threadInner.getElementsByClassName('volt-agent-worked')) {
+			if (!isHTMLElement(el)) {
+				continue;
+			}
 			const started = Number(el.dataset.startedAt);
 			if (!Number.isFinite(started)) {
 				continue;
 			}
-			const ended = el.dataset.endedAt ? Number(el.dataset.endedAt) : Date.now();
+			const ended = el.dataset.endedAt ? Number(el.dataset.endedAt) : now;
 			this.fillWorkedLine(el, ended - started);
 		}
-		for (const el of this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-ago')) {
+		for (const el of this.threadInner.getElementsByClassName('volt-agent-ago')) {
+			if (!isHTMLElement(el)) {
+				continue;
+			}
 			const when = Number(el.dataset.endedAt);
-			if (!Number.isFinite(when)) {
+			if (!Number.isFinite(when) || (!sweepOld && now - when > AGO_OLD_MS)) {
 				continue;
 			}
 			const text = el.querySelector('.volt-agent-searchable') ?? el;
-			text.textContent = dayjs(when).fromNow();
+			const label = dayjs(when).fromNow();
+			if (text.textContent !== label) {
+				text.textContent = label;
+			}
 		}
 	}
 

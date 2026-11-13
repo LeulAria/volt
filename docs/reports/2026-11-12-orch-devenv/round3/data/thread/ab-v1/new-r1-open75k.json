@@ -1,0 +1,43 @@
+{
+ "chat": "Long thread 75k|Turn 1: keep reading the modules",
+ "marker": "LONGTHREAD-END long75k",
+ "cold": false,
+ "copies": false,
+ "runs": 3,
+ "load": "17.14 27.01 36.51",
+ "settled": {
+  "n": 3,
+  "median": 537.7,
+  "min": 309.6,
+  "max": 1136.1
+ },
+ "firstVisible": {
+  "n": 3,
+  "median": 279.8,
+  "min": 22,
+  "max": 448.7
+ },
+ "results": [
+  {
+   "settled": 1136.0999999991618,
+   "firstVisible": 448.69999999925494,
+   "frames": 115,
+   "longTaskMs": 711,
+   "maxGap": 646
+  },
+  {
+   "settled": 309.5999999991618,
+   "firstVisible": 21.999999999301508,
+   "frames": 59,
+   "longTaskMs": 294,
+   "maxGap": 288
+  },
+  {
+   "settled": 537.6999999994878,
+   "firstVisible": 279.7999999993481,
+   "frames": 57,
+   "longTaskMs": 680,
+   "maxGap": 258
+  }
+ ]
+}

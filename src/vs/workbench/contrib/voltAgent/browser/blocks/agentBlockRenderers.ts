@@ -59,7 +59,7 @@ import type { ProofStatus } from '../../../../services/voltRuntime/common/harnes
 import { FileChangePreview } from '../review/fileChangePreview.js';
 import { chooseFileChangeDiffStyle, formatChangeStats, type FileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 import { fileChangeGroupTitle, fileChangeSource, ThreadPart } from '../chrome/agentTimeline.js';
-import { splitMarkdownChunks } from '../chrome/agentTranscriptReuse.js';
+import { groupMarkdownChunks, splitMarkdownChunks } from '../chrome/agentTranscriptReuse.js';
 import { friendlyToolTitle } from './agentHostToolActivity.js';
 
 export interface IBlockRenderContext {
@@ -485,8 +485,26 @@ function codeCardOptions(ctx: IBlockRenderContext): ICodeCardOptions {
 	};
 }
 
+/** The markdown renderer draws the first 100,000 characters of a string and cuts the rest. */
+const MARKDOWN_RENDER_LIMIT = 100_000;
+/** Parts of a longer text stay under it, with room for what link and math normalizing adds. */
+const MARKDOWN_PART_CHARS = 90_000;
+
 export function renderMarkdownInto(parent: HTMLElement, text: string, ctx: IBlockRenderContext, extraClass?: string): void {
-	const element = renderMarkdownElement(getWindow(parent), linkifyPreviewUrls(normalizeMathDelimiters(text)), ctx);
+	const win = getWindow(parent);
+	let element: HTMLElement;
+	if (text.length > MARKDOWN_RENDER_LIMIT) {
+		// A long text (a reasoning of 2,500 lines, a huge reply) is drawn in parts, each a contents box, so none is cut.
+		element = $('.rendered-markdown.volt-md-chunked');
+		const footnotes = new Map<string, number>();
+		for (const part of groupMarkdownChunks(splitMarkdownChunks(text), MARKDOWN_PART_CHARS)) {
+			const chunk = renderMarkdownElement(win, linkifyPreviewUrls(normalizeMathDelimiters(part)), ctx, footnotes);
+			chunk.classList.add('volt-md-chunk');
+			element.appendChild(chunk);
+		}
+	} else {
+		element = renderMarkdownElement(win, linkifyPreviewUrls(normalizeMathDelimiters(text)), ctx);
+	}
 	element.classList.add('volt-agent-markdown', 'volt-agent-searchable');
 	if (extraClass) {
 		element.classList.add(extraClass);

@@ -496,10 +496,15 @@ function appendElapsed(parent: HTMLElement, since: number): void {
 
 /** Refreshes the live elapsed labels under `root`; called once a second while a turn runs. */
 export function tickElapsed(root: HTMLElement, now = Date.now()): void {
-	for (const el of root.querySelectorAll<HTMLElement>(`.${ELAPSED_CLASS}`)) {
-		const started = Number(el.dataset.startedAt);
+	// A live collection: cached between ticks while the nodes under `root` stay the same, where a
+	// query walked a long chat's whole tree every second.
+	for (const el of root.getElementsByClassName(ELAPSED_CLASS)) {
+		const started = Number((el as HTMLElement).dataset?.startedAt);
 		if (Number.isFinite(started)) {
-			el.textContent = formatElapsed(now - started);
+			const text = formatElapsed(now - started);
+			if (el.textContent !== text) {
+				el.textContent = text;
+			}
 		}
 	}
 }

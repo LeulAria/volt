@@ -1,0 +1,36 @@
+{
+ "mode": "earlier",
+ "chat": "Long thread 45k",
+ "runs": 2,
+ "load": "14.73 16.72 11.98",
+ "turnsPerS": {
+  "n": 2,
+  "median": 5.9,
+  "min": 0,
+  "max": 11.7
+ },
+ "results": [
+  {
+   "turnsPerS": 0,
+   "turns": 0,
+   "wheelEvents": 143,
+   "gapsOver33": 14,
+   "frames": 434,
+   "maxGap": 172,
+   "longTaskMs": 674,
+   "loadBefore": 13.9,
+   "loadAfter": "16.71 12.40 8.13"
+  },
+  {
+   "turnsPerS": 11.7,
+   "turns": 58,
+   "wheelEvents": 92,
+   "gapsOver33": 30,
+   "frames": 272,
+   "maxGap": 221,
+   "longTaskMs": 1682,
+   "loadBefore": 13.66,
+   "loadAfter": "14.73 16.72 11.98"
+  }
+ ]
+}

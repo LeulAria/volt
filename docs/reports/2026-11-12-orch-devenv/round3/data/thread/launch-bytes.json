@@ -1,0 +1,30 @@
+{
+ "root": "/Applications/Volt.app/Contents/Resources/app",
+ "rows": [
+  {
+   "file": "out/vs/code/browser/workbench/workbench.js",
+   "how": "static (br 4 before, br 11 after)",
+   "raw": 21901412,
+   "before": 5767654,
+   "after": 4566947,
+   "afterMs": 37835
+  },
+  {
+   "file": "extensions/PKief.material-icon-theme/dist/material-icons.json",
+   "how": "vscode-remote-resource (raw before, br 7 after)",
+   "raw": 450888,
+   "before": 450888,
+   "after": 49515,
+   "afterMs": 8
+  },
+  {
+   "file": "extensions/theme-cursor/themes/cursor-dark-color-theme.json",
+   "how": "vscode-remote-resource (raw before, br 7 after)",
+   "raw": 43166,
+   "before": 43166,
+   "after": 7474,
+   "afterMs": 1
+  }
+ ],
+ "saved": 1637772
+}
