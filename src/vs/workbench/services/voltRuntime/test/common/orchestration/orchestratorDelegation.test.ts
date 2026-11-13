@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, resolveChatTaskRefs, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, resolveChatTaskRefs, subagentReport, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
 import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
@@ -93,6 +93,17 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		const delegate = byName.get('delegate_task')!;
 		// In every request of a top-level chat now: about 1.2k tokens (it was 9.6k characters behind the tool search).
 		assert.ok(JSON.stringify({ description: delegate.description, input_schema: delegate.inputSchema }).length < 5_000);
+	});
+
+	test('a subagent\'s report is its final message, unless that message is not the report', () => {
+		const notes = 'Reading pricing.ts first.';
+		const report = '## Outcome\nDone.\n\n## Changes\n- src/pricing.ts: pct / 100';
+		assert.strictEqual(subagentReport(`${notes}\n\n${report}`, report), report, 'notes between tool calls stay out of the report');
+		assert.strictEqual(subagentReport(report, report), undefined, 'the whole reply is the report');
+		assert.strictEqual(subagentReport(`${notes}\n\n${report}\n\nAll tests pass.`, 'All tests pass.'), `${report}\n\nAll tests pass.`, 'a last line after one more check does not drop the report written before it');
+		assert.strictEqual(subagentReport(`${report}\n\nAll tests pass.`, 'All tests pass.'), undefined);
+		assert.strictEqual(subagentReport(`${notes}\n\nFixed it: pct / 100.`, 'Fixed it: pct / 100.'), 'Fixed it: pct / 100.', 'no report headings: the final message');
+		assert.strictEqual(subagentReport(notes, ''), undefined, 'no text after the last tool call: the whole reply');
 	});
 
 	test('the parent capsule carries the user\'s request, the plan, the latest reply and the siblings, within its budget', () => {

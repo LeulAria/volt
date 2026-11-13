@@ -1825,7 +1825,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	private lastReply(threadId: string): string | undefined {
 		const last = this.runtime.getOrCreateSession(threadId).messages.at(-1);
-		return last?.role === 'assistant' ? last.content : undefined;
+		return last?.role === 'assistant' ? last.report ?? last.content : undefined;
 	}
 
 	//#endregion

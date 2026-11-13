@@ -404,6 +404,31 @@ export function subagentSpareKinds(allowWrites: boolean, request: string | undef
 }
 
 /**
+ * What goes up as a subagent's report: its final message (the text after its last tool call), as
+ * its brief says, not the notes it wrote between tool calls (`whole`). A final message that is not
+ * the report (a "Done." after one last check, with the "## Outcome" report written before that
+ * call) does not replace it: then the report runs from the last "## Outcome" heading. Undefined:
+ * the whole reply is the report.
+ */
+export function subagentReport(whole: string, final: string): string | undefined {
+	const text = whole.trim();
+	const last = final.trim();
+	if (!last || last === text) {
+		return undefined;
+	}
+	const outcome = /^#{1,3}\s*Outcome\b/gm;
+	if (outcome.test(last)) {
+		return last;
+	}
+	let from = -1;
+	outcome.lastIndex = 0;
+	for (let match = outcome.exec(text); match; match = outcome.exec(text)) {
+		from = match.index;
+	}
+	return from < 0 ? last : from === 0 ? undefined : text.slice(from);
+}
+
+/**
  * The refusal of a `delegate_task` call without a brief. Claude Code defers MCP tools behind Tool
  * Search, so its first call may come before it loaded the schema, with no arguments at all (5.9 s
  * and a ToolSearch round trip in a measured run). Naming the arguments lets the next call be right
