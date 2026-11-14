@@ -277,9 +277,9 @@ suite('Volt context pack', () => {
 		assert.ok(!codeLead.includes(LOAD_DEFERRED), 'said once');
 	});
 
-	test('the code hints name code_nav\'s impact and body ops, so agents check a change\'s reach and read one symbol', () => {
+	test('the code hints name code_nav\'s impact, body and structural ops, so agents check a change\'s reach, read one symbol and search by shape', () => {
 		for (const hint of [CODE_QUESTIONS, IDE_TOOLS_GUIDE]) {
-			assert.ok(hint.includes('(op impact)') && hint.includes('(op body)'), hint);
+			assert.ok(/\(op impact[;)]/.test(hint) && hint.includes('(op body)') && hint.includes('(op structural, pattern setTimeout($F, $MS))'), hint);
 		}
 	});
 });
