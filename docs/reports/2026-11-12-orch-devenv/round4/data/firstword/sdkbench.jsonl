@@ -2,3 +2,11 @@
 {"label":"sdk-min","flags":[],"rep":1,"load":"43.57 52.86 64.34","mainReqMs":918,"firstTextMs":1052,"before":1}
 {"label":"sdk-settings-mcp","flags":["settings","mcp"],"rep":0,"load":"48.73 53.57 64.39","mainReqMs":1064,"firstTextMs":1216,"before":1}
 {"label":"sdk-settings-mcp","flags":["settings","mcp"],"rep":1,"load":"44.22 52.44 63.86","mainReqMs":241,"firstTextMs":503,"before":1}
+{"label":"fl-sdk","flags":["settings","mcp","warm=5000"],"rep":0,"at":"2026-11-14T05:29:11.428Z","load":"11.05 13.84 13.35","mainReqMs":60,"firstTextMs":68,"before":1}
+{"label":"fl-sdk","flags":["settings","mcp","warm=5000"],"rep":0,"at":"2026-11-14T05:31:45.512Z","load":"11.97 13.27 13.19","mainReqMs":56,"firstTextMs":63,"before":1}
+{"label":"fl-sdk","flags":["settings","mcp","warm=5000"],"rep":0,"at":"2026-11-14T05:32:28.535Z","load":"12.13 13.14 13.14","mainReqMs":58,"firstTextMs":66,"before":1}
+{"label":"fl-sdk","flags":["settings","mcp","warm=5000"],"rep":0,"at":"2026-11-14T05:33:13.214Z","load":"15.88 13.80 13.37","mainReqMs":200,"firstTextMs":221,"before":1}
+{"label":"fl-sdk","flags":["settings","mcp","warm=5000"],"rep":0,"at":"2026-11-14T05:39:12.044Z","load":"12.98 14.90 14.18","mainReqMs":57,"firstTextMs":65,"before":1}
+{"label":"fl-sdk","flags":["settings","mcp","warm=5000"],"rep":0,"at":"2026-11-14T05:39:55.678Z","load":"13.00 14.62 14.11","mainReqMs":56,"firstTextMs":62,"before":1}
+{"label":"fl-sdk","flags":["settings","mcp","warm=5000"],"rep":0,"at":"2026-11-14T05:40:40.456Z","load":"14.98 14.76 14.18","mainReqMs":70,"firstTextMs":84,"before":1}
+{"label":"fl-sdk","flags":["settings","mcp","warm=5000"],"rep":0,"at":"2026-11-14T05:46:34.131Z","load":"12.35 16.39 15.34","mainReqMs":85,"firstTextMs":94,"before":1}
