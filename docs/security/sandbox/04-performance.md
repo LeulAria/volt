@@ -82,6 +82,37 @@ Agent CLIs pay this once per process, which lives for a whole chat. Workload com
 
 **Long-lived hosts (C5 supervisor), 2026-11-08,** Apple M4 Max, `workspace` profile: a Node host (Volt's runtime as Node) from `SandboxSupervisor.start` through attestation, the go byte and its `NODE_CHANNEL_FD` channel to the first RPC answered: **p50 114 ms, max 139 ms** over 8 runs (`PERF-HOST-1` in `sandboxSupervisor.test.ts`), inside the spec's T2 budget of 150 / 300 ms. With the machine at load average 29 the same test gave p50 332 ms, max 435 ms.
 
+**After the 2026-11-09 pass** (no rule loosened; Apple M4 Max, macOS 26.6), measured with the same scripts before and after. The after round ran under heavier load (load average 7.4 against 2.8), so its numbers are conservative.
+
+| | before | after |
+|---|---|---|
+| **a chat's agent launch** (Authority, compile, per-chat config overlay, spawn, attest, teardown; p50) | **169 ms** | **38 ms** |
+| of which prepare (overlay, resolve, profile) | 139 ms | 14 ms |
+| a launch without a chat's overlay (MCP hosts, plugin hosts, terminals) | 41 ms | 27 ms |
+| `SandboxManager.run`, agent profile (p50 / p95) | 38 / 71 ms | 25 / 30 ms |
+| `SandboxManager.run`, `workspace` profile | 28 ms | 19 ms |
+| policy compile, agent profile (resolve + profile text) | 13.3 ms | 2.9 ms |
+| teardown (tree kill and sweep) | 5.0 ms | 0.8 ms |
+| 8 sandboxes started together | 84 ms | 39 ms |
+| first launch after Volt starts (backend probe included) | 107 ms | 83–98 ms |
+| backend probe, once per process | 43 ms | 22 ms |
+| `resolvedPolicyAllows` (every ACP file read or write, three times each) | 27 µs | 9 µs |
+| files broker, 1 KB read / write | 212 / 376 µs | 136 / 240 µs |
+
+Linux (Docker rig, bubblewrap 0.13.1): `SandboxManager.run` 11.9 ms end to end; the backend alone 8.0 ms.
+
+**What changed:**
+1. **The overlay's lock** (`agentStateOverlay.ts`). The previous run's merge still held `~/.claude.json.lock` when the next launch came, and the lock was polled every 100 ms. Volt's own merges now queue in-process, the lock is polled from 2 ms against other processes (the CLI's writers), a merge with nothing to copy back takes no lock, and the protected names are reset together.
+2. **The resolver's file-system calls run together** (`sandboxResolver.ts`). About a hundred `realpath` and `stat` calls, one after another, now start at once and are memoized per resolution; the loops take the answers in the original order, so every result and refusal is the same.
+3. **Merged Seatbelt regex groups are memoized** by their exact input (suffix, case mode, set of prefixes): credentials and the `.env` patterns are the same on every launch.
+4. **The teardown sweep reads only new processes.** `volt-sandbox-helper sweep` takes the tracked root and lists only processes whose kernel unique id is at least the root's: nothing older can be in the run's tree, join its new session's group or carry its tag. Reading every process's environment was most of the teardown.
+5. **The probe's independent trials run together** after the helper's integrity check, and the launcher starts the probe as soon as the Authority allows a launch.
+6. **`resolvedPolicyAllows` folds a policy's roots and names once**, not on every call.
+
+**Equivalence.** The new resolver and Seatbelt generator were run against HEAD's on 216 resolutions (agent and built-in profiles; plain, linked-worktree, symlinked and missing workspaces; refusals) and 840 profiles, cache hits included: byte-identical. The new `resolvedPolicyAllows` gave the same answer as the old one on 640,000 generated paths over 16 policies. SB-EQ-1, the adversarial suite (`VOLT_SANDBOX_REQUIRED=1`) and the Linux rig's suites pass.
+
+**Where the rest goes.** A sandboxed start is now mostly `sandbox-exec`: about 4 ms of libsandbox's fixed cost for any profile (measured warm with `sandbox_compile_string`, even for `(allow default)`), about 4 ms more for the agent profile's rules, then the prologue shell. Applying precompiled bytecode with `sandbox_apply` starts the same process in 2.6 ms instead of 12.2 ms, but every run's profile names its own run folder and canary, so the bytecode can't be reused across runs without moving those out of the profile. That is a design change to the per-run isolation (B-35, F.5), not done here.
+
 ## Inside a sandbox
 
 | | direct | sandboxed |

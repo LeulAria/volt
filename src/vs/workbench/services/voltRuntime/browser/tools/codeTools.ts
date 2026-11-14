@@ -7,9 +7,9 @@ import { raceTimeout } from '../../../../../base/common/async.js';
 import { isEqualOrParent } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import type { IVoltCodeImport, IVoltCodeImporter, IVoltCodeOutlineSymbol, IVoltCodeStructuralMatch } from '../../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
+import { CODE_ACTION_DESCRIPTION, CODE_ACTION_OPS, CODE_ACTION_SCHEMA, CODE_NAV_DESCRIPTION, CODE_NAV_OPS, CODE_NAV_SCHEMA, CodeNavOp, DIAGNOSTICS_DESCRIPTION, DIAGNOSTICS_SCHEMA, lspOffMessage } from '../../common/codeIntelligence.js';
 import { asRecord, pickNumber, pickString } from '../../common/tools/args.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
-import { objectSchema } from './schema.js';
 import { displayPath, resolveWorkspaceUri } from './workspacePath.js';
 
 /**
@@ -152,72 +152,12 @@ const MAX_CALL_DEPTH = 4;
 const MAX_CALL_TREE_NODES = 60;
 const CALL_TREE_DEADLINE_MS = 20_000;
 
-export const CODE_NAV_OPS = ['impact', 'body', 'definition', 'references', 'implementations', 'type_definition', 'hover', 'inspect', 'symbols', 'workspace_symbols', 'callers', 'callees', 'supertypes', 'subtypes', 'structural'] as const;
-export type CodeNavOp = typeof CODE_NAV_OPS[number];
-
-export const CODE_ACTION_OPS = ['rename', 'format', 'organize_imports', 'fixes', 'fix'] as const;
+// The tools' names, schemas and descriptions are the Code Intelligence feature's (common), shared with the MCP server.
+export { CODE_ACTION_DESCRIPTION, CODE_ACTION_OPS, CODE_ACTION_SCHEMA, CODE_NAV_DESCRIPTION, CODE_NAV_OPS, CODE_NAV_SCHEMA, DIAGNOSTICS_DESCRIPTION, DIAGNOSTICS_SCHEMA };
+export type { CodeNavOp };
 
 /** Positional ops: they need a line plus a column or the symbol's name. */
 const POSITIONAL: ReadonlySet<string> = new Set(['definition', 'references', 'implementations', 'type_definition', 'hover', 'inspect', 'callers', 'callees', 'supertypes', 'subtypes']);
-
-export const CODE_NAV_DESCRIPTION = [
-	'Type-checked answers from the language servers the editor runs (live buffers), with Volt\'s code index as fallback.',
-	'Use it for meaning, where grep returns look-alikes: who calls X (through other functions too), what implements interface Y, every use of method M of type T (not other methods with the same name), what type Z is.',
-	'Name the symbol with symbol, plus path and line where it is written; symbol alone finds its declaration (path narrows it; path#symbol works too).',
-	'Ops: impact (before a change, one call: callers 3 levels up, files using or importing symbol or path, the tests to run, current errors),',
-	'body (symbol\'s source with line numbers, not the whole file; comma-separate several),',
-	'references, implementations, definition, type_definition, hover (type, signature, docs),',
-	'inspect (hover + definition with body + references + implementations in one call),',
-	'callers / callees (call hierarchy; depth 2-4 follows callers of callers to the entry points and names the route handlers or procedures the calls are in), supertypes / subtypes,',
-	'symbols (outline of path), workspace_symbols (query: find declarations by name),',
-	'structural (pattern: $X one node, $$$ any, e.g. fetchUser($ID, $$$): code by its syntax across lines, not text; where filters a $X by regex; path, glob narrow).',
-	'Use grep for text, strings, SQL and config.',
-].join(' ');
-
-export const CODE_NAV_SCHEMA = objectSchema({
-	op: { type: 'string', enum: [...CODE_NAV_OPS] },
-	symbol: { type: 'string', description: 'The symbol\'s name. With line: the name on that line. Alone: found by its declaration (path narrows it)' },
-	path: { type: 'string' },
-	line: { type: 'integer', description: '1-based line where symbol is written' },
-	column: { type: 'integer', description: '1-based column, instead of symbol' },
-	depth: { type: 'integer', description: 'callers/callees/impact: levels to follow (1-4; default 1, impact 3)' },
-	query: { type: 'string', description: 'workspace_symbols: the name to look for' },
-	pattern: { type: 'string', description: 'structural: the code pattern' },
-	where: { type: 'object', description: 'structural: a regex per metavariable, e.g. {"MS":"^\\\\d"} keeps literal numbers' },
-	glob: { type: 'string', description: 'structural: files, e.g. **/*.ts; !**/*.test.* skips' },
-}, ['op']);
-
-export const DIAGNOSTICS_DESCRIPTION = [
-	'Errors and warnings from the editor\'s language services (type checker, linter) for the given files, or the whole workspace.',
-	'Use right after editing to confirm the change type-checks; it is much faster than a full build.',
-	'Only files the language service knows about are covered; a build or test run is still the final word.',
-].join(' ');
-
-export const DIAGNOSTICS_SCHEMA = objectSchema({
-	paths: { type: 'array', items: { type: 'string' }, description: 'Files to check (default: all open problems)' },
-	severity: { type: 'string', enum: ['error', 'warning', 'all'], description: 'Default error' },
-}, []);
-
-export const CODE_ACTION_DESCRIPTION = [
-	'Language-server refactors applied to the workspace, safer than hand edits across files.',
-	'rename: renames the symbol at path + line + symbol (or column) everywhere it is used (new_name).',
-	'format: formats path with its formatter. organize_imports: sorts and prunes path\'s imports.',
-	'fixes: lists quick fixes and refactors offered at path (line, or the whole file); kind narrows (quickfix, refactor, source).',
-	'fix: applies the one whose title contains title (default: the preferred fix at line).',
-	'Returns the diff of every changed file. Run diagnostics afterwards.',
-].join(' ');
-
-export const CODE_ACTION_SCHEMA = objectSchema({
-	op: { type: 'string', enum: [...CODE_ACTION_OPS] },
-	path: { type: 'string' },
-	line: { type: 'integer', description: '1-based line' },
-	end_line: { type: 'integer', description: 'fixes/fix: last line of the range (default line)' },
-	column: { type: 'integer' },
-	symbol: { type: 'string', description: 'rename: the name on that line, instead of a column' },
-	new_name: { type: 'string' },
-	kind: { type: 'string', description: 'fixes/fix: quickfix (default), refactor, source, or a full kind such as refactor.extract' },
-	title: { type: 'string', description: 'fix: part of the action title from fixes' },
-}, ['op', 'path']);
 
 export function createCodeTools(host: ICodeIntelHost, root: () => URI | undefined, nav?: ICodeNavIndex, write?: CodeEditWriter): IVoltTool[] {
 	const tools: IVoltTool[] = [
@@ -272,7 +212,7 @@ export async function runDiagnostics(host: ICodeIntelHost, root: URI | undefined
 	const severity = (pickString(args, 'severity') ?? 'error') as 'error' | 'warning' | 'all';
 	const checked = uris.filter(uri => host.lspAllowed(uri));
 	if (uris.length && !checked.length) {
-		return { callId: '', name: 'diagnostics', kind: 'read', text: 'Language servers are off for this checkout (Settings > Code Intelligence), so the editor has no diagnostics for it. Run the project\'s type checker or linter instead.' };
+		return { callId: '', name: 'diagnostics', kind: 'read', text: lspOffMessage('diagnostics') };
 	}
 	try {
 		const found = await host.diagnostics(checked.length ? checked : undefined, severity);
@@ -1341,7 +1281,7 @@ export async function runCodeAction(host: ICodeIntelHost, root: URI | undefined,
 		return fail('code_action', 'path is missing or outside the workspace.');
 	}
 	if (!host.lspAllowed(uri)) {
-		return fail('code_action', 'Language servers are off for this checkout (Settings > Code Intelligence). Edit the files directly.');
+		return fail('code_action', lspOffMessage('code_action'));
 	}
 	const line = pickNumber(args, 'line');
 	const range: ICodeRange | undefined = line ? { startLine: line, endLine: pickNumber(args, 'end_line') ?? line } : undefined;

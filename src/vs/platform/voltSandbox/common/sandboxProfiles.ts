@@ -42,15 +42,20 @@ export const SECRET_FILE_PATTERNS: readonly string[] = [
 /**
  * Files at a writable root that the host runs or trusts later: shell startup files, git hook
  * managers, editor, agent and worktree-setup configs, MCP server lists, and the files that would
- * make the root a bare git repository.
+ * make the root a bare git repository. Agent CLIs' project configs are here because Volt starts
+ * those CLIs unsandboxed for the project's other chats (skills pre-approve tools and ship scripts;
+ * Gemini's and Codex's project settings start MCP servers and hooks), and the editors' because
+ * opening the folder starts the language servers and tasks they name (EXEC-LATER-1).
  */
 export const PROTECTED_ROOT_NAMES: readonly string[] = [
 	'.gitconfig', '.gitmodules', '.bashrc', '.bash_profile', '.bash_login', '.zshrc', '.zprofile', '.zshenv', '.zlogin', '.profile',
 	'.ripgreprc', '.mcp.json', '.envrc', '.vscode', '.idea', '.devcontainer',
+	'.zed/settings.json', '.zed/tasks.json', '.helix/languages.toml', '.helix/config.toml', '.nvim.lua', '.nvimrc', '.exrc',
 	'.husky', '.githooks', '.pre-commit-config.yaml', 'lefthook.yml', '.lefthook.yml',
-	'.claude/settings.json', '.claude/settings.local.json', '.claude/commands', '.claude/agents', '.claude/hooks',
+	'.claude/settings.json', '.claude/settings.local.json', '.claude/commands', '.claude/agents', '.claude/hooks', '.claude/skills',
+	'.gemini/settings.json', '.gemini/commands', '.gemini/extensions', '.codex/config.toml', '.codex/hooks.json',
 	'.cursor/mcp.json', '.cursor/hooks.json', '.cursor/hooks', '.cursor/worktrees.json',
-	'.volt/hooks.json', '.volt/hooks', '.volt/mcp.json', '.volt/worktrees.json', 'volt.json', 't3.json',
+	'.volt/hooks.json', '.volt/hooks', '.volt/mcp.json', '.volt/worktrees.json', '.volt/sandbox.json', 'volt.json', 't3.json',
 	'opencode.json', 'opencode.jsonc', '.opencode',
 	'HEAD', 'objects', 'refs',
 ];
@@ -329,7 +334,12 @@ export const XCRUN_CACHE = 'xcrun_db';
  */
 export function agentSystemReadPaths(platform: string): readonly string[] {
 	if (platform === 'darwin') {
-		return ['/Library/Keychains', '/private/var/db/mds', '/private/var/run/resolv.conf', '/private/var/db/xcode_select_link', '/Library/Preferences/com.apple.security.plist', '/System/Volumes/Preboot/Cryptexes'];
+		return [
+			'/Library/Keychains', '/private/var/db/mds', '/private/var/run/resolv.conf', '/private/var/db/xcode_select_link', '/Library/Preferences/com.apple.security.plist', '/System/Volumes/Preboot/Cryptexes',
+			// xcodebuild, behind every /usr/bin shim (`git`, `pip3`) whenever xcrun's cache misses, loads these
+			// and reads the license acceptance; without them `git` says the Xcode license is not agreed (TOOLCHAIN-MAC-1).
+			'/Library/Developer/PrivateFrameworks', '/Library/Preferences/com.apple.dt.Xcode.plist', '/Library/Preferences/.GlobalPreferences.plist',
+		];
 	}
 	if (platform === 'win32') {
 		return [];

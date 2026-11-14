@@ -192,6 +192,8 @@ import './services/voltRuntime/electron-browser/voltAccounts.contribution.js';
 import './services/voltRuntime/electron-browser/voltSkillsDirectory.contribution.js';
 import './services/voltRuntime/electron-browser/voltRelay.contribution.js';
 import './contrib/voltProjects/electron-browser/voltProjects.contribution.js';
+// Volt HTTP client sends from the main process (replaces the window's transport)
+import './contrib/voltHttp/electron-browser/voltHttpTransport.contribution.js';
 // Volt window scopes (a New Window keeps its chats and projects until it closes)
 import './services/voltWindowScope/electron-browser/voltWindowScopeService.js';
 import './contrib/voltAgent/electron-browser/agentOpenInNewWindow.contribution.js';

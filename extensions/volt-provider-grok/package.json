@@ -91,7 +91,28 @@
 					"envKeys": [
 						"XAI_API_KEY",
 						"GROK_API_KEY"
-					]
+					],
+					"quietPaths": {
+						"processes": [
+							"grok"
+						],
+						"paths": [
+							".grok/bundled",
+							".grok/installed-plugins",
+							".grok/version.json",
+							".grok/experiments_remote_opt_out"
+						],
+						"readPaths": [
+							".agents/skills",
+							".claude/skills",
+							".claude/plugins",
+							".claude.json",
+							".claude/settings.json",
+							".claude/settings.local.json",
+							".cursor/skills",
+							".cursor/mcp.json"
+						]
+					}
 				},
 				"models": {
 					"source": "acp"

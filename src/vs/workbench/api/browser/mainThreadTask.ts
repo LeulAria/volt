@@ -24,7 +24,7 @@ import {
 import { IResolveSet, IResolvedVariables } from '../../contrib/tasks/common/taskSystem.js';
 import { ITaskService, ITaskFilter, ITaskProvider } from '../../contrib/tasks/common/taskService.js';
 
-import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
+import { extHostNamedCustomer, IExtHostContext, VoltSandboxedHostError } from '../../services/extensions/common/extHostCustomers.js';
 import { ExtHostContext, MainThreadTaskShape, ExtHostTaskShape, MainContext } from '../common/extHost.protocol.js';
 import {
 	ITaskDefinitionDTO, ITaskExecutionDTO, IProcessExecutionOptionsDTO, ITaskPresentationOptionsDTO,
@@ -460,13 +460,13 @@ export class MainThreadTask extends Disposable implements MainThreadTaskShape {
 	private readonly _providers: Map<number, { disposable: IDisposable; provider: ITaskProvider }>;
 
 	constructor(
-		extHostContext: IExtHostContext,
+		private readonly _hostContext: IExtHostContext,
 		@ITaskService private readonly _taskService: ITaskService,
 		@IWorkspaceContextService private readonly _workspaceContextServer: IWorkspaceContextService,
 		@IConfigurationResolverService private readonly _configurationResolverService: IConfigurationResolverService
 	) {
 		super();
-		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostTask);
+		this._proxy = _hostContext.getProxy(ExtHostContext.ExtHostTask);
 		this._providers = new Map();
 		this._register(this._taskService.onDidStateChange(async (event: ITaskEvent) => {
 			if (event.kind === TaskEventKind.Changed) {
@@ -531,6 +531,11 @@ export class MainThreadTask extends Disposable implements MainThreadTaskShape {
 				return Promise.resolve(this._proxy.$provideTasks(handle, validTypes)).then((value) => {
 					const tasks: Task[] = [];
 					for (const dto of value.tasks) {
+						if (this._hostContext.voltSandboxed && !isCustomExecution(dto)) {
+							// Volt: a shell or process task would run outside the extension's sandbox; its own (custom execution) runs inside.
+							console.warn(`Task System: ${value.extension.identifier.value} runs in Volt's sandbox; its task ${dto.name ?? ''} runs a shell or process outside it and is dropped.`);
+							continue;
+						}
 						const task = TaskDTO.to(dto, this._workspaceContextServer, true);
 						if (task) {
 							tasks.push(task);
@@ -554,6 +559,11 @@ export class MainThreadTask extends Disposable implements MainThreadTaskShape {
 				if (dto) {
 					dto.name = ((dto.name === undefined) ? '' : dto.name); // Using an empty name causes the name to default to the one given by the provider.
 					return Promise.resolve(this._proxy.$resolveTask(handle, dto)).then(resolvedTask => {
+						if (resolvedTask && this._hostContext.voltSandboxed && !isCustomExecution(resolvedTask)) {
+							// Volt: resolving the user's task into a shell or process would run it outside the sandbox.
+							console.warn(`Task System: an extension in Volt's sandbox resolved task ${resolvedTask.name ?? ''} into a shell or process; it is not resolved.`);
+							return undefined;
+						}
 						if (resolvedTask) {
 							return TaskDTO.to(resolvedTask, this._workspaceContextServer, true, task.configurationProperties.icon, task.configurationProperties.hide);
 						}
@@ -634,6 +644,10 @@ export class MainThreadTask extends Disposable implements MainThreadTaskShape {
 	// Passing in a TaskHandleDTO will cause the task to get re-resolved, which is important for tasks are coming from the core,
 	// such as those gotten from a fetchTasks, since they can have missing configuration properties.
 	public $executeTask(value: ITaskHandleDTO | ITaskDTO): Promise<ITaskExecutionDTO> {
+		if (this._hostContext.voltSandboxed && (TaskHandleDTO.is(value) || !isCustomExecution(value))) {
+			// Volt: running a task (the user's, or a shell or process one) runs outside the sandbox.
+			return Promise.reject(new VoltSandboxedHostError('Running a task'));
+		}
 		return new Promise<ITaskExecutionDTO>((resolve, reject) => {
 			if (TaskHandleDTO.is(value)) {
 				const workspace = this.getWorkspace(value.workspaceFolder);
@@ -784,4 +798,9 @@ export class MainThreadTask extends Disposable implements MainThreadTaskShape {
 		return this._taskService.registerSupportedExecutions(custom, shell, process);
 	}
 
+}
+
+/** Volt: a task whose execution is the extension's own pseudoterminal (it runs in the extension's host). */
+function isCustomExecution(dto: ITaskDTO): boolean {
+	return !!dto.execution && CustomExecutionDTO.is(dto.execution);
 }

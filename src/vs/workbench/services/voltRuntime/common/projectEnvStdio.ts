@@ -3,12 +3,15 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IAdminPolicy } from '../../../../platform/voltSandbox/common/authority.js';
 import { IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolRequest, IVoltPluginToolResult } from '../../../../platform/voltPlugins/common/pluginHosts.js';
 import { IChannel, ProxyChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../../../platform/voltGit/common/hostGit.js';
-import { IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltPromptBudget, IVoltSandboxApproval, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltChatFileRequest, IVoltChatFileResult, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltPromptBudget, IVoltSandboxApproval, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../../../../platform/voltStdio/common/voltStdio.js';
 import type { ISandboxWorkloadInfo } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import type { SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
+import type { IVoltSandboxRequest } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import type { ISandboxPolicyFilesInfo } from '../../../../platform/voltSandbox/common/sandboxPolicyFiles.js';
 import { EMPTY_TRUST_STATE, ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState } from '../../../../platform/voltSandbox/common/trust.js';
 import { projectRunEnv } from './projectRunEnv.js';
 
@@ -53,6 +56,9 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	jobWait(id: string, timeoutMs: number, until?: string, since?: number): Promise<IVoltJobOutput | undefined> { return this.inner.jobWait(id, timeoutMs, until, since); }
 	listJobs(): Promise<readonly IVoltJobOutput[]> { return this.inner.listJobs(); }
 	sandboxSupport(): Promise<IVoltSandboxSupportInfo> { return this.inner.sandboxSupport!(); }
+	managedPolicy(): Promise<IAdminPolicy> { return this.inner.managedPolicy ? this.inner.managedPolicy() : Promise.resolve({}); }
+	async sandboxPolicyFiles(request: IVoltSandboxRequest): Promise<ISandboxPolicyFilesInfo> { return this.inner.sandboxPolicyFiles ? this.inner.sandboxPolicyFiles(request) : { files: [], ignored: [] }; }
+	get onDidChangeManagedPolicy() { return this.inner.onDidChangeManagedPolicy; }
 	allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> { return this.inner.allowSandboxDomains!(id, domains); }
 	async checkSandboxDenials(id: string, since?: number): Promise<void> { await this.inner.checkSandboxDenials?.(id, since); }
 	sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> { return this.inner.sandboxAllows!(id, path, access); }
@@ -62,6 +68,8 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	acceptBuildEntries(root: string, paths?: readonly string[]): Promise<void> { return this.inner.acceptBuildEntries!(root, paths); }
 	sandboxReadFile(id: string, path: string): Promise<IVoltSandboxFileResult> { return this.inner.sandboxReadFile!(id, path); }
 	sandboxWriteFile(id: string, path: string, content: string): Promise<IVoltSandboxFileResult> { return this.inner.sandboxWriteFile!(id, path, content); }
+	/** Refused, never done another way, where the host cannot open files race-free for a sandboxed chat. */
+	async chatFile(request: IVoltChatFileRequest): Promise<IVoltChatFileResult> { return this.inner.chatFile ? this.inner.chatFile(request) : { ok: false, reason: 'this Volt host cannot open files safely for a sandboxed chat' }; }
 	prepareSandboxedTerminal(request: IVoltSandboxedTerminalRequest): Promise<IVoltSandboxedTerminalLaunch> {
 		const env = projectRunEnv(request.cwd);
 		return this.inner.prepareSandboxedTerminal!(env ? { ...request, env: { ...env, ...request.env } } : request);
@@ -84,6 +92,9 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	async stopSandboxedHosts(chatId: string): Promise<number> { return this.inner.stopSandboxedHosts ? this.inner.stopSandboxedHosts(chatId) : 0; }
 	async approveSandboxDenial(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval> {
 		return this.inner.approveSandboxDenial ? this.inner.approveSandboxDenial(id, denialId, expectedEpoch, scope) : { ok: false, epoch: expectedEpoch, reason: 'this host has no network broker' };
+	}
+	async approveChatDenial(chatId: string, denialId: string, deniedEpoch: number): Promise<IVoltSandboxApproval> {
+		return this.inner.approveChatDenial ? this.inner.approveChatDenial(chatId, denialId, deniedEpoch) : { ok: false, epoch: deniedEpoch, reason: 'this host has no network broker' };
 	}
 	async refuseSandboxDenial(id: string, denialId: string): Promise<boolean> { return this.inner.refuseSandboxDenial ? this.inner.refuseSandboxDenial(id, denialId) : false; }
 	async trustState(): Promise<ITrustState> { return this.inner.trustState ? this.inner.trustState() : EMPTY_TRUST_STATE; }

@@ -32,6 +32,37 @@ export function affectsVoltExtensionSandbox(e: IConfigurationChangeEvent): boole
 	return [VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING, VOLT_EXTENSION_SANDBOX_MODE_SETTING, VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING].some(key => e.affectsConfiguration(key));
 }
 
+const SANDBOX_SETTINGS = [VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING, VOLT_EXTENSION_SANDBOX_MODE_SETTING, VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING];
+
+/** Whether `key` names `setting`, a section holding it, or a part of it. */
+function touches(key: string, setting: string): boolean {
+	return key === setting || setting.startsWith(`${key}.`) || key.startsWith(`${setting}.`);
+}
+
+/** The settings `extension` contributes (`contributes.configuration`). */
+function contributedSettings(extension: IExtensionDescription): string[] {
+	const configuration = extension.contributes?.configuration;
+	const sections = Array.isArray(configuration) ? configuration : configuration ? [configuration] : [];
+	return sections.flatMap(section => Object.keys(section?.properties ?? {}));
+}
+
+/**
+ * Why an extension host may not write setting `key`, or undefined when it may (B-09). Where
+ * extensions run is the user's choice only, so no extension writes those settings. A host running
+ * a sandboxed extension writes only the settings that extension contributes: any other one can make
+ * Volt or an unsandboxed extension run what the sandboxed one chose (`git.path` pointing into its
+ * own storage), which would take it out of its sandbox.
+ */
+export function voltConfigurationWriteRefusal(key: string, hostedSandboxed: readonly IExtensionDescription[]): string | undefined {
+	if (SANDBOX_SETTINGS.some(setting => touches(key, setting))) {
+		return `${key}: only you can change where extensions run`;
+	}
+	if (hostedSandboxed.length && !hostedSandboxed.some(extension => contributedSettings(extension).some(own => key === own || key.startsWith(`${own}.`)))) {
+		return `${key}: a sandboxed extension changes only its own settings`;
+	}
+	return undefined;
+}
+
 /**
  * `extension`'s tier in this window (P2, P8). The platform is this machine's: the desktop runs
  * sandboxed hosts on its local agent server, and a browser workbench's server refuses with

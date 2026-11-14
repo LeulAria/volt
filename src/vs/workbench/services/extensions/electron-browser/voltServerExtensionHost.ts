@@ -116,7 +116,8 @@ export function createVoltServerExtensionHost(
 						throw new Error('A sandboxed extension host holds exactly one extension.');
 					}
 					extensionIdOf = extension.identifier.value;
-					return voltSandboxParams(extensionIdOf, false, context, trust);
+					// The server finds it in this app's own extension folder (named by the main process with the ticket), at this version.
+					return voltSandboxParams(extensionIdOf, false, context, trust, extension.version);
 				},
 				report: state => {
 					if (extensionIdOf || refused) {

@@ -22,7 +22,7 @@ import { ITextFileService } from '../../../../services/textfile/common/textfiles
 import { IAgentServerClientService } from '../../../../services/voltAgentServer/common/agentServerClient.js';
 import { CodeIntelHost } from '../../../../services/voltRuntime/browser/host/codeIntelHost.js';
 import { ICodeRange } from '../../../../services/voltRuntime/browser/tools/codeTools.js';
-import { isVoltWorktreePath, lspAllowedFor } from '../../../../services/voltRuntime/common/codeIntelligence.js';
+import { lspOffMessage, lspPolicy } from '../../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IWorkingCopyService } from '../../../../services/workingCopy/common/workingCopyService.js';
@@ -159,7 +159,7 @@ export class AgentServerWindow extends Disposable {
 			void sendFolders();
 		}
 		const host = this._register(new CodeIntelHost(accessor.get(IMarkerService), accessor.get(ITextModelService), accessor.get(ILanguageFeaturesService), accessor.get(IFileService)));
-		host.setLspPolicy(uri => lspAllowedFor(configuration, !workspace.isInsideWorkspace(uri) && isVoltWorktreePath(uri.fsPath)));
+		host.setLspPolicy(lspPolicy(configuration, uri => workspace.isInsideWorkspace(uri)));
 		const allowed = (uri: unknown): uri is URI => URI.isUri(uri) && host.lspAllowed(uri);
 		// The server's `file:` URIs come in as this window names them, and the answers go back in the server's names.
 		const handle = (method: string, handler: (...args: unknown[]) => unknown) => this._register(client.registerHandler(method, async (...args) =>
@@ -176,7 +176,7 @@ export class AgentServerWindow extends Disposable {
 		handle('codeIntel.diagnostics', (uris, severity) => {
 			const list = Array.isArray(uris) ? uris.filter(allowed) : undefined;
 			if (Array.isArray(uris) && uris.length && !list?.length) {
-				throw new Error('Language servers are off for this checkout (Settings > Code Intelligence), so the editor has no diagnostics for it. Run the project\'s type checker or linter instead.');
+				throw new Error(lspOffMessage('diagnostics'));
 			}
 			return host.diagnostics(list?.length ? list : undefined, severity === 'warning' || severity === 'all' ? severity : 'error');
 		});
@@ -203,7 +203,7 @@ export class AgentServerWindow extends Disposable {
 			const value = direction(way, ['supertypes', 'subtypes'] as const);
 			return allowed(uri) && position(line, column) && value ? host.typeHierarchy(uri, line as number, column as number, value) : undefined;
 		});
-		const off = 'Language servers are off for this checkout (Settings > Code Intelligence). Edit the files directly.';
+		const off = lspOffMessage('code_action');
 		handle('codeIntel.rename', (uri, line, column, newName) => allowed(uri) && position(line, column) && typeof newName === 'string' ? host.rename(uri, line as number, column as number, newName) : off);
 		handle('codeIntel.format', uri => allowed(uri) ? host.format(uri) : off);
 		handle('codeIntel.codeActions', (uri, value, only) => {

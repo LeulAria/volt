@@ -24,7 +24,7 @@ import { TestConfigurationService } from '../../../configuration/test/common/tes
 import { NullLogService } from '../../../log/common/log.js';
 import { IVoltSandboxRequest } from '../../../voltSandbox/common/sandboxPolicy.js';
 import { VoltSandboxLauncher } from '../../../voltSandbox/node/sandboxLauncher.js';
-import { ptyLauncherScript, PTY_GATE_SCRIPT } from '../../../voltSandbox/node/sandboxPty.js';
+import { ptyLauncherScript, PTY_ECHO_OFF, PTY_GATE_SCRIPT } from '../../../voltSandbox/node/sandboxPty.js';
 import { realSandboxAvailable } from '../../../voltSandbox/test/node/sandboxSuiteGate.js';
 import { execRefusal, IVoltExecContext, IVoltExecRequest, VoltExecRefusedError } from '../../common/voltStdio.js';
 import { VoltStdioService } from '../../node/voltStdioService.js';
@@ -50,8 +50,10 @@ suite('Volt exec context (B-04, B-06)', () => {
 	});
 
 	test('the PTY launcher text depends only on the channels, and opens them in their directions', () => {
-		assert.strictEqual(ptyLauncherScript(['out']), 'exec 3>"$1" || exit 125\nshift 1\nexec "$@"');
-		assert.strictEqual(ptyLauncherScript(['out', 'out', 'in', 'in']), 'exec 3>"$1" 4>"$2" 5<"$3" 6<"$4" || exit 125\nshift 4\nexec "$@"');
+		const echoOff = `${PTY_ECHO_OFF}\n`;
+		assert.ok(PTY_ECHO_OFF.startsWith('{ /bin/stty -echo || /usr/bin/stty -echo; } 2>/dev/null\n'), 'echo goes off first, with the system stty');
+		assert.strictEqual(ptyLauncherScript(['out']), `${echoOff}exec 3>"$1" || exit 125\nshift 1\nexec "$@"`);
+		assert.strictEqual(ptyLauncherScript(['out', 'out', 'in', 'in']), `${echoOff}exec 3>"$1" 4>"$2" 5<"$3" 6<"$4" || exit 125\nshift 4\nexec "$@"`);
 		assert.throws(() => ptyLauncherScript([]));
 		assert.ok(!/\$\{|`/.test(PTY_GATE_SCRIPT), 'the gate expands nothing it was not given');
 	});
@@ -168,6 +170,38 @@ suite('Volt exec context against real sandboxes (LIFE-PATH, B-04, F.6)', functio
 		});
 	}
 
+	test('NATIVE-DENY-2: a sandboxed command\'s result carries what its sandbox stopped (the native model\'s card)', async function () {
+		if (process.platform !== 'darwin') {
+			// Linux reports no kernel denials (05-limitations item 5); only macOS has them to carry.
+			this.skip();
+		}
+		const marker = homeMarker('native-deny');
+		const inside = join(ws, `native-deny-${counter++}`);
+		const result = await stdio.exec(request(`touch ${quote(inside)}; touch ${quote(marker)}`, chat(true, 'agent-shell'), chatSandbox()));
+		assert.ok(await exists(inside), `it ran: ${result.combined}`);
+		assert.strictEqual(await exists(marker), false);
+		assert.ok(result.sandboxDenials?.some(denial => denial.kind === 'write' && denial.target === marker), `the write outside is in the result: ${JSON.stringify(result.sandboxDenials)}`);
+	});
+
+	test('FAIL-TYPED-2: a spawn whose sandbox is not confirmed is a typed refusal before its id is handed out, and nothing ran', async () => {
+		const marker = join(ws, `typed-2-${counter++}`);
+		const launcher = (stdio as unknown as { sandbox: VoltSandboxLauncher }).sandbox;
+		const prepare = launcher.prepare;
+		launcher.prepare = async (...args: Parameters<VoltSandboxLauncher['prepare']>) => {
+			const launch = await prepare.apply(launcher, args);
+			// The backend's confirmation fails (a wrong answer on the confirm channel, an early exit).
+			return { ...launch, confirm: async () => ({ ok: false as const, error: 'scripted: the confirmation was wrong' }) };
+		};
+		try {
+			await assert.rejects(stdio.spawn({ command: '/usr/bin/touch', args: [marker], cwd: ws, context: chat(true, 'agent'), sandbox: chatSandbox() }), (err: Error) => err.name === 'SandboxUnavailableError' && /could not be established.*scripted/.test(err.message));
+		} finally {
+			launcher.prepare = prepare;
+		}
+		// The refused spawn's sandbox goes after the kernel log's grace (3 s), like any ended spawn's.
+		await new Promise(resolve => setTimeout(resolve, 3_300));
+		assert.strictEqual(await exists(marker), false, 'the agent never got its go byte');
+	});
+
 	/** Starts a sandboxed terminal the way the agent server does, on a real PTY. */
 	async function startTerminal(id: string, command: string): Promise<{ pty: IPty; output: () => string; exited: Promise<number> }> {
 		const launch = await stdio.prepareSandboxedTerminal({ id, file: '/bin/sh', args: ['-c', command], cwd: ws, env: { TERM: 'xterm-256color' }, sandbox: chatSandbox(), context: chat(true, 'terminal') });
@@ -204,6 +238,26 @@ suite('Volt exec context against real sandboxes (LIFE-PATH, B-04, F.6)', functio
 		assert.strictEqual(await exists(marker), false, 'no marker in the home folder');
 	});
 
+	test('PTY-ECHO-1: the go line is never echoed: the terminal\'s first output is the command\'s own', async () => {
+		const id = `term-echo-${counter++}`;
+		const { pty, output, exited } = await startTerminal(id, 'echo volt-first-line; echo second');
+		const go = await stdio.confirmSandboxedTerminal(id, pty.pid);
+		// As the window and the agent server do: typed the moment the sandbox is confirmed.
+		pty.write(go);
+		assert.strictEqual(await exited, 0, output());
+		const text = output().replace(/\r/g, '');
+		assert.ok(text.startsWith('volt-first-line\n'), `the first bytes are the command's: ${JSON.stringify(text.slice(0, 80))}`);
+		assert.ok(!text.includes(go.trim()), 'the go line never reaches the output the user and the agent read');
+		// The terminal echoes again for the user once the gate let the shell go.
+		const typed = `term-echo-typed-${counter++}`;
+		const { pty: second, output: secondOutput, exited: secondExited } = await startTerminal(typed, 'read line; echo "got:$line"');
+		second.write(await stdio.confirmSandboxedTerminal(typed, second.pid));
+		await new Promise(resolve => setTimeout(resolve, 300));
+		second.write('volt-typed\r');
+		assert.strictEqual(await secondExited, 0, secondOutput());
+		assert.ok(secondOutput().replace(/\r/g, '').includes('volt-typed\ngot:volt-typed'), `echo is back on: ${JSON.stringify(secondOutput())}`);
+	});
+
 	test('F.6: a terminal whose go line never comes, or is wrong, runs nothing', async () => {
 		const inside = join(ws, `gate-${counter++}`);
 		const id = `term-gate-${counter++}`;
@@ -220,7 +274,8 @@ suite('Volt exec context against real sandboxes (LIFE-PATH, B-04, F.6)', functio
 	test('F.6: a process that is not the launcher Volt prepared is not confirmed', async () => {
 		const id = `term-forged-${counter++}`;
 		const launch = await stdio.prepareSandboxedTerminal({ id, file: '/bin/sh', args: ['-c', 'true'], cwd: ws, env: {}, sandbox: chatSandbox(), context: chat(true, 'terminal') });
-		const [fifo3, fifo4] = [launch.args[3], launch.args[4]];
+		// After the script, its name and the gate's mark file.
+		const [fifo3, fifo4] = [launch.args[4], launch.args[5]];
 		// Something else writes plausible evidence into the channels: no bubblewrap or Seatbelt, no sandbox.
 		const forgery = process.platform === 'linux'
 			? `printf 'NoNewPrivs:1 Seccomp:2\\n' > ${quote(fifo3)}; printf '{"child-pid": %s}\\n' "$$" > ${quote(fifo4)}; sleep 30`

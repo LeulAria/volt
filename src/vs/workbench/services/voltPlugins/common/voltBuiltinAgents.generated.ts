@@ -81,6 +81,10 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 						DISABLE_AUTOUPDATER: '1',
 						DISABLE_TELEMETRY: '1',
 					},
+					quietPaths: {
+						processes: ['claude'],
+						paths: ['.claude/skills/synced', '.claude/plugins', '.local/state/claude'],
+					},
 					envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
 				},
 				models: {
@@ -215,6 +219,11 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 					readable: ['.grok'],
 					credentials: ['.grok/auth.json'],
 					envKeys: ['XAI_API_KEY', 'GROK_API_KEY'],
+					quietPaths: {
+						processes: ['grok'],
+						paths: ['.grok/bundled', '.grok/installed-plugins', '.grok/version.json', '.grok/experiments_remote_opt_out'],
+						readPaths: ['.agents/skills', '.claude/skills', '.claude/plugins', '.claude.json', '.claude/settings.json', '.claude/settings.local.json', '.cursor/skills', '.cursor/mcp.json'],
+					},
 				},
 				models: {
 					source: 'acp',

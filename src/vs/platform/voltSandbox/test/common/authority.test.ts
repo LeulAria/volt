@@ -207,6 +207,21 @@ suite('Volt Policy Authority (C2)', () => {
 			assert.ok(evaluate(PolicySnapshot.build({ ...host.input, grants: [approved] }), TOOL, ctx(LINEAR, [CHAT_OFF])).allow);
 		});
 
+		test('PERM-FLOW-2: a plugin\'s "Allow host" grants (the broker\'s) are part of its egress; revoked or expired ones are not; a chat\'s are never', () => {
+			const reach = { chats: [{ subject: CHAT_OFF, settings: { level: 'workspace-write' as const, network: false, allowedDomains: ['api.linear.app'] } }] };
+			assert.ok(evaluate(snap(reach), TOOL, ctx(LINEAR, [CHAT_OFF])).allow, 'its declared host only: within the chat');
+			// The broker's grant: a session grant of the plugin's running process, any session.
+			const allowHost = grant(LINEAR, 'net.connect@1', { kind: 'session', sessionId: 'p:host-run-7', scope: { targets: ['paste.evil.com'] } });
+			const refused = evaluate(snap({ ...reach, grants: [allowHost] }), TOOL, ctx(LINEAR, [CHAT_OFF]));
+			assert.deepStrictEqual(pick(refused), ['egress-compat', 'egress']);
+			assert.deepStrictEqual(refused.promptable?.flow?.hosts, ['paste.evil.com'], 'the card names what the chat does not reach');
+			assert.ok(evaluate(snap({ ...reach, grants: [{ ...allowHost, revoked: true }] }), TOOL, ctx(LINEAR, [CHAT_OFF])).allow, 'revoked');
+			assert.ok(evaluate(snap({ ...reach, grants: [{ ...allowHost, expiresAt: NOW - 1 }] }), TOOL, ctx(LINEAR, [CHAT_OFF])).allow, 'expired');
+			assert.deepStrictEqual(evaluate(snap({ ...reach, grants: [{ ...allowHost, scope: {} }] }), TOOL, ctx(LINEAR, [CHAT_OFF])).promptable?.flow?.hosts, 'all', 'a grant with no target reaches anything');
+			// A chat's own network grants widen what the chat reaches, not what it is judged to send.
+			assert.ok(evaluate(snap({ ...reach, grants: [grant(CHAT_OFF, 'net.connect@1', { scope: { targets: ['x.com'] } })] }), TOOL, ctx(LINEAR, [CHAT_OFF])).allow);
+		});
+
 		test('a chat prompting another chat: the target must be confined at least as much (INV-11)', () => {
 			const send: IAccessRequest = { capability: 'agents.send', target: CHAT_ON, edge: 'send' };
 			assert.deepStrictEqual(pick(evaluate(snap(), send, ctx(CHAT_OFF))), ['egress-compat', 'covers']);

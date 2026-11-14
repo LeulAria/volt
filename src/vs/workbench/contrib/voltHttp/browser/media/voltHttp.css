@@ -3,7 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-/* The HTTP client: request editor (top), response (bottom), and the sidebar's rows. */
+/*
+ * The HTTP client, laid out like Postman: the request's name and Save on top, method + URL in one
+ * box beside a split Send, dotted tabs over bordered key/value tables, a sash, then the response.
+ * Every colour comes from the theme. The sidebar's rows are at the end.
+ */
 
 .volt-http-editor,
 .volt-http-view {
@@ -17,6 +21,7 @@
 }
 
 .volt-http-editor {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	height: 100%;
@@ -27,35 +32,146 @@
 	overflow: hidden;
 }
 
+/* Head: HTTP · file / name … environment, Save */
+
 .volt-http-head {
-	padding: 12px 16px 0;
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 52px;
+	padding: 0 16px 0 20px;
+	box-sizing: border-box;
+}
+
+.volt-http-crumbs {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.volt-http-kind {
+	flex: none;
+	margin-right: 6px;
+	padding-bottom: 1px;
+	border-bottom: 1px solid currentColor;
+	color: var(--vscode-textLink-foreground);
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	line-height: 10px;
+}
+
+.volt-http-crumb {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 40%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-crumb-sep {
+	flex: none;
+	color: var(--volt-http-muted);
+	opacity: 0.7;
+}
+
+.volt-http-crumbs.no-source .volt-http-crumb,
+.volt-http-crumbs.no-source .volt-http-crumb-sep {
+	display: none;
+}
+
+.volt-http-name {
+	flex: 1 1 auto;
+	min-width: 120px;
+	max-width: 420px;
+}
+
+.volt-http-name .monaco-inputbox > .ibwrapper > .input {
+	padding: 4px 6px;
+	font-size: 13px;
+	font-weight: 600;
 }
 
 .volt-http-name .monaco-inputbox {
-	background: transparent !important;
-	border-color: transparent !important;
+	margin-left: -6px;
+	border-radius: 4px;
 }
 
-.volt-http-name .monaco-inputbox input {
-	font-size: 15px;
-	font-weight: 600;
+.volt-http-name .monaco-inputbox:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent) !important;
 }
 
-.volt-http-name .monaco-inputbox:focus-within {
-	border-color: var(--vscode-focusBorder) !important;
-}
-
-.volt-http-bar {
+.volt-http-head-actions {
+	flex: none;
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	padding: 8px 16px 10px;
+	gap: 6px;
 }
 
-.volt-http-method .volt-dropdown {
-	min-width: 92px;
-	font-family: var(--monaco-monospace-font);
+.monaco-workbench .volt-http-head-actions .volt-button {
+	height: 30px;
+	font-size: 13px;
+}
+
+/* URL bar: [ METHOD v | url ] [ Send | v ] */
+
+.volt-http-bar {
+	flex: none;
+	display: flex;
+	align-items: stretch;
+	gap: 8px;
+	height: 40px;
+	padding: 0 16px;
+	margin-top: 4px;
+}
+
+.volt-http-urlgroup {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: stretch;
+	min-width: 0;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 6px;
+	background: var(--vscode-input-background);
+	overflow: hidden;
+}
+
+.volt-http-urlgroup:focus-within {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-http-method {
+	flex: none;
+	display: flex;
+	width: 116px;
+	border-right: 1px solid var(--vscode-input-border, var(--volt-http-line));
+}
+
+.monaco-workbench .volt-http-method .volt-dropdown {
+	flex: 1;
+	justify-content: space-between;
+	height: 100%;
+	padding: 0 10px 0 14px;
+	border-radius: 0;
+	background: transparent;
+	font-size: 13px;
 	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+
+.monaco-workbench .volt-http-method .volt-dropdown:hover,
+.monaco-workbench .volt-http-method .volt-dropdown.open {
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.monaco-workbench .volt-http-method .volt-dropdown:focus-visible {
+	outline-offset: -1px;
 }
 
 .volt-http-method[data-method="GET"] .volt-dropdown,
@@ -71,57 +187,95 @@
 
 .volt-http-url {
 	flex: 1 1 auto;
+	display: flex;
 	min-width: 120px;
 }
 
-.volt-http-url input {
-	font-family: var(--monaco-monospace-font);
-	font-size: 12.5px;
+.volt-http-url .monaco-inputbox {
+	flex: 1;
+	height: 100%;
 }
 
-.volt-http-env {
-	flex: none;
+.volt-http-url .monaco-inputbox > .ibwrapper {
+	height: 100%;
 }
 
-.volt-http-bar .monaco-button {
+.volt-http-url .monaco-inputbox > .ibwrapper > .input {
+	height: 100%;
+	padding: 0 12px;
+	font-size: 13.5px;
+}
+
+.volt-http-send {
 	flex: none;
-	white-space: nowrap;
+	display: flex;
+	align-items: stretch;
+}
+
+.monaco-workbench .volt-http-send .volt-button {
+	height: 100%;
+	border: 0;
+	border-radius: 6px 0 0 6px;
+	padding: 0 26px;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.monaco-workbench .volt-http-send .volt-button.volt-http-send-more {
+	padding: 0 10px;
+	border-left: 1px solid var(--vscode-button-separator, rgba(0, 0, 0, 0.25));
+	border-radius: 0 6px 6px 0;
+}
+
+/* Request tabs: Params • Authorization • Headers (n) Body • */
+
+.volt-http-request {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.volt-http-tabs,
+.volt-http-res-tabs {
+	flex: none;
+	display: flex;
+	align-items: stretch;
+	gap: 24px;
 }
 
 .volt-http-tabs {
-	display: flex;
-	gap: 2px;
-	padding: 0 12px;
-	border-bottom: 1px solid var(--volt-http-line);
-}
-
-.volt-http-tabs.inline {
-	border-bottom: none;
-	padding: 0;
-	margin-left: auto;
+	height: 40px;
+	margin-top: 6px;
+	padding: 0 20px;
 }
 
 .volt-http-tab {
 	display: inline-flex;
 	align-items: center;
-	gap: 6px;
-	height: 30px;
-	padding: 0 10px;
+	gap: 5px;
+	height: 100%;
+	padding: 0;
 	border: none;
+	border-top: 2px solid transparent;
 	border-bottom: 2px solid transparent;
+	box-sizing: border-box;
 	background: none;
 	color: var(--volt-http-muted);
 	font: inherit;
+	font-size: 13px;
+	white-space: nowrap;
 	cursor: pointer;
 }
 
-.volt-http-tab:hover {
+.volt-http-tab:hover,
+.volt-http-tab.active {
 	color: var(--vscode-foreground);
 }
 
 .volt-http-tab.active {
-	color: var(--vscode-foreground);
-	border-bottom-color: var(--vscode-focusBorder);
+	border-bottom-color: var(--vscode-panelTitle-activeBorder, var(--vscode-focusBorder));
 }
 
 .volt-http-tab:focus-visible {
@@ -129,67 +283,218 @@
 	outline-offset: -1px;
 }
 
-.volt-http-badge {
-	padding: 0 6px;
-	border-radius: 8px;
-	background: var(--vscode-badge-background);
-	color: var(--vscode-badge-foreground);
-	font-size: 10.5px;
-	line-height: 16px;
-	text-transform: none;
+.volt-http-tab-count {
+	color: var(--volt-http-get);
+}
+
+.volt-http-tab-dot {
+	width: 6px;
+	height: 6px;
+	margin-left: 2px;
+	border-radius: 50%;
+	background: var(--volt-http-get);
 }
 
 .volt-http-tab-body {
-	flex: 0 1 42%;
-	min-height: 120px;
+	flex: 1 1 auto;
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
-	padding: 10px 16px;
+	gap: 12px;
+	min-height: 0;
+	padding: 14px 16px 16px;
 	overflow: auto;
 }
 
-.volt-http-body-top {
+/* Sections and key/value tables */
+
+.volt-http-section {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.volt-http-section.bulk {
+	flex: 1 1 auto;
+	min-height: 160px;
+}
+
+.volt-http-section-head {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+}
+
+.volt-http-section-head.hidden {
+	display: none;
+}
+
+.volt-http-section-title {
+	color: var(--volt-http-muted);
+	font-weight: 600;
+}
+
+.volt-http-section-actions {
+	margin-left: auto;
 }
 
 .volt-http-kv {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
+	min-height: 0;
 }
 
-.volt-http-kv-row {
+.volt-http-section.bulk .volt-http-kv {
+	flex: 1 1 auto;
+}
+
+.volt-http-link {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--vscode-textLink-foreground);
+	font: inherit;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-http-link:hover {
+	color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+	text-decoration: underline;
+}
+
+.volt-http-link.muted {
+	color: var(--volt-http-muted);
+}
+
+.volt-http-link.muted:hover {
+	color: var(--vscode-foreground);
+	text-decoration: none;
+}
+
+.volt-http-link:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-http-link.end {
+	margin-left: auto;
+}
+
+.volt-http-table {
+	flex: none;
+	border: 1px solid var(--volt-http-line);
+}
+
+.volt-http-tr {
 	display: grid;
-	grid-template-columns: 20px minmax(80px, 1fr) minmax(80px, 2fr) 22px;
+	grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr) 104px;
+	min-height: 32px;
+	border-bottom: 1px solid var(--volt-http-line);
+}
+
+.volt-http-tr:last-child {
+	border-bottom: 0;
+}
+
+.volt-http-tr:not(.head):hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+}
+
+.volt-http-td {
+	display: flex;
 	align-items: center;
-	gap: 6px;
+	min-width: 0;
+	border-right: 1px solid var(--volt-http-line);
 }
 
-.volt-http-kv-check {
+.volt-http-td:last-child {
+	border-right: 0;
+}
+
+.volt-http-td.label {
+	padding: 0 12px;
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+	font-weight: 600;
+}
+
+.volt-http-td.check {
+	justify-content: center;
+}
+
+.volt-http-td.check .monaco-checkbox {
 	margin: 0;
-	accent-color: var(--vscode-focusBorder);
 }
 
-.volt-http-kv-row input.input {
-	font-family: var(--monaco-monospace-font);
-	font-size: 12px;
+.volt-http-td.tail {
+	justify-content: flex-end;
+	padding: 0 10px;
+}
+
+.volt-http-td.cell {
+	align-items: stretch;
+}
+
+.volt-http-td.cell:focus-within {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-http-td.cell .monaco-inputbox {
+	flex: 1;
+}
+
+.volt-http-td.cell .monaco-inputbox > .ibwrapper {
+	height: 100%;
+}
+
+.volt-http-td.cell .monaco-inputbox > .ibwrapper > .input {
+	height: 100%;
+	padding: 0 12px;
+	font-size: 13px;
+}
+
+.volt-http-td.cell .monaco-inputbox.synthetic-focus {
+	outline: none;
+}
+
+.volt-http-tr.disabled .volt-http-td.cell {
+	opacity: 0.5;
+}
+
+.volt-http-td.text {
+	padding: 7px 12px;
+	overflow-wrap: anywhere;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.volt-http-table.readonly .volt-http-tr {
+	grid-template-columns: minmax(140px, 34%) minmax(0, 1fr);
+}
+
+.volt-http-table.readonly .volt-http-tr:not(.head) .volt-http-td:first-child {
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
 }
 
 .volt-http-kv-remove {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 22px;
-	height: 22px;
+	width: 24px;
+	height: 24px;
 	padding: 0;
 	border: none;
 	border-radius: 4px;
 	background: none;
 	color: var(--volt-http-muted);
 	cursor: pointer;
+	opacity: 0;
+}
+
+.volt-http-tr:hover .volt-http-kv-remove,
+.volt-http-kv-remove:focus-visible {
+	opacity: 1;
 }
 
 .volt-http-kv-remove:hover {
@@ -197,106 +502,296 @@
 	color: var(--vscode-foreground);
 }
 
-.volt-http-field {
-	display: grid;
-	grid-template-columns: 96px minmax(0, 1fr);
+.volt-http-kv-remove:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* Body: radio row (none · x-www-form-urlencoded · raw [JSON v] · GraphQL … Beautify) */
+
+.volt-http-modes {
+	flex: none;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 20px;
+	min-height: 28px;
+}
+
+.volt-http-radio {
+	display: inline-flex;
 	align-items: center;
 	gap: 8px;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: color-mix(in srgb, var(--vscode-foreground) 85%, transparent);
+	font: inherit;
+	cursor: pointer;
+}
+
+.volt-http-radio:hover,
+.volt-http-radio.checked {
+	color: var(--vscode-foreground);
+}
+
+.volt-http-radio:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.volt-http-radio-dot {
+	flex: none;
+	width: 14px;
+	height: 14px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-checkbox-border, var(--volt-http-line));
+	border-radius: 50%;
+	background: var(--vscode-checkbox-background, transparent);
+	transition: border-width 120ms ease, border-color 120ms ease;
+}
+
+.volt-http-radio.checked .volt-http-radio-dot {
+	border-width: 4px;
+	border-color: var(--vscode-button-background);
+}
+
+.volt-http-raw-format {
+	margin-left: -12px;
+}
+
+.monaco-workbench .volt-http-raw-format .volt-dropdown {
+	height: 24px;
+	padding: 0 4px 0 6px;
+	background: transparent;
+	color: var(--vscode-textLink-foreground);
+}
+
+.monaco-workbench .volt-http-raw-format .volt-dropdown:hover,
+.monaco-workbench .volt-http-raw-format .volt-dropdown.open {
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-http-code {
+	flex: 1 1 0;
+	min-height: 120px;
+	border: 1px solid var(--volt-http-line);
+	overflow: hidden;
+}
+
+.volt-http-code.bulk {
+	min-height: 140px;
+}
+
+.volt-http-graphql {
+	flex: 1 1 auto;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 16px;
+	min-height: 160px;
+}
+
+.volt-http-graphql-pane {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+	min-height: 0;
+}
+
+.volt-http-sublabel {
+	flex: none;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+/* Authorization: type on the left, its fields on the right */
+
+.volt-http-auth {
+	flex: 1 1 auto;
+	display: grid;
+	grid-template-columns: minmax(200px, 300px) minmax(0, 1fr);
+	min-height: 0;
+}
+
+.volt-http-auth-type {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 2px 20px 0 4px;
+	border-right: 1px solid var(--volt-http-line);
+}
+
+.volt-http-auth-help {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.volt-http-auth-fields {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-width: 0;
+	padding: 2px 4px 0 20px;
+}
+
+.volt-http-field {
+	display: grid;
+	grid-template-columns: 110px minmax(0, 1fr);
+	align-items: center;
+	gap: 8px;
+	max-width: 640px;
 }
 
 .volt-http-field label {
 	color: var(--volt-http-muted);
 }
 
-.volt-http-code {
-	flex: 1 1 auto;
-	min-height: 100px;
-	border: 1px solid var(--volt-http-line);
-	border-radius: 4px;
-	overflow: hidden;
+.volt-http-field-input .monaco-inputbox > .ibwrapper > .input {
+	padding: 6px 8px;
 }
 
-.volt-http-code.small {
-	flex: none;
-}
-
-.volt-http-sublabel {
-	color: var(--volt-http-muted);
-	font-size: 11px;
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
-}
+/* Divider (the sash sits on it) and the response */
 
 .volt-http-divider {
+	flex: none;
 	height: 1px;
 	background: var(--volt-http-line);
 }
 
 .volt-http-response {
-	flex: 1 1 auto;
-	min-height: 140px;
+	flex: 1 1 0;
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
-	padding: 10px 16px 12px;
+	min-height: 0;
 	overflow: hidden;
 }
 
-.volt-http-status {
+.volt-http-res-bar {
+	flex: none;
+	display: flex;
+	align-items: stretch;
+	gap: 16px;
+	height: 40px;
+	margin-top: 4px;
+	padding: 0 16px;
+}
+
+.volt-http-res-title {
+	align-self: center;
+	color: var(--volt-http-muted);
+	font-weight: 600;
+}
+
+.volt-http-res-meta {
 	display: flex;
 	align-items: center;
-	gap: 12px;
-	min-height: 30px;
+	gap: 8px;
+	margin-left: auto;
+	color: var(--volt-http-muted);
+	font-size: 12.5px;
+	white-space: nowrap;
+}
+
+.volt-http-meta-dot {
+	flex: none;
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	background: currentColor;
+	opacity: 0.6;
 }
 
 .volt-http-pill {
-	padding: 2px 8px;
+	padding: 3px 8px;
 	border-radius: 4px;
-	font-family: var(--monaco-monospace-font);
+	font-size: 12.5px;
 	font-weight: 600;
-	font-size: 12px;
-}
-
-.volt-http-pill.ok { color: var(--volt-http-get); background: color-mix(in srgb, var(--volt-http-get) 14%, transparent); }
-.volt-http-pill.info { color: var(--volt-http-put); background: color-mix(in srgb, var(--volt-http-put) 14%, transparent); }
-.volt-http-pill.warn { color: var(--volt-http-post); background: color-mix(in srgb, var(--volt-http-post) 14%, transparent); }
-.volt-http-pill.error { color: var(--volt-http-delete); background: color-mix(in srgb, var(--volt-http-delete) 14%, transparent); }
-
-.volt-http-metric {
-	color: var(--volt-http-muted);
 	font-variant-numeric: tabular-nums;
 }
 
+.volt-http-pill.ok { color: var(--volt-http-get); background: color-mix(in srgb, var(--volt-http-get) 16%, transparent); }
+.volt-http-pill.info { color: var(--volt-http-put); background: color-mix(in srgb, var(--volt-http-put) 16%, transparent); }
+.volt-http-pill.warn { color: var(--volt-http-post); background: color-mix(in srgb, var(--volt-http-post) 16%, transparent); }
+.volt-http-pill.error { color: var(--volt-http-delete); background: color-mix(in srgb, var(--volt-http-delete) 16%, transparent); }
+
+.volt-http-metric {
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-res-tools {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 8px 16px;
+}
+
+.monaco-workbench .volt-http-res-format .volt-dropdown {
+	height: 28px;
+	padding: 0 8px 0 10px;
+	border-radius: 4px;
+}
+
+.volt-http-spacer {
+	flex: 1 1 auto;
+}
+
+.monaco-workbench .volt-http-res-tools .volt-button.volt-http-icon-button {
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border-radius: 4px;
+}
+
+.monaco-workbench .volt-http-res-tools .volt-button.volt-http-icon-button.checked {
+	color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
+	background: var(--vscode-inputOption-activeBackground);
+}
+
+.volt-http-tool-sep {
+	flex: none;
+	width: 1px;
+	height: 16px;
+	margin: 0 6px;
+	background: var(--volt-http-line);
+}
+
 .volt-http-code.response {
-	flex: 1 1 auto;
+	flex: 1 1 0;
+	min-height: 0;
+	margin-left: 6px;
+	border: 0;
 }
 
-.volt-http-headers {
-	flex: 1 1 auto;
+.volt-http-res-scroll {
+	flex: 1 1 0;
+	min-height: 0;
+	padding: 8px 16px 16px;
 	overflow: auto;
-	font-family: var(--monaco-monospace-font);
-	font-size: 12px;
 }
 
-.volt-http-header-row {
-	display: grid;
-	grid-template-columns: minmax(120px, 30%) 1fr;
-	gap: 12px;
-	padding: 3px 0;
-	border-bottom: 1px solid var(--volt-http-line);
-}
-
-.volt-http-header-row .key {
-	color: var(--volt-http-muted);
-}
-
-.volt-http-header-row .value {
-	word-break: break-all;
+.volt-http-res-scroll .volt-http-table {
+	font-size: 12.5px;
 }
 
 .volt-http-empty {
 	color: var(--volt-http-muted);
 	padding: 8px 0;
+}
+
+.volt-http-empty.center {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 80px;
+	text-align: center;
 }
 
 .volt-http-empty.response,
@@ -306,17 +801,20 @@
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 10px;
+	gap: 12px;
+	padding: 16px;
 	color: var(--volt-http-muted);
+	text-align: center;
 }
 
-.volt-http-empty.response .codicon[class*='codicon-'],
-.volt-http-waiting .codicon[class*='codicon-'] {
+.volt-http-empty.response .codicon.codicon.codicon,
+.volt-http-waiting .codicon.codicon.codicon {
 	font-size: 28px;
 	opacity: 0.6;
 }
 
 .volt-http-error {
+	padding: 4px 16px;
 	color: var(--vscode-errorForeground);
 	font-family: var(--monaco-monospace-font);
 	font-size: 12px;

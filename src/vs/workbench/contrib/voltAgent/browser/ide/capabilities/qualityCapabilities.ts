@@ -9,7 +9,7 @@ import { IFileService } from '../../../../../../platform/files/common/files.js';
 import { IMarkerData, IMarkerService, MarkerSeverity } from '../../../../../../platform/markers/common/markers.js';
 import { COVERAGE_REPORT_FILES, IFileCoverageSummary, lineRanges, parseCoverage } from '../../../../../services/voltRuntime/common/ide/coverageReports.js';
 import { stripAnsi } from '../../../../../services/voltRuntime/common/ide/testReports.js';
-import { display, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, list, ok, resolvePath, str } from './capability.js';
+import { confinedReadRefusal, display, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, list, ok, resolvePath, str } from './capability.js';
 
 /** The newest coverage report in the project, summarized; per file, the lines that never ran. */
 export class CoverageCapability implements IIdeCapability {
@@ -35,6 +35,11 @@ export class CoverageCapability implements IIdeCapability {
 		}
 		if (!newest) {
 			return fail('No coverage report found (coverage/coverage-final.json, lcov.info, coverage.xml, coverage.out). Run tests with coverage first: tests op run coverage: true, or the project\'s coverage script.');
+		}
+		// The report may be a link the agent made: read it only where the chat's sandbox reads.
+		const refused = await confinedReadRefusal(ctx, newest.uri);
+		if (refused) {
+			return fail(`${newest.name} was not read: ${refused}.`);
 		}
 		const files = parseCoverage(newest.name, (await this.fileService.readFile(newest.uri)).value.toString());
 		const covered = files.reduce((sum, file) => sum + file.covered, 0);

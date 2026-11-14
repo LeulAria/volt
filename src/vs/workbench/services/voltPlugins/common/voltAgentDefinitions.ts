@@ -130,6 +130,7 @@ export function agentFootprintFromContribution(agent: IVoltAgentContribution, ui
 	readonly listHome?: boolean;
 	readonly chmodFolders?: readonly string[];
 	readonly ephemeralListen?: string;
+	readonly quietPaths?: { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths?: readonly string[] };
 } {
 	const state = agent.state ?? {};
 	return {
@@ -144,6 +145,7 @@ export function agentFootprintFromContribution(agent: IVoltAgentContribution, ui
 		...(state.listHome ? { listHome: true } : {}),
 		...(state.chmodFolders ? { chmodFolders: state.chmodFolders } : {}),
 		...(state.ephemeralListen ? { ephemeralListen: state.ephemeralListen } : {}),
+		...(state.quietPaths ? { quietPaths: { processes: [...state.quietPaths.processes], paths: [...state.quietPaths.paths], ...(state.quietPaths.readPaths ? { readPaths: [...state.quietPaths.readPaths] } : {}) } } : {}),
 	};
 }
 

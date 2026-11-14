@@ -25,7 +25,9 @@ import { IThemeService } from '../../../../../platform/theme/common/themeService
 import { IViewPaneOptions, ViewPane } from '../../../../browser/parts/views/viewPane.js';
 import { ViewPaneContainer } from '../../../../browser/parts/views/viewPaneContainer.js';
 import { Extensions as ViewExtensions, IViewContainersRegistry, IViewDescriptorService, IViewsRegistry, ViewContainerLocation } from '../../../../common/views.js';
+import { DEV_ENVIRONMENT_FEATURE_ID } from '../../../../services/voltRuntime/common/ide/ideTools.js';
 import { formatDuration } from '../../../../services/voltRuntime/common/terminals/watchedTasks.js';
+import { voltFeatureOn } from '../../../voltCustomize/common/voltFeatures.js';
 import { IAgentIdeActivity, IAgentIdeService } from './agentIdeService.js';
 
 const CONTAINER_ID = 'workbench.view.voltAgentSessions';
@@ -130,10 +132,11 @@ const container = Registry.as<IViewContainersRegistry>(ViewExtensions.ViewContai
 	order: 21,
 	ctorDescriptor: new SyncDescriptor(ViewPaneContainer, [CONTAINER_ID, { mergeViewWithContainerWhenSingleView: true }]),
 	storageId: CONTAINER_ID,
-	hideIfEmpty: false,
+	// Its only view goes while the Dev environment feature is off, and the container with it.
+	hideIfEmpty: true,
 }, ViewContainerLocation.Sidebar);
 Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViews([
-	{ id: VIEW_ID, name: localize2('voltSessions.view', "Agent Sessions"), ctorDescriptor: new SyncDescriptor(AgentSessionsView), canToggleVisibility: false, canMoveView: true },
+	{ id: VIEW_ID, name: localize2('voltSessions.view', "Agent Sessions"), ctorDescriptor: new SyncDescriptor(AgentSessionsView), canToggleVisibility: false, canMoveView: true, when: voltFeatureOn(DEV_ENVIRONMENT_FEATURE_ID) },
 ], container);
 Registry.as<IViewsRegistry>(ViewExtensions.ViewsRegistry).registerViewWelcomeContent(VIEW_ID, {
 	content: localize('voltSessions.empty', "Test runs, debug sessions and tasks agents start show here while they run."),

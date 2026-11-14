@@ -9,6 +9,7 @@ import { homedir, tmpdir } from 'os';
 import { promisify } from 'util';
 import { basename, dirname, isAbsolute, join, resolve } from '../../../base/common/path.js';
 import { isWindowsPathInside } from '../common/mxc.js';
+import type { ISandboxContainedPath } from '../common/compile.js';
 import { SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { isReservedEnvName, isSecretEnvName, systemReadPaths, XCRUN_CACHE } from '../common/sandboxProfiles.js';
 import { IResolvedGitDir, IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
@@ -51,6 +52,8 @@ export interface ISandboxRunContext {
 	readonly hostEnv: Readonly<Record<string, string | undefined>>;
 	/** Variables Volt itself sets for this run (provider settings). Reserved names are ignored. */
 	readonly env?: Readonly<Record<string, string>>;
+	/** Entries a narrowing layer (a repository's `.volt/sandbox.json`) narrowed to: refused unless still inside what they narrowed once canonical (B-32). */
+	readonly contained?: readonly ISandboxContainedPath[];
 }
 
 export interface ISandboxResolution {
@@ -65,12 +68,10 @@ interface ICanonical {
 	readonly isDirectory: boolean;
 }
 
-/** The real path, or the real path of the nearest existing parent plus the rest. */
-export function canonicalPath(path: string): Promise<ICanonical> {
-	return canonicalPathWith(path, path => fs.realpath(path));
-}
+type Realpath = (path: string) => Promise<string>;
 
-async function canonicalPathWith(path: string, realpath: (path: string) => Promise<string>): Promise<ICanonical> {
+/** The real path, or the real path of the nearest existing parent plus the rest. */
+export async function canonicalPath(path: string, realpath: Realpath = p => fs.realpath(p)): Promise<ICanonical> {
 	try {
 		const real = await realpath(path);
 		const stat = await fs.stat(real);
@@ -98,12 +99,13 @@ async function canonicalPathWith(path: string, realpath: (path: string) => Promi
  * of the run can be in flight together. A profile names a few hundred paths, most below the same
  * missing parents (`~/.config/…`); one at a time that was 560 `realpath` calls in a row for the
  * agent profile, about 50 ms of a busy machine's launch. Nothing is kept past the resolution, so
- * a path the workload changes later is read again by the next run.
+ * a path the workload changes later is read again by the next run. Answers are the ones a serial
+ * walk would get from the same file system.
  */
 function canonicalResolver(): (path: string) => Promise<ICanonical> {
 	const reals = new Map<string, Promise<string>>();
 	const answers = new Map<string, Promise<ICanonical>>();
-	const realpath = (path: string): Promise<string> => {
+	const realpath: Realpath = path => {
 		let real = reals.get(path);
 		if (!real) {
 			real = fs.realpath(path);
@@ -115,7 +117,7 @@ function canonicalResolver(): (path: string) => Promise<ICanonical> {
 	return path => {
 		let answer = answers.get(path);
 		if (!answer) {
-			answer = canonicalPathWith(path, realpath);
+			answer = canonicalPath(path, realpath);
 			answers.set(path, answer);
 		}
 		return answer;
@@ -253,11 +255,23 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 		}
 		if (c.exists && c.isDirectory) {
 			write.push(c.path);
-		} else if (c.exists || /\.[a-z0-9]{1,8}(-wal|-shm|-journal)?$/i.test(c.path)) {
-			// A file that is created later: a lock, or SQLite's sidecars, which exist only while the database is open.
+		} else if (c.exists || /\.[a-z0-9]{1,8}(?:-(?:wal|shm|journal))?$/i.test(c.path)) {
+			// A file to be created, named with an extension (a lock); SQLite's `-wal`/`-shm`/`-journal` exist only while the database is open (LIFE-WRITE-1).
 			writeFiles.push(c.path);
 		} else {
 			notes.push(`write path does not exist, skipped: ${c.path}`);
+		}
+	}
+
+	// A narrowed entry stays inside what it narrowed, judged on the same canonical answers its grant
+	// used: a symlink swapped in after the composition's check cannot carry it out (B-32).
+	for (const entry of context.contained ?? []) {
+		const parents = (await Promise.all(entry.within.flatMap(expand).map(canonical))).map(c => c.path);
+		for (const path of expand(entry.path)) {
+			const c = await canonical(path);
+			if (!parents.some(parent => isInside(c.path, parent))) {
+				refuse(`Refusing ${path} in ${entry.field}: a narrowing policy layer named it, and it resolves to ${c.path}, outside what that layer could narrow`);
+			}
 		}
 	}
 
@@ -372,7 +386,11 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	const usableDir = (dir: string) => readable(dir) && !deny.some(path => isInside(dir, path));
 	let cwd = runTmp;
 	if (context.cwd) {
-		cwd = (await canonical(context.cwd)).path;
+		const dir = await canonical(context.cwd);
+		cwd = dir.path;
+		if (!dir.exists || !dir.isDirectory) {
+			refuse(`The working directory does not exist: ${cwd}. Pick the chat's project folder again.`);
+		}
 		if (!usableDir(cwd)) {
 			refuse(`The working directory is not readable inside the sandbox: ${cwd}`);
 		}

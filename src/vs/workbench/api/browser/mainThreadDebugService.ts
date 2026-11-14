@@ -10,7 +10,7 @@ import {
 	ExtHostContext, ExtHostDebugServiceShape, MainThreadDebugServiceShape, DebugSessionUUID, MainContext,
 	IBreakpointsDeltaDto, ISourceMultiBreakpointDto, ISourceBreakpointDto, IFunctionBreakpointDto, IDebugSessionDto, IDataBreakpointDto, IStartDebuggingOptions, IDebugConfiguration, IThreadFocusDto, IStackFrameFocusDto
 } from '../common/extHost.protocol.js';
-import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
+import { assertNotVoltSandboxed, extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import severity from '../../../base/common/severity.js';
 import { AbstractDebugAdapter } from '../../contrib/debug/common/abstractDebugAdapter.js';
 import { IWorkspaceFolder } from '../../../platform/workspace/common/workspace.js';
@@ -35,7 +35,7 @@ export class MainThreadDebugService implements MainThreadDebugServiceShape, IDeb
 	private readonly _visualizerTreeHandles = new Map<string, IDisposable>();
 
 	constructor(
-		extHostContext: IExtHostContext,
+		private readonly extHostContext: IExtHostContext,
 		@IDebugService private readonly debugService: IDebugService,
 		@IDebugVisualizerService private readonly visualizerService: IDebugVisualizerService,
 	) {
@@ -253,6 +253,10 @@ export class MainThreadDebugService implements MainThreadDebugServiceShape, IDeb
 	}
 
 	public $registerDebugConfigurationProvider(debugType: string, providerTriggerKind: DebugConfigurationProviderTriggerKind, hasProvide: boolean, hasResolve: boolean, hasResolve2: boolean, handle: number): Promise<void> {
+		if (debugType === '*') {
+			// Volt: a provider for every type rewrites the program, arguments and environment of the user's own sessions.
+			assertNotVoltSandboxed(this.extHostContext, 'A debug configuration provider for every debug type');
+		}
 
 		const provider: IDebugConfigurationProvider = {
 			type: debugType,
@@ -317,6 +321,8 @@ export class MainThreadDebugService implements MainThreadDebugServiceShape, IDeb
 	}
 
 	public async $startDebugging(folder: UriComponents | undefined, nameOrConfig: string | IDebugConfiguration, options: IStartDebuggingOptions): Promise<boolean> {
+		// Volt: a session's program is launched by its adapter, which may run outside the sandbox (js-debug in the shared host).
+		assertNotVoltSandboxed(this.extHostContext, 'Starting a debug session');
 		const folderUri = folder ? uri.revive(folder) : undefined;
 		const launch = this.debugService.getConfigurationManager().getLaunch(folderUri);
 		const parentSession = this.getSession(options.parentSessionID);

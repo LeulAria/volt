@@ -44,7 +44,7 @@ const HOME_ENTRIES: readonly string[] = [
 	'.zshrc', '.zshenv', '.zprofile', '.zlogin', '.bashrc', '.bash_profile', '.bash_login', '.profile', '.config/fish',
 	'.gitconfig', '.config/git', 'Library/LaunchAgents', '.config/systemd', '.config/autostart',
 	// Volt's own settings and hooks (not `~/.volt/worktrees`, where chats work).
-	'.claude.json', '.claude', '.codex', '.cursor', '.config/opencode', '.agents', '.gemini', '.volt/hooks', '.volt/hooks.json', '.volt/mcp.json', '.volt/settings',
+	'.claude.json', '.claude', '.codex', '.cursor', '.config/opencode', '.agents', '.gemini', '.volt/hooks', '.volt/hooks.json', '.volt/mcp.json', '.volt/settings', '.volt/sandbox.json',
 	'AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup',
 ];
 

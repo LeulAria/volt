@@ -204,8 +204,18 @@ async function runShell(host: IShellToolHost, args: unknown, ctx: IToolContext):
 	if (result.logPath) {
 		host.onLog?.(result.logPath);
 	}
+	// What the chat's sandbox stopped: the chat shows its Volt Guard card, as for an agent CLI's own
+	// commands. No broker record goes with it (the card's "Allow" changes the chat's settings, which
+	// the next command reads).
+	for (const { denialId: _id, epoch: _epoch, ...denial } of result.sandboxDenials ?? []) {
+		ctx.emit?.({ type: 'sandbox.denial', denial });
+	}
 	const seconds = (result.durationMs / 1000).toFixed(1);
 	const output = result.combined.trim() || '(no output)';
+	if (result.refused) {
+		// Nothing ran: the chat's sandbox refused it (or it came without it). An error, never an exit status (FAIL-NATIVE-1).
+		return fail(`$ ${command}\n${result.combined.trim() || result.refused.reason}\n[not run: refused by Volt's sandbox (${result.refused.kind})]`);
+	}
 	let status: string;
 	if (result.running && !background) {
 		status = `[still running after ${seconds}s as job ${id}; output so far is above. Keep working, or job_wait (id, until, timeout_ms) for it; job_output reads more, job_stop stops it]`;

@@ -94,6 +94,20 @@ export class VoltTrustService extends Disposable implements IVoltTrustService {
 		return result;
 	}
 
+	async approveChatDenial(chatId: string, denialId: string, epoch: number, gesture: IUserGestureToken | undefined): Promise<IVoltSandboxApproval> {
+		if (!this.gestures.consume(gesture, chatSubject(chatId))) {
+			return { ok: false, epoch, reason: 'not allowed: the click did not come from Volt\'s own card' };
+		}
+		if (!this.stdio.approveChatDenial) {
+			return { ok: false, epoch, reason: 'this execution host has no network broker' };
+		}
+		const result = await this.stdio.approveChatDenial(chatId, denialId, epoch);
+		if (result.ok) {
+			void this.refresh();
+		}
+		return result;
+	}
+
 	async refuseDenial(processId: string, denialId: string): Promise<void> {
 		await this.stdio.refuseSandboxDenial?.(processId, denialId).catch(() => false);
 	}

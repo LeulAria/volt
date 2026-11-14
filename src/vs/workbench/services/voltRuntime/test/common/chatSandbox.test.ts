@@ -7,7 +7,7 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { isAtLeastAsStrict, spawnSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxInheritance.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, sandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
-import { confineChatSandbox, handoffSandboxRefusal, IChatSandboxStore, sandboxedInstructionRefusal } from '../../common/access/chatSandbox.js';
+import { chatSandboxScope, confineChatSandbox, handoffSandboxRefusal, IChatSandboxStore, sandboxedInstructionRefusal } from '../../common/access/chatSandbox.js';
 import { sandboxCovers } from '../../common/hostToolSandbox.js';
 import { isSandboxRefusedMessage, isSandboxUnavailableError, sandboxPlatformUnavailable, sandboxRefusedMessage, sandboxRefusedReason, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 
@@ -21,6 +21,14 @@ class FakeStore implements IChatSandboxStore {
 	async setSandboxSettings(id: string, settings: IVoltSandboxSettings): Promise<void> {
 		this.writes++;
 		this.chats.set(id, settings);
+	}
+}
+
+/** A store that knows each chat's working folder, as the runtime does. */
+class FolderStore extends FakeStore {
+	readonly folders = new Map<string, string>();
+	workingFolder(id: string): string | undefined {
+		return this.folders.get(id);
 	}
 }
 
@@ -127,6 +135,42 @@ suite('Volt chat sandbox', () => {
 		assert.ok(!allowed.forcedReadOnly, 'inside a folder the user allowed the caller');
 		assert.ok(!sandboxCovers(WRITE, WRITE, { target: '/Users/me/real-elsewhere', caller: '/Users/me/.volt/worktrees/p/wt-a' }));
 		assert.ok(spawnSandboxSettings(DEFAULT_SANDBOX_SETTINGS, WRITE, { child: { roots: ['/anywhere'] } }).settings === undefined, 'an unsandboxed caller confines nothing');
+	});
+
+	test('SCOPE-27a: a child whose workspace roots are unknown runs read-only (unknown folders fail closed)', async () => {
+		const store = new FakeStore();
+		const unknown = await confineChatSandbox(store, 'unknown', WRITE, { caller: CALLER, child: {} });
+		assert.ok(unknown.forcedReadOnly, 'no roots: it could write anywhere');
+		assert.strictEqual(store.getSandboxSettings('unknown').level, 'read-only');
+		const noScopes = await confineChatSandbox(store, 'no-scopes', WRITE);
+		assert.ok(noScopes.forcedReadOnly, 'a caller that passes no scopes gets the same');
+		const callerUnknown = await confineChatSandbox(store, 'caller-unknown', WRITE, { caller: {}, child: { roots: ['/Users/me/code/p'] } });
+		assert.ok(callerUnknown.forcedReadOnly, 'the caller\'s folders unknown: it covers only its allowed folders');
+		const none = await confineChatSandbox(store, 'no-folder', WRITE, { caller: CALLER, child: { roots: [] } });
+		assert.ok(!none.forcedReadOnly, 'a child known to have no workspace writes none');
+		assert.ok(!isAtLeastAsStrict(WRITE, WRITE, { a: {}, b: CALLER }), 'with scopes, an unknown target folder is not covered');
+		assert.ok(isAtLeastAsStrict(WRITE, WRITE), 'settings alone still compare as settings');
+	});
+
+	test('SCOPE-27b: thread_send compares both chats\' folders: a target writing a folder the sender can\'t is refused', () => {
+		const store = new FolderStore();
+		store.chats.set('a', WRITE).set('b', WRITE).set('a2', WRITE).set('lost', WRITE);
+		store.folders.set('a', '/Users/me/code/a').set('b', '/Users/me/code/b').set('a2', '/Users/me/code/a/sub');
+		const refusal = sandboxedInstructionRefusal(store, 'a', 'b', 'B');
+		assert.ok(refusal?.includes('writes a folder this chat cannot'), refusal);
+		assert.strictEqual(sandboxedInstructionRefusal(store, 'a', 'a2', 'A2'), undefined, 'a target inside the sender\'s folder is covered');
+		assert.ok(sandboxedInstructionRefusal(store, 'a', 'b', 'B', { from: { roots: ['/Users/me/code/a'] }, to: {} }), 'unknown target roots fail closed');
+		const blind = new FakeStore(WRITE);
+		assert.ok(sandboxedInstructionRefusal(blind, 'x', 'y', 'Y'), 'a store that does not know folders: refused, never assumed to write nothing');
+		assert.strictEqual(sandboxedInstructionRefusal(store, 'a', 'lost', 'Lost'), undefined, 'a chat with no folder writes no workspace');
+	});
+
+	test('SCOPE-27c: chatSandboxScope resolves the working folder through realpath; no folder is no roots', async () => {
+		const store = new FolderStore();
+		store.folders.set('a', '/link/a');
+		assert.deepStrictEqual(await chatSandboxScope(store, 'a', async path => path.replace('/link', '/real')), { roots: ['/real/a'] });
+		assert.deepStrictEqual(await chatSandboxScope(store, 'none'), { roots: [] });
+		assert.deepStrictEqual(await chatSandboxScope(new FakeStore(), 'a'), {}, 'unknown');
 	});
 
 	test('refused spawns: the error name survives, the message is recognized', () => {

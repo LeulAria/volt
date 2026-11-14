@@ -6,8 +6,10 @@
 import { chatCovers } from '../../../../platform/voltSandbox/common/authority.js';
 import { chatSubject } from '../../../../platform/voltSandbox/common/principals.js';
 import { domainAllowed, isPathInside, IVoltSandboxSettings, SandboxStrategy, strategyAtLeast, VoltSandboxLevel } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
-import { threadIdArg } from './orchestration/agentThreadTools.js';
+import { ideSandboxInstead, ideToolSandboxUse } from './ide/ideSandbox.js';
+import { stringList, threadIdArg } from './orchestration/agentThreadTools.js';
 import { parseActScript } from './tools/actScript.js';
+import { fileEditPaths } from './tools/fileEdits.js';
 import { localImagePaths } from './tools/localImages.js';
 
 /**
@@ -28,7 +30,7 @@ import { localImagePaths } from './tools/localImages.js';
  *   (any tool can add writes for a call: browser_run `edits`, a flow `save`).
  * - `persists`: memory and skills, which later chats read, sandboxed or not. Refused.
  * - `delegates`: prompts another chat, which runs with its own sandbox. Only when that chat is
- *   sandboxed at least as strictly as the caller.
+ *   sandboxed at least as strictly as the caller (each chat, when a call reaches several).
  * - `spawns`: starts a new chat or subagent. Refused until new chats inherit the caller's
  *   sandbox (`SPAWNED_CHATS_INHERIT_SANDBOX`).
  * - `sandboxed`: runs a process for the chat inside the chat's own OS sandbox, with its rules
@@ -111,23 +113,6 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	instant_grep: 'reads',
 	find_symbol: 'reads',
 	find_files: 'reads',
-	// The editor's language servers: code_nav and diagnostics read the files they name; code_action
-	// writes its file (rename: every file that uses the symbol, all inside the chat's folder).
-	code_nav: 'reads',
-	diagnostics: 'reads',
-	code_action: 'writes',
-
-	// The IDE: tests, the debugger, tasks and the `ide` gateway (agentIdeService.ts). Programs its
-	// capabilities run themselves (docker, git, profilers, analyzers) run in the chat's sandbox
-	// (`IdeCli`); test runs, debug sessions, tasks and notebook kernels run in the IDE's own
-	// services, so the provider asks the user once per chat before the first one (`needsApproval`).
-	// Files they name are judged as reads. These were refused outright, so a Supervised chat had
-	// none of them, while the provider's sandbox handling was never reached.
-	tests: 'sandboxed',
-	debug: 'sandboxed',
-	tasks: 'sandboxed',
-	ide: 'sandboxed',
-
 	// Pull requests: Volt's links and watches (gh reads). The stack tools run git checkout, rebase and push here.
 	link_pull_request: 'safe',
 	unlink_pull_request: 'safe',
@@ -214,7 +199,8 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	thread_search: 'reads-other',
 	thread_read: 'reads-other',
 	thread_send: 'delegates',
-	thread_wait: 'safe',
+	// Its answer carries the waited-on chat's last reply.
+	thread_wait: 'reads-other',
 	thread_interrupt: 'safe',
 	thread_fork: 'spawns',
 	// git add, commit and merge in both checkouts.
@@ -222,25 +208,56 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	thread_launch: 'spawns',
 	thread_update: 'safe',
 	thread_configure: 'safe',
-	queue_list: 'safe',
+	// Another chat's queued prompts, word for word.
+	queue_list: 'reads-other',
 	queue_edit: 'delegates',
 	queue_cancel: 'safe',
 	queue_reorder: 'safe',
 	queue_send_now: 'delegates',
 	queue_resume: 'delegates',
-	worktree_status: 'safe',
+	// The status of another chat's checkout (its changed files).
+	worktree_status: 'reads-other',
 	worktree_list: 'safe',
 	worktree_handoff: 'escapes',
 
-	// The orchestra: teams and councils are delegated tasks (they inherit this chat's sandbox), team
-	// messages reach this request's own members, and the board is Volt's state. machine_run runs the
-	// work on another machine and applies its branch here.
+	// Orchestra (orchestration/orchestra.ts, agentOrchestraService.ts). spawn_team and council start
+	// every member and seat as a subagent of the caller, through the orchestrator: each is confined at
+	// least as strictly before each of its turns (the orchestrator's startTurn), and one whose agent
+	// would be sandboxed more weakly is never started. Members in new worktrees need Volt's setup
+	// outside the sandbox (refused, as for delegate_task). team_send prompts teammates and the board's
+	// posts reach them: each such chat must be confined at least as strictly (INV-11); which chats a
+	// call reaches only the orchestra knows (`chatsByProvider`). Reading a team is reading its posts:
+	// the lead's and members' own team, or a team in the caller's subtree; any other team needs
+	// agents.read:other. orchestra_status without a team is Volt's state (machines, models, budget, the
+	// caller's own teams). machine_run sends the brief and the code to a remote runner, whose agent
+	// runs outside any sandbox (the relay runner, B-06), and `apply` fetches its branch into a new
+	// worktree with git here: refused. There is no local machine_run (work for this machine goes
+	// through delegate_task or spawn_team); reading and cancelling this chat's own runs is Volt's state.
 	orchestra_status: 'safe',
 	spawn_team: 'spawns',
+	team_send: 'delegates',
+	team_board: 'reads-other',
 	council: 'spawns',
-	team_send: 'spawns',
-	team_board: 'safe',
 	machine_run: 'escapes',
+
+	// Agent IDE: by tool and op (`ideToolSandboxUse`, ide/ideSandbox.ts). A test run executes the
+	// project's test command in the chat's sandbox; debug sessions, tasks and notebook kernels run
+	// outside it; the `ide` gateway's ops say what they do in ideCapabilities.ts.
+	tests: 'sandboxed',
+	debug: 'escapes',
+	tasks: 'escapes',
+	ide: 'escapes',
+
+	// Code intelligence: the editor's language servers, in Volt's process. The files named are judged;
+	// for a sandboxed chat its results (locations, previews, bodies, other files' diagnostics) are only
+	// what it may read, and code_action writes only where the sandbox would let the agent write.
+	code_nav: 'reads',
+	diagnostics: 'reads',
+	code_action: 'writes',
+
+	// Job waits: the agent's check command runs in the chat's sandbox; Volt's pid probe runs only a number.
+	watch_job: 'sandboxed',
+	unwatch_job: 'safe',
 };
 
 /**
@@ -275,6 +292,14 @@ export interface IHostToolSandboxUse {
 	readonly target?: string;
 	/** `reads-other`: it reads chats in general, never only the caller's own. */
 	readonly readsAnyChat?: boolean;
+	/** `reads-other`: more chats it reads (thread_wait's list), besides `target`. */
+	readonly targets?: readonly string[];
+	/**
+	 * The chats it prompts or reads are named in the serving provider's own terms (team members by
+	 * name, "all", a team id): the gate asks the provider which (`IVoltHostToolProvider.chatReach`),
+	 * judges each one, and refuses the call when the provider cannot say.
+	 */
+	readonly chatsByProvider?: boolean;
 }
 
 const MANAGE_AUTOMATION_SAFE = new Set(['list', 'delete']);
@@ -303,7 +328,8 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 		case 'manage_automations':
 			return { kind: MANAGE_AUTOMATION_SAFE.has(action) ? 'safe' : 'escapes' };
 		case 'automation':
-			return { kind: AUTOMATION_ACTIONS[action] ?? 'escapes' };
+			// Own keys only: `constructor` is an action the gate does not know, not Object's (SEC3-4).
+			return { kind: Object.prototype.hasOwnProperty.call(AUTOMATION_ACTIONS, action) ? AUTOMATION_ACTIONS[action] : 'escapes' };
 		case 'image_inspect':
 			return { kind, reads: strings([args.path]) };
 		case 'instant_grep':
@@ -313,26 +339,6 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 			return { kind, reads: strings([args.path]).length ? strings([args.path]) : ['.'] };
 		case 'workspace_status':
 			return { kind, reads: ['.'] };
-		case 'tests':
-		case 'debug':
-		case 'tasks':
-		case 'ide':
-			return { kind, reads: ['.', ...idePaths(name === 'ide' && isRecord(args.args) ? args.args : args)] };
-		case 'code_nav':
-			// workspace_symbols and the hierarchy ops answer from the whole workspace.
-			return { kind, reads: strings([args.path]).length ? [...strings([args.path]), '.'] : ['.'] };
-		case 'diagnostics':
-			return { kind, reads: Array.isArray(args.paths) && args.paths.length ? strings(args.paths) : ['.'] };
-		case 'code_action': {
-			const op = typeof args.op === 'string' ? args.op : '';
-			if (op === 'fixes') {
-				return { kind: 'reads', reads: strings([args.path]) };
-			}
-			// No path: the gate judges the chat's folder, so a read-only chat is refused. A rename writes
-			// every file that uses the symbol: the chat's folder is judged, and code_action applies
-			// nothing when any of those files is outside it (`applyChanges`).
-			return { kind, writes: op === 'rename' ? ['.', ...strings([args.path])] : strings([args.path]).length ? strings([args.path]) : ['.'] };
-		}
 		case 'browser_compare_image':
 			return { kind, reads: strings([args.reference_path]), urls: strings([args.url]) };
 		case 'html_render':
@@ -355,10 +361,6 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 			return { kind: spawnKind(args.workspace === 'worktree' || (isRecord(args.workspace) && args.workspace.type === 'worktree')) };
 		case 'thread_fork':
 			return { kind: spawnKind(args.workspace === 'worktree' || (isRecord(args.workspace) && args.workspace.type === 'worktree')) };
-		case 'spawn_team':
-			return { kind: spawnKind(args.isolation === 'worktree' || asList(args.members).some(member => member.isolation === 'worktree')) };
-		case 'council':
-		case 'team_send':
 		case 'message_task':
 			return { kind: spawnKind(false) };
 		case 'thread_send':
@@ -366,14 +368,58 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 		case 'queue_send_now':
 		case 'queue_resume':
 		case 'thread_read':
+		case 'queue_list':
+		case 'worktree_status':
 			return { kind, target: threadIdArg(args.thread_id) };
+		case 'thread_wait': {
+			// `thread_ids` as the tool reads it: a list, JSON text of one, or a single id (SEC3-4).
+			const targets = [...stringList(args.thread_ids, 20).map(threadIdArg), threadIdArg(args.thread_id)].filter((id): id is string => !!id);
+			return { kind, ...(targets.length ? { targets } : { readsAnyChat: true }) };
+		}
 		case 'thread_search':
 			return { kind, readsAnyChat: true };
+		case 'spawn_team':
+			// The team's `isolation`, or any member's own.
+			return { kind: spawnKind(args.isolation === 'worktree' || asList(args.members).some(member => member.isolation === 'worktree')) };
+		case 'council':
+			// Its seats work in this chat's checkout: a council takes no `isolation`.
+			return { kind: spawnKind(false) };
+		case 'team_send':
+			return { kind, chatsByProvider: true };
+		case 'team_board':
+			return { kind: TEAM_BOARD_POSTS.has(opArg(args)) ? 'delegates' : 'reads-other', chatsByProvider: true };
+		case 'orchestra_status':
+			return strings([args.team_id]).length ? { kind: 'reads-other', chatsByProvider: true } : { kind };
+		case 'machine_run':
+			return { kind: MACHINE_RUN_OWN.has(opArg(args)) ? 'safe' : 'escapes' };
+		case 'tests':
+		case 'debug':
+		case 'tasks':
+		case 'ide':
+			return ideToolSandboxUse(name, args) ?? { kind };
+		case 'code_nav':
+			// workspace_symbols names no file: it searches the chat's folder.
+			return { kind, reads: strings([args.path, args.file]).length ? strings([args.path, args.file]) : ['.'] };
+		case 'diagnostics':
+			return { kind, reads: listOf(args.paths).length ? listOf(args.paths) : ['.'] };
+		case 'code_action':
+			// `fixes` only lists what the language server offers; the others change `path` (a rename, other files too: judged as they come).
+			return args.op === 'fixes' ? { kind: 'reads', reads: strings([args.path]) } : { kind, reads: strings([args.path]), writes: strings([args.path]) };
 	}
 	if (kind === 'browser') {
 		return { kind, urls: browserCallUrls(args) };
 	}
 	return { kind };
+}
+
+/** team_board ops that post on the board, which every other chat of the team reads (`read` and `claim` only read it). */
+const TEAM_BOARD_POSTS = new Set(['note', 'done', 'release', 'block', 'add']);
+/** machine_run ops on this chat's own runs: Volt's records (`run` and `apply` run outside the sandbox). */
+const MACHINE_RUN_OWN = new Set(['status', 'cancel']);
+
+/** An `op` as the orchestra reads it (trimmed, case kept: an op it does not know runs nothing). */
+function opArg(args: Readonly<Record<string, unknown>>): string {
+	return typeof args.op === 'string' ? args.op.trim() : '';
 }
 
 /** A start of a new chat: refused until spawned chats inherit the sandbox; one in a new worktree runs setup scripts outside it. */
@@ -393,20 +439,14 @@ function strings(values: readonly unknown[]): string[] {
 	return values.filter((value): value is string => typeof value === 'string' && !!value.trim()).map(value => value.trim());
 }
 
-/** Files an IDE call names (a program, a notebook, an .http file, a test file), judged as reads. */
-function idePaths(args: Readonly<Record<string, unknown>>): string[] {
-	const named = strings([args.path, args.program, args.file, args.notebook, args.cwd]);
-	// Test targets are files, folders, file:line or test names: only the ones that look like paths.
-	const targets = Array.isArray(args.targets) ? strings(args.targets).map(target => target.replace(/:\d+$/, '')).filter(target => /[\\/]|\.\w+$/.test(target)) : [];
-	return [...named, ...targets];
+/** A string or a list of strings. */
+function listOf(value: unknown): string[] {
+	return strings(Array.isArray(value) ? value : [value]);
 }
 
-/** browser_run `edits`: each `path` it changes. */
+/** browser_run `edits`: each path it changes, under every key the edit parser reads (`file`, `file_path`, ...). */
 function editPaths(edits: unknown): string[] {
-	if (edits === undefined) {
-		return [];
-	}
-	return strings((Array.isArray(edits) ? edits : [edits]).map(edit => isRecord(edit) ? edit.path : undefined));
+	return edits === undefined ? [] : fileEditPaths(edits);
 }
 
 /** A flow `save` writes `.volt/flows/<name>.flow` in the chat's folder. */
@@ -416,6 +456,37 @@ function flowWrites(save: unknown): string[] {
 
 const OPEN_ACTIONS = new Set(['navigate', 'goto', 'open', 'visit', 'launch']);
 const OPEN_LINE = /^\s*(?:\?\s*)?(?:goto|open|navigate|visit|launch)\b\s*(?:"([^"]*)"|'([^']*)'|(\S*))/i;
+
+/**
+ * What one step object opens, read as loosely as any step parser reads it (SEC3-4): the action
+ * under `action`, `do`, `type_of` or `step` (`browser_` prefix, any case), the shorthand
+ * `{ navigate: url }` or `{ goto: { href } }`, and the URL under `url` or `href`. More than a parser
+ * takes is fine: the gate only judges more.
+ */
+function stepTargets(step: Readonly<Record<string, unknown>>): string[] {
+	const out: string[] = [];
+	const named = [step.action, step.do, step.type_of, step.step].find((value): value is string => typeof value === 'string');
+	const action = named?.trim().toLowerCase().replace(/^browser_/, '') ?? '';
+	for (const key of ['url', 'href']) {
+		if (typeof step[key] === 'string') {
+			out.push(step[key] as string);
+		}
+	}
+	if (OPEN_ACTIONS.has(action) && !out.length) {
+		out.push(typeof step.target === 'string' ? step.target : '');
+	}
+	for (const [key, value] of Object.entries(step)) {
+		if (!OPEN_ACTIONS.has(key.toLowerCase().replace(/^browser_/, ''))) {
+			continue;
+		}
+		if (typeof value === 'string') {
+			out.push(value);
+		} else if (isRecord(value)) {
+			out.push(...strings([value.url, value.href, value.target]));
+		}
+	}
+	return out;
+}
 
 /**
  * What the steps of an act call open (`goto` lines, navigate steps): URLs in a browser, deep links
@@ -439,10 +510,7 @@ function openedTargets(args: Readonly<Record<string, unknown>>): string[] {
 		}
 	}
 	for (const step of asList(args.steps)) {
-		const action = typeof step.action === 'string' ? step.action.trim().toLowerCase() : '';
-		if (OPEN_ACTIONS.has(action) || typeof step.url === 'string') {
-			out.push(typeof step.url === 'string' ? step.url : typeof step.target === 'string' ? step.target : '');
-		}
+		out.push(...stepTargets(step));
 	}
 	return out;
 }
@@ -574,12 +642,32 @@ export function legacyHostToolRefusal(use: IHostToolSandboxUse | undefined, call
 		case 'network':
 			return !sandbox.network;
 		case 'writes':
-			// A tool whose whole job is writing (code_action): never for a read-only chat.
+			// A read-only chat may write nowhere: refused before its paths are judged, as the Authority does.
 			return sandbox.level === 'read-only';
 		case 'delegates':
 			return !!use.target && use.target !== callerSessionId && !covers;
 		case 'reads-other':
-			return !!use.readsAnyChat || (use.target !== undefined && use.target !== callerSessionId);
+			return !!use.readsAnyChat || readTargets(use).some(target => target !== callerSessionId);
+	}
+	return false;
+}
+
+/** The chats a `reads-other` call names (`target` and `targets`). */
+export function readTargets(use: IHostToolSandboxUse): string[] {
+	return [...use.target !== undefined ? [use.target] : [], ...use.targets ?? []];
+}
+
+/**
+ * Whether `target` is `caller` or one of its children (its subagents and the side chats started
+ * from it, at any depth), by `parentOf`. A sandboxed chat reads only those.
+ */
+export function chatInSubtree(caller: string, target: string, parentOf: (id: string) => string | undefined): boolean {
+	let current: string | undefined = target;
+	for (let depth = 0; current !== undefined && depth < 32; depth++) {
+		if (current === caller) {
+			return true;
+		}
+		current = parentOf(current);
 	}
 	return false;
 }
@@ -667,12 +755,12 @@ export function isLoopbackHost(host: string): boolean {
 	return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '0.0.0.0' || /^127(\.\d{1,3}){3}$/.test(host);
 }
 
-/** What the model reads when a tool is refused for a sandboxed chat: what happened and what to do instead. */
-export function sandboxRefusalMessage(name: string, kind: HostToolSandboxClass | undefined, settings: IVoltSandboxSettings): string {
+/** What the model reads when a tool is refused for a sandboxed chat: what happened and what to do instead. `args`: the call's, for op-specific advice. */
+export function sandboxRefusalMessage(name: string, kind: HostToolSandboxClass | undefined, settings: IVoltSandboxSettings, args?: Readonly<Record<string, unknown>>): string {
 	const head = `${name} was not run: this chat runs in Volt's ${settings.level === 'read-only' ? 'read-only ' : ''}sandbox`;
 	switch (kind) {
 		case 'escapes':
-			return `${head}, and ${name} would run outside it. ${INSTEAD[name] ?? 'Do it with your own tools inside the sandbox, or ask the user to turn the sandbox off for this chat.'}`;
+			return `${head}, and ${name}${ideOpLabel(name, args)} would run outside it. ${(args && ideSandboxInstead(name, args)) ?? INSTEAD[name] ?? 'Do it with your own tools inside the sandbox, or ask the user to turn the sandbox off for this chat.'}`;
 		case 'persists':
 			return `${head}, and ${name} would save something later chats read outside the sandbox. Put what matters in your reply instead, or ask the user to save it.`;
 		case 'spawns':
@@ -686,6 +774,14 @@ export function sandboxRefusalMessage(name: string, kind: HostToolSandboxClass |
 		default:
 			return `${head}, and ${name} is not cleared to run from a sandboxed chat. Continue without it, or ask the user to turn the sandbox off for this chat.`;
 	}
+}
+
+/** ` (op run)`, ` (notebook run)`: which op of an op-based IDE tool was refused. */
+function ideOpLabel(name: string, args: Readonly<Record<string, unknown>> | undefined): string {
+	if (!args || typeof args.op !== 'string' || !args.op || !['tests', 'debug', 'tasks', 'ide'].includes(name)) {
+		return '';
+	}
+	return name === 'ide' && typeof args.capability === 'string' ? ` (${args.capability} ${args.op})` : ` (op ${args.op})`;
 }
 
 const SHELL_INSTEAD = 'Run the command with your own shell tool instead: it runs inside the sandbox.';
@@ -715,8 +811,45 @@ const INSTEAD: Readonly<Record<string, string>> = {
 	manage_automations: 'Ask the user to create, change or run the automation.',
 	automation: 'Ask the user to do it.',
 	delegate_task: 'Do the work in this chat instead.',
-	spawn_team: 'Run the team with isolation "shared", or do the work in this chat.',
-	machine_run: 'Ask the user to run it on that machine.',
 	thread_launch: 'Do the work in this chat, or ask the user to start the chat.',
 	thread_fork: 'Do the work in this chat, or ask the user to fork it.',
+	// Orchestra.
+	spawn_team: 'Members in their own worktrees need Volt to set those up outside the sandbox. Start the team without `isolation: "worktree"`: members then share this chat\'s checkout and its sandbox (give them items that do not overlap).',
+	machine_run: 'A remote server runs its agent outside any sandbox, and `apply` fetches the run\'s branch with git here. Do the work on this machine instead: delegate_task and spawn_team run inside this chat\'s sandbox. Or ask the user to run it on that machine, or to turn the sandbox off for this chat.',
 };
+
+/** What to do instead when a call reaches chats its sandbox may not, by tool and what it would do. */
+const REACH_INSTEAD: Readonly<Record<string, string>> = {
+	'team_send:delegates': 'Message only teammates at least as sandboxed as this chat, put it in your report (it goes to the lead), or ask the user to give them this chat\'s sandbox.',
+	'team_send:reads-other': 'Send it without `wait`: the answer comes back to this chat as a team message.',
+	'team_board:delegates': 'Every other member reads what you post on the board. Put it in your report instead (it goes to the lead), or ask the user to give them this chat\'s sandbox.',
+	'team_board:reads-other': 'Read the team this chat leads or is on (team_board without team_id), or ask the user for what that team found.',
+	'orchestra_status:reads-other': 'Ask for the team this chat leads or is on, or call orchestra_status without team_id.',
+	'task_status:reads-other': 'It is not one of this chat\'s own tasks: its report goes to the chat that started it. Read this chat\'s own tasks (task_status without task_id) or the team board, or ask the user.',
+	'message_task:reads-other': 'It is not one of this chat\'s own tasks: message a teammate with team_send (judged by its sandbox), or ask the user.',
+};
+
+/** "A", "A and B", "A, B and 3 more". */
+function chatList(labels: readonly string[]): string {
+	const names = [...new Set(labels)].map(label => `"${label}"`);
+	const shown = names.slice(0, 5);
+	const more = names.length - shown.length;
+	if (more > 0) {
+		return `${shown.join(', ')} and ${more} more`;
+	}
+	return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : shown[0] ?? 'another chat';
+}
+
+/**
+ * What the model reads when a call whose provider names the chats it reaches (`chatsByProvider`)
+ * would prompt chats less confined than the caller (`delegates`), or return what chats outside
+ * its subtree wrote (`reads-other`): which chats, and what to do instead.
+ */
+export function sandboxReachRefusal(name: string, kind: 'delegates' | 'reads-other', labels: readonly string[], settings: IVoltSandboxSettings): string {
+	const head = `${name} was not run: this chat runs in Volt's ${settings.level === 'read-only' ? 'read-only ' : ''}sandbox`;
+	const chats = chatList(labels);
+	const instead = REACH_INSTEAD[`${name}:${kind}`] ?? (kind === 'delegates' ? 'Do the work in this chat, or ask the user.' : 'Work from this chat\'s own context, or ask the user.');
+	return kind === 'delegates'
+		? `${head}, and ${chats} ${labels.length === 1 ? 'is' : 'are'} less confined than this chat: ${labels.length === 1 ? 'it' : 'they'} would act on your message with access this chat does not have. ${instead}`
+		: `${head}, and ${name} would return what ${chats} wrote, which needs the agents.read:other permission that sandboxed chats do not have. ${instead}`;
+}

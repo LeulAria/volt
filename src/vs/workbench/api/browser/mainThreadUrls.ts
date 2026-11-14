@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ExtHostContext, MainContext, MainThreadUrlsShape, ExtHostUrlsShape } from '../common/extHost.protocol.js';
-import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
+import { assertHostsExtension, extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { IURLService, IOpenURLOptions } from '../../../platform/url/common/url.js';
 import { URI, UriComponents } from '../../../base/common/uri.js';
 import { Disposable, IDisposable } from '../../../base/common/lifecycle.js';
@@ -38,7 +38,7 @@ export class MainThreadUrls extends Disposable implements MainThreadUrlsShape {
 	private readonly handlers = new Map<number, { extensionId: ExtensionIdentifier; disposable: IDisposable }>();
 
 	constructor(
-		context: IExtHostContext,
+		private readonly context: IExtHostContext,
 		@ITrustedDomainService trustedDomainService: ITrustedDomainService,
 		@IURLService private readonly urlService: IURLService,
 		@IExtensionUrlHandler private readonly extensionUrlHandler: IExtensionUrlHandler
@@ -49,6 +49,8 @@ export class MainThreadUrls extends Disposable implements MainThreadUrlsShape {
 	}
 
 	async $registerUriHandler(handle: number, extensionId: ExtensionIdentifier, extensionDisplayName: string): Promise<void> {
+		// Volt (B-08): only for an extension this host runs; another's handler (its OAuth callback) is not its to take.
+		assertHostsExtension(this.context, extensionId);
 		const handler = new ExtensionUrlHandler(this.proxy, handle, extensionId, extensionDisplayName);
 		const disposable = this.urlService.registerHandler(handler);
 

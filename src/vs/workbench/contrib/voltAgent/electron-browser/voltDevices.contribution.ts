@@ -48,7 +48,8 @@ import './voltWindowCapture.js';
 
 registerMainProcessRemoteService(IVoltDevicesService, VOLT_DEVICES_CHANNEL_NAME);
 registerMainProcessRemoteService(IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME);
-registerMainProcessRemoteService(IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME);
+// The desktop engines can always try: `isAvailable` is answered here, not sent to a main process that has no such method.
+registerMainProcessRemoteService(IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME, { proxyOptions: { properties: new Map([['isAvailable', undefined]]) } });
 registerSingleton(IAgentDevicesService, AgentDevicesService, InstantiationType.Delayed);
 
 export const OPEN_DEVICE_PREVIEW_COMMAND_ID = 'volt.devices.openPreview';

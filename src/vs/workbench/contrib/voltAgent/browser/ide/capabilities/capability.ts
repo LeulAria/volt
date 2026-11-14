@@ -8,9 +8,10 @@ import { isAbsolute } from '../../../../../../base/common/path.js';
 import { joinPath, relativePath } from '../../../../../../base/common/resources.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../../base/common/uuid.js';
-import { hostGitArgs } from '../../../../../../platform/voltGit/common/hostGit.js';
-import type { IVoltSandboxRequest } from '../../../../../../platform/voltSandbox/common/sandboxPolicy.js';
-import { IVoltExecContext, IVoltStdioService, runGitThrough } from '../../../../../../platform/voltStdio/common/voltStdio.js';
+import { IVoltSandboxRequest, IVoltSandboxSettings } from '../../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IVoltStdioService } from '../../../../../../platform/voltStdio/common/voltStdio.js';
+import { runChatGit } from '../../../../../services/voltRuntime/browser/tools/gitTools.js';
+import { IChatExec } from '../../../../../services/voltRuntime/common/execContext.js';
 import { IVoltHostFileChange } from '../../../../../services/voltRuntime/common/hostTools.js';
 import { shellQuote } from '../../../../../services/voltRuntime/common/ide/testFrameworks.js';
 import { stripAnsi } from '../../../../../services/voltRuntime/common/ide/testReports.js';
@@ -23,6 +24,31 @@ export interface IIdeCapabilityContext {
 	readonly chatId: string | undefined;
 	readonly token: CancellationToken;
 	readonly cli: IdeCli;
+	/**
+	 * A sandboxed chat's call: its sandbox, and the gate's rules for files an op finds or makes rather
+	 * than files the agent named (conflicted files, a report, a profile the sandboxed program wrote).
+	 * See {@link confinedReadRefusal}.
+	 */
+	readonly confinement?: IIdeConfinement;
+}
+
+export interface IIdeConfinement {
+	readonly sandbox: IVoltSandboxSettings;
+	readonly readRefusal?: (path: string) => Promise<string | undefined>;
+	readonly writeRefusal?: (path: string) => Promise<string | undefined>;
+	/** The chat's temp folder, which its sandbox may write (`ISandboxPathContext.tmpdir`). */
+	readonly tmpdir?: string;
+}
+
+/**
+ * Why a sandboxed chat's op may not read `uri` from Volt's process, or undefined when it may (or the
+ * chat is not sandboxed). Without the gate's rule it may not: Volt cannot tell.
+ */
+export async function confinedReadRefusal(ctx: IIdeCapabilityContext, uri: URI): Promise<string | undefined> {
+	if (!ctx.confinement) {
+		return undefined;
+	}
+	return ctx.confinement.readRefusal ? ctx.confinement.readRefusal(uri.fsPath) : `Volt cannot tell whether this sandboxed chat may read ${uri.fsPath}`;
 }
 
 export interface IIdeCapabilityResult {
@@ -44,6 +70,8 @@ export interface ICliResult {
 	readonly stderr: string;
 	/** The program is not installed (or could not start). */
 	readonly missing?: boolean;
+	/** Nothing ran: the chat's sandbox could not be set up, or HostGit refused the repository. Why. */
+	readonly refused?: string;
 }
 
 const MAX_OUTPUT = 4 * 1024 * 1024;
@@ -56,58 +84,81 @@ export interface ICliOptions {
 	readonly writable?: readonly string[];
 }
 
+/** What the IDE tools answer for a chat without a project folder: nothing runs (Volt's own folder is never a stand-in). */
+export const NO_PROJECT_FOLDER = 'this chat has no project folder, so nothing was run. Open a folder for the chat (or start it in a project) and try again.';
+
+const NO_FOLDER: ICliResult = { code: null, stdout: '', stderr: NO_PROJECT_FOLDER, refused: NO_PROJECT_FOLDER };
+
 /**
  * Runs programs for capabilities: without a shell when the platform offers it (arguments are never
  * parsed, so names from the agent cannot inject), with the user's environment, bounded in time.
- * For a sandboxed chat they run in that chat's OS sandbox, so `git commit` hooks, a profiled
- * script or a linter plugin get exactly the access the chat's agent has.
+ * `exec` says whose they are: a sandboxed chat's run in its sandbox, through the shell with every
+ * argument quoted (a program run without a shell cannot be sandboxed), so `git commit` hooks, a
+ * profiled script or a linter plugin get exactly the access the chat's agent has. git always goes
+ * through {@link git}: HostGit's guards, in the chat's sandbox when it has one.
  */
 export class IdeCli {
 
-	constructor(private readonly stdio: IVoltStdioService, private readonly cwd: string | undefined, private readonly context: IVoltExecContext, readonly sandbox?: IVoltSandboxRequest) { }
+	constructor(private readonly stdio: IVoltStdioService, private readonly cwd: string | undefined, private readonly exec: IChatExec) { }
+
+	/** The programs run in the chat's OS sandbox. */
+	get sandboxed(): boolean {
+		return !!this.exec.sandbox;
+	}
+
+	/** The chat's OS sandbox the programs run in, if any. */
+	get sandbox(): IVoltSandboxRequest | undefined {
+		return this.exec.sandbox;
+	}
 
 	async run(file: string, args: readonly string[], options?: ICliOptions): Promise<ICliResult> {
 		const cwd = options?.cwd ?? this.cwd;
+		if (!cwd) {
+			return NO_FOLDER;
+		}
 		const timeoutMs = options?.timeoutMs ?? 60_000;
-		const sandbox = this.sandboxWith(options?.writable);
-		if (this.stdio.execFile && !options?.env) {
-			const result = await this.stdio.execFile({ file, args, ...(cwd ? { cwd } : {}), timeoutMs, maxBytes: MAX_OUTPUT, ...(sandbox ? { sandbox } : {}) });
+		if (this.stdio.execFile && !options?.env && !this.exec.context.sandboxed && !this.exec.sandbox) {
+			const result = await this.stdio.execFile({ file, args, ...(cwd ? { cwd } : {}), timeoutMs, maxBytes: MAX_OUTPUT });
 			const missing = !!result.error && /ENOENT|not found|cannot find/i.test(result.error);
 			return { code: result.exitCode, stdout: result.stdout, stderr: result.error && !result.stderr ? result.error : result.stderr, ...(missing ? { missing } : {}) };
 		}
 		return this.shell([file, ...args].map(arg => shellQuote(arg, isWindows)).join(' '), { ...options, ...(cwd ? { cwd } : {}), timeoutMs });
 	}
 
-	/**
-	 * git in the chat's folder. A sandboxed chat's runs inside its sandbox with HostGit's guards (no
-	 * fsmonitor, hooks or `ext::`); any other chat's goes through HostGit on the host (B-03, B-06).
-	 */
-	async git(args: readonly string[], options?: { readonly timeoutMs?: number }): Promise<ICliResult> {
-		const timeoutMs = options?.timeoutMs ?? 30_000;
-		if (this.sandbox) {
-			return this.shell(['git', ...hostGitArgs(['--no-pager', ...args], { hooksPath: '/dev/null' })].map(arg => shellQuote(arg, isWindows)).join(' '), { timeoutMs });
-		}
-		if (!this.cwd) {
-			return { code: null, stdout: '', stderr: 'No workspace is open.' };
-		}
-		const result = await runGitThrough(this.stdio, { cwd: this.cwd, args: ['--no-pager', ...args], timeoutMs, maxBytes: MAX_OUTPUT });
-		const missing = !!result.error && /ENOENT|not found/i.test(result.error);
-		return { code: result.exitCode, stdout: result.stdout, stderr: result.error && !result.stderr ? result.error : result.stderr, ...(missing ? { missing } : {}) };
-	}
-
 	/** A shell command line (the agent's own command, as written). */
 	async shell(command: string, options?: ICliOptions): Promise<ICliResult> {
-		const sandbox = this.sandboxWith(options?.writable);
-		const result = await this.stdio.exec({ id: `volt-ide-${generateUuid()}`, command, ...(options?.cwd ?? this.cwd ? { cwd: options?.cwd ?? this.cwd } : {}), ...(options?.env ? { env: options.env } : {}), timeoutMs: options?.timeoutMs ?? 120_000, inlineChars: 200_000, context: this.context, ...(sandbox ? { sandbox } : {}) });
+		const cwd = options?.cwd ?? this.cwd;
+		if (!cwd) {
+			return NO_FOLDER;
+		}
+		const result = await this.stdio.exec({ id: `volt-ide-${generateUuid()}`, command, cwd, ...(options?.env ? { env: options.env } : {}), timeoutMs: options?.timeoutMs ?? 120_000, inlineChars: 200_000, ...this.execWith(options?.writable) });
+		if (result.refused) {
+			return { code: null, stdout: '', stderr: result.refused.reason, refused: result.refused.reason };
+		}
 		const missing = result.exitCode === 127 || /command not found|is not recognized/.test(result.stderr);
 		return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr, ...(missing ? { missing } : {}) };
 	}
 
-	private sandboxWith(writable: readonly string[] | undefined): IVoltSandboxRequest | undefined {
-		if (!this.sandbox || !writable?.length) {
-			return this.sandbox;
+	/**
+	 * git in the chat's folder: through HostGit (no fsmonitor, hooks or `ext::`), inside the chat's
+	 * sandbox when it has one; any other chat's goes through HostGit on the host (B-03, B-06).
+	 */
+	async git(args: readonly string[], options?: { readonly timeoutMs?: number }): Promise<ICliResult> {
+		if (!this.cwd) {
+			return NO_FOLDER;
 		}
-		return { ...this.sandbox, extraWritableRoots: [...(this.sandbox.extraWritableRoots ?? []), ...writable] };
+		const result = await runChatGit(this.stdio, this.exec, { id: `volt-ide-git-${generateUuid()}`, cwd: this.cwd, args, timeoutMs: options?.timeoutMs ?? 30_000, maxChars: MAX_OUTPUT });
+		const missing = result.exitCode === 127 || /command not found|is not recognized|ENOENT/.test(result.stderr);
+		return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr, ...(missing ? { missing } : {}), ...(result.refused ? { refused: result.refused } : {}) };
+	}
+
+	/** The chat's exec, its sandbox also writing `writable` (a profiler's output folder). */
+	private execWith(writable: readonly string[] | undefined): IChatExec {
+		const sandbox = this.exec.sandbox;
+		if (!sandbox || !writable?.length) {
+			return this.exec;
+		}
+		return { ...this.exec, sandbox: { ...sandbox, extraWritableRoots: [...(sandbox.extraWritableRoots ?? []), ...writable] } };
 	}
 }
 
@@ -121,6 +172,9 @@ export function fail(text: string): IIdeCapabilityResult {
 
 /** A CLI result as tool text: the output (trimmed to the last lines), or why it failed. */
 export function cliText(result: ICliResult, tool: string, maxLines = 120): IIdeCapabilityResult {
+	if (result.refused) {
+		return fail(`${tool} did not run: ${result.refused}`);
+	}
 	if (result.missing) {
 		return fail(`${tool} is not installed or not on PATH.`);
 	}

@@ -3,41 +3,23 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { CancellationToken } from '../../../base/common/cancellation.js';
+import { IRequestContext, IRequestOptions } from '../../../base/parts/request/common/request.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
 
+/** The main process channel the desktop window's HTTP client sends through (VS Code's `RequestChannel` protocol). */
 export const VOLT_HTTP_TRANSPORT_CHANNEL_NAME = 'voltHttpTransport';
 
 export const IVoltHttpTransport = createDecorator<IVoltHttpTransport>('voltHttpTransport');
 
-export interface IVoltHttpTransportRequest {
-	readonly method: string;
-	readonly url: string;
-	readonly headers: Readonly<Record<string, string>>;
-	readonly body?: string;
-	readonly timeoutMs: number;
-	/** At most this many characters of the body come back; `size` is the whole body's bytes. */
-	readonly maxBodyChars: number;
-}
-
-export interface IVoltHttpTransportResponse {
-	readonly status: number;
-	readonly headers: Readonly<Record<string, string>>;
-	readonly body: string;
-	readonly size: number;
-	readonly error?: undefined;
-}
-
-export interface IVoltHttpTransportError {
-	readonly error: string;
-}
-
 /**
- * Sends the HTTP client's requests. On the desktop the main process sends them: a window's own
- * fetch is a page's, and CORS refused every local API that sends no Access-Control-Allow-Origin
- * ("Failed to fetch" for a plain GET to a dev server, 2026-11-12 IDE round 2). Elsewhere the
- * window's request service does.
+ * How the HTTP client's requests (the user's from the request editor, agents' through `ide http`)
+ * leave Volt. In the desktop app they go out from the main process, so no CORS check applies, every
+ * response header comes back and no `Origin` is added; in the web workbench through the window's
+ * request service. A sandboxed chat's request is judged before it gets here.
  */
 export interface IVoltHttpTransport {
 	readonly _serviceBrand: undefined;
-	send(request: IVoltHttpTransportRequest): Promise<IVoltHttpTransportResponse | IVoltHttpTransportError>;
+	/** `followRedirects: 0`: a redirect is the response (its status and `location`), never followed. */
+	request(options: IRequestOptions, token: CancellationToken): Promise<IRequestContext>;
 }

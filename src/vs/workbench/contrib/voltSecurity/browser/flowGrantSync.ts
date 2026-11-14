@@ -34,7 +34,11 @@ export class FlowGrantSync extends Disposable implements IWorkbenchContribution 
 			},
 			revoke: async ids => { await trust.narrow({ revoke: ids }); },
 		});
-		const sync = () => hostTools.setStoredFlowGrants?.(storedFlows(trust.state.grants));
+		const sync = () => {
+			hostTools.setStoredFlowGrants?.(storedFlows(trust.state.grants));
+			// The "Allow host" grants the network broker applies to extensions: the gate judges their tool flows by them too.
+			hostTools.setStoredHostGrants?.(trust.state.grants);
+		};
 		this._register(trust.onDidChange(sync));
 		void trust.whenReady.then(sync);
 		this._register({ dispose: () => hostTools.setFlowGrantStore?.(undefined) });

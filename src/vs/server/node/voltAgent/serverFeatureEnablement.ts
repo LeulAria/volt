@@ -7,7 +7,7 @@ import { Event } from '../../../base/common/event.js';
 import { Disposable, IDisposable } from '../../../base/common/lifecycle.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { AgentServerMethod, IAgentServerClientInfo } from '../../../platform/voltAgentServer/common/protocolServer.js';
-import { VOLT_FEATURES } from '../../../workbench/contrib/voltCustomize/common/voltFeatures.js';
+import { VOLT_FEATURES, voltFeatureDisabledTools } from '../../../workbench/contrib/voltCustomize/common/voltFeatures.js';
 import { IVoltHostToolService } from '../../../workbench/services/voltRuntime/common/hostTools.js';
 
 /** The features turned off globally, as the last Volt window on this computer said. */
@@ -99,7 +99,7 @@ export class ServerFeatureEnablement extends Disposable {
 
 	private apply(): void {
 		const off = this.disabledFeatures();
-		this.hostTools.setDisabledTools(VOLT_FEATURES.filter(feature => feature.extensionId && off.has(feature.id)).flatMap(feature => feature.tools ?? []));
+		this.hostTools.setDisabledTools(voltFeatureDisabledTools(VOLT_FEATURES.filter(feature => feature.extensionId && off.has(feature.id))));
 	}
 }
 

@@ -12,6 +12,8 @@ import { ILogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { computeMachineCapacity, describeMachine, IMachineCapacity, IMachineProfile, ORCH_MACHINE_CAPACITY_SETTING, ORCH_MEASURE_CAPACITY_COMMAND_ID, parseMachineCapacity } from '../../../../services/voltRuntime/common/orchestration/machineCapacity.js';
+import { ORCHESTRA_FEATURE_ID } from '../../../../services/voltRuntime/common/orchestration/orchestra.js';
+import { voltFeatureOn } from '../../../voltCustomize/common/voltFeatures.js';
 
 /** Reads the machine's memory and cores: the desktop from its main process, the browser workbench from the agent server. */
 export type MachineProfileReader = (accessor: ServicesAccessor) => Promise<IMachineProfile>;
@@ -61,6 +63,8 @@ export function registerMachineCapacity(readMachine: MachineProfileReader): void
 				title: localize2('voltOrchestra.measureCapacity', "Measure How Many Agents This Machine Can Run"),
 				category: localize2('voltOrchestra.category', "Volt"),
 				f1: true,
+				// Not in the Command Palette while the Orchestra feature is off (its Settings page goes too).
+				precondition: voltFeatureOn(ORCHESTRA_FEATURE_ID),
 			});
 		}
 

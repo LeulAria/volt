@@ -144,7 +144,7 @@ export class MainThreadVolt extends Disposable implements MainThreadVoltShape {
 			}
 			const subscriptions = this._register(new DisposableStore());
 			const api = this.api;
-			entry = { extension, context: api.createContext(extension, subscriptions) };
+			entry = { extension, context: api.createContext(extension, subscriptions, { sandboxed: !!this.extHostContext.voltSandboxed }) };
 			this.entries.set(key, entry);
 			this._register(api.onDidChangeConsent(e => {
 				if (ExtensionIdentifier.equals(e.extensionId, extensionId) && this.turnSubscriptions.has(key)) {

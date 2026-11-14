@@ -8,6 +8,7 @@ import { CancellationToken, CancellationTokenSource } from '../../../../../base/
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
@@ -16,7 +17,7 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IVoltUsageService } from '../../../../../platform/voltUsage/common/voltUsage.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { IVoltSandboxSettings, sandboxWorkspaceRoots, strongerSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IVoltSandboxSettings, SandboxStrategy, sandboxStrategy, sandboxWorkspaceRoots, strongerSandboxLevel, VoltSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { stripAnsi } from '../../common/ide/testReports.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { ILifecycleService } from '../../../lifecycle/common/lifecycle.js';
@@ -45,7 +46,8 @@ import { DurableClaims } from '../jobs/durableClaims.js';
 import { BEACON_TTL_MS, WorkbenchBeacons } from '../jobs/workbenchBeacons.js';
 import { OrchestratorStore } from './orchestratorStore.js';
 import { orchIsTurnCurrent, orchTaskForToolCall, orchTasksOf } from '../../common/orchestration/orchestratorQueries.js';
-import { confineChatSandbox, handoffSandboxRefusal } from '../../common/access/chatSandbox.js';
+import { CHAT_SANDBOX_PLATFORM, chatSandboxScope, confineChatSandbox, handoffSandboxRefusal } from '../../common/access/chatSandbox.js';
+import { chatInSubtree, sandboxReachRefusal } from '../../common/hostToolSandbox.js';
 import { chatExec } from '../../common/execContext.js';
 
 /** Models one delegate_task call may run the same brief on. */
@@ -183,7 +185,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 	constructor(
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
-		@IFileService fileService: IFileService,
+		@IFileService private readonly fileService: IFileService,
 		@IEnvironmentService environmentService: IEnvironmentService,
 		@ILogService private readonly logService: ILogService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
@@ -1188,8 +1190,14 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 			const thread = this.state.threads[threadId];
 			if (thread?.parentId) {
-				// A subagent is never confined less than the chat that delegated to it (every turn: the parent's may have tightened).
-				await confineChatSandbox(this.runtime, threadId, this.runtime.getSandboxSettings(thread.parentId));
+				// A subagent (a team member, a council seat, a delegated task) is never confined less than the chat
+				// that delegated to it (every turn: the parent's may have tightened), writes its folder only when the
+				// parent may write it too, and never runs on an agent sandboxed more weakly than the parent's (INV-11).
+				const refused = await this.confineChild(threadId, thread.parentId, turn.prompt.modelRef);
+				if (refused) {
+					this.apply({ type: 'dispatch.failed', threadId, turnId: turn.id, error: `Not started: ${refused} Its parent chat runs in Volt's sandbox; give the task a model that runs in it.` });
+					return;
+				}
 			}
 			if (thread?.taskId && thread.parentId) {
 				await this.inheritAccessMode(threadId, thread.parentId);
@@ -1226,6 +1234,33 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				this.dispatching.delete(threadId);
 			}
 		}
+	}
+
+	/**
+	 * Confines a subagent's chat at least as tightly as its parent's (`confineChatSandbox`, INV-11),
+	 * with both agents' strategies and real folders. Returns why it may not run at all (its agent would
+	 * be sandboxed more weakly than the parent's); nothing is stored then, and its turn must not start.
+	 */
+	private async confineChild(threadId: string, parentId: string, modelRef?: string): Promise<string | undefined> {
+		const floor = this.runtime.getSandboxSettings(parentId);
+		if (floor.level === 'off') {
+			return undefined;
+		}
+		const realpath = (path: string) => this.fileService.realpath(URI.file(path)).then(real => real?.fsPath);
+		const strategy = (chatId: string, ref: string | undefined) => {
+			const providerId = this.providerOfRef(ref ?? this.state.threads[chatId]?.modelRef ?? this.runtime.getOrCreateSession(chatId).providerRef);
+			return providerId ? { strategy: this.agentSandboxStrategy(providerId, floor.level) } : {};
+		};
+		const decision = await confineChatSandbox(this.runtime, threadId, floor, {
+			caller: { ...await chatSandboxScope(this.runtime, parentId, realpath), ...strategy(parentId, undefined) },
+			child: { ...await chatSandboxScope(this.runtime, threadId, realpath), ...strategy(threadId, modelRef) },
+		});
+		return decision.refused;
+	}
+
+	/** How `providerId`'s agent is sandboxed at `level` on this machine (a seam for tests). */
+	protected agentSandboxStrategy(providerId: string, level: VoltSandboxLevel): SandboxStrategy {
+		return sandboxStrategy(providerId, level, CHAT_SANDBOX_PLATFORM);
 	}
 
 	/**
@@ -1849,15 +1884,19 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 					return { text: this.listModels(threadId) };
 				case DELEGATE_TASK_TOOL_NAME:
 					// Taken first: a call refused below must not leave its id for the next call's row.
-					return await this.delegate(threadId, delegateArgsWithAliases(args), token, this.takeDelegateCall(threadId));
-				case TASK_STATUS_TOOL_NAME:
-					return { text: this.taskStatus(threadId, typeof args.task_id === 'string' ? args.task_id : undefined) };
+					return await this.delegate(threadId, delegateArgsWithAliases(withoutOrchestraFields(args)), token, this.takeDelegateCall(threadId));
+				case TASK_STATUS_TOOL_NAME: {
+					const foreign = typeof args.task_id === 'string' ? this.foreignTaskRefusal(threadId, args.task_id, name) : undefined;
+					return foreign ? { error: foreign } : { text: this.taskStatus(threadId, typeof args.task_id === 'string' ? args.task_id : undefined) };
+				}
 				case WAIT_TASKS_TOOL_NAME:
 					return { text: await this.waitTasks(threadId, Array.isArray(args.task_ids) ? args.task_ids.filter((id): id is string => typeof id === 'string') : undefined, args.any === true, token) };
 				case CANCEL_TASK_TOOL_NAME:
 					return this.cancelTask(threadId, String(args.task_id ?? ''), typeof args.reason === 'string' ? args.reason : undefined);
-				case MESSAGE_TASK_TOOL_NAME:
-					return await this.messageTask(threadId, String(args.task_id ?? ''), String(args.message ?? ''), args.wait === true, token);
+				case MESSAGE_TASK_TOOL_NAME: {
+					const foreign = this.foreignTaskRefusal(threadId, String(args.task_id ?? ''), name);
+					return foreign ? { error: foreign } : await this.messageTask(threadId, String(args.task_id ?? ''), String(args.message ?? ''), args.wait === true, token);
+				}
 				case HANDOFF_TOOL_NAME:
 					return this.handoff(threadId, args);
 			}
@@ -1865,6 +1904,22 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			return { error: err instanceof Error ? err.message : String(err) };
 		}
 		return { error: `Unknown tool ${name}` };
+	}
+
+	/**
+	 * A sandboxed chat reads and messages only the tasks of its own subtree (its subagents and theirs):
+	 * another chat's task reports to that chat (its result needs agents.read:other), and a follow-up
+	 * would prompt a chat confined only by its own parent (INV-11). Team rosters and boards name
+	 * teammates' tasks, so a member could otherwise reach its siblings through task_status and
+	 * message_task. Undefined when the call may go on (an unknown task fails on its own).
+	 */
+	private foreignTaskRefusal(threadId: string, taskId: string, name: string): string | undefined {
+		const task = this.state.tasks[taskId.trim()];
+		const settings = this.runtime.getSandboxSettings(threadId);
+		if (!task || settings.level === 'off' || chatInSubtree(threadId, task.parentId, id => this.state.threads[id]?.parentId)) {
+			return undefined;
+		}
+		return sandboxReachRefusal(name, 'reads-other', [`${task.title} [${task.id}]`], settings);
 	}
 
 	private listModels(threadId: string): string {
@@ -2153,6 +2208,12 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			return { error: step.decision.rejected };
 		}
 		const id = step.decision.taskId!;
+		const childId = this.state.tasks[id]?.childId;
+		if (!step.decision.reused && childId) {
+			// Confined now, so its chat's Access shows the parent's sandbox while it waits its turn; its
+			// turns are confined again before they start (startTurn), and that one decides.
+			await this.confineChild(childId, parentId, model?.ref).catch(err => this.logService.warn('[volt orchestrator] confining a new subagent failed', err));
+		}
 		let waitCut = false;
 		if (args.wait === true) {
 			// Calls of one message run one after another: a wait here would hold back the next task.
@@ -2500,6 +2561,22 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 
 function isRunLive(status: string): boolean {
 	return status === 'running' || status === 'queued' || status === 'waiting';
+}
+
+/**
+ * delegate_task's arguments without the fields only the orchestra sets (`spawnTasks`): a team id
+ * lifts the per-turn spawn cap to the team cap and skips the repeat guard, `quiet` keeps reports
+ * from the chat, `blind` hides upstream tasks. An agent never sets them for itself.
+ */
+function withoutOrchestraFields(args: Record<string, unknown>): Record<string, unknown> {
+	if (args.team === undefined && args.blind === undefined && args.quiet === undefined) {
+		return args;
+	}
+	const rest = { ...args };
+	delete rest.team;
+	delete rest.blind;
+	delete rest.quiet;
+	return rest;
 }
 
 /** The contract and run fields a `tasks` entry may set for itself (others come from the call). */

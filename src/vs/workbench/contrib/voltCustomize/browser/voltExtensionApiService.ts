@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IAdminPolicy } from '../../../../platform/voltSandbox/common/authority.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { MarkdownString } from '../../../../base/common/htmlContent.js';
 import { Disposable, DisposableStore, IDisposable } from '../../../../base/common/lifecycle.js';
@@ -204,6 +205,11 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 	declare readonly _serviceBrand: undefined;
 
 	readonly policy: VoltExtensionCapabilityPolicy;
+	private managedPolicy: IAdminPolicy | undefined;
+
+	setManagedPolicy(policy: IAdminPolicy | undefined): void {
+		this.managedPolicy = policy && Object.keys(policy).length ? policy : undefined;
+	}
 	private readonly _onDidChangeConsent = this._register(new Emitter<{ readonly extensionId: string; readonly capability: string }>());
 	readonly onDidChangeConsent = this._onDidChangeConsent.event;
 	private readonly asking = new Map<string, Promise<boolean>>();
@@ -236,6 +242,7 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 		this.consentStore = new VoltConsentStore(features, trust, id => this.signers.get(id.toLowerCase()) ?? 'local', () => this.storeReady);
 		this.policy = this._register(new VoltExtensionCapabilityPolicy(this.consentStore, {
 			mode: () => readPolicyAuthorityMode(configurationService.getValue(POLICY_AUTHORITY_MODE_SETTING)),
+			admin: () => this.managedPolicy,
 			onDiff: diff => logService.warn(`[volt policy authority] shadow diff in the extension API: ${diff.extensionId} ${diff.api} ${diff.capability}${diff.target !== undefined ? ` on ${diff.target}` : ''}: before ${diff.legacy ? `denied (${diff.legacy.deniedBy})` : 'allowed'}, the Authority ${diff.authority ? `denies (${diff.authority.deniedBy}): ${diff.decision.reason}` : 'allows'}`),
 		}));
 		this._register(features.onDidChangeEnablement(e => {
@@ -436,7 +443,7 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 		};
 	}
 
-	createContext(extension: IExtensionDescription, subscriptions: DisposableStore): IVoltPluginContext {
+	createContext(extension: IExtensionDescription, subscriptions: DisposableStore, options?: { readonly sandboxed?: boolean }): IVoltPluginContext {
 		const manifest = voltManifestOf(extension);
 		const firstParty = isFirstPartyExtension(extension);
 		const contributes = manifest.contributes ?? {};
@@ -455,6 +462,7 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 			firstParty,
 			capabilities: contributes.voltCapabilities ?? {},
 			ownSettings: ownSettingsOf(extension),
+			...(options?.sandboxed ? { sandboxed: true } : {}),
 		};
 		return Object.freeze({
 			extensionId: principal.extensionId,

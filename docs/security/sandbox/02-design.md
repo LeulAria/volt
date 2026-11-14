@@ -147,7 +147,7 @@ JSON. Every field is optional except `schemaVersion`. An absent field takes its 
 | Layer | Trusted | May |
 |---|---|---|
 | built-in profile | — | the base |
-| user settings | yes | widen or narrow; `unmask`; `systemServices`; `bestEffort` |
+| user settings (`~/.volt/sandbox.json`, capped by the managed policy) | yes | widen or narrow; `unmask`; `systemServices`; `bestEffort` |
 | repository (`.volt/sandbox.json` and anything shipped in a repo) | **no** | narrow only |
 | per-run request | trusted only when Volt issues it on an explicit user grant | as its trust |
 
@@ -160,7 +160,7 @@ JSON. Every field is optional except `schemaVersion`. An absent field takes its 
 - `listen` and `systemServices`: AND.
 - Limits: the minimum.
 - `env.inherit`: only names already inherited (secret-like names never come in through `*`).
-- `env.set`: any value except reserved names.
+- `env.set`: trusted layers any value except reserved names; untrusted layers only new variables that are not secret-like and not already set or inherited.
 - `bestEffort`: can only shrink.
 
 Every dropped widening is returned in `ignored` with its field, value and reason.
@@ -289,4 +289,46 @@ Its diagnostics name the exact fix.
 
 - **Per chat:** the access picker sets the level (`off`, `workspace-write`, `read-only`) and network on/off. "Allow folder" and "Allow host" from a denial add trusted grants for that chat.
 - **Diagnostics:** `node scripts/volt-sandbox-inspect.mjs [workspace]` prints the backend's capability matrix and the resolved policy for a profile, without running anything. The benchmark is `node scripts/volt-sandbox-bench.mjs`.
-- **For later work:** user-level policy files (`~/.volt/sandbox.json`, trusted) and repository files (`.volt/sandbox.json`, untrusted) are defined by the schema and the composition rules, but are not loaded by the agent path yet (`05-limitations.md`).
+- **Policy files:** `~/.volt/sandbox.json` (yours) and `.volt/sandbox.json` in a workspace root (the repository's); see "Policy files" below.
+
+### Policy files
+
+Two optional files in the policy schema above (strict JSON: no comments, no trailing commas, `schemaVersion: 1`):
+
+| File | Layer | Trusted | May |
+|---|---|---|---|
+| `~/.volt/sandbox.json` | `user` | yes | widen or narrow the agent profile, capped by the managed policy |
+| `<workspace root>/.volt/sandbox.json` | `workspace` (one per root) | **no** | narrow only |
+
+- **Precedence.** The managed (admin) policy beats both: its gate runs first, and every widening in your file that it denies is dropped before composition (`capUserLayer`). Then the agent profile, your file and each repository's file are composed in that order with the narrow-only rules of "Layering", so a repository's file never widens what the profile or your file allows. The chat's own grants ("Allow folder", "Allow host") apply as before.
+- **Tokens.** `${home}` is your home folder. In a repository's file `${workspace}` is that repository's own root, so it cannot name another workspace.
+- **When they are read.** At every launch (agent chats, chat commands, stdio MCP hosts), before any folder is made. A file is parsed again only when its stat (`dev`, `ino`, size, `mtime`, `ctime`) changes; a warm launch costs one `stat` per file (0.026 ms for both, `POLFILE-CACHE-1`). An edit applies to the next launch, not to a running agent.
+- **Errors.**
+  - Your file: a JSON or schema error refuses the launch, naming the file and the line ("Your sandbox policy ~/.volt/sandbox.json has an error, so Volt did not start this sandboxed process: line 3: filesystem.write[0] ..."). Volt never runs without rules you asked for. Your file may be a symlink (dotfile managers) but must end at a regular file.
+  - A repository's file: a JSON or schema error, a symlink, a FIFO, a directory or a file over 256 KB is ignored, with a warning in the transcript and the Access menu. A cloned repository must not be able to stop you from working, and ignoring a narrow-only file never widens anything.
+- **Ignored entries are shown.** What the composition drops (a repository asking for more, your file asking for what the managed policy denies) is listed in the transcript at launch and as a quiet line in the chat's Access menu: "Ignored from .volt/sandbox.json: network.mode host, ...".
+- **Symlinks cannot widen a narrowing (B-32).** A repository's narrowed `read`/`write` entry that resolves outside through a symlink is dropped at load, and the resolver checks again on its own canonical answers, so a link swapped in between refuses the launch.
+- **Environment.** A repository's `env.set` may only add new variables that are not secret-like and not already set or inherited by the policy.
+- **Protected.** Both files are protected paths: no sandboxed agent can modify, replace, move or remove them (Seatbelt, bubblewrap and the files broker), `~/.volt/sandbox.json` included when `~/.volt` is writable. macOS also refuses creating a missing one; on Linux that is best effort (`filesystem.protectNew` is reported partial).
+
+Your file, opening one more folder and two hosts:
+
+```json
+{
+  "schemaVersion": 1,
+  "filesystem": { "write": ["${home}/src/shared-cache"] },
+  "network": { "mode": "proxy", "allow": ["registry.npmjs.org", "*.example.com"] }
+}
+```
+
+A repository keeping agents out of its fixtures and its release script, and to one of your hosts:
+
+```json
+{
+  "schemaVersion": 1,
+  "filesystem": { "deny": ["${workspace}/fixtures/customers"], "protect": ["${workspace}/scripts/release.sh"] },
+  "network": { "allow": ["registry.npmjs.org"] }
+}
+```
+
+With both, the agent reaches `registry.npmjs.org` only. Had the repository asked for `"mode": "host"` or another write root, that entry would be ignored and listed.

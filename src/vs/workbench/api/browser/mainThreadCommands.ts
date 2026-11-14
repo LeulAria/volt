@@ -6,7 +6,7 @@
 import { DisposableMap, IDisposable } from '../../../base/common/lifecycle.js';
 import { revive } from '../../../base/common/marshalling.js';
 import { CommandNotAllowedError, CommandsRegistry, ICommandMetadata, ICommandService } from '../../../platform/commands/common/commands.js';
-import { IExtHostContext, extHostNamedCustomer } from '../../services/extensions/common/extHostCustomers.js';
+import { assertNotVoltSandboxed, IExtHostContext, extHostNamedCustomer, voltSandboxRefusesCommand } from '../../services/extensions/common/extHostCustomers.js';
 import { IExtensionService } from '../../services/extensions/common/extensions.js';
 import { Dto, SerializableObjectWithBuffers } from '../../services/extensions/common/proxyIdentifier.js';
 import { ExtHostCommandsShape, ExtHostContext, MainContext, MainThreadCommandsShape } from '../common/extHost.protocol.js';
@@ -21,7 +21,7 @@ export class MainThreadCommands implements MainThreadCommandsShape {
 	private readonly _proxy: ExtHostCommandsShape;
 
 	constructor(
-		extHostContext: IExtHostContext,
+		private readonly extHostContext: IExtHostContext,
 		@ICommandService private readonly _commandService: ICommandService,
 		@IExtensionService private readonly _extensionService: IExtensionService,
 	) {
@@ -95,6 +95,9 @@ export class MainThreadCommands implements MainThreadCommandsShape {
 		// here; their capability is checked per extension once each has its own host.
 		if (CommandsRegistry.getCommandVisibility(id) === 'internal') {
 			throw new CommandNotAllowedError(id);
+		}
+		if (voltSandboxRefusesCommand(id)) {
+			assertNotVoltSandboxed(this.extHostContext, `The command ${id}`);
 		}
 		if (retry && args.length > 0 && !CommandsRegistry.getCommand(id)) {
 			await this._extensionService.activateByEvent(`onCommand:${id}`);

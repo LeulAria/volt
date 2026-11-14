@@ -10,16 +10,19 @@ import { Event } from '../../../../../base/common/event.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
-import { IFileService } from '../../../../../platform/files/common/files.js';
+import { FileOperationError, FileOperationResult, IFileService } from '../../../../../platform/files/common/files.js';
 import { HOST_MCP_TOKEN_TTL_MS, hostMcpSessionToken, parseHostMcpSessionToken } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
 import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
+import { extensionSubject } from '../../../../../platform/voltSandbox/common/principals.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IVoltChatFileRequest, IVoltChatFileResult, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { VoltHostToolService } from '../../browser/host/hostToolService.js';
 import { dataUrlBytes, decodeDataUrl, encodeImage, scaleScreenshot } from '../../browser/host/imageCodec.js';
 import { createBrowserTools } from '../../browser/tools/browserTool.js';
 import { BrowserBlockReason, IVoltBrowserAccessService } from '../../common/browserAccess.js';
 import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, IVoltBrowserAutomationOptions, IVoltHostFlowApproval, IVoltHostToolApproval, IVoltHostToolCall, IVoltHostToolOwner, IVoltHostToolInvocation, IVoltMcpServer, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
+import { chatInSubtree } from '../../common/hostToolSandbox.js';
 import { VoltMode } from '../../common/modes.js';
 import { createImage, IRgbaImage } from '../../common/tools/imageAnalysis.js';
 
@@ -44,7 +47,7 @@ suite('Volt host tool service', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function setup(options: { pageUrl?: string; files?: Map<string, Uint8Array>; links?: ReadonlyMap<string, string>; onAutomate?: (name: string, args: Record<string, unknown>, page: { url?: string }) => void } = {}) {
+	function setup(options: { pageUrl?: string; files?: Map<string, Uint8Array>; links?: ReadonlyMap<string, string>; dangling?: ReadonlySet<string>; onAutomate?: (name: string, args: Record<string, unknown>, page: { url?: string }) => void } = {}) {
 		const calls: ICommandCall[] = [];
 		const page: { url?: string } = { url: options.pageUrl };
 		const commands = {
@@ -84,12 +87,38 @@ suite('Volt host tool service', () => {
 				written.set(uri.path, content.toString());
 				return {};
 			},
-			realpath: async (uri: URI) => URI.file(real(uri.path)),
+			// A dangling link (its target not made yet): realpath fails on it and below it, stat sees the link itself.
+			realpath: async (uri: URI) => {
+				if ([...options.dangling ?? []].some(link => uri.path === link || uri.path.startsWith(`${link}/`))) {
+					throw new Error(`ENOENT: ${uri.path}`);
+				}
+				return URI.file(real(uri.path));
+			},
+			stat: async (uri: URI) => {
+				if (options.dangling?.has(uri.path)) {
+					return { isSymbolicLink: true };
+				}
+				throw new FileOperationError('missing', FileOperationResult.FILE_NOT_FOUND);
+			},
 		} as unknown as IFileService;
 		const workspace = { getWorkspace: () => ({ folders: [{ uri: URI.file('/ws') }] }) } as unknown as IWorkspaceContextService;
 		const blocked = new Map<string | undefined, BrowserBlockReason>();
 		const access = { blockReason: (sessionId: string | undefined) => blocked.get(sessionId) } as unknown as IVoltBrowserAccessService;
-		const service = store.add(new VoltHostToolService(commands, files, workspace, access));
+		// The execution host's race-free file operations for sandboxed chats (SEC3-3), over the same files.
+		const chatFiles: IVoltChatFileRequest[] = [];
+		const stdio = {
+			chatFile: async (request: IVoltChatFileRequest): Promise<IVoltChatFileResult> => {
+				chatFiles.push(request);
+				const path = URI.file(request.path).path;
+				if (request.op === 'read') {
+					const bytes = options.files?.get(path) ?? (written.has(path) ? VSBuffer.fromString(written.get(path)!).buffer : undefined);
+					return bytes ? { ok: true, path, content: VSBuffer.wrap(bytes).toString() } : { ok: false, reason: `${path} does not exist`, refusal: 'missing' };
+				}
+				written.set(path, request.content ?? '');
+				return { ok: true, path, existed: false };
+			},
+		} as unknown as IVoltStdioService;
+		const service = store.add(new VoltHostToolService(commands, files, workspace, access, stdio));
 		const modes = new Map<string, VoltMode>();
 		service.setSessionResolver({ mode: id => modes.get(id), cwd: () => undefined });
 		// What the MCP bridge registers: each chat's sandbox and the folder it works in.
@@ -97,7 +126,7 @@ suite('Volt host tool service', () => {
 		const folders = new Map<string, string>();
 		service.setSandboxResolver({ settings: id => sandboxes.get(id) ?? { level: 'off', network: true }, folder: id => folders.get(id) ?? '/ws' });
 		const automated = () => calls.filter(call => call.id === AUTOMATE_BROWSER_COMMAND_ID);
-		return { service, calls, modes, automated, blocked, written, page, sandboxes, folders };
+		return { service, calls, modes, automated, blocked, written, page, sandboxes, folders, chatFiles };
 	}
 
 	/** A provider serving `names`, recording what ran. */
@@ -233,6 +262,31 @@ suite('Volt host tool service', () => {
 		assert.strictEqual((await service.invokeTool('thread_search', { query: 'token' }, { sessionId: 's1', sandbox: { level: 'off', network: true } })).text, 'ran thread_search');
 	});
 
+	test('GATE-XCHAT-4: a sandboxed chat reads its own subtree (subagents, side chats) through thread_read, thread_wait, queue_list and worktree_status; no other chat', async () => {
+		const { service } = setup();
+		// What the bridge registers: parents as the history records them (s1 -> agent-1 -> agent-2; other is unrelated).
+		const parents = new Map([['agent-1', 's1'], ['agent-2', 'agent-1'], ['side', 'other']]);
+		service.setSandboxResolver({ settings: () => ({ level: 'off', network: true }), folder: () => '/ws', inSubtree: (sessionId, chatId) => chatInSubtree(sessionId, chatId, id => parents.get(id)) });
+		const tools = ['thread_read', 'thread_wait', 'queue_list', 'worktree_status'];
+		const ran = serve(service, tools);
+		const call = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		for (const name of tools) {
+			const args = (id: string) => name === 'thread_wait' ? { thread_ids: [id] } : { thread_id: id };
+			assert.strictEqual((await service.invokeTool(name, args('agent-1'), call)).text, `ran ${name}`, `${name}: its subagent`);
+			assert.strictEqual((await service.invokeTool(name, args('agent-2'), call)).text, `ran ${name}`, `${name}: its subagent's subagent`);
+			for (const other of ['other', 'side']) {
+				assert.match((await service.invokeTool(name, args(other), call)).error ?? '', /agents\.read:other/, `${name}: ${other}`);
+			}
+		}
+		assert.match((await service.invokeTool('thread_wait', { thread_ids: ['agent-1', 'other'] }, call)).error ?? '', /agents\.read:other/, 'one chat outside its subtree refuses the whole wait');
+		assert.match((await service.invokeTool('thread_read', { thread_id: 's1' }, { sessionId: 'agent-1', sandbox: WORKSPACE_WRITE })).error ?? '', /agents\.read:other/, 'a subagent does not read its parent');
+		assert.strictEqual(ran.length, tools.length * 2);
+		// Unsandboxed: as before.
+		for (const name of tools) {
+			assert.strictEqual((await service.invokeTool(name, { thread_id: 'other', thread_ids: ['other'] }, { sessionId: 's1' })).text, `ran ${name}`);
+		}
+	});
+
 	test('the native loop\'s calls are judged by the chat\'s own sandbox, which they do not carry', async () => {
 		const { service, sandboxes } = setup();
 		const ran = serve(service, ['thread_read', 'app_open']);
@@ -262,6 +316,48 @@ suite('Volt host tool service', () => {
 
 		// Unsandboxed: as before (inside the project).
 		assert.strictEqual((await run('.vscode/tasks.json')).error, undefined);
+	});
+
+	test('SEC3-2: a path through a link that does not resolve (a dangling link, its target not made yet) is refused, for reads and writes', async () => {
+		const DEV_SERVER: IVoltSandboxSettings = { ...WORKSPACE_WRITE, listenPorts: [3000] };
+		const { service, written, chatFiles } = setup({ pageUrl: 'http://localhost:3000/', dangling: new Set(['/ws/evil', '/ws/evdir', '/ws/pic.png', '/ws/.volt']) });
+		// `/ws/evil` -> ~/Library/LaunchAgents/x.plist, `/ws/evdir` -> a folder not made yet: writing follows the link out.
+		for (const path of ['evil', 'evdir/x.plist', '/ws/evil']) {
+			const refused = await service.invokeTool('browser_run', { edits: [{ path, content: '<plist/>' }] }, { sessionId: 's1', sandbox: DEV_SERVER });
+			assert.match(refused.error ?? '', /^browser_run did not start: no file was changed\. .*does not resolve/, path);
+		}
+		assert.match((await service.invokeTool('image_inspect', { path: 'pic.png' }, { sessionId: 's1', sandbox: DEV_SERVER })).error ?? '', /does not resolve/);
+		assert.match((await service.invokeTool('browser_act', { script: 'reload', save: 'x' }, { sessionId: 's1', sandbox: DEV_SERVER })).error ?? '', /^browser_act did not start: no file was changed/, 'a flow saved under a dangling .volt would follow it');
+		assert.strictEqual(written.size, 0);
+		assert.deepStrictEqual(chatFiles, []);
+	});
+
+	test('SEC3-3: a sandboxed chat\'s browser_run edits are read and written race-free by the execution host, only over the text they were made against', async () => {
+		const DEV_SERVER: IVoltSandboxSettings = { ...WORKSPACE_WRITE, listenPorts: [3000] };
+		const files = new Map([['/ws/src/app.ts', VSBuffer.fromString('const a = 1;\n').buffer]]);
+		const { service, written, chatFiles } = setup({ pageUrl: 'http://localhost:3000/', files });
+		const result = await service.invokeTool('browser_run', { edits: [{ path: 'src/app.ts', old_string: 'const a = 1;', new_string: 'const a = 2;' }, { path: 'src/new.ts', content: 'export {};' }] }, { sessionId: 's1', sandbox: DEV_SERVER });
+		assert.strictEqual(result.error, undefined);
+		assert.deepStrictEqual(chatFiles.map(request => [request.op, request.path, request.chatId, request.expected]), [
+			['read', '/ws/src/app.ts', 's1', undefined],
+			['read', '/ws/src/new.ts', 's1', undefined],
+			['write', '/ws/src/app.ts', 's1', 'const a = 1;\n'],
+			['write', '/ws/src/new.ts', 's1', undefined],
+		]);
+		assert.deepStrictEqual(chatFiles[2].sandbox, DEV_SERVER);
+		assert.ok(chatFiles[2].roots.includes('/ws'));
+		assert.strictEqual(written.get('/ws/src/app.ts'), 'const a = 2;\n');
+		// The execution host refuses (a link swapped in after the gate's check): the edit reports what was not written.
+		const stdioRefuses = { chatFile: async () => ({ ok: false, reason: '/ws/dir/a.ts goes through a symbolic link', refusal: 'symlink' }) } as unknown as IVoltStdioService;
+		const other = store.add(new VoltHostToolService({ executeCommand: async () => 'http://localhost:3000/' } as unknown as ICommandService, { realpath: async (uri: URI) => uri } as unknown as IFileService, { getWorkspace: () => ({ folders: [{ uri: URI.file('/ws') }] }) } as unknown as IWorkspaceContextService, { blockReason: () => undefined } as unknown as IVoltBrowserAccessService, stdioRefuses));
+		other.setSessionResolver({ mode: () => undefined, cwd: () => undefined });
+		other.setSandboxResolver({ settings: () => ({ level: 'off', network: true }), folder: () => '/ws' });
+		assert.match((await other.invokeTool('browser_run', { edits: [{ path: 'dir/a.ts', content: 'x' }] }, { sessionId: 's1', sandbox: DEV_SERVER })).error ?? '', /symbolic link/);
+		// A host without race-free files: refused, nothing written another way.
+		const bare = store.add(new VoltHostToolService({ executeCommand: async () => 'http://localhost:3000/' } as unknown as ICommandService, { realpath: async (uri: URI) => uri, writeFile: async () => { throw new Error('the file service must not be used'); } } as unknown as IFileService, { getWorkspace: () => ({ folders: [{ uri: URI.file('/ws') }] }) } as unknown as IWorkspaceContextService, { blockReason: () => undefined } as unknown as IVoltBrowserAccessService, {} as IVoltStdioService));
+		bare.setSessionResolver({ mode: () => undefined, cwd: () => undefined });
+		bare.setSandboxResolver({ settings: () => ({ level: 'off', network: true }), folder: () => '/ws' });
+		assert.match((await bare.invokeTool('browser_run', { edits: [{ path: 'src/a.ts', content: 'x' }] }, { sessionId: 's1', sandbox: DEV_SERVER })).error ?? '', /cannot open files safely/);
 	});
 
 	test('sandbox gate: image and page reads stay in the workspace and temp, never through a link out of it', async () => {
@@ -612,6 +708,28 @@ suite('Volt host tool service', () => {
 		second.setApprover(undefined);
 	});
 
+	test('PERM-FLOW-2: a sandboxed extension\'s tool flows are judged by its declared hosts plus the "Allow host" grants in the grant store (05-limitations #26)', async () => {
+		const { service } = setup();
+		const owner: IVoltHostToolOwner = { extensionId: 'acme.linear', label: 'Linear', firstParty: false, sandboxed: true, toolClass: 'network', declared: [{ id: 'tools.register' }, { id: 'net.connect', targets: ['api.linear.app'] }] };
+		store.add(service.registerToolProvider({ tools: [{ name: 'linear_sync', title: 'Synced', description: '', inputSchema: {} }], invoke: async () => ({ text: 'ran' }), owner }));
+		const chat = { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, allowedDomains: ['api.linear.app'] } };
+		const sync = () => service.invokeTool('linear_sync', {}, chat);
+		assert.strictEqual((await sync()).text, 'ran', 'its declared host is one the chat reaches');
+
+		// The user allowed it another host (the broker's session grant of its host process).
+		const allowHost: IGrant = { id: 'g-host', subject: extensionSubject('acme.linear', false), capability: 'net.connect@1', scope: { targets: ['paste.evil.com'] }, kind: 'session', sessionId: 'p:t3-run', source: 'user', grantedAt: 1, lastUsedAt: 1, epoch: 4 };
+		const asked: IVoltHostFlowApproval[] = [];
+		service.setApprover({ approve: async () => false, approveFlow: async request => { asked.push(request); return undefined; } });
+		service.setStoredHostGrants([allowHost, { ...allowHost, id: 'g-chat', subject: 'chat:s1', scope: { targets: ['other.com'] } }]);
+		assert.ok((await sync()).error, 'it can now send what it is given to paste.evil.com');
+		assert.deepStrictEqual(asked.map(request => request.hosts), [['paste.evil.com']], 'the card names the granted host the chat does not reach');
+		// Revoked on the Access page: the store no longer has it.
+		service.setStoredHostGrants([]);
+		assert.strictEqual((await sync()).text, 'ran');
+		assert.strictEqual(asked.length, 1);
+		service.setApprover(undefined);
+	});
+
 	test('PERM-FLOW-1: an extension tool whose class the gate can\'t judge without its arguments stays refused in a sandboxed chat', async () => {
 		const { service } = setup();
 		for (const toolClass of ['writes', 'reads', 'escapes', 'spawns', 'browser'] as const) {
@@ -623,5 +741,57 @@ suite('Volt host tool service', () => {
 			assert.ok((await service.invokeTool(`ext_${toolClass}`, {}, { sessionId: 's1', sandbox: { ...WORKSPACE_WRITE, network: true } })).error, toolClass);
 			registration.dispose();
 		}
+	});
+
+	test('DEV-SBX-11: the gate refuses a sandboxed chat\'s debug sessions, tasks, notebook kernels, ssh and editor commands before the IDE runs anything; the rest reaches it with the path rules', async () => {
+		const { service } = setup();
+		const calls: { name: string; args: Record<string, unknown>; call: IVoltHostToolCall | undefined }[] = [];
+		store.add(service.registerToolProvider({
+			tools: ['tests', 'debug', 'tasks', 'ide', 'code_nav', 'diagnostics', 'code_action', 'watch_job', 'unwatch_job'].map(name => ({ name, title: name, description: '', inputSchema: {} })),
+			invoke: async (name, args, call) => { calls.push({ name, args, call }); return { text: `ran ${name}` }; },
+		}));
+		const sandboxed = { sessionId: 's1', sandbox: WORKSPACE_WRITE };
+		const refused: [string, Record<string, unknown>, RegExp][] = [
+			['debug', { op: 'start', program: 'a.js' }, /^debug was not run: this chat runs in Volt's sandbox, and debug \(op start\) would run outside it\. Run the program with your own shell tool instead/],
+			['debug', { op: 'attach', port: 9229 }, /debug \(op attach\) would run outside it/],
+			['debug', { op: 'evaluate', expression: 'process.env' }, /debug \(op evaluate\) would run outside it\. It would run code in a debug session outside the sandbox/],
+			['debug', { op: 'breakpoints', path: 'a.js', line: 2, condition: 'x' }, /debug \(op breakpoints\) would run outside it/],
+			['tasks', { op: 'run', name: 'build' }, /^tasks was not run: .*tasks \(op run\) would run outside it\. Run the task's command with your own shell tool instead/],
+			['ide', { capability: 'notebook', op: 'run', args: { path: 'n.ipynb' } }, /ide \(notebook run\) would run outside it\. The notebook's kernel runs outside the sandbox/],
+			['ide', { capability: 'remote', op: 'exec', args: { host: 'prod', command: 'ls' } }, /ide \(remote exec\) would run outside it\. ssh would run with the user's keys/],
+			['ide', { capability: 'remote', op: 'hosts' }, /~\/\.ssh is a credential folder/],
+			['ide', { capability: 'extensions', op: 'run', args: { command: 'workbench.action.terminal.new' } }, /ide \(extensions run\) would run outside it\. Editor and extension commands run outside the sandbox/],
+			['ide', { capability: 'http', op: 'send', args: { method: 'POST', url: 'https://collector.example.net/x' } }, /^ide was not run: collector\.example\.net is not reachable: this chat's network is off/],
+			['code_nav', { op: 'references', path: '/etc/passwd', line: 1, symbol: 'root' }, /^code_nav was not run: .*A sandboxed chat reads files only in its workspace/],
+			['code_action', { op: 'rename', path: '.vscode/tasks.json', line: 1, symbol: 'x', new_name: 'y' }, /^code_action did not start: no file was changed/],
+		];
+		for (const [name, args, expected] of refused) {
+			assert.match((await service.invokeTool(name, args, sandboxed)).error ?? '', expected, `${name} ${JSON.stringify(args)}`);
+		}
+		assert.deepStrictEqual(calls.map(item => item.name), [], 'the IDE ran none of them');
+
+		const allowed: [string, Record<string, unknown>][] = [
+			['tests', { op: 'run', targets: ['test/a.test.js'] }],
+			['tests', { op: 'list' }],
+			['debug', { op: 'state' }],
+			['debug', { op: 'breakpoints', path: 'a.js', line: 2 }],
+			['tasks', { op: 'list' }],
+			['ide', { capability: 'git', op: 'branches' }],
+			['ide', { capability: 'docker', op: 'ps' }],
+			['code_nav', { op: 'references', path: 'src/a.ts', line: 1, symbol: 'x' }],
+			['code_action', { op: 'rename', path: 'src/a.ts', line: 1, symbol: 'x', new_name: 'y' }],
+			['watch_job', { title: 'build', check: 'test -f out/done' }],
+		];
+		for (const [name, args] of allowed) {
+			assert.strictEqual((await service.invokeTool(name, args, sandboxed)).text, `ran ${name}`, `${name} ${JSON.stringify(args)}`);
+		}
+		assert.strictEqual(calls.length, allowed.length);
+		// Each carries the gate's rules, for files the provider finds rather than files the agent named (a rename's other files).
+		const rename = calls.find(item => item.name === 'code_action')!.call!;
+		assert.ok(rename.readRefusal && rename.writeRefusal && rename.sandboxPaths);
+		assert.strictEqual(await rename.writeRefusal('/ws/src/b.ts'), undefined);
+		assert.match(await rename.writeRefusal('/ws/.git/hooks/pre-commit') ?? '', /./, 'a hook is not the chat\'s to write');
+		assert.match(await rename.readRefusal!('/etc/passwd') ?? '', /./);
+		assert.strictEqual(await rename.readRefusal!('/ws/src/b.ts'), undefined);
 	});
 });

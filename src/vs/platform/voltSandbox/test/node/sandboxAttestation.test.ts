@@ -562,3 +562,60 @@ suite('Volt sandbox pattern walk scope (B-27)', () => {
 		}
 	});
 });
+
+suite('Volt sandbox resolver refusals', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('LIFE-CWD-1: a working directory that does not exist is refused as missing, not as unreadable', async () => {
+		const root = await fs.realpath(await fs.mkdtemp(join(homedir(), '.volt-cwd-missing-')));
+		try {
+			const ws = join(root, 'project');
+			await fs.mkdir(ws);
+			const facts = await sandboxHostFacts();
+			const policy = agentSandboxPolicy(
+				{ level: 'workspace-write', network: false, providerId: '', workspaceRoots: [ws] },
+				{ platform: process.platform, home: facts.home, tempDirs: [facts.tmpRoot], cacheDir: join(root, 'cache') },
+			);
+			const runTmp = join(root, 'run');
+			await fs.mkdir(runTmp);
+			const missing = join(root, 'tmp', 'project');
+			await assert.rejects(
+				resolveSandboxPolicy(policy, { workspaceRoots: [ws], cwd: missing, hostEnv: { PATH: '/usr/bin:/bin', HOME: facts.home } }, facts, runTmp),
+				(err: Error) => err.message.includes('does not exist') && err.message.includes(missing),
+			);
+			// The workspace itself still resolves.
+			await resolveSandboxPolicy(policy, { workspaceRoots: [ws], cwd: ws, hostEnv: { PATH: '/usr/bin:/bin', HOME: facts.home } }, facts, runTmp);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test('LIFE-WRITE-1: a SQLite journal named writable is kept while it does not exist; a missing name without an extension is skipped', async () => {
+		const root = await fs.realpath(await fs.mkdtemp(join(homedir(), '.volt-write-missing-')));
+		try {
+			const home = join(root, 'home');
+			const ws = join(home, 'project');
+			await fs.mkdir(join(home, '.grok'), { recursive: true });
+			await fs.mkdir(ws, { recursive: true });
+			// Grok's worktree database exists; its -wal and -shm exist only while it is open (live, 2026-11-13).
+			await fs.writeFile(join(home, '.grok', 'worktrees.db'), '');
+			const facts: ISandboxHostFacts = { ...await sandboxHostFacts(), home };
+			const policy = agentSandboxPolicy(
+				{ level: 'workspace-write', network: false, providerId: 'grok', workspaceRoots: [ws] },
+				{ platform: process.platform, home, tempDirs: [facts.tmpRoot], cacheDir: join(root, 'cache') },
+			);
+			const runTmp = join(root, 'run');
+			await fs.mkdir(runTmp);
+			const { policy: resolved, notes } = await resolveSandboxPolicy(policy, { workspaceRoots: [ws], hostEnv: { PATH: '/usr/bin:/bin', HOME: home } }, facts, runTmp);
+			for (const name of ['worktrees.db', 'worktrees.db-wal', 'worktrees.db-shm']) {
+				assert.ok(resolved.writeFiles.includes(join(home, '.grok', name)), `${name} is writable`);
+			}
+			// Grok's folders that do not exist here (sessions, logs, ...) are skipped, not made files.
+			assert.ok(!resolved.writeFiles.includes(join(home, '.grok', 'sessions')));
+			assert.ok(notes.some(note => note.includes('.grok/sessions')));
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+});

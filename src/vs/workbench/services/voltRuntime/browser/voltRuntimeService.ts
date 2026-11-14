@@ -54,7 +54,7 @@ import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService, runGitThrough, VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { chatExec, IChatExec, voltExec } from '../common/execContext.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
-import { codeIndexEnabled, editCheckPhase, INSTANT_GREP_TOOL_NAME, isVoltWorktreePath, lspAllowedFor, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
+import { codeIndexEnabled, editCheckPhase, INSTANT_GREP_TOOL_NAME, lspPolicy, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
 import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
 import { retrievalAddsToMessage } from '../common/search/contextRetrieval.js';
 import { ISearchIndex, VoltSearch } from './search/voltSearch.js';
@@ -781,8 +781,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	) {
 		super();
 		this.codeIntel = this._register(createRuntimeCodeIntel(markerService, textModelService, languageFeaturesService, fileService));
-		// Volt's worktree checkouts get language servers only when opted in (Settings > Code Intelligence); projects always do.
-		this.codeIntel.setLspPolicy(uri => lspAllowedFor(this.configurationService, !this.workspace.isInsideWorkspace(uri) && isVoltWorktreePath(uri.fsPath)));
+		// A chat's worktree's language servers are opt-in (Settings > Code Intelligence); a project the user opened is not a worktree.
+		this.codeIntel.setLspPolicy(lspPolicy(this.configurationService, uri => this.workspace.isInsideWorkspace(uri)));
 		this.searchIndex = {
 			service: codeIndexService,
 			enabled: () => codeIndexEnabled(this.configurationService),
@@ -2423,6 +2423,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const next = normalizeSandboxSettings(settings);
 		this.sandboxChats = { ...this.sandboxChats, [sessionId]: next };
 		this.storeSandbox();
+		// The chat's chip and menu show its sandbox, whoever changed it (the menu, a refusal card's "Turn off sandbox").
+		this._onDidChangeAccess.fire();
 		// "Allow host": hosts are not part of the launch key, so the running agent keeps its process
 		// and its proxy lets the new hosts through from its next connection (F.9, B-31).
 		const added = (next.allowedDomains ?? []).filter(domain => !(before.allowedDomains ?? []).includes(domain));
@@ -6765,6 +6767,10 @@ function closestLevel(level: string, values: readonly string[]): string | undefi
 
 function asToolEvent(event: { type: string;[key: string]: unknown }): IVoltEvent | undefined {
 	if (event.type === 'plan' || event.type === 'file.change' || event.type === 'error') {
+		return event as IVoltEvent;
+	}
+	// A native model's command its chat's sandbox stopped: the same Volt Guard card an agent CLI's gets.
+	if (event.type === 'sandbox.denial' && event.denial && typeof event.denial === 'object') {
 		return event as IVoltEvent;
 	}
 	return undefined;

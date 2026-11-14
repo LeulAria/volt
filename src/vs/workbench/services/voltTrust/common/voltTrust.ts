@@ -54,6 +54,8 @@ export interface IVoltTrustService {
 
 	/** "Allow" / "Allow for This Chat" on a network denial card: the broker's approve, after the gesture. */
 	approveDenial(chatId: string, processId: string, denialId: string, epoch: number, scope: 'run' | 'chat', gesture: IUserGestureToken | undefined): Promise<IVoltSandboxApproval>;
+	/** "Allow for This Chat": by the broker's record of the chat's denial; needs no live run of it. */
+	approveChatDenial(chatId: string, denialId: string, epoch: number, gesture: IUserGestureToken | undefined): Promise<IVoltSandboxApproval>;
 	/** "Skip" on a network denial card: counts toward the broker's refusals. */
 	refuseDenial(processId: string, denialId: string): Promise<void>;
 

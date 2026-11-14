@@ -17,6 +17,7 @@ import { createCodeIndexNav } from './codeIndexNav.js';
 import { createCodeTools, ICodeIntelHost } from './codeTools.js';
 import { withEditDiagnostics } from './editDiagnostics.js';
 import { createFileTools, IFileToolHost, IToolDocuments, writeComputedEdit } from './fileTools.js';
+import { fileToolSandbox } from './sandboxedFiles.js';
 import { createGitTools } from './gitTools.js';
 import { createIdeTools } from './ideTools.js';
 import { createMetaTools, IMetaToolHost } from './metaTools.js';
@@ -57,6 +58,8 @@ export interface IBuiltinToolServices {
  * neither the order nor a description may change between requests of one conversation.
  */
 export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] {
+	// The chat's sandbox at each call: a sandboxed chat's file and search tools get the host-tool gate's rules (SEC3-1).
+	const sandbox = () => fileToolSandbox(services.exec(), services.hostTools, services.stdio, services.root());
 	const files: IFileToolHost = {
 		fileService: services.fileService,
 		root: services.root,
@@ -64,12 +67,16 @@ export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] 
 		ledger: services.ledger,
 		documents: services.documents,
 		rulesFor: services.rulesFor,
+		sandbox,
 	};
 	const codeIntel = services.codeIntel;
 	return [
 		// With language servers, writes answer with the file's errors (no extra diagnostics turn).
 		...createFileTools(files).map(tool => codeIntel && (tool.name === 'edit_file' || tool.name === 'write_file') ? withEditDiagnostics(tool, codeIntel, services.root) : tool),
-		...createSearchTools(services.search, services.root),
+		...createSearchTools(services.search, services.root, () => {
+			const confined = sandbox();
+			return confined ? { readRefusal: path => confined.refusal(URI.file(path), 'read') } : undefined;
+		}),
 		...(services.codeIntel ? createCodeTools(
 			services.codeIntel,
 			services.root,

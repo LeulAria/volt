@@ -7,9 +7,8 @@ import { joinPath } from '../../../../../../base/common/resources.js';
 import { IFileService } from '../../../../../../platform/files/common/files.js';
 import { IWorkbenchEnvironmentService } from '../../../../../services/environment/common/environmentService.js';
 import { IPathService } from '../../../../../services/path/common/pathService.js';
+import { DEVCONTAINER_FILES } from '../../../../../services/voltRuntime/common/ide/ideSandbox.js';
 import { cliText, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, ok, safeName, str } from './capability.js';
-
-const DEVCONTAINER_FILES = ['.devcontainer/devcontainer.json', '.devcontainer.json'];
 
 /** Remote and container environments: where the window runs, SSH hosts, dev containers. */
 export class RemoteCapability implements IIdeCapability {

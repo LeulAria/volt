@@ -1,0 +1,130 @@
+{
+	"name": "dev-environment",
+	"displayName": "Volt: Dev Environment",
+	"description": "Agents run tests, debug programs, run tasks and use the editor's other services (the ide gateway), with an activity tab beside the chat. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*",
+		"volt": "^1.0.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {
+		"voltModule": {
+			"feature": "devEnvironment",
+			"label": "Tests, debugging and tasks",
+			"description": "Agents run tests, debug programs, run tasks and use the editor's other services through the ide gateway.",
+			"category": "workspace",
+			"icon": "debug-alt",
+			"order": 45,
+			"commands": [
+				"volt.agentIde.openActivityTab"
+			],
+			"settings": [
+				"volt.agent.ide."
+			]
+		},
+		"voltTools": [
+			{
+				"name": "tests",
+				"class": "sandboxed"
+			},
+			{
+				"name": "debug",
+				"class": "escapes"
+			},
+			{
+				"name": "tasks",
+				"class": "escapes"
+			},
+			{
+				"name": "ide",
+				"class": "escapes"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "files.read:workspace",
+					"class": "low",
+					"reason": "Test results, launch configurations and task definitions in the chat's project."
+				},
+				{
+					"id": "files.write",
+					"class": "medium",
+					"reason": "The ide gateway's notebook capability edits and inserts cells."
+				},
+				{
+					"id": "terminals.run",
+					"class": "medium",
+					"reason": "Tasks run in terminals."
+				},
+				{
+					"id": "terminals.read",
+					"class": "medium",
+					"reason": "The tasks tool returns the output of its task's terminal."
+				},
+				{
+					"id": "files.read:home",
+					"class": "critical",
+					"targets": [
+						"~/.ssh/config"
+					],
+					"reason": "The ide gateway's remote capability lists the hosts in ~/.ssh/config."
+				},
+				{
+					"id": "git.read",
+					"class": "medium",
+					"reason": "The ide gateway's git capability reads branches, history, blame and conflicts."
+				},
+				{
+					"id": "git.write",
+					"class": "high",
+					"reason": "The ide gateway's git capability stages, commits, switches branches and stashes."
+				},
+				{
+					"id": "hosting.read",
+					"class": "medium",
+					"reason": "The ide gateway's ci capability reads GitHub Actions runs and their logs through gh."
+				},
+				{
+					"id": "net.connect",
+					"class": "low",
+					"reason": "The ide gateway's http capability sends requests through the HTTP client's service."
+				},
+				{
+					"id": "net.loopback.connect:*",
+					"class": "high",
+					"reason": "The ide gateway's http capability reaches the user's local servers."
+				},
+				{
+					"id": "commands.execute:*",
+					"class": "critical",
+					"reason": "The ide gateway's extensions capability runs a command the user approves."
+				},
+				{
+					"id": "spawn.unsandboxed",
+					"class": "critical",
+					"reason": "Debug sessions, tasks, notebook kernels and the docker, kubectl and gh programs run on the host; a sandboxed chat's run in its sandbox or are refused."
+				}
+			]
+		}
+	}
+}

@@ -183,6 +183,53 @@ export function networkRulesCover(entries: readonly string[], target: INormalize
 	return false;
 }
 
+/** The ports a rule lets through: its own, else 443 (`*`: 80 and 443). */
+function rulePorts(rule: NetworkRule): readonly number[] {
+	return rule.kind === 'any' ? [80, 443] : [rule.port ?? 443];
+}
+
+/**
+ * Whether every connection the rule `child` lets through, a rule of `parents` lets through too, by
+ * {@link networkRuleCovers}: so a parent's `*` never covers `evil.com:22`, a paste site or an IP
+ * literal, and `*.x.com` never covers `x.com` or another port (I.4, B-32). For "may a child have
+ * this host": an entry that is not a rule is never covered (fail closed), and one that lets nothing
+ * through (`*.com`, a public suffix) is.
+ */
+export function networkEntryWithin(child: string, parents: readonly string[]): boolean {
+	const rule = parseNetworkRule(child);
+	if (!rule) {
+		return false;
+	}
+	const rules = parents.map(parseNetworkRule).filter((parent): parent is NetworkRule => !!parent);
+	const ports = rulePorts(rule);
+	switch (rule.kind) {
+		case 'any':
+			return rules.some(parent => parent.kind === 'any');
+		case 'name': {
+			const target = normalizeNetworkHost(rule.host);
+			return typeof target !== 'string' && rules.some(parent => ports.every(port => networkRuleCovers(parent, target, port)));
+		}
+		case 'suffix':
+			if (isPublicSuffix(rule.base)) {
+				return true;
+			}
+			// Every descendant of the base that is not an exfil host, on its port.
+			return rules.some(parent => parent.kind === 'any'
+				? ports.every(port => port === 80 || port === 443)
+				: parent.kind === 'suffix' && !isPublicSuffix(parent.base) && (rule.base === parent.base || rule.base.endsWith(`.${parent.base}`)) && rulePorts(parent)[0] === ports[0]);
+		case 'ip': {
+			const range = parseCidr(rule.cidr);
+			return !!range && rules.some(parent => {
+				if (parent.kind !== 'ip' || rulePorts(parent)[0] !== ports[0]) {
+					return false;
+				}
+				const outer = parseCidr(parent.cidr);
+				return !!outer && outer.bytes.length === range.bytes.length && outer.prefix <= range.prefix && cidrContains(parent.cidr, rule.cidr.slice(0, rule.cidr.indexOf('/')));
+			});
+		}
+	}
+}
+
 // --- public suffixes ---------------------------------------------------------------------------
 
 /**

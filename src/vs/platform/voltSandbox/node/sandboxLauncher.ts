@@ -9,16 +9,18 @@ import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
-import { dirname, join } from '../../../base/common/path.js';
+import { dirname, isAbsolute, join, normalize } from '../../../base/common/path.js';
 import { chatLaunchView, evaluateLaunch, IAdminPolicy, ILaunchDecision, IWorkspaceRestriction, PolicyAuthorityMode, PolicySnapshot } from '../common/authority.js';
-import { ILaunchCompileInput, ILaunchCompileRecord, ISandboxCompositionNote, ISandboxLayer, LaunchPolicyCache, launchCompileRecord, launchPolicyBytes } from '../common/compile.js';
+import { composeLaunchLayers, ILaunchCompileInput, ILaunchCompileRecord, ISandboxComposition, ISandboxCompositionNote, ISandboxLayer, LaunchPolicyCache, launchCompileRecord, launchPolicyBytes } from '../common/compile.js';
+import { describeIgnoredEntries, ISandboxPolicyFilesInfo } from '../common/sandboxPolicyFiles.js';
+import { ISandboxPolicyFileLayers, SandboxPolicyFiles } from './sandboxPolicyFiles.js';
 import { chatSubject, corePrincipal, ICallContext, IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
 import { MCP_HOST_QUOTAS, mcpHostPolicy } from '../common/sandboxMcp.js';
 import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
-import { IAttestation, ISandboxBackendCapabilities, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
-import { ISandboxDenial, isNoiseDenial } from '../common/sandboxDenials.js';
+import { IAttestation, ISandboxBackendCapabilities, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { ISandboxDenial, isNoiseDenial, isQuietDenial } from '../common/sandboxDenials.js';
 import { agentStatePlan } from '../common/agentState.js';
-import { AGENT_STATE_ROOT, agentEndpointLoopbackPorts, agentSandboxPolicy, agentSandboxRefusal, IAgentSandboxHost, isAgentHousekeepingDenial, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { AGENT_STATE_ROOT, agentEndpointLoopbackPorts, agentQuietDomains, agentQuietPaths, agentSandboxPolicy, agentSandboxRefusal, IAgentSandboxHost, isAgentHousekeepingDenial, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
@@ -28,7 +30,7 @@ import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js
 import { readAdminPolicy, systemAdminPolicySource } from './adminPolicy.js';
 import { PrincipalRegistry } from './principalRegistry.js';
 import { IPreparedSandbox, SandboxManager } from './sandboxManager.js';
-import { HostStartResult, SandboxSupervisor } from './supervisor.js';
+import { HostStartResult, killTagged, SandboxSupervisor } from './supervisor.js';
 import { SandboxedExtensionHosts } from './extensionHostSandbox.js';
 import { sandboxHostFacts } from './sandboxResolver.js';
 import { SandboxConfirmation } from './sandboxBackends.js';
@@ -121,6 +123,8 @@ export interface IVoltSandboxLauncherOptions {
 	readonly networkMode?: () => NetworkBrokerMode;
 	/** Where the network broker's grants live (the grant store); not with `manager`. */
 	readonly grants?: () => Promise<INetworkGrantSource | undefined>;
+	/** `~/.volt/sandbox.json` and the workspaces' `.volt/sandbox.json`; tests point the user's elsewhere. */
+	readonly policyFiles?: SandboxPolicyFiles;
 }
 
 /** A stdio MCP server Volt starts for a sandboxed chat (see {@link VoltSandboxLauncher.startMcpHost}). */
@@ -161,6 +165,18 @@ export interface ISandboxViolationEvent {
 	readonly tag: string;
 	readonly denial: ISandboxDenial;
 }
+
+/** Where a run's denials are judged from: the home folder, the chat's folders and the CLI's own state (see `isQuietDenial`). */
+interface IDenialContext {
+	readonly home: string;
+	readonly roots: readonly string[];
+	readonly own?: { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths?: readonly string[] };
+	/** The agent CLI's housekeeping (`isAgentHousekeepingDenial`): logged, never a card. */
+	readonly housekeeping?: (denial: ISandboxDenial) => boolean;
+}
+
+/** Commands that read or list what they are told to: their denial is the agent's own and keeps its card (DENY-QUIET-1). */
+const EXPLICIT_READER = /^(?:ls|find|tree|du|stat|cat|head|tail|less|more|file|wc|bat|eza|exa|lsd|open|xxd|od|strings)$/;
 
 interface ILogger {
 	info(message: string): void;
@@ -209,6 +225,10 @@ export class VoltSandboxLauncher extends Disposable {
 	private readonly _onViolation = this._register(new Emitter<ISandboxViolationEvent>());
 	readonly onViolation: Event<ISandboxViolationEvent> = this._onViolation.event;
 
+	private readonly _onDidChangeManagedPolicy = this._register(new Emitter<void>());
+	/** The managed (admin) policy was read or changed: every gate that judges by it re-judges. */
+	readonly onDidChangeManagedPolicy: Event<void> = this._onDidChangeManagedPolicy.event;
+
 	private readonly _onDidShadowDiff = this._register(new Emitter<ILaunchShadowDiff>());
 	readonly onDidShadowDiff: Event<ILaunchShadowDiff> = this._onDidShadowDiff.event;
 
@@ -226,8 +246,11 @@ export class VoltSandboxLauncher extends Disposable {
 	private readonly platform: string | undefined;
 	private readonly readAdmin: () => Promise<IAdminPolicy & { readonly source?: string; readonly problem?: string }>;
 	private admin: Promise<IAdminPolicy> | undefined;
+	/** The managed policy once read: what the network broker judges by. */
+	private adminNow: IAdminPolicy | undefined;
 	private workspace: IWorkspaceRestriction | undefined;
 	private layers: readonly ISandboxLayer[] = [];
+	private readonly policyFiles: SandboxPolicyFiles;
 	private epoch = 0;
 	private readonly _shadowDiffs: ILaunchShadowDiff[] = [];
 	private readonly compiles: ILaunchCompileRecord[] = [];
@@ -240,7 +263,9 @@ export class VoltSandboxLauncher extends Disposable {
 	) {
 		super();
 		const sandboxLogger = { info: (m: string) => logger.info(m), warn: (m: string) => logger.warn(m) };
-		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}), ...(options.grants ? { grants: options.grants } : {}) });
+		// The broker judges connections by the managed policy as last read here (launches, `invalidate`).
+		// Runs a dead Volt left behind are reaped by their tag before their folders go (FAIL-CRASH-1).
+		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}), ...(options.grants ? { grants: options.grants } : {}), adminPolicy: () => this.adminNow, reap: killTagged });
 		this.now = options.now ?? Date.now;
 		this.platform = options.platform;
 		this.registry = new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now);
@@ -254,6 +279,7 @@ export class VoltSandboxLauncher extends Disposable {
 		this.mode = options.mode ?? (() => 'enforce');
 		this.readAdmin = options.admin ?? (() => readAdminPolicy(systemAdminPolicySource()));
 		this.workspace = options.workspace;
+		this.policyFiles = options.policyFiles ?? new SandboxPolicyFiles();
 		this.cache.invalidate(this.epoch);
 	}
 
@@ -336,6 +362,13 @@ export class VoltSandboxLauncher extends Disposable {
 					throw new SandboxUnavailableError(`Volt's sandbox policy refused this launch: ${decision.reason}.`, 'unavailable');
 				}
 			}
+			// The policy files, before any folder is made: a broken `~/.volt/sandbox.json` refuses here.
+			const files = await this.readPolicyFiles(request, host);
+			if (files.refusal) {
+				throw new SandboxUnavailableError(files.refusal, 'unavailable');
+			}
+			// The backend's probe (once per process, cached) runs while the folders and the overlay are made.
+			void this.manager.capabilities().catch(() => undefined);
 			const sshAuthSock = options.hostEnv.SSH_AUTH_SOCK && await fs.stat(options.hostEnv.SSH_AUTH_SOCK).then(s => s.isSocket(), () => false) ? options.hostEnv.SSH_AUTH_SOCK : undefined;
 			// Package caches per principal: one chat's sandbox cannot plant a package another one runs (B-35).
 			const cacheDir = join(host.cacheDir, sandboxCacheKey(request));
@@ -344,27 +377,38 @@ export class VoltSandboxLauncher extends Disposable {
 			const statePlan = request.stateKey !== undefined ? agentStatePlan(request.providerId, request.stateKey, { platform: host.platform, home: host.home, root: this.stateRoot(host.home), hostEnv: options.hostEnv }, AGENT_CONFIG_NAMES) : undefined;
 			const overlay = statePlan ? await AgentStateOverlay.prepare(statePlan, { warn: message => this.logger.warn(message) }) : undefined;
 			const agentHost: IAgentSandboxHost = { ...host, cacheDir, ...(sshAuthSock ? { sshAuthSock } : {}), ...(statePlan ? { statePlan } : {}) };
-			const policy = this.policyFor(principal.subject, mode, decision, { subject: principal.subject, epoch, request, host: agentHost, ...this.layers.length ? { layers: this.layers } : {} });
+			const { policy, ignored, contained } = this.policyFor(principal.subject, mode, decision, this.compileInput(principal.subject, epoch, request, agentHost, files), files);
 			// The overlay's variables win over the user's own (`CLAUDE_CONFIG_DIR` set in their shell).
 			const env = statePlan ? { ...options.env, ...statePlan.env } : options.env;
 			const prepared = await this.manager.prepare({
 				command,
 				args: [...nativeSandboxOffArgs(request.providerId), ...args],
 				policy,
-				context: { workspaceRoots: request.workspaceRoots.filter(root => !root.endsWith('/.git')), cwd: options.cwd, hostEnv: options.hostEnv, env },
+				context: { workspaceRoots: request.workspaceRoots.filter(root => !root.endsWith('/.git')), cwd: options.cwd, hostEnv: options.hostEnv, env, ...contained.length ? { contained } : {} },
 				terminal: !!options.terminal,
 				label: options.label ?? `${request.providerId} agent`,
 				isolate: [{ root: host.cacheDir, keep: cacheDir }],
 				// The network broker's route, token, grants and budgets are this principal's; its chat's
 				// grants attach to the chat, not to this one run (I.4 routes).
 				principal,
+				// The CLI's own telemetry stays blocked without a card inviting the user to allow it.
+				quietHosts: agentQuietDomains(request.providerId),
 			});
 			sealed = this.registry.sealLaunchPolicy(principal, prepared.launchPolicyHash);
 			launched = true;
-			// The CLI's own housekeeping, the run's canary and looks at the home folder: logged, never a card (B-05).
+			// The folders above these are the ones a CLI or a tool probes by itself (quiet denials): the
+			// chat's, and temp's (`/private/var` above the macOS user temp folder).
+			const given = [...request.workspaceRoots, ...request.extraWritableRoots ?? [], ...host.tempDirs];
+			const roots = [...new Set([...given, ...await Promise.all(given.map(root => fs.realpath(root).catch(() => root)))])];
+			const own = agentQuietPaths(request.providerId, host.home);
+			// The CLI's own housekeeping and looks at the home folder: logged, never a card (B-05).
 			const realConfig = statePlan?.links[0] ? dirname(statePlan.links[0].target) : undefined;
 			const housekeeping = (denial: ISandboxDenial) => isAgentHousekeepingDenial(request.providerId, host.home, denial, { sentinel: prepared.policy.sentinel, ...(realConfig ? { realConfig } : {}) });
-			return this.launch(prepared, overlay, policy, sealed, housekeeping);
+			return this.launch(prepared, overlay, policy, sealed, [...files.warnings, ...describeIgnoredEntries([...files.ignored, ...ignored], policyFileName)], { home: host.home, roots, ...(own ? { own } : {}), housekeeping });
+		} catch (err) {
+			// Every failure here (a cache or overlay folder that can't be made, a config that can't be
+			// linked) is the sandbox refusing, typed, so the chat says so and never retries it (FAIL-TYPED-1).
+			throw err instanceof SandboxUnavailableError ? err : new SandboxUnavailableError(`Volt could not prepare the sandbox: ${redactSandboxText(err instanceof Error ? err.message : String(err), host.home)}`, 'unavailable');
 		} finally {
 			if (!launched) {
 				this.registry.retire(principal.id);
@@ -393,6 +437,8 @@ export class VoltSandboxLauncher extends Disposable {
 		const { stateKey: _stateKey, ...request } = launch.sandbox;
 		const subject = chatSubject(launch.chatId);
 		const judgeAs = corePrincipal(`mcp-launch:${launch.chatId}`, subject, 'mcp');
+		/** What the policy files narrowed to, as of the latest compute: the resolver checks it at each (re)start. */
+		let contained: ISandboxComposition['contained'] = [];
 		const compute = async (): Promise<IVoltSandboxPolicy> => {
 			const epoch = this.epoch;
 			const mode = this.mode();
@@ -403,8 +449,13 @@ export class VoltSandboxLauncher extends Disposable {
 					throw new McpHostPolicyRefusal(`Volt's sandbox policy refused this chat's launch: ${decision.reason}.`);
 				}
 			}
-			const chat = this.policyFor(subject, mode, decision, { subject, epoch, request, host: { ...host, cacheDir: join(host.cacheDir, sandboxCacheKey(request)) }, ...this.layers.length ? { layers: this.layers } : {} });
-			return mcpHostPolicy({ server: launch.server, chat, request, platform: host.platform, home: host.home, allowedHosts: launch.allowedHosts ?? [] }).policy;
+			const files = await this.readPolicyFiles(request, host);
+			if (files.refusal) {
+				throw new McpHostPolicyRefusal(files.refusal);
+			}
+			const chat = this.policyFor(subject, mode, decision, this.compileInput(subject, epoch, request, { ...host, cacheDir: join(host.cacheDir, sandboxCacheKey(request)) }, files), files);
+			contained = chat.contained;
+			return mcpHostPolicy({ server: launch.server, chat: chat.policy, request, platform: host.platform, home: host.home, allowedHosts: launch.allowedHosts ?? [] }).policy;
 		};
 		let first: IVoltSandboxPolicy | undefined;
 		try {
@@ -439,6 +490,8 @@ export class VoltSandboxLauncher extends Disposable {
 				storageDir,
 				hostEnv: launch.hostEnv,
 				...(launch.env ? { env: launch.env } : {}),
+				// Read by the resolver after `policy` above ran for this (re)start.
+				get contained() { return contained; },
 			},
 			ipc: false,
 			stdio: 'pipe',
@@ -501,7 +554,9 @@ export class VoltSandboxLauncher extends Disposable {
 			return;
 		}
 		for (const host of this.supervisor.list()) {
-			if (host.principal.id === principal.id && isLiveWorkloadState(host.state)) {
+			// A host whose process just exited revokes its own principal when its channel closes: that exit is
+			// not a stop (a crash stays a crash, restarted within its budget or broken with its stderr).
+			if (host.principal.id === principal.id && isLiveWorkloadState(host.state) && !host.exiting) {
 				this.logger.info(`[volt-sandbox] ${host.label}: its principal was revoked; stopping it`);
 				void host.terminate('stopped');
 			}
@@ -527,7 +582,7 @@ export class VoltSandboxLauncher extends Disposable {
 	 * The policy that acts: the compiled one in `enforce`, the earlier composition in `shadow`.
 	 * Both are computed when they can be, and a difference is recorded with what explains it.
 	 */
-	private policyFor(subject: SubjectKey, mode: PolicyAuthorityMode, decision: ILaunchDecision, input: ILaunchCompileInput): IVoltSandboxPolicy {
+	private policyFor(subject: SubjectKey, mode: PolicyAuthorityMode, decision: ILaunchDecision, input: ILaunchCompileInput, files: ISandboxPolicyFileLayers): Pick<ISandboxComposition, 'policy' | 'ignored' | 'contained'> {
 		const compiled = decision.allow ? this.cache.compile(decision, input) : undefined;
 		if (compiled) {
 			this.compiles.push(launchCompileRecord(compiled, input));
@@ -535,11 +590,36 @@ export class VoltSandboxLauncher extends Disposable {
 				this.compiles.shift();
 			}
 		}
-		const legacy = agentSandboxPolicy(input.request, input.host);
-		if (compiled && launchPolicyBytes(compiled.policy) !== launchPolicyBytes(legacy)) {
+		// The policy files apply in both modes: they are the user's and the repository's, not the Authority's.
+		const legacy = composeLaunchLayers(agentSandboxPolicy(input.request, input.host), files.layers, files.realpaths);
+		if (compiled && launchPolicyBytes(compiled.policy) !== launchPolicyBytes(legacy.policy)) {
 			this.recordDiff({ subject, mode, kind: 'policy', decision, ignored: compiled.ignored });
 		}
-		return mode === 'enforce' && compiled ? compiled.policy : legacy;
+		return mode === 'enforce' && compiled ? compiled : legacy;
+	}
+
+	/** A launch's compile input: the policy files' layers first, then the launcher's own narrowing layers (never trusted). */
+	private compileInput(subject: SubjectKey, epoch: number, request: IVoltSandboxRequest, host: IAgentSandboxHost, files: ISandboxPolicyFileLayers): ILaunchCompileInput {
+		const layers = [...files.layers, ...this.layers.map(layer => ({ ...layer, trusted: false }))];
+		return { subject, epoch, request, host, ...layers.length ? { layers } : {}, ...files.realpaths ? { realpaths: files.realpaths } : {} };
+	}
+
+	private async readPolicyFiles(request: IVoltSandboxRequest, host: Omit<IAgentSandboxHost, 'sshAuthSock'>): Promise<ISandboxPolicyFileLayers> {
+		return this.policyFiles.read(host.home, request.workspaceRoots, await this.adminPolicy());
+	}
+
+	/**
+	 * What the policy files do to a chat with `request` (its Access menu): the files, what was ignored
+	 * from them, and the refusal a broken user file causes. Read and composed as a launch would.
+	 */
+	async policyFilesInfo(request: IVoltSandboxRequest): Promise<ISandboxPolicyFilesInfo> {
+		const host = await this.hostFacts();
+		const files = await this.readPolicyFiles(request, host);
+		if (files.refusal) {
+			return { files: files.files, ignored: files.ignored, refusal: files.refusal };
+		}
+		const { ignored } = composeLaunchLayers(agentSandboxPolicy(request, { ...host, cacheDir: join(host.cacheDir, sandboxCacheKey(request)) }), files.layers, files.realpaths);
+		return { files: files.files, ignored: [...files.ignored, ...ignored] };
 	}
 
 	private recordDiff(diff: Omit<ILaunchShadowDiff, 'at'>): void {
@@ -579,6 +659,9 @@ export class VoltSandboxLauncher extends Disposable {
 	invalidate(changes: { readonly admin?: IAdminPolicy; readonly workspace?: IWorkspaceRestriction; readonly layers?: readonly ISandboxLayer[] } = {}): number {
 		if (changes.admin) {
 			this.admin = Promise.resolve(changes.admin);
+			this.adminNow = changes.admin;
+			this.manager.currentBroker?.adminChanged();
+			this._onDidChangeManagedPolicy.fire();
 		}
 		if ('workspace' in changes) {
 			this.workspace = changes.workspace;
@@ -591,33 +674,72 @@ export class VoltSandboxLauncher extends Disposable {
 		return this.epoch;
 	}
 
+	/** The managed policy, read on first use (launches, plugin hosts, the network broker judge by it). */
+	managedPolicy(): Promise<IAdminPolicy> {
+		return this.adminPolicy();
+	}
+
+	/**
+	 * Reads the managed policy again; when it changed (an MDM push, `/etc/volt/policy.json` edited),
+	 * every consumer gets it through {@link invalidate}: launches, the broker (open tunnels re-judged),
+	 * plugin hosts, and over {@link onDidChangeManagedPolicy} the windows' gates. True when it changed.
+	 */
+	async refreshManagedPolicy(): Promise<boolean> {
+		const before = await this.adminPolicy();
+		const read = await this.readAdmin().then(({ source: _source, problem: _problem, ...policy }): IAdminPolicy => policy, (): IAdminPolicy => ({ unreadable: true }));
+		if (JSON.stringify(sortedAdmin(read)) === JSON.stringify(sortedAdmin(this.adminNow ?? before))) {
+			return false;
+		}
+		this.logger.info(`[volt-sandbox] the managed policy changed${read.unreadable ? ' and can\'t be read: third parties get nothing' : ''}`);
+		this.invalidate({ admin: read });
+		return true;
+	}
+
+	/** Re-reads the managed policy every `intervalMs` (a few stats) while Volt runs; see {@link refreshManagedPolicy}. */
+	watchManagedPolicy(intervalMs: number): IDisposable {
+		const timer = setInterval(() => void this.refreshManagedPolicy().catch(() => undefined), intervalMs);
+		(timer as { unref?(): void }).unref?.();
+		return this._register(toDisposable(() => clearInterval(timer)));
+	}
+
+	/** The managed policy once read; undefined before. */
+	get managedPolicyNow(): IAdminPolicy | undefined {
+		return this.adminNow;
+	}
+
 	private adminPolicy(): Promise<IAdminPolicy> {
-		this.admin ??= this.readAdmin().then(({ source: _source, problem, ...policy }) => {
-			if (problem) {
-				this.logger.warn(`[volt-sandbox] managed policy: ${problem}`);
-			}
-			return policy;
-		}, () => ({ unreadable: true }));
+		if (!this.admin) {
+			const admin = this.readAdmin().then(({ source: _source, problem, ...policy }): IAdminPolicy => {
+				if (problem) {
+					this.logger.warn(`[volt-sandbox] managed policy: ${problem}`);
+				}
+				return policy;
+			}, (): IAdminPolicy => ({ unreadable: true }));
+			this.admin = admin;
+			// Registered first, so the policy is the broker's before any launch that awaited it goes on.
+			void admin.then(policy => {
+				if (this.admin === admin) {
+					this.adminNow = policy;
+					this.manager.currentBroker?.adminChanged();
+					this._onDidChangeManagedPolicy.fire();
+				}
+			});
+		}
 		return this.admin;
 	}
 
-	private launch(prepared: IPreparedSandbox, overlay: AgentStateOverlay | undefined, policy: IVoltSandboxPolicy, principal: IPrincipal, housekeeping: (denial: ISandboxDenial) => boolean): ISandboxLaunch {
-		const quiet = new Set<string>();
+	private launch(prepared: IPreparedSandbox, overlay: AgentStateOverlay | undefined, policy: IVoltSandboxPolicy, principal: IPrincipal, fileNotices: readonly string[], where: IDenialContext): ISandboxLaunch {
 		const listener = prepared.onDenial(denial => {
 			if (denial.kind === 'process' || denial.kind === 'limit') {
 				return;
 			}
-			const shown: ISandboxDenial = { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}), ...(denial.denialId ? { denialId: denial.denialId } : {}), ...(denial.epoch !== undefined ? { epoch: denial.epoch } : {}) };
-			if (denial.source !== 'proxy' && housekeeping(shown)) {
-				if (!quiet.has(`${shown.kind}|${shown.target}`) && quiet.size < 200) {
-					quiet.add(`${shown.kind}|${shown.target}`);
-					this.logger.info(`[volt-sandbox] ${prepared.tag} housekeeping denial, not shown: ${shown.kind} ${shown.target}${shown.process ? ` (${shown.process})` : ''}`);
-				}
-				return;
-			}
-			this.report(prepared.tag, shown);
+			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}), ...(denial.denialId ? { denialId: denial.denialId } : {}), ...(denial.epoch !== undefined ? { epoch: denial.epoch } : {}) }, where);
 		});
-		const { warnings, notes } = sandboxLaunchNotices(prepared.unenforced, prepared.backend, policy);
+		// The policy files' problems and ignored entries first: they explain the rules this run has. Partial
+		// dimensions reach the chat only when the user can act on them (`sandboxLaunchNotices`).
+		const notices = sandboxLaunchNotices(prepared.unenforced, prepared.backend, policy);
+		const warnings = [...fileNotices, ...notices.warnings];
+		const notes = notices.notes;
 		let disposed = false;
 		return {
 			command: prepared.command,
@@ -673,13 +795,24 @@ export class VoltSandboxLauncher extends Disposable {
 
 	private stateRootPruned = false;
 
-	private report(tag: string, denial: ISandboxDenial): void {
+	private report(tag: string, denial: ISandboxDenial, { home, roots, own, housekeeping }: IDenialContext): void {
 		if (isNoiseDenial(denial)) {
 			return;
 		}
-		const key = `${tag}|${denial.kind}|${denial.target}`;
+		const reader = denial.process?.replace(/^.*\//, '');
+		const quiet = isQuietDenial(denial, home, roots, own)
+			// The CLI's own housekeeping, by any process but a command the agent ran to read or list it.
+			|| (denial.source !== 'proxy' && !(reader && EXPLICIT_READER.test(reader)) && !!housekeeping?.(denial));
+		// A quiet read (by the shell) never hides the agent's own read of the same file (by `cat`).
+		const key = `${tag}|${denial.kind}|${denial.target}${quiet ? `|quiet|${denial.process ?? ''}` : ''}`;
 		const now = Date.now();
 		if ((this.recent.get(key) ?? 0) > now - 10_000) {
+			return;
+		}
+		if (quiet) {
+			// Still denied, and on record here; no card in the chat (a shell's or a tool's own startup read).
+			this.recent.set(key, now);
+			this.logger.info(`[volt-sandbox] ${tag} quiet denial: ${denial.kind} ${redactSandboxText(denial.target, home)}${denial.process ? ` (${denial.process})` : ''}`);
 			return;
 		}
 		this.recent.set(key, now);
@@ -693,37 +826,43 @@ export class VoltSandboxLauncher extends Disposable {
 		this._onViolation.fire({ tag, denial });
 	}
 
-	private hostFacts(): Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> {
+	/**
+	 * The machine facts of a launch. Most are read once; what is in `~/.ssh` is read at every launch,
+	 * so a key made after Volt started is denied to the next launch too (SSH-2).
+	 */
+	private async hostFacts(): Promise<Omit<IAgentSandboxHost, 'sshAuthSock'>> {
 		this.agentHost ??= (async () => {
 			const facts = await sandboxHostFacts();
-			const temps = new Set<string>([facts.tmpRoot]);
-			for (const dir of ['/tmp', '/var/tmp']) {
-				temps.add(await fs.realpath(dir).catch(() => dir));
-			}
-			if (facts.platform === 'darwin') {
-				const cache = await execFileAsync('/usr/bin/getconf', ['DARWIN_USER_CACHE_DIR']).then(r => fs.realpath(r.stdout.trim()), () => undefined);
-				if (cache) {
-					temps.add(cache);
-				}
-			}
 			// The root of the per-principal caches (see `sandboxCacheKey`); each run gets its own child.
 			const cacheRoot = join(facts.home, '.volt', 'sandbox-cache');
-			await fs.mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-			const cacheDir = await fs.realpath(cacheRoot).catch(() => cacheRoot);
-			const userDataDir = await fs.realpath(this.userDataDir).catch(() => this.userDataDir);
+			// Independent lookups, made together; the temp folders keep this order.
+			const [shared, darwinCache, cacheDir, userDataDir] = await Promise.all([
+				Promise.all(['/tmp', '/var/tmp'].map(dir => fs.realpath(dir).catch(() => dir))),
+				facts.platform === 'darwin' ? execFileAsync('/usr/bin/getconf', ['DARWIN_USER_CACHE_DIR']).then(r => fs.realpath(r.stdout.trim()), () => undefined) : Promise.resolve(undefined),
+				fs.mkdir(cacheRoot, { recursive: true, mode: 0o700 }).then(() => fs.realpath(cacheRoot).catch(() => cacheRoot)),
+				fs.realpath(this.userDataDir).catch(() => this.userDataDir),
+			]);
+			const temps = new Set<string>([facts.tmpRoot, ...shared, ...darwinCache ? [darwinCache] : []]);
 			return {
 				platform: facts.platform,
 				home: facts.home,
 				tempDirs: [...temps].filter(dir => dir !== '/' && dir !== facts.home),
 				uid: process.getuid?.(),
 				userDataDir,
-				sshPrivateKeys: await sshPrivateKeys(join(facts.home, '.ssh')),
 				cacheDir,
 			};
 		})();
-		return this.agentHost;
+		const host = await this.agentHost;
+		const ssh = join(host.home, '.ssh');
+		const [keys, readable] = await Promise.all([sshPrivateKeys(ssh), sshReadablePaths(ssh)]);
+		return { ...host, sshPrivateKeys: keys, sshReadable: readable };
 	}
 
+}
+
+/** How the transcript names the file an ignored entry came from. */
+function policyFileName(source: ISandboxCompositionNote['source']): string | undefined {
+	return source === 'user' ? '~/.volt/sandbox.json' : source === 'workspace' ? '.volt/sandbox.json' : undefined;
 }
 
 /**
@@ -733,6 +872,16 @@ export class VoltSandboxLauncher extends Disposable {
  */
 export function sandboxCacheKey(request: Pick<IVoltSandboxRequest, 'providerId' | 'workspaceRoots'>): string {
 	return createHash('sha256').update([request.providerId, ...request.workspaceRoots].join('\0')).digest('hex').slice(0, 16);
+}
+
+/** A managed policy with its lists sorted, so two reads of the same policy compare equal. */
+function sortedAdmin(policy: IAdminPolicy): IAdminPolicy {
+	return {
+		...(policy.unreadable ? { unreadable: true } : {}),
+		...(policy.denyCapabilities ? { denyCapabilities: [...policy.denyCapabilities].sort() } : {}),
+		...(policy.denyHosts ? { denyHosts: [...policy.denyHosts].sort() } : {}),
+		...(policy.maxThirdPartyClass ? { maxThirdPartyClass: policy.maxThirdPartyClass } : {}),
+	};
 }
 
 function mechanismOf(backend: SandboxBackendId): SandboxMechanism {
@@ -753,29 +902,175 @@ export function supportFrom(capabilities: ISandboxBackendCapabilities): IVoltSan
 	};
 }
 
-/** Files in `~/.ssh` that hold a private key, judged by content rather than name. */
+/** A private key's first bytes: PEM and OpenSSH (`-----BEGIN ... PRIVATE KEY-----`), RFC 4716 (`---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----`), PuTTY. */
+const PRIVATE_KEY_HEAD = /-{4,5} ?BEGIN [A-Z0-9 ]*PRIVATE KEY ?-{4,5}|PuTTY-User-Key-File/;
+/** How deep and how many entries `~/.ssh` is searched for keys: folders such as `keys/work/` are common, thousands of files are not. */
+const SSH_SCAN_DEPTH = 4;
+const SSH_SCAN_ENTRIES = 2000;
+
+/**
+ * Files in `~/.ssh` (and its folders) that hold a private key, judged by content rather than name,
+ * at their real paths and as named. Read at every launch (SSH-2).
+ */
 export async function sshPrivateKeys(dir: string): Promise<string[]> {
-	const out: string[] = [];
-	const names = await fs.readdir(dir).catch(() => [] as string[]);
-	for (const name of names) {
-		const path = join(dir, name);
-		const handle = await fs.open(path, 'r').catch(() => undefined);
-		if (!handle) {
-			continue;
-		}
-		try {
-			const stat = await handle.stat();
-			if (!stat.isFile() || stat.size > 1024 * 1024) {
+	const out = new Set<string>();
+	let budget = SSH_SCAN_ENTRIES;
+	const visit = async (folder: string, depth: number): Promise<void> => {
+		const entries = await fs.readdir(folder, { withFileTypes: true }).catch(() => []);
+		for (const entry of entries) {
+			if (--budget < 0) {
+				return;
+			}
+			const path = join(folder, entry.name);
+			// A linked folder (`config.d` kept in a dotfiles repo) is searched where it points.
+			const isFolder = entry.isDirectory() || (entry.isSymbolicLink() && await fs.stat(path).then(stat => stat.isDirectory(), () => false));
+			if (isFolder) {
+				if (depth < SSH_SCAN_DEPTH) {
+					await visit(path, depth + 1);
+				}
 				continue;
 			}
-			const { buffer, bytesRead } = await handle.read(Buffer.alloc(256), 0, 256, 0);
-			const head = buffer.subarray(0, bytesRead).toString('latin1');
-			if (/-----BEGIN [A-Z ]*PRIVATE KEY-----|PuTTY-User-Key-File/.test(head)) {
-				out.push(await fs.realpath(path).catch(() => path));
+			// A link is judged by what it reaches (a key kept elsewhere and linked in).
+			if (await sshFileHead(path).then(head => head !== undefined && PRIVATE_KEY_HEAD.test(head))) {
+				out.add(path);
+				out.add(await fs.realpath(path).catch(() => path));
 			}
-		} finally {
-			await handle.close();
+		}
+	};
+	await visit(dir, 0);
+	return [...out];
+}
+
+/** The first 4 KiB of a regular file of at most 1 MiB (through links), or undefined. */
+async function sshFileHead(path: string): Promise<string | undefined> {
+	const handle = await fs.open(path, 'r').catch(() => undefined);
+	if (!handle) {
+		return undefined;
+	}
+	try {
+		const stat = await handle.stat();
+		if (!stat.isFile() || stat.size > 1024 * 1024) {
+			return undefined;
+		}
+		const { buffer, bytesRead } = await handle.read(Buffer.alloc(4096), 0, 4096, 0);
+		return buffer.subarray(0, bytesRead).toString('latin1');
+	} finally {
+		await handle.close();
+	}
+}
+
+/** How many files ssh's configs may make readable, and how deep `Include` is followed (ssh's own limit is 16). */
+const SSH_READABLE_FILES = 200;
+const SSH_INCLUDE_DEPTH = 8;
+/** The config keywords that name files ssh reads: `Include` (configs), known hosts, certificates, and keys (whose `.pub` it reads). */
+const SSH_FILE_KEYWORDS = /^\s*(include|userknownhostsfile|certificatefile|identityfile)\s*(?:=\s*|\s)(.*)$/i;
+
+/** Where an ssh config's path word points: `~/` is the home folder, a relative path is in `~/.ssh`; `%` tokens other than `%d` are not followed. */
+function sshConfigPath(word: string, dir: string): string | undefined {
+	const home = dirname(dir);
+	const path = word.replace(/^~(?=\/|$)/, home).replace(/%d/g, home);
+	if (!path || path.includes('%') || path.toLowerCase() === 'none') {
+		return undefined;
+	}
+	return isAbsolute(path) ? normalize(path) : join(dir, path);
+}
+
+/** A config line's words, `"quoted words"` kept whole, as ssh splits them. */
+function sshConfigWords(text: string): string[] {
+	return [...text.matchAll(/"([^"]*)"|(\S+)/g)].map(match => match[1] ?? match[2]).filter(word => !word.startsWith('#'));
+}
+
+/** The files an `Include` pattern names (ssh expands it with glob(3)): `*`, `?` and `[...]` per path segment. */
+async function sshGlob(pattern: string, limit: number): Promise<string[]> {
+	let paths = ['/'];
+	for (const segment of pattern.split('/').filter(Boolean)) {
+		if (!/[*?[]/.test(segment)) {
+			paths = paths.map(path => join(path, segment));
+			continue;
+		}
+		const matcher = new RegExp(`^${segment.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
+		const next: string[] = [];
+		for (const path of paths) {
+			const names = await fs.readdir(path).catch(() => [] as string[]);
+			next.push(...names.filter(name => !name.startsWith('.') && matcher.test(name)).sort().map(name => join(path, name)));
+		}
+		paths = next.slice(0, limit);
+	}
+	return paths;
+}
+
+/**
+ * What ssh reads for git over SSH when a chat's network is on (SSH-1): its config, the files in
+ * `config.d` and every file its configs `Include`, the known hosts files (the default ones and any
+ * `UserKnownHostsFile`), and the public keys and certificates (`*.pub` in `~/.ssh`, and the `.pub`
+ * and `-cert.pub` of every `IdentityFile`, plus `CertificateFile`s), each as named and at its real
+ * path (a config linked from a dotfiles folder). Files only, never folders, so nothing written into
+ * `~/.ssh` after the launch is readable, and never a file that holds a private key, whatever its
+ * name (ssh signs through the ssh-agent socket). Nothing else in `~/.ssh` is readable: not the
+ * private keys, not notes or tokens kept there. Read at every launch.
+ */
+export async function sshReadablePaths(dir: string): Promise<string[]> {
+	const out = new Set<string>();
+	const seen = new Set<string>();
+	const configs: { path: string; depth: number }[] = [];
+	const add = async (path: string, config?: number) => {
+		if (seen.has(path) || seen.size >= SSH_READABLE_FILES) {
+			return;
+		}
+		seen.add(path);
+		const real = await fs.realpath(path).catch(() => undefined);
+		const head = real !== undefined ? await sshFileHead(real) : undefined;
+		if (real === undefined || head === undefined || PRIVATE_KEY_HEAD.test(head)) {
+			return;
+		}
+		out.add(path);
+		out.add(real);
+		if (config !== undefined) {
+			configs.push({ path: real, depth: config });
+		}
+	};
+	const names = (await fs.readdir(dir).catch(() => [] as string[])).sort();
+	for (const name of names) {
+		if (name === 'config') {
+			await add(join(dir, name), 0);
+		} else if (/^known_hosts2?$/.test(name) || /\.pub$/.test(name)) {
+			await add(join(dir, name));
+		} else if (name === 'config.d') {
+			const included = (await fs.readdir(join(dir, name)).catch(() => [] as string[])).sort();
+			for (const file of included.slice(0, SSH_READABLE_FILES)) {
+				await add(join(dir, name, file), 1);
+			}
 		}
 	}
-	return out;
+	// Follow what the configs name. A config is the user's own; the sandbox can't write any of them.
+	for (let i = 0; i < configs.length; i++) {
+		const { path, depth } = configs[i];
+		const text = await fs.readFile(path, 'latin1').catch(() => '');
+		for (const line of text.slice(0, 256 * 1024).split('\n')) {
+			const match = SSH_FILE_KEYWORDS.exec(line);
+			if (!match) {
+				continue;
+			}
+			const keyword = match[1].toLowerCase();
+			for (const word of sshConfigWords(match[2])) {
+				const target = sshConfigPath(word, dir);
+				if (!target) {
+					continue;
+				}
+				if (keyword === 'include') {
+					if (depth < SSH_INCLUDE_DEPTH) {
+						for (const file of await sshGlob(target, SSH_READABLE_FILES)) {
+							await add(file, depth + 1);
+						}
+					}
+				} else if (keyword === 'identityfile') {
+					await add(`${target}.pub`);
+					await add(`${target}-cert.pub`);
+				} else {
+					await add(target);
+				}
+			}
+		}
+	}
+	return [...out];
 }

@@ -38,6 +38,11 @@ export interface IVoltPluginPrincipal {
 	readonly capabilities: IVoltCapabilitiesContribution;
 	/** Setting keys (or prefixes ending in `.`) the extension contributes itself: `config.own`, like `voltModule.settings`. */
 	readonly ownSettings?: readonly string[];
+	/**
+	 * Its code runs in the OS sandbox with its network through the broker (a sandboxed extension's
+	 * host): its tools reach its declared hosts and its "Allow host" grants, not everything (G.6).
+	 */
+	readonly sandboxed?: boolean;
 }
 
 export interface ICapabilityRequest {

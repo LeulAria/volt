@@ -6,7 +6,7 @@
 import { INativeHostService } from '../../../../platform/native/common/native.js';
 import { registerMachineCapacity } from '../browser/orchestration/agentMachineCapacity.js';
 
-// Memory and cores from the main process.
+// Memory and cores from the main process. The measure command is gated on the Orchestra feature there.
 registerMachineCapacity(async accessor => {
 	const nativeHostService = accessor.get(INativeHostService);
 	const [stats, props] = await Promise.all([nativeHostService.getOSStatistics(), nativeHostService.getOSProperties()]);

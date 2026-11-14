@@ -27,6 +27,7 @@ import { IPrincipal, PrincipalKind, SubjectKey } from '../../common/principals.j
 import { GrantCommitResult, IGrantStoreChange, IGrantStoreChangeEvent } from '../../node/grantStore.js';
 import { INetworkAuditEvent, INetworkBrokerOptions, INetworkDenial, INetworkGrantSource, INetworkRouteOptions, IResolvedAddress, MemoryGrantSource, NetworkAuditLog, NetworkBroker, NetworkRoute } from '../../node/networkBroker.js';
 import { denialTarget } from '../../node/sandboxManager.js';
+import { agentQuietDomains } from '../../common/sandboxPolicy.js';
 
 const PUBLIC: IResolvedAddress = { address: '93.184.216.34', family: 4 };
 
@@ -327,6 +328,39 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		assert.ok(denials.filter(d => d.reason === 'auth').every(d => !d.promptable), 'never an "Allow" for an auth refusal');
 		assert.strictEqual(upstream.hits(), 0);
 		assert.match((await open(a.port, connect(a, 'allowed.test:443'))).line, /200/, 'the owner still gets through');
+	});
+
+	test('NET-28: a chat\'s proxy credential dies with its route and rotates on the next turn; the old token never works again', async () => {
+		// One chat (subject), two turns: each turn opens its own route with its own port and token.
+		const subject: SubjectKey = 'chat:rotate';
+		const turn1 = await broker.openRoute({ principal: principal(subject), allow: ['allowed.test'], onDenial: denial => denials.push(denial) });
+		assert.match((await open(turn1.port, connect(turn1, 'allowed.test:443'))).line, /200/, 'the turn\'s own token works');
+		const port1 = turn1.port;
+		const token1 = turn1.token;
+
+		// The turn ends: the route is disposed (as a finished turn's is). Its listener closes.
+		turn1.dispose();
+		assert.ok(await until(() => broker.grantsOf(subject).length === 0), 'its session grants end');
+		// Reuse after end: the port is gone, so the dead credential reaches nothing.
+		let refused = false;
+		try {
+			const late = net.connect({ host: '127.0.0.1', port: port1 });
+			late.on('error', () => undefined);
+			await new Promise<void>((resolve, reject) => { late.once('connect', () => { late.destroy(); resolve(); }); late.once('error', () => { refused = true; resolve(); }); setTimeout(() => reject(new Error('timed out')), 3000); });
+		} catch { /* treat a hang as not-refused, asserted below */ }
+		assert.ok(refused, 'the closed route\'s port refuses new connections');
+
+		// The next turn gets a fresh route: a different port and a different token (rotation).
+		const turn2 = await broker.openRoute({ principal: principal(subject), allow: ['allowed.test'], onDenial: denial => denials.push(denial) });
+		assert.notStrictEqual(turn2.token, token1, 'the token rotated');
+		assert.notStrictEqual(turn2.port, port1, 'a fresh port');
+		// The old token presented to the new turn's route is refused (its owner is gone: a plain 407, no tokenOf).
+		const reused = await open(turn2.port, connect(turn2, 'allowed.test:443', token1));
+		assert.match(reused.line, /407/, 'the previous turn\'s token is dead on the new route');
+		assert.ok(audit.some(e => e.reason === 'auth' && e.principal === turn2.principal.id && e.tokenOf === undefined), 'refused with no surviving owner to name');
+		assert.match((await open(turn2.port, connect(turn2, 'allowed.test:443'))).line, /200/, 'the new turn\'s own token works');
+		assert.strictEqual(upstream.hits(), 2, 'only the two legitimate connections reached upstream');
+		turn2.dispose();
 	});
 
 	test('NET-13: a live grant applies to the same running client\'s next connection; approvals are CAS on the epoch', async () => {
@@ -705,6 +739,119 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		assert.match((await open(later.port, connect(later, 'example.test:443'))).line, /403/, 'a session grant is the instance\'s');
 		await r.revokeHosts(['example.test']);
 		assert.match((await open(r.port, connect(r, 'example.test:443'))).line, /403/, 'revoked');
+	});
+
+	test('NET-21: a host revoked while its lookup is in flight is refused before anything connects', async () => {
+		let release!: () => void;
+		const held = new Promise<void>(resolve => release = resolve);
+		broker.dispose();
+		broker = makeBroker({ lookup: async host => { lookups.push(host); await held; return [PUBLIC]; } });
+		const r = await route([]);
+		await r.allowHosts(['slow.test']);
+		const pending = open(r.port, connect(r, 'slow.test:443'));
+		assert.ok(await until(() => lookups.includes('slow.test')), 'the lookup started');
+		await r.revokeHosts(['slow.test']);
+		release();
+		assert.match((await pending).line, /403/);
+		assert.deepStrictEqual(connected, [], 'no upstream connection was opened');
+	});
+
+	test('NET-22: pipelined plain-HTTP requests hold their connection slots before the lookup', async () => {
+		const held = new Set<net.Socket>();
+		const sink = net.createServer(socket => { held.add(socket); socket.on('error', () => undefined); });
+		await new Promise<void>(resolve => sink.listen(0, '127.0.0.1', resolve));
+		const sinkPort = (sink.address() as net.AddressInfo).port;
+		broker.dispose();
+		broker = makeBroker({ connect: address => { connected.push(address.address); return net.connect({ host: '127.0.0.1', port: sinkPort }); } });
+		try {
+			const r = await route(['http://pipe.test'], { limits: { maxConnections: 4 } });
+			const request = `GET http://pipe.test/ HTTP/1.1\r\nHost: pipe.test\r\nProxy-Authorization: ${basic(r.token)}\r\n\r\n`;
+			const client = await raw(r.port, request.repeat(40));
+			raws.push(client);
+			await until(() => connected.length >= 4);
+			await new Promise(resolve => setTimeout(resolve, 300));
+			assert.ok(connected.length <= 4, `at most 4 upstream connections at once, saw ${connected.length}`);
+		} finally {
+			held.forEach(socket => socket.destroy());
+			await new Promise<void>(resolve => sink.close(() => resolve()));
+		}
+	});
+
+	test('NET-23: a plain-HTTP upload counts against the principal\'s byte budget', async () => {
+		const r = await route(['http://up.test', 'allowed.test'], { limits: { maxConnections: 8, bytesPerDay: 1000 } });
+		const body = 'x'.repeat(5000);
+		const upload = await raw(r.port, `POST http://up.test/ HTTP/1.1\r\nHost: up.test\r\nContent-Length: ${body.length}\r\nProxy-Authorization: ${basic(r.token)}\r\n\r\n${body}`);
+		raws.push(upload);
+		assert.ok(await until(() => audit.some(event => event.decision === 'close' && event.reason === 'budget')), 'the upload passed the budget and was cut');
+		assert.match((await open(r.port, connect(r, 'allowed.test:443'))).line, /429/, 'nothing more today');
+	});
+
+	test('NET-24: manifest wildcards that name no host open nothing, and SIIT addresses are judged as IPv4', async () => {
+		const subject: SubjectKey = 'plugin:acme.wild@local';
+		const manifest = { subject, network: 'broker' as const, declared: [{ id: 'net.connect', targets: ['**', '*.*', '*.com', '*example.com'] }] };
+		const r = await broker.openRoute({ principal: principal(subject, 't3'), allow: [], view: { manifest }, onDenial: denial => denials.push(denial) });
+		assert.match((await open(r.port, connect(r, 'attacker-evil-example.com:443'))).line, /403/);
+		const chat = await route(['*']);
+		for (const literal of ['[::ffff:0:a9fe:a9fe]:80', '[::ffff:0:7f00:1]:443']) {
+			assert.match((await open(chat.port, connect(chat, literal))).line, /403/, literal);
+		}
+		assert.deepStrictEqual(connected, []);
+	});
+
+	test('NET-25: "Allow for This Chat" works after the refused run ended, by the broker\'s record of that chat only', async () => {
+		const chatId = `ended-${++principalCount}`;
+		const first = await route([], { principal: principal(`chat:${chatId}`) });
+		assert.match((await open(first.port, connect(first, 'later.test:443'))).line, /403/);
+		const denial = denials.at(-1)!;
+		assert.match((await open(first.port, connect(first, '10.0.0.7:443'))).line, /403/);
+		const privateDenial = denials.at(-1)!;
+		// The turn ends: its agent process and route go. Other chats' approvals move the epoch meanwhile.
+		first.dispose();
+		const other = await route([]);
+		await other.allowHosts(['unrelated.test']);
+		assert.ok(broker.epoch > denial.epoch);
+		assert.deepStrictEqual(await broker.approveForChat('someone-else', denial.denialId, denial.epoch), { ok: false, epoch: broker.epoch, reason: 'Volt has no record of this denial for this chat (it may be too old); allow the host when it is blocked again' }, 'only that chat\'s record');
+		assert.ok(!(await broker.approveForChat(chatId, denial.denialId, denial.epoch + 1)).ok, 'the epoch the card was shown with');
+		assert.ok(!(await broker.approveForChat(chatId, privateDenial.denialId, privateDenial.epoch)).ok, 'a private-address refusal is never approvable');
+		assert.ok(!(await broker.approveForChat(chatId, 'forged', denial.epoch)).ok, 'an unrecorded denial gets nothing (B-34)');
+		const approved = await broker.approveForChat(chatId, denial.denialId, denial.epoch);
+		assert.ok(approved.ok, 'approved on the latest epoch, not refused as stale');
+		assert.ok(!(await broker.approveForChat(chatId, denial.denialId, denial.epoch)).ok, 'approved once');
+		const grant = broker.grantsOf(`chat:${chatId}`).find(candidate => candidate.scope.targets?.[0] === 'later.test');
+		assert.ok(grant && grant.sessionId === chatId && grant.kind === 'session', 'the chat\'s grant, bound to the chat');
+		// The chat's next run (a new agent process, a new principal) reaches it from its first connection.
+		const next = await route([], { principal: principal(`chat:${chatId}`) });
+		assert.match((await open(next.port, connect(next, 'later.test:443'))).line, /200/);
+		assert.match((await open(other.port, connect(other, 'later.test:443'))).line, /403/, 'another chat does not get it');
+		next.dispose();
+		assert.ok(broker.grantsOf(`chat:${chatId}`).some(candidate => candidate.id === grant.id), 'it outlives the run');
+	});
+
+	test('NET-26: "Allow for This Chat" while the run is open applies to that run\'s next connection at once', async () => {
+		const chatId = `live-${++principalCount}`;
+		const r = await route([], { principal: principal(`chat:${chatId}`) });
+		assert.match((await open(r.port, connect(r, 'now.test:443'))).line, /403/);
+		const denial = denials.at(-1)!;
+		assert.ok((await broker.approveForChat(chatId, denial.denialId, denial.epoch)).ok);
+		assert.match((await open(r.port, connect(r, 'now.test:443'))).line, /200/, 'no restart');
+		assert.ok(!(await r.approve(denial.denialId, broker.epoch)).ok, 'and the route\'s own record is spent too');
+	});
+
+	test('NET-27: an agent CLI\'s own telemetry is refused and audited, never a denial card', async () => {
+		const r = await route([], { quiet: agentQuietDomains('claude-code') });
+		for (const host of ['http-intake.logs.us5.datadoghq.com', 'statsigapi.net', 'api.segment.io']) {
+			assert.match((await open(r.port, connect(r, `${host}:443`))).line, /403/, `${host} stays blocked`);
+		}
+		assert.strictEqual(denials.length, 0, 'no card for what the user never asked for');
+		const quiet = audit.filter(event => event.decision === 'deny' && event.quiet);
+		assert.deepStrictEqual(quiet.map(event => event.destination), ['http-intake.logs.us5.datadoghq.com', 'statsigapi.net', 'api.segment.io'], 'logged');
+		assert.ok(quiet.every(event => !event.denialId), 'nothing to approve');
+		assert.match((await open(r.port, connect(r, 'api.github.com:443'))).line, /403/);
+		assert.strictEqual(denials.length, 1, 'any other host is still a card');
+		assert.ok(denials[0].promptable);
+		const allowed = await route(['*.datadoghq.com'], { quiet: agentQuietDomains('claude-code') });
+		assert.ok((await allowed.destination('http-intake.logs.us5.datadoghq.com', 443)).ok, 'a host the user allowed is allowed, quiet or not');
+		assert.ok(agentQuietDomains('codex').includes('*.datadoghq.com'), 'the shared list applies to every agent');
 	});
 });
 

@@ -15,6 +15,12 @@ import { IDE_GATEWAY_SCHEMA, IDE_GATEWAY_TOOL_NAME, ideGatewayDescription, isIde
  * call (a debugger step returns where it stopped and the locals there).
  */
 
+/**
+ * `voltModule.feature` of `extensions/volt-dev-environment`: off, these tools, the Testing view's
+ * Volt tests and the Agent Sessions view go away.
+ */
+export const DEV_ENVIRONMENT_FEATURE_ID = 'devEnvironment';
+
 export const TESTS_TOOL_NAME = 'tests';
 export const DEBUG_TOOL_NAME = 'debug';
 export const TASKS_TOOL_NAME = 'tasks';
@@ -66,7 +72,7 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 			'targets are files, folders, file:line (the test at that line) or test names; omit targets to run everything; failed: true reruns the last failures.',
 			'op results: the last run again, or one test\'s full messages and output (target).',
 			'Prefer it over running the test command in shell: it targets single tests, returns structured failures and is visible to the user. Tests it does not cover (node --test, a custom npm test script) run in the shell.',
-			'In a sandboxed chat a run first asks the user (it runs outside the sandbox); the test command in shell runs inside the sandbox without asking.',
+			'In a sandboxed chat a run goes through Volt\'s runner inside the chat\'s sandbox; tests a test extension runs (outside the sandbox) are not run there: run those in the shell.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',

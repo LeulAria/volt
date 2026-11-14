@@ -3,12 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { IAdminPolicy } from '../../voltSandbox/common/authority.js';
 import { Event } from '../../../base/common/event.js';
 import { IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPluginToolRequest, IVoltPluginToolResult } from '../../voltPlugins/common/pluginHosts.js';
 import { createDecorator } from '../../instantiation/common/instantiation.js';
 import type { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../voltGit/common/hostGit.js';
 import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
-import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
+import type { ISandboxPolicyFilesInfo } from '../../voltSandbox/common/sandboxPolicyFiles.js';
+import type { IVoltSandboxRequest, IVoltSandboxSettings } from '../../voltSandbox/common/sandboxPolicy.js';
 import type { ISandboxWorkloadInfo } from '../../voltSandbox/common/sandboxWorkloads.js';
 import type { SubjectKey } from '../../voltSandbox/common/principals.js';
 import type { ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState } from '../../voltSandbox/common/trust.js';
@@ -267,6 +269,11 @@ export interface IVoltExecResult {
 	readonly running: boolean;
 	/** Nothing ran: who it was for did not allow it, or its sandbox could not be set up. */
 	readonly refused?: IVoltExecRefusal;
+	/**
+	 * A sandboxed command: what its sandbox stopped while it ran (noise and quiet denials left out),
+	 * so the chat can show its Volt Guard card for a command its own model ran (native models).
+	 */
+	readonly sandboxDenials?: readonly ISandboxDenial[];
 }
 
 export interface IVoltJobOutput {
@@ -303,6 +310,12 @@ export interface IVoltStdioService {
 	readonly onSandboxEvent?: Event<IVoltSandboxEvent>;
 	/** What OS sandboxing this machine offers. */
 	sandboxSupport?(): Promise<IVoltSandboxSupportInfo>;
+	/** The managed (admin) policy this execution host enforces; the window's gates judge by it too. */
+	managedPolicy?(): Promise<IAdminPolicy>;
+	/** What `~/.volt/sandbox.json` and the workspace's `.volt/sandbox.json` do to a chat with this sandbox. */
+	sandboxPolicyFiles?(request: IVoltSandboxRequest): Promise<ISandboxPolicyFilesInfo>;
+	/** The managed policy changed while Volt runs (it is re-read every minute): the new policy. */
+	readonly onDidChangeManagedPolicy?: Event<IAdminPolicy>;
 	/** Lets a sandboxed process (network off) reach more hosts, without a restart. */
 	allowSandboxDomains?(id: string, domains: readonly string[]): Promise<void>;
 	/**
@@ -335,6 +348,14 @@ export interface IVoltStdioService {
 	sandboxReadFile?(id: string, path: string): Promise<IVoltSandboxFileResult>;
 	/** Writes `path` for sandboxed spawn `id`, the same way; a file with more than one link is refused. */
 	sandboxWriteFile?(id: string, path: string, content: string): Promise<IVoltSandboxFileResult>;
+	/**
+	 * A file Volt itself reads, writes or deletes for a sandboxed chat (a native model's file tools,
+	 * host tools that change files), after the host-tool gate allowed it: judged again by the gate's
+	 * path rule (the files broker's, `filesPlan`) on the real path, and opened without following a
+	 * symlink anywhere in the path, so a link swapped in after the gate's check cannot redirect it
+	 * (SEC3-3). Never throws: a refusal is `ok: false`.
+	 */
+	chatFile?(request: IVoltChatFileRequest): Promise<IVoltChatFileResult>;
 	/**
 	 * A sandboxed chat's terminal (spec F.6). node-pty passes no extra file descriptors, so the
 	 * sandbox's control channels are FIFOs in the run's private folder, opened by the launcher this
@@ -391,6 +412,13 @@ export interface IVoltStdioService {
 	 * store until revoked. Refused when the denial is not that spawn's, or the epoch moved.
 	 */
 	approveSandboxDenial?(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval>;
+	/**
+	 * "Allow for This Chat" by the broker's record of chat `chatId`'s denial, whether or not the run
+	 * that was refused is still open (a turn's agent process usually has ended by the time the card
+	 * is answered). `deniedEpoch` is the epoch the denial was recorded at; the grant applies to the
+	 * chat's open runs at once and to its later runs, kept in the grant store until revoked.
+	 */
+	approveChatDenial?(chatId: string, denialId: string, deniedEpoch: number): Promise<IVoltSandboxApproval>;
 	/** Skip on a denial card: counts toward the route's refusals (two auto-deny, G.12). */
 	refuseSandboxDenial?(id: string, denialId: string): Promise<boolean>;
 	/** The grant store (`~/.volt/trust/grants.json`) as the Access page shows it. */
@@ -436,6 +464,44 @@ export async function runGitThrough(stdio: IVoltStdioService, request: IHostGitR
 		return { exitCode: null, stdout: '', stderr: message, error: message };
 	}
 }
+
+/** One file operation Volt performs for a sandboxed chat ({@link IVoltStdioService.chatFile}). */
+export interface IVoltChatFileRequest {
+	readonly op: 'read' | 'write' | 'delete';
+	/** Absolute, as Volt resolved the agent's path (before symlinks). */
+	readonly path: string;
+	/** The chat (its principal is `chat:<id>`). */
+	readonly chatId: string;
+	/** The chat's sandbox, from Volt's record. */
+	readonly sandbox: IVoltSandboxSettings;
+	/** The chat's folders (its worktree or project), from Volt's record. */
+	readonly roots: readonly string[];
+	/** Write: the file's whole new text (UTF-8). */
+	readonly content?: string;
+	/** Write: the text the file must hold now (an edit computed against it); a file that changed since is not written. */
+	readonly expected?: string;
+	/** Read: `base64` for bytes (images); default `utf8`. */
+	readonly encoding?: 'utf8' | 'base64';
+	/** Read: refused when the file is larger. */
+	readonly maxBytes?: number;
+}
+
+export type IVoltChatFileResult =
+	| {
+		readonly ok: true;
+		/** The final path of the opened file. */
+		readonly path: string;
+		/** Read: the content, in the encoding asked for. */
+		readonly content?: string;
+		/** Write and delete: whether the file existed before. */
+		readonly existed?: boolean;
+	}
+	| {
+		readonly ok: false;
+		readonly reason: string;
+		/** `changed`: an edit's text changed since it was read; `missing`: no such file; else a refusal. */
+		readonly refusal?: string;
+	};
 
 /** A file read or written for a sandboxed spawn. */
 export type IVoltSandboxFileResult =

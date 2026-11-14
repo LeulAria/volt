@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
+import { decodeBase64, encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { extname } from '../../../../../base/common/path.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
@@ -13,6 +13,7 @@ import { asRecord, pickBoolean, pickNumber, pickString, pickStringAllowEmpty } f
 import { applyExactEdits, diffHunk, IExactEdit } from '../../common/tools/editText.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
 import { objectSchema } from './schema.js';
+import { IFileToolSandbox, sandboxedFileMessage } from './sandboxedFiles.js';
 import { displayPath, resolveReadableUri, resolveWorkspaceUri } from './workspacePath.js';
 
 /** Open editors: an agent edit lands in the buffer the user sees, not behind it. */
@@ -47,6 +48,12 @@ export interface IFileToolHost {
 	readonly documents?: IToolDocuments;
 	/** Project rules whose globs match this file, attached the first time it is touched. */
 	readonly rulesFor?: (uri: URI) => string | undefined;
+	/**
+	 * The chat's sandbox, when it has one (SEC3-1): every read, list, write and delete is judged by
+	 * the host-tool gate's rule and done race-free through it, on disk (open editors' unsaved text is
+	 * neither read nor written for a sandboxed chat: saving it would follow a swapped-in symlink).
+	 */
+	readonly sandbox?: () => IFileToolSandbox | undefined;
 }
 
 const READ_LINE_LIMIT = 2_000;
@@ -165,21 +172,38 @@ async function runRead(host: IFileToolHost, args: unknown, _ctx: IToolContext): 
 		return fail('read_file', 'Path is missing or outside the workspace.');
 	}
 	const shown = displayPath(root, uri);
+	const sandbox = host.sandbox?.();
 	try {
 		const image = IMAGE_TYPES[extname(uri.path).toLowerCase()];
 		if (image) {
-			const bytes = await host.fileService.readFile(uri);
-			if (bytes.value.byteLength > MAX_IMAGE_BYTES) {
-				return fail('read_file', `${shown} is ${Math.round(bytes.value.byteLength / 1024)} KB, too large to view.`);
+			let bytes: VSBuffer;
+			if (sandbox) {
+				const read = await sandbox.read(uri, { encoding: 'base64', maxBytes: MAX_IMAGE_BYTES });
+				if (!read.ok) {
+					return fail('read_file', read.refusal === 'floor' ? sandboxedFileMessage('read_file', shown, 'read', read.reason) : read.reason);
+				}
+				bytes = decodeBase64(read.content ?? '');
+			} else {
+				bytes = (await host.fileService.readFile(uri)).value;
 			}
-			return { callId: '', name: 'read_file', kind: 'read', text: `Image ${shown} (${Math.round(bytes.value.byteLength / 1024)} KB).`, image: `data:${image};base64,${encodeBase64(bytes.value)}` };
+			if (bytes.byteLength > MAX_IMAGE_BYTES) {
+				return fail('read_file', `${shown} is ${Math.round(bytes.byteLength / 1024)} KB, too large to view.`);
+			}
+			return { callId: '', name: 'read_file', kind: 'read', text: `Image ${shown} (${Math.round(bytes.byteLength / 1024)} KB).`, image: `data:${image};base64,${encodeBase64(bytes)}` };
 		}
-		const dirty = host.documents?.dirtyText(uri);
+		const dirty = sandbox ? undefined : host.documents?.dirtyText(uri);
 		let raw: string;
 		let version: string | undefined;
 		if (dirty !== undefined) {
 			raw = dirty;
 			version = `dirty:${raw.length}:${quickHash(raw)}`;
+		} else if (sandbox) {
+			const read = await sandbox.read(uri);
+			if (!read.ok) {
+				return fail('read_file', read.refusal === 'floor' ? sandboxedFileMessage('read_file', shown, 'read', read.reason) : read.reason);
+			}
+			raw = read.content ?? '';
+			version = contentVersion(raw);
 		} else {
 			const file = await host.fileService.readFile(uri);
 			raw = file.value.toString();
@@ -244,21 +268,32 @@ async function runList(host: IFileToolHost, args: unknown, _ctx: IToolContext): 
 	const lines: string[] = [];
 	let total = 0;
 	const limit = 400;
+	// A sandboxed chat lists only what its sandbox may read, and never descends through a symlink.
+	const sandbox = host.sandbox?.();
 	const walk = async (dir: URI, level: number): Promise<void> => {
 		const stat = await host.fileService.resolve(dir);
 		const children = [...(stat.children ?? [])].sort((a, b) => (a.isDirectory === b.isDirectory ? a.name.localeCompare(b.name) : a.isDirectory ? -1 : 1));
 		for (const child of children) {
 			total++;
 			if (lines.length < limit) {
-				lines.push(`${'  '.repeat(level)}${child.name}${child.isDirectory ? '/' : ''}`);
+				lines.push(`${'  '.repeat(level)}${child.name}${child.isDirectory ? '/' : ''}${sandbox && child.isSymbolicLink ? ' (link)' : ''}`);
 			}
-			if (child.isDirectory && level + 1 < depth && !SKIP_DIRS.has(child.name) && lines.length < limit) {
+			if (child.isDirectory && level + 1 < depth && !SKIP_DIRS.has(child.name) && lines.length < limit && !(sandbox && child.isSymbolicLink)) {
 				await walk(child.resource, level + 1).catch(() => undefined);
 			}
 		}
 	};
 	try {
+		const refused = sandbox ? await sandbox.refusal(uri, 'read') : undefined;
+		if (refused) {
+			return fail('list_dir', sandboxedFileMessage('list_dir', displayPath(root, uri), 'read', refused));
+		}
 		await walk(uri, 0);
+		// The folder must still be one the sandbox may read: a swap for a symlink while it was listed is refused.
+		const after = sandbox ? await sandbox.refusal(uri, 'read') : undefined;
+		if (after) {
+			return fail('list_dir', sandboxedFileMessage('list_dir', displayPath(root, uri), 'read', after));
+		}
 		const extra = total > lines.length ? `\n… ${total - lines.length} more entries` : '';
 		return { callId: '', name: 'list_dir', kind: 'read', text: lines.length ? `${displayPath(root, uri)}/\n${lines.join('\n')}${extra}` : '(empty)' };
 	} catch (err) {
@@ -275,12 +310,23 @@ async function runEdit(host: IFileToolHost, args: unknown, ctx: IToolContext): P
 		return fail('edit_file', 'Path is missing or outside the workspace.');
 	}
 	const shown = displayPath(root, uri);
+	const sandbox = host.sandbox?.();
 	try {
-		const dirty = host.documents?.dirtyText(uri);
+		const dirty = sandbox ? undefined : host.documents?.dirtyText(uri);
 		let original: string;
 		let etag: string | undefined;
 		if (dirty !== undefined) {
 			original = dirty;
+		} else if (sandbox) {
+			const refused = await sandbox.refusal(uri, 'write');
+			if (refused) {
+				return fail('edit_file', sandboxedFileMessage('edit_file', shown, 'write', refused));
+			}
+			const read = await sandbox.read(uri);
+			if (!read.ok) {
+				return fail('edit_file', read.refusal === 'missing' ? `${shown} does not exist. Use write_file to create it.` : read.refusal === 'floor' ? sandboxedFileMessage('edit_file', shown, 'read', read.reason) : read.reason);
+			}
+			original = read.content ?? '';
 		} else {
 			if (!await host.fileService.exists(uri)) {
 				return fail('edit_file', `${shown} does not exist. Use write_file to create it.`);
@@ -294,7 +340,7 @@ async function runEdit(host: IFileToolHost, args: unknown, ctx: IToolContext): P
 		if ('error' in result) {
 			return fail('edit_file', `${shown}: ${result.error}`);
 		}
-		const version = await writeText(host, uri, result.text, dirty !== undefined, etag);
+		const version = sandbox ? await writeSandboxed(sandbox, 'edit_file', shown, uri, result.text, original) : await writeText(host, uri, result.text, dirty !== undefined, etag);
 		host.ledger?.()?.recordWrite(uri.toString(), shown, version);
 		ctx.emit?.({ type: 'file.change', uri, kind: 'edit', before: original, existed: true });
 		const hunk = diffHunk(original, result.text);
@@ -323,19 +369,36 @@ async function runWrite(host: IFileToolHost, args: unknown, ctx: IToolContext): 
 		return fail('write_file', 'contents is required. Pass the complete file text in contents.');
 	}
 	const shown = displayPath(root, uri);
+	const sandbox = host.sandbox?.();
 	try {
-		const existed = await host.fileService.exists(uri);
+		let existed: boolean;
+		let previous: string | undefined;
+		let dirty: string | undefined;
+		if (sandbox) {
+			const refused = await sandbox.refusal(uri, 'write');
+			if (refused) {
+				return fail('write_file', sandboxedFileMessage('write_file', shown, 'write', refused));
+			}
+			const read = await sandbox.read(uri);
+			if (!read.ok && read.refusal !== 'missing') {
+				return fail('write_file', read.refusal === 'floor' ? sandboxedFileMessage('write_file', shown, 'read', read.reason) : read.reason);
+			}
+			existed = read.ok;
+			previous = read.ok ? read.content : undefined;
+		} else {
+			existed = await host.fileService.exists(uri);
+			dirty = existed ? host.documents?.dirtyText(uri) : undefined;
+			previous = dirty;
+		}
 		const ledger = host.ledger?.();
 		const key = uri.toString();
 		if (existed && ledger && !ledger.knows(key) && !pickBoolean(args, 'overwrite')) {
 			return fail('write_file', `${shown} already exists and you have not read it in this conversation. Read it first and use edit_file, or pass overwrite: true to replace it entirely.`);
 		}
-		const dirty = existed ? host.documents?.dirtyText(uri) : undefined;
-		let previous: string | undefined = dirty;
-		if (existed && previous === undefined) {
+		if (!sandbox && existed && previous === undefined) {
 			previous = await host.fileService.readFile(uri).then(file => file.value.toString(), () => undefined);
 		}
-		const version = await writeText(host, uri, contents, dirty !== undefined, undefined);
+		const version = sandbox ? await writeSandboxed(sandbox, 'write_file', shown, uri, contents, undefined) : await writeText(host, uri, contents, dirty !== undefined, undefined);
 		ledger?.recordWrite(key, shown, version);
 		ctx.emit?.({ type: 'file.change', uri, kind: existed ? 'edit' : 'create', ...(previous !== undefined ? { before: previous } : {}), existed });
 		const lines = contents ? contents.split('\n').length : 0;
@@ -359,10 +422,26 @@ async function runDelete(host: IFileToolHost, args: unknown, ctx: IToolContext):
 		return fail('delete_file', 'Path is missing or outside the workspace.');
 	}
 	const shown = displayPath(root, uri);
+	const sandbox = host.sandbox?.();
 	try {
+		const refused = sandbox ? await sandbox.refusal(uri, 'write') : undefined;
+		if (refused) {
+			return fail('delete_file', sandboxedFileMessage('delete_file', shown, 'write', refused));
+		}
 		const stat = await host.fileService.resolve(uri);
 		if (stat.isDirectory) {
 			return fail('delete_file', `${shown} is a directory. delete_file only removes files.`);
+		}
+		if (sandbox) {
+			// Race-free, so no Trash: the file is removed by its real path, and the change set keeps its text.
+			const read = await sandbox.read(uri);
+			const removed = await sandbox.delete(uri);
+			if (!removed.ok) {
+				return fail('delete_file', removed.refusal === 'floor' ? sandboxedFileMessage('delete_file', shown, 'write', removed.reason) : removed.reason);
+			}
+			host.ledger?.()?.recordWrite(uri.toString(), shown, undefined);
+			ctx.emit?.({ type: 'file.change', uri, kind: 'delete', ...(read.ok && read.content !== undefined ? { before: read.content } : {}), existed: true });
+			return { callId: '', name: 'delete_file', kind: 'edit', text: `Deleted ${shown}.` };
 		}
 		const before = await host.fileService.readFile(uri).then(file => file.value.toString(), () => undefined);
 		await host.fileService.del(uri, { useTrash: true }).catch(() => host.fileService.del(uri));
@@ -381,11 +460,14 @@ async function runDelete(host: IFileToolHost, args: unknown, ctx: IToolContext):
  * change set. Returns the diff summary for the tool result.
  */
 export async function writeComputedEdit(host: IFileToolHost, uri: URI, before: string, after: string, ctx: IToolContext): Promise<{ readonly added: number; readonly removed: number; readonly text: string }> {
-	const dirty = host.documents?.dirtyText(uri);
+	const sandbox = host.sandbox?.();
+	const dirty = sandbox ? undefined : host.documents?.dirtyText(uri);
 	if (dirty !== undefined && dirty !== before) {
 		throw new Error(`${displayPath(host.root(), uri)} changed while the edit was computed; run it again.`);
 	}
-	const version = await writeText(host, uri, after, dirty !== undefined, undefined);
+	const version = sandbox
+		? await writeSandboxed(sandbox, 'code_action', displayPath(host.root(), uri), uri, after, before)
+		: await writeText(host, uri, after, dirty !== undefined, undefined);
 	host.ledger?.()?.recordWrite(uri.toString(), displayPath(host.root(), uri), version);
 	ctx.emit?.({ type: 'file.change', uri, kind: 'edit', before, existed: true });
 	return diffHunk(before, after);
@@ -397,6 +479,23 @@ async function writeText(host: IFileToolHost, uri: URI, text: string, open: bool
 	}
 	const stat = await host.fileService.writeFile(uri, VSBuffer.fromString(text), etag ? { etag } : undefined);
 	return stat.etag;
+}
+
+/**
+ * A sandboxed chat's write: judged and done race-free, only over `expected` when given (a stale
+ * edit is refused, nothing written). Throws what the model reads; returns the ledger version.
+ */
+async function writeSandboxed(sandbox: IFileToolSandbox, tool: string, shown: string, uri: URI, text: string, expected: string | undefined): Promise<string> {
+	const written = await sandbox.write(uri, text, expected);
+	if (!written.ok) {
+		throw new Error(written.refusal === 'changed' ? `${shown} changed on disk while you were editing it. Read it again, then redo the edit against the current text.` : written.refusal === 'floor' ? sandboxedFileMessage(tool, shown, 'write', written.reason) : written.reason);
+	}
+	return contentVersion(text);
+}
+
+/** A ledger version from the text itself (a sandboxed chat's files are read without the file service's etag). */
+function contentVersion(text: string): string {
+	return `content:${text.length}:${quickHash(text)}`;
 }
 
 function firstTouchRules(host: IFileToolHost, uri: URI, ledger: FileLedger | undefined): string | undefined {

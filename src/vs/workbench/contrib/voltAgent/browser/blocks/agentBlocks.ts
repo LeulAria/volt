@@ -409,7 +409,7 @@ export function refreshLimitWarning(segments: AgentSegment[], title: string, nex
 
 /** Each refusal keeps its own row: it names a different path or host, so it is never merged. */
 export function appendSandboxDenial(segments: AgentSegment[], denial: ISandboxDenial): void {
-	segments.push({ kind: 'notice', severity: 'warning', title: 'Blocked by the sandbox', description: denial.target, sandbox: denial });
+	segments.push({ kind: 'notice', severity: 'warning', title: 'Volt Guard', description: denial.target, sandbox: denial });
 }
 
 /**

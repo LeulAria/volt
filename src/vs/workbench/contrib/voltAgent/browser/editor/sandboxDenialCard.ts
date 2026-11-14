@@ -83,24 +83,34 @@ export function renderSandboxDenialCard(tray: HTMLElement, options: ISandboxDeni
 		const open = button(localize('voltSandboxCard.openAccess', "Review Access"), 'secondary', localize('voltSandboxCard.openAccessTitle', "Open Settings, Access, where this chat's permissions are"));
 		store.add(open.onDidClick(() => options.openAccess()));
 	} else if (denial.kind === 'network' && recorded) {
-		const approve = (scope: 'run' | 'chat', token: IUserGestureToken) => {
-			const id = options.processId();
-			if (!id) {
-				say(localize('voltSandboxCard.ended', "The run that was blocked has ended. Allow the host when it is blocked again."));
+		const forChat = button(localize('voltSandboxCard.allowForChat', "Allow for This Chat"), 'secondary', localize('voltSandboxCard.allowForChatTitle', "Let this chat reach {0} from now on, until you revoke it in Settings, Access", denial.target));
+		const once = button(localize('voltSandboxCard.allow', "Allow"), 'primary', localize('voltSandboxCard.allowTitle', "Let this run of the agent reach {0}", denial.target));
+		const allowed = (scope: 'run' | 'chat') => {
+			// Done: the buttons go, and the card says what now holds.
+			row.hidden = true;
+			note.hidden = false;
+			note.removeAttribute('role');
+			note.textContent = scope === 'chat'
+				? localize('voltSandboxCard.allowedChat', "Allowed for this chat: {0}", denial.target)
+				: localize('voltSandboxCard.allowedRun', "Allowed for this run: {0}", denial.target);
+			options.retry();
+		};
+		const answer = (scope: 'run' | 'chat', token: IUserGestureToken) => void answerNetworkDenial(options, scope, token).then(result => {
+			if (!tray.isConnected) {
 				return;
 			}
-			void trust.approveDenial(options.chatId, id, denial.denialId!, denial.epoch!, scope, token).then(result => {
-				if (result.ok) {
-					options.retry();
-				} else if (tray.isConnected) {
-					say(localize('voltSandboxCard.notAllowed', "Not allowed: {0}", result.reason));
-				}
-			});
-		};
-		const forChat = button(localize('voltSandboxCard.allowForChat', "Allow for This Chat"), 'secondary', localize('voltSandboxCard.allowForChatTitle', "Let this chat reach {0} from now on, until you revoke it in Settings, Access", denial.target));
-		store.add(bindGestureButton(forChat, trust.gestures, principal, token => approve('chat', token), { area: tray }));
-		const once = button(localize('voltSandboxCard.allow', "Allow"), 'primary', localize('voltSandboxCard.allowTitle', "Let this run of the agent reach {0}", denial.target));
-		store.add(bindGestureButton(once, trust.gestures, principal, token => approve('run', token), { area: tray }));
+			if (result.kind === 'allowed') {
+				allowed(scope);
+			} else if (result.kind === 'ended') {
+				// "Allow" is for the run that was blocked; once it is over only the chat-wide answer helps.
+				once.enabled = false;
+				say(localize('voltSandboxCard.ended', "The run that was blocked has ended. Allow for This Chat lets this chat's next runs reach {0}.", denial.target));
+			} else {
+				say(localize('voltSandboxCard.notAllowed', "Not allowed: {0}", result.reason));
+			}
+		});
+		store.add(bindGestureButton(forChat, trust.gestures, principal, token => answer('chat', token), { area: tray }));
+		store.add(bindGestureButton(once, trust.gestures, principal, token => answer('run', token), { area: tray }));
 	} else if (denial.kind === 'network' && options.allowHostSetting) {
 		const allow = button(localize('voltSandboxCard.allowForChat', "Allow for This Chat"), 'primary', localize('voltSandboxCard.allowHostTitle', "Add {0} to this chat's allowed hosts", denial.target));
 		armed(allow, options.allowHostSetting);
@@ -115,6 +125,31 @@ export function renderSandboxDenialCard(tray: HTMLElement, options: ISandboxDeni
 		outside.enabled = false;
 		renderConfirmation(tray, options, store);
 	}));
+}
+
+export type NetworkDenialAnswer = { readonly kind: 'allowed' } | { readonly kind: 'ended' } | { readonly kind: 'refused'; readonly reason: string };
+
+/**
+ * A gesture-armed answer to a recorded network denial. `chat`: the broker's record of the chat's
+ * denial decides, with or without a live run (the refused agent process has usually ended by the
+ * time the card is read). `run`: only for the run that was blocked, while it is still running.
+ */
+export async function answerNetworkDenial(options: Pick<ISandboxDenialCardOptions, 'denial' | 'chatId' | 'trust' | 'processId'>, scope: 'run' | 'chat', token: IUserGestureToken): Promise<NetworkDenialAnswer> {
+	const { denial, trust } = options;
+	if (!denial.denialId || denial.epoch === undefined) {
+		return { kind: 'refused', reason: 'Volt has no record of this denial' };
+	}
+	let result;
+	if (scope === 'chat') {
+		result = await trust.approveChatDenial(options.chatId, denial.denialId, denial.epoch, token);
+	} else {
+		const id = options.processId();
+		if (!id) {
+			return { kind: 'ended' };
+		}
+		result = await trust.approveDenial(options.chatId, id, denial.denialId, denial.epoch, 'run', token);
+	}
+	return result.ok ? { kind: 'allowed' } : { kind: 'refused', reason: result.reason };
 }
 
 function whyText(denial: ISandboxDenial, offered: boolean): string {

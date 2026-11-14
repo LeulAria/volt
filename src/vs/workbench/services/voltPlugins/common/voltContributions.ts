@@ -122,6 +122,8 @@ export interface IVoltAgentStateContribution {
 	readonly env?: Readonly<Record<string, string>>;
 	/** Environment variables it reads its keys and endpoints from, passed even though they look secret. */
 	readonly envKeys?: readonly string[];
+	/** Folders it reads and writes by itself outside its overlay (`readPaths`: reads only), and its process names: still denied, logged without a card. */
+	readonly quietPaths?: { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths?: readonly string[] };
 	/** H.12 shorthand for a provider without seeds: keys merged back to the real config after a turn. */
 	readonly mergeBack?: readonly string[];
 	/** It lists the home folder's entries at start (names only). */
@@ -209,6 +211,11 @@ export interface IVoltModuleContribution {
 	readonly commands?: readonly string[];
 	/** Setting keys, or prefixes ending in `.`. */
 	readonly settings?: readonly string[];
+	/**
+	 * Capabilities of another feature's gateway tool that are this feature's, as `tool.capability`
+	 * (`ide.http`): while it is off, calls of them are refused and the tool stays.
+	 */
+	readonly toolCapabilities?: readonly string[];
 	readonly entry?: string;
 }
 
@@ -355,6 +362,7 @@ export const VOLT_CONTRIBUTION_SCHEMAS: Readonly<Record<keyof IVoltContributes, 
 						tmpDirs: STRINGS,
 						env: ENV_RECORD,
 						envKeys: { type: 'array', items: ENV_NAME },
+						quietPaths: { type: 'object', required: ['processes', 'paths'], additionalProperties: false, properties: { processes: STRINGS, paths: STRINGS, readPaths: STRINGS } },
 						mergeBack: STRINGS,
 						listHome: { type: 'boolean' },
 						chmodFolders: STRINGS,
@@ -396,6 +404,7 @@ export const VOLT_CONTRIBUTION_SCHEMAS: Readonly<Record<keyof IVoltContributes, 
 			order: { type: 'number' },
 			commands: STRINGS,
 			settings: STRINGS,
+			toolCapabilities: { type: 'array', items: { type: 'string', pattern: '^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_-]*$' } },
 			entry: { type: 'string' },
 		},
 	},

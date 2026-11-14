@@ -19,6 +19,7 @@ export class VoltAgentServerMainService extends Disposable implements IVoltAgent
 	declare readonly _serviceBrand: undefined;
 
 	private readonly launcher: AgentServerLauncher;
+	private readonly extensionsPath: string;
 	/** A window asked for the server: keep it up across sleep even while no window is open. */
 	private wanted = false;
 
@@ -28,6 +29,7 @@ export class VoltAgentServerMainService extends Disposable implements IVoltAgent
 		@IProductService productService: IProductService,
 	) {
 		super();
+		this.extensionsPath = environmentMainService.extensionsPath;
 		this.launcher = new AgentServerLauncher({
 			userDataDir: environmentMainService.userDataPath,
 			// The checkout in dev builds.
@@ -70,7 +72,7 @@ export class VoltAgentServerMainService extends Disposable implements IVoltAgent
 
 	createExtensionHostTicket(): Promise<IVoltExtensionHostTicket & { readonly port: number }> {
 		this.wanted = true;
-		return this.launcher.createExtensionHostTicket();
+		return this.launcher.createExtensionHostTicket(this.extensionsPath);
 	}
 
 	sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> {

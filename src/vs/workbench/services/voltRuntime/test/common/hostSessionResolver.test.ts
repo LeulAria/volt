@@ -41,4 +41,18 @@ suite('RunModeTracker', () => {
 		const { result } = tracker({ c: { folder: '/repo' } });
 		assert.strictEqual(result.cwd('c'), undefined);
 	});
+
+	test('HOST-CWD-1: a chat without a worktree works in its project folder, not the window\'s', () => {
+		const { result: resolver, start } = tracker({ plain: { folder: '/repo/app' }, worktree: { worktreePath: '/worktrees/app-1', folder: '/repo/app' } });
+		start('plain');
+		start('worktree');
+		assert.strictEqual(resolver.cwd('plain'), '/repo/app', 'the project folder (no worktree)');
+		assert.strictEqual(resolver.cwd('worktree'), '/worktrees/app-1', 'the worktree when it has one');
+		assert.strictEqual(resolver.mode('plain'), 'agent');
+	});
+
+	test('HOST-CWD-2: a chat that never ran here has no folder from the resolver', () => {
+		const { result: resolver } = tracker({ unknown: { folder: '/repo/app' } });
+		assert.strictEqual(resolver.cwd('unknown'), undefined);
+	});
 });

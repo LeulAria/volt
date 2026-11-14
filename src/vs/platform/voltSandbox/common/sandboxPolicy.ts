@@ -123,6 +123,20 @@ export interface IAgentFootprint {
 	readonly tmpDirs?: (uid: number | undefined) => readonly string[];
 	/** API hosts the agent must reach to work at all. */
 	readonly domains: readonly string[];
+	/**
+	 * Host rules of the CLI's own telemetry and background calls (error reporting, analytics, feature
+	 * flags) beyond {@link AGENT_TELEMETRY_DOMAINS}: refused as any host is, but never shown as a
+	 * denial card the user is invited to allow (the user didn't ask for them); audit log only.
+	 */
+	readonly quietDomains?: readonly string[];
+	/**
+	 * Home folders the CLI reads and writes by itself outside its overlay (claude.ai's synced skills
+	 * and plugins, its locks), and the names of its own processes: still denied, but such a denial by
+	 * one of those processes is logged, never a card (the user didn't ask for it). A shell or a
+	 * command the agent runs on the same path (`cat`, `ls`) keeps its card. `readPaths` are quiet for
+	 * reads only (other CLIs' skills and settings the CLI scans at start): a write there keeps its card.
+	 */
+	readonly quietPaths?: { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths?: readonly string[] };
 	/** Environment variables the CLI reads its keys and endpoints from, copied even though they look secret. */
 	readonly envKeys?: readonly string[];
 	/** Fixed environment for a sandboxed run (turn off self-updates that would write executables). */
@@ -251,6 +265,9 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		credentials: ['.claude/.credentials.json'],
 		tmpDirs: uid => [`/private/tmp/claude-${uid ?? 0}`, `/tmp/claude-${uid ?? 0}`, '/private/tmp/cc-socks', '/tmp/cc-socks'],
 		domains: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
+		// Its Datadog log intake and Statsig feature gates are quiet through AGENT_TELEMETRY_DOMAINS.
+		// claude.ai's synced skills and plugins go to the real `~/.claude` whatever CLAUDE_CONFIG_DIR says.
+		quietPaths: { processes: ['claude'], paths: ['.claude/skills/synced', '.claude/plugins', '.local/state/claude'] },
 		envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
 		// DISABLE_TELEMETRY: its usage logs go to a Datadog intake (http-intake.logs.us5.datadoghq.com),
 		// which takes logs for any account's key, so it stays unlisted; told not to send, it does not try
@@ -288,6 +305,13 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		credentials: ['.grok/auth.json'],
 		domains: ['x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
 		envKeys: ['XAI_API_KEY', 'GROK_API_KEY'],
+		// At every start it scans the other CLIs' skills, plugins and settings to offer them, and updates
+		// its bundled plugins and version files in place: all stay denied, without a card.
+		quietPaths: {
+			processes: ['grok'],
+			paths: ['.grok/bundled', '.grok/installed-plugins', '.grok/version.json', '.grok/experiments_remote_opt_out'],
+			readPaths: ['.agents/skills', '.claude/skills', '.claude/plugins', '.claude.json', '.claude/settings.json', '.claude/settings.local.json', '.cursor/skills', '.cursor/mcp.json'],
+		},
 	},
 	opencode: {
 		// OpenCode 2 keeps credentials and sessions in `.local/share/opencode/opencode.db` and its settings in `.config/opencode`.
@@ -448,6 +472,29 @@ export function agentApiDomains(providerId: string): readonly string[] {
 	return [...(AGENT_FOOTPRINTS[providerId]?.domains ?? []), ...NPM_DOMAINS];
 }
 
+/**
+ * Telemetry and analytics intakes agent CLIs call on their own (Datadog, Statsig, Segment, Sentry,
+ * PostHog, Amplitude, Mixpanel, Honeycomb, LaunchDarkly's event stream): for every agent, quiet
+ * denials (see {@link IAgentFootprint.quietDomains}). A host the agent's API needs is in `domains`
+ * and allowed whatever this says.
+ */
+export const AGENT_TELEMETRY_DOMAINS: readonly string[] = [
+	'*.datadoghq.com', '*.datadoghq.eu', 'statsigapi.net', '*.statsigapi.net', 'featuregates.org', '*.featuregates.org', 'api.segment.io', '*.segment.io', 'cdn.segment.com',
+	'*.ingest.sentry.io', '*.ingest.us.sentry.io', '*.posthog.com', 'api.amplitude.com', 'api2.amplitude.com', 'api-js.mixpanel.com', 'api.mixpanel.com', 'api.honeycomb.io', 'events.launchdarkly.com',
+];
+
+/** Host rules whose denials for `providerId`'s agent are logged only, never a card (its own telemetry). */
+export function agentQuietDomains(providerId: string): readonly string[] {
+	return [...AGENT_TELEMETRY_DOMAINS, ...(AGENT_FOOTPRINTS[providerId]?.quietDomains ?? [])];
+}
+
+/** Where `providerId`'s CLI keeps background state of its own, as absolute paths (see {@link IAgentFootprint.quietPaths}). */
+export function agentQuietPaths(providerId: string, home: string): { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths: readonly string[] } | undefined {
+	const own = Object.prototype.hasOwnProperty.call(AGENT_FOOTPRINTS, providerId) ? AGENT_FOOTPRINTS[providerId].quietPaths : undefined;
+	const absolute = (paths: readonly string[] = []) => paths.map(path => `${normalizeSandboxPath(home)}/${path}`);
+	return own && home ? { processes: own.processes, paths: absolute(own.paths), readPaths: absolute(own.readPaths) } : undefined;
+}
+
 /** `/a/b/` and `/a//b` as `/a/b`. Relative paths are returned unchanged (and later rejected). */
 export function normalizeSandboxPath(path: string): string {
 	const trimmed = path.trim().replace(/\/{2,}/g, '/');
@@ -580,8 +627,14 @@ export interface IAgentSandboxHost {
 	readonly uid?: number;
 	/** Volt's user data: the agent-server token, the host MCP state. No agent may read it. */
 	readonly userDataDir?: string;
-	/** Private keys in `~/.ssh` (found by content): denied even when `~/.ssh` stays readable for git over SSH. */
+	/** Private keys in `~/.ssh` and its folders (found by content), as named and as real paths: denied on top of everything. */
 	readonly sshPrivateKeys?: readonly string[];
+	/**
+	 * What ssh reads for git over SSH with the network on: `~/.ssh/config`, `config.d` and what the
+	 * configs `Include`, the known hosts files and the public keys, as named and as real paths (see
+	 * `sshReadablePaths`). The rest of `~/.ssh` stays unreadable.
+	 */
+	readonly sshReadable?: readonly string[];
 	/** The ssh-agent socket, granted when the chat's network is on. */
 	readonly sshAuthSock?: string;
 	/** Where sandboxed package caches live (see `SANDBOX_CACHE_ENV`). */
@@ -594,6 +647,15 @@ export interface IAgentSandboxHost {
 function ports(values: readonly number[] | undefined): number[] {
 	return unique((values ?? []).filter(port => Number.isInteger(port) && port > 0 && port < 65536).map(String)).map(Number);
 }
+
+/**
+ * Home files macOS's own tools read on every start, relative to the home folder: CoreFoundation's
+ * text encoding id, and the preferences xcodebuild (behind the /usr/bin shims) reads. No secrets.
+ */
+const MAC_HOME_TOOL_FILES: readonly string[] = [
+	'.CFUserTextEncoding', 'Library/Preferences/.GlobalPreferences.plist', 'Library/Preferences/.GlobalPreferences_m.plist',
+	'Library/Preferences/com.apple.dt.Xcode.plist', 'Library/Preferences/com.apple.dt.xcodebuild.plist',
+];
 
 /**
  * The policy an agent CLI process tree runs under. Weaker than the workload profiles by design,
@@ -642,9 +704,12 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		// Its config: the overlay's read-only links, or (no overlay for this launch) the real folder.
 		...(plan ? plan.read : overlay ? [at(overlay.home)] : []),
 		// The login: macOS keychain files are guarded by their own access lists.
-		...(host.platform === 'darwin' ? [at('Library/Keychains')] : []),
-		// ssh needs its config and known_hosts for git over SSH; the private keys stay denied.
-		...(request.network ? [at('.ssh')] : []),
+		// CoreFoundation's text encoding id (`0x1F5:0x0:0x0`), read by every program that links it (git,
+		// python), and the preferences xcodebuild reads behind the /usr/bin shims (TOOLCHAIN-MAC-1).
+		...(host.platform === 'darwin' ? [at('Library/Keychains'), ...MAC_HOME_TOOL_FILES.map(at)] : []),
+		// git over SSH: ssh reads its config, known hosts and public keys, and signs through the agent
+		// socket; nothing else in `~/.ssh` (notes, tokens, keys under any name) is readable (SSH-1).
+		...(request.network ? (host.sshReadable ?? []).map(normalizeSandboxPath).filter(path => isAbsolute(path) && path !== home) : []),
 	]);
 
 	const protect: string[] = [];
@@ -660,7 +725,8 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		// Read-only holds even when the workspace sits below a writable folder (a repo in /tmp).
 		protect.push(...workspace.filter(root => !extra.some(allowed => isPathInside(root, allowed))));
 	}
-	protect.push(...agentStateProtections(home, footprint), ...(plan?.protect ?? []), ...PROTECTED_GIT_PATTERNS);
+	// The user's own sandbox policy, which may widen: read-only even when the user lets the agent write `~/.volt`.
+	protect.push(at('.volt/sandbox.json'), ...agentStateProtections(home, footprint), ...(plan?.protect ?? []), ...PROTECTED_GIT_PATTERNS);
 	if (host.platform === 'darwin') {
 		// The temp folders are writable, but not xcrun's cache of which binary `/usr/bin/git` runs.
 		protect.push(...host.tempDirs.map(dir => `${normalizeSandboxPath(dir)}/${XCRUN_CACHE}`));
@@ -671,10 +737,11 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		...credentialDenyEntries()
 			// Keychain items are guarded by their own access lists; the CLI reads its login from there.
 			.filter(entry => entry !== '${home}/Library/Keychains')
-			// With network on, ssh needs its config and known_hosts; only the private keys stay denied.
+			// With network on, the few files ssh reads are allowed above; the rest of `~/.ssh` is simply not readable.
 			.filter(entry => !(entry === '${home}/.ssh' && request.network))
 			.map(entry => entry.replace(/^\$\{home\}/, home)),
-		...(request.network ? (host.sshPrivateKeys ?? []) : []),
+		// Also with network off: a key linked into `~/.ssh` from a readable folder is denied at its real path.
+		...(host.sshPrivateKeys ?? []),
 		...ALL_AGENT_CREDENTIALS.filter(path => !ownCredentials.has(path)).map(at),
 		...(host.userDataDir ? [normalizeSandboxPath(host.userDataDir)] : []),
 		// The overlay's seed snapshots are Volt's: the merge compares against them.

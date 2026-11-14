@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { URI } from '../../../../base/common/uri.js';
 import type { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import type { IVoltCodeIndexOptions, IVoltCodeSymbol, IVoltLspLimits, VoltCodeSymbolKind, VoltFffMode } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import type { IVoltHostToolInfo } from './hostTools.js';
@@ -68,14 +69,31 @@ export function lspAllowedFor(configuration: IConfigurationService, inWorktree: 
 }
 
 /**
- * Whether `path` is a worktree checkout Volt made for a chat (`~/.volt/worktrees/<repo>/<checkout>`),
- * which `volt.codeIntelligence.lsp.worktrees` governs. Callers asked "is it outside this window's
- * folders" instead, but the agent window usually has no folder open: every chat on a project was
- * taken for a worktree, and code_nav, diagnostics and code_action answered "language servers are
- * off for this checkout" (hotel benchmark, round 2).
+ * Whether a file is in a checkout Volt made for a chat (`~/.volt/worktrees/<repo>/<checkout>`), whose
+ * language servers are opt-in (`LSP_WORKTREES_SETTING`). A project the user opened is not one,
+ * whether or not it is one of the window's folders (the agent window has none). Callers asked "is it
+ * outside this window's folders" instead, but the agent window usually has no folder open: every chat
+ * on a project was taken for a worktree, and code_nav, diagnostics and code_action answered "language
+ * servers are off for this checkout" (hotel benchmark, round 2).
  */
-export function isVoltWorktreePath(path: string): boolean {
+export function inVoltWorktree(path: string): boolean {
 	return /[\\/]\.volt[\\/]worktrees[\\/]/.test(path);
+}
+
+/** The same test under the name the rest of the code index and its tests use. */
+export const isVoltWorktreePath = inVoltWorktree;
+
+/** The language-server policy for a window: a file outside its folders is opted in only when it is in a chat's worktree. */
+export function lspPolicy(configuration: IConfigurationService, insideWindow: (uri: URI) => boolean): (uri: URI) => boolean {
+	return uri => lspAllowedFor(configuration, !insideWindow(uri) && inVoltWorktree(uri.fsPath));
+}
+
+/** What a language-server tool answers when language servers are off for a file's checkout: why, and what to use instead. */
+export function lspOffMessage(tool: 'diagnostics' | 'code_action'): string {
+	const why = 'Language servers are off for this checkout (Settings > Code Intelligence: "Enable LSPs", or "Enable LSPs for Worktrees" for a chat\'s worktree)';
+	return tool === 'diagnostics'
+		? `${why}, so the editor has no diagnostics for it. Run the project's type checker or linter with your shell tool instead (for example \`npx tsc --noEmit\`, \`cargo check\`, \`ruff check\`).`
+		: `${why}, so nothing was changed. Edit the files with your own edit tools; code_nav definition and references (pass symbol) still answer from the code index, and grep finds the rest.`;
 }
 
 export function rtkEnabled(configuration: IConfigurationService): boolean {
@@ -139,8 +157,6 @@ export function formatSymbols(symbols: readonly IVoltCodeSymbol[], limitHit: boo
 export const INSTANT_GREP_TOOL_NAME = 'instant_grep';
 export const FIND_SYMBOL_TOOL_NAME = 'find_symbol';
 export const FIND_FILES_TOOL_NAME = 'find_files';
-/** The editor's language servers over MCP, served by the same module (schemas in codeTools.ts). */
-export const LANGUAGE_SERVER_TOOL_NAMES: readonly string[] = ['code_nav', 'diagnostics', 'code_action'];
 
 /**
  * Claude Code's file edits checked by the language server as they happen: hooks of type
@@ -156,7 +172,92 @@ export function editCheckPhase(name: string, args: Record<string, unknown> | und
 	return phase === 'read' || phase === 'before' || phase === 'after' ? phase : undefined;
 }
 
-export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
+/** The editor's language servers as tools: the native agent's and, over MCP, every other agent's. */
+export const CODE_NAV_TOOL_NAME = 'code_nav';
+export const DIAGNOSTICS_TOOL_NAME = 'diagnostics';
+export const CODE_ACTION_TOOL_NAME = 'code_action';
+export const LANGUAGE_SERVER_TOOL_NAMES = [CODE_NAV_TOOL_NAME, DIAGNOSTICS_TOOL_NAME, CODE_ACTION_TOOL_NAME] as const;
+
+export const CODE_NAV_OPS = ['impact', 'body', 'definition', 'references', 'implementations', 'type_definition', 'hover', 'inspect', 'symbols', 'workspace_symbols', 'callers', 'callees', 'supertypes', 'subtypes', 'structural'] as const;
+export type CodeNavOp = typeof CODE_NAV_OPS[number];
+
+export const CODE_ACTION_OPS = ['rename', 'format', 'organize_imports', 'fixes', 'fix'] as const;
+
+function toolSchema(properties: Record<string, object>, required: string[]): object {
+	return { type: 'object', properties, required, additionalProperties: false };
+}
+
+export const CODE_NAV_DESCRIPTION = [
+	'Type-checked answers from the language servers the editor runs (live buffers), with Volt\'s code index as fallback.',
+	'Use it for meaning, where grep returns look-alikes: who calls X (through other functions too), what implements interface Y, every use of method M of type T (not other methods with the same name), what type Z is.',
+	'Name the symbol with symbol, plus path and line where it is written; symbol alone finds its declaration (path narrows it; path#symbol works too).',
+	'Ops: impact (before a change, one call: callers 3 levels up, files using or importing symbol or path, the tests to run, current errors),',
+	'body (symbol\'s source with line numbers, not the whole file; comma-separate several),',
+	'references, implementations, definition, type_definition, hover (type, signature, docs),',
+	'inspect (hover + definition with body + references + implementations in one call),',
+	'callers / callees (call hierarchy; depth 2-4 follows callers of callers to the entry points and names the route handlers or procedures the calls are in), supertypes / subtypes,',
+	'symbols (outline of path), workspace_symbols (query: find declarations by name),',
+	'structural (pattern: $X one node, $$$ any, e.g. fetchUser($ID, $$$): code by its syntax across lines, not text; where filters a $X by regex; path, glob narrow).',
+	'Use grep for text, strings, SQL and config.',
+].join(' ');
+
+export const CODE_NAV_SCHEMA = toolSchema({
+	op: { type: 'string', enum: [...CODE_NAV_OPS] },
+	symbol: { type: 'string', description: 'The symbol\'s name. With line: the name on that line. Alone: found by its declaration (path narrows it)' },
+	path: { type: 'string' },
+	line: { type: 'integer', description: '1-based line where symbol is written' },
+	column: { type: 'integer', description: '1-based column, instead of symbol' },
+	depth: { type: 'integer', description: 'callers/callees/impact: levels to follow (1-4; default 1, impact 3)' },
+	query: { type: 'string', description: 'workspace_symbols: the name to look for' },
+	pattern: { type: 'string', description: 'structural: the code pattern' },
+	where: { type: 'object', description: 'structural: a regex per metavariable, e.g. {"MS":"^\\\\d"} keeps literal numbers' },
+	glob: { type: 'string', description: 'structural: files, e.g. **/*.ts; !**/*.test.* skips' },
+}, ['op']);
+
+export const DIAGNOSTICS_DESCRIPTION = [
+	'Errors and warnings from the editor\'s language services (type checker, linter) for the given files, or the whole workspace.',
+	'Use right after editing to confirm the change type-checks; it is much faster than a full build.',
+	'Only files the language service knows about are covered; a build or test run is still the final word.',
+].join(' ');
+
+export const DIAGNOSTICS_SCHEMA = toolSchema({
+	paths: { type: 'array', items: { type: 'string' }, description: 'Files to check (default: all open problems)' },
+	severity: { type: 'string', enum: ['error', 'warning', 'all'], description: 'Default error' },
+}, []);
+
+export const CODE_ACTION_DESCRIPTION = [
+	'Language-server refactors applied to the workspace, safer than hand edits across files.',
+	'rename: renames the symbol at path + line + symbol (or column) everywhere it is used (new_name).',
+	'format: formats path with its formatter. organize_imports: sorts and prunes path\'s imports.',
+	'fixes: lists quick fixes and refactors offered at path (line, or the whole file); kind narrows (quickfix, refactor, source).',
+	'fix: applies the one whose title contains title (default: the preferred fix at line).',
+	'Returns the diff of every changed file. Run diagnostics afterwards.',
+].join(' ');
+
+export const CODE_ACTION_SCHEMA = toolSchema({
+	op: { type: 'string', enum: [...CODE_ACTION_OPS] },
+	path: { type: 'string' },
+	line: { type: 'integer', description: '1-based line' },
+	end_line: { type: 'integer', description: 'fixes/fix: last line of the range (default line)' },
+	column: { type: 'integer' },
+	symbol: { type: 'string', description: 'rename: the name on that line, instead of a column' },
+	new_name: { type: 'string' },
+	kind: { type: 'string', description: 'fixes/fix: quickfix (default), refactor, source, or a full kind such as refactor.extract' },
+	title: { type: 'string', description: 'fix: part of the action title from fixes' },
+}, ['op', 'path']);
+
+/** code_nav, diagnostics and code_action for agents that bring their own tools, answered from the buffers the user sees. */
+export const LANGUAGE_SERVER_TOOLS: readonly IVoltHostToolInfo[] = [
+	// Behind Claude Code's tool search (~480 tokens in every request otherwise). It went unused there
+	// while the lead named it only loosely (02-code-intelligence.md); the IDE guide and CODE_QUESTIONS
+	// now give its exact name and how to load it on the turns about the code.
+	{ name: CODE_NAV_TOOL_NAME, title: 'Navigated code', group: 'core', description: CODE_NAV_DESCRIPTION, inputSchema: CODE_NAV_SCHEMA },
+	{ name: DIAGNOSTICS_TOOL_NAME, title: 'Read diagnostics', group: 'core', description: DIAGNOSTICS_DESCRIPTION, inputSchema: DIAGNOSTICS_SCHEMA },
+	{ name: CODE_ACTION_TOOL_NAME, title: 'Refactored code', group: 'core', description: CODE_ACTION_DESCRIPTION, inputSchema: CODE_ACTION_SCHEMA, approvalInReadOnlyModes: 'changes files' },
+];
+
+/** The index's search tools. */
+const CODE_SEARCH_TOOLS: readonly IVoltHostToolInfo[] = [
 	{
 		name: INSTANT_GREP_TOOL_NAME,
 		title: 'Searched code',
@@ -228,5 +329,8 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 		},
 	},
 ];
+
+/** Every tool the Code Intelligence feature serves on the volt MCP server: what goes away when it is off. */
+export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [...CODE_SEARCH_TOOLS, ...LANGUAGE_SERVER_TOOLS];
 
 //#endregion

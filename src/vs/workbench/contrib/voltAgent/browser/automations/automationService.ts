@@ -42,7 +42,7 @@ import { AgentScratchFolders } from '../workspace/agentScratchProject.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAutomationRunHost } from './automationCommands.js';
-import { confineChatSandbox } from '../../../../services/voltRuntime/common/access/chatSandbox.js';
+import { chatSandboxScope, confineChatSandbox } from '../../../../services/voltRuntime/common/access/chatSandbox.js';
 import { stricterSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxInheritance.js';
 
 /** Status and tool updates are batched into one write; a run's start is written at once. */
@@ -826,7 +826,13 @@ export class AutomationService extends Disposable implements IAutomationService 
 		const host: IAutomationRunHost = { scheduled: { id: automation.id, title: automation.name, runId: run.id, ...(origin.provider !== 'schedule' && origin.provider !== 'manual' ? { webhook: true } : {}) } };
 		// Made or changed by a sandboxed chat: the run is confined at least as tightly (older automations: their source chat's sandbox).
 		const floor = automation.sandbox ?? (automation.createdByAgent && automation.sourceThreadId ? this.runtime.getSandboxSettings(automation.sourceThreadId) : undefined);
-		await confineChatSandbox(this.runtime, threadId, floor);
+		// The run writes its folder only when the chat that made the automation may write it (INV-11); with
+		// that chat gone its folders are unknown, and a confined run is read-only (fails closed).
+		const realpath = (path: string) => this.fileService.realpath(URI.file(path)).then(real => real?.fsPath);
+		await confineChatSandbox(this.runtime, threadId, floor, floor ? {
+			caller: automation.sourceThreadId && this.history.get(automation.sourceThreadId) ? await chatSandboxScope(this.runtime, automation.sourceThreadId, realpath) : {},
+			child: await chatSandboxScope(this.runtime, threadId, realpath),
+		} : undefined);
 		await onThread(threadId);
 		const result = await this.orchestrator.submit(threadId, {
 			text,

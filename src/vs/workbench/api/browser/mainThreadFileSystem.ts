@@ -7,7 +7,7 @@ import { Emitter, Event } from '../../../base/common/event.js';
 import { IDisposable, toDisposable, DisposableStore, DisposableMap } from '../../../base/common/lifecycle.js';
 import { URI, UriComponents } from '../../../base/common/uri.js';
 import { IFileWriteOptions, FileSystemProviderCapabilities, IFileChange, IFileService, IStat, IWatchOptions, FileType, IFileOverwriteOptions, IFileDeleteOptions, IFileOpenOptions, FileOperationError, FileOperationResult, FileSystemProviderErrorCode, IFileSystemProviderWithOpenReadWriteCloseCapability, IFileSystemProviderWithFileReadWriteCapability, IFileSystemProviderWithFileFolderCopyCapability, FilePermission, toFileSystemProviderErrorCode, IFileStatWithPartialMetadata, IFileStat } from '../../../platform/files/common/files.js';
-import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
+import { extHostNamedCustomer, IExtHostContext, VoltSandboxedHostError } from '../../services/extensions/common/extHostCustomers.js';
 import { ExtHostContext, ExtHostFileSystemShape, IFileChangeDto, MainContext, MainThreadFileSystemShape } from '../common/extHost.protocol.js';
 import { VSBuffer } from '../../../base/common/buffer.js';
 import { IMarkdownString } from '../../../base/common/htmlContent.js';
@@ -18,9 +18,11 @@ export class MainThreadFileSystem implements MainThreadFileSystemShape {
 	private readonly _proxy: ExtHostFileSystemShape;
 	private readonly _fileProvider = new DisposableMap<number, RemoteFileSystemProvider>();
 	private readonly _disposables = new DisposableStore();
+	/** Volt: schemes this host serves itself (its own providers). */
+	private readonly _ownSchemes = new Map<number, string>();
 
 	constructor(
-		extHostContext: IExtHostContext,
+		private readonly extHostContext: IExtHostContext,
 		@IFileService private readonly _fileService: IFileService
 	) {
 		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostFileSystem);
@@ -41,10 +43,31 @@ export class MainThreadFileSystem implements MainThreadFileSystemShape {
 
 	async $registerFileSystemProvider(handle: number, scheme: string, capabilities: FileSystemProviderCapabilities, readonlyMessage?: IMarkdownString): Promise<void> {
 		this._fileProvider.set(handle, new RemoteFileSystemProvider(this._fileService, scheme, capabilities, readonlyMessage, handle, this._proxy));
+		this._ownSchemes.set(handle, scheme);
 	}
 
 	$unregisterProvider(handle: number): void {
 		this._fileProvider.deleteAndDispose(handle);
+		this._ownSchemes.delete(handle);
+	}
+
+	/**
+	 * Volt (P2): a sandboxed extension's host reads and writes `file:` itself, inside its sandbox.
+	 * What it asks of the window's file service (`vscode-userdata:` maps to any path of the user's,
+	 * remote and virtual schemes) the window would do outside that sandbox: only its own schemes.
+	 */
+	private _checkConsumer(...uris: UriComponents[]): void {
+		if (!this.extHostContext.voltSandboxed) {
+			return;
+		}
+		const own = new Set(this._ownSchemes.values());
+		for (const uri of uris) {
+			if (!own.has(URI.revive(uri).scheme)) {
+				const err = new VoltSandboxedHostError(`workspace.fs on ${URI.revive(uri).scheme}: URIs`);
+				err.name = FileSystemProviderErrorCode.NoPermissions;
+				throw err;
+			}
+		}
 	}
 
 	$onFileSystemChange(handle: number, changes: IFileChangeDto[]): void {
@@ -60,6 +83,7 @@ export class MainThreadFileSystem implements MainThreadFileSystemShape {
 
 	async $stat(uri: UriComponents): Promise<IStat> {
 		try {
+			this._checkConsumer(uri);
 			const stat = await this._fileService.stat(URI.revive(uri));
 			return {
 				ctime: stat.ctime,
@@ -75,6 +99,7 @@ export class MainThreadFileSystem implements MainThreadFileSystemShape {
 
 	async $readdir(uri: UriComponents): Promise<[string, FileType][]> {
 		try {
+			this._checkConsumer(uri);
 			const stat = await this._fileService.resolve(URI.revive(uri), { resolveMetadata: false });
 			if (!stat.isDirectory) {
 				const err = new Error(stat.name);
@@ -103,6 +128,7 @@ export class MainThreadFileSystem implements MainThreadFileSystemShape {
 
 	async $readFile(uri: UriComponents): Promise<VSBuffer> {
 		try {
+			this._checkConsumer(uri);
 			const file = await this._fileService.readFile(URI.revive(uri));
 			return file.value;
 		} catch (err) {
@@ -112,6 +138,7 @@ export class MainThreadFileSystem implements MainThreadFileSystemShape {
 
 	async $writeFile(uri: UriComponents, content: VSBuffer): Promise<void> {
 		try {
+			this._checkConsumer(uri);
 			await this._fileService.writeFile(URI.revive(uri), content);
 		} catch (err) {
 			return MainThreadFileSystem._handleError(err);
@@ -120,6 +147,7 @@ export class MainThreadFileSystem implements MainThreadFileSystemShape {
 
 	async $rename(source: UriComponents, target: UriComponents, opts: IFileOverwriteOptions): Promise<void> {
 		try {
+			this._checkConsumer(source, target);
 			await this._fileService.move(URI.revive(source), URI.revive(target), opts.overwrite);
 		} catch (err) {
 			return MainThreadFileSystem._handleError(err);
@@ -128,6 +156,7 @@ export class MainThreadFileSystem implements MainThreadFileSystemShape {
 
 	async $copy(source: UriComponents, target: UriComponents, opts: IFileOverwriteOptions): Promise<void> {
 		try {
+			this._checkConsumer(source, target);
 			await this._fileService.copy(URI.revive(source), URI.revive(target), opts.overwrite);
 		} catch (err) {
 			return MainThreadFileSystem._handleError(err);
@@ -136,6 +165,7 @@ export class MainThreadFileSystem implements MainThreadFileSystemShape {
 
 	async $mkdir(uri: UriComponents): Promise<void> {
 		try {
+			this._checkConsumer(uri);
 			await this._fileService.createFolder(URI.revive(uri));
 		} catch (err) {
 			return MainThreadFileSystem._handleError(err);
@@ -144,6 +174,7 @@ export class MainThreadFileSystem implements MainThreadFileSystemShape {
 
 	async $delete(uri: UriComponents, opts: IFileDeleteOptions): Promise<void> {
 		try {
+			this._checkConsumer(uri);
 			return await this._fileService.del(URI.revive(uri), opts);
 		} catch (err) {
 			return MainThreadFileSystem._handleError(err);

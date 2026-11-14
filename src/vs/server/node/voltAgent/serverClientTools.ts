@@ -19,6 +19,8 @@ export interface IClientToolCall {
 	readonly external?: IVoltExternalCaller;
 	/** The calling chat's sandbox (the server's gate already ran): the window's tool reads it, and its nested calls carry it back. */
 	readonly sandbox?: IVoltSandboxSettings;
+	/** The folders the gate's path rules judged by: the window rebuilds the rules from them (its closures do not cross). */
+	readonly sandboxPaths?: IVoltHostToolCall['sandboxPaths'];
 	readonly cancelKey?: string;
 	/**
 	 * Set when the chat is sandboxed: its read rule stays here (a function does not cross the
@@ -27,7 +29,7 @@ export interface IClientToolCall {
 	readonly readRuleKey?: string;
 }
 
-function toClientToolCall(call: IVoltHostToolCall | undefined, cancelKey?: string, readRuleKey?: string): IClientToolCall | undefined {
+export function toClientToolCall(call: IVoltHostToolCall | undefined, cancelKey?: string, readRuleKey?: string): IClientToolCall | undefined {
 	if (!call) {
 		return cancelKey ? { cancelKey } : undefined;
 	}
@@ -38,6 +40,7 @@ function toClientToolCall(call: IVoltHostToolCall | undefined, cancelKey?: strin
 		...(call.source ? { source: call.source } : {}),
 		...(call.external ? { external: call.external } : {}),
 		...(call.sandbox ? { sandbox: call.sandbox } : {}),
+		...(call.sandboxPaths ? { sandboxPaths: call.sandboxPaths } : {}),
 		...(cancelKey ? { cancelKey } : {}),
 		...(readRuleKey ? { readRuleKey } : {}),
 	};

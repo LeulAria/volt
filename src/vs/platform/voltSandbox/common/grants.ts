@@ -149,7 +149,11 @@ export function canonicalJson(value: unknown): string {
 
 // --- the store file (G.9) ----------------------------------------------------------------------
 
-/** Grant-store schema written by this build. */
+/**
+ * Grant-store schema written by this build. Every later schema must keep applying the revocation
+ * log `grants.revoked` over its store (`GrantStore`): it is how an older Volt revokes in a store it
+ * can't write.
+ */
 export const GRANT_STORE_SCHEMA = 1;
 
 export interface IGrantStoreData {

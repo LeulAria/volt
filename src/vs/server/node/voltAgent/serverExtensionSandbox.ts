@@ -25,12 +25,23 @@ export class ServerExtensionSandbox implements IVoltExtensionHostSandbox {
 			/** `bootstrap-fork.js`. */
 			readonly bootstrapFork: string;
 			readonly home: string;
+			/**
+			 * P6: the desktop app's own extension folders on this computer, as its main process named
+			 * them when it asked for a ticket (with the server's token). An extension installed the
+			 * normal way (Extensions view, a .vsix) is there, not in the server's folder.
+			 */
+			readonly localExtensionDirs?: () => readonly string[];
 		},
 		private readonly logService: ILogService,
 	) { }
 
 	async start(params: IVoltSandboxedHostStartParams, options: IVoltExtensionHostSandboxStartOptions): Promise<{ readonly ok: true; readonly started: ISandboxedExtensionHostStart } | { readonly ok: false; readonly code: string; readonly reason: string }> {
-		const found = await findInstalledExtension([{ dir: options.dirs.extensions, builtin: false }, { dir: options.dirs.builtinExtensions, builtin: true }], params.extensionId);
+		const roots = [
+			{ dir: options.dirs.extensions, builtin: false },
+			...(this.options.localExtensionDirs?.() ?? []).map(dir => ({ dir, builtin: false })),
+			{ dir: options.dirs.builtinExtensions, builtin: true },
+		];
+		const found = await findInstalledExtension(roots, params.extensionId, typeof params.version === 'string' ? params.version : undefined);
 		if (!found) {
 			return { ok: false, code: 'unknown', reason: `${params.extensionId} is not installed where Volt's server runs extensions.` };
 		}
@@ -68,15 +79,17 @@ interface IExtensionManifestLike {
 }
 
 /**
- * The installed copy of `extensionId` in `roots` (the newest version when several are installed),
- * with the facts the sandbox decides on. Built-in folders count as built-in.
+ * The installed copy of `extensionId` in `roots` (the version the window runs when it is installed,
+ * else the newest), with the facts the sandbox decides on. Built-in folders count as built-in.
+ * Folders the extension manager marked for removal (`.obsolete`) are skipped.
  */
-export async function findInstalledExtension(roots: readonly { readonly dir: string; readonly builtin: boolean }[], extensionId: string): Promise<{ readonly location: string; readonly facts: IT3ExtensionFacts } | undefined> {
+export async function findInstalledExtension(roots: readonly { readonly dir: string; readonly builtin: boolean }[], extensionId: string, preferredVersion?: string): Promise<{ readonly location: string; readonly facts: IT3ExtensionFacts } | undefined> {
 	const wanted = extensionId.toLowerCase();
 	let best: { location: string; facts: IT3ExtensionFacts; version: string } | undefined;
 	for (const root of roots) {
+		const obsolete = await readObsolete(root.dir);
 		for (const name of await fs.readdir(root.dir).catch(() => [] as string[])) {
-			if (name.startsWith('.')) {
+			if (name.startsWith('.') || obsolete.has(name)) {
 				continue;
 			}
 			const location = join(root.dir, name);
@@ -85,12 +98,25 @@ export async function findInstalledExtension(roots: readonly { readonly dir: str
 				continue;
 			}
 			const version = typeof manifest.version === 'string' ? manifest.version : '0.0.0';
+			if (preferredVersion !== undefined && version === preferredVersion) {
+				return { location, facts: extensionFacts(`${manifest.publisher}.${manifest.name}`, manifest, root.builtin) };
+			}
 			if (!best || compareVersions(version, best.version) > 0) {
 				best = { location, version, facts: extensionFacts(`${manifest.publisher}.${manifest.name}`, manifest, root.builtin) };
 			}
 		}
 	}
 	return best && { location: best.location, facts: best.facts };
+}
+
+/** The extension manager's `.obsolete` file: folder names waiting to be removed. */
+async function readObsolete(dir: string): Promise<ReadonlySet<string>> {
+	try {
+		const value = JSON.parse(await fs.readFile(join(dir, '.obsolete'), 'utf8'));
+		return new Set(value && typeof value === 'object' ? Object.keys(value).filter(key => value[key] === true) : []);
+	} catch {
+		return new Set();
+	}
 }
 
 export function extensionFacts(id: string, manifest: IExtensionManifestLike, builtin: boolean): IT3ExtensionFacts {

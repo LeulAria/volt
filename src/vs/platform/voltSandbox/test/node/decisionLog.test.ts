@@ -73,11 +73,11 @@ suite('Volt decision log (C2)', function () {
 		const count = await logDay(log, 6);
 		const file = join(dir, 'decisions.log');
 		const result = await replayDecisionLog(file);
-		assert.deepStrictEqual(result, { decisions: count, mismatches: [] });
+		assert.deepStrictEqual(result, { decisions: count, mismatches: [], unproven: 0 });
 		const lines = (await fs.readFile(file, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
 		assert.strictEqual(lines.filter(line => line.type === 'snapshot').length, 6, 'each snapshot once');
 		const decision = lines.find(line => line.type === 'decision');
-		assert.deepStrictEqual(Object.keys(decision).sort(), ['at', 'context', 'ctxDigest', 'decision', 'epoch', 'request', 'snapshotDigest', 'type']);
+		assert.deepStrictEqual(Object.keys(decision).sort(), ['at', 'context', 'ctxDigest', 'decision', 'epoch', 'reqDigest', 'request', 'snapshotDigest', 'type', 'v']);
 		if (process.platform !== 'win32') {
 			assert.strictEqual((await fs.stat(file)).mode & 0o777, 0o600);
 			assert.strictEqual((await fs.stat(dir)).mode & 0o777, 0o700);
@@ -102,8 +102,34 @@ suite('Volt decision log (C2)', function () {
 		assert.ok(mismatches.some(m => m.line > snapshotAt + 1 && /is not the logged/.test(String(m.replayed))), 'decisions on the edited snapshot');
 	});
 
+	test('POL-DET-2: an edited request is reported even when it decides the same; an older Volt\'s records replay, marked unproven (05-limitations 28)', async () => {
+		const log = new DecisionLog(dir, { now: () => NOW });
+		const count = await logDay(log, 2);
+		const file = join(dir, 'decisions.log');
+		const lines = (await fs.readFile(file, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+		// A denied request moved to another denied target: the same decision, a different request.
+		const at = lines.findIndex(line => line.type === 'decision' && line.request.capability === 'files.write');
+		const edited = lines.map((line, i) => i === at ? { ...line, request: { ...line.request, target: '~/.aws/credentials' } } : line);
+		await fs.writeFile(file, edited.map(line => JSON.stringify(line)).join('\n') + '\n');
+		assert.deepStrictEqual((await replayDecisionLog(file)).mismatches.map(m => [m.line, m.replayed]), [[at + 1, 'the logged request does not match its digest']]);
+		// Version 1 records (no `v`, no `reqDigest`), as an older Volt wrote them.
+		const v1 = lines.map(line => {
+			if (line.type !== 'decision') {
+				return line;
+			}
+			const { v: _v, reqDigest: _reqDigest, ...rest } = line;
+			return rest;
+		});
+		await fs.writeFile(file, v1.map(line => JSON.stringify(line)).join('\n') + '\n');
+		assert.deepStrictEqual(await replayDecisionLog(file), { decisions: count, mismatches: [], unproven: count }, 'replayed, without request proof');
+		// A version from the future is not silently replayed.
+		const future = lines.map((line, i) => i === at ? { ...line, v: 99 } : line);
+		await fs.writeFile(file, future.map(line => JSON.stringify(line)).join('\n') + '\n');
+		assert.ok((await replayDecisionLog(file)).mismatches.some(m => /version 99/.test(String(m.replayed))));
+	});
+
 	test('rotation: files rotate by size, old ones are dropped, and each file replays on its own', async () => {
-		const log = new DecisionLog(dir, { now: () => NOW, maxBytes: 6_000, keep: 2 });
+		const log = new DecisionLog(dir, { now: () => NOW, maxBytes: 8_000, keep: 2 });
 		await logDay(log, 12);
 		const names = (await fs.readdir(dir)).sort();
 		assert.deepStrictEqual(names, ['decisions.1.log', 'decisions.2.log', 'decisions.log']);
@@ -113,9 +139,9 @@ suite('Volt decision log (C2)', function () {
 			assert.deepStrictEqual(mismatches, [], name);
 		}
 		// A new process appending to the same folder starts a fresh, self-contained file.
-		const later = new DecisionLog(dir, { now: () => NOW, maxBytes: 6_000, keep: 2 });
+		const later = new DecisionLog(dir, { now: () => NOW, maxBytes: 8_000, keep: 2 });
 		await logDay(later, 1);
-		assert.deepStrictEqual(await replayDecisionLog(join(dir, 'decisions.log')), { decisions: REQUESTS.length, mismatches: [] });
+		assert.deepStrictEqual(await replayDecisionLog(join(dir, 'decisions.log')), { decisions: REQUESTS.length, mismatches: [], unproven: 0 });
 	});
 });
 

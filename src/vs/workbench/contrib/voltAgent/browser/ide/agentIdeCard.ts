@@ -25,6 +25,7 @@ const TONE: Readonly<Record<AgentIdeActivityState, string>> = {
 	failed: 'state-failed',
 	ended: 'state-stopped',
 	stopped: 'state-stopped',
+	refused: 'state-stopped',
 };
 
 function kindIcon(activity: IAgentIdeActivity): ThemeIcon {
@@ -53,6 +54,7 @@ function stateLabel(activity: IAgentIdeActivity): string {
 		case 'failed': return localize('voltIde.failed', "Failed");
 		case 'ended': return localize('voltIde.ended', "Ended");
 		case 'stopped': return localize('voltIde.stopped', "Stopped");
+		case 'refused': return localize('voltIde.refused', "Not run (sandbox)");
 	}
 }
 

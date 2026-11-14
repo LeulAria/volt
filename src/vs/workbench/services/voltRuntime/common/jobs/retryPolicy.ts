@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { isSandboxRefusedMessage } from '../access/sandboxRefusal.js';
+
 /**
  * Retry policies for Volt's durable work (resuming chats after a usage limit, scheduled
  * automations), shaped like Temporal's: an initial interval that grows by a coefficient up to a
@@ -52,13 +54,14 @@ export function retryAllowed(policy: IRetryPolicy, attempt: number): boolean {
 
 /**
  * Failures no retry fixes: the account is signed out, the key is wrong, the model or the chat is
- * gone, the request itself is malformed. Everything else (network, overload, a crashed agent
+ * gone, the request itself is malformed, the chat's sandbox refused to start the agent (its folder
+ * is gone, the sandbox cannot be enforced). Everything else (network, overload, a crashed agent
  * process, timeouts) is worth another attempt.
  */
 const NON_RETRYABLE = /\b(?:not (?:signed|logged) in|sign in|log ?in (?:again|required|to)|unauthori[sz]ed|authentication (?:failed|required|error)|invalid[_ ](?:api[_ ])?key|invalid x-api-key|permission[_ ]denied|forbidden|401\b|403\b|model[_ ]not[_ ]found|unknown model|no such model|invalid[_ ]request|not found: (?:thread|chat|session)|(?:chat|automation) (?:is gone|was deleted))/i;
 
 export function isRetryableFailure(message: string | undefined): boolean {
-	return !message || !NON_RETRYABLE.test(message);
+	return !message || !(NON_RETRYABLE.test(message) || isSandboxRefusedMessage(message));
 }
 
 /**

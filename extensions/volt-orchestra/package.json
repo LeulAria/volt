@@ -1,0 +1,111 @@
+{
+	"name": "orchestra",
+	"displayName": "Volt: Orchestra",
+	"description": "Agent teams with a shared board, councils that weigh a question across models, and runs on your other machines, with the Orchestration settings page. Disable this extension to turn the feature off.",
+	"version": "0.0.1",
+	"publisher": "volt",
+	"license": "MIT",
+	"engines": {
+		"vscode": "*",
+		"volt": "^1.0.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"volt",
+		"feature"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"contributes": {
+		"voltModule": {
+			"feature": "orchestra",
+			"label": "Teams and councils",
+			"description": "Agent teams with a shared board, councils that weigh a question across models, and runs on your other machines.",
+			"category": "agents",
+			"icon": "organization",
+			"order": 35,
+			"commands": [
+				"volt.orchestra.measureCapacity"
+			],
+			"settings": [
+				"volt.orchestra."
+			]
+		},
+		"voltTools": [
+			{
+				"name": "orchestra_status",
+				"class": "safe"
+			},
+			{
+				"name": "spawn_team",
+				"class": "spawns"
+			},
+			{
+				"name": "team_send",
+				"class": "delegates"
+			},
+			{
+				"name": "team_board",
+				"class": "reads-other"
+			},
+			{
+				"name": "council",
+				"class": "spawns"
+			},
+			{
+				"name": "machine_run",
+				"class": "escapes"
+			}
+		],
+		"voltSettingsPages": [
+			{
+				"id": "orchestration",
+				"label": "Orchestration"
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{
+					"id": "tools.register",
+					"class": "low"
+				},
+				{
+					"id": "agents.create",
+					"class": "high",
+					"reason": "Team members and council seats are chats."
+				},
+				{
+					"id": "agents.send",
+					"class": "medium",
+					"reason": "team_send and the team board reach teammates."
+				},
+				{
+					"id": "agents.read:other",
+					"class": "high",
+					"reason": "The team board and orchestra_status show teammates' posts."
+				},
+				{
+					"id": "net.connect",
+					"class": "low",
+					"reason": "machine_run sends work to the user's other Volt servers."
+				},
+				{
+					"id": "git.write",
+					"class": "high",
+					"reason": "machine_run apply fetches a run's branch into a new worktree."
+				},
+				{
+					"id": "spawn.unsandboxed",
+					"class": "critical",
+					"reason": "Members in new worktrees run the worktree's setup on the host."
+				}
+			]
+		}
+	}
+}

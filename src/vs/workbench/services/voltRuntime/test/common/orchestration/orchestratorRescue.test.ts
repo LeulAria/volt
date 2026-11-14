@@ -53,6 +53,22 @@ suite('Volt orchestrator: keep working until done', () => {
 		assert.strictEqual(sim.thread('a').active, undefined);
 	});
 
+	test('a chat its sandbox refused to start is looked at every 30 min, not restarted into the same refusal', () => {
+		const sim = new OrchSim(KEEP_WORKING);
+		sim.submit('a', 'build it');
+		sim.start('a');
+		sim.settle('a', 'failed', undefined, 'Sandbox unavailable: The working directory does not exist: /tmp/gone. Pick the chat\'s project folder again. Volt did not start the agent without it.');
+		const refused = sim.thread('a').rescue!;
+		assert.strictEqual(rescueDueAt(refused, 'a') - refused.at, 30 * 60_000);
+
+		const other = new OrchSim(KEEP_WORKING);
+		other.submit('b', 'build it');
+		other.start('b');
+		other.settle('b', 'failed', undefined, 'something broke');
+		const broke = other.thread('b').rescue!;
+		assert.ok(rescueDueAt(broke, 'b') - broke.at < 60_000, 'a failure a retry may fix goes again soon');
+	});
+
 	test('stopping the chat or sending it something else ends it; with the setting off nothing is armed', () => {
 		const sim = new OrchSim(KEEP_WORKING);
 		sim.submit('a', 'one');

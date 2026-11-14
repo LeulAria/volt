@@ -230,7 +230,7 @@ const PARSED_METADATA = METADATA_ADDRESSES.map(address => (parseIPv4(address) ??
 
 /**
  * The IPv4 address(es) an IPv6 address stands for, if it embeds one: `::ffff:0:0/96` (mapped),
- * `::ffff:0:0:0/96` (SIIT translated), `::/96` (compatible, deprecated), `64:ff9b::/96` (NAT64), `2002::/16` (6to4) and `64:ff9b:1::/48`
+ * `::ffff:0:0:0/96` (SIIT, RFC 2765), `::/96` (compatible, deprecated), `64:ff9b::/96` (NAT64), `2002::/16` (6to4) and `64:ff9b:1::/48`
  * (RFC 8215 local-use NAT64), where a network may put the IPv4 address at any RFC 6052 position, so
  * every reading counts.
  */

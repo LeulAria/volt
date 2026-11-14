@@ -5,7 +5,7 @@
 
 import { DisposableStore, Disposable, IDisposable, MutableDisposable, combinedDisposable } from '../../../base/common/lifecycle.js';
 import { ExtHostContext, ExtHostTerminalServiceShape, MainThreadTerminalServiceShape, MainContext, TerminalLaunchConfig, ITerminalDimensionsDto, ExtHostTerminalIdentifier, TerminalQuickFix, ITerminalCommandDto } from '../common/extHost.protocol.js';
-import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
+import { assertHostsExtension, assertNotVoltSandboxed, extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
 import { URI } from '../../../base/common/uri.js';
 import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../platform/log/common/log.js';
@@ -39,6 +39,8 @@ export class MainThreadTerminalService implements MainThreadTerminalServiceShape
 	 * This comes in play only when dealing with terminals created on the extension host side
 	 */
 	private readonly _extHostTerminals = new Map<string, Promise<ITerminalInstance>>();
+	/** Volt: instance ids of the terminals this host created (they keep working once their id turns numeric). */
+	private readonly _voltOwnTerminals = new Set<number>();
 	private readonly _terminalProcessProxies = new Map<number, ITerminalProcessExtHostProxy>();
 	private readonly _profileProviders = new Map<string, IDisposable>();
 	private readonly _completionProviders = new Map<string, IDisposable>();
@@ -57,7 +59,7 @@ export class MainThreadTerminalService implements MainThreadTerminalServiceShape
 	private _os: OperatingSystem = OS;
 
 	constructor(
-		_extHostContext: IExtHostContext,
+		private readonly _extHostContext: IExtHostContext,
 		@ITerminalService private readonly _terminalService: ITerminalService,
 		@ITerminalLinkProviderService private readonly _terminalLinkProviderService: ITerminalLinkProviderService,
 		@ITerminalQuickFixService private readonly _terminalQuickFixService: ITerminalQuickFixService,
@@ -143,6 +145,10 @@ export class MainThreadTerminalService implements MainThreadTerminalServiceShape
 	}
 
 	public async $createTerminal(extHostTerminalId: string, launchConfig: TerminalLaunchConfig): Promise<void> {
+		if (!launchConfig.isExtensionCustomPtyTerminal) {
+			// Volt: a shell the window starts runs outside the sandbox; a pseudoterminal runs in the extension's own host.
+			assertNotVoltSandboxed(this._extHostContext, 'A terminal with a shell');
+		}
 		const shellLaunchConfig: IShellLaunchConfig = {
 			name: launchConfig.name,
 			executable: launchConfig.shellPath,
@@ -172,12 +178,14 @@ export class MainThreadTerminalService implements MainThreadTerminalServiceShape
 				config: shellLaunchConfig,
 				location: await this._deserializeParentTerminal(launchConfig.location)
 			});
+			this._voltOwnTerminals.add(terminal.instanceId);
 			r(terminal);
 		});
 		this._extHostTerminals.set(extHostTerminalId, terminal);
 		const terminalInstance = await terminal;
 		this._store.add(terminalInstance.onDisposed(() => {
 			this._extHostTerminals.delete(extHostTerminalId);
+			this._voltOwnTerminals.delete(terminalInstance.instanceId);
 		}));
 	}
 
@@ -215,6 +223,11 @@ export class MainThreadTerminalService implements MainThreadTerminalServiceShape
 
 	public async $sendText(id: ExtHostTerminalIdentifier, text: string, shouldExecute: boolean): Promise<void> {
 		const instance = await this._getTerminalInstance(id);
+		if (instance && !this._voltOwnTerminals.has(instance.instanceId)) {
+			// Volt: typing into a terminal this host did not create (the user's shell) runs outside the sandbox.
+			// Its own (pseudoterminals, the only kind a sandboxed host can create) keep their id after they open.
+			assertNotVoltSandboxed(this._extHostContext, 'Sending text to a terminal it did not create');
+		}
 		await instance?.sendText(text, shouldExecute);
 	}
 
@@ -460,7 +473,10 @@ export class MainThreadTerminalService implements MainThreadTerminalServiceShape
 	}
 
 	$setEnvironmentVariableCollection(extensionIdentifier: string, persistent: boolean, collection: ISerializableEnvironmentVariableCollection | undefined, descriptionMap: ISerializableEnvironmentDescriptionMap): void {
+		// Volt (B-08): only its own collection; and none from a sandboxed extension (it would set the env of the user's shells).
+		assertHostsExtension(this._extHostContext, extensionIdentifier);
 		if (collection) {
+			assertNotVoltSandboxed(this._extHostContext, 'Changing the environment of terminals');
 			const translatedCollection = {
 				persistent,
 				map: deserializeEnvironmentVariableCollection(collection),

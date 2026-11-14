@@ -15,7 +15,7 @@ import { describeFrame, findFrames, frameTimeRange, ITimeRange, summarizeCompari
 import { IVoltProfileFile } from '../../../../../services/voltRuntime/common/profiler/profileFormats.js';
 import { USAGE_SAMPLER_SCRIPT, usageProfile } from '../../../../../services/voltRuntime/common/profiler/usageSampler.js';
 import { ILoadedProfile, IVoltProfilerService, ProfilerView } from '../../profiler/voltProfilerService.js';
-import { fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, num, ok, resolvePath, str } from './capability.js';
+import { confinedReadRefusal, fail, IIdeCapability, IIdeCapabilityContext, IIdeCapabilityResult, num, ok, resolvePath, str } from './capability.js';
 
 const VIEWS: readonly ProfilerView[] = ['chart', 'graph', 'heatmap', 'table', 'counters', 'diff'];
 
@@ -87,11 +87,12 @@ export class ProfileCapability implements IIdeCapability {
 	/**
 	 * A folder for one recording, writable from the chat's sandbox. The profiles home is in Volt's
 	 * user data, which a sandbox denies outright ("EPERM: Failed to write file .../volt-profiles/...",
-	 * 2026-11-12 IDE round 2), so a sandboxed run records in /tmp and `keep` moves it home after.
+	 * 2026-11-12 IDE round 2), so a sandboxed run records in the chat's temp folder (else /tmp) and
+	 * `keep` moves it home after.
 	 */
 	private async recordingDir(ctx?: IIdeCapabilityContext): Promise<URI> {
 		const name = `run-${generateUuid().slice(0, 12)}`;
-		const dir = ctx?.cli.sandbox && !isWindows ? URI.file(`/tmp/volt-profiles/${name}`) : joinPath(this.profiler.profilesHome, name);
+		const dir = ctx?.cli.sandbox && !isWindows ? URI.file(`${ctx.confinement?.tmpdir ?? '/tmp'}/volt-profiles/${name}`) : joinPath(this.profiler.profilesHome, name);
 		await this.fileService.createFolder(dir);
 		return dir;
 	}
@@ -122,9 +123,20 @@ export class ProfileCapability implements IIdeCapability {
 		const direct = /^(\s*(?:\S*\/)?node)(\s)/.exec(command);
 		const run = direct ? `${direct[1]} ${flags(shellQuote(recording.fsPath, isWindows))}${direct[2]}${command.slice(direct[0].length)}` : command;
 		const result = await ctx.cli.shell(run, { timeoutMs: num(args, 'timeout_ms') ?? 600_000, ...(direct ? {} : { env: { NODE_OPTIONS: flags(`"${recording.fsPath}"`) } }), writable: [recording.fsPath] });
-		const dir = await this.keep(recording);
+		if (result.refused) {
+			return fail(`The command did not run: ${result.refused}`);
+		}
 		const extension = op === 'cpu' ? '.cpuprofile' : '.heapprofile';
-		const entries = (await this.fileService.resolve(dir).catch(() => undefined))?.children?.filter(child => child.name.endsWith(extension)) ?? [];
+		// A sandboxed program wrote these: a link it made in their place is not followed out of the sandbox
+		// (judged where it was written, before the recording moves into Volt's profiles home).
+		const readable = new Set<string>();
+		for (const entry of (await this.fileService.resolve(recording).catch(() => undefined))?.children ?? []) {
+			if (entry.name.endsWith(extension) && !await confinedReadRefusal(ctx, entry.resource)) {
+				readable.add(entry.name);
+			}
+		}
+		const dir = await this.keep(recording);
+		const entries = (await this.fileService.resolve(dir).catch(() => undefined))?.children?.filter(child => readable.has(child.name)) ?? [];
 		if (!entries.length) {
 			const sandboxed = !direct && ctx.cli.sandbox ? ' This chat runs in Volt\'s sandbox, which removes NODE_OPTIONS: pass a command that starts with node (e.g. "node scripts/build.js") to profile it here.' : '';
 			return fail(`No ${op === 'cpu' ? 'CPU' : 'heap'} profile was written (exit code ${result.code}).${sandboxed} Only Node.js processes are profiled this way; for other languages record with their profiler (py-spy record --format speedscope, perf + stackcollapse, go test -cpuprofile then pprof -raw) and open the file, or use op sample for memory and CPU over time.\n${tailOf(result.stderr || result.stdout, 15)}`);
@@ -151,8 +163,12 @@ export class ProfileCapability implements IIdeCapability {
 		const started = Date.now();
 		const line = ['sh', '-c', USAGE_SAMPLER_SCRIPT, 'volt-sample', out.fsPath, String(interval), command].map(part => shellQuote(part, false)).join(' ');
 		const result = await ctx.cli.shell(line, { timeoutMs: num(args, 'timeout_ms') ?? 600_000, writable: [dir.fsPath] });
+		if (result.refused) {
+			return fail(`The command did not run: ${result.refused}`);
+		}
 		const wall = Date.now() - started;
-		const lines = await this.fileService.readFile(out).then(content => content.value.toString(), () => '');
+		// Written by a sandboxed program: read only where the chat's sandbox reads.
+		const lines = await confinedReadRefusal(ctx, out) ? '' : await this.fileService.readFile(out).then(content => content.value.toString(), () => '');
 		if (!lines.trim()) {
 			return fail(`No samples were taken (exit code ${result.code}): the command ended before the first one, or ps is not available.\n${tailOf(result.stderr || result.stdout, 10)}`);
 		}
@@ -170,11 +186,15 @@ export class ProfileCapability implements IIdeCapability {
 		const runs = Math.min(Math.max(num(args, 'runs') ?? 10, 1), 200);
 		const warmup = Math.min(num(args, 'warmup') ?? 1, 20);
 		const hyperfine = await ctx.cli.run('hyperfine', ['--version'], { timeoutMs: 10_000 });
+		if (hyperfine.refused) {
+			return fail(`The command did not run: ${hyperfine.refused}`);
+		}
 		if (!hyperfine.missing && hyperfine.code === 0) {
 			const dir = await this.recordingDir(ctx);
 			const report = joinPath(dir, 'bench.json');
 			const result = await ctx.cli.run('hyperfine', ['--runs', String(runs), '--warmup', String(warmup), '--export-json', report.fsPath, '--style', 'none', command], { timeoutMs: 1_800_000, writable: [dir.fsPath] });
-			const json = await this.fileService.readFile(report).then(file => JSON.parse(file.value.toString()) as { results: { mean: number; stddev: number; min: number; max: number; median: number }[] }, () => undefined);
+			const readable = !await confinedReadRefusal(ctx, report);
+			const json = !readable ? undefined : await this.fileService.readFile(report).then(file => JSON.parse(file.value.toString()) as { results: { mean: number; stddev: number; min: number; max: number; median: number }[] }, () => undefined);
 			const stats = json?.results[0];
 			return stats ? ok(`${command}: mean ${ms(stats.mean * 1000)} \u00b1 ${ms(stats.stddev * 1000)}, median ${ms(stats.median * 1000)}, min ${ms(stats.min * 1000)}, max ${ms(stats.max * 1000)} (${runs} runs, hyperfine).`) : fail(tailOf(result.stderr, 20));
 		}
@@ -182,6 +202,9 @@ export class ProfileCapability implements IIdeCapability {
 		for (let i = 0; i < warmup + runs; i++) {
 			const started = Date.now();
 			const result = await ctx.cli.shell(command, { timeoutMs: 600_000 });
+			if (result.refused) {
+				return fail(`The command did not run: ${result.refused}`);
+			}
 			if (result.code !== 0) {
 				return fail(`Run ${i + 1} failed with exit code ${result.code}:\n${tailOf(result.stderr || result.stdout, 15)}`);
 			}

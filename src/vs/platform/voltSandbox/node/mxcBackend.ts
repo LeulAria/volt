@@ -405,6 +405,8 @@ export class MxcBackend implements ISandboxBackend {
 		child.stderr?.on('data', (data: Buffer | string) => { stderr = (stderr + data.toString()).slice(-4_000); });
 		let exited = false;
 		child.once('exit', () => { exited = true; });
+		// A launcher that could not be spawned never exits: without this the loop waits out the whole timeout.
+		child.once('error', err => { exited = true; stderr ||= err.message; });
 		const started = Date.now();
 		let status = await readStatus();
 		while (!status.ready && !exited && Date.now() - started < CONFIRM_TIMEOUT_MS) {

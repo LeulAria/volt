@@ -4,13 +4,19 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../base/common/event.js';
+import { DisposableStore, IDisposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { ContextKeyExpr, ContextKeyExpression } from '../../../../platform/contextkey/common/contextkey.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { CODE_INTELLIGENCE_TOOLS } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from '../../../services/voltRuntime/common/deviceTools.js';
 import { DESKTOP_TOOL_NAMES } from '../../../services/voltRuntime/common/desktopTools.js';
 import { ASK_QUESTION_TOOL_NAME, AUTOMATION_TOOL_NAMES, AWAIT_ANSWERS_TOOL_NAME, BROWSER_DESIGN_TOOL_NAMES, BROWSER_TOOL_NAMES, COMMIT_PLAN_TOOL_NAMES, IMAGE_INSPECT_TOOL_NAME, PULL_REQUEST_TOOL_NAMES, THREAD_TOOL_NAMES, VISUAL_TOOL_NAMES } from '../../../services/voltRuntime/common/hostTools.js';
+import { IDE_GATEWAY_TOOL_NAME } from '../../../services/voltRuntime/common/ide/ideCapabilities.js';
+import { IDE_TOOL_NAMES } from '../../../services/voltRuntime/common/ide/ideTools.js';
+import { JOB_WATCH_TOOL_NAMES } from '../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { MEMORY_TOOL_NAMES } from '../../../services/voltRuntime/common/memory/voltMemory.js';
 import { AGENT_TASK_TOOL_NAMES } from '../../../services/voltRuntime/common/orchestration/agentTasks.js';
+import { ORCHESTRA_TOOL_NAMES } from '../../../services/voltRuntime/common/orchestration/orchestra.js';
 import { PLAYGROUND_TOOL_NAMES } from '../../../services/voltRuntime/common/playgroundTools.js';
 import { TERMINAL_TOOL_NAMES } from '../../../services/voltRuntime/common/terminalTools.js';
 import { IVoltPluginManifest, validateVoltContributes, VoltModuleCategory } from '../../../services/voltPlugins/common/voltContributions.js';
@@ -73,6 +79,11 @@ export interface IVoltFeature {
 	/** `volt.usage`: the built-in extension that carries it. None: core, always on. */
 	readonly extensionId?: string;
 	readonly tools?: readonly string[];
+	/**
+	 * Capabilities of another feature's gateway tool that are this feature's, as `tool.capability`
+	 * (`ide.http`): while it is off the tool stays and calls of the capability are refused.
+	 */
+	readonly toolCapabilities?: readonly string[];
 	readonly commands?: readonly string[];
 	/** Setting keys, or prefixes ending in `.`. */
 	readonly settings?: readonly string[];
@@ -139,8 +150,8 @@ const CORE = {
 	},
 	terminals: {
 		id: 'terminals', label: 'Terminals and dev servers', category: 'workspace', icon: 'terminal',
-		description: 'Long-running processes the user can watch, Docker, and opening apps.',
-		tools: [...TERMINAL_TOOL_NAMES, 'docker_ensure', 'app_open'],
+		description: 'Long-running processes the user can watch, background jobs an agent waits on, Docker, and opening apps.',
+		tools: [...TERMINAL_TOOL_NAMES, ...JOB_WATCH_TOOL_NAMES, 'docker_ensure', 'app_open'],
 		settings: ['terminal.integrated.'],
 	},
 	workspaceContext: {
@@ -178,6 +189,14 @@ export const VOLT_FEATURES_HAND_WRITTEN: readonly IVoltFeature[] = [
 	CORE.threads,
 	CORE.queue,
 	CORE.subagents,
+	{
+		id: 'orchestra', label: 'Teams and councils', category: 'agents', icon: 'organization', extensionId: 'volt.orchestra',
+		description: 'Agent teams with a shared board, councils that weigh a question across models, and runs on your other machines.',
+		tools: [...ORCHESTRA_TOOL_NAMES],
+		commands: ['volt.orchestra.measureCapacity'],
+		settings: ['volt.orchestra.'],
+		sections: ['orchestration'],
+	},
 	CORE.runGroups,
 	CORE.questions,
 	// --- Workspace (core) ---
@@ -186,10 +205,17 @@ export const VOLT_FEATURES_HAND_WRITTEN: readonly IVoltFeature[] = [
 	CORE.workspaceContext,
 	{
 		id: 'codeIntelligence', label: 'Code intelligence', category: 'workspace', icon: 'symbol-class', extensionId: 'volt.code-intelligence',
-		description: 'Volt\'s code index: instant grep, symbol and file search for agents.',
+		description: 'Volt\'s code index (instant grep, symbol and file search) and the editor\'s language servers (navigation, diagnostics, refactors) for agents.',
 		tools: CODE_INTELLIGENCE_TOOLS.map(tool => tool.name),
 		settings: ['volt.codeIntelligence.'],
 		sections: ['codeIntelligence'],
+	},
+	{
+		id: 'devEnvironment', label: 'Tests, debugging and tasks', category: 'workspace', icon: 'debug-alt', extensionId: 'volt.dev-environment',
+		description: 'Agents run tests, debug programs, run tasks and use the editor\'s other services through the ide gateway.',
+		tools: [...IDE_TOOL_NAMES],
+		commands: ['volt.agentIde.openActivityTab'],
+		settings: ['volt.agent.ide.'],
 	},
 	{
 		id: 'gitGraph', label: 'Git Graph', category: 'workspace', icon: 'git-commit', extensionId: 'volt.git-graph',
@@ -233,6 +259,14 @@ export const VOLT_FEATURES_HAND_WRITTEN: readonly IVoltFeature[] = [
 		id: 'playgrounds', label: 'Playgrounds', category: 'tools', icon: 'beaker', extensionId: 'volt.playgrounds',
 		description: 'Throwaway pages agents build and check outside the project.',
 		tools: PLAYGROUND_TOOL_NAMES,
+	},
+	{
+		id: 'httpClient', label: 'HTTP client', category: 'tools', icon: 'send', extensionId: 'volt.http-client',
+		description: 'Send and save requests in .http files and read the responses, from the right panel\'s + menu.',
+		// Agents reach it through the Dev environment's ide gateway.
+		toolCapabilities: [`${IDE_GATEWAY_TOOL_NAME}.http`],
+		commands: ['volt.http.openInTools', 'volt.http.newRequest', 'volt.http.selectEnvironment', 'volt.http.refresh'],
+		surfaces: ['http'],
 	},
 	{
 		id: 'visuals', label: 'Charts, HTML and canvas', category: 'tools', icon: 'graph', extensionId: 'volt.visuals',
@@ -350,6 +384,7 @@ export function voltFeatureFromManifest(manifest: IVoltPluginManifest): IVoltFea
 		...(tools ? { tools } : {}),
 		...(voltModule.commands ? { commands: [...voltModule.commands] } : {}),
 		...(voltModule.settings ? { settings: [...voltModule.settings] } : {}),
+		...(voltModule.toolCapabilities ? { toolCapabilities: [...voltModule.toolCapabilities] } : {}),
 		...(items ? { items: items.ids } : {}),
 		...(sections ? { sections: sections.ids } : {}),
 		...(surfaces ? { surfaces: surfaces.ids } : {}),
@@ -427,6 +462,48 @@ export function voltFeature(id: string): IVoltFeature | undefined {
 
 export function voltFeatureSettingMatches(feature: IVoltFeature, key: string): boolean {
 	return !!feature.settings?.some(setting => setting.endsWith('.') ? key.startsWith(setting) : key === setting);
+}
+
+/**
+ * What `IVoltHostToolService.setDisabledTools` takes while these features are off: their tools and
+ * their gateway capabilities. The window and the agent server both use it, so every chat, sandboxed
+ * or not, in either place, is refused the same calls.
+ */
+export function voltFeatureDisabledTools(off: readonly IVoltFeature[]): string[] {
+	return off.flatMap(feature => [...feature.tools ?? [], ...feature.toolCapabilities ?? []]);
+}
+
+/** `voltFeature.<id>`: the context key `IVoltFeatureService` keeps true while the feature is on. */
+export function voltFeatureContextKey(featureId: string): string {
+	return `voltFeature.${featureId}`;
+}
+
+/**
+ * A when clause that holds while the feature is on, for the views, menus and commands of a feature
+ * without a module. The feature service is eager and binds the key (true for a feature that is on,
+ * or whose manifest is missing) when the window starts, in every workbench these parts are in.
+ */
+export function voltFeatureOn(featureId: string): ContextKeyExpression {
+	return ContextKeyExpr.has(voltFeatureContextKey(featureId));
+}
+
+/**
+ * Keeps what `create` makes (a controller, a provider registration) while the feature is on: made
+ * now or when it turns on, disposed when it turns off, for a feature without a module.
+ */
+export function whileVoltFeatureOn(features: IVoltFeatureService, featureId: string, create: () => IDisposable): IDisposable {
+	const store = new DisposableStore();
+	const part = store.add(new MutableDisposable());
+	const update = () => {
+		if (!features.isEnabled(featureId)) {
+			part.clear();
+		} else if (!part.value) {
+			part.value = create();
+		}
+	};
+	update();
+	store.add(features.onDidChange(update));
+	return store;
 }
 
 /**

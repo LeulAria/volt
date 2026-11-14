@@ -38,8 +38,11 @@ import { CODE_INTELLIGENCE_TOOLS } from '../../../services/voltRuntime/common/co
 import { CAPTURE_TOOLS, DEVICE_TOOLS } from '../../../services/voltRuntime/common/deviceTools.js';
 import { DESKTOP_TOOLS } from '../../../services/voltRuntime/common/desktopTools.js';
 import { IVoltHostToolService, VOLT_HOST_TOOLS } from '../../../services/voltRuntime/common/hostTools.js';
+import { IDE_TOOLS } from '../../../services/voltRuntime/common/ide/ideTools.js';
+import { JOB_WATCH_TOOLS } from '../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { VOLT_MEMORY_TOOLS } from '../../../services/voltRuntime/common/memory/voltMemory.js';
 import { AGENT_TASK_TOOLS } from '../../../services/voltRuntime/common/orchestration/agentTasks.js';
+import { ORCHESTRA_TOOLS } from '../../../services/voltRuntime/common/orchestration/orchestra.js';
 import { THREAD_TOOLS } from '../../../services/voltRuntime/common/orchestration/agentThreadTools.js';
 import { PLAYGROUND_TOOLS } from '../../../services/voltRuntime/common/playgroundTools.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
@@ -60,7 +63,7 @@ export function isVoltCapabilityId(id: string): boolean {
 /** What each agent tool does, from the tool lists Volt ships (features register the rest at runtime). */
 const TOOL_DESCRIPTIONS = new Map<string, string>([
 	...VOLT_HOST_TOOLS, ...THREAD_TOOLS, ...AGENT_TASK_TOOLS, ...VOLT_MEMORY_TOOLS, ...TERMINAL_TOOLS, ...PLAYGROUND_TOOLS,
-	...CODE_INTELLIGENCE_TOOLS, ...DESKTOP_TOOLS, ...DEVICE_TOOLS, ...CAPTURE_TOOLS,
+	...CODE_INTELLIGENCE_TOOLS, ...DESKTOP_TOOLS, ...DEVICE_TOOLS, ...CAPTURE_TOOLS, ...ORCHESTRA_TOOLS, ...IDE_TOOLS, ...JOB_WATCH_TOOLS,
 ].map(tool => [tool.name, tool.description]));
 
 const CUSTOMIZATION_KINDS: readonly { kind: AgentCustomizationKind; label: string; icon: ThemeIcon }[] = [

@@ -48,8 +48,13 @@ const FILE_TYPES: Record<string, string> = {
 	svelte: '**/*.svelte',
 };
 
-/** The agent's search tools, answered by Volt's unified search (index, FFF, ripgrep); `confine` for a sandboxed chat's. */
-export function createSearchTools(search: VoltSearch, root: () => URI | undefined, confine?: ISearchConfinement): IVoltTool[] {
+/**
+ * The agent's search tools, answered by Volt's unified search (index, FFF, ripgrep); `confine` for a
+ * sandboxed chat's, or a function asked at each call (a native model's chat, whose sandbox the
+ * runtime knows only then: SEC3-1).
+ */
+export function createSearchTools(search: VoltSearch, root: () => URI | undefined, confinement?: ISearchConfinement | (() => ISearchConfinement | undefined)): IVoltTool[] {
+	const confine = () => typeof confinement === 'function' ? confinement() : confinement;
 	return [
 		{
 			name: 'grep',
@@ -78,7 +83,7 @@ export function createSearchTools(search: VoltSearch, root: () => URI | undefine
 			}, ['pattern']),
 			idempotent: true,
 			timeoutMs: 60_000,
-			execute: async (args, ctx) => runGrep(search, root(), args, ctx.signal, confine),
+			execute: async (args, ctx) => runGrep(search, root(), args, ctx.signal, confine()),
 		},
 		{
 			name: 'glob',
@@ -98,7 +103,7 @@ export function createSearchTools(search: VoltSearch, root: () => URI | undefine
 			}, ['pattern']),
 			idempotent: true,
 			timeoutMs: 60_000,
-			execute: async (args, ctx) => runGlob(search, root(), args, ctx.signal, confine),
+			execute: async (args, ctx) => runGlob(search, root(), args, ctx.signal, confine()),
 		},
 		{
 			name: 'find_files',
@@ -118,7 +123,7 @@ export function createSearchTools(search: VoltSearch, root: () => URI | undefine
 			}, ['query']),
 			idempotent: true,
 			timeoutMs: 30_000,
-			execute: async (args, ctx) => runFindFiles(search, root(), args, ctx.signal, confine),
+			execute: async (args, ctx) => runFindFiles(search, root(), args, ctx.signal, confine()),
 		},
 		{
 			name: 'find_symbol',
@@ -140,7 +145,7 @@ export function createSearchTools(search: VoltSearch, root: () => URI | undefine
 			}, ['name']),
 			idempotent: true,
 			timeoutMs: 30_000,
-			execute: async (args, ctx) => runFindSymbol(search, root(), args, ctx.signal, confine),
+			execute: async (args, ctx) => runFindSymbol(search, root(), args, ctx.signal, confine()),
 		},
 	];
 }

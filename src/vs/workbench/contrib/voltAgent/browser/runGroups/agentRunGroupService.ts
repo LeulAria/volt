@@ -74,7 +74,7 @@ import { reviewBuildEntries } from '../review/buildEntryReview.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { confineChatSandbox } from '../../../../services/voltRuntime/common/access/chatSandbox.js';
-import type { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { IVoltSandboxSettings, sandboxWorkspaceRoots } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 
 const STORE_VERSION = 1;
 /** Why a run's chat is held: its worktree or setup is not ready. */
@@ -248,20 +248,26 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 		this._onDidChange.fire(group.id);
 		// Each run starts on its own: one failing never holds back or rolls back the others.
 		for (const run of group.runs) {
-			void this.launch(group.id, run.id, request.liveDisplay, request.sandbox).catch(err => this.failSetup(group.id, run.id, err));
+			void this.launch(group.id, run.id, request.liveDisplay, request.sandbox, request.sandboxRoots).catch(err => this.failSetup(group.id, run.id, err));
 		}
 		return group;
 	}
 
 	/** The run's chat: bound to the project, held by a block with its prompt queued, then its worktree. */
-	private async launch(groupId: string, runId: string, liveDisplay: unknown, sandbox: IVoltSandboxSettings | undefined): Promise<void> {
+	private async launch(groupId: string, runId: string, liveDisplay: unknown, sandbox: IVoltSandboxSettings | undefined, sandboxRoots: readonly string[] | undefined): Promise<void> {
 		// Registered before the first await, so Stop finds the run's setup however early it comes.
 		const token: ISetupToken = { cancelled: false };
 		this.setups.set(runId, token);
 		const group = this.groups.get(groupId)!;
 		const run = group.runs.find(candidate => candidate.id === runId)!;
-		// Started by a sandboxed chat: the run's chat is confined at least as tightly before its prompt is queued.
-		await confineChatSandbox(this.runtime, runId, sandbox);
+		// Started by a sandboxed chat: the run's chat is confined at least as tightly before its prompt is
+		// queued, and writes its worktree (a checkout of the repository) only when that chat may write the
+		// repository (INV-11, as thread_launch judges a new worktree).
+		const repoRoot = await this.fileService.realpath(URI.file(group.repoRoot)).then(real => real?.fsPath ?? group.repoRoot, () => group.repoRoot);
+		await confineChatSandbox(this.runtime, runId, sandbox, sandbox ? {
+			caller: sandboxRoots ? { roots: sandboxRoots } : {},
+			child: { roots: sandboxWorkspaceRoots(repoRoot, repoRoot, true) },
+		} : undefined);
 		const project = this.projectFor(group);
 		if (project) {
 			attachSessionToProject(this.sessionContext, this.workspace, this.history, runId, project);
