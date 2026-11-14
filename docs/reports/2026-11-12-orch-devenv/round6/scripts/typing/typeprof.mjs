@@ -28,7 +28,7 @@ await c.send('Tracing.start', {
 	transferMode: 'ReportEvents',
 	traceConfig: {
 		recordMode: 'recordAsMuchAsPossible',
-		includedCategories: ['latencyInfo', 'input', 'benchmark', 'devtools.timeline', 'disabled-by-default-devtools.timeline', 'disabled-by-default-devtools.timeline.stack', 'disabled-by-default-devtools.timeline.frame', 'blink.user_timing', 'v8.execute', 'blink', 'disabled-by-default-v8.cpu_profiler'],
+		includedCategories: ['latencyInfo', 'input', 'benchmark', 'devtools.timeline', 'disabled-by-default-devtools.timeline', 'disabled-by-default-devtools.timeline.stack', 'disabled-by-default-devtools.timeline.frame', 'blink.user_timing', 'v8.execute', 'blink', 'disabled-by-default-v8.cpu_profiler', ...(args.includes('--inval') ? ['disabled-by-default-devtools.timeline.invalidationTracking'] : [])],
 	},
 });
 await sleep(500);
@@ -95,6 +95,30 @@ for (const name of ['Layout', 'UpdateLayoutTree']) {
 	console.log(`\n== forced ${name}: ${forced.length} of ${sum.get(name)?.n ?? 0}, ${ms(forced.reduce((a, e) => a + (e.dur ?? 0), 0))} ms; top stacks`);
 	for (const [k, v] of [...by].sort((a, b) => b[1].us - a[1].us).slice(0, 12)) {
 		console.log(`${String(v.n).padStart(5)} ${ms(v.us).toFixed(1).padStart(8)} ${k}`);
+	}
+}
+
+// --inval: what dirtied style before each forced style recalc (invalidation tracking events between the previous
+// UpdateLayoutTree's end and the forced one's start), grouped by the forcing stack, then by reason + selector + stack.
+if (args.includes('--inval')) {
+	const recalcs = main.filter(e => e.name === 'UpdateLayoutTree').sort((a, b) => a.ts - b.ts);
+	const invals = events.filter(e => e.pid === mainPid && /InvalidationTracking$/.test(e.name)).sort((a, b) => a.ts - b.ts);
+	const groups = new Map();
+	let j = 0;
+	for (let i = 0; i < recalcs.length; i++) {
+		const r = recalcs[i];
+		const forcedBy = r.args?.beginData?.stackTrace?.length ? stackKey(r.args.beginData.stackTrace).split(' < ')[0] : '(frame)';
+		const from = i ? recalcs[i - 1].ts + (recalcs[i - 1].dur ?? 0) : 0;
+		while (j < invals.length && invals[j].ts < from) { j++; }
+		for (let k = j; k < invals.length && invals[k].ts < r.ts; k++) {
+			const d = invals[k].args?.data ?? {};
+			const key = `${forcedBy} <= ${invals[k].name.replace('InvalidationTracking', '')} ${d.reason ?? ''} ${d.selectorPart ?? ''} ${d.extraData ?? ''} ${d.nodeName ?? ''} ${d.stackTrace ? '@' + stackKey(d.stackTrace).split(' < ').slice(0, 3).join(' < ') : ''}`.replace(/\s+/g, ' ');
+			groups.set(key, (groups.get(key) ?? 0) + 1);
+		}
+	}
+	console.log('\n== style invalidations before forced recalcs (count, forcing function <= invalidation reason/selector/node/stack)');
+	for (const [k, v] of [...groups].sort((a, b) => b[1] - a[1]).slice(0, 30)) {
+		console.log(`${String(v).padStart(6)} ${k}`);
 	}
 }
 
