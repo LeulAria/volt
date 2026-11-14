@@ -4827,17 +4827,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * What the user has open beside the chat (right-panel tabs, the device and its app, terminals,
 	 * git), for agents that cannot see Volt's window. Sent when this agent session has not heard it
 	 * or it changed, so an unchanged window costs nothing; workspace_status has the details. The
-	 * window answers within a bounded time or the turn goes without.
+	 * window is asked when the run starts ({@link askWorkspaceSnapshot}), so its round trip overlaps
+	 * the agent's start; the prompt then waits a bounded time for the answer or goes without.
 	 */
-	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle, intent: IIntent): Promise<string | undefined> {
-		// A subagent reports to another agent, not to the user looking at the window (and the window's
-		// answer is a round trip on its first prompt's path). "hi" or "thanks" needs no workspace
-		// either (~160 tokens): nothing is marked sent, so the next real request carries it.
-		if (session.subagent || intent.smallTalk) {
+	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle, asked: Promise<IWorkspaceSnapshot | undefined> | undefined): Promise<string | undefined> {
+		if (!asked) {
 			return undefined;
 		}
 		// A busy window answers late: this turn goes without, and the next one sends it (nothing was marked sent).
-		const snapshot = await raceTimeout(this.commandService.executeCommand<IWorkspaceSnapshot | undefined>(WORKSPACE_SNAPSHOT_COMMAND_ID, session.sessionId).catch(() => undefined), WORKSPACE_LEAD_WAIT_MS);
+		const snapshot = await raceTimeout(asked, WORKSPACE_LEAD_WAIT_MS);
 		if (!snapshot) {
 			return undefined;
 		}
@@ -4847,6 +4845,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		session.workspaceSent = { handle, key };
 		return formatWorkspaceContext(snapshot);
+	}
+
+	/** Asks the chat's window what the user has open, for {@link workspaceLead}; undefined when the turn goes without. */
+	private askWorkspaceSnapshot(session: ISessionState, request: IVoltSendRequest, intent: IIntent): Promise<IWorkspaceSnapshot | undefined> | undefined {
+		// A subagent reports to another agent, not to the user looking at the window. "hi" or "thanks"
+		// needs no workspace either (~160 tokens): nothing is marked sent, so the next real request carries it.
+		if (session.subagent || intent.smallTalk || isCompactCommand(request.text) || isVoltNote(request.text)) {
+			return undefined;
+		}
+		return this.commandService.executeCommand<IWorkspaceSnapshot | undefined>(WORKSPACE_SNAPSHOT_COMMAND_ID, session.sessionId).catch(() => undefined);
 	}
 
 	/** What `buildAcpLead` reads, and nothing else: the lead is built on every turn's critical path. */
@@ -4974,6 +4982,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const retrieval = isCompactCommand(request.text) || isVoltNote(request.text) ? undefined : this.retrieveContext(session, run, request.text, true);
 		// Asked now, so its wait overlaps the agent's start instead of following it (only a new agent's lead uses it).
 		const indexed = this.largeIndexedProject(this.executionRoot(session));
+		// The window's round trip too: what it shows at Enter, ready when the agent is.
+		const workspace = this.askWorkspaceSnapshot(session, request, intent);
 		// Another model from the same CLI is another agent session: restart it; the recap carries the thread over.
 		const hasLiveAgent = () => !!session.agentHandle && session.agentProviderId === provider.id && session.agentRef === item.ref
 			&& session.agentCwd === this.executionRoot(session)?.fsPath && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true);
@@ -5047,18 +5057,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					const leadStarted = Date.now();
 					const leadParts: string[] = [];
 					const timed = <T>(name: string, promise: Promise<T>) => promise.finally(() => leadParts.push(`${name} ${Date.now() - leadStarted}ms`));
-					const [primer, pack, workspace, retrieved] = await Promise.all([
+					const [primer, pack, workspaceText, retrieved] = await Promise.all([
 						// The turn primer (first turn only): the relevant files and the app open in the chat's browser.
 						attempt === 0 ? timed('primer', this.turnPrimer(session, run, request, intent)) : undefined,
 						timed('context', this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused, indexed)),
-						timed('workspace', this.workspaceLead(session, handle, intent)),
+						timed('workspace', this.workspaceLead(session, handle, workspace)),
 						// The retriever's deadline is soft (searches already running finish): cut it here.
 						retrieval ? timed('retrieval', raceTimeout(retrieval, AGENT_RETRIEVAL_DEADLINE_MS)) : undefined,
 					]);
 					if (Date.now() - leadStarted >= SLOW_LEAD_MS) {
 						this.logService.info(`[volt] lead for run ${run.runId} took ${Date.now() - leadStarted}ms (${leadParts.join(', ')})`);
 					}
-					const lead = [handoff?.text, moved, buildAcpLead(pack), retrieved?.text, primer, workspace].filter(Boolean).join('\n\n') || undefined;
+					const lead = [handoff?.text, moved, buildAcpLead(pack), retrieved?.text, primer, workspaceText].filter(Boolean).join('\n\n') || undefined;
 					if (moved && session.moved?.model === moved) {
 						session.moved = undefined;
 					}

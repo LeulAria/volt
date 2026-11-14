@@ -1021,7 +1021,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		step();
 		const [launched, spawned, initDone, sessionDone, ready] = steps.map(at => at - started);
 		const timing = `launch ${launched}ms, spawn ${spawned - launched}ms, initialize ${initDone - spawned}ms, ${resume ? 'session/resume' : 'session/new'} ${sessionDone - initDone}ms, setup ${ready - sessionDone}ms`;
-		this.logService.info(`[ACP] ${this.id} session ${handle.id}: ${command} ${args.join(' ')} | ${config} | ${timing}`);
+		// A `data:` preload (claudeAcpPatch.ts) is kilobytes of base64: logged by its kind only.
+		const shown = args.map(arg => arg.startsWith('data:') ? `${arg.slice(0, arg.indexOf(',') + 1)}...` : arg);
+		this.logService.info(`[ACP] ${this.id} session ${handle.id}: ${command} ${shown.join(' ')} | ${config} | ${timing}`);
 		return live;
 	}
 

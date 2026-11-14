@@ -352,6 +352,33 @@ suite('Agent runtime orchestration', () => {
 		assert.deepStrictEqual(agent.prompts.map(prompt => prompt.lead?.includes('<volt_workspace') ?? false), [false, true, false]);
 	});
 
+	test('the window is asked for the workspace summary while the agent starts, not after it', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		const order: string[] = [];
+		// Plain timers: a spare the service starts after the turn may still be waiting when the test ends.
+		const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+		const start = agent.start.bind(agent);
+		agent.start = async request => {
+			order.push('agent start');
+			await wait(30);
+			order.push('agent ready');
+			return start(request);
+		};
+		const snapshot: IWorkspaceSnapshot = { panelOpen: true, tabs: [{ kind: 'browser', title: 'Shop', focused: true, target: 'http://localhost:3000/' }] };
+		(service as unknown as { commandService: { executeCommand: (id: string) => Promise<unknown> } }).commandService.executeCommand = async id => {
+			if (id !== WORKSPACE_SNAPSHOT_COMMAND_ID) {
+				return undefined;
+			}
+			order.push('window asked');
+			// The window answers after the agent is ready, within the prompt's wait: the turn still carries it.
+			await wait(60);
+			return snapshot;
+		};
+		await waitEnd(await service.send('chat', { text: 'the add to cart button on the shop page does nothing, fix it', mode: 'agent', providerRef: ref }));
+		assert.ok(order.indexOf('window asked') >= 0 && order.indexOf('window asked') < order.indexOf('agent ready'), order.join(', '));
+		assert.ok(agent.prompts[0].lead?.includes('<volt_workspace'));
+	});
+
 	test('a chat the user renamed keeps its name when a short first message is titled again', async () => {
 		const { service, model, history, ref, waitEnd } = await setup('model');
 		model.titles = ['Fix sidebar list jumping to top'];
