@@ -1,5 +1,5 @@
 #!/bin/sh
-# Round 5 token matrix, interleaved: per repetition B1 "hi" on the before build (CDP 9979, volt-e5-base at 9bbb8818c60),
+# Round 6 token matrix, interleaved: per repetition B1 "hi" on the before build (CDP 9979, volt-e5-base at 7f07f73d677),
 # the after build (CDP 9973, volt-e5-tokens) and the Bare CLI (CLAUDE_BIN, Claude Code 2.1.322 = the version Volt's
 # adapter runs), then B3 (a real read-and-explain task) B3_N times per arm, also interleaved.
 # Both test instances must be running (runtok.mjs launch, see README in this folder). Source env.sh first.
@@ -9,8 +9,8 @@ TAG=$1; MODEL=$2; EFFORT=$3; N=${4:-3}
 REF="agent:seed-claude-code:$MODEL"
 B3='Read src/paginate.ts and src/dates.ts. Explain what each function does and list every bug you find with the line number. Do not change any file.'
 : "${TOK_DIR:?set TOK_DIR}"
-before() { [ "${SKIP_BEFORE:-0}" = 1 ] || VOLT_UD=$HOME/.volt-r5/tokens/ud-base VOLT_CDP=9979 node runtok.mjs run "$@"; }
-after() { [ "${SKIP_AFTER:-0}" = 1 ] || VOLT_UD=$HOME/.volt-r5/tokens/ud VOLT_CDP=9973 node runtok.mjs run "$@"; }
+before() { [ "${SKIP_BEFORE:-0}" = 1 ] || VOLT_UD=$HOME/.volt-r6/tokens/ud-base VOLT_CDP=9979 node runtok.mjs run "$@"; }
+after() { [ "${SKIP_AFTER:-0}" = 1 ] || VOLT_UD=$HOME/.volt-r6/tokens/ud VOLT_CDP=9973 node runtok.mjs run "$@"; }
 bare() { [ "${SKIP_BARE:-0}" = 1 ] || ./cleanenv.sh env TOK_DIR="$TOK_DIR" TOK_CFG="$TOK_CFG" TOK_PROXY="${TOK_PROXY:?}" CLAUDE_BIN="${CLAUDE_BIN:-claude}" node runbare.mjs "$@"; }
 for r in $(seq 1 "$N"); do
   before "before-$TAG-b1" "$REF" hi "$r"

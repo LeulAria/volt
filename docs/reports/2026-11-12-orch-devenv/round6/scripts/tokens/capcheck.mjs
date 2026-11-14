@@ -13,8 +13,8 @@ const DIR = process.env.TOK_DIR ?? '/tmp/v3-tokens';
 const FOLDER = process.env.TOK_FOLDER ?? join(DIR, 'capfx');
 // CAP_PREFIX labels a round of checks (cap: the first, on the after build before AskUserQuestion went; cap2: the final build).
 const PREFIX = process.env.CAP_PREFIX ?? 'cap';
-// Round 5: base = the before build (volt-e5-base), after = volt-e5-tokens (see env.sh / matrix.sh).
-const ARMS = { base: { ud: `${process.env.HOME}/.volt-r5/tokens/ud-base`, port: 9979 }, after: { ud: `${process.env.HOME}/.volt-r5/tokens/ud`, port: 9973 } };
+// Round 6: base = the before build (volt-e5-base), after = volt-e5-tokens (see env.sh / matrix.sh).
+const ARMS = { base: { ud: `${process.env.HOME}/.volt-r6/tokens/ud-base`, port: 9979 }, after: { ud: `${process.env.HOME}/.volt-r6/tokens/ud`, port: 9973 } };
 
 /** One request per family; `family` matches tool names (MCP names end with the volt tool's name). */
 export const TASKS = [
