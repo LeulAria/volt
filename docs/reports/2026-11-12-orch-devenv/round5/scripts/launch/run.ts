@@ -32,7 +32,7 @@ const armFor = (id: string): App => { const m = /^(.*)-long$/.exec(id); return m
 const APPS: Record<string, App> = new Proxy({} as Record<string, App>, { get: (_t, k: string) => (/^[a-z0-9-]+$/.test(k) ? armFor(k) : undefined), ownKeys: () => [] });
 
 const KEEP = process.env.ADE_KEEP_RENDERING ? ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"] : [];
-function env(home: string, dev?: boolean): string[] {
+function env(home: string, dev?: boolean, extra: Record<string, string> = {}): string[] {
   const vars: Record<string, string> = {
     ...(dev ? { NODE_ENV: "development", VSCODE_DEV: "1", VSCODE_CLI: "1", VSCODE_SKIP_PRELAUNCH: "1", VOLT_AGENT_SERVER_LAUNCHD: "0" } : {}),
     // Seeding only: a launchd agent server does not get the app's environment, so its sandbox does not grant the replay
@@ -43,11 +43,18 @@ function env(home: string, dev?: boolean): string[] {
     ANTHROPIC_BASE_URL: REPLAY_URL,
     ANTHROPIC_API_KEY: "sk-ant-replay-0000",
     DISABLE_AUTOUPDATER: "1",
+    ...extra,
   };
   return Object.entries(vars).flatMap(([k, v]) => ["--env", `${k}=${v}`]);
 }
+/** Exploration arms only: `apps/<arm>/env` holds `K=V` lines (round 5's VOLT_LAUNCH_EXP switches). Headline arms have none. */
+function armEnv(app: App): Record<string, string> {
+  const file = join(app.bundle, "..", "env");
+  if (!existsSync(file)) return {};
+  return Object.fromEntries(readFileSync(file, "utf8").split("\n").map((l) => l.trim()).filter((l) => l.includes("=")).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+}
 function launchArgv(app: App): string[] {
-  return ["open", "-n", "-a", app.bundle, ...env(app.home, !!app.dev), "--args", ...(app.dev ? [app.dev, "--disable-extension=vscode.vscode-api-tests"] : []), "--use-mock-keychain",
+  return ["open", "-n", "-a", app.bundle, ...env(app.home, !!app.dev, armEnv(app)), "--args", ...(app.dev ? [app.dev, "--disable-extension=vscode.vscode-api-tests"] : []), "--use-mock-keychain",
     "--user-data-dir", app.ud, "--extensions-dir", `${app.home}/.volt/extensions`, `--remote-debugging-port=${CDP_PORT}`, ...KEEP,
     ...(process.env.ADE_OPEN ? [process.env.ADE_OPEN] : []), ...(process.env.ADE_EXTRA ? process.env.ADE_EXTRA.split(" ") : [])];
 }

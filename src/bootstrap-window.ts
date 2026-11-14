@@ -11,6 +11,7 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { BrowserWindow, WebContentsView, ipcMain, session, type BrowserWindowConstructorOptions, type IpcMainInvokeEvent, type ProtocolRequest, type ProtocolResponse, type WebPreferences } from 'electron';
 import { EARLY_IPC_KEY, EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL, EARLY_WINDOW_HINT_FILE, EARLY_WINDOW_KEY, IEarlyWindowBounds, IEarlyWindowHint, isPlainLaunch, lastWindowBounds, parseEarlyWindowHint } from './vs/platform/windows/common/earlyWindow.js';
+import { mark } from './vs/base/common/performance.js';
 
 /** The IPC channels the page calls before the window code exists: its configuration and the shell environment. */
 const SHELL_ENV_CHANNEL = 'vscode:fetchShellEnv';
@@ -116,22 +117,7 @@ export function openEarlyWindow(plan: IEarlyWindowPlan): Promise<void> {
 
 	const options: Record<string, unknown> = { ...hint.options, ...bounds };
 	const windowOptions: BrowserWindowConstructorOptions = { ...options, show: true, webPreferences: { sandbox: true } };
-	const win = new BrowserWindow(windowOptions);
-
 	const webPreferences: WebPreferences = { ...hint.webPreferences, additionalArguments: [`--vscode-window-config=${channel}`] };
-	const view = new WebContentsView({ webPreferences });
-	if (typeof hint.options.backgroundColor === 'string') {
-		view.setBackgroundColor(hint.options.backgroundColor);
-	}
-	win.contentView.addChildView(view);
-	const layout = () => {
-		if (!win.isDestroyed()) {
-			const { width, height } = win.getContentBounds();
-			view.setBounds({ x: 0, y: 0, width, height });
-		}
-	};
-	layout();
-	win.on('resize', layout);
 
 	// Requests for the page's own files are served at once; anything else waits for the protocol service.
 	const resources: IPendingRequest[] = [];
@@ -175,9 +161,46 @@ export function openEarlyWindow(plan: IEarlyWindowPlan): Promise<void> {
 		if (event.sender !== view.webContents) {
 			return undefined;
 		}
+		mark('code/voltLaunchPageStarted');
 		stopServingSnapshot();
 		return readSnapshot(plan);
 	});
+
+	// The window, and the view whose page loads the workbench. (Round 5 exploration, removed before the final build:
+	// VOLT_LAUNCH_EXP=view-first starts the page before the window, whose creation holds the main thread.)
+	const viewFirst = (process.env['VOLT_LAUNCH_EXP'] ?? '').includes('view-first');
+	let win!: BrowserWindow;
+	let view!: WebContentsView;
+	const createView = () => {
+		view = new WebContentsView({ webPreferences });
+		if (typeof hint.options.backgroundColor === 'string') {
+			view.setBackgroundColor(hint.options.backgroundColor);
+		}
+	};
+	// The fragment tells the page it is the launch window's (the window code compares and reloads the URL without it).
+	const loadPage = () => view.webContents.loadURL(`${hint.url}#${EARLY_PAGE_FRAGMENT}`);
+	const createWindow = () => {
+		mark('code/voltWillCreateLaunchWindow');
+		win = new BrowserWindow(windowOptions);
+		mark('code/voltDidCreateLaunchWindow');
+	};
+	if (viewFirst) {
+		createView();
+		loadPage();
+		createWindow();
+	} else {
+		createWindow();
+		createView();
+	}
+	win.contentView.addChildView(view);
+	const layout = () => {
+		if (!win.isDestroyed()) {
+			const { width, height } = win.getContentBounds();
+			view.setBounds({ x: 0, y: 0, width, height });
+		}
+	};
+	layout();
+	win.on('resize', layout);
 
 	const state: IEarlyWindowState = {
 		win,
@@ -211,8 +234,9 @@ export function openEarlyWindow(plan: IEarlyWindowPlan): Promise<void> {
 	view.webContents.once('render-process-gone', fail);
 	(globalThis as Record<string, unknown>)[EARLY_WINDOW_KEY] = state;
 
-	// The fragment tells the page it is the launch window's (the window code compares and reloads the URL without it).
-	view.webContents.loadURL(`${hint.url}#${EARLY_PAGE_FRAGMENT}`);
+	if (!viewFirst) {
+		loadPage();
+	}
 	return whenPageStarted;
 }
 
