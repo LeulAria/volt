@@ -18,7 +18,7 @@ import { nowNs } from "/tmp/ademark/bench/core/clock.ts";
 const R4 = `${process.env.HOME_REAL ?? "/Users/leularia"}/.volt-r5/launch`;
 const NATIVE = process.env.ADEMARK_NATIVE ?? "/tmp/ademark/bench/native/bin/ademark-native";
 const WINWAIT = process.env.ADE_WINWAIT ?? `/Users/leularia/.volt-r4/coldstart/winwait`;
-const REPLAY_URL = process.env.ADE_REPLAY_URL ?? "http://127.0.0.1:18974";
+const REPLAY_URL = process.env.ADE_REPLAY_URL ?? "http://127.0.0.1:18994";
 const CDP_PORT = Number(process.env.ADE_CDP_PORT ?? 9974);
 const PROBE = "ademarkqz";
 const HOMES = `${R4}/h`;

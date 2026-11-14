@@ -1,6 +1,6 @@
 #!/bin/bash
 # Round 5 launch rig (copied from round 4 coldstart; ADEMark method, unofficial). Everything is under ~/.volt-r5/launch.
-#   setup.sh rig                  ADEMark replay server on 18974 (own log), arena copy
+#   setup.sh rig                  ADEMark replay server on 18994 (own log), arena copy
 #   setup.sh app before|after <VOLT.app> [commit]   copy a minified build to ~/.volt-r5/launch/apps/<arm>/VOLT.app (commit stamped)
 #   setup.sh clone <src> <dst>   copy a seeded profile + HOME to another arm
 #   setup.sh seed <arm>           fresh profile: settings, Claude Opus 5.5 High, Full access, 5 seeded threads
@@ -10,14 +10,14 @@ R4=~/.volt-r5/launch
 R4OLD=~/.volt-r4/coldstart
 HOMES=$R4/h
 R3SCRIPTS="$HERE/../../../round3/scripts/ademark"
-PORT=9974; REPLAY=18974
+PORT=9974; REPLAY=18994
 
 home() { # isolated HOME: the same claude first on PATH, an API key helper, the replay server as base URL
 	local N=$HOMES/$1
 	mkdir -p "$N/.local/bin" "$N/.claude"
 	ln -sfn "$(readlink -f ~/.local/bin/claude)" "$N/.local/bin/claude"
 	printf '#!/bin/sh\necho sk-ant-replay-0000\n' > "$N/.claude/key.sh"; chmod +x "$N/.claude/key.sh"
-	printf '{"apiKeyHelper":"%s/.claude/key.sh","env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:18974","DISABLE_AUTOUPDATER":"1"}}\n' "$N" > "$N/.claude/settings.json"
+	printf '{"apiKeyHelper":"%s/.claude/key.sh","env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:18994","DISABLE_AUTOUPDATER":"1"}}\n' "$N" > "$N/.claude/settings.json"
 	echo '{"hasCompletedOnboarding":true,"theme":"dark","oauthAccount":{"emailAddress":"replay@ademark.invalid"}}' > "$N/.claude.json"
 	printf 'export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"\n' | tee "$N/.zprofile" > "$N/.zshenv"
 }
