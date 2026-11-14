@@ -120,6 +120,8 @@ suite('Volt orchestrator: handoff contract and context', () => {
 			assert.ok(typed.includes(option) || delegate.description.includes(option), option);
 		}
 		assert.match(delegate.description, /one call each, in one message/);
+		// Named alone, the lead of a "each in its own git worktree" request made its worktrees with git and ran its parts shared (ADEMark C1).
+		assert.match(delegate.description, /isolation:"worktree" \(Volt makes its own git worktree and branch\)/);
 		// One subagent per call: a `tasks` list held every part back until the whole list was written.
 		assert.ok(!typed.includes('tasks') && !/in one call/.test(delegate.description));
 	});
