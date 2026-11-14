@@ -1,0 +1,6 @@
+{"name":"default","flags":[],"at":"2026-11-14T10:54:50.150Z","load":"65.27 67.14 40.70","ok":true,"stopReason":"end_turn","turnMs":1166,"samples":[80,80,54,54,54,54],"restMiB":54}
+{"name":"semi1","flags":["--max-semi-space-size=1"],"at":"2026-11-14T10:55:24.559Z","load":"56.42 64.83 40.93","ok":true,"stopReason":"end_turn","turnMs":688,"samples":[63,53,53,53,53,53],"restMiB":53}
+{"name":"optsize","flags":["--optimize-for-size"],"at":"2026-11-14T10:56:00.715Z","load":"51.14 62.61 41.08","ok":true,"stopReason":"end_turn","turnMs":771,"samples":[55,53,53,53,53,53],"restMiB":53}
+{"name":"semi1+optsize","flags":["--max-semi-space-size=1","--optimize-for-size"],"at":"2026-11-14T10:56:37.023Z","load":"56.45 62.56 41.92","ok":true,"stopReason":"end_turn","turnMs":814,"samples":[55,54,54,54,54,54],"restMiB":54}
+{"name":"semi1+old96","flags":["--max-semi-space-size=1","--max-old-space-size=96"],"at":"2026-11-14T10:57:13.909Z","load":"59.57 62.93 43.03","ok":true,"stopReason":"end_turn","turnMs":1085,"samples":[55,53,53,53,53,53],"restMiB":53}
+{"name":"semi2","flags":["--max-semi-space-size=2"],"at":"2026-11-14T10:57:49.516Z","load":"49.51 60.09 42.79","ok":true,"stopReason":"end_turn","turnMs":1008,"samples":[60,53,53,53,53,53],"restMiB":53}
