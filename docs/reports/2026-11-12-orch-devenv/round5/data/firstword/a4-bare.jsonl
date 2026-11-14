@@ -1,0 +1,2 @@
+{"label": "try-bare", "rep": 0, "at": "2026-11-14T11:24:49Z", "load": "82.91 83.50 73.40", "method": "pty bytes", "cliReadyMs": 1971.752833, "totalMs": 676.986875, "beforeRequestMs": 475.311625, "onScreenMs": 201.67525, "requests": [{"session": "hi", "atMs": 475.311625, "bytes": 87772}]}
+{"label": "try-bare", "rep": 1, "at": "2026-11-14T11:24:57Z", "load": "75.21 81.85 72.93", "method": "pty bytes", "cliReadyMs": 1272.614916, "totalMs": 315.81575, "beforeRequestMs": 171.926375, "onScreenMs": 143.889375, "requests": [{"session": "hi", "atMs": 171.926375, "bytes": 87772}]}
