@@ -1,7 +1,7 @@
 #!/bin/bash
 # Round 4 coldstart rig (ADEMark method, unofficial). Everything that must survive a reboot is under ~/.volt-r4/coldstart.
 #   setup.sh rig                  winwait, ADEMark replay server on 18948 (own log), arena copy
-#   setup.sh app before|after <VOLT.app>   copy a minified build to ~/.volt-r4/coldstart/apps/<arm>/VOLT.app
+#   setup.sh app before|after <VOLT.app> [commit]   copy a minified build to ~/.volt-r4/coldstart/apps/<arm>/VOLT.app (commit stamped)
 #   setup.sh seed before|after    fresh profile: settings, Claude Opus 5.5 High, Full access, 5 seeded threads
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,6 +33,13 @@ app)
 	ARM=$2; SRC=$3
 	rm -rf "$R4/apps/$ARM"; mkdir -p "$R4/apps/$ARM"
 	ditto "$SRC" "$R4/apps/$ARM/VOLT.app"
+	# A local worktree build has no commit (getVersion cannot read a linked worktree's .git), and without a commit the
+	# window runs with no V8 code cache, unlike a shipped build. Stamp the source commit as a release build has it.
+	COMMIT=${4:-}
+	if [ -n "$COMMIT" ]; then
+		python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.setdefault("commit", sys.argv[2]); json.dump(d, open(p,"w"), indent="\t")' \
+			"$R4/apps/$ARM/VOLT.app/Contents/Resources/app/product.json" "$COMMIT"
+	fi
 	;;
 seed)
 	ARM=$2; APP=$( [[ $ARM == dev-* ]] && echo $ARM || echo cold-$ARM ); UD=/tmp/v4-cold-ud-$ARM
@@ -56,10 +63,28 @@ EOF
 	sqlite3 "$DB" "insert or replace into ItemTable(key,value) values('volt.runtime.accessMode','full-access')"
 	sqlite3 "$DB" "insert or replace into ItemTable(key,value) values('volt.runtime.modelOptions','{\"agent:seed-claude-code:claude-opus-5-5\":{\"reasoning\":\"high\"}}')"
 	rm -f "$DB.backup"
-	ADE_KEEP_RENDERING=1 bun "$HERE/run.ts" --app $APP --launch
+	ADE_SERVER_DETACHED=1 ADE_KEEP_RENDERING=1 bun "$HERE/run.ts" --app $APP --launch
 	sleep 40
 	node "$R3SCRIPTS/volt-drive.mjs" 9944 seed 5
 	bun "$HERE/run.ts" --app $APP --quit || true
+	bun "$HERE/run.ts" --app $APP --kill
 	;;
-*) echo "usage: setup.sh rig | app <arm> <VOLT.app> | seed <arm>"; exit 2 ;;
+long)
+	# A copy of a seeded arm whose last chat is ADEMark's long thread (A11 prompt, about 11 min of replay)
+	ARM=$2; UD=/tmp/v4-cold-ud-$ARM; L=$ARM-long
+	bun "$HERE/run.ts" --app cold-$ARM --quit || true
+	bun "$HERE/run.ts" --app cold-$ARM --kill
+	rm -rf /tmp/v4-cold-ud-$L "$HOMES/$L"
+	cp -cR "$UD" /tmp/v4-cold-ud-$L 2>/dev/null || true
+	cp -cR "$HOMES/$ARM" "$HOMES/$L"
+	rm -f /tmp/v4-cold-ud-$L/agentServer/runtime.json /tmp/v4-cold-ud-$L/*.sock
+	sed -i '' "s#v4-cold-ud-$ARM#v4-cold-ud-$L#g" /tmp/v4-cold-ud-$L/User/globalStorage/storage.json
+	sed -i '' "s#h/$ARM#h/$L#g" "$HOMES/$L/.claude/settings.json"
+	ADE_SERVER_DETACHED=1 ADE_KEEP_RENDERING=1 bun "$HERE/run.ts" --app cold-$L --launch
+	sleep 30
+	node "$R3SCRIPTS/volt-drive.mjs" 9944 send 'replay:long-2000' 1800000
+	bun "$HERE/run.ts" --app cold-$L --quit || true
+	bun "$HERE/run.ts" --app cold-$L --kill
+	;;
+*) echo "usage: setup.sh rig | app <arm> <VOLT.app> [commit] | seed <arm> | long <arm>"; exit 2 ;;
 esac

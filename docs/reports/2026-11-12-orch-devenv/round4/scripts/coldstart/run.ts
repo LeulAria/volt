@@ -25,11 +25,15 @@ const HOMES = `${R4}/h`;
 const ARENA = `${R4}/arena`;
 
 interface App { id: string; bundle: string; home: string; ud: string; dev?: string }
-const arm = (id: string, name: string): App => ({ id, bundle: `${R4}/apps/${name}/VOLT.app`, home: `${HOMES}/${name}`, ud: `/tmp/v4-cold-ud-${name}` });
+const arm = (id: string, name: string, bundle = name): App => ({ id, bundle: `${R4}/apps/${bundle}/VOLT.app`, home: `${HOMES}/${name}`, ud: `/tmp/v4-cold-ud-${name}` });
 // Dev arms: a worktree's unbundled out/ on that worktree's own copy of the dev Electron.
 const devArm = (id: string, name: string, tree: string): App => ({ id, bundle: `${tree}/.build/electron/VOLT.app`, home: `${HOMES}/${name}`, ud: `/tmp/v4-cold-ud-${name}`, dev: tree });
 const APPS: Record<string, App> = {
   "cold-before": arm("cold-before", "before"), "cold-after": arm("cold-after", "after"),
+  // Exploration only: a copy of a minified arm with one change applied by hand (see NEXT.md).
+  "cold-exp": arm("cold-exp", "exp"),
+  // The same builds on a profile whose last chat is ADEMark's A11 long thread (about 2,000 items), made by clone-long.
+  "cold-before-long": arm("cold-before-long", "before-long", "before"), "cold-after-long": arm("cold-after-long", "after-long", "after"),
   "dev-before": devArm("dev-before", "dev-before", "/Users/leularia/Desktop/VOLT/volt-e4-coldstart-base/volt"),
   "dev-after": devArm("dev-after", "dev-after", "/Users/leularia/Desktop/VOLT/volt-e4-coldstart"),
 };
@@ -38,6 +42,9 @@ const KEEP = process.env.ADE_KEEP_RENDERING ? ["--disable-backgrounding-occluded
 function env(home: string, dev?: boolean): string[] {
   const vars: Record<string, string> = {
     ...(dev ? { NODE_ENV: "development", VSCODE_DEV: "1", VSCODE_CLI: "1", VSCODE_SKIP_PRELAUNCH: "1", VOLT_AGENT_SERVER_LAUNCHD: "0" } : {}),
+    // Seeding only: a launchd agent server does not get the app's environment, so its sandbox does not grant the replay
+    // server's loopback port (ANTHROPIC_BASE_URL) and seed turns hang. Timed launches keep the shipped launchd server.
+    ...(process.env.ADE_SERVER_DETACHED ? { VOLT_AGENT_SERVER_LAUNCHD: "0" } : {}),
     HOME: home,
     PATH: `${home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`,
     ANTHROPIC_BASE_URL: REPLAY_URL,
@@ -51,7 +58,11 @@ function launchArgv(app: App): string[] {
     "--user-data-dir", app.ud, "--extensions-dir", `${app.home}/.volt/extensions`, `--remote-debugging-port=${CDP_PORT}`, ...KEEP,
     ...(process.env.ADE_OPEN ? [process.env.ADE_OPEN] : []), ...(process.env.ADE_EXTRA ? process.env.ADE_EXTRA.split(" ") : [])];
 }
-const COMPOSER_TEXT = `(()=>{const a=document.activeElement; const ed=a?.closest('.volt-agent-composer .monaco-editor'); return ed? (ed.querySelector('.view-lines')?.textContent ?? '') : null})()`;
+// The focused composer's text: the real one (Monaco), or the window snapshot's text area that stands in for it from the
+// first frame until the workbench takes over (it keeps the keys and hands them to the real composer). ADEMark reads
+// Ready from the pixels of the composer region, where both draw the typed text.
+const COMPOSER_TEXT = `(()=>{const a=document.activeElement; const ed=a?.closest?.('.volt-agent-composer .monaco-editor');
+  return {real: ed ? (ed.querySelector('.view-lines')?.textContent ?? '') : null, snap: a?.id === 'volt-window-snapshot-input' ? a.value : null}})()`;
 
 function voltLabel(ud: string): string {
   return `com.volt.agent-server.${new Bun.CryptoHasher("sha256").update(ud).digest("hex").slice(0, 12)}`;
@@ -164,8 +175,11 @@ async function cdpKey(cdp: Cdp, key: string, code: string, vk: number, modifiers
   await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: vk, modifiers });
 }
 
-/** ADEMark's echo timer, DOM edition (round 3): a probe key every 50 ms +-20 %, Ready = first poll whose focused composer holds a probe pair. */
-async function domEcho(t0: bigint, timeoutMs: number): Promise<{ readyMs: number | null; typed: number; cdp: Cdp | null }> {
+/**
+ * ADEMark's echo timer, DOM edition (round 3): a probe key every 50 ms +-20 %, Ready = first poll whose focused composer
+ * (real, or the window snapshot's stand-in) holds a probe pair; it keeps polling until the real composer holds one too.
+ */
+async function domEcho(t0: bigint, timeoutMs: number): Promise<{ readyMs: number | null; readyFrom: string | null; readyRealMs: number | null; typed: number; cdp: Cdp | null }> {
   let cdp: Cdp | null = null;
   let done = false; let typed = 0; let i = 0;
   const typer = (async () => {
@@ -178,22 +192,24 @@ async function domEcho(t0: bigint, timeoutMs: number): Promise<{ readyMs: number
       await sleep(50 * (0.8 + Math.random() * 0.4));
     }
   })();
-  let readyMs: number | null = null;
+  let readyMs: number | null = null; let readyFrom: string | null = null; let readyRealMs: number | null = null;
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
     if (!cdp) { try { cdp = await Cdp.connect(200); } catch { /* */ } }
     if (cdp) {
       const a = nowNs();
-      let text: string | null | undefined;
-      try { text = await cdp.eval<string | null>(COMPOSER_TEXT); } catch { text = null; }
+      let c: { real: string | null; snap: string | null } | undefined;
+      try { c = await cdp.eval(COMPOSER_TEXT); } catch { c = undefined; }
       const b = nowNs();
-      if (text && hasProbePair(text)) { readyMs = ms(t0, (a + b) / 2n); break; }
+      const at = ms(t0, (a + b) / 2n);
+      if (readyMs === null && (hasProbePair(c?.real) || hasProbePair(c?.snap))) { readyMs = at; readyFrom = hasProbePair(c?.real) ? "composer" : "snapshot"; }
+      if (hasProbePair(c?.real)) { readyRealMs = at; break; }
     }
     await sleep(4);
   }
   done = true;
   await typer;
-  return { readyMs, typed, cdp };
+  return { readyMs, readyFrom, readyRealMs, typed, cdp };
 }
 
 /** The app's own marks, relative to t0 (wall clock ms): main marks handed to the window, then the renderer's. */
@@ -255,7 +271,7 @@ async function launchTest(app: App, test: "A1" | "A2", rep: number) {
     await sleep(300);
     r.cdp.close();
   }
-  row({ app: app.id, test, rep, window_ms: windowMs, ready_ms: r.readyMs, method: "dom-echo, cdp keys", typed: r.typed, quit: quitHow,
+  row({ app: app.id, test, rep, window_ms: windowMs, ready_ms: r.readyMs, ready_from: r.readyFrom, ready_real_ms: r.readyRealMs, method: "dom-echo, cdp keys", typed: r.typed, quit: quitHow,
     server_alive_before: serverAlive, gate_quiet: gate.quiet, gate_cores: gate.cores_last, marks: breakdown(marks, t0Wall), code_caching: marks?.cached ?? null });
 }
 
