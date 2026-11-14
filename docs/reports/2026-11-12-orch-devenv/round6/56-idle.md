@@ -12,7 +12,28 @@ instance at a time on CDP 9977, profiles `~/.volt-r6/idle/ud/<arm>`. ADEMark met
 
 ## Before / after
 
-(a5a6-batch rows: data/idle/a6.jsonl; summarize.mjs)
+Rows so far: dev builds, session 1 (2026-11-14 22:00-22:12 UTC, order before, after, timing lock held, seeded profiles,
+load at each sample's start). Data: [data/idle/a6.jsonl](data/idle/a6.jsonl), raw 4 Hz samples in
+[data/idle/raw/](data/idle/raw/). `node summarize.mjs` prints the medians.
+
+| Test (dev builds) | Before | After | Load at start |
+|---|---|---|---|
+| A6 idle, in front: app CPU | 0.52 % (n 1) | 1.03 % (n 1) | 9.0 / 12.9 |
+| A6 idle, in front: app wakeups/s | 15.2 | 14.4 | 9.0 / 12.9 |
+| A6 idle, covered (cover held): app CPU | 0.36 % (n 1) | 0.90 % (n 1) | 6.3 / 12.6 |
+| A6 covered: wakeups/s | 12.7 | 11.4 | 6.3 / 12.6 |
+| main CPU / wakeups (front) | 0.19 % / 5.6 per s | 0.37 % / 4.8 per s | |
+| agent server (front) | 0.09 % / 3.5 per s | 0.19 % / 3.5 per s | |
+| extension host (front) | 0.08 % / 0.8 per s | 0.16 % / 0.9 per s | |
+| shared process (front) | 0.06 % / 1.6 per s | 0.11 % / 1.3 per s | |
+| A5 app RAM, median over the front sample | 1,440 MB | 1,385 MB | 9.0 / 12.9 |
+| processes in the app group | 10 | 10 | |
+
+The after row is not a regression reading: weight's minified build was compiling on the same Mac during both after
+samples (load 12.6-12.9 against 6-9 for before), and every process, Volt's and Chromium's alike, shows about twice the
+CPU per wakeup at equal or fewer wakeups (main 4.8 vs 5.6 per s, the shared process 1.3 vs 1.6 per s), which is cache
+and scheduler contention, not code. Wakeups, the number the code controls, are lower in both variants. Session 2 (ABBA,
+2 more reps per arm) and the minified arms are queued on the timing lock; the medians replace this table when they land.
 
 ## What wakes Volt at rest (dev build, exploration, load 22-89, not timings)
 
