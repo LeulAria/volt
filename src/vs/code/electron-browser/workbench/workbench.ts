@@ -5,6 +5,9 @@
 
 /* eslint-disable no-restricted-globals */
 
+import { canPaintVoltWindowSnapshot, IVoltWindowSnapshot, voltWindowSnapshotKey } from '../../../platform/voltWindowSnapshot/common/windowSnapshot.js';
+import { paintWindowSnapshot } from '../../../platform/voltWindowSnapshot/browser/windowSnapshotPaint.js';
+
 (async function () {
 
 	// Add a perf entry right from the top
@@ -330,6 +333,23 @@
 		performance.mark('code/didShowPartsSplash');
 	}
 
+	/** Paints the window's last screen (see IVoltWindowSnapshot); the workbench takes over once it has drawn the restored chat. */
+	function showVoltWindowSnapshot(configuration: INativeWindowConfiguration, baseTheme: string | undefined): boolean {
+		if (!configuration.voltWindowSnapshot) {
+			return false;
+		}
+		try {
+			const snapshot = JSON.parse(configuration.voltWindowSnapshot) as IVoltWindowSnapshot;
+			if (canPaintVoltWindowSnapshot(snapshot, voltWindowSnapshotKey(configuration), window, baseTheme) && paintWindowSnapshot(document, snapshot)) {
+				performance.mark('code/voltDidPaintWindowSnapshot');
+				return true;
+			}
+		} catch (error) {
+			console.error('[volt] could not paint the window snapshot', error);
+		}
+		return false;
+	}
+
 	//#endregion
 
 	//#region Window Helpers
@@ -588,6 +608,12 @@
 
 	// Mark start of workbench
 	performance.mark('code/didLoadWorkbenchMain');
+
+	// Volt, dev builds: the CSS came with the workbench code, so the window's last screen is painted now.
+	if (configuration.cssModules?.length && configuration.partsSplash?.layoutInfo && isAgentSplash(configuration.partsSplash.layoutInfo) && showVoltWindowSnapshot(configuration, configuration.partsSplash.baseTheme)) {
+		// Let it be drawn before the workbench's own start takes the thread.
+		await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+	}
 
 	// Load workbench
 	result.main(configuration);

@@ -48,6 +48,8 @@ import { VSBuffer } from '../../../base/common/buffer.js';
 import { errorHandler } from '../../../base/common/errors.js';
 import { FocusMode } from '../../native/common/native.js';
 import { IVoltWindowScopesMainService } from '../../voltWindowScope/electron-main/voltWindowScopesMainService.js';
+import { voltWindowSnapshotKey } from '../../voltWindowSnapshot/common/windowSnapshot.js';
+import { IVoltWindowSnapshotMainService } from '../../voltWindowSnapshot/electron-main/windowSnapshotMainService.js';
 
 export interface IWindowCreationOptions {
 	readonly state: IWindowState;
@@ -731,7 +733,8 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		@IStateService stateService: IStateService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@ICSSDevelopmentService private readonly cssDevelopmentService: ICSSDevelopmentService,
-		@IVoltWindowScopesMainService private readonly voltWindowScopes: IVoltWindowScopesMainService
+		@IVoltWindowScopesMainService private readonly voltWindowScopes: IVoltWindowScopesMainService,
+		@IVoltWindowSnapshotMainService private readonly voltWindowSnapshots: IVoltWindowSnapshotMainService
 	) {
 		super(configurationService, stateService, environmentMainService, logService);
 
@@ -745,6 +748,8 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 				// Every load (first, reload, crash reload) starts from the scopes as they are now.
 				if (configuration) {
 					configuration.voltWindowScopes = this.voltWindowScopes.scopes;
+					// The screen this window left, painted in its first frame (read on every load: a reload shows the latest).
+					configuration.voltWindowSnapshot = await this.voltWindowSnapshots.read(voltWindowSnapshotKey(configuration));
 				}
 				await this.refreshDevCssModules(configuration);
 			}));

@@ -154,6 +154,8 @@ import { IVoltAwakeService, VOLT_AWAKE_CHANNEL_NAME } from '../../platform/voltA
 import { VoltAwakeMainService } from '../../platform/voltAwake/electron-main/voltAwakeMainService.js';
 import { VOLT_WINDOW_SCOPES_CHANNEL_NAME } from '../../platform/voltWindowScope/common/voltWindowScope.js';
 import { IVoltWindowScopesMainService, VoltWindowScopesMainService } from '../../platform/voltWindowScope/electron-main/voltWindowScopesMainService.js';
+import { VOLT_WINDOW_SNAPSHOT_CHANNEL_NAME } from '../../platform/voltWindowSnapshot/common/windowSnapshotService.js';
+import { IVoltWindowSnapshotMainService, VoltWindowSnapshotMainService } from '../../platform/voltWindowSnapshot/electron-main/windowSnapshotMainService.js';
 import { IVoltDiagnosticsService } from '../../platform/voltDiagnostics/common/voltDiagnostics.js';
 import { registerVoltDiagnosticsMain, VoltDiagnosticsMainService } from '../../platform/voltDiagnostics/electron-main/voltDiagnosticsMainService.js';
 import { IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME } from '../../platform/voltStorage/common/voltStorage.js';
@@ -1189,6 +1191,7 @@ export class CodeApplication extends Disposable {
 
 		// Volt window scopes (a New Window keeps its chats and projects until it closes)
 		services.set(IVoltWindowScopesMainService, new SyncDescriptor(VoltWindowScopesMainService, undefined, false /* proxied to other processes */));
+		services.set(IVoltWindowSnapshotMainService, new SyncDescriptor(VoltWindowSnapshotMainService, undefined, true));
 
 		// Volt diagnostics (tracing export, stall log, heap snapshots)
 		services.set(IVoltDiagnosticsService, new SyncDescriptor(VoltDiagnosticsMainService, undefined, false /* proxied to other processes */));
@@ -1404,6 +1407,9 @@ export class CodeApplication extends Disposable {
 
 		// Volt window scopes
 		mainProcessElectronServer.registerChannel(VOLT_WINDOW_SCOPES_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltWindowScopesMainService), disposables));
+
+		// Volt window snapshots: the screen a window left, painted in its next first frame
+		mainProcessElectronServer.registerChannel(VOLT_WINDOW_SNAPSHOT_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltWindowSnapshotMainService), disposables));
 
 		// Volt storage cleanup and first-run import
 		mainProcessElectronServer.registerChannel(VOLT_STORAGE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltStorageService), disposables));

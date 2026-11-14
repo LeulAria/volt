@@ -476,6 +476,8 @@ export interface INativeWindowConfiguration extends IWindowConfiguration, Native
 	voltWindowScope?: string;
 	/** Volt: every open scope when the window loads, so its lists are right from the first frame. */
 	voltWindowScopes?: IVoltWindowScopes;
+	/** Volt: the screen the window showed when it was last left (JSON of IVoltWindowSnapshot), painted in its first frame. */
+	voltWindowSnapshot?: string;
 }
 
 /**
