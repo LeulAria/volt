@@ -10,7 +10,8 @@ import { Position } from '../../../../../editor/common/core/position.js';
 import { SymbolKind } from '../../../../../editor/common/languages.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
-import { setCodeIntelHierarchy } from '../../../../services/voltRuntime/browser/host/codeIntelHost.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { setCodeIntelErrorProbe, setCodeIntelHierarchy } from '../../../../services/voltRuntime/browser/host/codeIntelHost.js';
 import { ICallEdge, ICodeSymbolRef } from '../../../../services/voltRuntime/browser/tools/codeTools.js';
 import { CallHierarchyItem, CallHierarchyModel } from '../../../callHierarchy/common/callHierarchy.js';
 import { getWorkspaceSymbols } from '../../../search/common/search.js';
@@ -46,14 +47,17 @@ function itemRef(item: CallHierarchyItem | TypeHierarchyItem): ICodeSymbolRef {
 /**
  * Hands the agents' code_nav the call hierarchy, type hierarchy and workspace symbol providers the
  * editor's own views use (Show Call Hierarchy, Go to Symbol in Workspace), so callers, callees,
- * supertypes and workspace_symbols answer from the same language servers.
+ * supertypes and workspace_symbols answer from the same language servers. Also lends the new-errors
+ * check after an agent's edit tsserver's direct answer for a file that stays clean.
  */
 export class CodeIntelHierarchyContribution extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'workbench.contrib.voltCodeIntelHierarchy';
 
-	constructor() {
+	constructor(@ICommandService commandService: ICommandService) {
 		super();
+		setCodeIntelErrorProbe({ errorFree: (model, token) => typeScriptErrorFree(commandService, model, token) });
+		this._register(toDisposable(() => setCodeIntelErrorProbe(undefined)));
 		setCodeIntelHierarchy({
 			calls: (model, position, direction, token) => calls(model, position, direction, token),
 			types: (model, position, direction, token) => types(model, position, direction, token),
@@ -71,6 +75,31 @@ export class CodeIntelHierarchyContribution extends Disposable implements IWorkb
 		});
 		this._register(toDisposable(() => setCodeIntelHierarchy(undefined)));
 	}
+}
+
+const TYPESCRIPT_LANGUAGES = new Set(['typescript', 'typescriptreact', 'javascript', 'javascriptreact']);
+
+interface ITsServerDiagnosticsResponse {
+	readonly success?: boolean;
+	readonly body?: readonly { readonly category?: string }[];
+}
+
+/**
+ * Whether tsserver finds no syntax or type errors in the model's current text. The TypeScript
+ * extension only pushes diagnostics that changed, so a file that stays clean never gets a marker
+ * event; its read-only `*DiagnosticsSync` requests answer directly (the extension sends pending
+ * text changes before any request). Undefined when tsserver cannot answer for this document.
+ */
+export async function typeScriptErrorFree(commandService: ICommandService, model: ITextModel, token: CancellationToken): Promise<boolean | undefined> {
+	if (!TYPESCRIPT_LANGUAGES.has(model.getLanguageId()) || token.isCancellationRequested) {
+		return undefined;
+	}
+	const ask = (command: string) => commandService.executeCommand<ITsServerDiagnosticsResponse>('typescript.tsserverRequest', command, { file: model.uri }).catch(() => undefined);
+	const answers = await Promise.all([ask('syntacticDiagnosticsSync'), ask('semanticDiagnosticsSync')]);
+	if (token.isCancellationRequested || answers.some(answer => !answer?.success || !Array.isArray(answer.body))) {
+		return undefined; // not open in tsserver, no TypeScript extension, or the request failed
+	}
+	return answers.every(answer => answer!.body!.every(diagnostic => diagnostic.category !== 'error'));
 }
 
 async function calls(model: ITextModel, position: Position, direction: 'incoming' | 'outgoing', token: CancellationToken): Promise<ICallEdge[] | undefined> {
