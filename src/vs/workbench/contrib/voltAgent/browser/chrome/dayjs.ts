@@ -38,11 +38,11 @@ function toMs(input?: number | Date): number {
 
 function fromNow(value: number): string {
 	const seconds = Math.max(0, Math.round((Date.now() - value) / 1000));
-	if (seconds < 10) {
-		return 'just now';
-	}
+	// "just now" for the whole first minute: a label counting seconds ("12s ago") changed the DOM once a
+	// second for 50 s after every turn, and each change was a frame, so the window never rested and
+	// the GPU process kept a streaming chat's working set (about 400 MB) a minute longer.
 	if (seconds < MINUTE) {
-		return `${seconds}s ago`;
+		return 'just now';
 	}
 	if (seconds < HOUR) {
 		return `${Math.floor(seconds / MINUTE)}m ago`;
