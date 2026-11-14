@@ -346,9 +346,14 @@ const HEAD_JUMP_FRAME_MS = 32;
 const STASHED_DRAWN_EXCHANGES = 12;
 /** Shows the pane even if the first chat's history never finishes loading. */
 const RESTORE_REVEAL_TIMEOUT_MS = 1500;
-/** An "ago" label older than this reads in hours or days, so the clock redoes it only every {@link AGO_OLD_SWEEP_TICKS} ticks. */
+/** An "ago" label older than this reads in hours or days, so the clock redoes it only every {@link AGO_OLD_SWEEP_MS}. */
 const AGO_OLD_MS = 60 * 60_000;
-const AGO_OLD_SWEEP_TICKS = 60;
+const AGO_OLD_SWEEP_MS = 60_000;
+/** An "ago" label younger than this changes within the second's pace ("a few seconds ago", "a minute ago"). */
+const AGO_SECONDS_MS = 90_000;
+/** The chat clock's pace while something on screen changes by the second, and otherwise (labels in minutes). */
+const CLOCK_FAST_MS = 1_000;
+const CLOCK_SLOW_MS = 10_000;
 /** How long the background picture's fade on a new chat's first send may run (420ms in agentChatBackground.css). */
 const CHAT_BACKDROP_FADE_MS = 600;
 
@@ -1044,9 +1049,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private mentionPreview: MentionCodePreview | undefined;
 	/** The card beside a `/skill` token in a sent message; made on first hover. */
 	private skillHoverCard: AgentSkillHoverCard | undefined;
-	private clockTimer: IDisposable | undefined;
-	/** Ticks of the one-second clock, so old "ago" labels are redone only every minute. */
-	private metaTicks = 0;
+	private readonly clockTimer = this._register(new MutableDisposable());
+	/** The clock ticks every second (else every {@link CLOCK_SLOW_MS}). */
+	private clockFast = false;
+	/** When "ago" labels over an hour old were last redone (once a minute). */
+	private agoOldSweptAt = 0;
 	private statusRotateTimer: IDisposable | undefined;
 	private readonly statusMotion = new Map<string, { text: string; from?: string; started?: number }>();
 	/** Replies that streamed in this editor: their "Worked for" fold starts open, as Cursor's does right after a run. */
@@ -6002,27 +6009,47 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 	}
 
+	/**
+	 * Starts the chat clock, or moves it to its one-second pace when it was slow: something just drawn (a live
+	 * counter, a fresh "ago" label) may change within the second.
+	 */
 	private ensureClock(): void {
-		if (this.clockTimer) {
+		if (this.clockTimer.value && this.clockFast) {
 			return;
 		}
-		const win = getWindow(this.container);
-		const id = win.setInterval(() => this.tickMeta(), 1000);
-		this.clockTimer = toDisposable(() => win.clearInterval(id));
-		this._register(this.clockTimer);
+		this.scheduleClock(CLOCK_FAST_MS);
 	}
 
-	private tickMeta(): void {
+	/**
+	 * The clock ticks every second while something drawn changes by the second (a run's counters, "a few seconds
+	 * ago"), and every {@link CLOCK_SLOW_MS} otherwise: a chat left alone showed only labels in minutes and hours,
+	 * yet woke the window every second for them (round 4, A6).
+	 */
+	private scheduleClock(ms: number): void {
+		const win = getWindow(this.container);
+		this.clockFast = ms <= CLOCK_FAST_MS;
+		const id = win.setTimeout(() => {
+			const fast = this.tickMeta();
+			this.scheduleClock(fast ? CLOCK_FAST_MS : CLOCK_SLOW_MS);
+		}, ms);
+		this.clockTimer.value = toDisposable(() => win.clearTimeout(id));
+	}
+
+	/** Redraws the thread's time labels; true while one of them changes by the second. */
+	private tickMeta(): boolean {
 		if (!this.threadInner) {
-			return;
+			return false;
 		}
-		// Runs every second over every drawn exchange. Rewriting each label, even with the same text,
-		// laid a 1,000-turn chat out again every second while it sat idle; now a label is written only
-		// when its text changes, the lookups are live collections (cached until nodes change), and
-		// labels over an hour old, which change by the hour, are redone once a minute.
+		// Rewriting each label, even with the same text, laid a 1,000-turn chat out again every second
+		// while it sat idle; now a label is written only when its text changes, the lookups are live
+		// collections (cached until nodes change), and labels over an hour old, which change by the
+		// hour, are redone once a minute.
 		const now = Date.now();
-		const sweepOld = this.metaTicks++ % AGO_OLD_SWEEP_TICKS === 0;
-		tickElapsed(this.threadInner, now);
+		const sweepOld = now - this.agoOldSweptAt >= AGO_OLD_SWEEP_MS;
+		if (sweepOld) {
+			this.agoOldSweptAt = now;
+		}
+		let fast = tickElapsed(this.threadInner, now) > 0;
 		for (const el of this.threadInner.getElementsByClassName('volt-agent-worked')) {
 			if (!isHTMLElement(el)) {
 				continue;
@@ -6031,6 +6058,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (!Number.isFinite(started)) {
 				continue;
 			}
+			fast ||= !el.dataset.endedAt;
 			const ended = el.dataset.endedAt ? Number(el.dataset.endedAt) : now;
 			this.fillWorkedLine(el, ended - started);
 		}
@@ -6042,12 +6070,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (!Number.isFinite(when) || (!sweepOld && now - when > AGO_OLD_MS)) {
 				continue;
 			}
+			fast ||= now - when < AGO_SECONDS_MS;
 			const text = el.querySelector('.volt-agent-searchable') ?? el;
 			const label = dayjs(when).fromNow();
 			if (text.textContent !== label) {
 				text.textContent = label;
 			}
 		}
+		return fast;
 	}
 
 	private async openWorkspaceFile(path: string, startLine?: number, endLine?: number): Promise<void> {
@@ -9434,7 +9464,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.tailListeners.dispose();
 		this.reuse.dispose();
 		this.eventDisposable?.dispose();
-		this.clockTimer?.dispose();
+		this.clockTimer.clear();
 		this.statusRotateTimer?.dispose();
 		this.renderHandle?.dispose();
 		this.slowTurnTimer?.dispose();
