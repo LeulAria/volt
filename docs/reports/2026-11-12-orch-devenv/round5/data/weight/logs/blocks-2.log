@@ -1,0 +1,109 @@
+== block minbefore 2026-11-14T17:19:28Z load 6.71 12.50 7.11
+{"pid":24010,"ms":2337,"load":"6.52 12.27 7.09"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":30680,"ms":1094,"load":"5.51 11.28 6.96"}
+{"arm":"minbefore","variant":"launch","app":692,"agents":0,"total":692,"processes":9,"cpuApp":0.72,"cpuAgents":0,"load":"4.73 9.64 6.77"}
+gpu                                              n=1   220 MiB cpu 0.09%
+renderer                                         n=1   191 MiB cpu 0.04%
+main                                             n=1    86 MiB cpu 0.36%
+agent server                                     n=1    62 MiB cpu 0.08%
+extension host                                   n=1    62 MiB cpu 0.09%
+node utility (shared process/file watcher/pty)   n=1    45 MiB cpu 0.06%
+network service                                  n=1    14 MiB cpu 0%
+sandbox helper                                   n=2     2 MiB cpu 0%
+{"pid":36352,"ms":644,"load":"6.33 9.14 6.79"}
+{"arm":"minbefore","ghostMiB":0,"left":0,"before":13,"load":"6.06 8.79 6.74"}
+{"pid":52986,"ms":1246,"load":"8.08 8.90 6.93"}
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+thread 6: seeded
+thread 7: seeded
+thread 8: seeded
+thread 9: seeded
+thread 10: seeded
+thread 11: seeded
+thread 12: seeded
+thread 13: seeded
+thread 14: seeded
+thread 15: seeded
+{"arm":"minbefore","variant":"a10-rest-20","app":1487,"agents":489,"total":1976,"processes":43,"cpuApp":4.99,"cpuAgents":5.9,"load":"10.85 9.65 7.37"}
+claude CLI                                       n=10  1783 MiB cpu 5.9%
+ACP adapter (node)                               n=10   700 MiB cpu 1.68%
+gpu                                              n=1   551 MiB cpu 0.94%
+renderer                                         n=1   233 MiB cpu 0.85%
+agent server                                     n=1   156 MiB cpu 0.21%
+main                                             n=1   102 MiB cpu 0.27%
+extension host                                   n=1    70 MiB cpu 0.1%
+node utility (shared process/file watcher/pty)   n=1    65 MiB cpu 0.08%
+code index                                       n=1    34 MiB cpu 0.01%
+other: Electron                                  n=1    33 MiB cpu 0%
+network service                                  n=1    14 MiB cpu 0.01%
+sandbox watchdog sh                              n=10    12 MiB cpu 0%
+log stream (sandbox denials)                     n=1     3 MiB cpu 0.66%
+sandbox helper                                   n=2     2 MiB cpu 0.18%
+other: caffeinate                                n=1     2 MiB cpu 0%
+stopped
+== end minbefore 2026-11-14T17:26:42Z
+== block min2 2026-11-14T17:27:16Z load 10.60 10.08 7.80
+{"pid":71272,"ms":9388,"load":"9.22 9.80 7.73"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":77855,"ms":1069,"load":"7.28 9.24 7.62"}
+{"arm":"min2","variant":"launch","app":630,"agents":0,"total":630,"processes":9,"cpuApp":0.7,"cpuAgents":0,"load":"6.17 8.34 7.43"}
+gpu                                              n=1   206 MiB cpu 0.07%
+renderer                                         n=1   164 MiB cpu 0.04%
+main                                             n=1    79 MiB cpu 0.31%
+extension host                                   n=1    57 MiB cpu 0.11%
+agent server                                     n=1    55 MiB cpu 0.1%
+node utility (shared process/file watcher/pty)   n=1    44 MiB cpu 0.07%
+network service                                  n=1    14 MiB cpu 0%
+sandbox helper                                   n=2     2 MiB cpu 0%
+{"pid":83400,"ms":544,"load":"6.32 7.96 7.36"}
+{"arm":"min2","ghostMiB":0,"left":0,"before":15,"load":"7.36 8.07 7.42"}
+{"pid":87205,"ms":577,"load":"6.61 7.87 7.39"}
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+thread 6: seeded
+thread 7: seeded
+thread 8: seeded
+thread 9: seeded
+thread 10: seeded
+thread 11: seeded
+thread 12: seeded
+thread 13: seeded
+thread 14: seeded
+thread 15: seeded
+{"arm":"min2","variant":"a10-rest-20","app":1489,"agents":480,"total":1956,"processes":43,"cpuApp":5.51,"cpuAgents":12.15,"load":"8.79 8.13 7.52"}
+claude CLI                                       n=10  1682 MiB cpu 12.17%
+ACP adapter (node)                               n=10   699 MiB cpu 1.08%
+gpu                                              n=1   611 MiB cpu 1.21%
+renderer                                         n=1   202 MiB cpu 1.18%
+agent server                                     n=1   121 MiB cpu 0.56%
+main                                             n=1   112 MiB cpu 0.36%
+node utility (shared process/file watcher/pty)   n=1    84 MiB cpu 0.08%
+extension host                                   n=1    70 MiB cpu 0.1%
+code index                                       n=1    34 MiB cpu 0%
+other: Electron                                  n=1    33 MiB cpu 0%
+network service                                  n=1    14 MiB cpu 0.01%
+sandbox watchdog sh                              n=10    12 MiB cpu 0%
+log stream (sandbox denials)                     n=1     3 MiB cpu 0.74%
+sandbox helper                                   n=2     2 MiB cpu 0.19%
+other: caffeinate                                n=1     2 MiB cpu 0%
+stopped
+== end min2 2026-11-14T17:34:37Z
+== blocks done 2026-11-14T17:34:37Z
