@@ -15,7 +15,7 @@ import { execSync, spawn } from 'child_process';
 import { appendFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { grade } from './grade.mjs';
-import { agentsSeen, ARENA_BASE, CAP_MS, CFG, DATA, fanOut, here, loadAvg, PROXY, QUIET_MS, readJsonl, rowsBetween, RUNS, seedFor, sessionIntervals, sleep, taskPrompt, tokensOf, usdOf } from './common.mjs';
+import { agentsSeen, ARENA_BASE, bodyOf, CAP_MS, CFG, DATA, fanOut, here, loadAvg, PROXY, QUIET_MS, readJsonl, rowsBetween, RUNS, seedFor, sessionIntervals, sleep, taskPrompt, tokensOf, usdOf } from './common.mjs';
 
 const UD = process.env.VOLT_UD ?? '/tmp/v4-c1-ud';
 const EXT = process.env.VOLT_EXT ?? `${UD}-ext`;
@@ -103,10 +103,19 @@ async function pickProject(c, folder) {
 	const shown = () => c.evaluate(`(() => [...document.querySelectorAll('*')].some(e => e.offsetParent && e.childElementCount === 0 && e.textContent.trim() === ${JSON.stringify(name)} && /label|project/.test(e.className)))()`);
 	const opened = await c.evaluate(`(() => { const e = [...document.querySelectorAll('button.volt-agent-landing-pick')].filter(e => e.offsetParent && e.querySelector('.label')).at(0); if (!e) { return false; } e.click(); return true; })()`);
 	if (!opened) { throw new Error('no project picker'); }
-	await sleep(800);
-	await c.evaluate(`(() => { const i = [...document.querySelectorAll('input')].filter(e => e.offsetParent && /search projects/i.test(e.placeholder)).at(-1); i?.focus(); i?.select(); return !!i; })()`);
+	// Under load the picker opens late: type only once its search box exists and has the focus.
+	let focused = false;
+	for (let i = 0; i < 40 && !focused; i++) {
+		await sleep(250);
+		focused = await c.evaluate(`(() => { const i = [...document.querySelectorAll('input')].filter(e => e.offsetParent && /search projects/i.test(e.placeholder)).at(-1); i?.focus(); i?.select(); return !!i && document.activeElement === i; })()`);
+	}
+	if (!focused) { throw new Error('the project search box did not open'); }
 	await c.send('Input.insertText', { text: folder });
-	await sleep(1500);
+	let listed = false;
+	for (let i = 0; i < 40 && !listed; i++) {
+		await sleep(250);
+		listed = await c.evaluate(`[...document.querySelectorAll('.monaco-list-row')].some(e => e.offsetParent && ((e.getAttribute('aria-label') ?? '').endsWith(${JSON.stringify(folder)}) || /^Open /.test(e.textContent.trim())))`);
+	}
 	const picked = await c.evaluate(`(() => { const r = [...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && (e.getAttribute('aria-label') ?? '').endsWith(${JSON.stringify(folder)})).at(-1) ?? [...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && /^Open /.test(e.textContent.trim())).at(-1); r?.click(); return !!r; })()`);
 	await sleep(1500);
 	if (!picked || !await shown()) { throw new Error(`could not pick the project ${folder}`); }
@@ -174,6 +183,10 @@ async function run(id) {
 	if (!shown.access.some(a => /full-access/.test(a))) { throw new Error(`access is not Full access: ${shown.access}`); }
 	const focused = await c.evaluate(`(() => { const t = [...document.querySelectorAll('textarea.inputarea')].filter(e => e.offsetParent).at(-1); if (!t) { return false; } t.focus(); return true; })()`);
 	if (!focused) { throw new Error('no composer'); }
+	// An empty composer first (a draft or stray text must not go out with the prompt).
+	await c.key('a', 'KeyA', 65, 4);
+	await c.key('Backspace', 'Backspace', 8);
+	await sleep(300);
 	await c.send('Input.insertText', { text: prompt });
 	await sleep(600);
 	const sessionsDir = join(USER, 'agentSessions', 'sessions');
@@ -231,9 +244,15 @@ async function finish({ id, chat, repo, seed, t0, load, shown }) {
 	const fan = fanOut(intervals.filter(s => s.cwd !== repo));
 	const graded = grade(repo, seed);
 	const mainModel = rows.find(r => r.meta?.task)?.model ?? null;
+	// TESTS.md 4: the prompt must reach the model. The lead's first request carries the trigger line and the C1 text
+	// byte for byte (as sent, or inside Volt's own wrapper).
+	const firstTask = rows.find(r => r.meta?.task);
+	const sentPrompt = existsSync(join(DATA, `${id}.prompt.txt`)) ? readFileSync(join(DATA, `${id}.prompt.txt`), 'utf8').trim() : '';
+	const promptExact = !!firstTask && !!sentPrompt && JSON.stringify(bodyOf(firstTask)?.messages ?? []).includes(JSON.stringify(sentPrompt).slice(1, -1));
 	const efforts = [...new Set(rows.filter(r => r.meta).map(r => `${r.model}:${r.meta.effort ?? '-'}:${r.meta.thinking ?? '-'}`))];
 	const invalid = [
 		!rows.length && 'no model request captured',
+		!promptExact && 'the prompt never reached the model as sent (check the capture)',
 		seen.agents < 2 && 'one agent did the work alone: the trigger did not start orchestration',
 		alone && 'no second agent in the first 15 minutes',
 		tokens.noUsage && 'a call has no usage (tokens-total invalid)',
@@ -246,7 +265,7 @@ async function finish({ id, chat, repo, seed, t0, load, shown }) {
 		shipped: graded.shipped, groups: graded.groups, handoff: graded.handoff, codesPlaced: graded.codesPlaced, npmTest: graded.npmTest,
 		tokensTotal: tokens.total, usd: usd?.usd ?? null, tokens, requests: rows.length, afterEnd: after.length,
 		agents: seen, fanOut: fan, sessions: intervals.map(s => ({ cwd: s.cwd, start: s.start - t0, end: s.end - t0, sidechain: s.sidechain })),
-		mainModel, efforts,
+		mainModel, efforts, promptExact,
 		tasks: (tree?.tasks ?? []).map(t => ({ title: t.title, role: t.role, isolation: t.isolation, state: t.state, model: t.modelLabel ?? t.modelRef, childId: t.childId, startedAt: t.startedAt && t.startedAt - t0, endedAt: t.endedAt && t.endedAt - t0, report: t.result?.length, branch: t.worktreeBranch, worktree: t.worktreePath, usage: t.usage, rounds: t.rounds?.length ?? t.rounds })),
 	};
 	writeFileSync(join(DATA, `${id}.grade.json`), JSON.stringify(graded, null, 1));
