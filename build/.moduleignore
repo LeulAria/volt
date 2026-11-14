@@ -60,6 +60,13 @@ fsevents/test/**
 !@vscode/tree-sitter-wasm/wasm/tree-sitter-regex.wasm
 !@vscode/tree-sitter-wasm/wasm/tree-sitter-ini.wasm
 !@vscode/tree-sitter-wasm/wasm/tree-sitter-css.wasm
+# The code index's structure layer (outlines, imports, structural search); C#, C++ and Ruby fall back to its regex outlines.
+!@vscode/tree-sitter-wasm/wasm/tree-sitter-tsx.wasm
+!@vscode/tree-sitter-wasm/wasm/tree-sitter-javascript.wasm
+!@vscode/tree-sitter-wasm/wasm/tree-sitter-python.wasm
+!@vscode/tree-sitter-wasm/wasm/tree-sitter-go.wasm
+!@vscode/tree-sitter-wasm/wasm/tree-sitter-rust.wasm
+!@vscode/tree-sitter-wasm/wasm/tree-sitter-java.wasm
 
 native-keymap/binding.gyp
 native-keymap/build/**

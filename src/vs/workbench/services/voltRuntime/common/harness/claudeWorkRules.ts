@@ -353,6 +353,22 @@ export const CLAUDE_READONLY_SUBAGENT_PROMPT = [
 ].join('\n');
 
 /**
+ * Hooks that check Claude Code's file edits with the editor's language servers as they happen
+ * (`EDIT_CHECK_TOOL_NAME` in codeIntelligence.ts): `mcp_tool` hooks (Claude Code 2.1.322 and later)
+ * call Volt's `diagnostics` on the volt MCP server. A Read opens the file for its language server,
+ * an edit's start notes its errors, its end hands the model the errors the edit added (nothing
+ * when there are none). They add no prompt text: only an edit that breaks something costs tokens.
+ */
+export function claudeEditCheckHooks(): Record<string, unknown> {
+	const call = (hook: string, timeout: number) => ({ type: 'mcp_tool', server: 'volt', tool: 'diagnostics', input: { path: '${tool_input.file_path}', hook }, timeout });
+	const edits = 'Edit|Write|MultiEdit';
+	return {
+		PreToolUse: [{ matcher: edits, hooks: [call('before', 5)] }],
+		PostToolUse: [{ matcher: edits, hooks: [call('after', 8)] }, { matcher: 'Read', hooks: [call('read', 3)] }],
+	};
+}
+
+/**
  * `session/new` (and `session/resume`) `_meta` for a Claude Code session: the main agent's rules
  * appended to Claude Code's prompt, and a SubagentStart hook that hands every subagent its rules.
  * A Volt subagent's session (`subagent`) also starts lean (see {@link CLAUDE_SUBAGENT_SESSION_SETTINGS}),
@@ -363,7 +379,7 @@ export const CLAUDE_READONLY_SUBAGENT_PROMPT = [
  * `lazyToolsPlugin`: the folder {@link claudeLazyToolsPlugin} was written to; the main agent loads
  * {@link CLAUDE_MAIN_LAZY_TOOLS} on demand with it (a subagent goes without them anyway).
  */
-export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?: boolean | VoltSubagentProfile; readonly voltAsks?: boolean; readonly lazyToolsPlugin?: string }): Record<string, unknown> {
+export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?: boolean | VoltSubagentProfile; readonly voltAsks?: boolean; readonly lazyToolsPlugin?: string; readonly editChecks?: boolean }): Record<string, unknown> {
 	const subagent = subagentProfile(opts?.subagent);
 	const lazyTools = !subagent && opts?.lazyToolsPlugin ? opts.lazyToolsPlugin : undefined;
 	const mainRules = [CLAUDE_MAIN_RULES, ...(opts?.voltAsks ? [CLAUDE_MAIN_ASK_RULE] : []), ...(lazyTools ? [CLAUDE_MAIN_LAZY_RULE] : [])].join('\n');
@@ -393,6 +409,7 @@ export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?:
 					hooks: {
 						SubagentStart: [{ hooks: [{ type: 'command', command: subagentStartHookCommand(), timeout: 10 }] }],
 						Stop: [{ hooks: [{ type: 'command', command: stopHookCommand(), timeout: 10 }] }],
+						...(opts?.editChecks && subagent !== 'readonly' ? claudeEditCheckHooks() : {}),
 					},
 				},
 			},

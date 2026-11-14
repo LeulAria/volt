@@ -1,0 +1,124 @@
+diff --git a/src/cli/cron-cli/register.cron-add.ts b/src/cli/cron-cli/register.cron-add.ts
+index 2388b00a3..bd0103d3a 100644
+--- a/src/cli/cron-cli/register.cron-add.ts
++++ b/src/cli/cron-cli/register.cron-add.ts
+@@ -1,7 +1,7 @@
+ import type { Command } from "commander";
+ import type { CronJob } from "../../cron/types.js";
+ import { danger } from "../../globals.js";
+-import { sanitizeAgentId } from "../../routing/session-key.js";
++import { DEFAULT_AGENT_ID, sanitizeAgentId } from "../../routing/session-key.js";
+ import { defaultRuntime } from "../../runtime.js";
+ import type { GatewayRpcOpts } from "../gateway-rpc.js";
+ import { addGatewayClientOptions, callGatewayFromCli } from "../gateway-rpc.js";
+@@ -155,7 +155,7 @@ export function registerCronAddCommand(cron: Command) {
+ 
+           const agentId =
+             typeof opts.agent === "string" && opts.agent.trim()
+-              ? sanitizeAgentId(opts.agent.trim())
++              ? sanitizeAgentId(opts.agent.trim(), DEFAULT_AGENT_ID)
+               : undefined;
+ 
+           const hasAnnounce = Boolean(opts.announce) || opts.deliver === true;
+diff --git a/src/cli/cron-cli/register.cron-edit.ts b/src/cli/cron-cli/register.cron-edit.ts
+index f1e6c74d7..68f4750c0 100644
+--- a/src/cli/cron-cli/register.cron-edit.ts
++++ b/src/cli/cron-cli/register.cron-edit.ts
+@@ -1,7 +1,7 @@
+ import type { Command } from "commander";
+ import type { CronJob } from "../../cron/types.js";
+ import { danger } from "../../globals.js";
+-import { sanitizeAgentId } from "../../routing/session-key.js";
++import { DEFAULT_AGENT_ID, sanitizeAgentId } from "../../routing/session-key.js";
+ import { defaultRuntime } from "../../runtime.js";
+ import { addGatewayClientOptions, callGatewayFromCli } from "../gateway-rpc.js";
+ import {
+@@ -128,7 +128,7 @@ export function registerCronEditCommand(cron: Command) {
+             throw new Error("Use --agent or --clear-agent, not both");
+           }
+           if (typeof opts.agent === "string" && opts.agent.trim()) {
+-            patch.agentId = sanitizeAgentId(opts.agent.trim());
++            patch.agentId = sanitizeAgentId(opts.agent.trim(), DEFAULT_AGENT_ID);
+           }
+           if (opts.clearAgent) {
+             patch.agentId = null;
+diff --git a/src/cron/normalize.ts b/src/cron/normalize.ts
+index 1cba881b7..ccb503ca3 100644
+--- a/src/cron/normalize.ts
++++ b/src/cron/normalize.ts
+@@ -1,4 +1,4 @@
+-import { sanitizeAgentId } from "../routing/session-key.js";
++import { DEFAULT_AGENT_ID, sanitizeAgentId } from "../routing/session-key.js";
+ import { isRecord } from "../utils.js";
+ import {
+   buildDeliveryFromLegacyPayload,
+@@ -302,7 +302,7 @@ export function normalizeCronJobInput(
+     } else if (typeof agentId === "string") {
+       const trimmed = agentId.trim();
+       if (trimmed) {
+-        next.agentId = sanitizeAgentId(trimmed);
++        next.agentId = sanitizeAgentId(trimmed, DEFAULT_AGENT_ID);
+       } else {
+         delete next.agentId;
+       }
+diff --git a/src/routing/resolve-route.ts b/src/routing/resolve-route.ts
+index 1aee956f6..76fc562ae 100644
+--- a/src/routing/resolve-route.ts
++++ b/src/routing/resolve-route.ts
+@@ -9,6 +9,7 @@ import {
+   buildAgentMainSessionKey,
+   buildAgentPeerSessionKey,
+   DEFAULT_ACCOUNT_ID,
++  DEFAULT_AGENT_ID,
+   DEFAULT_MAIN_KEY,
+   normalizeAgentId,
+   sanitizeAgentId,
+@@ -118,18 +119,18 @@ function listAgents(cfg: OpenClawConfig) {
+ function pickFirstExistingAgentId(cfg: OpenClawConfig, agentId: string): string {
+   const trimmed = (agentId ?? "").trim();
+   if (!trimmed) {
+-    return sanitizeAgentId(resolveDefaultAgentId(cfg));
++    return sanitizeAgentId(resolveDefaultAgentId(cfg), DEFAULT_AGENT_ID);
+   }
+   const normalized = normalizeAgentId(trimmed);
+   const agents = listAgents(cfg);
+   if (agents.length === 0) {
+-    return sanitizeAgentId(trimmed);
++    return sanitizeAgentId(trimmed, DEFAULT_AGENT_ID);
+   }
+   const match = agents.find((agent) => normalizeAgentId(agent.id) === normalized);
+   if (match?.id?.trim()) {
+-    return sanitizeAgentId(match.id.trim());
++    return sanitizeAgentId(match.id.trim(), DEFAULT_AGENT_ID);
+   }
+-  return sanitizeAgentId(resolveDefaultAgentId(cfg));
++  return sanitizeAgentId(resolveDefaultAgentId(cfg), DEFAULT_AGENT_ID);
+ }
+ 
+ function matchesChannel(
+diff --git a/src/routing/session-key.ts b/src/routing/session-key.ts
+index bd5cf5f4d..8637ce617 100644
+--- a/src/routing/session-key.ts
++++ b/src/routing/session-key.ts
+@@ -93,10 +93,10 @@ export function normalizeAgentId(value: string | undefined | null): string {
+   );
+ }
+ 
+-export function sanitizeAgentId(value: string | undefined | null): string {
++export function sanitizeAgentId(value: string | undefined | null, fallback: string): string {
+   const trimmed = (value ?? "").trim();
+   if (!trimmed) {
+-    return DEFAULT_AGENT_ID;
++    return fallback;
+   }
+   if (VALID_ID_RE.test(trimmed)) {
+     return trimmed.toLowerCase();
+@@ -107,7 +107,7 @@ export function sanitizeAgentId(value: string | undefined | null): string {
+       .replace(INVALID_CHARS_RE, "-")
+       .replace(LEADING_DASH_RE, "")
+       .replace(TRAILING_DASH_RE, "")
+-      .slice(0, 64) || DEFAULT_AGENT_ID
++      .slice(0, 64) || fallback
+   );
+ }
+ 

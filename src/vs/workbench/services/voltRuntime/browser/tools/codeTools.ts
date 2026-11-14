@@ -3,8 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { raceTimeout } from '../../../../../base/common/async.js';
 import { isEqualOrParent } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
+import type { IVoltCodeImport, IVoltCodeImporter, IVoltCodeOutlineSymbol, IVoltCodeStructuralMatch } from '../../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { asRecord, pickNumber, pickString } from '../../common/tools/args.js';
 import { IToolContext, IToolResult, IVoltTool } from '../../common/tools/tool.js';
 import { objectSchema } from './schema.js';
@@ -129,6 +131,12 @@ export interface ICodeNavIndex {
 	outline(root: URI, uri: URI): Promise<ICodeSymbol[] | undefined>;
 	/** Classes and interfaces that name `name` after implements or extends. */
 	implementations?(root: URI, name: string): Promise<ICodeLocation[] | undefined>;
+	/** The file's declarations with exact ranges and its imports, from its syntax tree (tree-sitter). */
+	structure?(root: URI, uri: URI): Promise<{ readonly symbols: readonly IVoltCodeOutlineSymbol[]; readonly imports: readonly IVoltCodeImport[] } | undefined>;
+	/** Files importing `uri` (depth 2: and files importing those). */
+	importers?(root: URI, uri: URI, depth: number): Promise<(IVoltCodeImporter & { readonly uri: URI })[] | undefined>;
+	/** Code shaped like a pattern; a string says why it could not search. */
+	structural?(root: URI, request: { readonly pattern: string; readonly folder?: URI; readonly language?: string; readonly includes?: readonly string[]; readonly excludes?: readonly string[]; readonly where?: Readonly<Record<string, string>>; readonly maxMatches: number }): Promise<{ readonly matches: readonly IVoltCodeStructuralMatch[]; readonly limitHit: boolean; readonly scanned: number } | string>;
 }
 
 /** Writes a computed edit into the workspace like edit_file does (buffers, ledger, change set). */
@@ -144,7 +152,7 @@ const MAX_CALL_DEPTH = 4;
 const MAX_CALL_TREE_NODES = 60;
 const CALL_TREE_DEADLINE_MS = 20_000;
 
-export const CODE_NAV_OPS = ['definition', 'references', 'implementations', 'type_definition', 'hover', 'inspect', 'symbols', 'workspace_symbols', 'callers', 'callees', 'supertypes', 'subtypes'] as const;
+export const CODE_NAV_OPS = ['impact', 'body', 'definition', 'references', 'implementations', 'type_definition', 'hover', 'inspect', 'symbols', 'workspace_symbols', 'callers', 'callees', 'supertypes', 'subtypes', 'structural'] as const;
 export type CodeNavOp = typeof CODE_NAV_OPS[number];
 
 export const CODE_ACTION_OPS = ['rename', 'format', 'organize_imports', 'fixes', 'fix'] as const;
@@ -155,11 +163,14 @@ const POSITIONAL: ReadonlySet<string> = new Set(['definition', 'references', 'im
 export const CODE_NAV_DESCRIPTION = [
 	'Type-checked answers from the language servers the editor runs (live buffers), with Volt\'s code index as fallback.',
 	'Use it for meaning, where grep returns look-alikes: who calls X (through other functions too), what implements interface Y, every use of method M of type T (not other methods with the same name), what type Z is.',
-	'Name the symbol with symbol, plus path and line where it is written; symbol alone finds its declaration (path narrows it).',
-	'Ops: references, implementations, definition, type_definition, hover (type, signature, docs),',
+	'Name the symbol with symbol, plus path and line where it is written; symbol alone finds its declaration (path narrows it; path#symbol works too).',
+	'Ops: impact (before a change, one call: callers 3 levels up, files using or importing symbol or path, the tests to run, current errors),',
+	'body (symbol\'s source with line numbers, not the whole file; comma-separate several),',
+	'references, implementations, definition, type_definition, hover (type, signature, docs),',
 	'inspect (hover + definition with body + references + implementations in one call),',
 	'callers / callees (call hierarchy; depth 2-4 follows callers of callers to the entry points and names the route handlers or procedures the calls are in), supertypes / subtypes,',
-	'symbols (outline of path), workspace_symbols (query: find declarations by name).',
+	'symbols (outline of path), workspace_symbols (query: find declarations by name),',
+	'structural (pattern: $X one node, $$$ any, e.g. fetchUser($ID, $$$): code by its syntax across lines, not text; where filters a $X by regex; path, glob narrow).',
 	'Use grep for text, strings, SQL and config.',
 ].join(' ');
 
@@ -169,8 +180,11 @@ export const CODE_NAV_SCHEMA = objectSchema({
 	path: { type: 'string' },
 	line: { type: 'integer', description: '1-based line where symbol is written' },
 	column: { type: 'integer', description: '1-based column, instead of symbol' },
-	depth: { type: 'integer', description: 'callers/callees: levels to follow (1-4, default 1)' },
+	depth: { type: 'integer', description: 'callers/callees/impact: levels to follow (1-4; default 1, impact 3)' },
 	query: { type: 'string', description: 'workspace_symbols: the name to look for' },
+	pattern: { type: 'string', description: 'structural: the code pattern' },
+	where: { type: 'object', description: 'structural: a regex per metavariable, e.g. {"MS":"^\\\\d"} keeps literal numbers' },
+	glob: { type: 'string', description: 'structural: files, e.g. **/*.ts; !**/*.test.* skips' },
 }, ['op']);
 
 export const DIAGNOSTICS_DESCRIPTION = [
@@ -461,9 +475,19 @@ export async function runCodeNav(host: ICodeIntelHost, root: URI | undefined, ar
 	if (op === 'workspace_symbols') {
 		return workspaceSymbols(host, root, pickString(args, 'query', 'symbol', 'name'), nav);
 	}
+	args = splitPathSymbol(args);
+	if (op === 'structural') {
+		return structuralSearch(root, args, nav);
+	}
+	if (op === 'body') {
+		return bodies(host, root, args, nav);
+	}
 	const path = pickString(args, 'path', 'file');
 	let uri = resolveWorkspaceUri(root, path);
-	if (!uri && !path && POSITIONAL.has(op)) {
+	if (op === 'impact' && uri && !pickString(args, 'symbol', 'name') && !pickNumber(args, 'line')) {
+		return moduleImpact(host, root, uri, nav);
+	}
+	if (!uri && !path && (POSITIONAL.has(op) || op === 'impact')) {
 		// A symbol without a path: its declaration, from the language server's workspace symbols or the index.
 		const qualified = pickString(args, 'symbol', 'name');
 		const found = qualified ? await locateDeclaration(host, root, qualified, nav) : 'This op needs symbol (or path, line and column).';
@@ -480,6 +504,13 @@ export async function runCodeNav(host: ICodeIntelHost, root: URI | undefined, ar
 	try {
 		if (op === 'symbols') {
 			return outline(host, root, uri, lsp, nav);
+		}
+		if (op === 'impact') {
+			const position = await resolvePosition(host, root, uri, args, lsp);
+			if (typeof position === 'string') {
+				return fail('code_nav', position);
+			}
+			return impact(host, root, position, nav, lsp, pickNumber(args, 'depth', 'levels'));
 		}
 		if (!POSITIONAL.has(op)) {
 			return fail('code_nav', `Unknown op ${op}.`);
@@ -545,6 +576,12 @@ async function outline(host: ICodeIntelHost, root: URI, uri: URI, lsp: boolean, 
 		const lines = shown.slice(0, 300).map(symbol => `${'  '.repeat(symbol.depth)}${symbol.kind} ${symbol.name} [${symbol.line}-${symbol.endLine}]${symbol.detail ? ` ${symbol.detail}` : ''}`);
 		const hidden = symbols.length - shown.length;
 		return text(`${displayPath(root, uri)} outline${hidden ? ` (${hidden} locals and callbacks left out)` : ''}:\n${lines.join('\n')}`);
+	}
+	// No language server: the syntax tree's declarations, with their ranges.
+	const parsed = await nav?.structure?.(root, uri).catch(() => undefined);
+	if (parsed?.symbols.length) {
+		const lines = parsed.symbols.slice(0, 300).map(symbol => `${'  '.repeat(symbol.depth)}${symbol.kind} ${symbol.name} [${symbol.line}-${symbol.endLine}]`);
+		return text(`${displayPath(root, uri)} outline (from its syntax tree, no language server):\n${lines.join('\n')}`);
 	}
 	const indexed = await nav?.outline(root, uri);
 	if (indexed?.length) {
@@ -884,6 +921,418 @@ async function typeHierarchy(host: ICodeIntelHost, root: URI, position: IResolve
 	const lines = types.slice(0, MAX_LOCATIONS).map(type => `${type.kind} ${type.name}${type.detail ? ` ${type.detail}` : ''}  ${displayPath(root, type.uri)}:${type.line}`);
 	return text(`${types.length} ${op === 'supertypes' ? 'supertype' : 'subtype'}${types.length === 1 ? '' : 's'} of ${position.name ?? where(root, position)}:\n${lines.join('\n')}`);
 }
+
+//#region body, impact, structural
+
+/** `path#symbol`, in path or symbol, as path and symbol. */
+export function splitPathSymbol(args: unknown): unknown {
+	const record = asRecord(args);
+	for (const key of ['path', 'file', 'symbol', 'name']) {
+		const value = record[key];
+		const at = typeof value === 'string' ? value.indexOf('#') : -1;
+		if (typeof value === 'string' && at > 0) {
+			const path = value.slice(0, at).trim();
+			const symbol = value.slice(at + 1).trim();
+			if (path && symbol && /[./]/.test(path)) {
+				const rest = { ...record };
+				delete rest.file;
+				delete rest.name;
+				return { ...rest, path, symbol };
+			}
+		}
+	}
+	return args;
+}
+
+/** Test files by the usual conventions of JS/TS, Python, Go, Rust, Java and Ruby. */
+export function isTestPath(path: string): boolean {
+	return /(^|\/)(__tests__|tests?|spec|specs|e2e)\//.test(path) || /\.(test|spec|e2e)\.[cm]?[jt]sx?$/.test(path) || /(_test\.(go|py|rb)|_spec\.rb|Tests?\.(java|kt|cs))$/.test(path) || /(^|\/)test_[^/]+\.py$/.test(path);
+}
+
+/** body shows at most this many lines of one declaration; a longer class shows its head and members. */
+const MAX_BODY_READ_LINES = 250;
+const MAX_BODIES = 8;
+/** Comment lines right above a declaration (its doc comment) come with its body, up to this many. */
+const MAX_DOC_LINES = 20;
+
+interface ISymbolSpan {
+	readonly start: number;
+	readonly end: number;
+	readonly kind?: string;
+	readonly name?: string;
+	/** Members inside it (for an outline of a long class). */
+	readonly members: readonly { readonly name: string; readonly kind: string; readonly line: number; readonly endLine: number }[];
+	readonly source: 'lsp' | 'tree' | 'text';
+}
+
+/**
+ * The whole declaration around `line`: the smallest symbol from the language server's outline
+ * (else the syntax tree's) that contains the line and has the name, else the smallest that starts
+ * on it. Without either, the lines until the indentation comes back to the declaration's.
+ */
+async function symbolSpan(host: ICodeIntelHost, root: URI, uri: URI, line: number, name: string | undefined, nav: ICodeNavIndex | undefined, lsp: boolean, text: string): Promise<ISymbolSpan> {
+	const choose = (symbols: readonly { name: string; kind: string; line: number; endLine: number }[], source: 'lsp' | 'tree'): ISymbolSpan | undefined => {
+		const containing = symbols.filter(symbol => symbol.line <= line && symbol.endLine >= line);
+		const bySize = (a: { line: number; endLine: number }, b: { line: number; endLine: number }) => (a.endLine - a.line) - (b.endLine - b.line);
+		const named = containing.filter(symbol => name && (symbol.name === name || symbol.name.startsWith(`${name}(`) || symbol.name.endsWith(`.${name}`))).sort(bySize)[0];
+		const chosen = named ?? containing.filter(symbol => Math.abs(symbol.line - line) <= 3).sort(bySize)[0];
+		if (!chosen) {
+			return undefined;
+		}
+		const members = symbols.filter(symbol => symbol !== chosen && symbol.line > chosen.line && symbol.endLine <= chosen.endLine);
+		return { start: chosen.line, end: chosen.endLine, kind: chosen.kind, name: chosen.name, members, source };
+	};
+	const fromLsp = lsp ? choose(await host.symbols(uri).catch(() => []), 'lsp') : undefined;
+	if (fromLsp) {
+		return fromLsp;
+	}
+	const parsed = await nav?.structure?.(root, uri).catch(() => undefined);
+	const fromTree = parsed ? choose(parsed.symbols, 'tree') : undefined;
+	if (fromTree) {
+		return fromTree;
+	}
+	// By indentation: up to the first later line indented no deeper that closes or starts something.
+	const lines = text.split('\n');
+	const indent = (value: string) => /^\s*/.exec(value)![0].replace(/\t/g, '    ').length;
+	const own = indent(lines[line - 1] ?? '');
+	let end = line;
+	for (let index = line; index < Math.min(lines.length, line + MAX_BODY_READ_LINES); index++) {
+		const value = lines[index];
+		if (!value.trim()) {
+			continue;
+		}
+		if (indent(value) <= own) {
+			end = /^\s*[}\])]/.test(value) || /^\s*end\b/.test(value) ? index + 1 : index;
+			break;
+		}
+		end = index + 1;
+	}
+	return { start: line, end: Math.max(line, end), members: [], source: 'text' };
+}
+
+/** The comment block right above `start` (a doc comment, decorators), as the first line to show. */
+function docStart(lines: readonly string[], start: number): number {
+	let first = start;
+	for (let index = start - 2; index >= 0 && start - index <= MAX_DOC_LINES; index--) {
+		const value = lines[index].trim();
+		if (/^(\/\/|\/\*|\*|#(?!include)|@[\w.]+)/.test(value) && value !== '') {
+			first = index + 1;
+		} else {
+			break;
+		}
+	}
+	return first;
+}
+
+async function bodies(host: ICodeIntelHost, root: URI, args: unknown, nav: ICodeNavIndex | undefined): Promise<IToolResult> {
+	const raw = pickString(args, 'symbol', 'name');
+	if (!raw) {
+		return fail('code_nav', 'body needs symbol (path narrows it; path#symbol works too).');
+	}
+	const path = pickString(args, 'path', 'file');
+	const given = resolveWorkspaceUri(root, path);
+	if (path && !given) {
+		return fail('code_nav', 'path is missing or outside the workspace.');
+	}
+	const names = raw.split(',').map(name => name.trim()).filter(Boolean).slice(0, MAX_BODIES);
+	const line = names.length === 1 ? pickNumber(args, 'line') : undefined;
+	const parts = await Promise.all(names.map(name => oneBody(host, root, given, name, line, nav).catch(err => `${name}: ${errorText(err)}`)));
+	const failed = parts.every(part => !part.includes('\n'));
+	return failed ? fail('code_nav', parts.join('\n')) : text(parts.join('\n\n'));
+}
+
+async function oneBody(host: ICodeIntelHost, root: URI, given: URI | undefined, qualified: string, line: number | undefined, nav: ICodeNavIndex | undefined): Promise<string> {
+	let uri = given;
+	let at = line;
+	if (!uri) {
+		const found = await locateDeclaration(host, root, qualified, nav);
+		if (typeof found === 'string') {
+			return found;
+		}
+		uri = found.uri;
+		at = found.line;
+	}
+	const content = await host.fileText?.(uri).catch(() => undefined);
+	if (content === undefined) {
+		return `${displayPath(root, uri)} could not be read.`;
+	}
+	at ??= declarationLineIn(content, qualified);
+	if (!at) {
+		return `"${qualified}" is not declared in ${displayPath(root, uri)}. Leave out path to look for it everywhere.`;
+	}
+	const name = qualified.split('.').filter(Boolean).at(-1);
+	const span = await symbolSpan(host, root, uri, at, name, nav, host.lspAllowed(uri), content);
+	const lines = content.split('\n');
+	const first = docStart(lines, span.start);
+	const numbered = (from: number, to: number) => lines.slice(from - 1, to).map((value, index) => `${String(from + index).padStart(5)}  ${value}`).join('\n');
+	const head = `${displayPath(root, uri)}:${span.start}-${span.end}${span.kind ? ` ${span.kind}` : ''} ${span.name ?? qualified}`;
+	if (span.end - first + 1 <= MAX_BODY_READ_LINES) {
+		return `${head}\n${numbered(first, span.end)}`;
+	}
+	// A long class or module: its head, then its members by line, so the next body call can pick one.
+	const shownTo = Math.min(span.end, first + 40);
+	const members = span.members.slice(0, 80).map(member => `  ${member.kind} ${member.name} [${member.line}-${member.endLine}]`);
+	return `${head} (${span.end - span.start + 1} lines; the first ${shownTo - first + 1}, then its members; ask body for ${span.name ?? qualified}.<member>)\n${numbered(first, shownTo)}${members.length ? `\nMembers:\n${members.join('\n')}` : `\n[${span.end - shownTo} more lines]`}`;
+}
+
+/** impact stops looking (and says so) after this long; callers stop earlier so the rest still runs. */
+const IMPACT_DEADLINE_MS = 20_000;
+const IMPACT_CALLERS_MS = 12_000;
+const MAX_IMPACT_CALLERS = 40;
+const MAX_IMPACT_FILES = 40;
+/** Files whose importers are searched for tests. */
+const MAX_TEST_SOURCES = 10;
+const MAX_DIAGNOSED_FILES = 8;
+const IMPACT_DIAGNOSTICS_MS = 5_000;
+
+interface IAffected {
+	readonly uri: URI;
+	readonly reasons: Set<string>;
+	readonly lines: Set<number>;
+	/** 0: the definition's own file; 1: uses or imports it; 2+: calls something that does. */
+	level: number;
+}
+
+interface ICallerNode {
+	readonly level: number;
+	readonly label: string;
+	readonly uri: URI;
+	readonly sites: readonly number[];
+	top?: boolean;
+}
+
+async function collectCallers(host: ICodeIntelHost, root: URI, position: IResolvedPosition, levels: number, deadline: number): Promise<{ nodes: ICallerNode[]; cut: boolean } | undefined> {
+	if (!position.column || !host.calls) {
+		return undefined;
+	}
+	const first = await host.calls(position.uri, position.line, position.column, 'incoming').catch(() => undefined);
+	if (!first) {
+		return undefined;
+	}
+	const seen = new Set<string>([`${position.uri.toString()}:${position.line}`]);
+	const nodes: ICallerNode[] = [];
+	let cut = false;
+	const walk = async (edges: readonly ICallEdge[], level: number): Promise<void> => {
+		for (const edge of edges) {
+			if (nodes.length >= MAX_IMPACT_CALLERS || Date.now() > deadline) {
+				cut = true;
+				return;
+			}
+			const named = await namedSites(host, edge);
+			if (named) {
+				nodes.push({ level, label: `${displayPath(root, edge.uri)}: calls in ${named}`, uri: edge.uri, sites: edge.sites });
+				continue;
+			}
+			const key = `${edge.uri.toString()}:${edge.line}`;
+			if (seen.has(key)) {
+				continue;
+			}
+			seen.add(key);
+			const node: ICallerNode = { level, label: `${edge.container ? `${edge.container}.` : ''}${edge.name}  ${displayPath(root, edge.uri)}:${edge.line}${edge.sites.length ? ` (calls at ${edge.sites.slice(0, 4).join(', ')})` : ''}`, uri: edge.uri, sites: edge.sites };
+			nodes.push(node);
+			if (level < levels) {
+				const next = await host.calls!(edge.uri, edge.line, edge.column, 'incoming').catch(() => undefined);
+				if (next && !next.length) {
+					node.top = true;
+				} else if (next?.length) {
+					await walk(next, level + 1);
+				}
+			}
+		}
+	};
+	await walk(first, 1);
+	return { nodes, cut };
+}
+
+const IMPORT_LINE = /^\s*(?:import\b|export\s+(?:\*|\{[^}]*\}|type\s+\{)[^;]*\bfrom\b|(?:const|let|var)\s+[\w${},\s]+=\s*require\(|from\s+[\w.]+\s+import\b|use\s)/;
+
+/**
+ * What a change to a symbol reaches, in one answer: its callers up to `levels` (the route or
+ * procedure each chain ends in), every file that uses or imports it (type-checked references,
+ * with the index's name matches for projects the language server did not load), the tests that
+ * cover those files (by the import graph), and the errors those files have now. Agents otherwise
+ * piece this together from 4-6 grep and read rounds before a refactor.
+ */
+async function impact(host: ICodeIntelHost, root: URI, position: IResolvedPosition, nav: ICodeNavIndex | undefined, lsp: boolean, depth: number | undefined): Promise<IToolResult> {
+	const started = Date.now();
+	const levels = Math.max(1, Math.min(MAX_CALL_DEPTH, Math.floor(depth ?? 3)));
+	const name = position.name;
+	const content = await host.fileText?.(position.uri).catch(() => undefined) ?? '';
+	const [span, lspReferences, callers, moduleImporters] = await Promise.all([
+		symbolSpan(host, root, position.uri, position.line, name, nav, lsp, content),
+		position.column ? host.references(position.uri, position.line, position.column).catch(() => []) : Promise.resolve([]),
+		collectCallers(host, root, position, levels, started + IMPACT_CALLERS_MS),
+		nav?.importers?.(root, position.uri, 1).catch(() => undefined),
+	]);
+	let references: readonly ICodeLocation[] = lspReferences;
+	let byName = '';
+	// No language server answer, or one that stays in this file while the name is used elsewhere: the index's matches by name.
+	const lspFiles = new Set(lspReferences.map(ref => ref.uri.toString()));
+	if (nav && name && /^[\w$]+$/.test(name) && lspFiles.size <= NARROW_REFERENCE_FILES) {
+		const indexed = await nav.references(root, name).catch(() => undefined) ?? [];
+		const extra = indexed.filter(ref => !lspFiles.has(ref.uri.toString()));
+		if (extra.length) {
+			references = [...lspReferences, ...extra];
+			byName = lspReferences.length ? ' (files past the first matched by name, not type-checked)' : FROM_INDEX;
+		}
+	}
+	const affected = new Map<string, IAffected>();
+	const note = (uri: URI, reason: string, lines: readonly number[], level: number) => {
+		const key = uri.toString();
+		let entry = affected.get(key);
+		if (!entry) {
+			entry = { uri, reasons: new Set(), lines: new Set(), level };
+			affected.set(key, entry);
+		}
+		entry.reasons.add(reason);
+		lines.forEach(line => entry!.lines.add(line));
+		entry.level = Math.min(entry.level, level);
+	};
+	const ownKey = position.uri.toString();
+	for (const ref of references) {
+		if (ref.uri.toString() === ownKey && ref.line >= span.start && ref.line <= span.end) {
+			continue; // the declaration itself, and recursion
+		}
+		const isImport = !!ref.preview && IMPORT_LINE.test(ref.preview);
+		note(ref.uri, isImport ? 'imports' : 'uses', isImport ? [] : [ref.line], ref.uri.toString() === ownKey ? 0 : 1);
+	}
+	for (const node of callers?.nodes ?? []) {
+		if (node.level > 1) {
+			// Its call sites are in the Callers list; here only the file counts.
+			note(node.uri, 'calls it indirectly', [], node.level);
+		}
+	}
+	for (const importer of moduleImporters ?? []) {
+		if (!affected.has(importer.uri.toString())) {
+			note(importer.uri, 'imports the file', [], 2);
+		}
+	}
+	// Tests: affected test files, then tests that import an affected file or the definition's file.
+	const tests = new Map<string, string>();
+	for (const entry of affected.values()) {
+		const path = displayPath(root, entry.uri);
+		if (isTestPath(path)) {
+			tests.set(path, entry.reasons.has('uses') ? 'uses it' : [...entry.reasons][0]);
+		}
+	}
+	if (nav?.importers) {
+		const sources = [position.uri, ...[...affected.values()].filter(entry => entry.level <= 1 && !isTestPath(displayPath(root, entry.uri))).sort((a, b) => a.level - b.level).map(entry => entry.uri)].slice(0, MAX_TEST_SOURCES);
+		const found = await raceTimeout(Promise.all(sources.map(async source => ({ source, importers: await nav.importers!(root, source, 1).catch(() => undefined) ?? [] }))), Math.max(1_000, started + IMPACT_DEADLINE_MS - Date.now()));
+		for (const { source, importers } of found ?? []) {
+			for (const importer of importers) {
+				if (isTestPath(importer.path) && !tests.has(importer.path)) {
+					tests.set(importer.path, `imports ${displayPath(root, source)}`);
+				}
+			}
+		}
+	}
+	// Errors the affected files have now (the language server's markers).
+	const diagnosed = lsp ? [position.uri, ...[...affected.values()].filter(entry => entry.uri.toString() !== ownKey).sort((a, b) => a.level - b.level).map(entry => entry.uri)].slice(0, MAX_DIAGNOSED_FILES) : [];
+	const errors = diagnosed.length ? await raceTimeout(host.diagnostics(diagnosed, 'error').catch(() => undefined), IMPACT_DIAGNOSTICS_MS) : undefined;
+
+	const out: string[] = [];
+	const where = `${displayPath(root, position.uri)}:${span.start}${span.end > span.start ? `-${span.end}` : ''}`;
+	out.push(`Impact of ${name ? `\`${name}\`` : 'the symbol'} (${span.kind ? `${span.kind}, ` : ''}${where})${noLspNote(lsp)}:`);
+	if (callers?.nodes.length) {
+		const tops = callers.nodes.filter(node => node.top).length;
+		out.push(`Callers, ${levels} level${levels === 1 ? '' : 's'}${tops ? ` (${tops} with no callers: entry points or used by name)` : ''}:\n${callers.nodes.map(node => `${'  '.repeat(node.level)}${node.label}${node.top ? '  [no callers]' : ''}`).join('\n')}${callers.cut ? '\n  [stopped early; ask callers from a deeper function for the rest]' : ''}`);
+	} else if (callers) {
+		out.push('Callers: none found by the language server.');
+	}
+	const imports = [...affected.values()].filter(entry => entry.reasons.has('imports')).length;
+	const files = [...affected.values()].sort((a, b) => a.level - b.level || displayPath(root, a.uri).localeCompare(displayPath(root, b.uri)));
+	const shownFiles = files.slice(0, MAX_IMPACT_FILES).map(entry => {
+		const path = displayPath(root, entry.uri);
+		const lines = [...entry.lines].sort((a, b) => a - b);
+		const reasons = [...entry.reasons].filter(reason => reason !== 'uses' || !lines.length).join(', ');
+		const uses = lines.length ? `uses ${lines.slice(0, 6).join(', ')}${lines.length > 6 ? ` (+${lines.length - 6})` : ''}` : '';
+		return `  ${path}${isTestPath(path) ? ' [test]' : ''}  ${[reasons, uses].filter(Boolean).join('; ')}`;
+	});
+	out.push(`${references.length} reference${references.length === 1 ? '' : 's'}${byName}; ${affected.size} file${affected.size === 1 ? '' : 's'} affected${imports ? ` (${imports} import it)` : ''}${moduleImporters?.length ? `, ${moduleImporters.length} import its file` : ''}:${shownFiles.length ? `\n${shownFiles.join('\n')}` : ' none outside the declaration.'}${files.length > MAX_IMPACT_FILES ? `\n  [${files.length - MAX_IMPACT_FILES} more files]` : ''}`);
+	out.push(tests.size ? `Tests to run (${tests.size}):\n${[...tests].slice(0, 25).map(([path, why]) => `  ${path}  (${why})`).join('\n')}` : 'Tests to run: none found that use it or import the affected files.');
+	if (errors?.length) {
+		out.push(`Errors now (${errors.length}):\n${errors.slice(0, 10).map(item => `  ${displayPath(root, item.uri)}:${item.line} ${item.message.split('\n')[0]}`).join('\n')}`);
+	} else if (errors) {
+		out.push(`Errors now: none in ${diagnosed.length} file${diagnosed.length === 1 ? '' : 's'} checked.`);
+	}
+	return text(out.join('\n\n'));
+}
+
+/** impact with a path and no symbol: who imports the file (and who imports those), the tests among them, its errors. */
+async function moduleImpact(host: ICodeIntelHost, root: URI, uri: URI, nav: ICodeNavIndex | undefined): Promise<IToolResult> {
+	if (!nav?.importers) {
+		return fail('code_nav', 'impact of a whole file needs Volt\'s code index (Settings > Code Intelligence); name a symbol in it instead.');
+	}
+	const [importers, errors] = await Promise.all([
+		nav.importers(root, uri, 2).catch(() => undefined),
+		host.lspAllowed(uri) ? raceTimeout(host.diagnostics([uri], 'error').catch(() => undefined), IMPACT_DIAGNOSTICS_MS) : Promise.resolve(undefined),
+	]);
+	if (!importers) {
+		return fail('code_nav', 'The code index could not answer (still indexing, or off). Try again shortly, or name a symbol in the file.');
+	}
+	const path = displayPath(root, uri);
+	const direct = importers.filter(item => item.depth === 1);
+	const indirect = importers.filter(item => item.depth === 2);
+	const tests = importers.filter(item => isTestPath(item.path));
+	const out = [`Impact of ${path} (by the import graph):`];
+	out.push(direct.length ? `Imported by ${direct.length} file${direct.length === 1 ? '' : 's'}:\n${direct.slice(0, MAX_IMPACT_FILES).map(item => `  ${item.path}:${item.line}${item.names.length ? `  ${item.names.slice(0, 6).join(', ')}${item.names.length > 6 ? ', ...' : ''}` : ''}`).join('\n')}${direct.length > MAX_IMPACT_FILES ? `\n  [${direct.length - MAX_IMPACT_FILES} more]` : ''}` : 'Imported by no file in this project.');
+	if (indirect.length) {
+		out.push(`Through those, ${indirect.length} more: ${indirect.slice(0, 30).map(item => item.path).join(', ')}${indirect.length > 30 ? ', ...' : ''}`);
+	}
+	out.push(tests.length ? `Tests to run (${tests.length}): ${tests.slice(0, 25).map(item => item.path).join(', ')}` : 'Tests to run: none import it within two steps.');
+	if (errors?.length) {
+		out.push(`Errors now in ${path}:\n${errors.slice(0, 10).map(item => `  ${item.line}: ${item.message.split('\n')[0]}`).join('\n')}`);
+	} else if (errors) {
+		out.push(`Errors now: none in ${path}.`);
+	}
+	return text(out.join('\n\n'));
+}
+
+const MAX_STRUCTURAL_MATCHES = 60;
+
+async function structuralSearch(root: URI, args: unknown, nav: ICodeNavIndex | undefined): Promise<IToolResult> {
+	const pattern = pickString(args, 'pattern', 'query');
+	if (!pattern?.trim()) {
+		return fail('code_nav', 'structural needs pattern: code with $X for one node and $$$ for any number, e.g. fetchUser($ID, $$$).');
+	}
+	if (!nav?.structural) {
+		return fail('code_nav', 'Structural search runs in Volt\'s code index, which this window does not have.');
+	}
+	const path = pickString(args, 'path', 'file');
+	const folder = path ? resolveWorkspaceUri(root, path) : undefined;
+	if (path && !folder) {
+		return fail('code_nav', 'path is outside the workspace.');
+	}
+	// glob: comma-separated; a leading ! skips files (`!**/*.test.*`).
+	const globs = (pickString(args, 'glob') ?? '').split(',').map(glob => glob.trim()).filter(Boolean);
+	const includes = globs.filter(glob => !glob.startsWith('!'));
+	const excludes = globs.filter(glob => glob.startsWith('!')).map(glob => glob.slice(1));
+	const rawWhere = (args as { where?: unknown } | undefined)?.where;
+	const where = rawWhere && typeof rawWhere === 'object' ? Object.fromEntries(Object.entries(rawWhere).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : undefined;
+	const result = await nav.structural(root, {
+		pattern,
+		...(folder ? { folder } : {}),
+		...(pickString(args, 'language', 'lang') ? { language: pickString(args, 'language', 'lang')! } : {}),
+		...(includes.length ? { includes } : {}),
+		...(excludes.length ? { excludes } : {}),
+		...(where && Object.keys(where).length ? { where } : {}),
+		maxMatches: Math.max(1, Math.min(200, pickNumber(args, 'limit', 'head_limit') ?? MAX_STRUCTURAL_MATCHES)),
+	});
+	if (typeof result === 'string') {
+		return fail('code_nav', result);
+	}
+	if (!result.matches.length) {
+		return text(`No code matches ${JSON.stringify(pattern)} (${result.scanned} file${result.scanned === 1 ? '' : 's'} parsed).`);
+	}
+	const byFile = new Map<string, IVoltCodeStructuralMatch[]>();
+	for (const match of result.matches) {
+		byFile.set(match.path, [...(byFile.get(match.path) ?? []), match]);
+	}
+	const lines = [...byFile].flatMap(([file, matches]) => [`${file}:`, ...matches.map(match => `  ${match.line}${match.endLine > match.line ? `-${match.endLine}` : ''}: ${match.text}${match.vars ? `  {${Object.entries(match.vars).map(([key, value]) => `${key}=${value}`).join(', ')}}` : ''}`)]);
+	return text(`${result.matches.length} match${result.matches.length === 1 ? '' : 'es'} in ${byFile.size} file${byFile.size === 1 ? '' : 's'}${result.limitHit ? ' (more exist: narrow path or the pattern)' : ''}:\n${lines.join('\n')}`);
+}
+
+//#endregion
 
 export async function runCodeAction(host: ICodeIntelHost, root: URI | undefined, args: unknown, write: CodeEditWriter, ctx: IToolContext): Promise<IToolResult> {
 	const op = pickString(args, 'op', 'operation') ?? '';

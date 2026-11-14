@@ -13,7 +13,8 @@ import { SymbolNameIndex } from '../common/symbolNameIndex.js';
 import { literalTrigramQuery, regexTrigramQuery, toByteString, TrigramQuery } from '../common/regexQuery.js';
 import { extractSymbols, hasSymbolRules, SYMBOL_KINDS } from '../common/symbolExtract.js';
 import { createJsMatcher, IJsMatcher, matchText } from '../common/textMatch.js';
-import { IVoltCodeIndexFileHits, IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeSymbol, VoltCodeIndexState, VoltCodeSymbolKind } from '../common/voltCodeIndex.js';
+import { IVoltCodeImportersRequest, IVoltCodeImportersResult, IVoltCodeIndexFileHits, IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeStructuralRequest, IVoltCodeStructuralResult, IVoltCodeStructureRequest, IVoltCodeStructureResult, IVoltCodeSymbol, VoltCodeIndexState, VoltCodeSymbolKind } from '../common/voltCodeIndex.js';
+import { CodeStructure } from './codeStructure.js';
 import { safeOpenRead } from '../../voltFiles/node/safeOpen.js';
 import { deleteSegment, ISegmentSymbols, mergeSegments, NEXT_BIT, PostingCache, releaseBuildMemory, rotl8, Segment, SegmentBuilder, TrigramTable, trigramBits } from './indexFormat.js';
 import { IGNORE_FILE_NAMES, listFiles, searchFiles } from './ripgrep.js';
@@ -839,6 +840,7 @@ export class RootIndex {
 	}
 
 	private markChanged(path: string): void {
+		this.structureLayer?.invalidate(path);
 		const at = this.live.get(path);
 		if (at) {
 			this.kill(at);
@@ -852,6 +854,7 @@ export class RootIndex {
 	}
 
 	private removePath(path: string): void {
+		this.structureLayer?.invalidate(path);
 		const at = this.live.get(path);
 		if (at) {
 			this.kill(at);
@@ -1755,6 +1758,101 @@ export class RootIndex {
 			symbols.push({ ...symbol, column: Math.max(1, raw.indexOf(symbol.name) + 1), text: line.length > 200 ? `${line.slice(0, 200)}\u2026` : line });
 		}
 		return { kind: 'results', symbols, limitHit: hits.length > request.limit };
+	}
+
+	//#endregion
+
+	//#region Structure (tree-sitter)
+
+	private structureLayer: CodeStructure | undefined;
+
+	private get codeStructure(): CodeStructure {
+		this.structureLayer ??= new CodeStructure({
+			readText: path => this.readText(path),
+			stamp: async path => {
+				try {
+					if (this.options.confined) {
+						const file = await this.openConfined(path);
+						try {
+							const stat = await file.stat();
+							return `${stat.size}:${stat.mtimeMs}`;
+						} finally {
+							await file.close();
+						}
+					}
+					const stat = await fs.stat(join(this.root, path));
+					return stat.isFile() ? `${stat.size}:${stat.mtimeMs}` : undefined;
+				} catch {
+					return undefined;
+				}
+			},
+			isListed: path => this.listed.has(path),
+			listed: () => this.listed,
+			filesContaining: async (pattern, extensions, folder, limit, regex) => {
+				const found = await this.doSearch({
+					root: this.root,
+					...(folder ? { folder: join(this.root, folder) } : {}),
+					pattern,
+					isRegExp: !!regex,
+					caseSensitive: true,
+					multiline: false,
+					includes: extensions.map(extension => `**/*.${extension}`),
+					maxMatches: limit * 8,
+					maxLineChars: 1,
+					options: this.options,
+				});
+				return found.kind === 'results' ? found.files.map(file => file.path).slice(0, limit) : undefined;
+			},
+		});
+		return this.structureLayer;
+	}
+
+	async structure(request: IVoltCodeStructureRequest): Promise<IVoltCodeStructureResult> {
+		try {
+			const notReady = await this.prepare(request.waitMs);
+			if (notReady) {
+				return { kind: 'fallback', reason: notReady };
+			}
+			const path = request.path.replace(/^\.?\/+/, '');
+			if (!this.listed.has(path)) {
+				return { kind: 'fallback', reason: 'not indexed' };
+			}
+			return await this.codeStructure.structure(path);
+		} catch (err) {
+			return this.queryFailed(err);
+		}
+	}
+
+	async importers(request: IVoltCodeImportersRequest): Promise<IVoltCodeImportersResult> {
+		try {
+			const notReady = await this.prepare(request.waitMs);
+			if (notReady) {
+				return { kind: 'fallback', reason: notReady };
+			}
+			const folder = this.folderOf(request.folder);
+			if (folder === undefined) {
+				return { kind: 'fallback', reason: 'not indexed' };
+			}
+			return await this.codeStructure.importers(request, folder || undefined);
+		} catch (err) {
+			return this.queryFailed(err);
+		}
+	}
+
+	async structural(request: IVoltCodeStructuralRequest): Promise<IVoltCodeStructuralResult> {
+		try {
+			const notReady = await this.prepare(request.waitMs);
+			if (notReady) {
+				return { kind: 'fallback', reason: notReady };
+			}
+			const folder = this.folderOf(request.folder);
+			if (folder === undefined) {
+				return { kind: 'fallback', reason: 'not indexed' };
+			}
+			return await this.codeStructure.structural(request, folder || undefined, this.pathFilter(folder, request.includes, request.excludes));
+		} catch (err) {
+			return this.queryFailed(err);
+		}
 	}
 
 	//#endregion

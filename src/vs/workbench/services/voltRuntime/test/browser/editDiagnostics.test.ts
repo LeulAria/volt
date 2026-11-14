@@ -7,7 +7,8 @@ import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ICodeIntelHost, IDiagnostic } from '../../browser/tools/codeTools.js';
-import { formatEditDiagnostics, withEditDiagnostics } from '../../browser/tools/editDiagnostics.js';
+import { editCheckHookOutput, formatEditDiagnostics, NO_HOOK_OUTPUT, withEditDiagnostics } from '../../browser/tools/editDiagnostics.js';
+import { editCheckPhase } from '../../common/codeIntelligence.js';
 import { IToolContext, IVoltTool } from '../../common/tools/tool.js';
 
 const ROOT = URI.file('/repo');
@@ -62,5 +63,21 @@ suite('Volt edit tools answer with the file\'s errors', () => {
 		const text = formatEditDiagnostics(Array.from({ length: 9 }, (_, index) => error(index + 1, `e${index}`)), 'src/a.ts');
 		assert.ok(text.startsWith('9 errors in src/a.ts now'));
 		assert.ok(text.endsWith('...and 3 more (diagnostics lists them)'));
+	});
+
+	test('Claude Code\'s edit hook: the errors an edit added as context for the model, nothing when there are none', () => {
+		assert.strictEqual(editCheckHookOutput([], 'src/a.ts'), NO_HOOK_OUTPUT);
+		const output = JSON.parse(editCheckHookOutput([
+			{ uri: URI.file('/repo/src/a.ts'), line: 10, column: 8, severity: 'error', message: 'Cannot find name \'match\'.\nmore', source: 'ts', code: '2552' },
+			{ uri: URI.file('/repo/src/a.ts'), line: 3, column: 1, severity: 'warning', message: 'unused' },
+		], 'src/a.ts'));
+		assert.deepStrictEqual(output, { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: '[Volt] This edit added 1 error in src/a.ts (language server):\n  10:8 Cannot find name \'match\'. [ts 2552]' } });
+	});
+
+	test('only diagnostics calls with a hook phase are edit checks', () => {
+		assert.strictEqual(editCheckPhase('diagnostics', { hook: 'after', path: 'a.ts' }), 'after');
+		assert.strictEqual(editCheckPhase('diagnostics', { paths: ['a.ts'] }), undefined);
+		assert.strictEqual(editCheckPhase('diagnostics', { hook: 'later' }), undefined);
+		assert.strictEqual(editCheckPhase('code_nav', { hook: 'after' }), undefined);
 	});
 });

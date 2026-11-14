@@ -12,6 +12,9 @@ import { displayPath } from './workspacePath.js';
 
 const MAX_DEFINITIONS = 20;
 const MAX_REFERENCES = 300;
+const MAX_IMPORTERS = 200;
+/** A first query may wait this long for the index to load (it is not built just for it). */
+const STRUCTURE_WAIT_MS = 8_000;
 
 /** code_nav by name, from the code index: declarations, whole-word uses, and a file's outline. */
 export function createCodeIndexNav(index: ISearchIndex): ICodeNavIndex {
@@ -74,6 +77,38 @@ export function createCodeIndexNav(index: ISearchIndex): ICodeNavIndex {
 				column: Math.max(1, line.text.search(/\b(?:class|interface)\b/) + 1),
 				preview: line.text.trim().slice(0, 160),
 			})));
+		},
+		structure: async (root, uri) => {
+			if (!usable(root)) {
+				return undefined;
+			}
+			const result = await index.service.structure({ root: root.fsPath, path: displayPath(root, uri), waitMs: STRUCTURE_WAIT_MS, options: index.options() }).catch(() => undefined);
+			return result?.kind === 'results' ? { symbols: result.symbols, imports: result.imports } : undefined;
+		},
+		importers: async (root, uri, depth) => {
+			if (!usable(root)) {
+				return undefined;
+			}
+			const result = await index.service.importers({ root: root.fsPath, path: displayPath(root, uri), depth, limit: MAX_IMPORTERS, waitMs: STRUCTURE_WAIT_MS, options: index.options() }).catch(() => undefined);
+			return result?.kind === 'results' ? result.importers.map(item => ({ ...item, uri: joinPath(root, item.path), ...(item.via ? { viaUri: joinPath(root, item.via) } : {}) })) : undefined;
+		},
+		structural: async (root, request) => {
+			if (!usable(root)) {
+				return 'Volt\'s code index is off (Settings > Code Intelligence), and structural search runs in it.';
+			}
+			const result = await index.service.structural({
+				root: root.fsPath,
+				pattern: request.pattern,
+				...(request.folder ? { folder: request.folder.fsPath } : {}),
+				...(request.language ? { language: request.language } : {}),
+				...(request.includes ? { includes: request.includes } : {}),
+				...(request.excludes ? { excludes: request.excludes } : {}),
+				...(request.where ? { where: request.where } : {}),
+				maxMatches: request.maxMatches,
+				waitMs: STRUCTURE_WAIT_MS,
+				options: index.options(),
+			}).catch(err => ({ kind: 'fallback' as const, reason: err instanceof Error ? err.message : String(err) }));
+			return result.kind === 'results' ? result : result.reason;
 		},
 		outline: async (root, uri) => {
 			if (!usable(root)) {

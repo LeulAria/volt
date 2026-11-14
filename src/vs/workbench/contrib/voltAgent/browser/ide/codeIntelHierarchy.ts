@@ -12,7 +12,7 @@ import { ITextModel } from '../../../../../editor/common/model.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { setCodeIntelErrorProbe, setCodeIntelHierarchy } from '../../../../services/voltRuntime/browser/host/codeIntelHost.js';
-import { ICallEdge, ICodeSymbolRef } from '../../../../services/voltRuntime/browser/tools/codeTools.js';
+import { ICallEdge, ICodeSymbolRef, IDiagnostic } from '../../../../services/voltRuntime/browser/tools/codeTools.js';
 import { CallHierarchyItem, CallHierarchyModel } from '../../../callHierarchy/common/callHierarchy.js';
 import { getWorkspaceSymbols } from '../../../search/common/search.js';
 import { TypeHierarchyItem, TypeHierarchyModel } from '../../../typeHierarchy/common/typeHierarchy.js';
@@ -56,7 +56,7 @@ export class CodeIntelHierarchyContribution extends Disposable implements IWorkb
 
 	constructor(@ICommandService commandService: ICommandService) {
 		super();
-		setCodeIntelErrorProbe({ errorFree: (model, token) => typeScriptErrorFree(commandService, model, token) });
+		setCodeIntelErrorProbe({ errorFree: (model, token) => typeScriptErrorFree(commandService, model, token), errors: (model, token) => typeScriptErrors(commandService, model, token) });
 		this._register(toDisposable(() => setCodeIntelErrorProbe(undefined)));
 		setCodeIntelHierarchy({
 			calls: (model, position, direction, token) => calls(model, position, direction, token),
@@ -81,7 +81,33 @@ const TYPESCRIPT_LANGUAGES = new Set(['typescript', 'typescriptreact', 'javascri
 
 interface ITsServerDiagnosticsResponse {
 	readonly success?: boolean;
-	readonly body?: readonly { readonly category?: string }[];
+	readonly body?: readonly { readonly category?: string; readonly text?: string; readonly code?: number; readonly start?: { readonly line: number; readonly offset: number } }[];
+}
+
+/**
+ * tsserver's errors and warnings in the model's current text, asked directly. The TypeScript
+ * extension reports diagnostics only for files open in an editor tab (unless project diagnostics are
+ * on), so a file an agent changed in a project chat never got a marker: the diagnostics tool said
+ * "no errors" and the new-errors checks never fired. Undefined when tsserver cannot answer.
+ */
+export async function typeScriptErrors(commandService: ICommandService, model: ITextModel, token: CancellationToken): Promise<IDiagnostic[] | undefined> {
+	if (!TYPESCRIPT_LANGUAGES.has(model.getLanguageId()) || token.isCancellationRequested) {
+		return undefined;
+	}
+	const ask = (command: string) => commandService.executeCommand<ITsServerDiagnosticsResponse>('typescript.tsserverRequest', command, { file: model.uri }).catch(() => undefined);
+	const answers = await Promise.all([ask('syntacticDiagnosticsSync'), ask('semanticDiagnosticsSync')]);
+	if (token.isCancellationRequested || answers.some(answer => !answer?.success || !Array.isArray(answer.body))) {
+		return undefined;
+	}
+	return answers.flatMap(answer => answer!.body!).filter(item => item.category === 'error' || item.category === 'warning').map((item): IDiagnostic => ({
+		uri: model.uri,
+		line: item.start?.line ?? 1,
+		column: item.start?.offset ?? 1,
+		severity: item.category === 'error' ? 'error' : 'warning',
+		message: item.text ?? '',
+		source: 'ts',
+		...(item.code !== undefined ? { code: String(item.code) } : {}),
+	}));
 }
 
 /**

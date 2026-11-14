@@ -166,4 +166,40 @@ suite('Volt code intelligence: the new-errors check after an agent write', () =>
 		assert.deepStrictEqual(await check, []);
 		assert.ok(Date.now() - started <= 450, 'ends once the markers settle');
 	}));
+
+	test('TypeScript files outside editor tabs get no markers: their errors come from tsserver directly, and markers win when there are some', async () => {
+		const { host, markers } = setup(true);
+		setCodeIntelErrorProbe({
+			errorFree: async () => false,
+			errors: async model => [{ uri: model.uri, line: 1, column: 14, severity: 'error', message: 'Type \'string\' is not assignable to type \'number\'.', source: 'ts', code: '2322' }],
+		});
+		const found = await host.diagnostics([FILE], 'error');
+		assert.deepStrictEqual(found.map(item => `${item.line}:${item.column} ${item.code}`), ['1:14 2322']);
+		assert.deepStrictEqual([...host.errorCounts(FILE).values()], [1]);
+		markers.changeOne('typescript', FILE, [error('from a tab')]);
+		assert.deepStrictEqual((await host.diagnostics([FILE], 'error')).map(item => item.message), ['from a tab']);
+	});
+
+	test('a file changed on disk by a CLI agent is read again before anyone is asked about it', async () => {
+		const disposables = store.add(new DisposableStore());
+		const markers = new MarkerService();
+		disposables.add({ dispose: () => markers.dispose() });
+		const model: ITextModel = disposables.add(createTextModel(TEXT, 'typescript', undefined, FILE));
+		let onDisk = TEXT;
+		let reloads = 0;
+		const textModels = {
+			createModelReference: async () => ({
+				object: { textEditorModel: model, isDirty: () => false, resolve: async () => { reloads++; model.setValue(onDisk); } },
+				dispose: () => { },
+			}),
+		} as unknown as ITextModelService;
+		const files = { readFile: async () => ({ value: VSBuffer.fromString(onDisk) }) } as unknown as IFileService;
+		const host = disposables.add(new CodeIntelHost(markers, textModels, new LanguageFeaturesService() as ILanguageFeaturesService, files));
+		assert.strictEqual(await host.fileText(FILE), TEXT);
+		onDisk = 'export const a = 2;\n';
+		host.noteWrite(FILE);
+		await host.newErrors(FILE, new Map());
+		assert.strictEqual(model.getValue(), onDisk);
+		assert.ok(reloads >= 1);
+	});
 });

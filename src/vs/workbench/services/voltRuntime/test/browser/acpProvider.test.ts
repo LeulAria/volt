@@ -290,13 +290,13 @@ suite('ACP provider supervision', () => {
 
 		const work = await env.provider.start(request({ sessionId: 's2', subagent: 'work' }));
 		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s2?groups=core,tasks,image,terminal,ide,browser');
-		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { subagent: 'work' }));
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { subagent: 'work', editChecks: true }));
 		await finish(env, work);
 
 		const main = await env.provider.start(request({ sessionId: 's3' }));
 		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s3', 'the user\'s own chat gets every tool');
 		// ask_question is among them, so Claude Code's own AskUserQuestion goes (a session without Volt's server keeps it, above).
-		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { voltAsks: true }));
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { voltAsks: true, editChecks: true }));
 		await finish(env, main);
 	});
 

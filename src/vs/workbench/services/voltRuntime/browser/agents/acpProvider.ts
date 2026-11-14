@@ -864,7 +864,11 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (req.textOnly) {
 			return this.textOnlyMeta(req);
 		}
-		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req), { subagent: subagentProfile(req.subagent), voltAsks, lazyToolsPlugin }) : undefined;
+		// Edits are checked by the window's language servers through the volt MCP server. Not gated on the
+		// window's tools being listed now: warm sessions start before the window registers them, and a
+		// hook whose tool is missing only fails quietly (the model never sees it).
+		const editChecks = voltAsks;
+		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req), { subagent: subagentProfile(req.subagent), voltAsks, lazyToolsPlugin, editChecks }) : undefined;
 	}
 
 	/**

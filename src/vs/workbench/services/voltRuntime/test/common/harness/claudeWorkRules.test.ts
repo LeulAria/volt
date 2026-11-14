@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, agentDescriptionWithTypes, claudeWorkRulesMeta, compactAgentListing, compactVoltToolNames, isClaudePlaceholderTitle, voltBypassModeNote, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
+import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeEditCheckHooks, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, agentDescriptionWithTypes, claudeWorkRulesMeta, compactAgentListing, compactVoltToolNames, isClaudePlaceholderTitle, voltBypassModeNote, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
 
 /** Claude Code 2.1.322's agent-types reminder (trimmed), with one custom agent whose description runs over two lines. */
 const AGENT_LISTING = [
@@ -240,5 +240,18 @@ suite('Volt Claude work rules', () => {
 		}
 		assert.strictEqual(meta.claudeCode.options.strictMcpConfig, true);
 		assert.strictEqual(meta.claudeCode.options.settings.includeGitInstructions, false);
+	});
+
+	test('edit checks: mcp_tool hooks call Volt\'s diagnostics around Read and the edit tools, not for read-only subagents', () => {
+		const hooks = claudeEditCheckHooks() as Record<string, { matcher: string; hooks: { type: string; server: string; tool: string; input: Record<string, string> }[] }[]>;
+		assert.deepStrictEqual(hooks.PreToolUse.map(entry => [entry.matcher, entry.hooks[0].input.hook]), [['Edit|Write|MultiEdit', 'before']]);
+		assert.deepStrictEqual(hooks.PostToolUse.map(entry => [entry.matcher, entry.hooks[0].input.hook]), [['Edit|Write|MultiEdit', 'after'], ['Read', 'read']]);
+		assert.deepStrictEqual({ ...hooks.PostToolUse[0].hooks[0], input: undefined, timeout: undefined }, { type: 'mcp_tool', server: 'volt', tool: 'diagnostics', input: undefined, timeout: undefined });
+		assert.strictEqual(hooks.PostToolUse[0].hooks[0].input.path, '${tool_input.file_path}');
+		const settings = (opts: Parameters<typeof claudeWorkRulesMeta>[1]) => (claudeWorkRulesMeta('claude-haiku-5-5', opts) as { claudeCode: { options: { settings: { hooks: Record<string, unknown> } } } }).claudeCode.options.settings.hooks;
+		assert.ok(settings({ editChecks: true }).PostToolUse);
+		assert.ok(settings({ editChecks: true, subagent: true }).PostToolUse);
+		assert.strictEqual(settings({ editChecks: true, subagent: 'readonly' }).PostToolUse, undefined);
+		assert.strictEqual(settings({}).PostToolUse, undefined);
 	});
 });

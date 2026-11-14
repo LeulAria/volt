@@ -142,6 +142,20 @@ export const FIND_FILES_TOOL_NAME = 'find_files';
 /** The editor's language servers over MCP, served by the same module (schemas in codeTools.ts). */
 export const LANGUAGE_SERVER_TOOL_NAMES: readonly string[] = ['code_nav', 'diagnostics', 'code_action'];
 
+/**
+ * Claude Code's file edits checked by the language server as they happen: hooks of type
+ * `mcp_tool` call `diagnostics` with `hook` set (`read` opens the file for its language server,
+ * `before` notes its errors, `after` answers the errors the edit added as the hook's context).
+ * The model never calls it this way; the call is not shown in the transcript.
+ */
+export const EDIT_CHECK_TOOL_NAME = 'diagnostics';
+export type EditCheckPhase = 'read' | 'before' | 'after';
+
+export function editCheckPhase(name: string, args: Record<string, unknown> | undefined): EditCheckPhase | undefined {
+	const phase = name === EDIT_CHECK_TOOL_NAME ? args?.hook : undefined;
+	return phase === 'read' || phase === 'before' || phase === 'after' ? phase : undefined;
+}
+
 export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 	{
 		name: INSTANT_GREP_TOOL_NAME,
@@ -153,6 +167,7 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 			'Regex or literal search over the project\'s files, answered from Volt\'s local trigram index: milliseconds even in very large repos, where ripgrep re-reads every file.',
 			'Same semantics as ripgrep (honors .gitignore, case-insensitive unless case_sensitive). Results are grouped by file with line numbers.',
 			'Prefer it over Grep, rg or find for searching code. Run several in parallel when exploring.',
+			'Code by its shape across lines (a call with a literal argument after a callback, nested calls) is code_nav op structural, not a multiline regex.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',
