@@ -147,6 +147,7 @@ import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/
 import { FRESH_TEXT_CLASS, FreshTextTracker, settleFreshText } from '../chrome/agentFreshText.js';
 import { reconcileChildren, TranscriptReuse } from '../chrome/agentTranscriptReuse.js';
 import { IAgentPendingFile } from '../review/agentEditsService.js';
+import { AgentCaretRest } from '../composer/agentCaretRest.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
 import { renderInlineMarkdown } from '../composer/agentInlineMarkdown.js';
 import { fillBrandLink, splitTextLinks } from '../blocks/agentLinkLogos.js';
@@ -917,6 +918,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	readonly onDidChangeQueue: Event<void> = this._onDidChangeQueue.event;
 
 	private inputEditor: ICodeEditor | undefined;
+	/** Holds the composer's caret still once it has been left alone a while (see AgentCaretRest). */
+	private caretRest: AgentCaretRest | undefined;
 	private inputModel: ITextModel | undefined;
 	private mentionController: AgentMentionController | undefined;
 	private composerLists: AgentComposerLists | undefined;
@@ -2145,6 +2148,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			wrappingIndent: 'none',
 			cursorStyle: 'line',
 			cursorWidth: 1,
+			cursorBlinking: forEdit ? editorConfiguration.cursorBlinking : this.caretRest?.override() ?? editorConfiguration.cursorBlinking,
 			renderLineHighlight: 'none',
 			renderLineHighlightOnlyWhenFocus: false,
 			guides: {
@@ -6511,6 +6515,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const modelUri = URI.from({ scheme: 'volt-agent-input', path: `input-${this.sessionKey}-${Date.now()}` });
 		this.inputModel = this.modelService.createModel('', null, modelUri, true);
 		this.inputEditor.setModel(this.inputModel);
+		this.caretRest = this.editorDisposables.add(new AgentCaretRest(this.inputEditor, () => this.getWorkbenchEditorOptions().cursorBlinking));
 		this.editorDisposables.add(registerComposerContext(modelUri, () => this.composerPredictionContext()));
 		this.mentionController = this.editorDisposables.add(this.instantiationService.createInstance(AgentMentionController, this.inputEditor));
 		this.mentionController.setHost(this.mentionHost(this.inputBox));
