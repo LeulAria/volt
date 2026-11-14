@@ -19,6 +19,10 @@ for (let i = 0; i < n; i++) {
 	for (let t = 0; t < 150 && !ok; t++) {
 		await sleep(200);
 		ok = await c.evaluate(marker);
+		// A built app may ask before the seed's command runs (Supervised): approve it, as a user seeding would.
+		if (!ok && t % 5 === 4) {
+			await c.evaluate(`[...document.querySelectorAll('.volt-agent-editor-main button, .volt-agent-editor-main .monaco-button, .volt-agent-editor-main [role=button]')].find(b => b.offsetParent && /^Run\b/.test((b.textContent || '').trim()))?.click()`);
+		}
 	}
 	console.log(`thread ${i + 1}: ${ok ? 'seeded' : 'no seed reply in 30 s'}`);
 	await sleep(1500);

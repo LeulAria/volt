@@ -93,6 +93,12 @@ export function cleanEnv({ replay = true } = {}) {
 	}
 	if (replay) {
 		env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${REPLAY}`;
+		// A built app runs its agent server as a launchd job, whose environment is only HOME and the app's plumbing: the
+		// agents then reach the real API (live tokens), not the replay server. ADEMark itself uses `launchctl setenv`, which
+		// would also reach the user's own Volt; the agent server is spawned by the app instead (same processes, other parent).
+		if (APP) {
+			env.VOLT_AGENT_SERVER_LAUNCHD = '0';
+		}
 	}
 	env.VSCODE_SKIP_PRELAUNCH = '1';
 	return env;
@@ -107,7 +113,9 @@ export function appExecutable(app = APP) {
 export function launchDev({ replay = true, args = [] } = {}) {
 	const log = openSync(`${UD}.log`, 'a');
 	const argv = ['--user-data-dir', UD, '--extensions-dir', EXT, `--remote-debugging-port=${PORT}`,
-		'--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-background-timer-throttling', ...args, FOLDER];
+		'--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-background-timer-throttling',
+		// A built app's fresh profile asks the macOS keychain otherwise: a system prompt on the user's screen, and CDP waits.
+		...(APP ? ['--use-mock-keychain'] : []), ...args, FOLDER];
 	const child = APP
 		? spawn(appExecutable(), argv, { cwd: process.env.HOME, env: cleanEnv({ replay }), detached: true, stdio: ['ignore', log, log] })
 		: spawn('./scripts/code.sh', argv, { cwd: CHECKOUT, env: cleanEnv({ replay }), detached: true, stdio: ['ignore', log, log] });
