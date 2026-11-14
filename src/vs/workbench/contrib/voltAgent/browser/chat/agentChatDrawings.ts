@@ -18,6 +18,11 @@ export interface IAgentChatDrawing extends IDisposable {
 	/** The backdrop shows: an animated drawing moves. */
 	play(): void;
 	pause(): void;
+	/**
+	 * Paused for a while (no input for the backdrop's idle time, or the backdrop is out of view): a
+	 * drawing that holds a large canvas may trade it for a picture of the same frame until it plays.
+	 */
+	rest?(): void;
 	/** The chat's controls moved: a drawing that keeps its text off them looks again. */
 	invalidateKeepClear?(): void;
 }

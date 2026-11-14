@@ -4,10 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, append, getWindow } from '../../../../../base/browser/dom.js';
-import { Disposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { disposableTimeout } from '../../../../../base/common/async.js';
+import { Disposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { AgentVoiceDictation } from './agentVoiceDictation.js';
 
 const WAVE_BARS = 18;
+/** The glow's opacity transition (agentComposerInput.css), plus a frame: it rests only once it has faded out. */
+const GLOW_FADE_MS = 400;
 /** One bar per microphone slice. Slices arrive four at a time and are drawn at this pace so the wave scrolls evenly. */
 const WAVE_STEP_MS = 32;
 /** Slices waiting to be drawn; more means the wave lags the voice, so older ones are dropped. */
@@ -31,6 +34,7 @@ export class AgentVoiceVisuals extends Disposable {
 	private readonly pending: number[] = [];
 	private frame: number | undefined;
 	private lastStep = 0;
+	private readonly glowRest = this._register(new MutableDisposable());
 
 	constructor(private readonly inputBox: HTMLElement, micButton: HTMLElement, private readonly dictation: AgentVoiceDictation) {
 		super();
@@ -54,8 +58,10 @@ export class AgentVoiceVisuals extends Disposable {
 
 	private render(): void {
 		const active = this.dictation.active;
+		const transcribing = this.dictation.state === 'transcribing';
+		this.restGlow(active || transcribing);
 		this.inputBox.classList.toggle('voice-active', active);
-		this.inputBox.classList.toggle('voice-transcribing', this.dictation.state === 'transcribing');
+		this.inputBox.classList.toggle('voice-transcribing', transcribing);
 		// On the glow, not the input box: a custom property set there would restyle the whole editor.
 		const level = this.dictation.state === 'listening' ? voiceLoudness(this.dictation.level) : 0;
 		this.glow.style.setProperty('--volt-voice-level', level.toFixed(3));
@@ -64,6 +70,29 @@ export class AgentVoiceVisuals extends Disposable {
 			this.pending.length = 0;
 			this.heights.fill(0);
 			this.drawBars();
+		}
+	}
+
+	/**
+	 * Out of the layout while no dictation shows it, once its fade-out is over. Even at opacity 0 its
+	 * blurred aurora (paused animation, twice the composer's width) is a composited layer of its own, and
+	 * the composer, its editor and the sash over it become layers too to stay above it: GPU memory in
+	 * every window at rest for an effect only dictation shows.
+	 */
+	private restGlow(shown: boolean): void {
+		this.glowRest.clear();
+		if (shown) {
+			if (this.glow.classList.contains('resting')) {
+				this.glow.classList.remove('resting');
+				// Style it once at opacity 0, so the fade-in runs instead of starting at full strength.
+				void this.glow.offsetWidth;
+			}
+		} else if (!this.glow.classList.contains('resting')) {
+			if (this.inputBox.classList.contains('voice-active') || this.inputBox.classList.contains('voice-transcribing')) {
+				this.glowRest.value = disposableTimeout(() => this.glow.classList.add('resting'), GLOW_FADE_MS);
+			} else {
+				this.glow.classList.add('resting');
+			}
 		}
 	}
 

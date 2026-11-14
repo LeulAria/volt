@@ -25,6 +25,8 @@ const MAX_SIDE_CROP = 1.4;
 const MAX_FRAMES_PER_SECOND = 30;
 /** Sharper than this is lost under the dim layer. */
 const MAX_PIXEL_RATIO = 2;
+/** Held this long at rest before the canvas is traded for a picture (never during a launch's first frames). */
+const ORBIT_REST_DELAY_MS = 5_000;
 
 const BACKGROUND = '#060607';
 const INK = '#ffffff';
@@ -422,14 +424,26 @@ export class AgentChatOrbit extends Disposable {
 	private lastFrameTime = 0;
 	private keepClear: readonly IOrbitBox[] = [];
 	private keepClearAt = 0;
+	/** At rest (see {@link rest}): the picture shown in the canvas's place. */
+	private resting: { readonly picture: HTMLImageElement; readonly url: string } | undefined;
+	private restTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Bumped by every wake: a rest still encoding its picture is dropped. */
+	private restGeneration = 0;
 
 	/** `keepClear`: the chat's controls on the canvas, in CSS pixels (read at most every 250 ms). */
-	constructor(parent: HTMLElement, private readonly still: () => boolean, private readonly readKeepClear: () => readonly IOrbitBox[] = () => []) {
+	constructor(parent: HTMLElement, private readonly still: () => boolean, private readonly readKeepClear: () => readonly IOrbitBox[] = () => [], private readonly restDelayMs = ORBIT_REST_DELAY_MS) {
 		super();
 		this.canvas = append(parent, $<HTMLCanvasElement>('canvas.volt-agent-chat-orbit', { 'aria-hidden': 'true' }));
 		this.context = this.canvas.getContext('2d', { alpha: false });
 		this._register(toDisposable(() => {
 			this.pause();
+			this.restGeneration++;
+			clearTimeout(this.restTimer);
+			if (this.resting) {
+				this.resting.picture.remove();
+				URL.revokeObjectURL(this.resting.url);
+				this.resting = undefined;
+			}
 			this.canvas.remove();
 		}));
 	}
@@ -442,14 +456,85 @@ export class AgentChatOrbit extends Disposable {
 		this.width = width;
 		this.height = height;
 		this.pixelRatio = pixelRatio;
-		this.canvas.width = Math.max(1, Math.round(width * pixelRatio));
-		this.canvas.height = Math.max(1, Math.round(height * pixelRatio));
+		this.wake();
 		this.draw();
+	}
+
+	/**
+	 * Held until the next input: the canvas (a window-sized bitmap, about 100 MB of the GPU's memory
+	 * with its buffers at 2x) goes, and a picture of the same frame shows in its place. Playing,
+	 * drawing again or resizing brings the canvas back with that frame first, in the same task.
+	 */
+	rest(): void {
+		if (this.playingSince !== undefined || this.still() || this.resting || this.restTimer !== undefined) {
+			return;
+		}
+		this.restTimer = setTimeout(() => {
+			this.restTimer = undefined;
+			void this.trade();
+		}, this.restDelayMs);
+	}
+
+	private async trade(): Promise<void> {
+		if (this.playingSince !== undefined || !this.context || this.canvas.width <= 1 || !this.canvas.isConnected) {
+			return;
+		}
+		const generation = ++this.restGeneration;
+		const blob = await new Promise<Blob | null>(resolve => this.canvas.toBlob(resolve, 'image/png'));
+		if (!blob || generation !== this.restGeneration || this.playingSince !== undefined) {
+			return;
+		}
+		const url = URL.createObjectURL(blob);
+		const picture = $<HTMLImageElement>('img.volt-agent-chat-orbit-still', { alt: '', 'aria-hidden': 'true', draggable: 'false' });
+		picture.src = url;
+		try {
+			await picture.decode();
+		} catch {
+			URL.revokeObjectURL(url);
+			return;
+		}
+		if (generation !== this.restGeneration || this.playingSince !== undefined || !this.canvas.isConnected) {
+			URL.revokeObjectURL(url);
+			return;
+		}
+		this.canvas.after(picture);
+		this.resting = { picture, url };
+		// A 0x0 canvas lets its bitmap go; its CSS box (inset 0, 100%) keeps the layout.
+		this.canvas.width = 0;
+		this.canvas.height = 0;
+	}
+
+	/** The canvas back at its size (its frame is drawn by the caller), the picture gone; a pending rest is dropped. */
+	private wake(): void {
+		this.restGeneration++;
+		if (this.restTimer !== undefined) {
+			clearTimeout(this.restTimer);
+			this.restTimer = undefined;
+		}
+		const width = Math.max(1, Math.round(this.width * this.pixelRatio));
+		const height = Math.max(1, Math.round(this.height * this.pixelRatio));
+		if (this.canvas.width !== width || this.canvas.height !== height) {
+			this.canvas.width = width;
+			this.canvas.height = height;
+		}
+		if (this.resting) {
+			const { picture, url } = this.resting;
+			this.resting = undefined;
+			// Drawn before the picture goes, in this task: the next frame shows the canvas, never a gap.
+			queueMicrotask(() => {
+				picture.remove();
+				URL.revokeObjectURL(url);
+			});
+		}
 	}
 
 	play(): void {
 		if (this.playingSince !== undefined) {
 			return;
+		}
+		if (this.resting || this.restTimer !== undefined) {
+			this.wake();
+			this.draw();
 		}
 		if (this.still()) {
 			this.draw();
@@ -498,6 +583,9 @@ export class AgentChatOrbit extends Disposable {
 	}
 
 	private draw(): void {
+		if (this.resting || this.restTimer !== undefined) {
+			this.wake();
+		}
 		if (this.context && this.width > 0 && this.height > 0) {
 			const now = Date.now();
 			if (now - this.keepClearAt >= CLEAR_REFRESH_MS) {

@@ -488,6 +488,10 @@ export class AgentChatBackdrop extends Disposable {
 			this.drawing?.view.play();
 		} else {
 			this.drawing?.view.pause();
+			// Held until the next input, not only between keystrokes: its canvas can go (see AgentChatOrbit.rest).
+			if (!this.shown || motion.recheckIn === undefined) {
+				this.drawing?.view.rest?.();
+			}
 		}
 		this.motionCheck.value = this.shown && this.drawing && motion.recheckIn !== undefined
 			? disposableTimeout(() => {

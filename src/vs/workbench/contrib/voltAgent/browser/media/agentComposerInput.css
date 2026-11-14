@@ -142,6 +142,11 @@
 	mask-image: radial-gradient(70% 140% at 50% 100%, #000 15%, transparent 72%);
 }
 
+/* No dictation and faded out (agentVoiceVisuals.ts): not composited at rest. */
+.volt-agent-voice-glow.resting {
+	display: none;
+}
+
 .volt-agent-input-box.voice-active .volt-agent-voice-glow {
 	opacity: calc(0.6 + var(--volt-voice-level, 0) * 0.4);
 }
