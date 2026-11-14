@@ -170,6 +170,12 @@ import { IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME } from '../../platform/vol
 import { VoltSpeechMainService } from '../../platform/voltSpeech/electron-main/voltSpeechMainService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
 
+/**
+ * Registered (lowest-priority) macOS defaults that Chromium reads for its text caret's blink period: a period of
+ * about eleven days, so the native caret is shown and does not blink. A blink period the user set wins.
+ */
+const NATIVE_CARET_DEFAULTS = { NSTextInsertionPointBlinkPeriodOn: 1e9, NSTextInsertionPointBlinkPeriodOff: 1e9 };
+
 /** The URLs of a request's frame and its ancestors, innermost first; undefined without a frame. */
 function frameUrls(frame: WebFrameMain | null | undefined): string[] | undefined {
 	if (!frame) {
@@ -662,6 +668,19 @@ export class CodeApplication extends Disposable {
 		try {
 			if (isMacintosh && this.configurationService.getValue('window.nativeTabs') === true && !systemPreferences.getUserDefault('NSUseImprovedLayoutPass', 'boolean')) {
 				systemPreferences.setUserDefault('NSUseImprovedLayoutPass', 'boolean', true as any);
+			}
+		} catch (error) {
+			this.logService.error(error);
+		}
+
+		// Volt: Chromium's own text caret does not blink (the look of macOS's "prefer non-blinking cursor") unless the
+		// user set a blink period, which wins over registered defaults. Every code editor (the agent composer too)
+		// keeps a focused, transparent <textarea> whose native caret blinked twice a second for good: a frame each
+		// time and a display link that never stopped, with nothing visible changing. Monaco draws the caret people
+		// see and blinks it as `editor.cursorBlinking` says. Round 4, A6.
+		try {
+			if (isMacintosh) {
+				systemPreferences.registerDefaults(NATIVE_CARET_DEFAULTS);
 			}
 		} catch (error) {
 			this.logService.error(error);
