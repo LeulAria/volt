@@ -151,7 +151,10 @@ async function launch(checkout) {
 function instancePids() {
 	const esc = UD.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	const mine = new RegExp(`(--user-data-dir[ =]|--volt-user-data-dir=)${esc}(\\s|$)`);
-	return execSync('ps -axo pid=,command=').toString().split('\n').filter(l => mine.test(l) && !/crel\.mjs|runvolt\.mjs|grep /.test(l)).map(l => Number(l.trim().split(/\s+/)[0])).filter(pid => pid && pid !== process.pid);
+	// The agent server is a detached process by design (chats keep working while no window is open) and the
+	// relaunched app reattaches to it; ADEMark's restart waits for the app (bundle) to exit, so it is not the app.
+	// (The first C6 run, before this line, waited for it too and force-killed it after 10 s.)
+	return execSync('ps -axo pid=,command=').toString().split('\n').filter(l => mine.test(l) && !/crel\.mjs|runvolt\.mjs|grep |volt-agent-server-main/.test(l)).map(l => Number(l.trim().split(/\s+/)[0])).filter(pid => pid && pid !== process.pid);
 }
 
 // ---------- processes of the thread (C4) ----------
@@ -460,7 +463,9 @@ async function run(test, id) {
 		const starts = ev.filter(l => l.event.type === 'run.start').length;
 		const ends = ev.filter(l => l.event.type === 'run.end');
 		if (ends.length && firstRunEnd === undefined) { firstRunEnd = ends[0].ts; log('first-run-end', { at: firstRunEnd - t0 }); }
-		const idle = starts > 0 && ends.length >= starts;
+		// Idle: the trace's last run event is a run.end (a run the quit cut, C6, has none: counting would wait forever).
+		const lastRunEvent = ev.filter(l => l.event.type === 'run.start' || l.event.type === 'run.end').at(-1);
+		const idle = starts > 0 && lastRunEvent?.event.type === 'run.end';
 		const rows = requestsSince(t0);
 		if (rows.length) { lastRequestEnd = Math.max(lastRequestEnd, ...rows.map(r => r.t + (r.ms ?? 0))); }
 		const allSent = nextFollowup >= followups.length;

@@ -46,11 +46,27 @@ Status: draft (C1 runs pending the machine's load; C2, C5, C6 pending).
 | crel-c4-1 | 90 s (ADEMark) | 51 | 59 s | no (idle agent killed) | partial | the task was done 31 s before the fault; "continue" at 152 s was answered |
 | crel-c4-30s-1 | 30 s (ours) | 63 | 32.6 s (cut) | no | partial | before the fix: the turn ended "done" on "The connection to Claude was lost."; row marked invalid for a mis-attributed recovery |
 | crel-c4-30s-3 | 30 s (ours) | 66 | 31.8 s (cut) | no | partial | first half of the fix only (session-update path); the adapter puts the failure on the prompt response |
-| crel-c4-30s-4 | 30 s (ours) | (fill) | (fill) | **yes, 11.1 s after the kill** | (fill) | both halves of the fix |
+| crel-c4-30s-4 | 30 s (ours) | 47 | 90.8 s (after the restart) | **yes, 11.1 s after the kill** | **pass** | both halves of the fix; "Restarting and retrying." shown |
 
 (c4-30s-2 invalid: the agent server restarted mid-run from a source sync.)
 
-### C5 Network Cut, C6 App Restart, C2 Message Delivery, C3 Chat Lock
+A note on ADEMark's 90 s: Opus 5.5 at medium finishes the W3 task in Volt in 55-60 s (first run end 59-61 s in
+the 90 s rows), so a fault at 90 s lands on an idle agent, the task is already done, and the harness's recovery
+watch (no new model request within 60 s) sends `continue`, which the rubric counts as `partial`. The 30 s rows
+are the real test of recovery; both are reported.
+
+### C6 App Restart
+
+| Run | Fault at | Load | App gone after Cmd-Q | Returned to thread | Resumed alone | Survival (own W3 tests) | Note |
+|---|---|---|---|---|---|---|---|
+| crel-c6-1 | 30 s | 33 | 10.5 s (the detached agent server was then force-killed by the rig) | yes (restored window) | **yes, 39 s after the quit** | pass by the rubric | the rig waited to its cap for a run.end the cut run never got (fixed; row annotated) |
+| crel-c6-2 | 30 s | (fill) | (fill) | (fill) | (fill) | (fill) | agent server left alone, as it is designed to outlive the window |
+
+What Volt showed after the relaunch (`data/orch/crel/shots/crel-c6-1-fault+10s.png`): the cut turn marked
+"Interrupted" with its file changes kept, then "Continued after Volt restarted" and the agent running again.
+No quit-confirmation dialog. The chat was reopened by the restored window itself (no click needed).
+
+### C5 Network Cut, C2 Message Delivery, C3 Chat Lock
 
 (pending)
 
