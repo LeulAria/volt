@@ -1,0 +1,1 @@
+Use Volt's delegate_task to run these two work items in parallel, one subagent per item, each in its own git worktree. Item 1: create the file NOTE1.md containing the single line "one" and commit it. Item 2: create the file NOTE2.md containing the single line "two" and commit it. When both are done, merge both branches into main yourself and reply DONE.
