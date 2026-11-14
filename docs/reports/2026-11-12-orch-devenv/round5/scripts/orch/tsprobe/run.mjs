@@ -12,7 +12,7 @@ mkdirSync(dir, { recursive: true });
 const id = `${label}-${rep}`;
 const log = join(dir, `${id}.calls.jsonl`);
 writeFileSync(log, '');
-writeFileSync(join(dir, `${id}.mcp.json`), JSON.stringify({ mcpServers: { volt: { command: 'node', args: [join(here, 'server.mjs')], env: { VOLT_OUT: out, TS_LOG: log } } } }));
+writeFileSync(join(dir, `${id}.mcp.json`), JSON.stringify({ mcpServers: { volt: { command: 'node', args: [join(here, 'server.mjs')], env: { VOLT_OUT: out, TS_LOG: log, ...(process.env.DELEGATE_DESC ? { DELEGATE_DESC: process.env.DELEGATE_DESC } : {}) } } } }));
 const prompt = readFileSync(join(here, process.env.TS_PROMPT ?? 'prompt-t1.txt'), 'utf8').trim();
 // Volt's Claude agents have no Agent/Task, Workflow or the other Claude Code team tools.
 const args = ['-p', prompt, '--model', 'claude-haiku-5-5', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions',
