@@ -1,0 +1,36 @@
+{
+ "chat": "Open medium",
+ "runs": 2,
+ "paneToEnd": {
+  "n": 2,
+  "median": 275.5,
+  "min": 234,
+  "max": 317
+ },
+ "framesWithoutTranscript": {
+  "n": 2,
+  "median": 1,
+  "min": 1,
+  "max": 1
+ },
+ "results": [
+  {
+   "paneAt": 1467,
+   "endAt": 1784,
+   "paneToEnd": 317,
+   "framesWithoutTranscript": 1,
+   "states": "none@26x51 rows@1467x1 end@1784x1 rows@1851x1 end@1992x12",
+   "loadBefore": 11.9,
+   "loadAfter": "11.90 14.56 15.31"
+  },
+  {
+   "paneAt": 1057,
+   "endAt": 1291,
+   "paneToEnd": 234,
+   "framesWithoutTranscript": 1,
+   "states": "none@16x54 rows@1057x1 end@1291x1 rows@1357x1 end@1391x9 rows@1882x20",
+   "loadBefore": 13.66,
+   "loadAfter": "13.05 14.72 15.36"
+  }
+ ]
+}
