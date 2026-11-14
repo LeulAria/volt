@@ -60,13 +60,23 @@ are the real test of recovery; both are reported.
 | Run | Fault at | Load | App gone after Cmd-Q | Returned to thread | Resumed alone | Survival (own W3 tests) | Note |
 |---|---|---|---|---|---|---|---|
 | crel-c6-1 | 30 s | 33 | 10.5 s (the detached agent server was then force-killed by the rig) | yes (restored window) | **yes, 39 s after the quit** | pass by the rubric | the rig waited to its cap for a run.end the cut run never got (fixed; row annotated) |
-| crel-c6-2 | 30 s | (fill) | (fill) | (fill) | (fill) | (fill) | agent server left alone, as it is designed to outlive the window |
+| crel-c6-2 | 30 s | 26 | 1.3 s | yes (restored window) | **yes, 16 s after the quit** | **pass** (0.95 min) | agent server left alone, as it is designed to outlive the window |
 
 What Volt showed after the relaunch (`data/orch/crel/shots/crel-c6-1-fault+10s.png`): the cut turn marked
 "Interrupted" with its file changes kept, then "Continued after Volt restarted" and the agent running again.
 No quit-confirmation dialog. The chat was reopened by the restored window itself (no click needed).
 
-### C5 Network Cut, C2 Message Delivery, C3 Chat Lock
+### C5 Network Cut
+
+| Run | Cut at | Load | What happened during the cut | Resumed alone | Survival (own W3 tests) | Note |
+|---|---|---|---|---|---|---|
+| crel-c5-1 | 30 s, 30 s long | 27 | Claude Code's own retry ("Reconnecting to Claude, attempt 1 of 10.") was taken for a lost process by fix 1: the turn failed at 37.8 s, Volt's keep-working rescue restarted the chat at 49 s into the same cut; it resumed 28.7 s after the API came back | yes | pass (2.33 min) | invalid for the method: the regression (fixed, `cfd99bbe1fc`) did the recovering, not the CLI's retry |
+| crel-c5-2 | 30 s, 30 s long | (fill) | (fill) | (fill) | (fill) | fix 1b in |
+
+The proxy's cut: 91 requests refused in the 30 s, 88 of them in one burst at +7-9 s (the composer predictor's
+Haiku calls and Claude Code's `/api/hello` connectivity checks and retries), one in-flight Opus stream cut.
+
+### C2 Message Delivery, C3 Chat Lock
 
 (pending)
 
@@ -89,6 +99,14 @@ on the prompt response or a session update mid-turn, so the runtime restarts the
 (the existing "Agent process died. Restarting and retrying." path). Service failures (overloaded, rate limited)
 stay notices. Tests: `acpProvider.test.ts` (three cases), `acpNotices.test.ts`.
 Numbers: C4 at 30 s, resumed alone 11.1 s after the kill (run 4) against never (runs 1 and 3).
+
+### 1b. A connection retry in progress stays a notice (`cfd99bbe1fc`)
+
+Cause: the adapter reports the CLI's own API retries as `transport_lost` too, at severity `warning`
+("Reconnecting to Claude, attempt 1 of 10."); fix 1 took that for a dead process, failed the turn and restarted
+the agent into the same outage (C5 run 1: the chat recovered, but by Volt's rescue, with the CLI's retry thrown
+away). Change: a lost process is category `connection` at severity `error` (`isLostAgentProcess`); a warning is a
+notice only. Test: `acpProvider.test.ts` (api_retry case). Numbers: C5 run 2.
 
 ### 2. A subagent gets the user's request whole; the lead names its part (`cc524a5b90b`)
 
