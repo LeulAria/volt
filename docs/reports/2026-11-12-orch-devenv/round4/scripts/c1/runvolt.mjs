@@ -247,7 +247,7 @@ async function finish({ id, chat, repo, seed, t0, load, shown }) {
 		tokensTotal: tokens.total, usd: usd?.usd ?? null, tokens, requests: rows.length, afterEnd: after.length,
 		agents: seen, fanOut: fan, sessions: intervals.map(s => ({ cwd: s.cwd, start: s.start - t0, end: s.end - t0, sidechain: s.sidechain })),
 		mainModel, efforts,
-		tasks: (tree?.tasks ?? []).map(t => ({ title: t.title, role: t.role, isolation: t.isolation, state: t.state, model: t.modelLabel ?? t.modelRef, childId: t.childId, startedAt: t.startedAt && t.startedAt - t0, endedAt: t.endedAt && t.endedAt - t0, report: t.result?.length, branch: t.worktree?.branch ?? t.branch })),
+		tasks: (tree?.tasks ?? []).map(t => ({ title: t.title, role: t.role, isolation: t.isolation, state: t.state, model: t.modelLabel ?? t.modelRef, childId: t.childId, startedAt: t.startedAt && t.startedAt - t0, endedAt: t.endedAt && t.endedAt - t0, report: t.result?.length, branch: t.worktreeBranch, worktree: t.worktreePath, usage: t.usage, rounds: t.rounds?.length ?? t.rounds })),
 	};
 	writeFileSync(join(DATA, `${id}.grade.json`), JSON.stringify(graded, null, 1));
 	writeFileSync(join(DATA, `${id}.traces.json`), JSON.stringify({ tree, traces }));
