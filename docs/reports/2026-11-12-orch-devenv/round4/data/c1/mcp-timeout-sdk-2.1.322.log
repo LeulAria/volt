@@ -11,3 +11,8 @@ The operation timed out.
 2026-11-14T00:34:13.682Z call 2: answered after 90.0 s
 slept 90 s
 == took 101 s
+== settings.json env wins: CLAUDE_CONFIG_DIR/settings.json {"env":{"MCP_TOOL_TIMEOUT":"20000"}}, process env MCP_TOOL_TIMEOUT=300000, 30 s tool
+2026-11-14T00:39:30.073Z call 2: sleep 30 s
+2026-11-14T00:39:52.241Z call 2: client hung up after 22.2 s
+MCP server "sleep" tool "sleep" timed out after 20s
+== took 29 s
