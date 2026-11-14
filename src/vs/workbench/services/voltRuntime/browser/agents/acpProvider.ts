@@ -113,8 +113,8 @@ interface IAcpSession {
 	 * with no tools, so Volt's modes and access policy have nothing to switch.
 	 */
 	textOnly?: { readonly ownPrompt: boolean };
-	/** A read of the OS sandbox's refusals is under way (`checkSandboxDenials`); `again`: one more after it, from then. */
-	sandboxCheck?: { again?: number };
+	/** A read of the OS sandbox's refusals is under way (`checkSandboxDenials`); `again`: one more after it, from then; `done`: all of them read. */
+	sandboxCheck?: { again?: number; readonly done: Promise<void> };
 	/** When each running tool call of a sandboxed agent started (a refusal check reads only its time). */
 	toolStarts?: Map<string, number>;
 }
@@ -308,6 +308,8 @@ const MAX_PENDING_SANDBOX_EVENTS = 20;
 const SANDBOX_CHECK_LOOKBACK_MS = 2 * 60_000;
 /** A background command that failed may have been refused any time since it started. */
 const SANDBOX_BACKGROUND_LOOKBACK_MS = 15 * 60_000;
+/** How long a turn's end waits for a refusal read still under way (`log show` takes 0.8-2.6 s here). */
+const SANDBOX_CHECK_END_WAIT_MS = 4_000;
 const MAX_TRACKED_TOOL_STARTS = 200;
 /** Spawn ids whose sandbox events wait for a session; older ones are dropped first. */
 const MAX_EARLY_SANDBOX_SPAWNS = 16;
@@ -1283,19 +1285,35 @@ export class AcpAgentProvider implements IAgentProvider {
 			live.sandboxCheck.again = Math.min(live.sandboxCheck.again ?? Infinity, since);
 			return;
 		}
-		const state: { again?: number } = live.sandboxCheck = {};
+		let settle!: () => void;
+		const state: { again?: number; done: Promise<void> } = live.sandboxCheck = { done: new Promise<void>(resolve => settle = resolve) };
 		const read = (from: number): void => {
 			void this.stdio.checkSandboxDenials!(live.processId, from).catch(() => undefined).finally(() => {
 				const again = state.again;
 				if (again !== undefined && this.sandboxedProcesses.has(live.processId)) {
 					state.again = undefined;
 					read(again);
-				} else if (live.sandboxCheck === state) {
-					live.sandboxCheck = undefined;
+				} else {
+					if (live.sandboxCheck === state) {
+						live.sandboxCheck = undefined;
+					}
+					settle();
 				}
 			});
 		};
 		read(since);
+	}
+
+	/**
+	 * A turn that ends while its refusals are being read waits for them (at most
+	 * {@link SANDBOX_CHECK_END_WAIT_MS}), so the "Blocked by the sandbox" card lands in the turn whose
+	 * command was refused rather than in the next one. Only turns with a failed command wait.
+	 */
+	private async settleSandboxCheck(live: IAcpSession): Promise<void> {
+		const pending = live.sandboxCheck?.done;
+		if (pending) {
+			await Promise.race([pending, timeout(SANDBOX_CHECK_END_WAIT_MS)]);
+		}
 	}
 
 	/** Records when a sandboxed agent's tool call started, so a refusal check reads only its time. */
@@ -2015,6 +2033,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				}
 				// Off the turn's path: the run ends now and the next prompt waits for the merge (see `stateSync`).
 				this.syncSandboxStateAfterTurn(live);
+				await this.settleSandboxCheck(live);
 				this.endTurn(live, turn, result?.stopReason === 'cancelled' || turn.userCancelled ? 'abort' : 'done');
 				return;
 			}
