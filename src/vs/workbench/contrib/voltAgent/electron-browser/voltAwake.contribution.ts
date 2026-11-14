@@ -25,7 +25,11 @@ import '../common/agentAwakeSettings.js';
 
 registerMainProcessRemoteService(IVoltAwakeService, VOLT_AWAKE_CHANNEL_NAME);
 
-const HEARTBEAT_MS = 30_000;
+/**
+ * How often the lease is re-sent unchanged so main's copy (kept 2 minutes) stays fresh. At rest this was the only
+ * renderer-to-main call left (round 6 IPC census, 3 in 90 s): once a minute keeps twice the headroom under the TTL.
+ */
+const HEARTBEAT_MS = 60_000;
 /** A run the orchestrator does not track counts only while it still emits; one that never ended stops counting. */
 const UNTRACKED_RUN_QUIET_MS = 15 * 60_000;
 
