@@ -131,6 +131,7 @@ import { searchFilesAndFolders } from '../../../search/browser/searchFilesAndFol
 import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from './agentEditorInput.js';
 import { OPEN_CONNECTED_AGENTS_COMMAND_ID } from '../orchestration/agentExternalCaller.js';
 import { createAgentTitleActionViewItem } from './agentTitleActions.js';
+import { hasUserInput, watchForUserInput } from './agentUserInput.js';
 import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
@@ -1161,6 +1162,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 
 	protected override createEditor(parent: HTMLElement): void {
 		parent.classList.add('volt-agent-editor-instance');
+		watchForUserInput(getWindow(parent));
 		this.container = append(parent, $('.volt-agent-editor'));
 		this.container.dataset.mode = normalizeVoltMode(this.currentMode);
 		// Until the first chat's history is read the thread is empty, which lays out the
@@ -6525,7 +6527,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.inputBox.classList.add('focused');
 			// Focus means a message is coming: start a CLI agent now so the first send skips its cold start.
 			// A switch focuses the composer too; then the open timer decides (see schedulePrewarm).
-			if (!this.focusingForSwitch) {
+			// Not the focus a window gives its restored chat at launch: nobody picked that chat yet.
+			if (!this.focusingForSwitch && hasUserInput(getWindow(this.inputBox))) {
 				this.prewarmAgent();
 			}
 		}));
@@ -9166,7 +9169,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.prewarmTimer = disposableTimeout(() => {
 			this.prewarmTimer?.dispose();
 			this.prewarmTimer = undefined;
-			if (this.isVisible() && !this.isStreaming() && this.composerCanSend()) {
+			// A chat only restored with the window (no key or click yet) starts no agent: a launch costs no agent process.
+			if (this.isVisible() && !this.isStreaming() && this.composerCanSend() && this.container && hasUserInput(getWindow(this.container))) {
 				this.prewarmAgent();
 			}
 		}, delay);
