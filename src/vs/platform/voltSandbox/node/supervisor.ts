@@ -205,6 +205,16 @@ export const HOST_CHANNEL_FD_ENV = 'VOLT_HOST_CHANNEL_FD';
 const STOP_TIMEOUT_MS = 5_000;
 /** How long a host's denials gather before the window hears of them. */
 const DENIAL_COALESCE_MS = 250;
+/** How long a host that crashed may take to read the OS's refusals of it (`log show`) before its restart. */
+const HOST_EXIT_DENIAL_READ_MS = 3_000;
+/** How long one read of a running host's refusals may take. */
+const HOST_DENIAL_READ_MS = 10_000;
+/** When a launch's refusals are read in its first seconds (ms after the launch). */
+const HOST_START_READS_MS = [3_000, 20_000];
+/** A host that works is read this long after its first message... */
+const HOST_QUIET_READ_MS = 2_000;
+/** ...and never more often than this (a read is about 0.3-0.6 s of CPU in `log`/`logd`). */
+const HOST_READ_GAP_MS = 30_000;
 const LEDGER_VERSION = 1;
 
 /** One host's record in its run folder, read back by the next start of Volt (F.11). */
@@ -733,6 +743,10 @@ class SandboxHost implements ISandboxedHost {
 		// A host disposed while its sandbox was being prepared takes no listener (it would leak).
 		if (!this.disposed) {
 			this.denialListener = { prepared, listener: prepared.onDenial(denial => this.recordDenial(denial, prepared.policy.home)) };
+			this.launchedAt = this.denialReadFrom = Date.now();
+			clearTimeout(this.denialReadTimer);
+			this.denialReadTimer = undefined;
+			this.scheduleDenialRead(this.launchedAt + HOST_START_READS_MS[0]);
 		}
 		this._backend = prepared.backend;
 		const piped = request.stdio === 'pipe';
@@ -894,6 +908,11 @@ class SandboxHost implements ISandboxedHost {
 			this._channelId = undefined;
 		}
 		this._channel = undefined;
+		if (wasRunning && !this.stopReason && !this.relaunching && code !== 0) {
+			// It died on its own: what the sandbox refused it is often why. The OS's refusals are read
+			// on demand (no resident kernel-log watch), so read them before its listener goes.
+			await prepared.flushDenials(HOST_EXIT_DENIAL_READ_MS).catch(() => undefined);
+		}
 		this.stopDenials(prepared);
 		await prepared.dispose();
 		if (this.prepared === prepared) {
@@ -967,7 +986,41 @@ class SandboxHost implements ISandboxedHost {
 			this.setState('running');
 		}
 		this.scheduleIdle();
+		// What the host was refused while it works: read shortly after, then at most every HOST_READ_GAP_MS while it keeps working.
+		this.scheduleDenialRead(Math.max(this.lastActivity + HOST_QUIET_READ_MS, this.lastDenialRead + HOST_READ_GAP_MS));
 	}
+
+	/**
+	 * The OS's refusals of this host are read on demand (`flushDenials`), not watched the whole time
+	 * it lives: in its first seconds (when a plugin most often reaches for what it may not), after
+	 * it worked, and when it crashes. A host at rest costs no reads.
+	 */
+	private scheduleDenialRead(at: number): void {
+		if (this.denialReadTimer || this.disposed) {
+			return;
+		}
+		this.denialReadTimer = setTimeout(() => {
+			this.denialReadTimer = undefined;
+			const listening = this.denialListener;
+			if (!listening || this.disposed) {
+				return;
+			}
+			const from = this.denialReadFrom;
+			this.lastDenialRead = this.denialReadFrom = Date.now();
+			void listening.prepared.flushDenials(HOST_DENIAL_READ_MS, from).catch(() => undefined);
+			const sinceLaunch = Date.now() - this.launchedAt;
+			const next = HOST_START_READS_MS.find(at => at > sinceLaunch);
+			if (next !== undefined) {
+				this.scheduleDenialRead(this.launchedAt + next);
+			}
+		}, Math.max(0, at - Date.now()));
+	}
+
+	private denialReadTimer: ReturnType<typeof setTimeout> | undefined;
+	/** The current launch's refusals before this moment were read. */
+	private denialReadFrom = 0;
+	private lastDenialRead = 0;
+	private launchedAt = 0;
 
 	private scheduleIdle(): void {
 		const idle = this.request.idle;
@@ -1099,6 +1152,7 @@ class SandboxHost implements ISandboxedHost {
 		clearTimeout(this.idleTimer);
 		clearTimeout(this.backoffTimer);
 		clearTimeout(this.denialTimer);
+		clearTimeout(this.denialReadTimer);
 		this.stopDenials();
 		for (const emitter of [this._onDidChangeState, this._onExit, this._onResource, this._onMessage, this._onStdout] as Emitter<unknown>[]) {
 			emitter.dispose();

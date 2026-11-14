@@ -47,6 +47,7 @@ import { AcpJsonRpcClient, AcpRequestAbandonedError, IAcpIncomingRequest } from 
 import { listClaudeModels } from './claudeCatalog.js';
 import { acpLaunchFor, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listFxModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
 import { listCodexModels } from './codexAppServer.js';
+import { sandboxRefusalLikely } from '../../common/sandboxDenialCheck.js';
 import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
 import { advertisedModelVariant, applyContextWindowSuffix, applyOptionsToParameterizedId, configUpdatesForOptions, descriptorsFromAcpModel, flattenChoices, formatAgentModelLabel, IAcpAvailableModel, IAcpConfigOption, IAcpModelMeta, isModelConfigOption, metadataForAcpModel, parseParameterizedModelId } from './acpModels.js';
@@ -112,6 +113,10 @@ interface IAcpSession {
 	 * with no tools, so Volt's modes and access policy have nothing to switch.
 	 */
 	textOnly?: { readonly ownPrompt: boolean };
+	/** A read of the OS sandbox's refusals is under way (`checkSandboxDenials`); `again`: one more after it, from then. */
+	sandboxCheck?: { again?: number };
+	/** When each running tool call of a sandboxed agent started (a refusal check reads only its time). */
+	toolStarts?: Map<string, number>;
 }
 
 /** States of an AIR async task; the last three are final. */
@@ -299,6 +304,11 @@ const SPARE_TTL_MS = 10 * 60_000;
 const MAX_SPARES = 2;
 /** Sandbox events kept per session (or spawn) until a turn shows them. */
 const MAX_PENDING_SANDBOX_EVENTS = 20;
+/** A failed call whose start Volt did not see: its refusal check reads this far back. */
+const SANDBOX_CHECK_LOOKBACK_MS = 2 * 60_000;
+/** A background command that failed may have been refused any time since it started. */
+const SANDBOX_BACKGROUND_LOOKBACK_MS = 15 * 60_000;
+const MAX_TRACKED_TOOL_STARTS = 200;
 /** Spawn ids whose sandbox events wait for a session; older ones are dropped first. */
 const MAX_EARLY_SANDBOX_SPAWNS = 16;
 
@@ -1253,6 +1263,53 @@ export class AcpAgentProvider implements IAgentProvider {
 		this.deliverSandboxEvent(session, turn, event);
 	}
 
+	/**
+	 * A sandboxed agent's tool call that failed, or whose output reads like a refusal: the OS's
+	 * refusals are read now and arrive as `sandbox.denial` cards (onSandboxEvent). Volt no longer
+	 * watches the kernel log the whole time a sandboxed agent lives (0.9-2.1 % of a core at rest).
+	 * The read covers the call's own time (its start, when seen): its cost grows with the window.
+	 * One read at a time per agent; calls during a read make one more after it.
+	 */
+	private checkSandboxAfterTool(live: IAcpSession, callId: string | undefined, result: unknown, error: string | undefined): void {
+		const started = callId ? live.toolStarts?.get(callId) : undefined;
+		if (callId) {
+			live.toolStarts?.delete(callId);
+		}
+		if (!this.sandboxedProcesses.has(live.processId) || !this.stdio.checkSandboxDenials || !sandboxRefusalLikely(result, error)) {
+			return;
+		}
+		const since = started ?? Date.now() - SANDBOX_CHECK_LOOKBACK_MS;
+		if (live.sandboxCheck) {
+			live.sandboxCheck.again = Math.min(live.sandboxCheck.again ?? Infinity, since);
+			return;
+		}
+		const state: { again?: number } = live.sandboxCheck = {};
+		const read = (from: number): void => {
+			void this.stdio.checkSandboxDenials!(live.processId, from).catch(() => undefined).finally(() => {
+				const again = state.again;
+				if (again !== undefined && this.sandboxedProcesses.has(live.processId)) {
+					state.again = undefined;
+					read(again);
+				} else if (live.sandboxCheck === state) {
+					live.sandboxCheck = undefined;
+				}
+			});
+		};
+		read(since);
+	}
+
+	/** Records when a sandboxed agent's tool call started, so a refusal check reads only its time. */
+	private noteToolStart(live: IAcpSession, callId: string): void {
+		if (!this.sandboxedProcesses.has(live.processId)) {
+			return;
+		}
+		const starts = live.toolStarts ??= new Map();
+		starts.set(callId, Date.now());
+		if (starts.size > MAX_TRACKED_TOOL_STARTS) {
+			starts.delete(starts.keys().next().value!);
+		}
+	}
+
 	private deliverSandboxEvent(session: IAcpSession, turn: AcpPromptTurn, event: IVoltSandboxEvent): void {
 		if (event.denial) {
 			this.pushActivity(session, turn, { type: 'sandbox.denial', denial: event.denial });
@@ -1553,6 +1610,11 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (task) {
 			// Not the turn's: a background command runs on after its turn, and its updates arrive between turns.
 			this.onBackgroundTaskUpdate(live, task.kind, task.update);
+			if (task.kind === 'state' && task.update.state === 'failed') {
+				const id = `background:${String(task.update.asyncTaskId)}`;
+				(live.toolStarts ??= new Map()).set(id, Date.now() - SANDBOX_BACKGROUND_LOOKBACK_MS);
+				this.checkSandboxAfterTool(live, id, undefined, 'failed');
+			}
 			return;
 		}
 		const turn = live.turn;
@@ -1579,6 +1641,11 @@ export class AcpAgentProvider implements IAgentProvider {
 			if (event.type === 'notice') {
 				this.pushNotice(live, turn, event);
 				continue;
+			}
+			if (event.type === 'tool.start') {
+				this.noteToolStart(live, event.callId);
+			} else if (event.type === 'tool.end') {
+				this.checkSandboxAfterTool(live, event.callId, event.result, event.error);
 			}
 			// Claude Code titles a session from its first prompt block, which is Volt's lead when one was sent
 			// ("[Volt] This looks like a question..."): Volt's own title from the user's words stays.
@@ -1699,6 +1766,11 @@ export class AcpAgentProvider implements IAgentProvider {
 			// Claude keeps one task list per session: a subagent's TaskUpdate sends the whole chat's list, so the parent's Tasks card takes it too.
 			const sharedPlan = isChatPlanUpdate(params, root);
 			for (const event of this.mapUpdate(params)) {
+				if (event.type === 'tool.start') {
+					this.noteToolStart(live, event.callId);
+				} else if (event.type === 'tool.end') {
+					this.checkSandboxAfterTool(live, event.callId, event.result, event.error);
+				}
 				if (event.type === 'text.delta' && event.delta && child) {
 					child.text += event.delta;
 				}

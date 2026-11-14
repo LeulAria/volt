@@ -54,6 +54,7 @@ export class ProjectEnvVoltStdioService implements IVoltStdioService {
 	listJobs(): Promise<readonly IVoltJobOutput[]> { return this.inner.listJobs(); }
 	sandboxSupport(): Promise<IVoltSandboxSupportInfo> { return this.inner.sandboxSupport!(); }
 	allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> { return this.inner.allowSandboxDomains!(id, domains); }
+	async checkSandboxDenials(id: string, since?: number): Promise<void> { await this.inner.checkSandboxDenials?.(id, since); }
 	sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> { return this.inner.sandboxAllows!(id, path, access); }
 	/** Git runs with the user's environment only: HostGit drops anything that would redirect it. */
 	git(request: IHostGitRequest): Promise<IHostGitResult> { return this.inner.git!(request); }

@@ -77,6 +77,12 @@ export interface ISandboxLaunch {
 	terminate(child: ChildProcess): Promise<void>;
 	/** Hosts the user allows later (network off): the running agent's next connection goes through. */
 	allowDomains(domains: readonly string[]): void;
+	/**
+	 * Reports every refusal the OS logged for this agent since `from` (epoch ms; default: since its
+	 * last read), or gives up after `timeoutMs`. The kernel's refusals are read on demand: call it
+	 * when one is likely (a command of the agent failed).
+	 */
+	flushDenials(timeoutMs: number, from?: number): Promise<void>;
 	/** After a turn: the allowed keys of the agent's config overlay go back to the user's config (B-05). */
 	syncState(): Promise<IAgentStateSync | undefined>;
 	dispose(): void;
@@ -631,6 +637,7 @@ export class VoltSandboxLauncher extends Disposable {
 			attestation: () => prepared.attestation(),
 			terminate: child => prepared.terminate(child),
 			allowDomains: domains => prepared.allowDomains(domains),
+			flushDenials: (timeoutMs, from) => prepared.flushDenials(timeoutMs, from),
 			syncState: async () => {
 				if (!overlay) {
 					return undefined;

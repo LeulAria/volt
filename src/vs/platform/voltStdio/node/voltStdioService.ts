@@ -53,6 +53,8 @@ const KILL_GRACE_MS = 2_000;
  */
 const EXIT_DRAIN_MS = 250;
 const MAX_WAIT_MS = 10 * 60_000;
+/** How long an on-demand read of a sandboxed agent's refusals may take (`log show` is 0.8-2.6 s here). */
+const SANDBOX_DENIAL_CHECK_MS = 10_000;
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007|\r(?!\n)/g;
 
 /**
@@ -542,6 +544,11 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 
 	async allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> {
 		this.sandboxes.get(id)?.allowDomains(domains);
+	}
+
+	async checkSandboxDenials(id: string, since?: number): Promise<void> {
+		// The refusals arrive through onSandboxEvent, as before.
+		await this.sandboxes.get(id)?.flushDenials(SANDBOX_DENIAL_CHECK_MS, since);
 	}
 
 	async sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> {

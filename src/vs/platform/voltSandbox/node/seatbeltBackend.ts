@@ -20,14 +20,14 @@ import { ISandboxBackend, ISandboxEvidence, ISandboxLaunchOptions, ISandboxLaunc
 import { binaryDigest, osBuild, ProbeCache } from './sandboxProbeCache.js';
 
 const execFileAsync = promisify(execFile);
-/** A marker the log stream's predicate (`VOLTSBX-`) lets through, but no denial line ever carries. */
+/** A marker the denial query's predicate (`VOLTSBX-`) lets through, but no denial line ever carries. */
 const FLUSH_MARKER = `${SEATBELT_TAG_PREFIX}flush-`;
 
 /**
  * The kernel's refusals (pid 0, sent by Sandbox.kext) and Volt's own flush markers (written by
- * `logger`). The stream runs while any sandboxed process lives, so it is narrowed by sender and
- * process before any message text is searched: a text search of every line of the unified log cost
- * about 4 % of a core on a busy Mac, this one about 0.6 % (round 3, 2026-11-13).
+ * `logger`). Narrowed by sender and process before any message text is searched: a text search of
+ * every line of the unified log cost about 4 % of a core on a busy Mac as a stream (round 3,
+ * 2026-11-13). Read on demand with `log show` ({@link SeatbeltDenialReader}).
  */
 export const SEATBELT_DENIAL_PREDICATE = `(processID == 0 AND sender == "Sandbox" AND eventMessage CONTAINS "${SEATBELT_TAG_PREFIX}") OR (process == "logger" AND eventMessage CONTAINS "${FLUSH_MARKER}")`;
 
@@ -69,8 +69,6 @@ export class SeatbeltBackend implements ISandboxBackend {
 
 	readonly id = 'seatbelt' as const;
 	private readonly cache = new ProbeCache<ISandboxBackendCapabilities>();
-	private monitor: ChildProcess | undefined;
-	private readonly listeners = new Map<string, ISandboxLaunchOptions['onDenial']>();
 	private attestor: SeatbeltAttestor | undefined;
 	private macosVersion: Promise<string> | undefined;
 	private helperPath: Promise<string | undefined> | undefined;
@@ -295,7 +293,7 @@ export class SeatbeltBackend implements ISandboxBackend {
 			extraStdio: ['pipe', 'pipe'],
 			extraStdioDirections: ['out', 'in'],
 			...(disclaim ? {} : { unenforced: ['platform.tcc'] satisfies SandboxDimension[] }),
-			...(listen ? { flushDenials: (timeoutMs: number) => this.flush(timeoutMs) } : {}),
+			...(listen ? { flushDenials: (timeoutMs: number, from?: number) => this.flush(timeoutMs, from) } : {}),
 			confirm: async child => {
 				pgid = child.pid;
 				if (pgid) {
@@ -345,89 +343,202 @@ export class SeatbeltBackend implements ISandboxBackend {
 	// --- denials from the kernel log ------------------------------------------------------------
 
 	private listen(tag: string, onDenial: ISandboxLaunchOptions['onDenial']): void {
-		this.listeners.set(tag, onDenial);
-		if (this.monitor) {
-			return;
-		}
-		// Only the kernel's own lines (pid 0, Sandbox.kext): a sandboxed process knows its tag and may
-		// write to the log (`logger`), so a line it forged would otherwise become a "Blocked" card whose
-		// "Allow Folder" widens its own sandbox. Plus Volt's own flush markers, which are never denials.
-		const child = spawn('/usr/bin/log', ['stream', '--style', 'ndjson', '--predicate', SEATBELT_DENIAL_PREDICATE], { stdio: ['ignore', 'pipe', 'ignore'] });
-		this.monitor = child;
-		let buffer = '';
-		child.stdout?.setEncoding('utf8');
-		child.stdout?.on('data', (data: string) => {
-			buffer += data;
-			const lines = buffer.split('\n');
-			buffer = lines.pop() ?? '';
-			for (const line of lines) {
-				if (line.includes(FLUSH_MARKER) && this.flushes.size) {
-					for (const [marker, resolve] of this.flushes) {
-						if (line.includes(marker)) {
-							this.flushes.delete(marker);
-							resolve();
-						}
-					}
-					continue;
-				}
-				const violation = parseSeatbeltLogLine(line);
-				const listener = violation && this.listeners.get(violation.tag);
-				const kind = violation && denialKindForOperation(violation.operation);
-				if (violation && listener && kind) {
-					listener({ kind: kind === 'launch' ? 'launch' : kind, target: violation.target, source: 'os', process: violation.process });
-				}
-			}
-		});
-		child.on('error', () => undefined);
-		child.on('close', () => {
-			if (this.monitor === child) {
-				this.monitor = undefined;
-			}
-		});
+		this.denials.listen(tag, onDenial);
 	}
 
 	/**
-	 * Every denial logged before now has been delivered (or `timeoutMs` passed): a marker goes into
-	 * the unified log through `logger`, and the stream hands lines over in order, so once the marker
-	 * is read the kernel's earlier refusals are too. Under load the stream lags the workload by
-	 * hundreds of milliseconds; a one-shot run that stopped listening at its exit lost its last
-	 * refusals (round 1: one attack in three blocked without being named).
+	 * Every denial logged before now has been delivered (or `timeoutMs` passed). Read on demand
+	 * from the unified log (`log show`), never by a resident `log stream`: that one cost 0.9-2.1 %
+	 * of a core for as long as any sandboxed process lived (rounds 4-5), the largest idle cost.
+	 * Callers ask when a refusal is likely: a one-shot run at its exit, an agent's command that
+	 * failed, a host that crashed.
 	 */
-	private flush(timeoutMs: number): Promise<void> {
-		if (!this.monitor) {
-			return Promise.resolve();
-		}
-		const marker = `${FLUSH_MARKER}${randomBytes(8).toString('hex')}`;
-		return new Promise<void>(resolve => {
-			const timer = setTimeout(() => {
-				this.flushes.delete(marker);
-				resolve();
-			}, timeoutMs);
-			this.flushes.set(marker, () => {
-				clearTimeout(timer);
-				resolve();
-			});
-			execFile('/usr/bin/logger', [marker], () => undefined);
-		});
+	private flush(timeoutMs: number, from?: number): Promise<void> {
+		return this.denials.check(timeoutMs, from);
 	}
 
-	private readonly flushes = new Map<string, () => void>();
+	private readonly denials = new SeatbeltDenialReader();
 
 	private unlisten(tag: string): void {
+		this.denials.unlisten(tag);
+	}
+
+	dispose(): void {
+		this.denials.dispose();
+		this.attestor?.dispose();
+		this.attestor = undefined;
+	}
+}
+
+/** One `log show` (or a fake in tests): the ndjson lines it printed, or undefined when it failed. */
+export type SeatbeltLogQuery = (startLocal: string, predicate: string) => Promise<string | undefined>;
+
+const LOG_SHOW_TIMEOUT_MS = 20_000;
+/** How far back a query reaches before a listener's last checked moment (clock skew, the log's own lag). */
+const QUERY_OVERLAP_MS = 2_000;
+/** Lines already delivered, so overlapping windows never report one refusal twice. */
+const SEEN_LIMIT = 4_000;
+/** Retries while Volt's marker is not in the datastore yet (the log's own flush lags under load). */
+const MARKER_RETRY_MS = 250;
+/** The longest window one query reads (a 10-minute window cost about 3 s of CPU here). */
+const MAX_LOOKBACK_MS = 15 * 60_000;
+
+/** `log show --start` takes local wall-clock time to the second. */
+export function logShowStart(ms: number): string {
+	const d = new Date(ms);
+	const two = (n: number) => String(n).padStart(2, '0');
+	return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+}
+
+const defaultLogQuery: SeatbeltLogQuery = (startLocal, predicate) => new Promise(resolve => {
+	execFile('/usr/bin/log', ['show', '--style', 'ndjson', '--start', startLocal, '--predicate', predicate], { timeout: LOG_SHOW_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) => resolve(err ? undefined : stdout));
+});
+
+const defaultMarkerWriter = (marker: string) => new Promise<void>(resolve => execFile('/usr/bin/logger', [marker], () => resolve()));
+
+/**
+ * The kernel's refusals of Volt's sandboxes, read from the unified log when someone asks. One
+ * query serves every listening run: it covers the earliest moment any of them has not been
+ * checked for. Volt writes a marker (`logger`) first and the query must see it, so every refusal
+ * logged before the call is in the answer (the datastore lags the kernel under load).
+ *
+ * Only the kernel's own lines (pid 0, Sandbox.kext) become denials: a sandboxed process knows its
+ * tag and may write to the log (`logger`), so a line it forged would otherwise become a "Blocked"
+ * card whose "Allow Folder" widens its own sandbox (`parseSeatbeltLogLine`).
+ */
+export class SeatbeltDenialReader {
+
+	private readonly listeners = new Map<string, { readonly onDenial: ISandboxLaunchOptions['onDenial']; since: number }>();
+	private readonly seen = new Set<string>();
+	/** The query running now, and the one queued behind it for callers who came while it ran. */
+	private running: Promise<void> | undefined;
+	private queued: Promise<void> | undefined;
+	private disposed = false;
+
+	constructor(
+		private readonly query: SeatbeltLogQuery = defaultLogQuery,
+		private readonly writeMarker: (marker: string) => Promise<void> = defaultMarkerWriter,
+		private readonly now: () => number = Date.now,
+	) { }
+
+	get listening(): number {
+		return this.listeners.size;
+	}
+
+	listen(tag: string, onDenial: ISandboxLaunchOptions['onDenial']): void {
+		// From a little before the launch: the run's first refusal may come within its first second.
+		this.listeners.set(tag, { onDenial, since: this.now() - QUERY_OVERLAP_MS });
+	}
+
+	unlisten(tag: string): void {
 		this.listeners.delete(tag);
-		if (!this.listeners.size && this.monitor) {
-			const monitor = this.monitor;
-			this.monitor = undefined;
-			monitor.kill();
+	}
+
+	/**
+	 * Resolves once every refusal logged before this call (since `from`, else since each run's last
+	 * read) reached its listener, or after `timeoutMs`. The query's cost grows with its window (here
+	 * 10 s of log: 0.5 s CPU; an hour: 12 s), so callers pass when the failed work started, and no
+	 * window reaches back more than {@link MAX_LOOKBACK_MS}.
+	 */
+	check(timeoutMs: number, from?: number): Promise<void> {
+		if (!this.listeners.size || this.disposed) {
+			return Promise.resolve();
+		}
+		const wanted = from ?? -Infinity;
+		let next: Promise<void>;
+		if (this.running) {
+			// A query already under way may have read the log before this call: wait for a fresh one.
+			this.queuedFrom = Math.min(this.queuedFrom ?? Infinity, wanted);
+			next = this.queued ??= this.running.then(() => {
+				const queuedFrom = this.queuedFrom;
+				this.queued = undefined;
+				this.queuedFrom = undefined;
+				return this.run(queuedFrom);
+			});
+		} else {
+			next = this.run(wanted);
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		return Promise.race([next, new Promise<void>(resolve => { timer = setTimeout(resolve, timeoutMs); })]).finally(() => clearTimeout(timer));
+	}
+
+	private queuedFrom: number | undefined;
+
+	private run(from: number | undefined): Promise<void> {
+		const run = this.read(from ?? -Infinity).catch(() => undefined).finally(() => {
+			if (this.running === run) {
+				this.running = undefined;
+			}
+		});
+		this.running = run;
+		return run;
+	}
+
+	private async read(wanted: number): Promise<void> {
+		if (!this.listeners.size || this.disposed) {
+			return;
+		}
+		const asked = this.now();
+		// No run has refusals from before it started, nor unread ones from before its last read.
+		const from = Math.max(wanted, Math.min(...[...this.listeners.values()].map(l => l.since)), asked - MAX_LOOKBACK_MS);
+		const marker = `${FLUSH_MARKER}${randomBytes(8).toString('hex')}`;
+		await this.writeMarker(marker);
+		let output: string | undefined;
+		for (let attempt = 0; attempt < 8 && !this.disposed; attempt++) {
+			output = await this.query(logShowStart(from - QUERY_OVERLAP_MS), SEATBELT_DENIAL_PREDICATE);
+			if (output === undefined || output.includes(marker)) {
+				break;
+			}
+			await new Promise(resolve => setTimeout(resolve, MARKER_RETRY_MS));
+		}
+		if (output === undefined || this.disposed) {
+			return;
+		}
+		for (const line of output.split('\n')) {
+			if (!line.includes(SEATBELT_TAG_PREFIX) || line.includes(FLUSH_MARKER)) {
+				continue;
+			}
+			const violation = parseSeatbeltLogLine(line);
+			const listener = violation && this.listeners.get(violation.tag);
+			const kind = violation && denialKindForOperation(violation.operation);
+			if (!violation || !listener || !kind) {
+				continue;
+			}
+			const key = seenKey(line);
+			if (this.seen.has(key)) {
+				continue;
+			}
+			this.seen.add(key);
+			if (this.seen.size > SEEN_LIMIT) {
+				this.seen.delete(this.seen.values().next().value!);
+			}
+			listener.onDenial({ kind: kind === 'launch' ? 'launch' : kind, target: violation.target, source: 'os', process: violation.process });
+		}
+		if (output.includes(marker)) {
+			// Everything from `from` up to the marker is read: a run with nothing unread before `from`
+			// starts its next query here (minus the overlap).
+			for (const listener of this.listeners.values()) {
+				if (Math.max(listener.since, asked - MAX_LOOKBACK_MS) >= from) {
+					listener.since = Math.max(listener.since, asked);
+				}
+			}
 		}
 	}
 
 	dispose(): void {
-		this.monitor?.kill();
-		this.monitor = undefined;
+		this.disposed = true;
 		this.listeners.clear();
-		this.attestor?.dispose();
-		this.attestor = undefined;
+		this.seen.clear();
+	}
+}
+
+/** One log line's identity: the kernel's timestamp and its text (two refusals in one microsecond are one line). */
+function seenKey(line: string): string {
+	try {
+		const parsed = JSON.parse(line) as { machTimestamp?: unknown; timestamp?: unknown; eventMessage?: unknown };
+		return `${parsed.machTimestamp ?? parsed.timestamp ?? ''}|${parsed.eventMessage ?? ''}`;
+	} catch {
+		return line;
 	}
 }
 

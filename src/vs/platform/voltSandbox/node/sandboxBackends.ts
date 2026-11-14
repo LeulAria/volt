@@ -83,10 +83,11 @@ export interface ISandboxLaunchSpec {
 	/** Dimensions this launch cannot enforce beyond the backend's report (shown, never blocking). */
 	readonly unenforced?: readonly SandboxDimension[];
 	/**
-	 * Waits (at most `timeoutMs`) until every denial the kernel logged before this call has been
-	 * delivered: a one-shot run's last refusals can reach the log stream after the workload exited.
+	 * Waits (at most `timeoutMs`) until every denial the kernel logged before this call (since
+	 * `from`, epoch ms, when given) has been delivered. The kernel's refusals are read on demand,
+	 * so a run's refusals reach `onDenial` only through this call.
 	 */
-	flushDenials?(timeoutMs: number): Promise<void>;
+	flushDenials?(timeoutMs: number, from?: number): Promise<void>;
 	/** Kills the whole process tree; resolves once every process found is signalled. Safe to call more than once and after exit. */
 	terminate(child: ChildProcess): Promise<void> | void;
 	/** Closes fds, stops bridges, deletes the backend's temp files. */

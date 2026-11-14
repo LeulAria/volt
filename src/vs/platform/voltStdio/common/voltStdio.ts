@@ -306,6 +306,12 @@ export interface IVoltStdioService {
 	/** Lets a sandboxed process (network off) reach more hosts, without a restart. */
 	allowSandboxDomains?(id: string, domains: readonly string[]): Promise<void>;
 	/**
+	 * Reads what the OS refused sandboxed spawn `id` so far; the refusals arrive on {@link onSandboxEvent}.
+	 * The kernel's refusals are read on demand, not watched: ask when one is likely (a command failed),
+	 * with `since` (epoch ms) when the failed work started: the read's cost grows with its window.
+	 */
+	checkSandboxDenials?(id: string, since?: number): Promise<void>;
+	/**
 	 * Whether the sandbox of spawn `id` lets it read or write `path`. For file access the agent
 	 * routes through Volt (ACP `fs/*`), which happens outside the agent's process. True when the
 	 * spawn is running and not sandboxed; false for an id this service does not know (fails closed).
