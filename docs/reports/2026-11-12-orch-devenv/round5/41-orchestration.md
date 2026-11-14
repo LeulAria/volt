@@ -2,7 +2,7 @@
 
 Branch `e5/orch` (worktree `volt-e5-orch`, base `9bbb8818c60`), 2026-11-14. Round 4: [`../round4/31-orchestration.md`](../round4/31-orchestration.md), [`../round4/37-orchestrated-build.md`](../round4/37-orchestrated-build.md).
 
-Status: draft (C1 pending).
+Status: final.
 
 ## Summary
 
@@ -24,7 +24,12 @@ before / Volt after:
   3.9 s (the lead's last turn thinks half as much without the pre-read project files), and subagents run 14.6 s
   instead of 18.0 s (the synthesis subagent writes the short answer its brief asks for: 6.1-7.5 s against
   6.4-10.9 s).
-- **C1**: see below.
+- **C1 (Opus 5.5, ADEMark method, unofficial, n = 1)**: Volt after shipped 5/5 (own tests) in **4.1 min** at
+  load 6.2, with 1.40M tokens, handoff 4/4 and codes placed 4/4, four workers at once, each in a worktree Volt made
+  (two of them adopted a worktree made ahead with its agent warm). ADEMark's published leader is Synara, 5/5 in
+  5.18 min with 2.03M tokens. This is the first C1 time on this rig taken at load 14 or less; the round-4 runs (Volt
+  before 7.46 min, Claude Code alone 7.79 min, Volt after 4.45 min) were all at load 30-124, so no before/after or
+  Claude Code comparison of C1 time is claimed.
 
 ## Results: medians, timed runs only
 
@@ -164,9 +169,59 @@ call it; short real briefs ("Q1", "Fix a.ts") still start. Tests in `agentOrches
 
 ## C1 (ADEMark method, unofficial)
 
-PENDING
+One run of ADEMark's C1 task on the after build (coordinator's call: n = 1, after arm only, round 4's runs as the
+before and Claude Code reference). Rig: round 4's `scripts/c1/` copied to [`scripts/c1/`](scripts/c1/) with the
+round-5 paths and `lockrun.mjs` (takes `~/.volt-r5/timing.lock` and waits for load 14 or less). Same method as
+[round 4's report 37](../round4/37-orchestrated-build.md): the C1 prompt byte for byte with fresh handoff codes
+(seed `ademark-volt-r5-<id>`), Volt's one-line trigger first, a fresh arena clone (ADEMark `31e2814`), Opus 5.5 at
+high effort, Full access, sandbox off (the capture proxy is on a loopback port), a clean Claude config (access token
+only), every model request through the capture proxy, the end rule of TESTS.md 4 (5 quiet minutes after the first
+end of turn; end = last tool answer), graded with our own tests (not ADEMark's hidden tests).
+
+| Run | Build | Load (1-min at t0) | Shipped (own tests) | Time to green | Tokens total | USD | Handoff | Codes placed | Fan-out (max at once / workers) | Worktrees |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **volt-r5-after-1** | e5/orch `d4063253ca8` (code as `616ad44e0aa`) | **6.2** | 5/5 | **4.1 min** | 1,402,344 | 2.50 | 4/4 | 4/4 | 4 / 4 | 4 Volt worktrees (`isolation: "worktree"`), none made by the lead |
+| round 4 volt-before-1 | `b2db4e7f605` | 76.4 | 5/5 | 7.46 min, under load | 1,752,902 | 2.23 | 4/4 | 4/4 | 4 / 4 | Volt worktrees |
+| round 4 cli-solo-1 | Claude Code 2.1.323 alone (C1-solo) | about 42 | 5/5 | 7.79 min, under load | 1,632,752 | 1.99 | 4/4 | n/a | one agent | n/a |
+| round 4 volt-after-1 | e4/c1 `a6d551d20dd` | 29.7 | 5/5 | 4.45 min, under load | 1,428,464 | 2.30 | 4/4 | 4/4 | 4 / 4 | lead-made |
+| Synara (site, Mac mini M4, hidden tests) | | | 5/5 | 5.18 min | 2.03M | | 4/4 | | | |
+
+Only the first row is a timing (load 6.2 at t0, the timing lock held for the whole run, 18:54-19:03 UTC). Round-4
+rows are under load and are shown as reference only. The run's row is not marked invalid (`invalid: []`): the prompt
+reached the model byte for byte (`promptExact`), and every worker was a separate Claude Code session.
+
+Where the time went (`scripts/c1/analyze.mjs volt-r5-after-1`, seconds from Enter):
+
+| Step | s |
+|---|---|
+| Lead reads the repo (two terminal calls), first `delegate_task` call | 22.7 |
+| Tasks created (one call per part, each with its own brief) | 34.8 / 44.1 / 56.2 / 69.7 |
+| Task created to the worker's first request | 1.6 / 0.4 / 0.3 / 1.1 (two adopted a warm worktree spare, two started cold in 0.5-0.6 s) |
+| Lead waits (one `wait_tasks`, no 60 s cut) | 70.6 to 168.4 (97.8 s) |
+| Last task settled | 168.3 |
+| Lead merges the four branches, runs the tests, writes REPORT.md | 168.3 to 233.9 (65.6 s, 10 terminal calls and one edit) |
+| Last tool answer (end) | 246.0 |
+| Lead requests / lead tokens | 14 / 0.56M |
+
+Notes:
+- The lead used Volt's worktrees for all four parts (round 4's after runs made their own with `git worktree add`);
+  the `isolation` schema text restored in round 4 (`498b6f7f295`) holds on Opus here.
+- The lead waited once with `wait_tasks` and started merging 1.7 s after it returned; no wait was cut at 60 s
+  (round 4's `MCP_TOOL_TIMEOUT` fix).
+- Tokens 1.40M against Synara's 2.03M; 1.19M of them are cache reads.
+- The lead's first user message carries the requestShape "lookup" line ("This depends on current or external
+  facts. Search and fetch primary sources first"), because the C1 text says "current"; the lead did not search the
+  web. That line is the tokens area's; left as an open item for it.
+- Data: [`data/c1/c1-runs.jsonl`](data/c1/c1-runs.jsonl), grade, prompt as sent, capture rows (no bodies) and Volt
+  traces in `data/c1/`.
 
 ## Not done, and why
 
 - Rep 4 of t1-t3 was not run (the coordinator asked to finish with three valid reps per cell).
+- C1 ran once (n = 1), after arm only, no Claude Code or before run this round (coordinator's call to finish).
+  So C1's 4.1 min is a timing of Volt after at load 6.2, not a measured gain over Volt before or Claude Code.
 - Effort is not a cause here (both send medium for Haiku 5.5), so there is no effort decision for the user.
+- Typecheck and the touched unit tests (`orchestratorDelegation.test.ts`, `agentOrchestratorService.test.ts`,
+  `turnPrimer.test.ts`, `voltHostMcpMainService.test.ts`) were run clean and passing at `616ad44e0aa` by the agent
+  before the reboot; no source changed after that commit, so they were not re-run.
+- Open for tokens: the "lookup" request-shape line on C1's lead (see C1 notes).
