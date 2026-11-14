@@ -234,7 +234,7 @@ suite('Agent orchestrator service', () => {
 		const [first, second] = service.tasksOf('parent');
 		assert.ok(first.batch && first.batch === second.batch, 'both parts carry the call\'s batch id');
 		await tool('parent', 'delegate_task', { task: 'Count the tests' });
-		assert.strictEqual(service.tasksOf('parent')[2].batch, undefined, 'a single task is not a batch');
+		assert.notStrictEqual(service.tasksOf('parent')[2].batch, first.batch, 'a call of its own is not part of the other call');
 
 		runtime.finish('parent', 'Started them.');
 		await settle();
@@ -342,6 +342,55 @@ suite('Agent orchestrator service', () => {
 		assert.ok(wake?.turn.prompt.text.includes('Fixed a.ts.'));
 		assert.ok(wake?.turn.prompt.text.includes('Volt verification'), 'the report says the checks passed');
 		assert.strictEqual(service.getTask(task.id)?.verification?.state, 'passed');
+	});
+
+	test('parts started in calls of their own in one turn wake the idle parent once; a later turn\'s part reports by itself', async () => {
+		const { service, runtime, host, tool } = await setup();
+		await service.submit('parent', { text: 'fix both' }, 'auto', 'p1');
+		await settle();
+		await tool('parent', 'delegate_task', { task: 'Fix a.ts' });
+		await tool('parent', 'delegate_task', { task: 'Fix b.ts' });
+		await settle();
+		const [first, second] = service.tasksOf('parent');
+		runtime.finish('parent', 'Started them.');
+		await settle();
+		const wakes = () => host.started.filter(request => request.threadId === 'parent' && request.turn.kind === 'notification');
+		runtime.finish(first.childId!, 'a.ts fixed.');
+		await settle();
+		assert.strictEqual(wakes().length, 0, 'one part done: the parent sleeps on');
+		runtime.finish(second.childId!, 'b.ts fixed.');
+		await settle();
+		assert.strictEqual(wakes().length, 1);
+		assert.ok(wakes()[0].turn.prompt.text.includes('a.ts fixed.') && wakes()[0].turn.prompt.text.includes('b.ts fixed.'));
+
+		// The wake-up turn starts one more part: it is not held back by the first turn's parts.
+		await tool('parent', 'delegate_task', { task: 'Fix c.ts' });
+		await settle();
+		const third = service.tasksOf('parent')[2];
+		assert.notStrictEqual(third.batch, first.batch);
+		runtime.finish('parent', 'Started c.');
+		await settle();
+		runtime.finish(third.childId!, 'c.ts fixed.');
+		await settle();
+		assert.strictEqual(wakes().length, 2);
+	});
+
+	test('a waiting delegate_task call stops waiting when the parent starts writing another one, so the next part is not held back', async () => {
+		const { service, runtime, tool } = await setup();
+		await service.submit('parent', { text: 'fix both' }, 'auto', 'p1');
+		await settle();
+		const parentRun = runtime.sends.find(send => send.threadId === 'parent')!.runId;
+		runtime.emit('parent', parentRun, { type: 'tool.start', callId: 'call-1', name: 'mcp__volt__delegate_task', title: 'delegate_task' });
+		const waiting = tool('parent', 'delegate_task', { task: 'Fix a.ts', wait: true });
+		await settle();
+		runtime.emit('parent', parentRun, { type: 'tool.start', callId: 'call-2', name: 'mcp__volt__delegate_task', title: 'delegate_task' });
+		const result = await waiting;
+		assert.match(result, /Not waited for: you are starting another task/);
+		assert.strictEqual(service.tasksOf('parent')[0].state, 'running');
+		const alone = tool('parent', 'delegate_task', { task: 'Fix b.ts', wait: true });
+		await settle();
+		runtime.finish(service.tasksOf('parent')[1].childId!, 'b.ts fixed.');
+		assert.ok((await alone).includes('b.ts fixed.'), 'a call nothing follows still waits for its report');
 	});
 
 	test('wait_tasks returns the report as soon as the subagent finishes, and it is not delivered again', async () => {

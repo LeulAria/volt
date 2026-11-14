@@ -99,9 +99,16 @@ suite('Volt orchestrator: handoff contract and context', () => {
 			assert.strictEqual(byName.get(name)?.alwaysLoad, 'top', name);
 		}
 		assert.strictEqual(byName.get('task_status')?.alwaysLoad, undefined);
+		// In every request of a top-level chat: the three were 5.7 KB (about 2K tokens) in round 3.
+		const size = ['delegate_task', 'wait_tasks', 'message_task'].reduce((sum, name) => sum + JSON.stringify({ name: `mcp__volt__${name}`, description: byName.get(name)!.description, input_schema: byName.get(name)!.inputSchema }).length, 0);
+		assert.ok(size < 2_200, `${size} characters`);
+		// The options that are not typed in the schema are still named, so a task that needs one finds it.
 		const delegate = byName.get('delegate_task')!;
-		// In every request of a top-level chat now: about 1.2k tokens (it was 9.6k characters behind the tool search).
-		assert.ok(JSON.stringify({ description: delegate.description, input_schema: delegate.inputSchema }).length < 5_000);
+		const typed = Object.keys((delegate.inputSchema as { properties: object }).properties);
+		for (const option of ['task', 'tasks', 'title', 'role', 'after', 'model', 'models', 'previous_task_id', 'isolation', 'wait', 'goal', 'scope', 'files', 'constraints', 'done_when', 'verify', 'context', 'budget_usd', 'fallback_models']) {
+			assert.ok(typed.includes(option) || delegate.description.includes(option), option);
+		}
+		assert.match(delegate.description, /one call each, in one message/);
 	});
 
 	test('a subagent\'s report is its final message, unless that message is not the report', () => {

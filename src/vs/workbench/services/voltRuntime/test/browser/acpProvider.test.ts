@@ -16,6 +16,8 @@ import { IVoltSandboxEvent, IVoltSandboxFileResult, IVoltStdioService } from '..
 import { isSandboxUnavailableError, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IAccessDecision } from '../../common/access/accessTypes.js';
+import { presetRules } from '../../common/access/accessPresets.js';
+import { compilePolicy } from '../../common/access/policyCompiler.js';
 import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent, isTitleFromLead, isVoltHostToolPermission } from '../../browser/agents/acpProvider.js';
 import { IVoltEvent } from '../../common/events.js';
 import { ACP_IDLE_TIMINGS } from '../../common/harness/acpStall.js';
@@ -56,6 +58,8 @@ class FakeAgentStdio {
 	steeringOutcome = 'injected';
 	/** What each new session starts with; every process gets its own copy. */
 	configOptions: Json[] = JSON.parse(JSON.stringify(CONFIG_OPTIONS)) as Json[];
+	/** The session modes each new session lists. */
+	availableModes: Json[] = [{ id: 'agent' }, { id: 'plan' }, { id: 'ask' }];
 	private readonly sessionConfig = new Map<string, Json[]>();
 	/** Runs before the agent answers one of Volt's requests (to send a request of its own first). */
 	beforeAnswer: ((process: string, msg: IWire) => void) | undefined;
@@ -126,7 +130,7 @@ class FakeAgentStdio {
 				return reply({ outcome: this.steeringOutcome });
 			case 'session/new':
 				this.sessionConfig.set(process, JSON.parse(JSON.stringify(this.configOptions)) as Json[]);
-				return reply({ sessionId: `acp-${process}`, configOptions: this.sessionConfig.get(process), modes: { currentModeId: 'agent', availableModes: [{ id: 'agent' }, { id: 'plan' }, { id: 'ask' }] } });
+				return reply({ sessionId: `acp-${process}`, configOptions: this.sessionConfig.get(process), modes: { currentModeId: (this.availableModes[0] as { id: string }).id, availableModes: this.availableModes } });
 			case 'session/set_config_option': {
 				const config = this.sessionConfig.get(process) ?? [];
 				const option = config.find(candidate => candidate.id === msg.params?.configId);
@@ -741,6 +745,24 @@ suite('ACP provider sandbox', () => {
 	}
 
 	const sandboxNotices = (events: readonly IVoltEvent[]) => events.flatMap(event => event.type === 'notice' && event.title === 'Sandbox' ? [event.description] : []);
+
+	test('a sandboxed Claude chat on Full access gets bypassPermissions: Codex\'s sandbox values are not applied to Claude\'s `mode`', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const agent = new FakeAgentStdio(store);
+		agent.configOptions = [{ id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: 'auto', options: [{ value: 'auto' }, { value: 'bypassPermissions' }] }];
+		agent.availableModes = [{ id: 'auto' }, { id: 'default' }, { id: 'acceptEdits' }, { id: 'plan' }, { id: 'bypassPermissions' }];
+		const provider = new AcpAgentProvider('claude-code', 'Claude Code', 'claude-agent-acp', [], agent.asService(),
+			{ getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService,
+			undefined as unknown as IFileService, new NullLogService());
+		provider.setSupervisionOptions({ clock: new FakeWatchdogClock(), idle: ACP_IDLE_TIMINGS });
+		const handle = await provider.start(request({ ...SANDBOXED, profile: { ...PROFILE, id: 'claude', providerId: 'claude-code' }, modelId: undefined, options: undefined }));
+		await provider.applyAccessPolicy(handle, compilePolicy({ preset: presetRules('full-access') }));
+		const writes = agent.written.filter(entry => entry.msg.method === 'session/set_config_option').map(entry => `${entry.msg.params?.configId}=${entry.msg.params?.value}`);
+		assert.deepStrictEqual(writes, ['mode=bypassPermissions']);
+		await provider.dispose(handle);
+	});
 
 	test('warnings sent while the agent spawns, and between turns, reach its next turn', async function () {
 		if (isWindows) {
