@@ -1189,11 +1189,6 @@ the background paints a solid square) and keep the glyph in the accent. */
 	display: inline-flex;
 }
 
-/* The activity pill fades out but stays laid out: its dots rest while it is not shown. */
-.volt-browser-dock:not(.mode-activity) .volt-browser-dock-activity .volt-browser-dock-dot-strip {
-	animation-play-state: paused;
-}
-
 .volt-browser-dock-activity-text {
 	min-width: 0;
 	overflow: hidden;
@@ -1321,8 +1316,9 @@ the background paints a solid square) and keep the glyph in the accent. */
 
 /*
  * One strip carries the eight frames (createThinkingDots draws them as its mask, 10 px a frame) and
- * steps sideways under the 10 px window: a transform animation, run by the compositor. Per-dot
- * opacity animations cost the main thread a style recalc per dot on every frame.
+ * is moved sideways under the 10 px window by createThinkingDots's timer while it is on screen. No
+ * CSS animation: per-dot opacity animations cost the main thread a style recalc per dot on every
+ * frame, and a transform animation on the strip still ticked style once a frame.
  */
 .volt-browser-dock-dots {
 	position: relative;
@@ -1341,22 +1337,6 @@ the background paints a solid square) and keep the glyph in the accent. */
 	mask-repeat: no-repeat;
 	-webkit-mask-size: 80px 10px;
 	mask-size: 80px 10px;
-	will-change: transform;
-	animation: volt-dot-strip 1.4s steps(8, end) infinite;
-}
-
-@keyframes volt-dot-strip {
-	to { transform: translateX(-80px); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.volt-browser-dock-dot-strip {
-		animation: none;
-	}
-}
-
-.monaco-workbench.reduce-motion .volt-browser-dock-dot-strip {
-	animation: none;
 }
 
 .volt-browser-dock-composer {
