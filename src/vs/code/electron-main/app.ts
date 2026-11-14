@@ -120,7 +120,7 @@ import { ICSSDevelopmentService, CSSDevelopmentService } from '../../platform/cs
 import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../platform/voltStdio/common/voltStdio.js';
 import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
 import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
-import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME } from '../../platform/voltAgentServer/common/agentServerService.js';
+import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME, VOLT_AGENT_SERVER_ENABLED_SETTING } from '../../platform/voltAgentServer/common/agentServerService.js';
 import { VoltAgentServerMainService } from '../../platform/voltAgentServer/electron-main/agentServerMainService.js';
 import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
 import { IVoltExternalMcpService, VOLT_EXTERNAL_MCP_CHANNEL_NAME } from '../../platform/voltExternalMcp/common/voltExternalMcp.js';
@@ -706,6 +706,9 @@ export class CodeApplication extends Disposable {
 
 		// Init Channels
 		appInstantiationService.invokeFunction(accessor => this.initChannels(accessor, mainProcessElectronServer, sharedProcessClient));
+
+		// Volt: start the agent server now, beside the window loading, instead of when the window asks for it
+		appInstantiationService.invokeFunction(accessor => this.startAgentServerEarly(accessor));
 
 		// Setup Protocol URL Handlers
 		const initialProtocolUrls = await appInstantiationService.invokeFunction(accessor => this.setupProtocolUrlHandlers(accessor, mainProcessElectronServer));
@@ -1585,6 +1588,19 @@ export class CodeApplication extends Disposable {
 			forceProfile,
 			forceTempProfile
 		});
+	}
+
+	/**
+	 * Every desktop window connects to the agent server before it can show its chats; a cold start
+	 * spent the window's whole load (the workbench code, its services, the restore) before asking
+	 * for it. Started here, the server boots while the window loads; the window's own request
+	 * then finds it up (or starting) and shares the start.
+	 */
+	private startAgentServerEarly(accessor: ServicesAccessor): void {
+		if (this.configurationService.getValue<boolean>(VOLT_AGENT_SERVER_ENABLED_SETTING) === false) {
+			return;
+		}
+		accessor.get(IVoltAgentServerMainService).ensureRunning().catch(err => this.logService.warn('[volt agent server] could not start the agent server at launch; the window will retry', err));
 	}
 
 	private afterWindowOpen(): void {
