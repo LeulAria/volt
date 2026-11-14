@@ -99,6 +99,12 @@ suite('runCli', () => {
 		assert.ok(timeout > taskWaitMs(true) + 30_000, `MCP_TOOL_TIMEOUT ${timeout} must outlast ${taskWaitMs(true)} ms`);
 	});
 
+	test('FIRSTWORD-WAIT-2: Claude\'s first command does not wait for MCP servers it does not require (the claude.ai connectors)', () => {
+		// Without it a message sent 0.4-1.1 s after a stopped chat's agent came back waited for the account's
+		// connectors, until about 1.1 s after ready (round 5, chain 4; round 6, report 52).
+		assert.strictEqual(cliAgentDefinition('claude-code')?.acpEnv?.CLAUDE_CODE_MCP_STARTUP_WAIT_MS, '0');
+	});
+
 	test('Codex launches the ACP adapter, never `codex acp`', () => {
 		const codex = cliAgentDefinition('codex');
 		assert.deepStrictEqual(acpLaunchFor(codex, 'codex', ['acp'], true), { command: 'codex-acp', args: [] });

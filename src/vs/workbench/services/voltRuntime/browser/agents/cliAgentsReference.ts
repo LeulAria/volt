@@ -37,7 +37,14 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		// and newer had no list to show in the Tasks card. This switch turns them on for every model.
 		// MCP_TOOL_TIMEOUT: Claude Code gives up on an MCP tool after 60 s, below Volt's long-polls
 		// (TASK_WAIT_LONG_MS): a lead waiting for its subagents got "The operation timed out." every minute.
-		acpEnv: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1', MCP_TOOL_TIMEOUT: '300000' },
+		// CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0: Claude Code's first command otherwise waits for every MCP server
+		// still connecting (up to MCP_TIMEOUT), the account's claude.ai connectors included, which it fetches
+		// over the network 0.4 s after the session is ready and connects 0.4-0.7 s later: a message sent 0.4-1.1 s
+		// after a stopped chat's agent came back waited until about 1.1 s after ready (round 5, chain 4). The host
+		// setting makes the first command wait only for servers it requires (Volt's own, named in the session's
+		// allow rules: CLAUDE_SESSION_OPTIONS); the connectors' tools join the session when they connect, as
+		// they do for a message sent the moment the agent is ready.
+		acpEnv: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1', MCP_TOOL_TIMEOUT: '300000', CLAUDE_CODE_MCP_STARTUP_WAIT_MS: '0' },
 		probeAuth: probeClaudeAuth,
 	},
 	{
