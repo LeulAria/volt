@@ -6,6 +6,7 @@
 import { decodeBase64 } from '../../../../../base/common/buffer.js';
 import { isWindows } from '../../../../../base/common/platform.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
+import { acpAdapterPreload } from '../../common/claudeAcpPatch.js';
 import { voltExec } from '../../common/execContext.js';
 import { antigravityModelsToInfo, parseAntigravityModelLines } from '../../common/models/antigravityModels.js';
 import { fxModelsToInfo, fxSignedIn, IFxStatus, parseFxModelIds, parseFxStatus } from '../../common/models/fxModels.js';
@@ -134,8 +135,11 @@ export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: stri
 		return { command: adapter.command, args: [] };
 	}
 	if (adapterBin) {
-		// The copy npx installed earlier, started directly: npx itself costs 0.5-1.5 s per spawn.
-		return { command: adapterBin, args: [] };
+		// The copy npx installed earlier, started directly: npx itself costs 0.5-1.5 s per spawn. Its
+		// `node` is the one its `#!/usr/bin/env node` line would find, with Volt's load hook for the
+		// work the adapter does between a prompt and its model request (see claudeAcpPatch.ts).
+		const preload = acpAdapterPreload(adapter.package);
+		return preload ? { command: 'node', args: ['--import', preload, adapterBin] } : { command: adapterBin, args: [] };
 	}
 	// The adapter version is pinned, so a cached copy is the right one: --prefer-offline skips the
 	// registry round trip npx makes on every spawn (a cold start of seconds, a failure offline).

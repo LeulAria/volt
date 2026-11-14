@@ -10,6 +10,7 @@ import { isWindows } from '../../../../../base/common/platform.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { acpLaunchFor, cliAgentDefinition, cliLoginForNotice, grokAcpArgs, npxCachedLaunchScript, runCli } from '../../browser/agents/cliAgents.js';
+import { acpAdapterPreload } from '../../common/claudeAcpPatch.js';
 
 /** Emits the process output from inside spawn(), before the caller learns the id: the IPC race. */
 class FastStdio implements IVoltStdioService {
@@ -94,6 +95,13 @@ suite('runCli', () => {
 		const codex = cliAgentDefinition('codex');
 		assert.deepStrictEqual(acpLaunchFor(codex, 'codex', ['acp'], true), { command: 'codex-acp', args: [] });
 		assertNpxLaunch(acpLaunchFor(codex, 'codex', ['acp'], false), 'codex-acp', '@agentclientprotocol/codex-acp@1.13.1');
+	});
+
+	test('Claude\'s adapter from npx\'s cache runs on node with Volt\'s preload; other adapters run as they are', () => {
+		const bin = '/home/u/.npm/_npx/abc/node_modules/.bin/claude-agent-acp';
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], false, bin), { command: 'node', args: ['--import', acpAdapterPreload('@agentclientprotocol/claude-agent-acp@0.106.0')!, bin] });
+		const codexBin = '/home/u/.npm/_npx/def/node_modules/.bin/codex-acp';
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('codex'), 'codex', [], false, codexBin), { command: codexBin, args: [] });
 	});
 
 	test('an adapter cached by npx runs directly, without npx as its parent', () => {
