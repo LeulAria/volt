@@ -64,6 +64,27 @@ Live check on the dev build after a relaunch (spawn census of the agent server a
 [explore logs](data/idle/explore/)): before, a focus started a code-index fork and two `log show`; after, no fork and
 one `log show`. Main's code index, held 20 minutes before, was gone 3 minutes after launch.
 
+## Method
+
+- **A5 + A6** ([scripts/idle/a5a6-batch.mjs](scripts/idle/a5a6-batch.mjs), [a6.mjs](scripts/idle/a6.mjs)): per rep a
+  fresh launch of the arm with its profile seeded once (5 chats answered `replay:seed` by ADEMark's replay server on
+  18977), composer focused, then ADEMark's sampler (`ademark-native sample`, 4 Hz) over main plus every process of the
+  arm's profile: 60 s front after a 90 s settle, then 60 s under ADEMark's cover panel. CPU % = delta(user + sys) /
+  wall of the `app` group; wakeups/s = idle-exit + interrupt wakeups; A5 = the `app` group's median RAM over the front
+  sample. Arms interleaved (ABBA), timing lock held, 1-minute load <= 14 at each sample's start and recorded in the row.
+  Built arms run their own binary with `--use-mock-keychain`.
+- **Censuses** (analysis aids, any load): [timers.mjs](scripts/idle/timers.mjs) logs every Node timer that fires in a
+  process over its inspector; [spawns.mjs](scripts/idle/spawns.mjs) every child process it starts, with the caller;
+  [idle-trace.mjs](scripts/idle/idle-trace.mjs) Chromium's trace of the window's processes; `--inspect` flags on main,
+  the shared process and the extension host, `SIGUSR1` on the agent server.
+
 ## Not done, and why
 
-(to be written)
+- **The focus burst in main (18 git processes) and the warm agent, plugin host and adapter it starts** belong to the
+  warm-on-intent path (firstword's area). This report measures them; it does not change when a focus warms. What idle
+  owns in that burst (the second kernel-log read, the code-index fork) is fixed above.
+- **The Chromium and Node floor per process** (mojo notifications, the memory-pressure evaluator, PartitionAlloc's
+  reclaimer, V8's GC timers) is not Volt's code; the only lever is fewer processes at rest. The shared process, the
+  extension host (the branch chip needs the git extension, round 5) and the network service stay.
+- **The agent server's 20 s WebSocket pings** (both directions) stay: longer pings would delay dead-peer detection for
+  web and phone clients by minutes for about 0.1 wakeups/s.
