@@ -6,7 +6,8 @@ import { createApp } from "../src/api.ts";
 import { sampleInvoices } from "../src/invoices.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const app = () => createApp({ invoices: sampleInvoices(5), rateLimit: { capacity: 1, refillPerSecond: 1, now: () => 1_000_000 } } as never);
+// Capacity 10: every request but GET /health takes a token, so a 1-token bucket turned the 405 check into a 429 (own-test bug, round 6).
+const app = () => createApp({ invoices: sampleInvoices(5), rateLimit: { capacity: 10, refillPerSecond: 1, now: () => 1_000_000 } } as never);
 
 test("C2-F2: a generated x-request-id is a UUID and differs between requests", () => {
   const instance = app();
@@ -31,7 +32,7 @@ test("C2-F2: 404, 405 and 429 responses carry x-request-id too", () => {
   const method = instance.handle({ method: "PATCH", path: "/invoices", headers: {} });
   assert.equal(method.status, 405);
   assert.match(String(method.headers["x-request-id"]), UUID);
-  instance.handle({ method: "GET", path: "/invoices", headers: { "x-api-key": "k" } });
+  for (let i = 0; i < 10; i++) instance.handle({ method: "GET", path: "/invoices", headers: { "x-api-key": "k" } });
   const limited = instance.handle({ method: "GET", path: "/invoices", headers: { "x-api-key": "k" } });
   assert.equal(limited.status, 429);
   assert.match(String(limited.headers["x-request-id"]), UUID);
