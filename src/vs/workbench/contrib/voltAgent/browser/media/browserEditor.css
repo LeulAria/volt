@@ -1319,15 +1319,23 @@ the background paints a solid square) and keep the glyph in the accent. */
 	display: inline-flex;
 }
 
-.volt-browser-dock-dots svg {
-	display: block;
-	width: 100%;
-	height: 100%;
-	overflow: visible;
+/* Nine 2px boxes on a 4px pitch (the SVG's r 1.125 on 4 in a 10.5 box, at 10px): HTML, so the compositor runs the fades. */
+.volt-browser-dock-dot-grid {
+	display: grid;
+	grid-template-columns: repeat(3, 2px);
+	grid-auto-rows: 2px;
+	gap: 2px;
+	width: 10px;
+	height: 10px;
 }
 
 .volt-browser-dock-dot {
-	fill: currentColor;
+	display: block;
+	width: 2px;
+	height: 2px;
+	border-radius: 50%;
+	background: currentColor;
+	will-change: opacity;
 	animation-duration: 1.4s;
 	animation-timing-function: steps(1, end);
 	animation-iteration-count: infinite;

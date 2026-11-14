@@ -111,27 +111,20 @@ interface IGitShortStat {
 	deletions: number;
 }
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
 /**
  * Cursor's in-progress loader for pills (DotGridLoader, sine_3x3): nine dots on a 3x3 grid, same
  * geometry (r 1.125 on a 4 pitch in a 10.5 box). The wave is CSS keyframes per dot (browserEditor.css).
+ * The dots are HTML boxes, not SVG circles: an opacity animation on a box runs on the compositor,
+ * while the circles cost a style recalc and a repaint of the main thread on every frame for as long
+ * as the chat worked (nine of them, 54 times a second, in the A8 trace).
  */
 export function createThinkingDots(): HTMLElement {
 	const root = $('span.volt-browser-dock-dots');
 	root.setAttribute('aria-hidden', 'true');
-	const svg = root.ownerDocument.createElementNS(SVG_NS, 'svg');
-	svg.setAttribute('viewBox', '0 0 10.5 10.5');
-	svg.setAttribute('focusable', 'false');
+	const grid = append(root, $('span.volt-browser-dock-dot-grid'));
 	for (let index = 0; index < 9; index++) {
-		const dot = root.ownerDocument.createElementNS(SVG_NS, 'circle');
-		dot.setAttribute('cx', String(1.25 + (index % 3) * 4));
-		dot.setAttribute('cy', String(1.25 + Math.floor(index / 3) * 4));
-		dot.setAttribute('r', '1.125');
-		dot.setAttribute('class', `volt-browser-dock-dot d${index + 1}`);
-		svg.appendChild(dot);
+		append(grid, $(`span.volt-browser-dock-dot.d${index + 1}`));
 	}
-	root.appendChild(svg);
 	return root;
 }
 
