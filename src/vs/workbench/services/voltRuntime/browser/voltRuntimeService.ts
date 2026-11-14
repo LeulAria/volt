@@ -41,7 +41,7 @@ import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, pickGenerationParams, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
 import { ORCH_WARM_SUBAGENTS_SETTING } from '../common/orchestration/orchestrator.js';
-import { requestAsksForSubagents, subagentReport, subagentSpareCount, subagentSpareKinds } from '../common/orchestration/agentTasks.js';
+import { namedSubagentCount, requestAsksForSubagents, subagentReport, subagentSpareCount, subagentSpareKinds } from '../common/orchestration/agentTasks.js';
 import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, subagentProfile, VoltProviderState, VoltSubagentProfile } from '../common/providers.js';
@@ -205,8 +205,6 @@ const SUBAGENT_SPARES = 3;
 const MAX_SUBAGENT_SPARES = 4;
 /** Unused subagent spares stop sooner: they were started for one delegate_task call. */
 const SUBAGENT_SPARE_TTL_MS = 90_000;
-/** A request that names worktrees gets its work spares in worktrees made ahead (see WorktreeSpares). */
-const WANTS_WORKTREES = /\bworktrees?\b/i;
 /** Claude Code's name for Volt's delegate_task (`mcp__<server>__delegate_task`), or the bare name. */
 const DELEGATE_TOOL_NAME = /(^|__)delegate_task$/;
 /** How long a new run waits for a cancelled one to let go of its agent session. */
@@ -574,6 +572,18 @@ const MAX_PARKED_PER_CHAT = 2;
 /** v2: the default for new chats is on (macOS, Linux); an `off` saved before it was the old default, not a choice. */
 const SANDBOX_DEFAULTS_VERSION = 2;
 
+/** What a spare for a chat's subagents starts with (`subagentSpareSetup`). */
+interface ISubagentSpareSetup {
+	readonly provider: IAgentProvider;
+	readonly profile: IProviderProfile;
+	readonly item: IVoltCatalogItem;
+	readonly options: IVoltModelOptions | undefined;
+	readonly settings: IVoltSandboxSettings;
+	readonly cwd: string | undefined;
+	readonly sandbox: IAgentSandboxStart | undefined;
+	readonly request: string | undefined;
+}
+
 export class AgentRuntimeService extends Disposable implements IAgentRuntimeService {
 
 	declare readonly _serviceBrand: undefined;
@@ -684,6 +694,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly subagentsWarmedAt = new Map<string, number>();
 	/** Worktrees made ahead, with a warm agent in each, for the worktree subagents a chat is about to start. */
 	private readonly worktreeSpares: WorktreeSpares;
+	/** Per chat, the worktree tasks its current run started (warmWorktreeSpares). */
+	private readonly worktreeTasksSeen = new Map<string, { readonly runId: string; readonly started: number }>();
 
 	private readonly _onDidChangeCatalog = this._register(new Emitter<void>());
 	readonly onDidChangeCatalog: Event<void> = this._onDidChangeCatalog.event;
@@ -5526,26 +5538,41 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * Starts spares for the subagents `session` is about to start: the chat's own model, options,
 	 * folder and sandbox (a subagent inherits them unless the call names others), so one
 	 * delegate_task call with several tasks finds them warm instead of starting each cold. Spares a
-	 * call does not use stop after SUBAGENT_SPARE_TTL_MS.
+	 * call does not use stop after SUBAGENT_SPARE_TTL_MS. Worktree subagents get theirs from their
+	 * first task on (see warmWorktreeSpares).
 	 */
 	private prewarmSubagents(session: ISessionState): void {
 		const now = Date.now();
 		// A subagent rarely delegates (depth-limited), and one call's spares serve the whole call.
-		if (session.subagent || now - (this.subagentsWarmedAt.get(session.sessionId) ?? 0) < 30_000 || this.configurationService.getValue<boolean>(ORCH_WARM_SUBAGENTS_SETTING) === false) {
+		if (now - (this.subagentsWarmedAt.get(session.sessionId) ?? 0) < 30_000) {
 			return;
+		}
+		const setup = this.subagentSpareSetup(session);
+		if (!setup) {
+			return;
+		}
+		this.subagentsWarmedAt.set(session.sessionId, now);
+		// The call's roles are still streaming: an Ask or Plan chat's subagents are all read-only (see
+		// `subagentProfileForTask`); elsewhere the request says whether its parts edit, read, or both.
+		const kinds = subagentSpareKinds(modePolicy(session.mode).allowWrites, setup.request, subagentSpareCount(setup.request, SUBAGENT_SPARES, MAX_SUBAGENT_SPARES));
+		for (const kind of ['work', 'readonly'] as const) {
+			if (kinds[kind]) {
+				this.agentPool.ensure(this.subagentSpareRequest(setup, kind), { count: kinds[kind], ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
+			}
+		}
+	}
+
+	/** What a spare for `session`'s subagents starts with; undefined when they get none. */
+	private subagentSpareSetup(session: ISessionState): ISubagentSpareSetup | undefined {
+		if (session.subagent || this.configurationService.getValue<boolean>(ORCH_WARM_SUBAGENTS_SETTING) === false) {
+			return undefined;
 		}
 		const item = session.agentRef ? this.catalog.find(candidate => candidate.ref === session.agentRef && candidate.enabled) : undefined;
 		const profile = item ? this.profiles.find(candidate => candidate.id === item.profileId) : undefined;
 		const provider = profile ? this.agentProviders.get(profile.providerId) : undefined;
 		if (!item || item.kind !== 'agent' || !profile || !provider) {
-			return;
+			return undefined;
 		}
-		this.subagentsWarmedAt.set(session.sessionId, now);
-		const cwd = this.executionRoot(session)?.fsPath;
-		const settings = this.getSandboxSettings(session.sessionId);
-		const sandbox: IAgentSandboxStart | undefined = settings.level === 'off' ? undefined : { settings, workspaceRoots: sandboxWorkspaceRoots(cwd, this.projectRoot(session)?.fsPath, !!session.worktreePath) };
-		// The call's roles are still streaming: an Ask or Plan chat's subagents are all read-only (see
-		// `subagentProfileForTask`); elsewhere the request says whether its parts edit, read, or both.
 		let request: string | undefined;
 		for (let i = session.messages.length - 1; i >= 0 && request === undefined; i--) {
 			const message = session.messages[i];
@@ -5553,18 +5580,57 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				request = message.content;
 			}
 		}
-		const kinds = subagentSpareKinds(modePolicy(session.mode).allowWrites, request, subagentSpareCount(request, SUBAGENT_SPARES, MAX_SUBAGENT_SPARES));
-		const options = this.getModelOptions(item.ref);
-		// Work in worktrees of their own ("each in its own git worktree"): a spare in the project folder
-		// would never fit them (an agent's folder is fixed), so their worktrees are made now, an agent in each.
-		const repoRoot = this.sessionContext.rootFor(session.sessionId)?.fsPath;
-		if (kinds.work && repoRoot && !session.worktreePath && request && WANTS_WORKTREES.test(request)) {
-			this.worktreeSpares.fill(repoRoot, kinds.work, spare => this.warmWorktreeSpare(provider, profile, item, options, settings, repoRoot, spare));
-		} else if (kinds.work) {
-			this.agentPool.ensure(this.spareRequest(provider, profile, item, cwd, options, sandbox, 'work'), { count: kinds.work, ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
+		const cwd = this.executionRoot(session)?.fsPath;
+		const settings = this.getSandboxSettings(session.sessionId);
+		const sandbox: IAgentSandboxStart | undefined = settings.level === 'off' ? undefined : { settings, workspaceRoots: sandboxWorkspaceRoots(cwd, this.projectRoot(session)?.fsPath, !!session.worktreePath) };
+		return { provider, profile, item, options: this.getModelOptions(item.ref), settings, cwd, sandbox, request };
+	}
+
+	private subagentSpareRequest(setup: ISubagentSpareSetup, kind: VoltSubagentProfile): ISpareRequest {
+		return this.spareRequest(setup.provider, setup.profile, setup.item, setup.cwd, setup.options, setup.sandbox, kind);
+	}
+
+	/**
+	 * A worktree made ahead for a worktree subagent of `repoRoot` (see WorktreeSpares), at the
+	 * repository's HEAD, with a warm agent in it; undefined when there is none, and the caller makes one.
+	 * Each worktree task of `parentSessionId` also warms worktrees for the parts still to come.
+	 */
+	takeWorktreeSpare(repoRoot: string, parentSessionId?: string): Promise<IWorktreeSpare | undefined> {
+		const taking = this.worktreeSpares.take(repoRoot);
+		if (parentSessionId) {
+			this.warmWorktreeSpares(repoRoot, parentSessionId);
 		}
-		if (kinds.readonly) {
-			this.agentPool.ensure(this.spareRequest(provider, profile, item, cwd, options, sandbox, 'readonly'), { count: kinds.readonly, ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
+		return taking;
+	}
+
+	/**
+	 * A chat's parts run in worktrees of their own: the spares warmed in its folder never fit them (an
+	 * agent's folder is fixed). From its first worktree task on, the parts its request names that have
+	 * not started yet get a worktree made ahead each, with an agent starting in it, and the folder's
+	 * work spares stop. Only for a request that names how many parts it has: one worktree task alone
+	 * warms nothing it would not use. (Guessing worktrees from the request's words warmed four that
+	 * went unused when the lead made its own worktrees and ran its parts shared, ADEMark C1.)
+	 */
+	private warmWorktreeSpares(repoRoot: string, parentSessionId: string): void {
+		const session = this.sessions.get(parentSessionId) as ISessionState | undefined;
+		const setup = session && !session.worktreePath ? this.subagentSpareSetup(session) : undefined;
+		const named = namedSubagentCount(setup?.request);
+		if (!session || !setup || !named) {
+			return;
+		}
+		const runId = session.run?.runId ?? '';
+		const seen = this.worktreeTasksSeen.get(parentSessionId);
+		const started = (seen?.runId === runId ? seen.started : 0) + 1;
+		if (this.worktreeTasksSeen.size > 100) {
+			this.worktreeTasksSeen.clear();
+		}
+		this.worktreeTasksSeen.set(parentSessionId, { runId, started });
+		if (started === 1) {
+			this.agentPool.discard(this.subagentSpareRequest(setup, 'work').key);
+		}
+		const want = Math.min(named, MAX_SUBAGENT_SPARES) - started;
+		if (want > 0) {
+			this.worktreeSpares.fill(repoRoot, want, spare => this.warmWorktreeSpare(setup.provider, setup.profile, setup.item, setup.options, setup.settings, repoRoot, spare));
 		}
 	}
 
@@ -5575,14 +5641,6 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const request = this.spareRequest(provider, profile, item, spare.path, options, sandbox, 'work');
 		this.agentPool.ensure(request, { count: 1, ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
 		return () => this.agentPool.discard(request.key);
-	}
-
-	/**
-	 * A worktree made ahead for a worktree subagent of `repoRoot` (see WorktreeSpares), at the
-	 * repository's HEAD, with a warm agent in it; undefined when there is none, and the caller makes one.
-	 */
-	takeWorktreeSpare(repoRoot: string): Promise<IWorktreeSpare | undefined> {
-		return this.worktreeSpares.take(repoRoot);
 	}
 
 	private emit(session: ISessionState, runId: string, event: IVoltEvent): void {

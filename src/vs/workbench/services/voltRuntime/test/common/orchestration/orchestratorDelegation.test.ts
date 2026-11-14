@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, requestAsksForSubagents, resolveChatTaskRefs, subagentReport, subagentSpareCount, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, namedSubagentCount, requestAsksForSubagents, resolveChatTaskRefs, subagentReport, subagentSpareCount, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
 import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
@@ -88,6 +88,9 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.strictEqual(subagentSpareCount('Answer four questions about src.', 3, 4), 3, 'questions are not parts');
 		assert.strictEqual(subagentSpareCount('Delegate each file to its own agent.', 3, 4), 3);
 		assert.strictEqual(subagentSpareCount(undefined, 3, 4), 3);
+		// Worktree spares are made only for the parts a request names (one worktree task alone warms none).
+		assert.strictEqual(namedSubagentCount('Do it in a worktree with a subagent.'), undefined);
+		assert.strictEqual(namedSubagentCount('Split it into six parallel tasks.'), 6);
 	});
 
 	test('a request that asks for subagents outright warms their agents with the run', () => {

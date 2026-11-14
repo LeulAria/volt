@@ -166,10 +166,11 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	/** Restore the checkout a chat already created, so a reload does not fall through to the open folder. */
 	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void;
 	/**
-	 * A worktree of `repoRoot` made ahead (with a warm agent in it) for a worktree subagent of a chat
-	 * that was about to delegate, at the repository's HEAD; undefined when there is none.
+	 * A worktree of `repoRoot` made ahead (with a warm agent in it) for a worktree subagent, at the
+	 * repository's HEAD; undefined when there is none. Each worktree task of `parentSessionId` warms
+	 * worktrees for the parts its request names that have not started yet.
 	 */
-	takeWorktreeSpare?(repoRoot: string): Promise<{ readonly path: string; readonly branch: string } | undefined>;
+	takeWorktreeSpare?(repoRoot: string, parentSessionId?: string): Promise<{ readonly path: string; readonly branch: string } | undefined>;
 	/**
 	 * The chat moved to another checkout (`path` undefined: the project's own). Its next turn runs
 	 * there: an ACP agent resumes its session in the new folder when it can, else a fresh one is

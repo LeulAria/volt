@@ -375,9 +375,13 @@ const NAMED_COUNT = /\b(two|three|four|five|six|[2-6])\s+(?:[a-z-]+\s+){0,2}?(?:
  * four-part request started its agent cold, on the critical path (ADEMark C1).
  */
 export function subagentSpareCount(request: string | undefined, fallback: number, max: number): number {
+	return Math.max(1, Math.min(max, namedSubagentCount(request) ?? fallback));
+}
+
+/** The number of parts or agents a request names ("four work items", "up to 4 agents"), if it names one. */
+export function namedSubagentCount(request: string | undefined): number | undefined {
 	const named = request ? NAMED_COUNT.exec(request)?.[1].toLowerCase() : undefined;
-	const count = named ? COUNT_WORDS[named] ?? Number(named) : fallback;
-	return Math.max(1, Math.min(max, count));
+	return named ? COUNT_WORDS[named] ?? Number(named) : undefined;
 }
 
 /** Words of a request that asks for subagents outright (`requestAsksForSubagents`). */

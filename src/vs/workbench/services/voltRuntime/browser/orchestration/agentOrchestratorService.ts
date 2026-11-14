@@ -1322,7 +1322,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				throw new Error('The parent chat has no project folder to branch from.');
 			}
 			// One made ahead while the parent wrote its call, with the subagent's agent already starting in it.
-			const created = await this.runtime.takeWorktreeSpare?.(root.fsPath) ?? await this.worktrees.create(root.fsPath);
+			const created = await this.runtime.takeWorktreeSpare?.(root.fsPath, task.parentId) ?? await this.worktrees.create(root.fsPath);
 			this.runtime.rememberWorktree(task.childId, created.path, created.branch);
 			this.history.open(task.childId).setMeta({ worktreePath: created.path, worktreeBranch: created.branch });
 			// The subagent's chat stays blocked until its worktree is set up (the card shows each step).
