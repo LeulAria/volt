@@ -582,6 +582,13 @@ import { paintWindowSnapshot } from '../../../platform/voltWindowSnapshot/browse
 				// Show our splash as early as possible
 				showSplash(windowConfig);
 
+				// Volt, built product: the workbench CSS is the page's own stylesheet (loaded before this script
+				// runs), so the window's last screen is painted in the splash frame, before the workbench code loads.
+				// Dev builds get their CSS with the workbench code and paint it after the import (below).
+				if (!windowConfig.cssModules?.length && windowConfig.partsSplash?.layoutInfo && isAgentSplash(windowConfig.partsSplash.layoutInfo)) {
+					showVoltWindowSnapshot(windowConfig, windowConfig.partsSplash.baseTheme);
+				}
+
 				// Code windows have a `vscodeWindowId` property to identify them
 				Object.defineProperty(window, 'vscodeWindowId', {
 					get: () => windowConfig.windowId
