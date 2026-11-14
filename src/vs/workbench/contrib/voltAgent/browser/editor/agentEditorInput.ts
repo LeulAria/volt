@@ -22,6 +22,7 @@ import { handoffActivityOf } from '../blocks/agentHandoffActivity.js';
 import type { IAgentAssistantMessage, IAgentMessage, IAgentPromptDisplay, IAgentUserMessage } from './agentEditor.js';
 import { AgentHistoryCodec, assistantSummary, userMessageText } from '../history/agentHistoryCodec.js';
 import { AgentSessionController, IAgentSessionControl } from './agentSessionController.js';
+import { ChatReadAhead } from './agentChatReadAhead.js';
 import type { IAgentDisplayMention } from '../composer/agentMentions.js';
 
 const AgentEditorIcon = registerIcon('volt-agent-editor-label-icon', Codicon.robot, localize('voltAgentEditorLabelIcon', 'Icon of the New Agent editor tab.'));
@@ -109,6 +110,23 @@ const runningDetached = new Map<string, AgentEditorInput>();
 const liveInputs = new Map<string, AgentEditorInput>();
 
 /**
+ * Chats read ahead of their open (the sidebar row under the pointer, the one keyboard focus is on). The agent
+ * server answers an open with the whole transcript: a round trip, the server reading a chat it has not loaded, and
+ * the window parsing it, 40-260 ms before a chat could draw. Read while the pointer rests on its row, the chat is
+ * ready when the row is pressed and draws in the frame after the press. Whatever input opens the chat next takes
+ * the read-ahead one over ({@link AgentEditorInput.adoptReadAhead}); one nobody opens is let go after a while.
+ */
+let readAhead: ChatReadAhead<AgentEditorInput> | undefined;
+/** The instantiation service of the list that asked last (a list can be rebuilt with a new scope). */
+let readAheadInstantiation: IInstantiationService | undefined;
+/** The pointer rests on a row this long before its chat is read: passing over the list reads nothing. */
+const READ_AHEAD_DWELL_MS = 40;
+/** A chat read ahead and not opened is let go after this (the server keeps it loaded a while longer). */
+const READ_AHEAD_KEEP_MS = 30_000;
+/** Chats kept read ahead at once. */
+const READ_AHEAD_MAX = 2;
+
+/**
  * Makes the controller of a new input. A window running its agents in the Volt agent server
  * installs one that mirrors the server's controller; undefined runs the chat in this process.
  */
@@ -188,9 +206,12 @@ export class AgentEditorInput extends EditorInput {
 		super();
 		this.codec = new AgentHistoryCodec(historyService);
 		const running = runningDetached.get(this.sessionId);
+		const readFirst = running ? undefined : readAhead?.take(this.sessionId);
 		if (running) {
 			runningDetached.delete(this.sessionId);
 			this._controller = running.handOver(this);
+		} else if (readFirst && !readFirst.isDisposed()) {
+			this._controller = readFirst.adoptReadAhead(this);
 		} else {
 			this._controller = controlFactory?.(this, instantiationService) ?? instantiationService.createInstance(AgentSessionController, this);
 		}
@@ -219,6 +240,10 @@ export class AgentEditorInput extends EditorInput {
 	static acquire(sessionId: string, instantiationService: IInstantiationService): AgentEditorInput {
 		const live = liveInputs.get(sessionId);
 		if (live && !live.isDisposed()) {
+			// A chat only read ahead is nobody's yet: it is held like a new input, not let go mid-run.
+			if (readAhead?.take(sessionId) === live) {
+				live.holdUntilIdle();
+			}
 			return live;
 		}
 		const detached = runningDetached.get(sessionId);
@@ -242,6 +267,72 @@ export class AgentEditorInput extends EditorInput {
 			this.detached = false;
 			this.dispose();
 		});
+	}
+
+	/**
+	 * Reads chat `sessionId` ahead of its open, when the window runs its chats in the agent server (a window that
+	 * reads history itself prefetches through the history service). Calls for the same chat while the pointer rests
+	 * on it are one read.
+	 */
+	static readAhead(sessionId: string, instantiationService: IInstantiationService): void {
+		if (!controlFactory) {
+			return;
+		}
+		readAheadInstantiation = instantiationService;
+		readAhead ??= new ChatReadAhead<AgentEditorInput>(
+			id => {
+				const live = liveInputs.get(id);
+				if ((live && !live.isDisposed()) || runningDetached.has(id) || !readAheadInstantiation) {
+					return undefined;
+				}
+				return readAheadInstantiation.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(id));
+			},
+			input => input.ensureLoaded(),
+			input => input.dispose(),
+			{ dwellMs: READ_AHEAD_DWELL_MS, keepMs: READ_AHEAD_KEEP_MS, max: READ_AHEAD_MAX },
+		);
+		readAhead.intend(sessionId);
+	}
+
+	/** The pointer left the chat list: a chat still waiting out its dwell is not read. */
+	static cancelReadAhead(): void {
+		readAhead?.cancel();
+	}
+
+	/** Lets every chat read ahead go (tests; a window that stops using the agent server). */
+	static resetReadAhead(): void {
+		readAhead?.dispose();
+		readAhead = undefined;
+		readAheadInstantiation = undefined;
+	}
+
+	/**
+	 * Gives the input opening this read-ahead chat its transcript, history log and controller; its load, when still
+	 * under way, finishes into `next`. This input lets go once the load has settled.
+	 */
+	private adoptReadAhead(next: AgentEditorInput): IAgentSessionControl {
+		this.adopted = true;
+		next.messages = this.messages;
+		next.historyHandle = this.historyHandle;
+		next.recordChain = this.recordChain;
+		const loaded = this.ensureLoaded().then(() => {
+			next.messages = this.messages;
+			next.contextUsed = this.contextUsed;
+			next.contextWindow = this.contextWindow;
+			next.restoredMode = this.restoredMode;
+			next.historyHandle ??= this.historyHandle;
+			if (!next.draft.trim() && !next.promptQueue.length && (this.draft || this.promptQueue.length)) {
+				next.draft = this.draft;
+				next.draftMentions = this.draftMentions;
+				next.promptQueue = this.promptQueue;
+				next.hasUnsavedContent = this.hasUnsavedContent;
+				next.lastDraftSignature = this.lastDraftSignature;
+			}
+		});
+		next.loading = loaded;
+		void loaded.finally(() => this.dispose());
+		this._controller.setHost(next);
+		return this._controller;
 	}
 
 	/** Gives a reopened input the live transcript, history log, and controller of the run still going here. */
@@ -559,6 +650,11 @@ export class AgentEditorInput extends EditorInput {
 		if (this.detached) {
 			return;
 		}
+		if (this.adopted) {
+			// The reopened input owns the controller and the history log now (and records a run still going).
+			super.dispose();
+			return;
+		}
 		// Closing a busy chat does not stop its agent: keep recording until the run ends.
 		if (this._controller.isRunning) {
 			this.detached = true;
@@ -571,11 +667,6 @@ export class AgentEditorInput extends EditorInput {
 				this.detached = false;
 				this.dispose();
 			});
-			super.dispose();
-			return;
-		}
-		if (this.adopted) {
-			// The reopened input owns the controller and the history log now.
 			super.dispose();
 			return;
 		}
