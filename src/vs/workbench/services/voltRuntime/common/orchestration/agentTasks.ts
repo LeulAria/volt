@@ -209,7 +209,7 @@ const STRINGS = { type: 'array', items: STRING };
 const DELEGATE_ARGS = {
 	task: STRING,
 	title: STRING,
-	role: { enum: AGENT_TASK_ROLES },
+	role: STRING,
 	after: STRINGS,
 	model: STRING,
 	previous_task_id: STRING,
@@ -225,28 +225,28 @@ export interface IAgentTaskToolInfo {
 	readonly alwaysLoad?: 'top';
 }
 
-/** delegate_task, with `tasks` taking at most `maxPerCall` entries (the user's setting). */
-function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
+/**
+ * delegate_task. It starts one subagent per call: Claude Code runs the calls of one message one
+ * after another, each as soon as it is written, so the first subagent starts while the parent still
+ * writes the next brief (a `tasks` list held every part until the whole list was written). The
+ * handler still takes `tasks` (at most `maxPerCall` entries, the user's setting) from callers that
+ * send one.
+ */
+function delegateTaskTool(): IAgentTaskToolInfo {
 	return {
 		name: DELEGATE_TASK_TOOL_NAME,
 		title: 'Delegated task',
 		alwaysLoad: 'top',
 		description: [
-			'Run work on a Volt subagent: a separate chat whose report comes back to you. For independent parts in parallel, a second opinion or self-contained work; not quick lookups.',
-			'Brief it like a colleague: the files and facts you found, exactly what to do.',
+			'Run work on a Volt subagent (its own chat; the report comes back to you): parallel parts, a second opinion, self-contained work; not quick lookups.',
+			'Brief: the files and facts you found, exactly what to do.',
 			'Several parts: one call each, in one message (each starts once written).',
-			'after: task_ids, or 1-based positions of this chat\'s tasks, to finish first; their reports join its brief.',
-			'Reports arrive as a message: end your turn or call wait_tasks; wait=true waits here.',
-			'role research/review: read-only. model: from list_models. previous_task_id: the next review round.',
-			'Also: models (same brief on 2-4), isolation:"worktree" (own branch), goal, scope (only files it may change), files, constraints, done_when, verify (commands run on its report), context (brief/full/none), budget_usd, fallback_models, tasks (several parts in one call).',
+			'after: task_ids, or 1-based positions of this chat\'s tasks, that must finish first (their reports join the brief).',
+			'Reports arrive as a message: end your turn or call wait_tasks (wait=true: wait here).',
+			'role: research or review (read-only), implementation, test, design, general. previous_task_id: next review round.',
+			'Also: models (2-4, same brief), isolation:"worktree", goal, scope (only files it may change), files, constraints, done_when, verify (commands run on its report), context (brief/full/none), budget_usd, fallback_models.',
 		].join(' '),
-		inputSchema: {
-			type: 'object',
-			properties: {
-				...DELEGATE_ARGS,
-				tasks: { type: 'array', maxItems: maxPerCall, items: { type: 'object' } },
-			},
-		},
+		inputSchema: { type: 'object', properties: DELEGATE_ARGS },
 	};
 }
 
@@ -257,7 +257,7 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 		description: 'List the agents and models Volt can run delegated tasks on (the same list as the user\'s model picker), with the model this chat is on. Use it before delegate_task or handoff when you want a specific model.',
 		inputSchema: { type: 'object', properties: {} },
 	},
-	delegateTaskTool(MAX_BATCH_TASKS),
+	delegateTaskTool(),
 	{
 		name: TASK_STATUS_TOOL_NAME,
 		title: 'Checked task',
@@ -268,8 +268,8 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 		name: WAIT_TASKS_TOOL_NAME,
 		title: 'Waited for tasks',
 		alwaysLoad: 'top',
-		description: 'Wait for delegated tasks and return their reports: all of task_ids (default: this chat\'s running tasks), or the first with any=true. Returns early after 45 s-4 min: call again, or end your turn (reports arrive as a message).',
-		inputSchema: { type: 'object', properties: { task_ids: STRINGS, any: { type: 'boolean' } } },
+		description: 'Wait for delegated tasks (default: all running; any=true: the first) and return their reports. Returns early after 45 s-4 min: call again, or end your turn.',
+		inputSchema: { type: 'object', properties: { task_ids: STRINGS } },
 	},
 	{
 		name: CANCEL_TASK_TOOL_NAME,
@@ -281,8 +281,8 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 		name: MESSAGE_TASK_TOOL_NAME,
 		title: 'Messaged task',
 		alwaysLoad: 'top',
-		description: 'Follow up on a finished delegated task in its own chat, which keeps what it learned (answer it, ask for fixes). The new report arrives like the first; wait=true waits here.',
-		inputSchema: { type: 'object', properties: { task_id: STRING, message: STRING, wait: { type: 'boolean' } }, required: ['task_id', 'message'] },
+		description: 'Send a finished delegated task a follow-up in its own chat, which keeps its context (answer it, ask for fixes). wait=true waits for the new report.',
+		inputSchema: { type: 'object', properties: { task_id: STRING, message: STRING }, required: ['task_id', 'message'] },
 	},
 	{
 		name: HANDOFF_TOOL_NAME,
@@ -300,9 +300,9 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 	},
 ];
 
-/** The task tools, with delegate_task's `tasks` capped at `maxPerCall`. */
-export function agentTaskTools(maxPerCall: number): readonly IAgentTaskToolInfo[] {
-	return maxPerCall === MAX_BATCH_TASKS ? AGENT_TASK_TOOLS : AGENT_TASK_TOOLS.map(tool => tool.name === DELEGATE_TASK_TOOL_NAME ? delegateTaskTool(maxPerCall) : tool);
+/** The task tools. The cap on a `tasks` list (`_maxPerCall`) is the handler's: the schema lists no `tasks`. */
+export function agentTaskTools(_maxPerCall: number): readonly IAgentTaskToolInfo[] {
+	return AGENT_TASK_TOOLS;
 }
 
 //#endregion

@@ -1,0 +1,14 @@
+modes "auto" default,acceptEdits,plan,auto,bypassPermissions config mode=auto,model=default,effort=high,ultracode=off,agent=default
+set mode "bypassPermissions"
+prompt {"stopReason":"end_turn","usage":{"inputTokens":4,"outputTokens":684,"cachedReadTokens":55376,"cache
+2596 tool_call:pending:mcp__probe__probe
+3621 tool_call:pending:mcp__probe__probe
+3759 tool_call_update:completed:
+4464 tool_call:pending:mcp__probe__probe
+4471 tool_call_update:completed:
+5557 tool_call_update:completed:
+calls:
+3621 n=1
+4464 n=2
+5463 n=3
+end 7184
