@@ -16,6 +16,14 @@ const STUCK_SYNC_PRIORITY = -2000;
  * (find, a footnote) is adopted before the follow could write over it.
  */
 const NATIVE_SCROLL_CHECK_PRIORITY = -1200;
+/**
+ * The scrollbar's slider is drawn last in the frame, after the sticky pass (-2000) has read its
+ * rects. The scrollable used to draw it in the scroll event itself: every scroll sync and follow
+ * step then left the slider's style dirty, and each later read in the frame (the native scroll
+ * check, the sticky pass) and the follow's own scrollTop write flushed style and layout of the whole
+ * thread again: three or four forced passes per streamed frame instead of one.
+ */
+const SCROLLBAR_RENDER_PRIORITY = -2500;
 /** Drag-select autoscroll starts this far inside the top edge, and inside the bottom one, where the composer's chips and the fade cover the rows. */
 const SELECT_SCROLL_EDGE_TOP = 24;
 const SELECT_SCROLL_EDGE_BOTTOM = 56;
@@ -53,6 +61,8 @@ export class AgentThreadView extends Disposable {
 			useShadows: false,
 			handleMouseWheel: true,
 			alwaysConsumeMouseWheel: false,
+			// The slider is drawn once per frame, at the end (scheduleScrollbarRender), not in the scroll event.
+			lazyRender: true,
 		}));
 		const node = this.scroll.getDomNode();
 		node.style.width = '100%';
@@ -60,8 +70,12 @@ export class AgentThreadView extends Disposable {
 		this.element.appendChild(node);
 		append(this.element, $('.volt-agent-thread-fade.top'));
 		append(this.element, $('.volt-agent-thread-fade.bottom'));
-		this._register(this.scroll.onScroll(() => this.scheduleSyncStuckTurns()));
+		this._register(this.scroll.onScroll(() => {
+			this.scheduleSyncStuckTurns();
+			this.scheduleScrollbarRender();
+		}));
 		this._register(toDisposable(() => this.stuckFrame?.dispose()));
+		this._register(toDisposable(() => this.scrollbarFrame?.dispose()));
 		// A native scroll (scrollIntoView for a footnote or a cited quote, find, a drag-select past
 		// the edge, scroll anchoring as an off-screen exchange is laid out) moves the element under
 		// the scrollable; catch the scrollable up, or the next wheel turn would jump back. Its sizes
@@ -76,6 +90,18 @@ export class AgentThreadView extends Disposable {
 	}
 
 	private nativeScrollFrame: IDisposable | undefined;
+	private scrollbarFrame: IDisposable | undefined;
+
+	/** Draws the scrollbar's slider for this frame's scrolls, once, after every layout read of the frame. */
+	private scheduleScrollbarRender(): void {
+		if (this.scrollbarFrame) {
+			return;
+		}
+		this.scrollbarFrame = runAtThisOrScheduleAtNextAnimationFrame(getWindow(this.inner), () => {
+			this.scrollbarFrame = undefined;
+			this.scroll.renderNow();
+		}, SCROLLBAR_RENDER_PRIORITY);
+	}
 
 	private scheduleNativeScrollCheck(): void {
 		if (this.nativeScrollFrame) {
