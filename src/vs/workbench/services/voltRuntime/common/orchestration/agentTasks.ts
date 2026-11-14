@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { VoltMode } from '../modes.js';
+import type { VoltSubagentProfile } from '../providers.js';
 import type { IOrchSpend, IOrchTask, IOrchTaskUsage, OrchTaskState } from './orchestrator.js';
 
 /**
@@ -57,6 +58,18 @@ export const MAX_TASK_DEPTH = 2;
  * and tells the agent to call again.
  */
 export const TASK_WAIT_MS = 45_000;
+/**
+ * The same budget for a Claude parent: Claude Code's MCP client waits for a tool far longer than 60 s
+ * (an HTTP call is cut at 5 min by Node's fetch). A 45 s cap made a Claude lead building for minutes
+ * call wait_tasks again and again, each a whole request on its full context (ADEMark C1-style run).
+ */
+export const TASK_WAIT_LONG_MS = 240_000;
+
+/** How long one waiting call may block: TASK_WAIT_LONG_MS for a Claude parent, TASK_WAIT_MS for any other. */
+export function taskWaitMs(longWaits: boolean): number {
+	return longWaits ? TASK_WAIT_LONG_MS : TASK_WAIT_MS;
+}
+
 /** A report longer than this is clipped in the parent's notification; the full text stays in the child chat. */
 export const TASK_RESULT_CHARS = 12_000;
 /** An upstream task's report as a dependent task receives it (`after`). */
@@ -99,6 +112,31 @@ export function stringListArg(value: unknown, max = 24, chars = 600): string[] {
 		.filter((item): item is string => typeof item === 'string' && !!item.trim())
 		.map(item => item.trim().slice(0, chars))
 		.slice(0, max);
+}
+
+/**
+ * `after` of a delegate_task call that starts one task: task_ids, or 1-based positions of this
+ * chat's own tasks in the order it started them ("1" is its first task). Models write a writer,
+ * then its reviewer in a second call with `after: ["1"]`, as they would inside one `tasks` call;
+ * that was refused ("not a task of this chat"), and the parent then waited for the writer itself
+ * and started the reviewer a turn later. A position with no task stays as given (the decider
+ * refuses it with the list of tasks).
+ */
+export function resolveChatTaskRefs(value: unknown, chatTasks: readonly { readonly id: string }[]): string[] {
+	const items = typeof value === 'string' || typeof value === 'number' ? [value] : Array.isArray(value) ? value : [];
+	const refs = items
+		.map(item => typeof item === 'number' && Number.isInteger(item) ? String(item) : typeof item === 'string' ? item.trim().slice(0, 40) : '')
+		.filter(Boolean)
+		.slice(0, 16);
+	return [...new Set(refs.map(ref => /^\d+$/.test(ref) ? chatTasks[Number(ref) - 1]?.id ?? ref : ref))];
+}
+
+/** At most this many `verify` commands per task: they run one after another before every report. */
+export const MAX_VERIFY_COMMANDS = 6;
+
+/** The `verify` commands from delegate_task's arguments: one line each, no blanks. */
+export function verifyFromArgs(args: Record<string, unknown>): string[] {
+	return stringListArg(args.verify, MAX_VERIFY_COMMANDS, 500).filter(command => !/[\r\n]/.test(command));
 }
 
 /** The contract from delegate_task's arguments (one task or one `tasks` entry); undefined when it names nothing. */
@@ -155,19 +193,30 @@ export function bareTaskToolName(name: string | undefined): AgentTaskToolName | 
 
 const MODEL_ARG = {
 	type: 'string',
-	description: 'Model to run it on: a `model` value from list_models (exact id or ref, or a label such as "Claude Opus 5.5"), or "auto" for the model the user set for this role. Omit to use this chat\'s model.',
+	description: 'A model from list_models (id, ref or label), or "auto" (the user\'s model for this role). Default: this chat\'s model.',
 };
 
-/** The handoff contract and run options, the same for one task and for each `tasks` entry. */
-const CONTRACT_ARGS = {
-	goal: { type: 'string', description: 'The outcome you want, in a sentence or two (what is true when the work is done).' },
-	constraints: { type: 'array', items: { type: 'string' }, description: 'Rules the work must keep: what must not change, APIs to keep, style to follow.' },
-	done_when: { type: 'array', items: { type: 'string' }, description: 'The checks that prove it is done (a test that passes, a type-check, what the page shows). The subagent checks each one and reports met or not met.' },
-	files: { type: 'array', items: { type: 'string' }, description: 'Files to read before starting (paths), so it does not explore to find them.' },
-	scope: { type: 'array', items: { type: 'string' }, description: 'Files or folders this task owns: the only ones it may change. Volt flags two tasks claiming the same paths.' },
-	context: { type: 'string', enum: ['brief', 'full', 'none'], description: 'How much of this chat the subagent gets besides your brief. brief (default): the user\'s request, your plan and latest reply, and what the other subagents are doing. full: more of the conversation. none: only your brief (an unbiased second opinion).' },
-	budget_usd: { type: 'number', description: 'Stop this task when it has spent this much (US dollars, at list price when the agent does not report a cost).' },
-	fallback_models: { type: 'array', items: { type: 'string' }, description: 'Models to retry on, in order, when the task fails on its model (provider error, usage limit). The retry gets the same brief.' },
+const STRING = { type: 'string' };
+const STRINGS = { type: 'array', items: STRING };
+
+/**
+ * The schemas of delegate_task, wait_tasks and message_task are in every request of a top-level
+ * chat (`alwaysLoad: 'top'`; round 3: 5.7 KB, about 2K tokens). So each says a thing once, the
+ * fields carry types only, and the options long or risky work needs are named in the description
+ * instead of typed: models write them as named, and the handler reads them as before (also on a
+ * `tasks` entry).
+ */
+const DELEGATE_ARGS = {
+	task: STRING,
+	title: STRING,
+	role: STRING,
+	after: STRINGS,
+	model: STRING,
+	previous_task_id: STRING,
+	wait: { type: 'boolean' },
+	// Typed, not only named: with isolation in the description alone, Opus leads made their own git
+	// worktrees for parallel edits (4 of 4: two C1 runs, two lead probes) instead of Volt's.
+	isolation: { type: 'string', enum: ['shared', 'worktree'], description: 'worktree: its own branch and checkout, for parallel edits of the same files; merge the branch it names.' },
 };
 
 export interface IAgentTaskToolInfo {
@@ -175,69 +224,32 @@ export interface IAgentTaskToolInfo {
 	readonly title: string;
 	readonly description: string;
 	readonly inputSchema: object;
+	/** `top`: in the prompt of top-level chats, not behind the tool search (`IVoltHostToolInfo.alwaysLoad`). */
+	readonly alwaysLoad?: 'top';
 }
 
-/** delegate_task, with `tasks` taking at most `maxPerCall` entries (the user's setting). */
-function delegateTaskTool(maxPerCall: number): IAgentTaskToolInfo {
+/**
+ * delegate_task. It starts one subagent per call: Claude Code runs the calls of one message one
+ * after another, each as soon as it is written, so the first subagent starts while the parent still
+ * writes the next brief (a `tasks` list held every part until the whole list was written). The
+ * handler still takes `tasks` (at most `maxPerCall` entries, the user's setting) from callers that
+ * send one.
+ */
+function delegateTaskTool(): IAgentTaskToolInfo {
 	return {
 		name: DELEGATE_TASK_TOOL_NAME,
 		title: 'Delegated task',
+		alwaysLoad: 'top',
 		description: [
-			'Run one task on a Volt subagent: a separate chat, on any model from list_models, that starts with your brief plus a short digest of this chat (the user\'s request, your plan, what other subagents do). Use it to work in parallel (several independent tasks at once), to get a second opinion from a different model (review, research), or to give a self-contained piece of work to a model better suited to it.',
-			'Write the brief like a hand-off to a capable colleague: the relevant files and facts you already found, and what to do with them. Fill the contract: `goal` (the outcome), `scope` (files it owns and may change), `files` (files to read first), `constraints`, and `done_when` (the checks that prove it is done; it reports each as met or not met). For work that edits code, name the files to change and what to change in each (paths, symbols, line numbers you saw), so the subagent can start editing at once instead of exploring again. Do not delegate trivial lookups you can do faster yourself.',
-			'To run several parts at once, start them all in ONE call with `tasks` (one entry per part, each with its own complete brief) instead of one call per part. A part that needs another part\'s result names it in `after` (that part\'s 1-based position in `tasks`, or a task_id): it starts once those finish, with their reports added to its brief.',
-			'Returns a task_id at once (wait=false, the default). Several tasks run in parallel. When a task finishes its report is delivered to this chat as a new message, so after starting tasks you may end your turn instead of polling; call wait_tasks only when you need the results before you can continue in this turn. task_status reads progress and spend. Subagent spend counts against the user\'s budget for this request; a task over its budget is stopped.',
-			'Review rounds: for each new round of a review (or any work you send back after changes), call delegate_task again with previous_task_id set to the last round and a fresh client_request_id (keep that id when you retry the same round). Do not use message_task for a new round: a fresh subagent reviews the current code without the previous reviewer\'s assumptions. Tasks and their reports survive a Volt restart.',
+			'Run work on a Volt subagent (its own chat; the report comes back to you): parallel parts, a second opinion, self-contained work; not quick lookups.',
+			'Brief: the files and facts you found, exactly what to do.',
+			'Several parts: one call each, in one message (each starts once written).',
+			'after: task_ids, or 1-based positions of this chat\'s tasks, that must finish first (their reports join the brief).',
+			'Reports arrive as a message: end your turn or call wait_tasks (wait=true: wait here).',
+			'role: research or review (read-only), implementation, test, design, general. previous_task_id: next review round.',
+			'Also: models (2-4, same brief), goal, scope (only files it may change), files, constraints, done_when, verify (commands run on its report), context (brief/full/none), budget_usd, fallback_models.',
 		].join(' '),
-		inputSchema: {
-			type: 'object',
-			properties: {
-				task: { type: 'string', description: 'The complete brief for the subagent. Give `task` for one subagent, or `tasks` for several.' },
-				tasks: {
-					type: 'array',
-					maxItems: maxPerCall,
-					description: `Start up to ${maxPerCall} subagents in one call, one entry per part of the work. Each entry takes the same fields as a single task (task, title, model, role, isolation, goal, scope, files, constraints, done_when, context, budget_usd, fallback_models) plus \`after\`; fields left out use this call's top-level values. Use instead of \`task\`.`,
-					items: {
-						type: 'object',
-						properties: {
-							task: { type: 'string', description: 'The complete brief for this subagent.' },
-							title: { type: 'string', description: 'A short title shown in Volt (3-6 words).' },
-							model: MODEL_ARG,
-							role: { type: 'string', enum: AGENT_TASK_ROLES },
-							isolation: { type: 'string', enum: ['shared', 'worktree'] },
-							...CONTRACT_ARGS,
-							after: { type: 'array', items: { type: 'string' }, description: 'Parts that must finish first: 1-based positions of earlier entries in `tasks` ("1", "2"), or task_ids. Their reports are added to this part\'s brief when it starts.' },
-						},
-						required: ['task'],
-					},
-				},
-				...CONTRACT_ARGS,
-				after: { type: 'array', items: { type: 'string' }, description: 'task_ids of this chat\'s tasks that must finish first; their reports are added to the brief when this one starts.' },
-				previous_task_id: {
-					type: 'string',
-					description: 'Start the next round of earlier work as a new task: the task_id of the previous round (e.g. a second review after you fixed what the first review found). Volt gives the new subagent that round\'s brief and report; your `task` should add what changed since, your responses to its findings, and the objections still open.',
-				},
-				title: { type: 'string', description: 'A short title shown in Volt (3-6 words).' },
-				model: MODEL_ARG,
-				models: {
-					type: 'array',
-					items: { type: 'string' },
-					description: 'Run the same brief on 2-4 models at once, one task each (independent reviews, competing designs, a second opinion from another vendor). Each report comes back on its own. Use instead of `model`.',
-				},
-				role: {
-					type: 'string',
-					enum: AGENT_TASK_ROLES,
-					description: 'research and review run read-only and report back; implementation, test and design may edit files; general decides from the brief.',
-				},
-				isolation: {
-					type: 'string',
-					enum: ['shared', 'worktree'],
-					description: 'shared (default, use it unless two tasks would edit the same files): works in this chat\'s checkout, so its edits land where the user sees them. worktree: works on a new git branch in its own checkout so parallel edits cannot collide; its edits do not reach this checkout until you merge that branch (the report names it).',
-				},
-				wait: { type: 'boolean', description: 'Wait for the result in this call (up to about 45 s, then call wait_tasks). Default false.' },
-				client_request_id: { type: 'string', description: 'Optional idempotency key: a retry with the same key returns the same task instead of starting another.' },
-			},
-		},
+		inputSchema: { type: 'object', properties: DELEGATE_ARGS },
 	};
 }
 
@@ -248,7 +260,7 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 		description: 'List the agents and models Volt can run delegated tasks on (the same list as the user\'s model picker), with the model this chat is on. Use it before delegate_task or handoff when you want a specific model.',
 		inputSchema: { type: 'object', properties: {} },
 	},
-	delegateTaskTool(MAX_BATCH_TASKS),
+	delegateTaskTool(),
 	{
 		name: TASK_STATUS_TOOL_NAME,
 		title: 'Checked task',
@@ -258,14 +270,9 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 	{
 		name: WAIT_TASKS_TOOL_NAME,
 		title: 'Waited for tasks',
-		description: 'Wait for delegated tasks to finish and return their reports. Waits for all of task_ids (default: every running task of this chat), or for the first one when any=true. Returns after about 45 s even if some are still running; call it again to keep waiting, or end your turn and the reports will be delivered as a message.',
-		inputSchema: {
-			type: 'object',
-			properties: {
-				task_ids: { type: 'array', items: { type: 'string' } },
-				any: { type: 'boolean', description: 'Return as soon as one of them finishes.' },
-			},
-		},
+		alwaysLoad: 'top',
+		description: 'Wait for delegated tasks (default: all running; any=true: the first) and return their reports. Returns early after 45 s-4 min: call again, or end your turn.',
+		inputSchema: { type: 'object', properties: { task_ids: STRINGS } },
 	},
 	{
 		name: CANCEL_TASK_TOOL_NAME,
@@ -276,16 +283,9 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 	{
 		name: MESSAGE_TASK_TOOL_NAME,
 		title: 'Messaged task',
-		description: 'Send a follow-up to a finished delegated task: it continues in the same chat with everything it already learned (answer its question, ask it to fix what review found, ask for more detail). Starts another round; the new report is delivered like the first.',
-		inputSchema: {
-			type: 'object',
-			properties: {
-				task_id: { type: 'string' },
-				message: { type: 'string' },
-				wait: { type: 'boolean', description: 'Wait for the new report in this call (up to about 45 s).' },
-			},
-			required: ['task_id', 'message'],
-		},
+		alwaysLoad: 'top',
+		description: 'Send a finished delegated task a follow-up in its own chat, which keeps its context (answer it, ask for fixes). wait=true waits for the new report.',
+		inputSchema: { type: 'object', properties: { task_id: STRING, message: STRING }, required: ['task_id', 'message'] },
 	},
 	{
 		name: HANDOFF_TOOL_NAME,
@@ -303,9 +303,9 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 	},
 ];
 
-/** The task tools, with delegate_task's `tasks` capped at `maxPerCall`. */
-export function agentTaskTools(maxPerCall: number): readonly IAgentTaskToolInfo[] {
-	return maxPerCall === MAX_BATCH_TASKS ? AGENT_TASK_TOOLS : AGENT_TASK_TOOLS.map(tool => tool.name === DELEGATE_TASK_TOOL_NAME ? delegateTaskTool(maxPerCall) : tool);
+/** The task tools. The cap on a `tasks` list (`_maxPerCall`) is the handler's: the schema lists no `tasks`. */
+export function agentTaskTools(_maxPerCall: number): readonly IAgentTaskToolInfo[] {
+	return AGENT_TASK_TOOLS;
 }
 
 //#endregion
@@ -339,6 +339,131 @@ export function modeForTaskRole(role: AgentTaskRole, requested: VoltMode | undef
 	return requested === 'plan' || requested === 'ask' || requested === 'debug' ? requested : 'agent';
 }
 
+/** How a delegated task's agent starts (`VoltSubagentProfile`): read-only for research, review and tasks in Ask or Plan mode. */
+export function subagentProfileForTask(task: Pick<IOrchTask, 'role' | 'mode'>): VoltSubagentProfile {
+	return task.role === 'research' || task.role === 'review' || task.mode === 'ask' || task.mode === 'plan' ? 'readonly' : 'work';
+}
+
+/**
+ * The whole request is read-only: a sentence of its own ("Do not edit any file."), not one part
+ * ("Reviewer (never edits files)") or the parent ("Do not edit files yourself"), or a read-only task.
+ */
+const READ_ONLY_REQUEST = /(?:^|[.!?:]\s+|\n\s*)(?:do not|don't|never|you must not)\s+(?:edit|change|modify)\s+(?:any\s+|the\s+)?(?:files?|code)\b(?!\s+yourself)|\bread[- ]only\s+(?:task|request|audit|review|question|investigation)s?\b/i;
+/** Parts of the request that run read-only (`subagentProfileForTask`: research and review). */
+const READ_ONLY_PARTS = /\b(?:review(?:er|ers|s)?|research(?:er|ers)?|audit(?:or|s)?|investigate)\b/i;
+
+/**
+ * Which spares to start while a chat writes its delegate_task call (`prewarmSubagents`), before its
+ * tasks' roles are known: the request the chat is working on says it best. A research request in an
+ * Agent chat warmed `work` spares, and every research subagent started cold (1.2-1.4 s each on the
+ * critical path, harness bench rounds 2 and 3).
+ */
+export function subagentSpareKinds(allowWrites: boolean, request: string | undefined, total: number): { readonly work: number; readonly readonly: number } {
+	if (!allowWrites || (request && READ_ONLY_REQUEST.test(request))) {
+		return { work: 0, readonly: total };
+	}
+	if (request && total > 1 && READ_ONLY_PARTS.test(request)) {
+		return { work: total - 1, readonly: 1 };
+	}
+	return { work: total, readonly: 0 };
+}
+
+const COUNT_WORDS: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6 };
+/** "four work items", "up to 4 agents", "3 subagents", "two parallel tasks". */
+const NAMED_COUNT = /\b(two|three|four|five|six|[2-6])\s+(?:[a-z-]+\s+){0,2}?(?:sub-?agents?|agents|work\s+items|items|tasks|parts)\b/i;
+
+/**
+ * How many spares a chat about to delegate warms (`prewarmSubagents`): as many as the request
+ * names parts or agents, within `max`, else `fallback`. With three, the fourth worker of a
+ * four-part request started its agent cold, on the critical path (ADEMark C1).
+ */
+export function subagentSpareCount(request: string | undefined, fallback: number, max: number): number {
+	return Math.max(1, Math.min(max, namedSubagentCount(request) ?? fallback));
+}
+
+/** The number of parts or agents a request names ("four work items", "up to 4 agents"), if it names one. */
+export function namedSubagentCount(request: string | undefined): number | undefined {
+	const named = request ? NAMED_COUNT.exec(request)?.[1].toLowerCase() : undefined;
+	return named ? COUNT_WORDS[named] ?? Number(named) : undefined;
+}
+
+/** Words of a request that asks for subagents outright (`requestAsksForSubagents`). */
+const ASKS_FOR_SUBAGENTS = /\b(?:sub-?agents?|delegate_task|delegate\s+(?:it|them|this|these|each(?:\s+\w+)?|the\s+\w+)\s+to|(?:parallel|separate)\s+agents?|agents?\s+in\s+parallel)\b/i;
+
+/**
+ * True when the request itself asks for subagents ("with three subagents", "use delegate_task"):
+ * their spares can start with the run instead of when the delegate_task call starts streaming.
+ * Since delegate_task is loaded up front (no tool search first), that call starts about 3-5 s
+ * before the tasks exist, less than an agent takes to start on a busy machine.
+ */
+export function requestAsksForSubagents(request: string | undefined): boolean {
+	return !!request && ASKS_FOR_SUBAGENTS.test(request);
+}
+
+/**
+ * What goes up as a subagent's report: its final message (the text after its last tool call), as
+ * its brief says, not the notes it wrote between tool calls (`whole`). A final message that is not
+ * the report (a "Done." after one last check, with the "## Outcome" report written before that
+ * call) does not replace it: then the report runs from the last "## Outcome" heading. Undefined:
+ * the whole reply is the report.
+ */
+export function subagentReport(whole: string, final: string): string | undefined {
+	const text = whole.trim();
+	const last = final.trim();
+	if (!last || last === text) {
+		return undefined;
+	}
+	const outcome = /^#{1,3}\s*Outcome\b/gm;
+	if (outcome.test(last)) {
+		return last;
+	}
+	let from = -1;
+	outcome.lastIndex = 0;
+	for (let match = outcome.exec(text); match; match = outcome.exec(text)) {
+		from = match.index;
+	}
+	return from < 0 ? last : from === 0 ? undefined : text.slice(from);
+}
+
+const DO_IT_YOURSELF = 'If you meant another Volt tool (browser_*, render_chart and the rest), do not delegate: load it with ToolSearch "select:mcp__volt__<name>" and call it yourself.';
+
+/** Briefs that are a placeholder, not work: a stray call, never a task (a short real brief still starts). */
+const PLACEHOLDER_BRIEF = /^(?:no-?op|test|ping|probe|placeholder|dummy|none|null|empty|todo|tbd)[.!]?$/i;
+
+/**
+ * A brief no subagent could work from ("noop"). Haiku main chats sent one on a one-tool request
+ * before loading that tool (round 5, a chart request: a subagent started on "noop" and was
+ * cancelled), so it starts nothing and says what to do instead.
+ */
+export function placeholderBriefRefusal(brief: string): string | undefined {
+	const text = brief.trim();
+	if (!PLACEHOLDER_BRIEF.test(text)) {
+		return undefined;
+	}
+	return `"${text}" is not a brief, so no subagent started: delegate_task runs a whole subagent in its own chat. ${DO_IT_YOURSELF} To delegate, call it again with the complete brief in \`task\`.`;
+}
+
+/**
+ * The refusal of a `delegate_task` call without a brief. Claude Code defers MCP tools behind Tool
+ * Search, so its first call may come before it loaded the schema, with no arguments at all (5.9 s
+ * and a ToolSearch round trip in a measured run). Naming the arguments lets the next call be right
+ * without loading the schema first.
+ */
+export function delegateTaskMissingBrief(args: Record<string, unknown>): string {
+	if (Object.values(args).some(value => value !== undefined)) {
+		return 'delegate_task needs a `task`: the complete brief for the subagent (or `tasks`, one entry per part).';
+	}
+	return [
+		// Haiku main chats also sent `{}` as their first call for a one-tool request (open a page, draw a
+		// chart), before loading that tool: the way out comes first.
+		`delegate_task was called without arguments. ${DO_IT_YOURSELF}`,
+		'To delegate, call it again now with its arguments (no ToolSearch needed):',
+		'- one subagent: {"task": "<the complete brief>", "title": "<3-6 words>"}',
+		'- several at once: {"tasks": [{"task": "...", "title": "..."}, {"task": "...", "after": ["1"]}]} (`after`: 1-based positions of parts that must finish first; their reports join the brief)',
+		'Optional on the call or on each part: `model` (a name from list_models, e.g. "claude-code:claude-haiku-5-5"), `role` (research and review are read-only; implementation, test, design, general), `context` ("brief" | "full" | "none"), `done_when` (checks), `files`, `scope`, `fallback_models`, `isolation` ("shared" | "worktree"), and on the call `client_request_id` and `wait`.',
+	].join('\n');
+}
+
 export function normalizeTaskRole(value: unknown): AgentTaskRole {
 	return typeof value === 'string' && (AGENT_TASK_ROLES as readonly string[]).includes(value) ? value as AgentTaskRole : 'general';
 }
@@ -360,6 +485,8 @@ export interface ITaskBriefContext {
 	readonly budget?: { readonly requestLeftUsd?: number; readonly taskUsd?: number };
 	/** The tasks it waits for (`after`); their reports are added when it starts. */
 	readonly after?: readonly string[];
+	/** Commands Volt runs before its report goes up (`IOrchTask.verify`). */
+	readonly verify?: readonly string[];
 }
 
 /**
@@ -386,7 +513,7 @@ export function buildTaskPrompt(brief: string, context: ITaskBriefContext): stri
 		lines.push(`[Volt subagent] Budget: ${caps.join('; ')}. Volt stops the work at the limit, so work efficiently and report early if the task needs much more.`);
 	}
 	if (context.after?.length) {
-		lines.push(`[Volt subagent] This task waited for ${context.after.join(', ')}; their reports are at the end. Treat their claims as leads to check, not as facts.`);
+		lines.push(`[Volt subagent] This task waited for ${context.after.join(', ')}; their reports are at the end. Use them as your brief says; where it says nothing, treat their claims as leads to check, not as facts.`);
 	}
 	if (context.isolation === 'worktree') {
 		lines.push(`[Volt subagent] You work in your own git worktree${context.worktreeBranch ? ` on branch ${context.worktreeBranch}` : ' (a separate checkout on its own branch)'}. Commit your changes there when done and name the branch in your report, so the other agent can merge it.`);
@@ -408,6 +535,9 @@ export function buildTaskPrompt(brief: string, context: ITaskBriefContext): stri
 	const contract = contractLines(context.contract, readOnly ? undefined : context.scope);
 	if (contract.length) {
 		lines.push('', '<contract>', ...contract, '</contract>');
+	}
+	if (context.verify?.length) {
+		lines.push('', `[Volt subagent] When you report done, Volt itself runs ${context.verify.length === 1 ? 'this command' : 'these commands'} in your checkout before your report goes up: ${context.verify.map(command => `\`${command}\``).join(', ')}. A failure comes back to you with its output, so run ${context.verify.length === 1 ? 'it' : 'them'} yourself first and fix what fails. Never weaken, skip or delete a check to make it pass.`);
 	}
 	lines.push('', reportFormat(context.role, !!context.contract?.doneWhen?.length));
 	return lines.join('\n');
@@ -436,12 +566,17 @@ function contractLines(contract: ITaskContract | undefined, scope: readonly stri
  */
 function reportFormat(role: AgentTaskRole, checks: boolean): string {
 	const verification = checks
-		? '"## Verification" (each done_when check: met or not met, with the command you ran or what you saw)'
-		: '"## Verification" (how you checked your work: commands run and their result, or what you read)';
+		? '"## Verification" (each done_when check: met or not met, and how you know)'
+		: '"## Verification" (one line: what you ran or read to check it)';
 	const middle = EDITING_ROLES.has(role)
-		? '"## Changes" (each file you changed and what changed; "None" if nothing)'
+		? '"## Changes" (each file you changed and what changed, a line each; "None" if nothing)'
 		: '"## Findings" (what you found, with file paths and line numbers)';
-	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Use these headings: "## Outcome" (done, partly done or blocked, in one or two sentences), ${middle}, ${verification}, "## Open issues" (what is left, risks, anything you were unsure of; "None" if nothing).`;
+	// Short on purpose: the parent reads every report in each of its later requests, and a report is
+	// output the subagent writes on the critical path (round-3 bench: reports of 1.3-3.4 KB that
+	// restated the brief and every check took 2-5 s to write). A brief that sets the answer's form ("at
+	// most 3 lines") gets that form: with the headings on top, t1's Q4 subagent (round-4 bench) wrote
+	// 0.6-2.1K output tokens in 4.9-11.5 s (median 8.4 s), against 3.9 s for Claude Code's.
+	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Keep it as short as the facts allow: no restating the brief, no narration. If the brief says what to report or in what form (a format, a length, "only X"), report exactly that, with no headings. Otherwise use these headings: "## Outcome" (done, partly done or blocked, in one sentence), ${middle}, ${verification}, and "## Open issues" only when something is left or uncertain.`;
 }
 
 /**
@@ -454,7 +589,9 @@ export function lintTaskBrief(brief: string, role: AgentTaskRole, contract: ITas
 	const words = brief.trim().split(/\s+/).filter(Boolean).length;
 	const editing = EDITING_ROLES.has(role) && role !== 'general';
 	const namesFiles = !!scope?.length || !!contract?.files?.length || /[\w-]+\/[\w./-]+|\b[\w-]+\.(?:ts|tsx|js|jsx|mjs|css|scss|html|json|md|py|go|rs|java|kt|swift|rb|php|cs|c|cc|cpp|h|vue|svelte|sql|yml|yaml|toml)\b/.test(brief);
-	if (editing && !contract?.doneWhen?.length) {
+	// A brief that names its files is specific enough to finish on: asking for done_when on every small
+	// edit only made the next call's arguments longer.
+	if (editing && !contract?.doneWhen?.length && !namesFiles) {
 		notes.push('no done_when: the subagent decides on its own when it is finished. Name the checks that prove the work (a test, a type-check, what the page shows).');
 	}
 	if (editing && !namesFiles) {
@@ -542,6 +679,28 @@ export function formatTokens(value: number): string {
 	return String(Math.round(value));
 }
 
+/** The subagent's checks failed: what it gets back (model-facing) instead of its report going up. */
+export function verifyFailedText(summary: string, round: number, maxRounds: number): string {
+	const left = maxRounds - round;
+	return [
+		`[Volt] Volt ran your task's checks after your report, and they failed (round ${round} of ${maxRounds}). Your report has not gone to the other agent yet.`,
+		'',
+		summary.trim(),
+		'',
+		`Find the cause and fix it, run the failing check yourself until it passes, then end with an updated report. Never weaken, skip or delete a check to make it pass. ${left > 1 ? `Volt checks again after your report (${left} more tries).` : 'Volt checks once more; if it still fails, your report goes up saying so.'}`,
+	].join('\n');
+}
+
+/** The report as the parent reads it: the subagent's own, then what Volt's run of its checks found. */
+export function withVerification(report: string | undefined, verification: { readonly state: 'passed' | 'failed' | 'skipped' | 'running'; readonly round: number; readonly summary?: string }): string {
+	const head = verification.state === 'passed'
+		? `## Volt verification\nPassed: Volt ran the checks itself after the report${verification.round > 1 ? ` (it took ${verification.round} rounds)` : ''}.`
+		: verification.state === 'failed'
+			? `## Volt verification\nFAILED after ${verification.round} round${verification.round === 1 ? '' : 's'}: the checks still fail. Treat the report's claims with care.`
+			: '## Volt verification\nNot run.';
+	return [report?.trim() || '(no report)', '', head, ...(verification.summary?.trim() ? [verification.summary.trim()] : [])].join('\n');
+}
+
 /** A follow-up round in an existing child chat. */
 export function buildTaskFollowUp(message: string): string {
 	return `[Volt] The agent that delegated your task sent a follow-up. Answer it, then end with an updated report.\n\n${message.trim()}`;
@@ -610,6 +769,14 @@ export function describeTask(task: IOrchTask, now: number, options: { readonly i
 	}
 	if (task.failedOn?.length) {
 		lines.push(`failed on: ${task.failedOn.join(', ')}; continued on ${task.modelLabel ?? task.modelRef ?? 'the next model'}`);
+	}
+	if (task.verify?.length) {
+		const verification = task.verification;
+		const state = !verification ? 'not run yet (they run when it reports done)'
+			: verification.state === 'running' ? `Volt is running them (round ${verification.round}); its report waits for them`
+				: verification.state === 'failed' && isLiveTaskState(task.state) ? `failed in round ${verification.round}; it is fixing what they found`
+					: `${verification.state} (round ${verification.round})`;
+		lines.push(`checks: ${state}`);
 	}
 	if (task.usage && (task.usage.tokens || task.usage.costUsd)) {
 		lines.push(`spent: ${describeUsage(task.usage)}${task.budgetUsd !== undefined ? ` (budget ${formatUsd(task.budgetUsd)})` : ''}`);
@@ -701,9 +868,72 @@ export function newTaskId(existing: (id: string) => boolean, random: () => numbe
 	}
 }
 
+/**
+ * delegate_task arguments with the names other harnesses use for the same thing: Claude Code's own
+ * Agent tool takes `prompt` and `description`, and Claude wrote those into delegate_task's `tasks`
+ * entries (a refused call and a retry before any subagent started). `prompt`/`brief` count as
+ * `task`, and `description` as `title` when there is none.
+ */
+export function delegateArgsWithAliases(args: Record<string, unknown>): Record<string, unknown> {
+	const fix = (entry: Record<string, unknown>): Record<string, unknown> => {
+		if (typeof entry.task === 'string' && entry.task.trim()) {
+			return entry;
+		}
+		const task = [entry.prompt, entry.brief].find((value): value is string => typeof value === 'string' && !!value.trim());
+		if (!task) {
+			return entry;
+		}
+		const { prompt: _prompt, brief: _brief, ...rest } = entry;
+		return { ...rest, task, ...(rest.title === undefined && typeof entry.description === 'string' ? { title: entry.description } : {}) };
+	};
+	const top = fix(args);
+	return Array.isArray(top.tasks)
+		? { ...top, tasks: top.tasks.map(entry => entry && typeof entry === 'object' && !Array.isArray(entry) ? fix(entry as Record<string, unknown>) : entry) }
+		: top;
+}
+
+/** A model a task may run on, as `model` arguments name it. */
+export interface ITaskModelCandidate {
+	readonly ref: string;
+	readonly id: string;
+	readonly label: string;
+	readonly qualifier?: string;
+	/** The provider's name as the user sees it ("Claude", "Cursor"). */
+	readonly providerLabel?: string;
+	readonly providerId?: string;
+}
+
+/**
+ * The model a `model` argument names: its ref, id or label exactly, else by words, so the names
+ * agents write ("Claude Haiku 4.5", "claude-haiku-4-5", "Sonnet 5.5") find "Haiku 4.5" of the
+ * Claude provider instead of costing a failed call and a list_models round trip.
+ */
+export function matchTaskModel<T extends ITaskModelCandidate>(items: readonly T[], value: string): T | undefined {
+	const wanted = value.trim().toLowerCase();
+	const exact = items.find(item => item.ref.toLowerCase() === wanted)
+		?? items.find(item => item.id.toLowerCase() === wanted)
+		?? items.find(item => item.label.toLowerCase() === wanted)
+		?? items.find(item => `${item.label} ${item.qualifier ?? ''}`.trim().toLowerCase() === wanted);
+	if (exact) {
+		return exact;
+	}
+	const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+	const w = words(value);
+	if (!w) {
+		return undefined;
+	}
+	const hits = items.filter(item => [item.label, `${item.label} ${item.qualifier ?? ''}`, `${item.providerLabel ?? ''} ${item.label}`, item.id].map(words).some(name =>
+		!!name && (name === w || name.startsWith(`${w} `) || (name.length >= 4 && w.endsWith(` ${name}`)))));
+	// The same model under two providers: the one the name mentions.
+	const named = hits.find(item => [item.providerLabel, item.providerId].some(provider => provider && w.includes(words(provider))));
+	return named ?? hits[0] ?? items.find(item => item.label.toLowerCase().includes(wanted) || item.ref.toLowerCase().includes(wanted));
+}
+
 /** First line of the brief, trimmed to a title, when the caller gave none. */
 export function titleFromBrief(brief: string, max = 60): string {
 	const line = brief.trim().split('\n').map(text => text.trim()).find(Boolean) ?? 'Task';
-	const plain = line.replace(/^[#>*\-\s]+/, '').replace(/[`*_]/g, '');
+	// Briefs often open with where to work ("In /tmp/repo: edit src/a.js ..."): the title is the work.
+	const unplaced = line.replace(/^(?:working\s+)?in\s+(?:the\s+)?(?:repo\s+|project\s+)?[`'"]?[~.]?\/[^\s`'"]*[`'"]?\s*[:,]\s*(?=\S)/i, '');
+	const plain = (unplaced.charAt(0).toUpperCase() + unplaced.slice(1)).replace(/^[#>*\-\s]+/, '').replace(/[`*_]/g, '');
 	return plain.length > max ? `${plain.slice(0, max - 1).trimEnd()}…` : plain;
 }

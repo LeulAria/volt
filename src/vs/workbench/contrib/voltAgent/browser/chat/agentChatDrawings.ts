@@ -6,7 +6,7 @@
 import { $, append, getWindow } from '../../../../../base/browser/dom.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { AgentChatDrawing } from '../../common/agentChatBackground.js';
-import { AgentChatOrbit } from './agentChatOrbit.js';
+import { AgentChatOrbit, IOrbitBox } from './agentChatOrbit.js';
 
 /**
  * A chat background drawn live in the backdrop instead of shown as a picture, under the backdrop's
@@ -18,13 +18,23 @@ export interface IAgentChatDrawing extends IDisposable {
 	/** The backdrop shows: an animated drawing moves. */
 	play(): void;
 	pause(): void;
+	/**
+	 * Paused for a while (no input for the backdrop's idle time, or the backdrop is out of view): a
+	 * drawing that holds a large canvas may trade it for a picture of the same frame until it plays.
+	 */
+	rest?(): void;
+	/** The chat's controls moved: a drawing that keeps its text off them looks again. */
+	invalidateKeepClear?(): void;
 }
 
-/** `still`: an animated drawing shows one frame (reduced motion). */
-export function createAgentChatDrawing(drawing: AgentChatDrawing, parent: HTMLElement, still: () => boolean): IAgentChatDrawing {
+/**
+ * `still`: an animated drawing shows one frame (reduced motion). `keepClear`: the chat's controls on
+ * the drawing, in CSS pixels, which Orbit's moving names stay off.
+ */
+export function createAgentChatDrawing(drawing: AgentChatDrawing, parent: HTMLElement, still: () => boolean, keepClear?: () => readonly IOrbitBox[]): IAgentChatDrawing {
 	switch (drawing) {
 		case 'orbit':
-			return new AgentChatOrbit(parent, still);
+			return new AgentChatOrbit(parent, still, keepClear);
 		case 'volt':
 			return new AgentChatVoltMark(parent);
 		case 'halftone':

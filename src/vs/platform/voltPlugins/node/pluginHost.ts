@@ -35,7 +35,7 @@ import { IVoltPluginAvailability, IVoltPluginFolders, IVoltPluginStatus, IVoltPl
  *
  * - One host per plugin (H.6): one subject, one process, never two plugins together. Started by
  *   the supervisor on the first tool call or context request (H.2), from the manifest's tool list,
- *   which is complete before anything starts. Stopped after 5 minutes with no RPC and no live
+ *   which is complete before anything starts. Stopped after 90 seconds with no RPC and no live
  *   resource; the host budget (24) is the supervisor's.
  * - Identity is the channel: every request is answered for the principal the registry bound to
  *   that host's channel. Nothing in a payload says who sent it (and the protocol rejects payloads
@@ -93,7 +93,7 @@ export interface IVoltPluginHostServiceOptions {
 	readonly hostEntry?: string;
 	/** Test builds only: where the host loads `ses` from (default {@link sesLocation}). */
 	readonly sesPath?: string;
-	/** Default: idle after 60 s, stopped after 5 min (H.2). */
+	/** Default: idle after 60 s, stopped after 90 s (H.2). */
 	readonly idle?: { readonly afterMs: number; readonly stopAfterMs: number };
 	/** How long starting and activating may take. Default 20 s. */
 	readonly activationTimeoutMs?: number;
@@ -124,7 +124,13 @@ export const T2_LIMITS = Object.freeze({
 	cpuWindowMs: 10_000,
 	storageBytes: 100 * 1024 * 1024,
 	idleAfterMs: 60_000,
-	idleStopMs: 5 * 60_000,
+	/**
+	 * A stopped host comes back on its next call in about half a second, and Memory's context block
+	 * (on every new agent's first prompt) is served from the last one read while it does. A host left
+	 * up for 5 minutes kept its process, a sandbox watchdog and the sandbox's denial monitor alive
+	 * through every rest after a chat was opened (ADEMark A5: about 30 MB and 1 % of a core).
+	 */
+	idleStopMs: 90_000,
 	/** Context a plugin adds to an agent's prompt (H.11 #13: capped). */
 	contextChars: 16 * 1024,
 	/** How often a host holding live resources is kept from going idle. */

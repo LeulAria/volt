@@ -18,6 +18,7 @@ import { IVoltHostToolProvider } from '../../common/hostTools.js';
 import { IOrchStartTurnRequest, IOrchTurnHost } from '../../common/orchestration/orchestrator.js';
 import { IVoltSendRequest } from '../../common/session.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
+import { VoltAccessMode } from '../../common/access/accessModes.js';
 
 /** A runtime that runs nothing: the test starts and ends runs and says what the reply was. */
 class FakeRuntime {
@@ -35,6 +36,7 @@ class FakeRuntime {
 			{ ref: 'agent:cursor', kind: 'agent', providerId: 'cursor', profileId: 'p', id: 'grok', label: 'Cursor Grok 4.6', enabled: true },
 		];
 	}
+	listProviderStatuses() { return [{ profileId: 'p', label: 'Claude' }]; }
 	canSteer() { return false; }
 	steer() { return false; }
 	chatFor(id: string) { return id; }
@@ -43,6 +45,9 @@ class FakeRuntime {
 	readonly sandboxes = new Map<string, IVoltSandboxSettings>();
 	getSandboxSettings(threadId: string): IVoltSandboxSettings { return this.sandboxes.get(threadId) ?? DEFAULT_SANDBOX_SETTINGS; }
 	async setSandboxSettings(threadId: string, settings: IVoltSandboxSettings) { this.sandboxes.set(threadId, settings); }
+	readonly access = new Map<string, VoltAccessMode>();
+	getAccessMode(threadId?: string): VoltAccessMode { return (threadId ? this.access.get(threadId) : undefined) ?? 'supervised'; }
+	async setAccessMode(mode: VoltAccessMode, threadId?: string) { this.access.set(threadId ?? '', mode); }
 	getOrCreateSession(threadId: string) {
 		const reply = this.replies.get(threadId);
 		return { providerRef: undefined, messages: reply ? [{ role: 'assistant', content: reply }] : [] };
@@ -122,6 +127,7 @@ suite('Agent orchestrator service', () => {
 			stub({ run: async () => undefined, needsRetry: () => false }),
 			stub({ onWillShutdown: () => toDisposable(() => undefined) }),
 			stub({ invokeFunction: () => undefined }),
+			stub({ exec: async () => ({ exitCode: 0, stdout: '', stderr: '', combined: '', timedOut: false }), cancelExec: async () => undefined }),
 		));
 		await service.whenReady;
 		const host = new FakeHost(runtime);
@@ -218,6 +224,30 @@ suite('Agent orchestrator service', () => {
 		assert.ok(wake?.turn.prompt.text.includes('README written: 40 lines.'));
 	});
 
+	test('the parts of one delegate_task call wake the idle parent once, with both reports', async () => {
+		const { service, runtime, host, tool } = await setup();
+		await service.submit('parent', { text: 'do both' }, 'auto', 'p1');
+		await settle();
+		const started = await tool('parent', 'delegate_task', { tasks: [{ task: 'Fix a.ts', title: 'Fix a' }, { task: 'Review b.ts', title: 'Review b' }] });
+		assert.match(started, /delivered to this chat together once all of them have finished/);
+		await settle();
+		const [first, second] = service.tasksOf('parent');
+		assert.ok(first.batch && first.batch === second.batch, 'both parts carry the call\'s batch id');
+		await tool('parent', 'delegate_task', { task: 'Count the tests' });
+		assert.notStrictEqual(service.tasksOf('parent')[2].batch, first.batch, 'a call of its own is not part of the other call');
+
+		runtime.finish('parent', 'Started them.');
+		await settle();
+		runtime.finish(first.childId!, 'a.ts fixed.');
+		await settle();
+		const wakes = () => host.started.filter(request => request.threadId === 'parent' && request.turn.kind === 'notification');
+		assert.strictEqual(wakes().length, 0, 'one part done: the parent sleeps on');
+		runtime.finish(second.childId!, 'b.ts has one bug.');
+		await settle();
+		assert.strictEqual(wakes().length, 1);
+		assert.ok(wakes()[0].turn.prompt.text.includes('a.ts fixed.') && wakes()[0].turn.prompt.text.includes('b.ts has one bug.'));
+	});
+
 	test('a subagent of a sandboxed chat is confined at least as tightly before its first turn', async () => {
 		const { service, runtime, host, tool } = await setup();
 		runtime.sandboxes.set('parent', { level: 'read-only', network: false });
@@ -233,6 +263,167 @@ suite('Agent orchestrator service', () => {
 		assert.deepStrictEqual(runtime.getSandboxSettings(task.childId!), { level: 'read-only', network: false }, 'confined before the host starts it');
 		gate.complete();
 		await settle();
+	});
+
+	test('a subagent asks for approval as its parent chat does: a Full access parent\'s subagent does not stop for approvals', async () => {
+		const { service, runtime, host, tool } = await setup();
+		runtime.access.set('parent', 'full-access');
+		const gate = new DeferredPromise<void>();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		host.gate = gate.p;
+		await tool('parent', 'delegate_task', { task: 'Fix a.ts' });
+		await settle();
+		const task = service.tasksOf('parent')[0];
+		assert.ok(host.started.some(request => request.threadId === task.childId), 'its brief turn is starting');
+		assert.strictEqual(runtime.getAccessMode(task.childId!), 'full-access', 'set before the host starts it');
+		gate.complete();
+		await settle();
+		// The user tightens the parent: the next round follows.
+		runtime.access.set('parent', 'supervised');
+		runtime.finish(task.childId!, 'Fixed.');
+		await settle();
+		await tool('parent', 'message_task', { task_id: task.id, message: 'Also b.ts' });
+		await settle();
+		assert.strictEqual(runtime.getAccessMode(task.childId!), 'supervised');
+	});
+
+	test('a delegate_task call without arguments (schema not loaded yet) is told the arguments, so the next call is right', async () => {
+		const { service, host, tool } = await setup();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		const refused = await tool('parent', 'delegate_task', {});
+		assert.match(refused, /called without arguments/);
+		assert.match(refused, /no ToolSearch needed/);
+		assert.match(refused, /"task": "<the complete brief>"/);
+		assert.match(refused, /"tasks": \[/);
+		// A chat that meant another Volt tool (a stray first call on a one-tool request) is told to load it.
+		assert.match(refused, /another Volt tool .*ToolSearch "select:mcp__volt__<name>"/);
+		assert.strictEqual(service.tasksOf('parent').length, 0);
+		// A call with other arguments but no brief gets the short refusal.
+		assert.match(await tool('parent', 'delegate_task', { title: 'x' }), /^delegate_task needs a `task`/);
+		// A one-word brief ("noop") starts no subagent either.
+		const stray = await tool('parent', 'delegate_task', { task: 'noop' });
+		assert.match(stray, /"noop" is not a brief, so no subagent started/);
+		assert.match(stray, /select:mcp__volt__<name>/);
+		assert.match(await tool('parent', 'delegate_task', { tasks: [{ task: 'test' }] }), /not a brief/);
+		assert.strictEqual(service.tasksOf('parent').length, 0);
+		// The retry the refusal describes starts the task at once.
+		assert.match(await tool('parent', 'delegate_task', { task: 'Read a.ts and report', title: 'Read a' }), /Started task t-/);
+		await settle();
+		assert.strictEqual(host.started.at(-1)?.turn.kind, 'brief');
+	});
+
+	test('a delegated task starts its agent lean: read-only for research and review, working for the rest', async () => {
+		const { service, host, tool } = await setup();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		await tool('parent', 'delegate_task', { tasks: [{ task: 'Research a.ts', role: 'research' }, { task: 'Review b.ts', role: 'review' }, { task: 'Fix c.ts', role: 'implementation' }, { task: 'Do d' }] });
+		await settle();
+		const profiles = service.tasksOf('parent').map(task => host.started.find(request => request.threadId === task.childId)?.subagent);
+		assert.deepStrictEqual(profiles, ['readonly', 'readonly', 'work', 'work']);
+	});
+
+	test('delegate_task takes the names agents use for a brief and a model, and a refusal lists the models', async () => {
+		const { service, tool } = await setup();
+		await service.submit('parent', { text: 'go' }, 'auto', 'p1');
+		await settle();
+		const started = await tool('parent', 'delegate_task', { tasks: [{ prompt: 'In /tmp/repo: fix a.ts', model: 'Claude Opus 5.5' }, { prompt: 'Review b.ts', description: 'Review b', model: 'cursor grok 4.6' }] });
+		assert.match(started, /Started 2 of 2 tasks/);
+		assert.deepStrictEqual(service.tasksOf('parent').map(task => [task.title, task.modelLabel]), [['Fix a.ts', 'Claude Opus 5.5'], ['Review b', 'Cursor Grok 4.6']]);
+		assert.match(await tool('parent', 'delegate_task', { task: 'x', model: 'GPT 9' }), /No connected model matches "GPT 9". Pass one of: "Claude Opus 5.5" \(Claude\), "Cursor Grok 4.6"/);
+	});
+
+	test('a subagent\'s checks run in its checkout before its report wakes the parent', async () => {
+		const { service, runtime, host, tool } = await setup();
+		await service.submit('parent', { text: 'fix it' }, 'auto', 'p1');
+		await settle();
+		await tool('parent', 'delegate_task', { task: 'Fix a.ts', verify: ['npm test -- a'] });
+		await settle();
+		const task = service.tasksOf('parent')[0];
+		runtime.finish('parent', 'Delegated.');
+		await settle();
+		runtime.finish(task.childId!, 'Fixed a.ts.');
+		await settle();
+		const wake = host.started.at(-1);
+		assert.strictEqual(wake?.threadId, 'parent');
+		assert.ok(wake?.turn.prompt.text.includes('Fixed a.ts.'));
+		assert.ok(wake?.turn.prompt.text.includes('Volt verification'), 'the report says the checks passed');
+		assert.strictEqual(service.getTask(task.id)?.verification?.state, 'passed');
+	});
+
+	test('parts started in calls of their own in one turn wake the idle parent once; a later turn\'s part reports by itself', async () => {
+		const { service, runtime, host, tool } = await setup();
+		await service.submit('parent', { text: 'fix both' }, 'auto', 'p1');
+		await settle();
+		await tool('parent', 'delegate_task', { task: 'Fix a.ts' });
+		await tool('parent', 'delegate_task', { task: 'Fix b.ts' });
+		await settle();
+		const [first, second] = service.tasksOf('parent');
+		runtime.finish('parent', 'Started them.');
+		await settle();
+		const wakes = () => host.started.filter(request => request.threadId === 'parent' && request.turn.kind === 'notification');
+		runtime.finish(first.childId!, 'a.ts fixed.');
+		await settle();
+		assert.strictEqual(wakes().length, 0, 'one part done: the parent sleeps on');
+		runtime.finish(second.childId!, 'b.ts fixed.');
+		await settle();
+		assert.strictEqual(wakes().length, 1);
+		assert.ok(wakes()[0].turn.prompt.text.includes('a.ts fixed.') && wakes()[0].turn.prompt.text.includes('b.ts fixed.'));
+
+		// The wake-up turn starts one more part: it is not held back by the first turn's parts.
+		await tool('parent', 'delegate_task', { task: 'Fix c.ts' });
+		await settle();
+		const third = service.tasksOf('parent')[2];
+		assert.notStrictEqual(third.batch, first.batch);
+		runtime.finish('parent', 'Started c.');
+		await settle();
+		runtime.finish(third.childId!, 'c.ts fixed.');
+		await settle();
+		assert.strictEqual(wakes().length, 2);
+	});
+
+	test('a waiting delegate_task call stops waiting when the parent starts writing another one, so the next part is not held back', async () => {
+		const { service, runtime, tool } = await setup();
+		await service.submit('parent', { text: 'fix both' }, 'auto', 'p1');
+		await settle();
+		const parentRun = runtime.sends.find(send => send.threadId === 'parent')!.runId;
+		runtime.emit('parent', parentRun, { type: 'tool.start', callId: 'call-1', name: 'mcp__volt__delegate_task', title: 'delegate_task' });
+		const waiting = tool('parent', 'delegate_task', { task: 'Fix a.ts', wait: true });
+		await settle();
+		runtime.emit('parent', parentRun, { type: 'tool.start', callId: 'call-2', name: 'mcp__volt__delegate_task', title: 'delegate_task' });
+		const result = await waiting;
+		assert.match(result, /Not waited for: you are starting another task/);
+		assert.strictEqual(service.tasksOf('parent')[0].state, 'running');
+		const alone = tool('parent', 'delegate_task', { task: 'Fix b.ts', wait: true });
+		await settle();
+		runtime.finish(service.tasksOf('parent')[1].childId!, 'b.ts fixed.');
+		assert.ok((await alone).includes('b.ts fixed.'), 'a call nothing follows still waits for its report');
+	});
+
+	test('a waiting delegate_task call returns its upstream parts\' reports with its own, so no wait_tasks call is needed for them', async () => {
+		const { service, runtime, host, tool } = await setup();
+		await service.submit('parent', { text: 'answer Q1-Q4' }, 'auto', 'p1');
+		await settle();
+		await tool('parent', 'delegate_task', { task: 'Q1' });
+		await tool('parent', 'delegate_task', { task: 'Q2' });
+		await settle();
+		const [q1, q2] = service.tasksOf('parent');
+		const waiting = tool('parent', 'delegate_task', { task: 'Q3 from the reports', after: [q1.id, q2.id], wait: true });
+		await settle();
+		runtime.finish(q1.childId!, 'Q1 answer.');
+		runtime.finish(q2.childId!, 'Q2 answer.');
+		await settle();
+		const q3 = service.tasksOf('parent')[2];
+		runtime.finish(q3.childId!, 'Q3 answer.');
+		const result = await waiting;
+		for (const answer of ['Q1 answer.', 'Q2 answer.', 'Q3 answer.']) {
+			assert.ok(result.includes(answer), answer);
+		}
+		assert.deepStrictEqual(service.tasksOf('parent').map(task => task.delivery), ['acknowledged', 'acknowledged', 'acknowledged']);
+		runtime.finish('parent', 'Q1-Q3.');
+		await settle();
+		assert.ok(!host.started.some(request => request.turn.kind === 'notification'), 'no wake-up for reports already read');
 	});
 
 	test('wait_tasks returns the report as soon as the subagent finishes, and it is not delivered again', async () => {
@@ -320,6 +511,48 @@ suite('Agent orchestrator service', () => {
 		assert.ok(brief?.turn.prompt.text.includes('Found: missing null check in login().'), 'the new reviewer sees the previous report');
 		assert.ok(brief?.turn.prompt.text.includes('round 2'));
 		assert.match(await tool('parent', 'delegate_task', { task: 'x', previous_task_id: 't-000000' }), /No task t-000000/);
+	});
+
+	test('a batch of subagents is saved in a couple of writes, each started once its own state is on disk, and a restart reads every one back', async () => {
+		const first = await setup();
+		await first.service.submit('parent', { text: 'split it' }, 'auto', 'p1');
+		await settle();
+		const rootFile = URI.file('/user/voltOrchestrator/roots/parent.json');
+		let writes = 0;
+		const write = first.fileService.writeFile.bind(first.fileService);
+		first.fileService.writeFile = (...args: Parameters<FileService['writeFile']>) => {
+			writes++;
+			return write(...args);
+		};
+		// No child starts before the saved tree holds its task.
+		const unsaved: string[] = [];
+		const startTurn = first.host.startTurn.bind(first.host);
+		first.host.startTurn = async request => {
+			const saved = (await first.fileService.readFile(rootFile)).value.toString();
+			if (!saved.includes(request.threadId)) {
+				unsaved.push(request.threadId);
+			}
+			return startTurn(request);
+		};
+		const brief = 'x'.repeat(2_000);
+		const result = await first.tool('parent', 'delegate_task', { tasks: Array.from({ length: 6 }, (_, i) => ({ task: `${brief} part ${i}`, title: `Part ${i}` })) });
+		assert.match(result, /Started 6 of 6 tasks/);
+		await settle();
+		await timeout(50);
+		const tasks = first.service.tasksOf('parent');
+		assert.strictEqual(tasks.filter(task => task.state === 'running').length, 6);
+		assert.deepStrictEqual(unsaved, []);
+		assert.ok(writes <= 3, `6 spawns took ${writes} writes`);
+		assert.ok(first.service.getThread(tasks[0].childId!)?.active?.prompt.text.includes(brief), 'the turn itself keeps the whole brief');
+		await timeout(300);
+
+		const saved = JSON.parse((await first.fileService.readFile(rootFile)).value.toString()) as { events: { event: { turn?: { prompt: { text: string } }; item?: { prompt: { text: string } } } }[] };
+		const prompts = saved.events.map(envelope => envelope.event.turn?.prompt.text ?? envelope.event.item?.prompt.text).filter((text): text is string => !!text);
+		assert.ok(prompts.length > 0);
+		assert.ok(prompts.every(text => text.length < 500), 'the audit trail keeps prompts short');
+		const second = await setup({ fileService: first.fileService });
+		await settle();
+		assert.strictEqual(second.service.tasksOf('parent').length, 6, 'every task was saved');
 	});
 
 	test('a harness subagent is tracked from the Task call and ends with its parent turn', async () => {

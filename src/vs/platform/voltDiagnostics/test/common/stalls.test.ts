@@ -8,7 +8,8 @@ import { Event } from '../../../../base/common/event.js';
 import { IServerChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { IpcActivityRecorder } from '../../common/ipcActivity.js';
-import { DriftStallDetector, formatStall, StallRateLimiter, stallTickInterval } from '../../common/stalls.js';
+import { DriftStallDetector, DriftStallMonitor, formatStall, StallRateLimiter, stallTickInterval } from '../../common/stalls.js';
+import { runWithFakedTimers } from '../../../../base/test/common/timeTravelScheduler.js';
 import { readStallThreshold } from '../../common/voltDiagnostics.js';
 
 suite('Volt event-loop stalls', () => {
@@ -64,6 +65,32 @@ suite('Volt event-loop stalls', () => {
 			'Window 2 event loop stalled for 400 ms (350 ms blocking input)',
 		);
 	});
+
+	test('an armed monitor ticks only for a while after work arrives, then rests (no idle wakeups)', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const stalls: number[] = [];
+		const monitor = new DriftStallMonitor(300, stall => stalls.push(stall.durationMs), () => Date.now(), Date.now, 1_000);
+		assert.strictEqual(monitor.armed, true, 'watching from the start');
+		await new Promise(resolve => setTimeout(resolve, 1_500));
+		assert.strictEqual(monitor.armed, false, 'at rest after the arm time');
+		monitor.poke();
+		assert.strictEqual(monitor.armed, true, 'an IPC call wakes it');
+		await new Promise(resolve => setTimeout(resolve, 600));
+		monitor.poke();
+		await new Promise(resolve => setTimeout(resolve, 600));
+		assert.strictEqual(monitor.armed, true, 'a later call keeps it watching');
+		await new Promise(resolve => setTimeout(resolve, 1_000));
+		assert.strictEqual(monitor.armed, false);
+		assert.deepStrictEqual(stalls, []);
+		monitor.dispose();
+	}));
+
+	test('without an arm time the monitor always runs (as before)', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const monitor = new DriftStallMonitor(300, () => undefined, () => Date.now());
+		await new Promise(resolve => setTimeout(resolve, 5_000));
+		assert.strictEqual(monitor.armed, true);
+		monitor.dispose();
+		assert.strictEqual(monitor.armed, false);
+	}));
 });
 
 suite('Volt IPC activity', () => {

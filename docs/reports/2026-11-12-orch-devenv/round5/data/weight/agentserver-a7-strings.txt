@@ -1,0 +1,61 @@
+# Dev agent server V8 heap mid-ADEMark-A7 (130 s into 5 replay streams), strings by size and prefix. Before: e5/weight at 62a18ec2510. After: event log fix (1f9c93b49cf). load 16-21 (exploratory).
+## before
+<1K      155931 7.7 MiB
+1-10K    2447 10.6 MiB
+10-100K  4521 105.5 MiB
+>100K    140 30.8 MiB
+  32.8 MiB   2005 I will start with src/server.ts so the change matc
+  32.6 MiB   2000 I will go through src/server.ts in the order a req
+  26.7 MiB    456 /*------------------------------------------------
+  14.7 MiB    475 data:application/json;base64,eyJtYXBwaW5ncyI6Ijs7O
+   2.3 MiB    121 I will start with src/paginate.ts so the change ma
+   2.3 MiB    120 I will go through src/paginate.ts in the order a r
+   2.1 MiB    116 I will start with src/dates.ts so the change match
+   2.1 MiB    115 I will go through src/dates.ts in the order a requ
+   2.0 MiB    113 I will start with src/api.ts so the change matches
+   2.0 MiB      1 //#endregion export function voltChartsRuntime(win
+   2.0 MiB    113 I will go through src/api.ts in the order a reques
+   1.9 MiB    108 I will start with src/invoices.ts so the change ma
+   1.8 MiB    108 I will go through src/invoices.ts in the order a r
+   1.7 MiB     91 data:application/json;base64,eyJtYXBwaW5ncyI6IkFBT
+   1.3 MiB     24 data:application/json;base64,eyJtYXBwaW5ncyI6IjtBQ
+   0.9 MiB     35 // Copyright Joyent, Inc. and other Node contribut
+   0.8 MiB      1 {"t":"evt","seq":1,"topic":"col","data":{"col":"ru
+   0.7 MiB      7 import { createDecorator } from "../../../../../pl
+   0.6 MiB      1 "use strict"; var __defProp = Object.definePropert
+   0.4 MiB     14 data:application/json;base64,eyJtYXBwaW5ncyI6IkFBU
+   0.4 MiB      1 {"t":"evt","seq":14,"topic":"col","data":{"col":"r
+   0.4 MiB      1 [{"name":"ask_question","title":"Asked questions",
+   0.3 MiB      1 {"t":"evt","seq":13,"topic":"col","data":{"col":"r
+   0.3 MiB      1 {"t":"evt","seq":12,"topic":"col","data":{"col":"r
+   0.3 MiB      1 {"t":"evt","seq":11,"topic":"col","data":{"col":"r
+## after
+<1K      124427 6.2 MiB
+1-10K    990 3.3 MiB
+10-100K  978 32.0 MiB
+>100K    140 30.5 MiB
+  26.7 MiB    456 /*------------------------------------------------
+  14.7 MiB    475 data:application/json;base64,eyJtYXBwaW5ncyI6Ijs7O
+   2.0 MiB      1 //#endregion export function voltChartsRuntime(win
+   1.7 MiB     91 data:application/json;base64,eyJtYXBwaW5ncyI6IkFBT
+   1.3 MiB     24 data:application/json;base64,eyJtYXBwaW5ncyI6IjtBQ
+   0.9 MiB     35 // Copyright Joyent, Inc. and other Node contribut
+   0.8 MiB      1 {"t":"evt","seq":1,"topic":"col","data":{"col":"ru
+   0.7 MiB      7 import { createDecorator } from "../../../../../pl
+   0.6 MiB      1 "use strict"; var __defProp = Object.definePropert
+   0.4 MiB     14 data:application/json;base64,eyJtYXBwaW5ncyI6IkFBU
+   0.4 MiB      1 {"t":"evt","seq":15,"topic":"col","data":{"col":"r
+   0.4 MiB      1 [{"name":"ask_question","title":"Asked questions",
+   0.4 MiB      1 {"t":"evt","seq":14,"topic":"col","data":{"col":"r
+   0.3 MiB      1 {"t":"evt","seq":11,"topic":"col","data":{"col":"r
+   0.3 MiB      2 [{"ref":"agent:seed-claude-code:claude-opus-5-5","
+   0.3 MiB      1 /** Biggest image the tools will analyse (about 40
+   0.3 MiB      1 export const AGENT_TASK_ROLES = [ "general", "re
+   0.2 MiB      7 data:application/json;base64,eyJtYXBwaW5ncyI6IkFBV
+   0.2 MiB     12 data:application/json;base64,eyJtYXBwaW5ncyI6IkFBb
+   0.2 MiB      1 import { describeMachineLoad, RELAY_AGENT_IDS } fr
+   0.2 MiB      1 import { hostName, hostProductLabel, parseChangeRe
+   0.2 MiB      1 import { parseWorkspaceMoveSpec, validateBranchNam
+   0.2 MiB     10 data:application/json;base64,eyJtYXBwaW5ncyI6IkFBc
+   0.2 MiB      1 [{"profileId":"seed-ollama","providerId":"ollama",
+   0.2 MiB      1 {"t":"evt","seq":7,"topic":"col","data":{"col":"ru

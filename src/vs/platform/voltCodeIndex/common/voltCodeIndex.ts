@@ -197,6 +197,101 @@ export type IVoltCodeIndexSymbolsResult =
 	| { readonly kind: 'fallback'; readonly reason: string }
 	| { readonly kind: 'results'; readonly symbols: readonly IVoltCodeSymbol[]; readonly limitHit: boolean };
 
+//#region Structure (tree-sitter)
+
+/** A declaration with its whole range, from a syntax tree (no language server involved). */
+export interface IVoltCodeOutlineSymbol {
+	readonly name: string;
+	readonly kind: VoltCodeSymbolKind;
+	/** 1-based, first line of the declaration (decorators and doc comments not included). */
+	readonly line: number;
+	/** 1-based, last line of the declaration. */
+	readonly endLine: number;
+	/** 1-based column of the name. */
+	readonly column: number;
+	/** Declarations it sits in (0: top level). */
+	readonly depth: number;
+	/** The enclosing declaration's name (a class for a method). */
+	readonly container?: string;
+}
+
+export interface IVoltCodeImport {
+	/** The module as written: `./a.js`, `react`, `os.path`. */
+	readonly specifier: string;
+	/** 1-based. */
+	readonly line: number;
+	/** Names it brings in (`default`, `*` for a namespace or wildcard import). */
+	readonly names: readonly string[];
+	/** The root-relative file (or, for Go, folder) it resolves to; undefined for packages and unresolved ones. */
+	readonly resolved?: string;
+}
+
+export interface IVoltCodeStructureRequest extends IVoltCodeIndexQueryBase {
+	/** Root-relative path of the file. */
+	readonly path: string;
+}
+
+export type IVoltCodeStructureResult =
+	| { readonly kind: 'fallback'; readonly reason: string }
+	| { readonly kind: 'results'; readonly language: string; readonly symbols: readonly IVoltCodeOutlineSymbol[]; readonly imports: readonly IVoltCodeImport[] };
+
+export interface IVoltCodeImportersRequest extends IVoltCodeIndexQueryBase {
+	/** Root-relative path of the imported file. */
+	readonly path: string;
+	/** 1: files importing it; 2: also files importing those (default 1). */
+	readonly depth?: number;
+	readonly limit: number;
+}
+
+export interface IVoltCodeImporter {
+	/** Root-relative. */
+	readonly path: string;
+	/** 1-based line of the import. */
+	readonly line: number;
+	readonly names: readonly string[];
+	/** 1: imports the file itself; 2: imports a file that does. */
+	readonly depth: number;
+	/** For depth 2: the depth-1 file it imports. */
+	readonly via?: string;
+}
+
+export type IVoltCodeImportersResult =
+	| { readonly kind: 'fallback'; readonly reason: string }
+	| { readonly kind: 'results'; readonly importers: readonly IVoltCodeImporter[]; readonly limitHit: boolean; readonly ms: number };
+
+export interface IVoltCodeStructuralRequest extends IVoltCodeIndexQueryBase {
+	/**
+	 * Code with metavariables, ast-grep style: `$X` matches one node, `$$$` (or `$$$ARGS`) any number
+	 * of nodes. `fetchUser($ID, $$$)`, `if ($A) { return $B }`. A repeated `$X` must match the same text.
+	 */
+	readonly pattern: string;
+	/** Grammar of the pattern: typescript, tsx, javascript, python, go, rust, java, c-sharp, cpp, ruby. Default from the files searched. */
+	readonly language?: string;
+	/** Globs over root-relative paths; a file must match one. */
+	readonly includes?: readonly string[];
+	/** Globs over root-relative paths; a file matching one is skipped (tests, generated code). */
+	readonly excludes?: readonly string[];
+	/** Metavariable name to a regular expression its code must match, `{ MS: '^\\d' }` (a literal delay). */
+	readonly where?: Readonly<Record<string, string>>;
+	readonly maxMatches: number;
+}
+
+export interface IVoltCodeStructuralMatch {
+	readonly path: string;
+	readonly line: number;
+	readonly endLine: number;
+	/** The matched code's first line, trimmed. */
+	readonly text: string;
+	/** Metavariable bindings, `{ X: "user.id" }`. */
+	readonly vars?: Readonly<Record<string, string>>;
+}
+
+export type IVoltCodeStructuralResult =
+	| { readonly kind: 'fallback'; readonly reason: string }
+	| { readonly kind: 'results'; readonly matches: readonly IVoltCodeStructuralMatch[]; readonly limitHit: boolean; readonly scanned: number; readonly ms: number };
+
+//#endregion
+
 //#region Language server budget
 
 /**
@@ -241,6 +336,12 @@ export interface IVoltCodeIndexService {
 	/** Fuzzy, typo-tolerant file search by name or path: FFF when installed, else the index. */
 	findFiles(request: IVoltCodeIndexFindFilesRequest): Promise<IVoltCodeIndexFindFilesResult>;
 	symbols(request: IVoltCodeIndexSymbolsRequest): Promise<IVoltCodeIndexSymbolsResult>;
+	/** A file's declarations with their ranges and its imports, from its syntax tree. */
+	structure(request: IVoltCodeStructureRequest): Promise<IVoltCodeStructureResult>;
+	/** Files that import a file (the reverse import graph). */
+	importers(request: IVoltCodeImportersRequest): Promise<IVoltCodeImportersResult>;
+	/** Code shaped like a pattern (syntax trees, not text). */
+	structural(request: IVoltCodeStructuralRequest): Promise<IVoltCodeStructuralResult>;
 	/** Whether FFF is installed and where. `fffPath` is the user's setting, if any. */
 	fffStatus(fffPath?: string): Promise<IVoltFffStatus>;
 	/** Downloads Volt's pinned FFF release into the user data folder, checking its SHA-256. */
@@ -265,6 +366,9 @@ export class NullVoltCodeIndexService implements IVoltCodeIndexService {
 	async files(): Promise<IVoltCodeIndexFilesResult> { return { kind: 'fallback', reason: 'unavailable' }; }
 	async findFiles(): Promise<IVoltCodeIndexFindFilesResult> { return { kind: 'fallback', reason: 'unavailable' }; }
 	async symbols(): Promise<IVoltCodeIndexSymbolsResult> { return { kind: 'fallback', reason: 'unavailable' }; }
+	async structure(): Promise<IVoltCodeStructureResult> { return { kind: 'fallback', reason: 'unavailable' }; }
+	async importers(): Promise<IVoltCodeImportersResult> { return { kind: 'fallback', reason: 'unavailable' }; }
+	async structural(): Promise<IVoltCodeStructuralResult> { return { kind: 'fallback', reason: 'unavailable' }; }
 	async fffStatus(): Promise<IVoltFffStatus> { return { state: 'unsupported', bundledVersion: '', running: 0 }; }
 	async installFff(): Promise<IVoltFffStatus> { return { state: 'unsupported', bundledVersion: '', running: 0 }; }
 	async status(): Promise<readonly IVoltCodeIndexStatus[]> { return []; }

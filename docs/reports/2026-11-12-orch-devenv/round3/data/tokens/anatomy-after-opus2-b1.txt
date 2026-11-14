@@ -1,0 +1,63 @@
+{
+ "file": "/Users/leularia/.volt-r3/tokens/run/capture.jsonl.bodies/656.json",
+ "total": "n/a (count_tokens 400: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"messa)",
+ "params": {
+  "model": "claude-opus-5-5",
+  "thinking": {
+   "type": "adaptive",
+   "display": "updates"
+  },
+  "effort": "medium",
+  "max_tokens": 128000,
+  "context_management": "yes"
+ },
+ "system": 2675,
+ "tools": 12144,
+ "toolsNamed": [
+  "Agent",
+  "AskUserQuestion",
+  "Bash",
+  "Edit",
+  "ListAgents",
+  "Read",
+  "ReportFindings",
+  "ScheduleWakeup",
+  "Skill",
+  "ToolSearch",
+  "Workflow",
+  "Write"
+ ],
+ "mcpTools": 0,
+ "mcpNamed": [],
+ "deferred": 1,
+ "injected": 7641,
+ "lastUserText": "hi"
+}
+| Segment | Part | Tokens | Chars |
+|---|---|---|---|
+| system | billing header | 44 | 73 |
+| system | block 1: You are Claude Code, Anthropic's official CLI for  | 37 | 94 |
+| system | block 2:  You are an agent working with the user toward the | 2594 | 8091 |
+| tools | Agent | 2024 | 5246 |
+| tools | AskUserQuestion | 1834 | 4498 |
+| tools | Bash | 1504 | 3406 |
+| tools | Edit | 634 | 964 |
+| tools | ListAgents | 691 | 1151 |
+| tools | Read | 998 | 1919 |
+| tools | ReportFindings | 1107 | 2177 |
+| tools | ScheduleWakeup | 1981 | 4631 |
+| tools | Skill | 909 | 1803 |
+| tools | ToolSearch | 821 | 1440 |
+| tools | Workflow | 2265 | 5355 |
+| tools | Write | 522 | 639 |
+| injected (user) | reminder: Codebase and user instructions are shown below. Be sure to adh | 301 | 761 |
+| injected (user) | reminder: As you answer the user's questions, you can use the following | 290 | 958 |
+| injected (user) | reminder: Attribution for git commits and pull requests you create from | 210 | 581 |
+| injected (user) | other | 3 | 2 |
+| injected (system) | environment | 295 | 834 |
+| injected (system) | deferred tool list | 1998 | 3968 |
+| injected (system) | agent types | 1163 | 3614 |
+| injected (system) | mcp instructions | 36 | 123 |
+| injected (system) | mcp instructions: volt | 691 | 1944 |
+| injected (system) | skills list | 2640 | 7523 |
+| injected (system) | date | 14 | 27 |

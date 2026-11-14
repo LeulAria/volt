@@ -1,0 +1,44 @@
+{
+ "chat": "Long thread 45k",
+ "drawAll": true,
+ "ms": 10000,
+ "load": "15.04 18.18 20.02",
+ "taskMsPerS": {
+  "n": 3,
+  "median": 20.9,
+  "min": 20.3,
+  "max": 281.9
+ },
+ "results": [
+  {
+   "taskMsPerS": 20.9,
+   "scriptMsPerS": 9.5,
+   "layoutMsPerS": 3.6,
+   "styleMsPerS": 0.3,
+   "layouts": 9,
+   "nodes": 105523,
+   "loadBefore": 13.06,
+   "loadAfter": "12.14 15.97 19.57"
+  },
+  {
+   "taskMsPerS": 281.9,
+   "scriptMsPerS": 150,
+   "layoutMsPerS": 22.5,
+   "styleMsPerS": 14.4,
+   "layouts": 9,
+   "nodes": 116472,
+   "loadBefore": 12.14,
+   "loadAfter": "24.66 18.46 20.40"
+  },
+  {
+   "taskMsPerS": 20.3,
+   "scriptMsPerS": 9.1,
+   "layoutMsPerS": 3.6,
+   "styleMsPerS": 0.4,
+   "layouts": 10,
+   "nodes": 127452,
+   "loadBefore": 13.59,
+   "loadAfter": "15.04 18.18 20.02"
+  }
+ ]
+}

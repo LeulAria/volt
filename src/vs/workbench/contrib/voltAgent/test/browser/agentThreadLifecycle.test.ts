@@ -7,8 +7,8 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { MockContextKeyService } from '../../../../../platform/keybinding/test/common/mockKeybindingService.js';
 import { IAgentHistoryService, IAgentSessionLifecycle, IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { IAgentOrchestratorService, IOrchThread, ORCH_HOLD_SETTLED, OrchCommandBody } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
-import { AgentLifecycleUndoContext, AgentThreadLifecycleService } from '../../browser/home/agentThreadLifecycle.js';
+import { IAgentOrchestratorService, IOrchThread, ORCH_HOLD_ARCHIVED, ORCH_HOLD_SETTLED, OrchCommandBody } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { AgentLifecycleUndoContext, AgentThreadLifecycleService, needsBringBack } from '../../browser/home/agentThreadLifecycle.js';
 
 /** Just enough history: the setters change the stored meta the way the real service does. */
 function fakeHistory(metas: IAgentSessionMeta[]): IAgentHistoryService {
@@ -106,5 +106,14 @@ suite('Agent thread lifecycle undo', () => {
 		assert.strictEqual(history.get('a')?.settled, undefined);
 		assert.strictEqual(history.get('a')?.archived, false);
 		assert.strictEqual(service.notice, undefined, 'not an undoable lifecycle move');
+	});
+
+	test('a send needs no bring-back for a chat that is neither held, settled nor archived', () => {
+		assert.strictEqual(needsBringBack(undefined, undefined), false);
+		assert.strictEqual(needsBringBack('cloning', { settled: undefined, archived: false }), false);
+		assert.strictEqual(needsBringBack(ORCH_HOLD_SETTLED, undefined), true);
+		assert.strictEqual(needsBringBack(ORCH_HOLD_ARCHIVED, undefined), true);
+		assert.strictEqual(needsBringBack(undefined, { settled: true }), true);
+		assert.strictEqual(needsBringBack(undefined, { archived: true }), true);
 	});
 });

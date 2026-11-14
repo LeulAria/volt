@@ -1,0 +1,66 @@
+{
+ "branch": "main",
+ "shipped": 5,
+ "groups": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true,
+  "Integration": true
+ },
+ "handoff": 4,
+ "codesPlaced": 4,
+ "handoffDetail": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true
+ },
+ "placedDetail": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true
+ },
+ "codes": {
+  "W1": "ADM-W1-HJKNX5",
+  "W2": "ADM-W2-AEIVOR",
+  "W3": "ADM-W3-BCWB2P",
+  "W4": "ADM-W4-D5FU6G"
+ },
+ "npmTest": {
+  "status": 0,
+  "summary": ""
+ },
+ "files": {
+  "w1-limiter": {
+   "pass": true,
+   "failed": []
+  },
+  "w1-api": {
+   "pass": true,
+   "failed": []
+  },
+  "w2-dates": {
+   "pass": true,
+   "failed": []
+  },
+  "w3-cursor": {
+   "pass": true,
+   "failed": []
+  },
+  "w4-create": {
+   "pass": true,
+   "failed": []
+  },
+  "w4-idempotency": {
+   "pass": true,
+   "failed": []
+  },
+  "integration": {
+   "pass": true,
+   "failed": []
+  }
+ },
+ "report": "W1 | w1-rate-limiting | ADM-W1-HJKNX5\nW2 | w2-timezone-drift | ADM-W2-AEIVOR\nW3 | w3-cursor-pagination | ADM-W3-BCWB2P\nW4 | w4-idempotent-create | ADM-W4-D5FU6G"
+}

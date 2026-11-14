@@ -1,0 +1,65 @@
+out/ = new for: src/vs/server/node/voltAgent/agentServerMain.ts
+src/vs/server/node/voltAgent/serverCompression.ts
+src/vs/server/node/voltAgent/serverWorkbench.ts
+src/vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.ts
+src/vs/workbench/contrib/voltAgent/browser/chrome/agentTranscriptReuse.ts
+src/vs/workbench/contrib/voltAgent/browser/chrome/agentTranscriptView.ts
+src/vs/workbench/contrib/voltAgent/browser/editor/agentChatNavigation.contribution.ts
+src/vs/workbench/contrib/voltAgent/browser/editor/agentEditor.ts
+src/vs/workbench/contrib/voltAgent/browser/editor/agentThreadWindow.ts
+src/vs/workbench/contrib/voltAgent/browser/editor/agentTurnNav.ts
+window up on 9953
+== new r2 warm
+run 1: settled 37.3 ms, first visible 12.9 ms, long tasks 0 ms, max frame gap 24 ms  (load 8.45 9.93 23.28)
+run 2: settled 38.0 ms, first visible 13.0 ms, long tasks 0 ms, max frame gap 25 ms  (load 9.06 10.02 23.16)
+run 3: settled 13.0 ms, first visible 13.0 ms, long tasks 0 ms, max frame gap 26 ms  (load 8.73 9.93 23.05)
+{"settled":{"n":3,"median":37.3,"min":13,"max":38},"firstVisible":{"n":3,"median":13,"min":12.9,"max":13}}
+== new r2 cold
+run 1: settled 163.6 ms, first visible 96.9 ms, long tasks 60 ms, max frame gap 58 ms  (load 8.59 9.88 22.96)
+run 2: settled 130.5 ms, first visible 47.2 ms, long tasks 62 ms, max frame gap 66 ms  (load 8.23 9.79 22.85)
+run 3: settled 121.0 ms, first visible 54.5 ms, long tasks 56 ms, max frame gap 50 ms  (load 7.65 9.64 22.72)
+run 4: settled 121.4 ms, first visible 62.9 ms, long tasks 0 ms, max frame gap 50 ms  (load 7.65 9.64 22.72)
+run 5: settled 121.6 ms, first visible 63.2 ms, long tasks 0 ms, max frame gap 50 ms  (load 8.16 9.71 22.67)
+{"settled":{"n":5,"median":121.6,"min":121,"max":163.6},"firstVisible":{"n":5,"median":62.9,"min":47.2,"max":96.9}}
+== new r2 open75k
+run 1: settled 13.6 ms, first visible 13.6 ms, long tasks 0 ms, max frame gap 25 ms  (load 8.42 9.69 22.43)
+run 2: settled 13.2 ms, first visible 13.2 ms, long tasks 0 ms, max frame gap 25 ms  (load 9.28 9.82 22.33)
+run 3: settled 13.2 ms, first visible 13.2 ms, long tasks 0 ms, max frame gap 17 ms  (load 9.25 9.81 22.25)
+{"settled":{"n":3,"median":13.2,"min":13.2,"max":13.6},"firstVisible":{"n":3,"median":13.2,"min":13.2,"max":13.6}}
+== new r2 earlier
+run 1: 66 earlier turns in 5.0 s (13.3/s), 1 of 591 frame gaps > 33 ms, max gap 58 ms, long tasks 65 ms  (load 11.39 10.23 22.25)
+run 2: 77 earlier turns in 5.0 s (15.4/s), 0 of 598 frame gaps > 33 ms, max gap 17 ms, long tasks 0 ms  (load 11.20 10.24 22.04)
+{"turnsPerS":{"n":2,"median":14.4,"min":13.3,"max":15.4}}
+== new r2 home
+run 1: first message settled on screen after 1800 ms (first seen 1791 ms), 6 gaps > 33 ms, max gap 542 ms, long tasks 1589 ms  (load 10.40 10.10 21.86)
+run 2: first message settled on screen after 402 ms (first seen 385 ms), 4 gaps > 33 ms, max gap 50 ms, long tasks 52 ms  (load 9.81 9.98 21.75)
+run 3: first message settled on screen after 404 ms (first seen 387 ms), 3 gaps > 33 ms, max gap 58 ms, long tasks 51 ms  (load 10.64 10.16 21.67)
+{"toTop":{"n":3,"median":404,"min":401.9,"max":1800.3}}
+== new r2 a11open
+run 1: settled 29.8 ms, first visible 29.8 ms, long tasks 0 ms, max frame gap 10 ms  (load 9.30 9.89 21.44)
+run 2: settled 13.9 ms, first visible 13.9 ms, long tasks 0 ms, max frame gap 15 ms  (load 8.72 9.76 21.33)
+run 3: settled 13.1 ms, first visible 13.1 ms, long tasks 0 ms, max frame gap 10 ms  (load 7.75 9.52 21.11)
+{"settled":{"n":3,"median":13.9,"min":13.1,"max":29.8},"firstVisible":{"n":3,"median":13.9,"min":13.1,"max":29.8}}
+== new r2 stutter
+run 1: 0 gaps > 33 ms, max gap 29 ms, 41 frames, long tasks 0 ms  (load 8.17 9.57 21.06)
+run 2: 0 gaps > 33 ms, max gap 10 ms, 40 frames, long tasks 0 ms  (load 8.48 9.61 21.01)
+run 3: 0 gaps > 33 ms, max gap 15 ms, 40 frames, long tasks 0 ms  (load 8.12 9.52 20.91)
+run 4: 0 gaps > 33 ms, max gap 16 ms, 40 frames, long tasks 0 ms  (load 8.68 9.60 20.80)
+run 5: 0 gaps > 33 ms, max gap 14 ms, 40 frames, long tasks 0 ms  (load 8.79 9.61 20.74)
+{"gapsOver33":{"n":5,"median":0,"min":0,"max":0}}
+== new r2 idle
+drawn exchanges: 1098
+run 1: {"taskMsPerS":17.6,"scriptMsPerS":2.4,"layoutMsPerS":0,"styleMsPerS":0.6,"layouts":0,"nodes":58596}  (load 7.94 9.36 20.39)
+run 2: {"taskMsPerS":21.4,"scriptMsPerS":4.3,"layoutMsPerS":0,"styleMsPerS":1.7,"layouts":0,"nodes":58596}  (load 8.33 9.39 20.27)
+run 3: {"taskMsPerS":17.1,"scriptMsPerS":3.1,"layoutMsPerS":0,"styleMsPerS":0.8,"layouts":0,"nodes":58596}  (load 7.81 9.25 20.09)
+{"n":3,"median":17.6,"min":17.1,"max":21.4}
+== new r2 reasoning
+run 1: reasoning on screen 13 ms, settled 13 ms (222144 chars, 1 blocks), long tasks 109 ms (longest 109 ms)  (load 8.33 9.32 19.99)
+run 2: reasoning on screen 6 ms, settled 6 ms (222144 chars, 1 blocks), long tasks 75 ms (longest 75 ms)  (load 8.46 9.33 19.93)
+run 3: reasoning on screen 12 ms, settled 12 ms (222144 chars, 1 blocks), long tasks 81 ms (longest 81 ms)  (load 7.94 9.21 19.83)
+{"shownMs":{"n":3,"median":12,"min":6,"max":13},"settledMs":{"n":3,"median":12,"min":6,"max":13}}
+== new r2 send
+run 1: sent message on screen 11 ms, first word 4486 ms ("OK"), long tasks 0 ms, max frame gap 42 ms  (load 9.08 9.35 19.63)
+run 2: sent message on screen 9 ms, first word 2784 ms ("OK"), long tasks 0 ms, max frame gap 25 ms  (load 8.29 9.17 19.45)
+{"echoMs":{"n":2,"median":10,"min":9,"max":11},"firstWordMs":{"n":2,"median":3635,"min":2784,"max":4486}}
+SUITE-EXIT 0

@@ -5,7 +5,7 @@
 
 import { raceTimeout } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
-import { isEqualOrParent, joinPath, relativePath } from '../../../../../base/common/resources.js';
+import { isEqual, isEqualOrParent, joinPath, relativePath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { isAbsolute } from '../../../../../base/common/path.js';
 import { stripAnsi } from '../../../../services/voltRuntime/common/ide/testReports.js';
@@ -31,6 +31,12 @@ export interface ITestRunWatcher {
 export interface ITestToolResult {
 	readonly text: string;
 	readonly isError?: boolean;
+}
+
+export interface ITestRunArgs {
+	readonly targets?: readonly string[];
+	readonly failed?: boolean;
+	readonly coverage?: boolean;
 }
 
 /** A sandboxed chat's call: the gate's read rule. Without it the chat sees no tests (Volt cannot tell which files it may read). */
@@ -102,47 +108,29 @@ export class IdeTests {
 	}
 
 	/**
+	 * Whether `run` with these arguments would start a run: a call with nothing to run (a `node --test`
+	 * project no controller covers) answers at once instead of waiting on a card the agent's MCP client
+	 * gives up on after 60 s.
+	 */
+	async wouldRun(key: string, root: URI | undefined, args: ITestRunArgs, as?: IAgentTestRun & ITestConfinement): Promise<boolean> {
+		const sandboxed = !!as?.exec.sandbox;
+		await this.settle(sandboxed, root);
+		return 'tests' in await this.select(key, root, args, sandboxed ? as : undefined);
+	}
+
+	/**
 	 * Runs tests for `as` (the calling chat: its exec, in its sandbox when it has one). A sandboxed
 	 * chat's run is Volt's runner only: a test extension's controller runs tests in its extension
 	 * host, outside any sandbox.
 	 */
-	async run(key: string, root: URI | undefined, args: { readonly targets?: readonly string[]; readonly failed?: boolean; readonly coverage?: boolean }, watcher: ITestRunWatcher | undefined, token: CancellationToken, as?: IAgentTestRun & ITestConfinement): Promise<ITestToolResult> {
+	async run(key: string, root: URI | undefined, args: ITestRunArgs, watcher: ITestRunWatcher | undefined, token: CancellationToken, as?: IAgentTestRun & ITestConfinement): Promise<ITestToolResult> {
 		const sandboxed = !!as?.exec.sandbox;
 		await this.settle(sandboxed, root);
-		let tests: InternalTestItem[];
-		let title: string;
-		let skipped = '';
-		if (args.failed) {
-			const last = this.lastResult(key);
-			if (!last) {
-				return { text: 'No earlier test run to take failures from. Run tests first.', isError: true };
-			}
-			tests = [...last.tests].filter(item => item.ownComputedState === TestResultState.Failed || item.ownComputedState === TestResultState.Errored)
-				.map(item => this.testService.collection.getNodeById(item.item.extId))
-				.filter((item): item is IncrementalTestCollectionItem => !!item);
-			if (!tests.length) {
-				return { text: 'The last run had no failures.' };
-			}
-			title = `Rerun ${tests.length} failed`;
-		} else if (args.targets?.length) {
-			const resolved = this.resolveTargets(root, args.targets, sandboxed ? await this.visibleEntries(as) : undefined);
-			if ('error' in resolved) {
-				return { text: resolved.error, isError: true };
-			}
-			tests = resolved.tests;
-			title = args.targets.join(', ');
-		} else {
-			tests = [...this.testService.collection.rootItems];
-			if (sandboxed) {
-				const others = tests.filter(test => test.controllerId !== VOLT_TEST_CONTROLLER_ID);
-				tests = tests.filter(test => test.controllerId === VOLT_TEST_CONTROLLER_ID);
-				skipped = others.length ? `\n(Not run: the tests of ${[...new Set(others.map(test => this.controllerLabel(test)))].join(', ')}, whose extension runs them outside this chat's sandbox. Run those with your own shell tool: it runs inside the sandbox.)` : '';
-			}
-			if (!tests.length) {
-				return { text: `No tests in this workspace to run.${skipped}`, isError: true };
-			}
-			title = 'All tests';
+		const selected = await this.select(key, root, args, sandboxed ? as : undefined);
+		if (!('tests' in selected)) {
+			return selected;
 		}
+		const { tests, title, skipped } = selected;
 		if (sandboxed) {
 			const foreign = tests.filter(test => test.controllerId !== VOLT_TEST_CONTROLLER_ID);
 			if (foreign.length) {
@@ -169,6 +157,39 @@ export class IdeTests {
 		this.lastRun.set(key, result.id);
 		const note = args.coverage && !coverage ? '\n(No coverage profile for these tests; ran them without coverage.)' : '';
 		return { text: this.summarize(root, result) + note + skipped };
+	}
+
+	/**
+	 * The tests a run takes, or why there are none. Call after `settle`. `confined`: a sandboxed
+	 * chat's call, which targets only tests in files it may read and runs only Volt's runner's when
+	 * it names none.
+	 */
+	private async select(key: string, root: URI | undefined, args: ITestRunArgs, confined: ITestConfinement | undefined): Promise<{ readonly tests: InternalTestItem[]; readonly title: string; readonly skipped: string } | ITestToolResult> {
+		if (args.failed) {
+			const last = this.lastResult(key);
+			if (!last) {
+				return { text: 'No earlier test run to take failures from. Run tests first.', isError: true };
+			}
+			const tests = [...last.tests].filter(item => item.ownComputedState === TestResultState.Failed || item.ownComputedState === TestResultState.Errored)
+				.map(item => this.testService.collection.getNodeById(item.item.extId))
+				.filter((item): item is IncrementalTestCollectionItem => !!item);
+			return tests.length ? { tests, title: `Rerun ${tests.length} failed`, skipped: '' } : { text: 'The last run had no failures.' };
+		}
+		const visible = confined ? await this.visibleEntries(confined) : undefined;
+		if (args.targets?.length) {
+			const resolved = this.resolveTargets(root, args.targets, visible);
+			return 'error' in resolved ? { text: resolved.error, isError: true } : { tests: resolved.tests, title: args.targets.join(', '), skipped: '' };
+		}
+		// A chat's project or worktree outside the window's folders: its own tests, not every project's.
+		const project = root && voltTestRoots.list().some(candidate => isEqual(candidate, root)) ? this.resolveTargets(root, [root.fsPath], visible) : undefined;
+		let tests: InternalTestItem[] = project && !('error' in project) ? project.tests : project ? [] : [...this.testService.collection.rootItems];
+		let skipped = '';
+		if (confined) {
+			const others = tests.filter(test => test.controllerId !== VOLT_TEST_CONTROLLER_ID);
+			tests = tests.filter(test => test.controllerId === VOLT_TEST_CONTROLLER_ID);
+			skipped = others.length ? `\n(Not run: the tests of ${[...new Set(others.map(test => this.controllerLabel(test)))].join(', ')}, whose extension runs them outside this chat's sandbox. Run those with your own shell tool: it runs inside the sandbox.)` : '';
+		}
+		return tests.length ? { tests, title: 'All tests', skipped } : { text: `No tests in this workspace to run.${skipped}`, isError: true };
 	}
 
 	/** The run request the Testing service would make for these tests, made here so the agent's run can be told apart (`agentTestRuns`). */

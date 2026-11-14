@@ -1,0 +1,1 @@
+Use Volt's delegate_task to run the four work items in parallel: one implementation subagent per item, each with isolation worktree, then merge their branches into main yourself.

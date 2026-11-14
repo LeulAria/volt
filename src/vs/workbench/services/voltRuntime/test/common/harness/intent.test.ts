@@ -265,4 +265,54 @@ suite('Volt intent router', () => {
 			['read', 'search', 'web', 'meta'],
 		);
 	});
+	test('a question naming code is about the workspace, not a web lookup', () => {
+		for (const text of [
+			'Which functions or methods call `assertTransition`, and with which target status does each call it?',
+			'Which classes inject FolioService through their constructor? List them.',
+			'Which database tables have a foreign key that references rooms.id?',
+			'what does max_occupancy mean here',
+		]) {
+			const intent = classifyIntent(text, 'agent');
+			assert.strictEqual(intent.referencesWorkspace, true, text);
+			assert.strictEqual(intent.wantsWeb, false, text);
+		}
+		assert.ok(classifyIntent('Which classes inject FolioService through their constructor?', 'agent').signals.includes('code-identifier'));
+	});
+
+	test('brand names and domains are not code', () => {
+		for (const text of ['how much is the iPhone 17 in UAE', 'PlayStation 5 price today', 'is YouTube down', 'best PowerPoint templates']) {
+			assert.strictEqual(classifyIntent(text, 'agent').referencesWorkspace, false, text);
+		}
+	});
+
+	test('"source files" is the project, not a request for cited sources', () => {
+		const intent = classifyIntent('Which non-test source files write to the `reservations` table? List each file.', 'agent');
+		assert.strictEqual(intent.wantsWeb, false);
+		assert.strictEqual(intent.shape.cite, false);
+		assert.strictEqual(classifyIntent('summarize the EU AI act with sources', 'agent').shape.cite, true);
+	});
+
+	test('tests named only to leave them out are not a request about tests', () => {
+		assert.strictEqual(classifyIntent('Which non-test source files write to the reservations table? Ignore *.spec.ts files.', 'agent').mentionsTests, undefined);
+		assert.strictEqual(classifyIntent('fix the failing tests in the cart module', 'agent').mentionsTests, true);
+	});
+
+	test('IDE work: the tool that fits, and none for code questions that only mention tests or a database', () => {
+		const work = (text: string) => classifyIntent(text, 'agent', { hasWorkspace: true }).ideWork ?? [];
+		// The live IDE checks of the 2026-11-12 test pass (round2/12-ide-and-code-intel.md).
+		assert.deepStrictEqual(work('The cart tests in this project fail. Which test fails and why? Do not change any files.'), ['tests']);
+		assert.deepStrictEqual(work('In shop.db, which sku brings in the most revenue (qty times price), and how much?'), ['db']);
+		assert.deepStrictEqual(work('Rename the function lineTotal in src/cart.ts to lineAmount everywhere it is used.'), ['rename']);
+		assert.deepStrictEqual(work('The flaky service from docker-compose.yml keeps restarting. Why? Do not change any files.'), ['docker']);
+		// Hotel benchmark questions: code relationships, no IDE tool.
+		assert.deepStrictEqual(work('In this repo, what implements the StateReader interface (packages/domain/src/commands/query.ts), including object literals typed as StateReader? For each non-test implementation, give the production call chain that passes it into the domain kernel\'s runCommand, from the entry point down.'), []);
+		assert.deepStrictEqual(work('If the bookings column special_request_tags were renamed in the database schema, which files would need changes?'), []);
+		assert.deepStrictEqual(work('Which test-only helpers call runMigrations?'), []);
+		assert.deepStrictEqual(work('run the tests for the cart'), ['tests']);
+		assert.deepStrictEqual(work('what is in the database? show me the rows of orders'), ['db']);
+		// The tests tool does not run node's own runner: no hint that sends the agent there first (round 3, t2).
+		assert.deepStrictEqual(work('Benchmark task in /tmp/w/t2 (a node project; `npm test` runs node:test). Three tests fail: fix them, then run `npm test`.'), []);
+		assert.deepStrictEqual(work('The tests fail; they run with node --test test/'), []);
+		assert.deepStrictEqual(work('The tests fail: we moved from node --test to vitest.'), ['tests']);
+	});
 });

@@ -6,7 +6,6 @@
 import { randomBytes } from 'crypto';
 import { promises as fs } from 'fs';
 import type * as http from 'http';
-import * as zlib from 'zlib';
 import type { Socket } from 'net';
 import { hostname } from 'os';
 import minimist from 'minimist';
@@ -50,7 +49,7 @@ import { ISecretStorageService } from '../../../platform/secrets/common/secrets.
 import { getResolvedShellEnv } from '../../../platform/shell/node/shellEnv.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../platform/workspace/common/workspace.js';
-import { AGENT_SERVER_RESTART_EXIT_CODE, AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions, VOLT_EXTHOST_TICKET_PATH, VOLT_LOCAL_LINK_PATH, VOLT_PAIRING_CODE_PATH } from '../../../platform/voltAgentServer/common/protocol.js';
+import { AGENT_SERVER_RESTART_EXIT_CODE, AgentServerCloseCode, ICollectionDelta, IAgentServerRuntimeInfo, IVoltSshTunnelOptions, VOLT_EXTHOST_TICKET_PATH, VOLT_LOCAL_LINK_PATH, VOLT_PAIRING_CODE_PATH, VOLT_SANDBOX_WORKLOADS_PATH } from '../../../platform/voltAgentServer/common/protocol.js';
 import { AgentServerProtocol, IClientCallOptions } from '../../../platform/voltAgentServer/common/protocolServer.js';
 import { SessionTopicData } from '../../../platform/voltAgentServer/common/sessionPatch.js';
 import { agentServerPaths, clearAgentServerRuntime, ensureAgentServerToken, isProcessAlive, preferredAgentServerPort, writeAgentServerRuntime } from '../../../platform/voltAgentServer/node/agentServerFiles.js';
@@ -139,7 +138,9 @@ import { IPairingHttpContext, isLoopbackAddress, machineLabel, ServerPairing } f
 import { handleSignIn } from './serverSignIn.js';
 import { ServerTunnels } from './serverTunnels.js';
 import { ServerWorkbench } from './serverWorkbench.js';
+import { OnDemandSweep } from './onDemandSweep.js';
 import { ServerRender } from './serverRender.js';
+import { COMPRESSIBLE, CompressedCopies, preferredEncoding } from './serverCompression.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
@@ -173,6 +174,7 @@ function parseArgs(argv: string[]): IServerArgs {
 export async function main(argv: string[]): Promise<void> {
 	const args = parseArgs(argv);
 	const paths = agentServerPaths(args.userDataDir);
+	compressedCopies = new CompressedCopies(join(paths.dir, 'compressed'));
 	// The compile cache its launcher set is for this process: agents, terminals and dev servers started here don't write to it.
 	if (process.env['NODE_COMPILE_CACHE'] === paths.compileCacheDir) {
 		delete process.env['NODE_COMPILE_CACHE'];
@@ -621,12 +623,15 @@ export async function main(argv: string[]): Promise<void> {
 	await writeAgentServerRuntime(paths, info);
 	logService.info(`[volt agent server] listening on http://${httpContext.network ? '127.0.0.1' : args.host}:${port} (epoch ${epoch})`);
 	// A revoked device, or one whose token expired, is disconnected within 5 s (INV-08): its socket
-	// and the browser workbench's connections opened with its cookie.
-	const sweep = setInterval(() => {
+	// and the browser workbench's connections opened with its cookie. Only while a device is connected:
+	// the desktop's own server, with no device, does not wake for it.
+	const sweep = disposables.add(new OnDemandSweep(DEVICE_SWEEP_MS, () => protocol.listClients().some(client => !!client.deviceId) || workbench.deviceSockets > 0, () => {
 		protocol.closeWhere(client => !!client.deviceId && !pairing.isActive(client.deviceId), AgentServerCloseCode.Unauthorized, 'device removed or expired');
 		workbench.closeInactive(deviceId => pairing.isActive(deviceId));
-	}, DEVICE_SWEEP_MS);
-	disposables.add(toDisposable(() => clearInterval(sweep)));
+	}));
+	disposables.add(protocol.onDidChangeClients(() => sweep.wake()));
+	disposables.add(workbench.onDidAddDeviceSocket(() => sweep.wake()));
+	sweep.wake();
 
 	//#endregion
 
@@ -670,7 +675,7 @@ export async function main(argv: string[]): Promise<void> {
 				: hookedTriggers(automations.list()).some(({ automation }) => automation.enabled)
 					? 'an automation waits for webhooks'
 					: undefined;
-	disposables.add(stopWhenIdle({ clients: () => protocol.listClients().length, runsIdle, orchestrator, network: args.host !== '127.0.0.1' && args.host !== 'localhost', busy, stop: () => void stop(0), logService }));
+	disposables.add(stopWhenIdle({ clients: () => protocol.listClients().map(client => client.kind), onDidChangeClients: protocol.onDidChangeClients, runsIdle, orchestrator, network: args.host !== '127.0.0.1' && args.host !== 'localhost', busy, stop: () => void stop(0), logService }));
 	process.on('uncaughtException', err => logService.error('[volt agent server] uncaught exception', err));
 	process.on('unhandledRejection', err => logService.error('[volt agent server] unhandled rejection', err));
 }
@@ -738,37 +743,10 @@ const MIME: Record<string, string> = {
 	'.scm': 'text/plain; charset=utf-8',
 };
 
-/** Text assets worth compressing; the web IDE's editor bundle shrinks to about a quarter. */
-const COMPRESSIBLE = new Set(['.html', '.js', '.mjs', '.css', '.json', '.svg', '.map', '.webmanifest', '.ttf', '.otf', '.txt', '.wasm', '.scm']);
-/**
- * Files this big get a faster brotli level: quality 7 takes about 4 s on the workbench's 21 MB
- * bundle, quality 4 about 1 s for a copy a tenth larger.
- */
-const LARGE_FILE_BYTES = 1024 * 1024;
-/** Compressed copies of the served files, by path and modification time (the app is a few MB). `ready` once made. */
-const compressed = new Map<string, { readonly mtime: number; readonly data: Promise<Buffer>; ready?: Buffer }>();
+/** Compressed copies of the served files (the app is a few MB); main() gives it a disk cache. */
+let compressedCopies = new CompressedCopies(undefined);
 /** Requests that came in through a tunnel: from loopback, but not from this computer's browser. */
 const tunnelRequests = new WeakSet<http.IncomingMessage>();
-
-function preferredEncoding(header: string | string[] | undefined): 'br' | 'gzip' | undefined {
-	const value = Array.isArray(header) ? header.join(',') : header ?? '';
-	return /\bbr\b/.test(value) ? 'br' : /\bgzip\b/.test(value) ? 'gzip' : undefined;
-}
-
-function compressedCopy(file: string, mtime: number, encoding: 'br' | 'gzip'): { readonly data: Promise<Buffer>; readonly ready?: Buffer } {
-	const key = `${encoding}:${file}`;
-	const hit = compressed.get(key);
-	if (hit && hit.mtime === mtime) {
-		return hit;
-	}
-	const data = fs.readFile(file).then(contents => new Promise<Buffer>((resolve, reject) => encoding === 'br'
-		? zlib.brotliCompress(contents, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: contents.length > LARGE_FILE_BYTES ? 4 : 7, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: contents.length } }, (err, out) => err ? reject(err) : resolve(out))
-		: zlib.gzip(contents, { level: contents.length > LARGE_FILE_BYTES ? 5 : 7 }, (err, out) => err ? reject(err) : resolve(out))));
-	const entry: { readonly mtime: number; readonly data: Promise<Buffer>; ready?: Buffer } = { mtime, data };
-	compressed.set(key, entry);
-	data.then(out => entry.ready = out, () => compressed.delete(key));
-	return entry;
-}
 
 /** This computer's own browser: over loopback, not through a tunnel. */
 function fromThisComputer(req: http.IncomingMessage): boolean {
@@ -810,6 +788,20 @@ async function serveHttp(req: http.IncomingMessage, res: http.ServerResponse, to
 			sendJson(res, 401, { error: 'unauthorized' });
 		} else {
 			sendJson(res, 200, url.pathname === VOLT_LOCAL_LINK_PATH ? pairing.createLocalNonce() : pairing.createCode(ctx));
+		}
+		return;
+	}
+	if (url.pathname === VOLT_SANDBOX_WORKLOADS_PATH || url.pathname === `${VOLT_SANDBOX_WORKLOADS_PATH}/stop`) {
+		// P6: the desktop app's window lists and stops the sandboxed hosts it asked this server for; only it (the server's own token, this computer).
+		const stop = url.pathname !== VOLT_SANDBOX_WORKLOADS_PATH;
+		if (req.method !== (stop ? 'POST' : 'GET')) {
+			sendJson(res, 405, { error: 'method_not_allowed' });
+		} else if (ctx.viaTunnel || ctx.viaNetwork || !isLoopbackAddress(req.socket.remoteAddress) || !secretsEqual(bearerToken(req), token)) {
+			sendJson(res, 401, { error: 'unauthorized' });
+		} else if (stop) {
+			sendJson(res, 200, { stopped: await workbench.stopSandboxWorkload(url.searchParams.get('id') ?? '') });
+		} else {
+			sendJson(res, 200, { workloads: await workbench.sandboxWorkloads() });
 		}
 		return;
 	}
@@ -920,10 +912,12 @@ async function sendFile(req: http.IncomingMessage, res: http.ServerResponse, ser
 		let data: Buffer | undefined;
 		const encoding = COMPRESSIBLE.has(extname(served)) && stat.size > 1024 ? preferredEncoding(req.headers['accept-encoding']) : undefined;
 		if (encoding) {
-			const copy = compressedCopy(served, stat.mtimeMs, encoding);
+			// Another device (a phone over Wi-Fi or a tunnel) gets a large file's smallest copy once it is made.
+			const local = fromThisComputer(req);
+			const copy = compressedCopies.copy(served, stat.mtimeMs, encoding, !local);
 			// Over loopback compressing only costs time (seconds for the workbench's bundle on a fresh
 			// server): this computer's browser gets the file as it is until the copy is made.
-			if (copy.ready || !fromThisComputer(req)) {
+			if (copy.ready || !local) {
 				data = copy.ready ?? await copy.data;
 				headers['Content-Encoding'] = encoding;
 			}

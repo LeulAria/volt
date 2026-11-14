@@ -17,11 +17,12 @@ import { VoltMode } from '../../voltRuntime/common/modes.js';
 import { IProviderProfile, IProviderProfileDraft } from '../../voltRuntime/common/profiles.js';
 import { IAgentDetectResult, IModelMessage, IVoltCatalogItem, IVoltProviderStatus } from '../../voltRuntime/common/providers.js';
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from '../../voltRuntime/common/questions.js';
-import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
+import { IAgentPrewarmOptions, IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
 import type { IVoltMcpApprovalRecord } from '../../voltRuntime/common/harness/mcpApprovals.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import type { VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { chatExec, IChatExec } from '../../voltRuntime/common/execContext.js';
+import { PredictorTask } from '../../voltRuntime/common/prediction/predictorSkill.js';
 import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../../voltRuntime/common/session.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
@@ -79,6 +80,8 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 	/** Session objects handed out, updated in place as the server's summaries change. */
 	private readonly sessions = new Map<string, IVoltSession>();
 	private readonly requested = new Set<string>();
+	/** Each chat's access mode and sandbox as last mirrored, so a change of them redraws access pickers. */
+	private readonly accessSeen = new Map<string, string>();
 	/** `/compact` plans for a model other than the chat's own, by chat and model, asked of the server once per transcript length. */
 	private readonly compactionPlans = new Map<string, { readonly key: string; plan: IVoltCompactionPlan | undefined }>();
 
@@ -120,8 +123,23 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 				this._onDidChangeActiveCatalog.fire();
 			}
 		} else if (col === 'sessions') {
+			let access = false;
 			for (const key of keys) {
 				this.refreshSession(key);
+				// A chat's own access mode and sandbox arrive in its summary, after the call that set them.
+				const summary = this.summary(key);
+				if (!summary) {
+					this.accessSeen.delete(key);
+					continue;
+				}
+				const seen = JSON.stringify([summary.accessMode, summary.sandbox]);
+				if (this.accessSeen.get(key) !== seen) {
+					access = true;
+					this.accessSeen.set(key, seen);
+				}
+			}
+			if (access) {
+				this._onDidChangeAccess.fire();
 			}
 		} else if (col === 'questions') {
 			for (const key of keys) {
@@ -223,8 +241,8 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 		this.client.send('runtime.truncateSession', sessionId, userTurns);
 	}
 
-	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void {
-		this.client.send('runtime.prewarmAgent', sessionId, providerRef, mode);
+	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode, options?: IAgentPrewarmOptions): void {
+		this.client.send('runtime.prewarmAgent', sessionId, providerRef, mode, ...(options ? [options] : []));
 	}
 
 	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void {
@@ -403,8 +421,9 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 	}
 
 	/** One completion, run by the server; its events are replayed here once it finishes. */
-	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken): AsyncIterable<IVoltEvent> {
-		const events = await this.client.call<IVoltEvent[]>('runtime.streamModel', ref, messages, options);
+	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken, task?: PredictorTask): AsyncIterable<IVoltEvent> {
+		// The task goes along: the server's predictor session reads it as `<task>` (without it every request said `<task>undefined</task>`).
+		const events = await this.client.call<IVoltEvent[]>('runtime.streamModel', ref, messages, options, task);
 		for (const event of events) {
 			if (token.isCancellationRequested) {
 				return;

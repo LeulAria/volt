@@ -20,7 +20,7 @@ import { isLiveWorkloadState } from '../common/sandboxWorkloads.js';
 import { IAttestation, ISandboxBackendCapabilities, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { ISandboxDenial, isNoiseDenial, isQuietDenial } from '../common/sandboxDenials.js';
 import { agentStatePlan } from '../common/agentState.js';
-import { AGENT_STATE_ROOT, agentQuietDomains, agentQuietPaths, agentSandboxPolicy, IAgentSandboxHost, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
+import { AGENT_STATE_ROOT, agentEndpointLoopbackPorts, agentQuietDomains, agentQuietPaths, agentSandboxPolicy, agentSandboxRefusal, IAgentSandboxHost, isAgentHousekeepingDenial, IVoltSandboxRequest, nativeSandboxOffArgs } from '../common/sandboxPolicy.js';
 import { AGENT_CONFIG_NAMES } from '../common/sandboxProfiles.js';
 import { AgentStateOverlay, IAgentStateSync } from './agentStateOverlay.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
@@ -66,9 +66,12 @@ export interface ISandboxLaunch {
 	readonly principal: IPrincipal;
 	readonly policy: IResolvedSandboxPolicy;
 	readonly mechanism: SandboxMechanism;
-	/** Dimensions running best effort (status `partial`). Shown in the transcript. */
+	/** Dimensions running best effort (status `partial`). Listed on the Security page. */
 	readonly unenforced: readonly SandboxDimension[];
+	/** Something the user should know before trusting the run (shown in the transcript as a warning). */
 	readonly warnings: readonly string[];
+	/** A partial dimension the user can do something about: shown once in the chat, quietly (see {@link sandboxLaunchNotices}). */
+	readonly notes: readonly ISandboxLaunchNote[];
 	/** Attests the spawned process from outside, then lets the agent run (F.5). Never `ok` without evidence. */
 	confirm(child: ChildProcess): Promise<SandboxConfirmation>;
 	/** The external evidence the agent started on, once `confirm` succeeded (F.12). */
@@ -76,6 +79,12 @@ export interface ISandboxLaunch {
 	terminate(child: ChildProcess): Promise<void>;
 	/** Hosts the user allows later (network off): the running agent's next connection goes through. */
 	allowDomains(domains: readonly string[]): void;
+	/**
+	 * Reports every refusal the OS logged for this agent since `from` (epoch ms; default: since its
+	 * last read), or gives up after `timeoutMs`. The kernel's refusals are read on demand: call it
+	 * when one is likely (a command of the agent failed).
+	 */
+	flushDenials(timeoutMs: number, from?: number): Promise<void>;
 	/** After a turn: the allowed keys of the agent's config overlay go back to the user's config (B-05). */
 	syncState(): Promise<IAgentStateSync | undefined>;
 	dispose(): void;
@@ -161,18 +170,50 @@ export interface ISandboxViolationEvent {
 interface IDenialContext {
 	readonly home: string;
 	readonly roots: readonly string[];
-	readonly own?: { readonly processes: readonly string[]; readonly paths: readonly string[] };
+	readonly own?: { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths?: readonly string[] };
+	/** The agent CLI's housekeeping (`isAgentHousekeepingDenial`): logged, never a card. */
+	readonly housekeeping?: (denial: ISandboxDenial) => boolean;
 }
+
+/** Commands that read or list what they are told to: their denial is the agent's own and keeps its card (DENY-QUIET-1). */
+const EXPLICIT_READER = /^(?:ls|find|tree|du|stat|cat|head|tail|less|more|file|wc|bat|eza|exa|lsd|open|xxd|od|strings)$/;
 
 interface ILogger {
 	info(message: string): void;
 	warn(message: string, ...args: unknown[]): void;
 }
 
-const UNENFORCED_TEXT: Partial<Record<SandboxDimension, string>> = {
-	'filesystem.protectNew': 'protected files that do not exist yet (new git hooks, editor tasks) are not guarded on this OS',
-	'process.tree': 'a process that detaches itself completely can outlive the agent (it stays sandboxed)',
+/** A partial sandbox dimension the chat mentions: what is partial, why, and how to fix it. */
+export interface ISandboxLaunchNote {
+	readonly title: string;
+	readonly detail: string;
+}
+
+/**
+ * The partial dimensions worth a line in the chat: only ones that are true for this run and that
+ * the user can change. The rest are limits of the OS nobody can change from Volt (macOS tracks the
+ * process tree from its root, polls memory, mediates operations rather than syscalls; bubblewrap
+ * cannot guard files that do not exist yet): the Security page lists them as "not enforced", and
+ * the chat stays quiet about them instead of warning at the top of every sandboxed chat.
+ */
+const ACTIONABLE_PARTIAL: Partial<Record<SandboxDimension, ISandboxLaunchNote>> = {
+	'platform.tcc': {
+		title: 'Sandbox uses Volt\'s macOS privacy permissions here',
+		detail: 'This project is in Desktop, Documents, Downloads, iCloud Drive or on an external volume, which macOS opens only to apps you allowed. So the agent runs under Volt\'s privacy permissions (Files and Folders, and any others you gave Volt) instead of none of its own. The sandbox\'s file and network limits still apply. To run it with no privacy permissions, move the project to a folder outside those, such as ~/Projects.',
+	},
 };
+
+/** The chat's warnings and notes for a launch with `unenforced` dimensions, on `backend`. */
+export function sandboxLaunchNotices(unenforced: readonly SandboxDimension[], backend: SandboxBackendId, policy: Pick<IVoltSandboxPolicy, 'network'>): { readonly warnings: string[]; readonly notes: ISandboxLaunchNote[] } {
+	const notes = unenforced.flatMap(dimension => ACTIONABLE_PARTIAL[dimension] ?? []);
+	const warnings: string[] = [];
+	// bubblewrap shares the host's network when it is on, and seccomp cannot tell ports apart: a granted
+	// port lets the agent listen on any (bubblewrapBackend.ts, `blockListen`).
+	if (backend === 'bubblewrap' && policy.network.mode === 'host' && (policy.network.listen || policy.network.listenPorts?.length)) {
+		warnings.push('With the network on, Linux cannot limit listening to the ports you allowed, so the agent may listen on any port. Turn the network off for this chat to hold it to those ports.');
+	}
+	return { warnings, notes };
+}
 
 /**
  * Agent CLI processes in the OS sandbox: builds the agent profile for a chat's request and runs
@@ -201,6 +242,8 @@ export class VoltSandboxLauncher extends Disposable {
 	private readonly cache = new LaunchPolicyCache();
 	private readonly mode: () => PolicyAuthorityMode;
 	private readonly now: () => number;
+	/** The platform the launches run on, when the caller names it (tests); else the host's. */
+	private readonly platform: string | undefined;
 	private readonly readAdmin: () => Promise<IAdminPolicy & { readonly source?: string; readonly problem?: string }>;
 	private admin: Promise<IAdminPolicy> | undefined;
 	/** The managed policy once read: what the network broker judges by. */
@@ -224,6 +267,7 @@ export class VoltSandboxLauncher extends Disposable {
 		// Runs a dead Volt left behind are reaped by their tag before their folders go (FAIL-CRASH-1).
 		this.manager = options.manager ?? new SandboxManager(sandboxLogger, { platform: options.platform ?? process.platform, ...(options.networkMode ? { networkMode: options.networkMode } : {}), ...(options.grants ? { grants: options.grants } : {}), adminPolicy: () => this.adminNow, reap: killTagged });
 		this.now = options.now ?? Date.now;
+		this.platform = options.platform;
 		this.registry = new PrincipalRegistry(options.executionHost ?? `launcher:${process.pid}`, this.now);
 		// Disposed at once (its disposal starts killing the hosts); the shutdown below waits for those kills.
 		// Its hosts' principals (and their restarts') are this registry's, so revoking a chat's anchor stops them.
@@ -292,7 +336,18 @@ export class VoltSandboxLauncher extends Disposable {
 	 * the Authority's result is only compared; every difference is recorded either way.
 	 */
 	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest, options: { cwd?: string; hostEnv: Readonly<Record<string, string | undefined>>; env?: Readonly<Record<string, string>>; terminal?: boolean; label?: string; kind?: PrincipalKind }): Promise<ISandboxLaunch> {
+		// The model endpoint the user set for this CLI (a local gateway) is reachable like Volt's MCP server.
+		const endpointPorts = agentEndpointLoopbackPorts(request.providerId, options.hostEnv).filter(port => !request.loopbackPorts?.includes(port));
+		if (endpointPorts.length) {
+			request = { ...request, loopbackPorts: [...request.loopbackPorts ?? [], ...endpointPorts] };
+		}
 		const host = await this.hostFacts();
+		// An agent this OS's sandbox cannot hold (a random listening port on macOS): refused before
+		// anything is prepared, with the reason the chat shows next to "Turn off sandbox for this chat".
+		const unsupported = agentSandboxRefusal(request.providerId, this.platform ?? host.platform, request.providerId.charAt(0).toUpperCase() + request.providerId.slice(1));
+		if (unsupported) {
+			throw new SandboxUnavailableError(`${unsupported}.`, 'unavailable');
+		}
 		const mode = this.mode();
 		const principal = this.registry.mint({ subject: launchSubject(request), kind: options.kind ?? 'agent', launchPolicyHash: '' });
 		let sealed = principal;
@@ -346,7 +401,10 @@ export class VoltSandboxLauncher extends Disposable {
 			const given = [...request.workspaceRoots, ...request.extraWritableRoots ?? [], ...host.tempDirs];
 			const roots = [...new Set([...given, ...await Promise.all(given.map(root => fs.realpath(root).catch(() => root)))])];
 			const own = agentQuietPaths(request.providerId, host.home);
-			return this.launch(prepared, overlay, policy, sealed, [...files.warnings, ...describeIgnoredEntries([...files.ignored, ...ignored], policyFileName)], { home: host.home, roots, ...(own ? { own } : {}) });
+			// The CLI's own housekeeping and looks at the home folder: logged, never a card (B-05).
+			const realConfig = statePlan?.links[0] ? dirname(statePlan.links[0].target) : undefined;
+			const housekeeping = (denial: ISandboxDenial) => isAgentHousekeepingDenial(request.providerId, host.home, denial, { sentinel: prepared.policy.sentinel, ...(realConfig ? { realConfig } : {}) });
+			return this.launch(prepared, overlay, policy, sealed, [...files.warnings, ...describeIgnoredEntries([...files.ignored, ...ignored], policyFileName)], { home: host.home, roots, ...(own ? { own } : {}), housekeeping });
 		} catch (err) {
 			// Every failure here (a cache or overlay folder that can't be made, a config that can't be
 			// linked) is the sandbox refusing, typed, so the chat says so and never retries it (FAIL-TYPED-1).
@@ -670,18 +728,18 @@ export class VoltSandboxLauncher extends Disposable {
 		return this.admin;
 	}
 
-	private launch(prepared: IPreparedSandbox, overlay: AgentStateOverlay | undefined, policy: IVoltSandboxPolicy, principal: IPrincipal, notices: readonly string[], where: IDenialContext): ISandboxLaunch {
+	private launch(prepared: IPreparedSandbox, overlay: AgentStateOverlay | undefined, policy: IVoltSandboxPolicy, principal: IPrincipal, fileNotices: readonly string[], where: IDenialContext): ISandboxLaunch {
 		const listener = prepared.onDenial(denial => {
 			if (denial.kind === 'process' || denial.kind === 'limit') {
 				return;
 			}
 			this.report(prepared.tag, { kind: denial.kind, target: denial.target, source: denial.source === 'proxy' ? 'proxy' : 'os', ...(denial.process ? { process: denial.process } : {}), ...(denial.promptable === false ? { promptable: false } : {}), ...(denial.denialId ? { denialId: denial.denialId } : {}), ...(denial.epoch !== undefined ? { epoch: denial.epoch } : {}) }, where);
 		});
-		// The policy files' problems and ignored entries first: they explain the rules this run has.
-		const warnings = [...notices, ...prepared.unenforced.map(dimension => `Sandbox is partial here: ${UNENFORCED_TEXT[dimension] ?? dimension}.`)];
-		if (policy.network.listen) {
-			warnings.push('Sandbox is partial here: with the network on, Linux cannot limit listening to the ports you allowed, so the agent may listen on any port.');
-		}
+		// The policy files' problems and ignored entries first: they explain the rules this run has. Partial
+		// dimensions reach the chat only when the user can act on them (`sandboxLaunchNotices`).
+		const notices = sandboxLaunchNotices(prepared.unenforced, prepared.backend, policy);
+		const warnings = [...fileNotices, ...notices.warnings];
+		const notes = notices.notes;
 		let disposed = false;
 		return {
 			command: prepared.command,
@@ -696,10 +754,12 @@ export class VoltSandboxLauncher extends Disposable {
 			mechanism: mechanismOf(prepared.backend),
 			unenforced: prepared.unenforced,
 			warnings,
+			notes,
 			confirm: child => prepared.confirm(child),
 			attestation: () => prepared.attestation(),
 			terminate: child => prepared.terminate(child),
 			allowDomains: domains => prepared.allowDomains(domains),
+			flushDenials: (timeoutMs, from) => prepared.flushDenials(timeoutMs, from),
 			syncState: async () => {
 				if (!overlay) {
 					return undefined;
@@ -735,11 +795,14 @@ export class VoltSandboxLauncher extends Disposable {
 
 	private stateRootPruned = false;
 
-	private report(tag: string, denial: ISandboxDenial, { home, roots, own }: IDenialContext): void {
+	private report(tag: string, denial: ISandboxDenial, { home, roots, own, housekeeping }: IDenialContext): void {
 		if (isNoiseDenial(denial)) {
 			return;
 		}
-		const quiet = isQuietDenial(denial, home, roots, own);
+		const reader = denial.process?.replace(/^.*\//, '');
+		const quiet = isQuietDenial(denial, home, roots, own)
+			// The CLI's own housekeeping, by any process but a command the agent ran to read or list it.
+			|| (denial.source !== 'proxy' && !(reader && EXPLICIT_READER.test(reader)) && !!housekeeping?.(denial));
 		// A quiet read (by the shell) never hides the agent's own read of the same file (by `cat`).
 		const key = `${tag}|${denial.kind}|${denial.target}${quiet ? `|quiet|${denial.process ?? ''}` : ''}`;
 		const now = Date.now();

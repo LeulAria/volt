@@ -172,10 +172,10 @@ export class AgentServerProtocol extends Disposable {
 		const stored = this.log.append(topic, data);
 		for (const client of this.clients.values()) {
 			if (hearsTopic(client.topics, topic)) {
-				this.sendEvent(client, stored.event.seq, stored.text);
+				this.sendEvent(client, stored.seq, stored.text);
 			}
 		}
-		return stored.event.seq;
+		return stored.seq;
 	}
 
 	/**
@@ -355,8 +355,8 @@ export class AgentServerProtocol extends Disposable {
 			socket.send(JSON.stringify(welcome));
 			client.lastSent = frame.resume!.seq;
 			for (const stored of decision.events) {
-				if (hearsTopic(client.topics, stored.event.topic)) {
-					this.sendEvent(client, stored.event.seq, stored.text);
+				if (hearsTopic(client.topics, stored.topic)) {
+					this.sendEvent(client, stored.seq, stored.text);
 				}
 			}
 		} else {

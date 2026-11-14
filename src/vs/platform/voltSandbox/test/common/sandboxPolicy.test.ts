@@ -6,9 +6,13 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { denialKindForOperation, denialsInOutput, describeDenial, folderToAllow, isNoiseDenial } from '../../common/sandboxDenials.js';
-import { agentApiDomains, codexSandboxValue, domainAllowed, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
+import { agentApiDomains, agentEndpointLoopbackPorts, codexSandboxValue, domainAllowed, isAgentHousekeepingDenial, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
 import { parseSeatbeltLogLine, sbplRegex, sbplString } from '../../common/seatbelt.js';
+import { protectedEditTarget } from '../../common/sandboxProfiles.js';
+import { isUserFacingDenial } from '../../common/sandboxWorkloads.js';
 
+/** Who writes a real refusal to the unified log. */
+const KERNEL_SANDBOX = '/System/Library/Extensions/Sandbox.kext/Contents/MacOS/Sandbox';
 const MAC: ISandboxHostInfo = { platform: 'darwin', home: '/Users/me', tmpdir: '/private/var/folders/ab/xyz/T', darwinUserCacheDir: '/private/var/folders/ab/xyz/C', uid: 501 };
 
 function request(overrides: Partial<IVoltSandboxRequest> = {}): IVoltSandboxRequest {
@@ -32,6 +36,9 @@ suite('Volt sandbox policy', () => {
 		assert.ok(planAllowsWrite(plan, `${MAC.home}/.volt/sandbox/agent-state/chat/cursor-acp/config/cli-config.json`), 'choosing a model rewrites the overlay copy');
 		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/hooks.json`));
 		assert.ok(!planAllowsWrite(plan, `${MAC.home}/.cursor/mcp.json`));
+		// Its edit tool waits on this SQLite database: denied, an edit never returned.
+		assert.ok(planAllowsWrite(plan, `${MAC.home}/.cursor/ai-tracking/ai-code-tracking.db`));
+		assert.ok(planAllowsWrite(plan, `${MAC.home}/.cursor/ai-tracking/ai-code-tracking.db-wal`));
 	});
 
 	test('workspace-write: workspace, temp and the agent state are writable; nothing else', () => {
@@ -122,7 +129,7 @@ suite('Volt sandbox policy', () => {
 		assert.ok(!planAllowsWrite(unknown, '/Users/me/.claude/x'), 'another agent\'s state is not shared');
 	});
 
-	test('network off: the agent API plus allowed hosts; on: no proxy', () => {
+	test('network off: the agent API plus allowed hosts; on: the same plus the package registries', () => {
 		const off = resolveSandboxPlan(request({ network: false, allowedDomains: ['Example.org'] }), MAC);
 		assert.strictEqual(off.network, 'proxy');
 		assert.ok(domainAllowed('api.anthropic.com', off.allowedDomains));
@@ -130,9 +137,12 @@ suite('Volt sandbox policy', () => {
 		assert.ok(domainAllowed('registry.npmjs.org', off.allowedDomains), 'the npx adapter');
 		assert.ok(!domainAllowed('evil.com', off.allowedDomains));
 		assert.ok(!domainAllowed('anthropic.com.evil.com', off.allowedDomains));
-		const on = resolveSandboxPlan(request(), MAC);
-		assert.strictEqual(on.network, 'all');
-		assert.deepStrictEqual(on.allowedDomains, []);
+		// Network on: hostname rules too (the broker), with the package registries added.
+		const on = resolveSandboxPlan(request({ allowedDomains: ['example.org'] }), MAC);
+		assert.strictEqual(on.network, 'proxy');
+		assert.ok(domainAllowed('api.anthropic.com', on.allowedDomains) && domainAllowed('pypi.org', on.allowedDomains) && domainAllowed('example.org', on.allowedDomains));
+		assert.ok(!domainAllowed('evil.com', on.allowedDomains));
+		assert.ok(!domainAllowed('pypi.org', off.allowedDomains), 'registries only with the network on');
 	});
 
 	test('domain patterns', () => {
@@ -181,12 +191,29 @@ suite('Volt sandbox Seatbelt helpers', () => {
 	});
 
 	test('kernel log lines are parsed and attributed by tag', () => {
-		const ndjson = JSON.stringify({ eventMessage: 'Sandbox: touch(49447) deny(1) file-write-create /Users/me/Desktop/x y.txt\nVOLTSBX-abc123' });
+		const ndjson = JSON.stringify({ eventMessage: 'Sandbox: touch(49447) deny(1) file-write-create /Users/me/Desktop/x y.txt\nVOLTSBX-abc123', processID: 0, senderImagePath: KERNEL_SANDBOX });
 		assert.deepStrictEqual(parseSeatbeltLogLine(ndjson), { process: 'touch', pid: 49447, operation: 'file-write-create', target: '/Users/me/Desktop/x y.txt', tag: 'abc123' });
 		assert.deepStrictEqual(parseSeatbeltLogLine('Sandbox: 2.1.291(50239) deny(1) network-outbound 1.2.3.4:443\nVOLTSBX-t9'), { process: '2.1.291', pid: 50239, operation: 'network-outbound', target: '1.2.3.4:443', tag: 't9' });
 		assert.strictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: 'Sandbox: x(1) deny(1) file-write-create /a' })), undefined, 'not ours');
 		assert.strictEqual(parseSeatbeltLogLine('Filtering the log data using ...'), undefined);
 		assert.strictEqual(parseSeatbeltLogLine('{broken'), undefined);
+	});
+
+	test('LOG-FORGE-1: a refusal counts only from the kernel\'s Sandbox.kext; a line any process writes with `logger` is ignored', () => {
+		// Measured on macOS 26.6: `logger "Sandbox: touch(1) deny(1) file-write-create ~/.ssh/x VOLTSBX-<tag>"` from
+		// inside a sandbox reaches a `log stream` whose predicate is only the tag, as processID 9xxxx, sender /usr/bin/logger.
+		const forged = 'Sandbox: touch(1) deny(1) file-write-create /Users/me/other-project VOLTSBX-abc123';
+		assert.strictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: forged, processID: 96619, senderImagePath: '/usr/bin/logger', processImagePath: '/usr/bin/logger' })), undefined);
+		assert.strictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: forged, processID: 0, senderImagePath: '/usr/bin/logger' })), undefined, 'pid 0 alone is not enough');
+		assert.strictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: forged })), undefined, 'no origin: not trusted');
+		assert.strictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: forged, processID: 0, senderImagePath: KERNEL_SANDBOX }))?.target, '/Users/me/other-project');
+	});
+
+	test('LOCAL-DENIAL-1: a refused connection to this machine names its port; elsewhere stays as the kernel said', () => {
+		// macOS 26.6 logs `remote:*:<port>` without the address; the `-local` rule says which it was.
+		assert.deepStrictEqual(parseSeatbeltLogLine(JSON.stringify({ eventMessage: 'Sandbox: curl(812) deny(1) network-outbound remote:*:5432\nVOLTSBX-abc123-local', processID: 0, senderImagePath: KERNEL_SANDBOX })), { process: 'curl', pid: 812, operation: 'network-outbound', target: 'localhost:5432', tag: 'abc123' });
+		assert.deepStrictEqual(parseSeatbeltLogLine('Sandbox: node(9) deny(1) network-outbound remote:*:443\nVOLTSBX-abc123'), { process: 'node', pid: 9, operation: 'network-outbound', target: 'remote:*:443', tag: 'abc123' });
+		assert.strictEqual(parseSeatbeltLogLine('Sandbox: node(9) deny(1) network-outbound remote:*:22\nVOLTSBX-abc123-local')?.tag, 'abc123', 'attributed to its run');
 	});
 });
 
@@ -221,9 +248,52 @@ suite('Volt sandbox denials', () => {
 		assert.ok(isNoiseDenial({ kind: 'read', target: '/private/var/run/utmpx', source: 'os' }));
 		assert.ok(isNoiseDenial({ kind: 'write', target: '/var/run/utmp', source: 'os' }));
 		assert.ok(!isNoiseDenial({ kind: 'write', target: '/private/var/run/notes.txt', source: 'os' }));
+		// Claude Code's start-up knock on other sessions' sockets: still refused, no card.
+		assert.ok(isNoiseDenial({ kind: 'network', target: '/private/tmp/cc-socks/68979.sock', source: 'os' }));
+		assert.ok(!isNoiseDenial({ kind: 'network', target: '/private/tmp/other/68979.sock', source: 'os' }));
+		assert.ok(!isNoiseDenial({ kind: 'write', target: '/private/tmp/cc-socks/68979.sock', source: 'os' }));
 		assert.strictEqual(describeDenial({ kind: 'write', target: '/Users/me/notes.txt', source: 'os' }, '/Users/me'), 'Sandbox blocked a write to ~/notes.txt');
 		assert.strictEqual(folderToAllow('/Users/me/out/a.txt', false), '/Users/me/out');
 		assert.strictEqual(folderToAllow('/Users/me/out/', true), '/Users/me/out');
+	});
+
+	test('HOUSEKEEPING-1: the agent CLI\'s own background state, the run\'s canary and the home listing are never offered; real edits still are', () => {
+		const home = '/Users/me';
+		const quiet = (kind: 'read' | 'write' | 'network' | 'launch', target: string, own: { sentinel?: string; realConfig?: string } = {}, providerId = 'claude-code') => isAgentHousekeepingDenial(providerId, home, { kind, target }, own);
+		// What Claude Code writes on its own at start (seen as "Blocked by the sandbox" cards in a fresh chat).
+		for (const target of ['/Users/me/.claude/skills/synced/0b1c/manifest.json', '/Users/me/.claude/skills/.trash', '/Users/me/.claude/plugins/store', '/Users/me/.claude/sessions/123.key.tmp', '/Users/me/.claude.json', '/Users/me/.local/state/claude/locks', '/Users/me/.cache/claude/staging/x']) {
+			assert.ok(quiet('write', target), target);
+		}
+		// Plugins synced from claude.ai and the marketplace list's lock (2026-11-12: four cards in every new sandboxed chat).
+		for (const target of ['/Users/me/.claude/plugins/known_marketplaces_claudeai.json.lock', '/Users/me/.claude/plugins/synced/bb14_5f1e/.last-complete-round', '/Users/me/.claude/plugins/synced/bb14_5f1e/.marketplaces.json.tmp.7bd7a611', '/Users/me/.claude/plugins/synced/bb14_5f1e/manifest.json']) {
+			assert.ok(quiet('write', target), target);
+		}
+		assert.ok(quiet('read', '/Users/me/.local/state/claude/locks'));
+		assert.ok(quiet('read', '/Users/me'), 'a look at the home folder itself');
+		assert.ok(quiet('read', '/Users'), 'and at its parent');
+		assert.ok(quiet('read', '/Users/me/.claude'), 'its real config folder as a folder');
+		assert.ok(quiet('read', '/Users/me/.volt/sandbox/runs/volt-sbx-x/canary', { sentinel: '/Users/me/.volt/sandbox/runs/volt-sbx-x/canary' }), 'the attestation canary');
+		// A moved config folder (CLAUDE_CONFIG_DIR): its housekeeping there too.
+		assert.ok(quiet('write', '/opt/claude-cfg/skills/synced/a/manifest.json', { realConfig: '/opt/claude-cfg' }));
+		// Still shown: edits to settings, instructions and skills, anything else in the home folder, other agents, network.
+		for (const target of ['/Users/me/.claude/settings.json', '/Users/me/.claude/CLAUDE.md', '/Users/me/.claude/skills/my-skill/SKILL.md', '/Users/me/.claude/hooks/x.sh', '/Users/me/.zshrc', '/Users/me/notes/a.txt', '/Users/me/.claude.json.evil', '/Users/me/.claude-other/x', '/Users/me/.claude/plugins/known_marketplaces_claudeai.json.evil']) {
+			assert.ok(!quiet('write', target), target);
+		}
+		assert.ok(!quiet('read', '/Users/me/notes'), 'a folder below the home folder');
+		// What every Claude subagent's first turn logged in a sandboxed chat (2026-11-12): plugin sync,
+		// its state folder, XDG and temp path walks, and the Bash tool's zsh reading the user's rc files.
+		for (const target of ['/Users/me/.claude/plugins/synced/a_b/.last-complete-round', '/Users/me/.claude/plugins/known_marketplaces_claudeai.json.lock']) {
+			assert.ok(quiet('write', target), target);
+		}
+		for (const target of ['/Users/me/.claude/state', '/Users/me/.config', '/private/var', '/Users/me/.zshrc', '/Users/me/.zshenv']) {
+			assert.ok(quiet('read', target), target);
+		}
+		assert.ok(!quiet('read', '/Users/me/.config/gh/hosts.yml'), 'below ~/.config still shows');
+		assert.ok(!quiet('read', '/private/var/root'), 'below the path-walk folders still shows');
+		assert.ok(!quiet('read', '/Users/me/notes/.zshrc'), 'an rc file outside the home folder still shows');
+		assert.ok(!quiet('read', '/Users/me/.ssh/id_ed25519'));
+		assert.ok(!quiet('write', '/Users/me/.claude/skills/synced/x', {}, 'codex'), 'another CLI has its own footprint');
+		assert.ok(!quiet('network', 'api.anthropic.com') && !quiet('launch', '/Users/me/.claude/sessions'));
 	});
 
 	test('per-chat settings: folders and hosts are added once, and the launch key follows them', () => {
@@ -260,5 +330,52 @@ suite('Volt sandbox denials', () => {
 		assert.strictEqual(codexSandboxValue('model', 'gpt-5', 'wrap'), 'gpt-5');
 		assert.strictEqual(codexSandboxValue('sandbox', true, 'wrap'), true);
 		assert.strictEqual(codexSandboxValue('sandbox', 'read-only', 'none'), 'read-only');
+	});
+
+	test('instruction files and hooks other tools run later are never writable', () => {
+		const plan = resolveSandboxPlan(request(), MAC);
+		assert.ok(!planAllowsWrite(plan, '/Users/me/repo/.husky/pre-commit'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/repo/.envrc'));
+		assert.ok(!planAllowsWrite(plan, '/Users/me/.claude/CLAUDE.md'), 'read into every later Claude Code session');
+		assert.ok(!planAllowsWrite(resolveSandboxPlan(request({ providerId: 'codex' }), MAC), '/Users/me/.codex/AGENTS.md'));
+	});
+});
+
+suite('Volt sandbox: edits through the window and host warnings (e2e review)', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('EDIT-GUARD-1: an edit to what the sandbox keeps read-only is named; ordinary project files are not', () => {
+		assert.strictEqual(protectedEditTarget('/repo/.git/hooks/post-merge'), '.git/hooks');
+		assert.strictEqual(protectedEditTarget('/repo/.git/config'), '.git/config');
+		assert.strictEqual(protectedEditTarget('/repo/sub/.git/info/attributes'), '.git/info');
+		assert.strictEqual(protectedEditTarget('/repo/.vscode/tasks.json'), '.vscode');
+		assert.strictEqual(protectedEditTarget('/repo/packages/a/.vscode/settings.json'), '.vscode');
+		assert.strictEqual(protectedEditTarget('/repo/.husky/pre-commit'), '.husky');
+		assert.strictEqual(protectedEditTarget('/repo/.claude/settings.json'), '.claude/settings.json');
+		assert.strictEqual(protectedEditTarget('/repo/.mcp.json'), '.mcp.json');
+		for (const path of ['/repo/src/a.ts', '/repo/lab-notes.md', '/repo/.git/COMMIT_EDITMSG', '/repo/refs/notes.md', '/repo/objects/model.ts', '/repo/HEAD.md', '/repo/.claude/notes.md', '/repo/.vscodeignore', '/repo/docs/.github/x.md']) {
+			assert.strictEqual(protectedEditTarget(path), undefined, path);
+		}
+	});
+
+	test('HOST-WARN-1: a host is warned about what it tried, not the runtime\'s own denials', () => {
+		assert.ok(isUserFacingDenial({ kind: 'read', target: '/Users/me/.ssh/id_ed25519' }));
+		assert.ok(isUserFacingDenial({ kind: 'write', target: '/private/var/folders/x/T/volt-sbx-other/tmp/f' }), 'another run\'s temp');
+		assert.ok(isUserFacingDenial({ kind: 'network', target: 'example.com:443' }));
+		assert.ok(!isUserFacingDenial({ kind: 'launch', target: 'com.apple.logd' }));
+		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/private/var/folders/x/T/runs/volt-sbx-abc/canary' }), 'the run\'s own canary');
+		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/Library/Preferences/Logging/com.apple.diagnosticd.filter.plist' }));
+		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/Users/me/.CFUserTextEncoding' }));
+		assert.ok(!isUserFacingDenial({ kind: 'read', target: '/dev/dtracehelper' }));
+	});
+
+	test('a local model endpoint in the CLI\'s own base URL key is a loopback grant', () => {
+		assert.deepStrictEqual(agentEndpointLoopbackPorts('claude-code', { ANTHROPIC_BASE_URL: 'http://127.0.0.1:18952' }), [18952]);
+		assert.deepStrictEqual(agentEndpointLoopbackPorts('codex', { OPENAI_BASE_URL: 'http://localhost:4000/v1' }), [4000]);
+		// Remote endpoints, other CLIs' keys and unrelated variables grant nothing.
+		assert.deepStrictEqual(agentEndpointLoopbackPorts('claude-code', { ANTHROPIC_BASE_URL: 'https://gateway.example.com' }), []);
+		assert.deepStrictEqual(agentEndpointLoopbackPorts('claude-code', { OPENAI_BASE_URL: 'http://127.0.0.1:4000' }), []);
+		assert.deepStrictEqual(agentEndpointLoopbackPorts('claude-code', { HTTP_PROXY: 'http://127.0.0.1:8080' }), []);
 	});
 });

@@ -324,6 +324,8 @@ export interface IAgentHistoryService {
 	pinSessionParent(id: string, parentId: string, options?: { readonly subagent?: boolean }): void;
 	/** The parent {@link pinSessionParent} or the stored log gives a side chat. */
 	sessionParent(id: string): string | undefined;
+	/** The chat runs a delegated task ({@link pinSessionParent} with `subagent`), also before its log is written. */
+	isSubagentSession?(id: string): boolean;
 
 	setPinned(id: string, pinned: boolean): Promise<void>;
 	setArchived(id: string, archived: boolean): Promise<void>;

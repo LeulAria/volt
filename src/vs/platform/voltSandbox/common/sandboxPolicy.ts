@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { AGENT_OVERLAYS, IAgentStatePlan } from './agentState.js';
-import { AGENT_CONFIG_NAMES, AGENT_ENV_INHERIT, agentSystemReadPaths, CREDENTIAL_HOME_PATHS, credentialDenyEntries, HOME_TOOLCHAIN_PATHS, isSecretEnvName, PROTECTED_GIT_PATTERNS, PROTECTED_ROOT_NAMES } from './sandboxProfiles.js';
+import { AGENT_CONFIG_NAMES, AGENT_ENV_INHERIT, agentSystemReadPaths, CREDENTIAL_HOME_PATHS, credentialDenyEntries, HOME_TOOLCHAIN_PATHS, isSecretEnvName, PROTECTED_GIT_PATTERNS, PROTECTED_ROOT_NAMES, XCRUN_CACHE } from './sandboxProfiles.js';
 import { IVoltSandboxPolicy, SandboxDimension } from './sandboxSchema.js';
 
 /**
@@ -141,9 +141,92 @@ export interface IAgentFootprint {
 	readonly envKeys?: readonly string[];
 	/** Fixed environment for a sandboxed run (turn off self-updates that would write executables). */
 	readonly env?: Readonly<Record<string, string>>;
+	/**
+	 * The CLI lists the home folder's entries at start and stops without them (fx: "Failed to load
+	 * startup state"). Names only: nothing below the home folder becomes readable by it.
+	 */
+	readonly listHome?: boolean;
+	/**
+	 * State folders (relative to home) the CLI sets the permission bits of at start (fx: `chmod 700
+	 * ~/.fx`, and "Saved credential storage is unavailable" when refused). Only the mode: the folder
+	 * itself stays unwritable (moving it would carry its credentials out of their deny).
+	 */
+	readonly chmodFolders?: readonly string[];
+	/**
+	 * Why the CLI needs to listen on a port it picks at random (Antigravity's language server). A
+	 * sandbox may grant that only where a listener can be kept to the sandbox itself (its own network
+	 * namespace on Linux); elsewhere the CLI runs only with the sandbox off (see `agentSandboxRefusal`).
+	 */
+	readonly ephemeralListen?: string;
 }
 
+/**
+ * Each CLI's own background state that stays out of reach on purpose (synced skills, plugin
+ * stores, session files and caches of its real config folder, its version locks), below the home
+ * folder: a denial there is housekeeping, logged and never shown as a "Blocked by the sandbox"
+ * card, whose "Allow Folder" would open a folder the user's own CLI later runs code from. Writes to
+ * its settings, instructions, hooks or a skill the agent edits on purpose are not listed and still
+ * show. Only the denial's presentation: no path here is made readable or writable.
+ */
+export const AGENT_HOUSEKEEPING: Readonly<Record<string, readonly string[]>> = {
+	'claude-code': [
+		'.claude.json', '.claude/skills/synced', '.claude/skills/.trash', '.claude/plugins/store', '.claude/plugins/cache', '.claude/plugins/repos',
+		'.claude/plugins/marketplaces', '.claude/plugins/known_marketplaces.json', '.claude/plugins/installed_plugins.json', '.claude/plugins/install-counts-cache.json',
+		// claude.ai plugin sync at every start of a chat that has it on (2.1.280).
+		'.claude/plugins/synced', '.claude/plugins/known_marketplaces_claudeai.json', '.claude/plugins/known_marketplaces_claudeai.json.lock', '.claude/state',
+		'.claude/statsig', '.claude/todos', '.claude/shell-snapshots', '.claude/sessions', '.claude/session-env', '.claude/projects', '.claude/debug',
+		'.claude/telemetry', '.claude/stats-cache.json', '.claude/history.jsonl', '.claude/ide', '.claude/paste-cache', '.claude/backups', '.claude/cache',
+		'.claude/plans', '.claude/tasks', '.claude/transcripts', '.claude/file-history', '.claude/mcp-needs-auth-cache.json', '.claude/.last-cleanup',
+		// Plugins synced from claude.ai and the marketplace list's lock and temp files (four cards at the start of every chat).
+		'.claude/plugins/synced', '.claude/plugins/known_marketplaces.json.lock', '.claude/plugins/known_marketplaces_claudeai.json', '.claude/plugins/known_marketplaces_claudeai.json.lock',
+		// Its version locks (`<version>#<pid>.lock`) and updater staging: never opened (a planted or removed lock steers the user's own updater).
+		'.local/state/claude', '.cache/claude',
+	],
+};
+
 const NPM_DOMAINS = ['registry.npmjs.org'];
+
+/**
+ * Package registries an agent with its network on reaches without asking, by exact name: what
+ * `npm/pnpm/yarn/bun install`, `pip`/`uv`, `cargo`, `go`, `gem`/`bundle`, Maven/Gradle, NuGet,
+ * Composer, CocoaPods, pub, Hex, Deno and rustup fetch packages from. With the network on, an
+ * agent's traffic goes through its network broker route like a network-off chat's (spec I.4); these,
+ * the agent's own API hosts and the hosts the user allowed for the chat pass, anything else is
+ * refused with an "Allow" offer. No paste, upload, object-store or git host is in it (a package's
+ * `git+https` source, `git push` and `gh` need the user's "Allow" for that host).
+ */
+export const AGENT_PACKAGE_REGISTRIES: readonly string[] = [
+	// JavaScript.
+	'registry.npmjs.org', 'registry.yarnpkg.com', 'repo.yarnpkg.com', 'jsr.io', 'npm.jsr.io', 'deno.land', 'dl.deno.land',
+	// Python.
+	'pypi.org', 'files.pythonhosted.org',
+	// Rust.
+	'crates.io', 'index.crates.io', 'static.crates.io', 'static.rust-lang.org',
+	// Go.
+	'proxy.golang.org', 'sum.golang.org', 'index.golang.org',
+	// Ruby.
+	'rubygems.org', 'index.rubygems.org',
+	// JVM.
+	'repo.maven.apache.org', 'repo1.maven.org', 'plugins.gradle.org', 'services.gradle.org', 'downloads.gradle.org',
+	// .NET, PHP, Swift/Objective-C, Dart, Elixir.
+	'api.nuget.org', 'repo.packagist.org', 'packagist.org', 'cdn.cocoapods.org', 'pub.dev', 'repo.hex.pm', 'builds.hex.pm',
+];
+
+/**
+ * The hosts an agent's traffic may reach (its network broker route's rules): its own API hosts,
+ * the hosts the user allowed for the chat, and, with the chat's network on, the package registries.
+ * Never `localhost`: loopback is a port grant, not a host rule.
+ */
+export function agentNetworkHosts(providerId: string, network: boolean, allowedDomains: readonly string[] | undefined): string[] {
+	return unique([...agentApiDomains(providerId), ...(network ? AGENT_PACKAGE_REGISTRIES : []), ...(allowedDomains ?? [])]
+		.map(domain => domain.trim().toLowerCase()).filter(domain => domain && domain !== 'localhost'));
+}
+
+/** Folders above the system temp root, looked at as folders on the way to it. */
+const PATH_WALK_FOLDERS: readonly string[] = ['/private', '/private/var', '/var'];
+
+/** The shell startup files a login or interactive shell reads from the home folder. */
+const SHELL_STARTUP_FILES: readonly string[] = ['.zshenv', '.zprofile', '.zshrc', '.zlogin', '.bashrc', '.bash_profile', '.bash_login', '.profile'];
 
 /** Volt's own per-chat agent state (config overlays, see agentState.ts), below the home folder. */
 export const AGENT_STATE_ROOT = '.volt/sandbox/agent-state';
@@ -177,7 +260,8 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	'claude-code': {
 		writable: ['Library/Caches/claude-cli-nodejs', '.cache/claude-cli-nodejs'],
 		// The install (`.local/share/claude`, `.claude/local`). Its config folder comes in through the overlay.
-		readable: ['.local/share/claude'],
+		// `.volt/claude-plugins`: the plugins Volt passes to its sessions (claudeLazyToolsPlugin), read-only so no chat can change another's.
+		readable: ['.local/share/claude', '.volt/claude-plugins'],
 		credentials: ['.claude/.credentials.json'],
 		tmpDirs: uid => [`/private/tmp/claude-${uid ?? 0}`, `/tmp/claude-${uid ?? 0}`, '/private/tmp/cc-socks', '/tmp/cc-socks'],
 		domains: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
@@ -185,7 +269,10 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		// claude.ai's synced skills and plugins go to the real `~/.claude` whatever CLAUDE_CONFIG_DIR says.
 		quietPaths: { processes: ['claude'], paths: ['.claude/skills/synced', '.claude/plugins', '.local/state/claude'] },
 		envKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'],
-		env: { DISABLE_AUTOUPDATER: '1' },
+		// DISABLE_TELEMETRY: its usage logs go to a Datadog intake (http-intake.logs.us5.datadoghq.com),
+		// which takes logs for any account's key, so it stays unlisted; told not to send, it does not try
+		// (measured: CLI 2.1.322 opens no connection to it), and no chat shows a refusal for it.
+		env: { DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1' },
 	},
 	codex: {
 		writable: [],
@@ -195,7 +282,9 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		envKeys: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_HOME'],
 	},
 	'cursor-acp': {
-		writable: ['Library/Application Support/Cursor/User/globalStorage'],
+		// `.cursor/ai-tracking` (2026.11.11): every file edit records itself in ai-code-tracking.db (SQLite,
+		// outside CURSOR_CONFIG_DIR); denied, the Edit tool never returned and subagents hung for 10 min.
+		writable: ['Library/Application Support/Cursor/User/globalStorage', '.cursor/ai-tracking'],
 		// It refreshes its login in place (`auth.json`, or the keychain).
 		writableFiles: ['.cursor/auth.json', '.config/cursor/auth.json'],
 		readable: ['.local/share/cursor-agent'],
@@ -205,8 +294,11 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	},
 	grok: {
 		writable: ['.grok/sessions', '.grok/logs', '.grok/memory-v2', '.grok/memtrace', '.grok/grove', '.grok/downloads', '.local/state/grok'],
+		// worktrees.db is SQLite: without its -wal/-shm sidecars and the two lock files Grok waits on
+		// them, and a sandboxed turn ended minutes after its answer (measured 2026-11-12: 130-400 s).
 		writableFiles: [
-			'.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db', '.grok/worktrees.db-wal', '.grok/worktrees.db-shm', '.grok/models_cache.json',
+			'.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db',
+			'.grok/worktrees.db-wal', '.grok/worktrees.db-shm', '.grok/worktrees.db-journal', '.grok/bundled/.lock', '.grok/installed-plugins/registry.lock', '.grok/models_cache.json',
 			'.grok/settings_cache.json', '.grok/tip_cursor.json', '.grok/agent_id', '.grok/.config-init.lock', '.grok/managed_config.lock', '.grok/.metadata_version',
 		],
 		readable: ['.grok'],
@@ -238,6 +330,7 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		credentials: ['.gemini/oauth_creds.json', '.gemini/antigravity-cli/antigravity-oauth-token', '.gemini/jetski-standalone-oauth-token'],
 		domains: ['*.googleapis.com', 'accounts.google.com', 'oauth2.googleapis.com'],
 		envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT'],
+		ephemeralListen: 'its language server listens on a random port',
 	},
 	pi: {
 		// Pi refreshes its OAuth tokens in `.pi/agent/auth.json`.
@@ -267,6 +360,11 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 		credentials: ['.fx/auth.json', '.fx/mcp-credentials'],
 		domains: ['fx.sh', '*.fx.sh', 'ai-gateway.vercel.sh', 'vercel.com', '*.vercel.com', 'chatgpt.com', '*.chatgpt.com', 'api.openai.com', 'auth.openai.com', 'x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
 		envKeys: ['AI_GATEWAY_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY'],
+		// At start it lists the home folder and sets `~/.fx` to 0700 (measured 2026-11-12, fx 0.0.15 on
+		// macOS 26.6: with the listing denied `initialize` fails "Failed to load startup state", with the
+		// chmod denied "Saved credential storage is unavailable"; its keychain login itself reads fine).
+		listHome: true,
+		chmodFolders: ['.fx'],
 	},
 };
 
@@ -285,6 +383,48 @@ function genericFootprint(providerId: string): IAgentFootprint {
 
 function footprintOf(providerId: string): IAgentFootprint {
 	return Object.prototype.hasOwnProperty.call(AGENT_FOOTPRINTS, providerId) ? AGENT_FOOTPRINTS[providerId] : genericFootprint(providerId);
+}
+
+/**
+ * Whether a file denial of an agent's run is not the agent's doing: the CLI's own background state
+ * ({@link AGENT_HOUSEKEEPING}), the run's own canary (the attestation's sentinel), or a look at
+ * the home folder itself (path walks pass through it). The launcher logs these and never offers
+ * them to the user: each "Allow" there would widen the sandbox to something the user's own CLI or
+ * the whole home folder depends on. `realConfig` is the CLI's config folder when the user moved it
+ * (`CLAUDE_CONFIG_DIR`): the footprint's entries below its default folder are read there too.
+ */
+export function isAgentHousekeepingDenial(providerId: string, home: string, denial: { readonly kind: string; readonly target: string }, own: { readonly sentinel?: string; readonly realConfig?: string } = {}): boolean {
+	if (denial.kind !== 'read' && denial.kind !== 'write') {
+		return false;
+	}
+	const target = normalizeSandboxPath(denial.target);
+	const root = normalizeSandboxPath(home);
+	// The home folder and its parent as folders (a listing), never anything below them.
+	const parent = root.slice(0, root.lastIndexOf('/')) || '/';
+	if ((own.sentinel && target === normalizeSandboxPath(own.sentinel)) || (denial.kind === 'read' && (target === root || target === parent))) {
+		return true;
+	}
+	// Looks every sandboxed CLI and shell makes at start, kept out on purpose: `~/.config` and the
+	// folders above the temp root as folders (XDG lookups, path walks), and the user's shell startup
+	// files, which the agent's Bash runs without (they may export tokens). Reads only: a write to an
+	// rc file still shows. Measured 2026-11-12: 3 such rows in every Claude subagent's first turn.
+	if (denial.kind === 'read' && (target === `${root}/.config` || PATH_WALK_FOLDERS.includes(target) || SHELL_STARTUP_FILES.some(name => target === `${root}/${name}`))) {
+		return true;
+	}
+	const overlay = Object.prototype.hasOwnProperty.call(AGENT_OVERLAYS, providerId) ? AGENT_OVERLAYS[providerId] : undefined;
+	const configHome = overlay ? `${overlay.home}/` : undefined;
+	// Its real config folder as a folder: the overlay serves its contents, the CLI still looks at it.
+	if (denial.kind === 'read' && overlay && (target === `${root}/${overlay.home}` || (own.realConfig && target === normalizeSandboxPath(own.realConfig)))) {
+		return true;
+	}
+	const housekeeping = Object.prototype.hasOwnProperty.call(AGENT_HOUSEKEEPING, providerId) ? AGENT_HOUSEKEEPING[providerId] : [];
+	return housekeeping.some(entry => {
+		const paths = [`${root}/${entry}`];
+		if (own.realConfig && configHome && entry.startsWith(configHome)) {
+			paths.push(`${normalizeSandboxPath(own.realConfig)}/${entry.slice(configHome.length)}`);
+		}
+		return paths.some(path => isPathInside(target, path));
+	});
 }
 
 /**
@@ -451,7 +591,6 @@ export function resolveSandboxPlan(request: IVoltSandboxRequest, host: ISandboxH
 	// Config, hooks and instructions inside the CLI's writable state folders (B-05).
 	denySubpaths.push(...agentStateProtections(home, footprintOf(request.providerId)));
 
-	const network = request.network ? 'all' : 'proxy';
 	return {
 		level: request.level,
 		writableSubpaths: unique(writable.flatMap(path => withPrivateAliases(normalizeSandboxPath(path), host.platform))),
@@ -459,10 +598,18 @@ export function resolveSandboxPlan(request: IVoltSandboxRequest, host: ISandboxH
 		denyWriteSubpaths: unique(denySubpaths.flatMap(path => withPrivateAliases(path, host.platform))),
 		denyWriteFiles: unique(denyFiles.flatMap(path => withPrivateAliases(path, host.platform))),
 		denyReadSubpaths: SECRET_HOME_DIRS.map(dir => `${home}/${dir}`),
-		network,
-		allowedDomains: network === 'proxy' ? unique([...agentApiDomains(request.providerId), ...(request.allowedDomains ?? [])].map(domain => domain.trim().toLowerCase()).filter(Boolean)) : [],
+		// Network on or off, an agent's traffic goes through Volt's broker and its hostname rules.
+		network: 'proxy',
+		allowedDomains: agentNetworkHosts(request.providerId, request.network, request.allowedDomains),
 		loopbackPorts: unique((request.loopbackPorts ?? []).filter(port => Number.isInteger(port) && port > 0 && port < 65536).map(String)).map(Number),
 	};
+}
+
+const LEVEL_STRENGTH: Readonly<Record<VoltSandboxLevel, number>> = { 'off': 0, 'workspace-write': 1, 'read-only': 2 };
+
+/** The level that confines more (read-only over workspace-write over off). */
+export function strongerSandboxLevel(a: VoltSandboxLevel, b: VoltSandboxLevel): VoltSandboxLevel {
+	return LEVEL_STRENGTH[a] >= LEVEL_STRENGTH[b] ? a : b;
 }
 
 /** Config names directly inside each writable state folder, never writable (a CLI that keeps `bin` or `settings.json` there). */
@@ -580,6 +727,10 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 	}
 	// The user's own sandbox policy, which may widen: read-only even when the user lets the agent write `~/.volt`.
 	protect.push(at('.volt/sandbox.json'), ...agentStateProtections(home, footprint), ...(plan?.protect ?? []), ...PROTECTED_GIT_PATTERNS);
+	if (host.platform === 'darwin') {
+		// The temp folders are writable, but not xcrun's cache of which binary `/usr/bin/git` runs.
+		protect.push(...host.tempDirs.map(dir => `${normalizeSandboxPath(dir)}/${XCRUN_CACHE}`));
+	}
 
 	const ownCredentials = new Set(footprint.credentials ?? []);
 	const deny = [
@@ -598,18 +749,20 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 	];
 
 	const listenPorts = ports(request.listenPorts);
-	// Linux with an open network shares the host's network namespace, where seccomp can refuse
-	// listening but cannot tell ports apart: a granted port there opens them all, and says so.
-	const listenAnywhere = request.network && host.platform === 'linux' && listenPorts.length > 0;
-	const network = request.network
-		? { mode: 'host' as const, allow: [], loopbackPorts: [], listen: listenAnywhere, ...(listenPorts.length && !listenAnywhere ? { listenPorts } : {}) }
-		: {
-			mode: 'proxy' as const,
-			allow: unique([...agentApiDomains(request.providerId), ...(request.allowedDomains ?? [])].map(domain => domain.trim().toLowerCase()).filter(domain => domain && domain !== 'localhost')),
-			loopbackPorts: ports(request.loopbackPorts),
-			listen: false,
-			...(listenPorts.length ? { listenPorts } : {}),
-		};
+	// Network on or off, the agent's traffic goes through its network broker route (spec I.4): the
+	// hostname rules of `agentNetworkHosts`, every DNS answer checked, loopback, private and metadata
+	// addresses refused. The OS lets it reach only the route and the loopback ports below, so
+	// clearing the proxy variables gets it nowhere. On macOS it shares the host's loopback, so its
+	// granted listen ports are also ports it may connect to (a dev server it started). On Linux it
+	// runs in its own network namespace either way, where its listeners are its own (a bridged
+	// loopback port would take the port its server binds).
+	const network = {
+		mode: 'proxy' as const,
+		allow: agentNetworkHosts(request.providerId, request.network, request.allowedDomains),
+		loopbackPorts: ports([...(request.loopbackPorts ?? []), ...(host.platform === 'darwin' ? listenPorts : [])]),
+		listen: false,
+		...(listenPorts.length ? { listenPorts } : {}),
+	};
 
 	const cacheEnv = Object.fromEntries(Object.entries(SANDBOX_CACHE_ENV).map(([name, sub]) => [name, `${host.cacheDir}/${sub}`]));
 	// bubblewrap cannot guard paths that do not exist yet; macOS cannot contain a setsid daemon.
@@ -617,7 +770,7 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 	return {
 		schemaVersion: 1,
 		name: `agent ${request.providerId} ${request.level}`,
-		filesystem: { read, write, deny: unique(deny), protect: unique(protect), unmask: [] },
+		filesystem: { read, write, deny: unique(deny), protect: unique(protect), unmask: [], ...(footprint.listHome ? { list: [home] } : {}), ...(footprint.chmodFolders?.length ? { chmod: footprint.chmodFolders.map(at) } : {}) },
 		network,
 		process: { limits: {} },
 		env: {
@@ -629,6 +782,24 @@ export function agentSandboxPolicy(request: IVoltSandboxRequest, host: IAgentSan
 		host: { unixSockets: request.network && host.sshAuthSock && host.platform === 'darwin' ? [host.sshAuthSock] : [], systemServices: true },
 		bestEffort,
 	};
+}
+
+/**
+ * Why `providerId`'s CLI cannot run in the OS sandbox on `platform`, or undefined when it can. An
+ * agent that must listen on a port it picks at random (`ephemeralListen`) runs sandboxed only where
+ * a listener stays inside the sandbox: bubblewrap's own network namespace (every agent launch is
+ * `proxy`, so it has one). Seatbelt cannot keep a listener to this machine: its `localhost` filter
+ * also matches `0.0.0.0` and the machine's LAN address (measured on macOS 26.6, binding `0.0.0.0` or
+ * the LAN address under `(local ip "localhost:*")` was reachable from the LAN address), so a granted
+ * random port would be one any device on the network could connect to. There it runs only with the
+ * sandbox off, said before the launch rather than after the CLI fails.
+ */
+export function agentSandboxRefusal(providerId: string, platform: string, label = providerId): string | undefined {
+	const reason = footprintOf(providerId).ephemeralListen;
+	if (reason && platform === 'darwin') {
+		return `${label} runs only with the sandbox off on macOS: ${reason}, and macOS's sandbox cannot keep a port like that to this machine (other devices on your network could connect to it)`;
+	}
+	return undefined;
 }
 
 /** The writes a sandboxed agent of `providerId` may make in the home folder, relative to it: for tests and the Security page. */
@@ -722,7 +893,7 @@ export function describeSandbox(settings: IVoltSandboxSettings): string {
 		return 'No sandbox: the agent can write anywhere your user can.';
 	}
 	const where = settings.level === 'read-only' ? 'Read-only: the agent cannot change your files' : 'Writes stay inside the workspace';
-	return `${where}; network ${settings.network ? 'on' : 'off (only the agent\'s own API)'}.`;
+	return `${where}; network ${settings.network ? 'on (package registries, the agent\'s API and allowed hosts)' : 'off (only the agent\'s own API and allowed hosts)'}.`;
 }
 
 // --- Per chat settings ------------------------------------------------------------------------
@@ -814,6 +985,17 @@ export function loopbackPort(url: string | undefined): number | undefined {
 	const match = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):(\d+)/i.exec(url ?? '');
 	const port = match ? Number(match[1]) : NaN;
 	return Number.isInteger(port) && port > 0 && port < 65536 ? port : undefined;
+}
+
+/**
+ * Loopback ports of the model endpoint the user pointed the CLI at in their own environment
+ * (`ANTHROPIC_BASE_URL=http://127.0.0.1:4000` for a local gateway or proxy). Only the CLI's own
+ * `*_BASE_URL` keys count. Without the grant the sandboxed CLI cannot reach its model at all and
+ * retries in silence ("Thinking" forever).
+ */
+export function agentEndpointLoopbackPorts(providerId: string, hostEnv: Readonly<Record<string, string | undefined>>): number[] {
+	const keys = (footprintOf(providerId).envKeys ?? []).filter(key => key.endsWith('_BASE_URL'));
+	return ports(keys.map(key => loopbackPort(hostEnv[key])).filter((port): port is number => port !== undefined));
 }
 
 // --- Codex's own sandbox --------------------------------------------------------------------

@@ -2770,7 +2770,7 @@ export interface ExtHostDataChannelsShape {
 
 /** A `vscode.volt` method the main thread serves through `$call` (one per facade method). */
 export type VoltApiMethod =
-	| 'chats.list' | 'chats.current' | 'chats.read' | 'chats.send' | 'chats.start'
+	| 'chats.list' | 'chats.current' | 'chats.read' | 'chats.send' | 'chats.start' | 'chats.pickModel'
 	| 'tools.invoke'
 	| 'storage.get' | 'storage.set' | 'storage.delete' | 'storage.keys'
 	| 'settings.get' | 'settings.update'

@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
+import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, CODE_QUESTIONS, IDE_TOOLS_GUIDE, IDE_TOOLS_GUIDE_SANDBOXED, IDE_WORK_HINTS, LOAD_DEFERRED, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, STANDING_NOTES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 
 suite('Volt context pack', () => {
@@ -90,6 +90,23 @@ suite('Volt context pack', () => {
 			runPlan: { kind: 'static', start: 'python3 -m http.server 8080' },
 		});
 		assert.ok(!/http\.server/.test(prompt));
+	});
+
+	test('small talk gets no lead: nothing to frame, chart or keep in the workspace; the mode contract stays', () => {
+		for (const text of ['hi', 'thanks!', 'ok']) {
+			const intent = classifyIntent(text, 'agent', { hasWorkspace: true });
+			assert.strictEqual(intent.smallTalk, true, text);
+			assert.strictEqual(buildAcpLead({ mode: 'agent', intent, visuals: true }), undefined, text);
+		}
+		const plan = buildAcpLead({ mode: 'plan', intent: classifyIntent('ok', 'plan', { hasWorkspace: true }), visuals: true });
+		assert.ok(plan?.startsWith('[Volt mode: plan]'), plan);
+		for (const text of ['what is 2+2', 'nissan kicks 2026 price dubai', 'explain the auth flow']) {
+			const intent = classifyIntent(text, 'agent', { hasWorkspace: true });
+			assert.ok(!intent.smallTalk, text);
+			const lead = buildAcpLead({ mode: 'agent', intent, visuals: true });
+			assert.ok(lead?.includes(WORKSPACE_SCOPE) && lead.includes(VISUAL_REPLIES), text);
+		}
+		assert.ok(!classifyIntent('thanks', 'agent', { hasWorkspace: true, priorLane: 'agent' }).smallTalk, 'a follow-up in coding work keeps its lane and lead');
 	});
 
 	test('building from a design image adds the render-and-compare loop, except in read-only modes', () => {
@@ -217,5 +234,74 @@ suite('Volt context pack', () => {
 		assert.ok(buildSystemPrompt({ mode: 'agent', intent: classifyIntent('[/scratch skill] the release plan', 'agent'), visuals: true }).includes(SCRATCH_REPLIES), 'native prompts receive the same guidance');
 		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('sketch out the auth architecture', 'agent') })?.includes(SURFACES), 'not without the volt MCP server');
 		assert.ok(!buildAcpLead({ mode: 'agent', intent: classifyIntent('add pagination to the users table', 'agent'), visuals: true })?.includes(SURFACES));
+	});
+	test('a question about the code gets the code-intelligence hint, a plain question does not', () => {
+		const code = classifyIntent('Which classes inject FolioService through their constructor?', 'agent');
+		assert.strictEqual(code.lane, 'chat');
+		const lead = buildAcpLead({ mode: 'agent', intent: code, codeIndexed: true, ideTools: true }) ?? '';
+		assert.ok(lead.includes(CODE_QUESTIONS));
+		assert.ok(lead.includes(LOAD_DEFERRED), 'the volt tools are deferred: the hint says how to load them');
+		assert.ok(!buildAcpLead({ mode: 'agent', intent: code })?.includes(CODE_QUESTIONS));
+		const plain = classifyIntent('how much is nissan kicks in UAE', 'agent');
+		const plainLead = buildAcpLead({ mode: 'agent', intent: plain, codeIndexed: true, ideTools: true }) ?? '';
+		assert.ok(!plainLead.includes(CODE_QUESTIONS) && !plainLead.includes(LOAD_DEFERRED));
+	});
+	test('an agent session hears each standing note once; request-specific notes go with every request that calls for them', () => {
+		const heard = new Set<string>();
+		const code = classifyIntent('Read src/paginate.ts and src/dates.ts. Explain what each function does and list every bug you find with the line number.', 'agent');
+		const first = buildAcpLead({ mode: 'agent', intent: code, visuals: true, ideTools: true }, heard) ?? '';
+		assert.ok(first.includes(VISUAL_REPLIES) && first.includes(IDE_TOOLS_GUIDE) && first.includes(WORKSPACE_SCOPE), first);
+		assert.deepStrictEqual([...heard].sort(), ['ide', 'scope', 'visuals']);
+		assert.ok([...heard].every(id => STANDING_NOTES.includes(id)));
+		// The next turn of the same agent session: none of them again.
+		const second = buildAcpLead({ mode: 'agent', intent: code, visuals: true, ideTools: true }, heard) ?? '';
+		assert.ok(!second.includes(VISUAL_REPLIES) && !second.includes(IDE_TOOLS_GUIDE) && !second.includes(WORKSPACE_SCOPE), second);
+		// Switching to a sandboxed chat is news; a test request still gets its own note every time.
+		const tests = classifyIntent("npm test is failing. Make every test pass. Don't edit anything under test/.", 'agent');
+		const third = buildAcpLead({ mode: 'agent', intent: tests, visuals: true, ideTools: true, sandboxed: true }, heard) ?? '';
+		assert.ok(third.includes(IDE_TOOLS_GUIDE_SANDBOXED) && third.includes(TEST_INTEGRITY), third);
+		assert.ok((buildAcpLead({ mode: 'agent', intent: tests, ideTools: true, sandboxed: true }, heard) ?? '').includes(TEST_INTEGRITY));
+		// "hi" first marks nothing heard, so the first real request still carries them.
+		const fresh = new Set<string>();
+		assert.strictEqual(buildAcpLead({ mode: 'agent', intent: classifyIntent('hi', 'agent'), visuals: true, ideTools: true }, fresh), undefined);
+		assert.strictEqual(fresh.size, 0);
+		// Without a set (other callers) every note goes out each time, as before.
+		assert.strictEqual(buildAcpLead({ mode: 'agent', intent: code, visuals: true, ideTools: true }), first);
+	});
+	test('a sandboxed chat is told what of the IDE runs inside its sandbox and what asks first', () => {
+		const intent = classifyIntent('add a retry to the payment webhook handler and run its tests', 'agent');
+		const open = buildAcpLead({ mode: 'agent', intent, ideTools: true }) ?? '';
+		const sandboxed = buildAcpLead({ mode: 'agent', intent, ideTools: true, sandboxed: true }) ?? '';
+		assert.ok(open.includes(IDE_TOOLS_GUIDE) && !open.includes(IDE_TOOLS_GUIDE_SANDBOXED));
+		assert.ok(sandboxed.includes(IDE_TOOLS_GUIDE_SANDBOXED));
+		assert.ok(IDE_TOOLS_GUIDE_SANDBOXED.includes('asks the user') && IDE_TOOLS_GUIDE_SANDBOXED.includes('Full access'));
+	});
+	test('a request an IDE tool answers gets one line naming it, in any lane', () => {
+		const hints = (text: string, mode: 'agent' | 'ask' = 'agent') => {
+			const lead = buildAcpLead({ mode, intent: classifyIntent(text, mode), ideTools: true }) ?? '';
+			return (Object.keys(IDE_WORK_HINTS) as (keyof typeof IDE_WORK_HINTS)[]).filter(kind => lead.includes(IDE_WORK_HINTS[kind]));
+		};
+		assert.deepStrictEqual(hints('The flaky container from docker-compose.yml keeps restarting. Why?'), ['docker'], 'a chat-lane question');
+		assert.deepStrictEqual(hints('scripts/slow.mjs is slow. Find which function takes the time.'), ['profile']);
+		assert.deepStrictEqual(hints('The cart tests are failing. Find out which one and why.'), ['tests']);
+		assert.deepStrictEqual(hints('Log in to the local API with the requests in requests.http and show me the profile.'), ['http']);
+		assert.deepStrictEqual(hints('Which sku has the highest revenue in shop.db?'), ['db']);
+		assert.deepStrictEqual(hints('Rename applyDiscount to applyCoupon everywhere'), ['rename']);
+		assert.deepStrictEqual(hints('If the bookings column special_request_tags were renamed in the schema, which files change?'), [], 'a question renames nothing');
+		assert.deepStrictEqual(hints('Which oRPC procedures reach resolveBookingStayRent?'), []);
+		assert.deepStrictEqual(hints('why does the container keep restarting?', 'ask'), [], 'Ask mode runs nothing');
+		assert.ok(!(buildAcpLead({ mode: 'agent', intent: classifyIntent('scripts/slow.mjs is slow', 'agent') }) ?? '').includes(IDE_WORK_HINTS.profile), 'not without the volt MCP server');
+		// How to load a deferred volt tool: once, from the IDE guide in the code lanes, or from its own line.
+		const chatLead = buildAcpLead({ mode: 'agent', intent: classifyIntent('The flaky container from docker-compose.yml keeps restarting. Why?', 'agent'), ideTools: true }) ?? '';
+		assert.ok(chatLead.includes(LOAD_DEFERRED) && !chatLead.includes(IDE_TOOLS_GUIDE));
+		const codeLead = buildAcpLead({ mode: 'agent', intent: classifyIntent('add a retry to the payment webhook handler and run its tests', 'agent'), ideTools: true }) ?? '';
+		assert.ok(codeLead.includes(IDE_WORK_HINTS.tests) && codeLead.includes(IDE_TOOLS_GUIDE) && IDE_TOOLS_GUIDE.includes('ToolSearch'), codeLead);
+		assert.ok(!codeLead.includes(LOAD_DEFERRED), 'said once');
+	});
+
+	test('the code hints name code_nav\'s impact, body and structural ops, so agents check a change\'s reach, read one symbol and search by shape', () => {
+		for (const hint of [CODE_QUESTIONS, IDE_TOOLS_GUIDE]) {
+			assert.ok(hint.includes('(op impact)') && hint.includes('(op body)') && hint.includes('(op structural, e.g. setTimeout($F, $MS))'), hint);
+		}
 	});
 });

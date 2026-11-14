@@ -1,0 +1,15 @@
+{
+	"note": "Rows kept in runs.jsonl for the record but left out of every table: the user's Claude subscription refused sign-ins from 17:27Z to at least 17:47Z (\"Claude Code can't use your Claude subscription, usually because a payment is past due\", Hermes: \"OAuth authentication ... 403\"). Every Claude-backed arm failed in that window; Cursor's own models were unaffected. All nine were re-run after the subscription worked again (18:52Z).",
+	"rows": [
+		{ "id": "t3-t1-3", "at": "2026-11-12T17:27:44", "reason": "Claude subscription refused mid-run (final message is the sign-in error)" },
+		{ "id": "cc-t1-3", "at": "2026-11-12T17:33:24", "reason": "Claude subscription refused" },
+		{ "id": "hermes-t1-3", "at": "2026-11-12T17:33:26", "reason": "Claude subscription refused (403 OAuth)" },
+		{ "id": "volt-t2-3", "at": "2026-11-12T17:35:20", "reason": "Claude subscription refused (1 s, no tokens)" },
+		{ "id": "cc-t2-3", "at": "2026-11-12T17:35:28", "reason": "Claude subscription refused" },
+		{ "id": "hermes-t2-3", "at": "2026-11-12T17:35:30", "reason": "Claude subscription refused" },
+		{ "id": "volt-t3-3", "at": "2026-11-12T17:47:12", "reason": "Claude subscription refused (1 s, no tokens)" },
+		{ "id": "cc-t3-3", "at": "2026-11-12T17:47:20", "reason": "Claude subscription refused" },
+		{ "id": "hermes-t3-3", "at": "2026-11-12T17:47:22", "reason": "Claude subscription refused" },
+		{ "id": "t3-t2-2", "at": "2026-11-12T19:09:02", "reason": "Contaminated: Volt restarted the three hung Cursor subagents of volt-cursor-sonnet-t2-1 (after their processes were stopped) and they edited /tmp/vcmp/w/t2 at 19:09:07-12, inside this run. Re-run." }
+	]
+}

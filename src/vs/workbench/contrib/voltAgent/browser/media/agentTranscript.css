@@ -1233,7 +1233,10 @@ button.volt-tr-subagent-head:hover .volt-tr-chevron,
 	color: var(--volt-md-fg-quaternary);
 }
 
-.volt-tr-subagent.stopped .volt-tr-subagent-status {
+/* A finished agent's line is its outcome, what the row is read for: the tertiary tone, not the
+ * model's quaternary one (36% read 3.1:1 on the dark chat and 2.3:1 on the light one). */
+.volt-tr-subagent.stopped .volt-tr-subagent-status,
+.volt-tr-subagent.state-completed .volt-tr-subagent-status {
 	color: var(--volt-md-fg-tertiary);
 }
 

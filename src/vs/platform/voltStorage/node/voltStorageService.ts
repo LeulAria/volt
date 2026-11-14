@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { execFile } from 'child_process';
 import { createHash } from 'crypto';
 import { Dirent, promises as fs } from 'fs';
 import { basename, dirname, isAbsolute, join, normalize, resolve } from '../../../base/common/path.js';
@@ -96,6 +97,56 @@ export async function measurePath(path: string, seen = new Set<string>()): Promi
 	return { bytes, files };
 }
 
+/**
+ * Disk use of each path like {@link measurePath}, measured by one `du -sk` child process (hard links counted once across
+ * all of them): a walk of every checkout in this process ran an lstat callback per file on the main process's event
+ * loop, about 9 s of its JS in 30 s for 16 GB of checkouts (round 4). Undefined where `du` is not available (Windows)
+ * or failed; a path `du` could not read is left out.
+ */
+export function measurePathsWithDu(paths: readonly string[]): Promise<Map<string, number> | undefined> {
+	if (process.platform === 'win32' || !paths.length) {
+		return Promise.resolve(process.platform === 'win32' ? undefined : new Map());
+	}
+	return new Promise(resolve => {
+		execFile('/usr/bin/du', ['-sk', '--', ...paths], { maxBuffer: 16 * 1024 * 1024, env: { LC_ALL: 'C' } }, (err, stdout) => {
+			// `du` exits 1 when one entry is unreadable but still prints the others.
+			if (err && !stdout) {
+				resolve(undefined);
+				return;
+			}
+			resolve(parseDuOutput(stdout));
+		});
+	});
+}
+
+/** `du -sk` lines (`<KiB>\t<path>`) as bytes per path. */
+export function parseDuOutput(stdout: string): Map<string, number> {
+	const sizes = new Map<string, number>();
+	for (const line of stdout.split('\n')) {
+		const tab = line.indexOf('\t');
+		const kib = tab > 0 ? Number(line.slice(0, tab)) : NaN;
+		if (Number.isFinite(kib)) {
+			sizes.set(line.slice(tab + 1), kib * 1024);
+		}
+	}
+	return sizes;
+}
+
+/**
+ * Checkouts whose size must be measured again: never measured, or their chat ran since (its `updatedAt` is later
+ * than the measurement). A checkout no chat points at keeps its size until it is gone.
+ */
+export function checkoutsToMeasure(checkouts: readonly string[], cache: ReadonlyMap<string, { readonly bytes: number; readonly at: number }>, context: Pick<IVoltStorageContext, 'worktrees'>): string[] {
+	return checkouts.filter(path => {
+		const cached = cache.get(samePathKey(path));
+		if (!cached) {
+			return true;
+		}
+		const ref = context.worktrees.find(candidate => samePathKey(candidate.path) === samePathKey(path));
+		return !!ref && (ref.updatedAt ?? Number.POSITIVE_INFINITY) >= cached.at;
+	});
+}
+
 async function exists(path: string): Promise<boolean> {
 	try {
 		await fs.access(path);
@@ -127,6 +178,8 @@ export class VoltStorageService implements IVoltStorageService {
 
 	/** One clean at a time; a second waits instead of racing the first over the same folders. */
 	private cleaning: Promise<unknown> = Promise.resolve();
+	/** Checkout sizes from the last worktree-limit pass, by path key, with when they were measured. */
+	private readonly checkoutSizes = new Map<string, { bytes: number; at: number }>();
 
 	constructor(
 		private readonly layout: IVoltStorageLayout,
@@ -169,7 +222,8 @@ export class VoltStorageService implements IVoltStorageService {
 		const checkouts = await this.worktreeCheckouts(this.layout.worktreesRoot);
 		// Sizes only matter with a size limit; counting is cheap, walking every checkout is not.
 		const sized = limits.maxBytes > 0;
-		const entries = await Promise.all(checkouts.map(async path => ({ path, bytes: sized ? (await measurePath(path)).bytes : 0 })));
+		const sizes = sized ? await this.sizeCheckouts(checkouts, context) : undefined;
+		const entries = checkouts.map(path => ({ path, bytes: sizes?.get(path) ?? 0 }));
 		let count = entries.length;
 		let bytes = entries.reduce((sum, entry) => sum + entry.bytes, 0);
 		const skipped: { path: string; keep: VoltStorageKeep }[] = [];
@@ -199,6 +253,29 @@ export class VoltStorageService implements IVoltStorageService {
 			this.logService.info(`[volt-storage] worktree limits (${limits.maxCount} checkouts, ${limits.maxBytes} bytes): ${removed} removed, ${skipped.length} kept, ${errors.length} failed, ${freedBytes} bytes`);
 		}
 		return { freedBytes, removed, skipped, errors };
+	}
+
+	/**
+	 * Bytes per checkout for the size limit. Every pass walked every checkout (16 GB here: 13 s of CPU, 80 s of disk);
+	 * now a checkout is measured again only when its chat ran since the last pass, all of them in one `du`.
+	 */
+	private async sizeCheckouts(checkouts: readonly string[], context: IVoltStorageContext): Promise<Map<string, number>> {
+		const at = Date.now();
+		const stale = checkoutsToMeasure(checkouts, this.checkoutSizes, context);
+		const measured = await measurePathsWithDu(stale) ?? new Map(await Promise.all(stale.map(async path => [path, (await measurePath(path)).bytes] as const)));
+		for (const path of stale) {
+			const bytes = measured.get(path);
+			if (bytes !== undefined) {
+				this.checkoutSizes.set(samePathKey(path), { bytes, at });
+			}
+		}
+		const live = new Set(checkouts.map(samePathKey));
+		for (const key of [...this.checkoutSizes.keys()]) {
+			if (!live.has(key)) {
+				this.checkoutSizes.delete(key);
+			}
+		}
+		return new Map(checkouts.map(path => [path, this.checkoutSizes.get(samePathKey(path))?.bytes ?? measured.get(path) ?? 0]));
 	}
 
 	private async doClean(id: VoltStorageId, context: IVoltStorageContext, project: IVoltProjectStorageRequest | undefined): Promise<IVoltStorageCleanResult> {

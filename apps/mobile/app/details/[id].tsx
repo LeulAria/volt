@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import {
-	ACCESS_MODES, compactNumber, duration, firstLine, historyOf, modelLabel, projectOf, RADIUS, runtimeOf, sessionsOf, shortPath, tasksOf, threadsOf, uriPath
+	ACCESS_MODES, compactNumber, DEFAULT_ACCESS_MODE, duration, firstLine, historyOf, modelLabel, projectOf, RADIUS, runtimeOf, sessionsOf, shortPath, tasksOf, threadsOf, uriPath
 } from '@volt/client-core';
 import { router, useLocalSearchParams } from 'expo-router';
 import { type ReactNode, useState } from 'react';
@@ -58,7 +58,7 @@ function Details({ chatId }: { readonly chatId: string }) {
 	const runtime = runtimeOf(cols);
 	const project = projectOf(cols, chatId);
 	const tasks = Object.values(tasksOf(cols)).filter(task => task?.parentId === chatId).sort((a, b) => (b.createdAt ?? b.startedAt ?? 0) - (a.createdAt ?? a.startedAt ?? 0));
-	const access = ACCESS_MODES.find(a => a.id === (session?.accessMode ?? runtime.accessMode)) ?? ACCESS_MODES[3];
+	const access = ACCESS_MODES.find(a => a.id === (session?.accessMode ?? runtime.accessMode ?? DEFAULT_ACCESS_MODE)) ?? ACCESS_MODES[0];
 	const folder = session?.worktreePath ?? session?.workingFolder ?? meta?.workspaceFolder ?? uriPath(project?.root);
 	const [renaming, setRenaming] = useState(false);
 	const [deleting, setDeleting] = useState(false);

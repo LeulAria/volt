@@ -14,9 +14,15 @@ export interface IEventLogLimits {
 
 export const DEFAULT_EVENT_LOG_LIMITS: IEventLogLimits = { maxEvents: 20_000, maxBytes: 64 * 1024 * 1024 };
 
+/**
+ * A published event as kept for replay: its frame as sent, so a replay doesn't serialize twice, and
+ * what routes it. Not the event's data: a streaming reply's patch carries its appended text as a
+ * slice of the whole reply so far (`sessionEdits`), and a slice keeps the string it was cut from
+ * alive. Kept data held one copy of the reply per buffered patch: 2,000 copies of one long answer.
+ */
 interface IStoredEvent {
-	readonly event: IAgentServerEvent;
-	/** The frame as sent, so a replay doesn't serialize twice. */
+	readonly seq: number;
+	readonly topic: AgentServerTopic;
 	readonly text: string;
 }
 
@@ -51,7 +57,7 @@ export class AgentServerEventLog {
 
 	/** The oldest `seq` still replayable, or `seq + 1` when the buffer is empty. */
 	get oldestSeq(): number {
-		return this.head < this.buffer.length ? this.buffer[this.head].event.seq : this._seq + 1;
+		return this.head < this.buffer.length ? this.buffer[this.head].seq : this._seq + 1;
 	}
 
 	get size(): number {
@@ -60,7 +66,7 @@ export class AgentServerEventLog {
 
 	append(topic: AgentServerTopic, data: unknown): IStoredEvent {
 		const event: IAgentServerEvent = { t: 'evt', seq: ++this._seq, topic, data };
-		const stored: IStoredEvent = { event, text: JSON.stringify(event) };
+		const stored: IStoredEvent = { seq: event.seq, topic, text: JSON.stringify(event) };
 		this.buffer.push(stored);
 		this.bytes += stored.text.length;
 		this.evict();

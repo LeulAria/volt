@@ -7,7 +7,7 @@ import assert from 'assert';
 import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { FRESH_TEXT_CLASS, settleFreshText } from '../../browser/chrome/agentFreshText.js';
-import { hashString, reconcileChildren, splitMarkdownChunks, TranscriptReuse, TranscriptRowCache } from '../../browser/chrome/agentTranscriptReuse.js';
+import { groupMarkdownChunks, hashString, reconcileChildren, splitMarkdownChunks, TranscriptReuse, TranscriptRowCache } from '../../browser/chrome/agentTranscriptReuse.js';
 
 function el(id: string): HTMLElement {
 	const node = document.createElement('div');
@@ -69,6 +69,39 @@ suite('Transcript reuse', () => {
 
 		test('footnote definitions do not count as link definitions', () => {
 			assert.strictEqual(split('Claim.[^1]\n\n[^1]: Source.').length, 2);
+		});
+	});
+
+	suite('groupMarkdownChunks', () => {
+
+		test('joins pieces up to the limit and gives the text back', () => {
+			const pieces = ['aaaa\n\n', 'bbbb\n\n', 'cccc\n\n', 'dd'];
+			const parts = groupMarkdownChunks(pieces, 12);
+			assert.deepStrictEqual(parts, ['aaaa\n\nbbbb\n\n', 'cccc\n\ndd']);
+			assert.strictEqual(parts.join(''), pieces.join(''));
+		});
+
+		test('a short text stays one part', () => {
+			assert.deepStrictEqual(groupMarkdownChunks(['One.\n\n', 'Two.'], 100), ['One.\n\nTwo.']);
+		});
+
+		test('a piece longer than the limit is cut at line ends', () => {
+			const long = 'line one\nline two\nline three\n';
+			const parts = groupMarkdownChunks(['Intro.\n\n', long], 20);
+			assert.ok(parts.every(p => p.length <= 20), JSON.stringify(parts));
+			assert.ok(parts.slice(0, -1).every(p => p.endsWith('\n')));
+			assert.strictEqual(parts.join(''), 'Intro.\n\n' + long);
+		});
+
+		test('a 224,000-character reasoning splits into parts the renderer draws whole', () => {
+			let text = '';
+			for (let i = 1; i <= 2500; i++) {
+				text += i % 40 === 0 ? `\n\`\`\`ts\nconst step${i} = 1;\n\`\`\`\n\n` : `Line ${i} of the plan: read mod${i % 20}.ts, compare its exports with the index.\n`;
+			}
+			const parts = groupMarkdownChunks(splitMarkdownChunks(text), 90_000);
+			assert.ok(parts.length > 1);
+			assert.ok(parts.every(p => p.length <= 90_000));
+			assert.strictEqual(parts.join(''), text);
 		});
 	});
 

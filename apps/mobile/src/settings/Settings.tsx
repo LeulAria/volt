@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ACCESS_MODES, type IVoltPalette, VOLT_THEMES, DENSITY_PREVIEW_STEPS, DENSITY_PREVIEW_SUMMARY, type IEnvironmentDescriptor, modelLabel, providerName, RADIUS, routeLabel, TOOL_DENSITIES, TOOL_DENSITY_LABELS, type ToolDensity } from '@volt/client-core';
+import { ACCESS_MODES, DEFAULT_ACCESS_MODE, type IVoltPalette, VOLT_THEMES, DENSITY_PREVIEW_STEPS, DENSITY_PREVIEW_SUMMARY, type IEnvironmentDescriptor, modelLabel, providerName, RADIUS, routeLabel, TOOL_DENSITIES, TOOL_DENSITY_LABELS, type ToolDensity } from '@volt/client-core';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -111,7 +111,7 @@ function Connected() {
 		}
 	}, [client, status.live]);
 	const env = client.environment;
-	const access = ACCESS_MODES.find(a => a.id === runtime.accessMode) ?? ACCESS_MODES[3];
+	const access = ACCESS_MODES.find(a => a.id === (runtime.accessMode ?? DEFAULT_ACCESS_MODE)) ?? ACCESS_MODES[0];
 	const route = env.routes.find(r => r.baseUrl === status.baseUrl) ?? env.routes[0];
 	const color = tone === 'ok' ? p.success : tone === 'busy' ? p.info : tone === 'warn' ? p.warning : p.danger;
 

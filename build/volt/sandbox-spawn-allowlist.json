@@ -522,10 +522,10 @@
 		{
 			"file": "src/vs/platform/voltSandbox/node/seatbeltBackend.ts",
 			"kind": "child_process",
-			"count": 5,
+			"count": 6,
 			"owner": "sandbox",
 			"reason": "supervisor",
-			"why": "The macOS sandbox backend: sandbox-exec probe, the kernel log stream, the watchdog and the tree kill, and the verified volt-sandbox-helper (its probe, and the server that spawns workloads with TCC disclaimed and attests them from outside, H7)."
+			"why": "The macOS sandbox backend: sandbox-exec probe, the kernel log stream, the watchdog and the tree kill, the verified volt-sandbox-helper (its probe, and the server that spawns workloads with TCC disclaimed and attests them from outside, H7), and /usr/bin/logger with a fixed argument: the random flush marker a one-shot run waits for in the log stream (no user input, never in a sandbox)."
 		},
 		{
 			"file": "src/vs/platform/voltSpeech/electron-main/voltSpeechMainService.ts",
@@ -546,7 +546,7 @@
 		{
 			"file": "src/vs/platform/voltStdio/node/voltStdioService.ts",
 			"kind": "child_process",
-			"count": 7,
+			"count": 8,
 			"owner": "stdio",
 			"reason": "supervisor",
 			"why": "Runs every chat process and command with its ExecContext: a sandboxed chat's only through the sandbox launcher, refused without it (execRefusal)."
@@ -606,6 +606,14 @@
 			"owner": "agent-server",
 			"reason": "user-action",
 			"why": "Tunnels (cloudflared, ssh, tailscale) the user set up in Add Device."
+		},
+		{
+			"file": "src/vs/server/node/voltAgent/serverWorkbench.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "agent-server",
+			"reason": "supervisor",
+			"why": "Reads the computer name (/usr/sbin/scutil --get ComputerName, fixed arguments) for the browser workbench's page config."
 		},
 		{
 			"file": "src/vs/workbench/api/node/extHostTunnelService.ts",

@@ -20,8 +20,10 @@ import { DESKTOP_TOOL_NAMES } from './desktopTools.js';
 import { isIdeToolName } from './ide/ideTools.js';
 import { isJobWatchToolName } from './jobs/jobWatch.js';
 import { isMemoryToolName } from './memory/voltMemory.js';
+import { isOrchestraTool } from './orchestration/orchestra.js';
 import { PLAYGROUND_TOOL_NAMES } from './playgroundTools.js';
 import type { VoltMode } from './modes.js';
+import type { VoltSubagentProfile } from './providers.js';
 import type { AgentQuestionDraft, IAgentQuestionResponse } from './questions.js';
 import { PROPOSE_PLAN_TOOL_NAME } from './plans.js';
 import { parseActSteps } from './tools/pageModel.js';
@@ -161,6 +163,18 @@ export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
  */
 export type VoltHostToolGroup = 'core' | 'browser' | 'image' | 'tasks' | 'threads' | 'pullRequests' | 'visuals' | 'devices' | 'capture' | 'memory' | 'desktop' | 'terminal' | 'ide';
 
+/**
+ * The host tools a Volt subagent's agent gets (`getMcpServers(sessionId, { groups })`), by profile.
+ * A subagent reports to the agent that delegated to it, so it gets no chat, queue, pull request,
+ * visual, device, desktop or memory tools: of 138 tools a read-only one keeps 26 and one that changes
+ * files 72. Every profile keeps the coordination tools (`tasks`: delegate_task one level down, team
+ * boards and councils) and code intelligence and ask_question (`core`).
+ */
+export const SUBAGENT_HOST_TOOL_GROUPS: Readonly<Record<VoltSubagentProfile, readonly VoltHostToolGroup[]>> = {
+	readonly: ['core', 'tasks', 'image'],
+	work: ['core', 'tasks', 'image', 'terminal', 'ide', 'browser'],
+};
+
 export interface IVoltHostToolInfo {
 	readonly name: string;
 	readonly title: string;
@@ -172,6 +186,22 @@ export interface IVoltHostToolInfo {
 	 * simulator". Unset: it runs in every mode.
 	 */
 	readonly approvalInReadOnlyModes?: string;
+	/**
+	 * Listed to MCP clients as always loaded (`_meta` `anthropic/alwaysLoad`): Claude Code then puts
+	 * it in the prompt instead of behind its tool search, where agents rarely look. Every such tool is
+	 * in every request of every chat, "hi" included, so only the task tools are, and only as `top`:
+	 * the turn's lead names the other tools a request needs and how to load them (contextPack.ts).
+	 * `top`: only for top-level chats (a full tool listing); Volt subagents (a `groups` subset) get it
+	 * behind the tool search. delegate_task: a top-level chat that delegates paid a Tool Search round
+	 * trip (2-3 s and a whole request) before its first call (harness bench, round 3).
+	 */
+	readonly alwaysLoad?: boolean | 'top';
+	/**
+	 * Set by a window on the tools it lends the agent server: its provider has no `needsApproval`,
+	 * so the server does not ask the window before each call. A busy window that answered that
+	 * question late made code search ask the user ("acts in a Volt window").
+	 */
+	readonly neverAsks?: boolean;
 }
 
 export interface IVoltHostToolResult {
@@ -923,7 +953,7 @@ export function voltHostToolName(name?: string, title?: string): string | undefi
 		const tail = value.includes(':') ? value.slice(value.lastIndexOf(':') + 1).trim() : value;
 		for (const candidate of [value.replace(TOOL_PREFIX_RE, '').trim(), tail.replace(TOOL_PREFIX_RE, '').trim()]) {
 			const id = candidate.toLowerCase();
-			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id) || id === WORKSPACE_STATUS_TOOL_NAME || isJobWatchToolName(id) || isIdeToolName(id)) {
+			if (VOLT_HOST_TOOLS.some(tool => tool.name === id) || (PULL_REQUEST_TOOL_NAMES as readonly string[]).includes(id) || (COMMIT_PLAN_TOOL_NAMES as readonly string[]).includes(id) || (VISUAL_TOOL_NAMES as readonly string[]).includes(id) || (AUTOMATION_TOOL_NAMES as readonly string[]).includes(id) || (DEVICE_TOOL_NAMES as readonly string[]).includes(id) || (CAPTURE_TOOL_NAMES as readonly string[]).includes(id) || (DESKTOP_TOOL_NAMES as readonly string[]).includes(id) || (THREAD_TOOL_NAMES as readonly string[]).includes(id) || (PLAYGROUND_TOOL_NAMES as readonly string[]).includes(id) || isMemoryToolName(id) || TERMINAL_READ_TOOL_NAMES.has(id) || id === WORKSPACE_STATUS_TOOL_NAME || isJobWatchToolName(id) || isIdeToolName(id) || isOrchestraTool(id)) {
 				return canonicalHostToolName(id);
 			}
 		}
@@ -1214,4 +1244,23 @@ export interface IVoltHostToolService {
 export interface IVoltFlowGrantStore {
 	persist(grant: IGrant): Promise<void>;
 	revoke(ids: readonly string[]): Promise<void>;
+}
+
+/**
+ * A call whose only argument holds the whole call as JSON text, e.g. council `{"question": "{\"question\": …,
+ * \"participants\": […]}"}` (seen from Haiku 5.5, 2026-11-12): the arguments inside, so the tool does not run
+ * with defaults in place of what the agent asked for. Anything else is returned as it came.
+ */
+export function unwrapStuffedArgs(args: Record<string, unknown>): Record<string, unknown> {
+	const keys = Object.keys(args);
+	const value = keys.length === 1 ? args[keys[0]] : undefined;
+	if (typeof value !== 'string' || !/^\s*\{[\s\S]*\}\s*$/.test(value)) {
+		return args;
+	}
+	try {
+		const inner: unknown = JSON.parse(value);
+		return inner && typeof inner === 'object' && !Array.isArray(inner) && Object.prototype.hasOwnProperty.call(inner, keys[0]) ? inner as Record<string, unknown> : args;
+	} catch {
+		return args;
+	}
 }

@@ -3,38 +3,51 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { execFile } from 'child_process';
 import { randomBytes } from 'crypto';
-import { existsSync, promises as fs } from 'fs';
+import { existsSync, promises as fs, readdirSync } from 'fs';
 import type * as http from 'http';
 import type { Socket } from 'net';
-import { homedir } from 'os';
+import { cpus, homedir, hostname, totalmem } from 'os';
+import { promisify } from 'util';
 import { CancellationToken } from '../../../base/common/cancellation.js';
-import { Event } from '../../../base/common/event.js';
+import { Emitter, Event } from '../../../base/common/event.js';
 import { parse as parseJsonc } from '../../../base/common/json.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
 import { FileAccess } from '../../../base/common/network.js';
-import { dirname, isAbsolute, join, normalize, sep } from '../../../base/common/path.js';
+import { dirname, extname, isAbsolute, join, normalize, sep } from '../../../base/common/path.js';
 import { IServerChannel, ProxyChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { IConfigurationService } from '../../../platform/configuration/common/configuration.js';
 import { parseArgs } from '../../../platform/environment/node/argv.js';
 import { ILogService } from '../../../platform/log/common/log.js';
 import product from '../../../platform/product/common/product.js';
 import { RemoteAgentConnectionContext } from '../../../platform/remote/common/remoteAgentEnvironment.js';
+import { VOLT_ACCOUNTS_CHANNEL_NAME } from '../../../platform/voltAccounts/common/voltAccounts.js';
+import { VoltAccountsService } from '../../../platform/voltAccounts/node/voltAccountsService.js';
 import { IAgentServerAuth } from '../../../platform/voltAgentServer/common/protocolServer.js';
-import { IVoltExtensionHostTicket, VOLT_EXTHOST_TICKET_QUERY } from '../../../platform/voltAgentServer/common/protocol.js';
+import { IVoltExtensionHostTicket, VOLT_DESKTOP_EXTENSIONS_DIR_ENV, VOLT_EXTHOST_TICKET_QUERY } from '../../../platform/voltAgentServer/common/protocol.js';
+import type { ISandboxWorkloadInfo } from '../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import { VOLT_FS_BROWSE_CHANNEL_NAME } from '../../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltGitService, VOLT_GIT_CHANNEL_NAME } from '../../../platform/voltGit/common/voltGit.js';
 import { IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME } from '../../../platform/voltCodeIndex/common/voltCodeIndex.js';
+import { VOLT_EDITOR_IMPORT_CHANNEL_NAME } from '../../../platform/voltEditorImport/common/voltEditorImport.js';
+import { VoltEditorImportService } from '../../../platform/voltEditorImport/node/voltEditorImportService.js';
+import { VOLT_SKILLS_DIRECTORY_CHANNEL_NAME } from '../../../platform/voltMarketplace/common/voltMarketplace.js';
+import { VoltSkillsDirectoryService } from '../../../platform/voltMarketplace/node/voltSkillsDirectoryService.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/voltPullRequestService.js';
 import { IVoltExecRequest, IVoltSandboxedMcpRequest, IVoltStdioSpawnOptions, VOLT_STDIO_CHANNEL_NAME } from '../../../platform/voltStdio/common/voltStdio.js';
 import { VoltStdioService } from '../../../platform/voltStdio/node/voltStdioService.js';
+import { VOLT_STORAGE_CHANNEL_NAME } from '../../../platform/voltStorage/common/voltStorage.js';
+import { IVoltStorageLayout } from '../../../platform/voltStorage/common/voltStorageRules.js';
+import { VoltStorageService } from '../../../platform/voltStorage/node/voltStorageService.js';
 import { VOLT_USAGE_CHANNEL_NAME } from '../../../platform/voltUsage/common/voltUsage.js';
 import { VoltUsageService } from '../../../platform/voltUsage/node/voltUsageService.js';
 import type { IServerAPI, IServerEmbedder } from '../remoteExtensionHostAgentServer.js';
 import { ServerExtensionSandbox } from './serverExtensionSandbox.js';
+import { COMPRESSIBLE } from './serverCompression.js';
 import { ServerParsedArgs, serverOptions } from '../serverEnvironmentService.js';
 import type { SocketServer } from '../serverServices.js';
 
@@ -102,6 +115,14 @@ export class ServerWorkbench extends Disposable {
 	/** The remote connection's sockets, by the device whose cookie opened them. */
 	private readonly sockets = new Map<Socket, string>();
 	private readonly isBuilt = !process.env['VSCODE_DEV'];
+	private readonly _onDidAddDeviceSocket = this._register(new Emitter<void>());
+	/** A paired device opened a workbench connection: the device sweep must run. */
+	readonly onDidAddDeviceSocket: Event<void> = this._onDidAddDeviceSocket.event;
+
+	/** Workbench connections opened by paired devices (the device sweep runs while there are any). */
+	get deviceSockets(): number {
+		return this.sockets.size;
+	}
 
 	constructor(
 		private readonly options: IServerWorkbenchOptions,
@@ -154,7 +175,7 @@ export class ServerWorkbench extends Disposable {
 			}
 		}
 		// The workbench's own files: served here, compressed and (in a release) cached for good.
-		const staticFiles = this.staticFiles(url.pathname);
+		const staticFiles = this.staticFiles(url.pathname) ?? this.builtinExtensionFile(url, req);
 		if (staticFiles && (req.method === 'GET' || req.method === 'HEAD')) {
 			if (staticFiles === 'forbidden') {
 				res.writeHead(403).end();
@@ -205,6 +226,15 @@ export class ServerWorkbench extends Disposable {
 	}
 
 	private readonly tickets = new Map<string, number>();
+
+	/** The sandboxed hosts the workbench windows started here (P6: the desktop's sandboxed extensions). None before any. */
+	async sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]> {
+		return this._stdio ? this._stdio.sandboxWorkloads() : [];
+	}
+
+	async stopSandboxWorkload(id: string): Promise<boolean> {
+		return !!id && !!this._stdio && this._stdio.stopSandboxWorkload(id);
+	}
 
 	/**
 	 * P6: extension folders of desktop apps on this computer (their main process names its own when
@@ -261,6 +291,7 @@ export class ServerWorkbench extends Disposable {
 		if (deviceId) {
 			this.sockets.set(socket, deviceId);
 			socket.once('close', () => this.sockets.delete(socket));
+			this._onDidAddDeviceSocket.fire();
 		}
 		this.ensureServer().then(server => server.handleUpgrade(req, socket), err => {
 			this.logService.error('[volt agent server] the workbench server failed to start', err);
@@ -361,6 +392,22 @@ export class ServerWorkbench extends Disposable {
 		return [file];
 	}
 
+	/**
+	 * A built-in extension's text file the workbench itself reads (`vscode-remote-resource` under the
+	 * app's own extensions), served like the static files: compressed. VS Code's server sends them as
+	 * they are, so a phone's first launch downloaded the icon theme's 451 KB of JSON. Requests from
+	 * another origin (the web worker extension host) still go to VS Code's server, which answers
+	 * them with the CORS headers they need.
+	 */
+	private builtinExtensionFile(url: URL, req: http.IncomingMessage): readonly string[] | undefined {
+		const path = url.searchParams.get('path');
+		if (!/^\/code\/[^/]+\/vscode-remote-resource$/.test(url.pathname) || req.headers.origin || !path?.startsWith('/')) {
+			return undefined;
+		}
+		const file = normalize(path);
+		return file.startsWith(join(APP_ROOT, 'extensions') + sep) && COMPRESSIBLE.has(extname(file)) ? [file] : undefined;
+	}
+
 	//#endregion
 
 	//#region The VS Code server
@@ -406,8 +453,9 @@ export class ServerWorkbench extends Disposable {
 		args['accept-server-license-terms'] = true;
 		args['server-data-dir'] = dataDir;
 		args['user-data-dir'] = join(dataDir, 'data');
-		// The desktop's extensions, so the browser has the same ones.
-		args['extensions-dir'] = join(homedir(), product.dataFolderName, 'extensions');
+		// The desktop's extensions, so the browser has the same ones and the desktop's sandboxed
+		// extensions are found (P6): the folder the app said it uses, else the default one.
+		args['extensions-dir'] = process.env[VOLT_DESKTOP_EXTENSIONS_DIR_ENV] || join(homedir(), product.dataFolderName, 'extensions');
 		args['builtin-extensions-dir'] = join(APP_ROOT, 'extensions');
 		args['telemetry-level'] = 'off';
 		if ((await this.desktopSettings())['security.workspace.trust.enabled'] === false) {
@@ -471,7 +519,21 @@ export class ServerWorkbench extends Disposable {
 			hostSettings: () => this.configurationService.getValue(VOLT_SOURCE_CONTROL_HOSTS_SETTING),
 		}));
 		socketServer.registerChannel(VOLT_PULL_REQUEST_CHANNEL_NAME, ProxyChannel.fromService(pullRequests, store));
-		socketServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, ProxyChannel.fromService(this.options.usage ?? new VoltUsageService(resolveEnv, this.logService, join(userDataDir, 'volt-usage')), store));
+		const usage = this.options.usage ?? new VoltUsageService(resolveEnv, this.logService, join(userDataDir, 'volt-usage'));
+		socketServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, ProxyChannel.fromService(usage, store));
+		// The same saved Claude accounts as the desktop (one store per machine). Automatic switching
+		// stays with the desktop's main process, so two processes never switch at once.
+		const accounts = store.add(new VoltAccountsService({ autoSwitch: false }, this.configurationService, this.logService, usage));
+		socketServer.registerChannel(VOLT_ACCOUNTS_CHANNEL_NAME, ProxyChannel.fromService(accounts, store));
+		socketServer.registerChannel(VOLT_SKILLS_DIRECTORY_CHANNEL_NAME, ProxyChannel.fromService(new VoltSkillsDirectoryService(), store));
+		socketServer.registerChannel(VOLT_STORAGE_CHANNEL_NAME, ProxyChannel.fromService(new VoltStorageService(storageLayout(userDataDir), resolveEnv, this.logService, {
+			// The desktop app has these open while it runs; only it can clear them.
+			chromiumCache: desktopClears,
+			codeCache: desktopClears,
+			browserCache: desktopClears,
+			browserData: desktopClears,
+		}), store));
+		socketServer.registerChannel(VOLT_EDITOR_IMPORT_CHANNEL_NAME, ProxyChannel.fromService(new VoltEditorImportService(this.logService), store));
 	}
 
 	/**
@@ -503,7 +565,17 @@ export class ServerWorkbench extends Disposable {
 			productConfiguration: productForWeb(),
 			// The desktop's remote button: the icon alone, the computer in its tooltip.
 			windowIndicator: { label: '$(remote)', tooltip: `Volt on ${this.options.label}` },
-			voltAgentServer: { environmentId: this.options.environmentId(), wsPath: '/ws', deviceToken: this.signedInToken(req), userHome: homedir() },
+			voltAgentServer: {
+				environmentId: this.options.environmentId(),
+				wsPath: '/ws',
+				deviceToken: this.signedInToken(req),
+				userHome: homedir(),
+				// The desktop's user data dir: the agent server's log is under it.
+				userDataDir: this.options.userDataDir,
+				// What the desktop reads from its main process: the title bar's machine name, and the
+				// memory and cores Settings > Orchestration sizes agent runs by.
+				machine: { name: await computerName(), totalMemMb: totalmem() / (1024 * 1024), cpus: cpus().length || 1, cpuModel: cpus()[0]?.model?.trim(), platform: process.platform, arch: process.arch },
+			},
 		};
 	}
 
@@ -517,6 +589,45 @@ export class ServerWorkbench extends Disposable {
 	}
 
 	//#endregion
+}
+
+/** The name the computer goes by (the Mac's Sharing name), as the desktop's main process reads it. */
+async function computerName(): Promise<string> {
+	if (process.platform === 'darwin') {
+		try {
+			const { stdout } = await promisify(execFile)('/usr/sbin/scutil', ['--get', 'ComputerName'], { timeout: 2000 });
+			if (stdout.trim()) {
+				return stdout.trim();
+			}
+		} catch {
+			// The host name below.
+		}
+	}
+	return (process.env['COMPUTERNAME'] || hostname()).trim();
+}
+
+const desktopClears = () => Promise.reject(new Error('The Volt desktop app clears this (it is open while Volt runs). Use Settings > Storage there.'));
+
+/**
+ * The desktop's folders, for Settings > Storage. The log folder in use is the newest one (the
+ * desktop's current session); it is read each time, since the desktop may have restarted since.
+ */
+function storageLayout(userDataDir: string): IVoltStorageLayout {
+	const logs = join(userDataDir, 'logs');
+	return {
+		userDataPath: userDataDir,
+		userRoamingPath: join(userDataDir, 'User'),
+		get logsSessionPath() {
+			try {
+				const sessions = readdirSync(logs, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+				return join(logs, sessions.at(-1) ?? '');
+			} catch {
+				return logs;
+			}
+		},
+		worktreesRoot: join(homedir(), '.volt', 'worktrees'),
+		commit: product.commit,
+	};
 }
 
 /** {@link VoltStdioService} for workbench windows: what a window started stops with it. */

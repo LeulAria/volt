@@ -112,6 +112,8 @@ import { InlineCommentController } from '../review/inlineCommentController.js';
 import '../../common/agentWorkflowSettings.js';
 import '../automations/automations.contribution.js';
 import '../workflows/workflows.contribution.js';
+import '../profiler/profiler.contribution.js';
+import '../ide/codeIntelHierarchy.js';
 import '../workspace/voltAgentWindowService.js';
 import '../scratchBoard/scratchBoard.contribution.js';
 import './agentWorkflowCommands.js';

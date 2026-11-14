@@ -5,9 +5,10 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildTaskPrompt, contractFromArgs, describeSpend, describeTask, lintTaskBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, namedSubagentCount, placeholderBriefRefusal, requestAsksForSubagents, resolveChatTaskRefs, subagentReport, subagentSpareCount, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
-import { extractRoot, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
+import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
+import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
 import { buildParentCapsule, userRequests } from '../../../common/orchestration/taskContext.js';
 import { foldSpend, seedSpendTracker, spendUsage } from '../../../common/orchestration/taskSpend.js';
 import { OrchSim } from './orchestratorSim.js';
@@ -37,8 +38,11 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.ok(text.includes('this task may spend up to $2.00; the subagents of this request have $12.50 left'));
 		assert.ok(text.includes('This task waited for t-aaaaaa'));
 		assert.ok(text.indexOf('<parent_context>') < text.indexOf('<task>'), 'the digest comes before the brief');
-		assert.ok(text.trimEnd().endsWith('"## Open issues" (what is left, risks, anything you were unsure of; "None" if nothing).'), 'the report format is the last thing it reads');
+		assert.ok(text.trimEnd().endsWith('and "## Open issues" only when something is left or uncertain.'), 'the report format is the last thing it reads');
 		assert.ok(text.includes('"## Changes"') && text.includes('each done_when check: met or not met'));
+		assert.ok(text.includes('Keep it as short as the facts allow'), 'reports are short: the parent rereads each in every later request');
+		assert.ok(text.includes('If the brief says what to report or in what form (a format, a length, "only X"), report exactly that, with no headings. Otherwise use these headings'), 'a brief that sets the answer\'s form gets that form, not the headings');
+		assert.ok(text.includes('Use them as your brief says; where it says nothing, treat their claims as leads to check'), 'upstream reports are used as the brief says (a "using only these answers" brief is not told to re-check them)');
 
 		const review = buildTaskPrompt('Review it.', { role: 'review', depth: 1, isolation: 'shared', scope: ['src/header/'] });
 		assert.ok(review.includes('"## Findings"'));
@@ -52,6 +56,99 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.ok(notes[0].startsWith('no done_when'));
 		assert.ok(notes[1].startsWith('no files named'));
 		assert.ok(lintTaskBrief('Check it.', 'research', undefined, undefined, 'none')[0].includes('context is none'));
+		// A brief that names its file is specific enough: no push for done_when (it only made the next payload longer).
+		assert.deepStrictEqual(lintTaskBrief('Add formatReceipt to src/money.ts as SPEC.md says.', 'implementation', undefined, undefined, 'brief'), []);
+	});
+
+	test('a placeholder brief (a stray call) is refused with the way to the tool the chat meant; short real briefs start', () => {
+		for (const stray of ['noop', 'No-op', ' test ', 'placeholder.', 'TODO']) {
+			assert.match(placeholderBriefRefusal(stray) ?? '', /is not a brief, so no subagent started.*select:mcp__volt__<name>/, stray);
+		}
+		for (const real of ['Q1', 'Fix a.ts', 'Test the login flow', 'Run the tests', 'x']) {
+			assert.strictEqual(placeholderBriefRefusal(real), undefined, real);
+		}
+	});
+
+	test('a single-task call names this chat\'s earlier tasks by position, as a `tasks` call does', () => {
+		const tasks = [{ id: 't-aaaaaa' }, { id: 't-bbbbbb' }];
+		assert.deepStrictEqual(resolveChatTaskRefs(['1'], tasks), ['t-aaaaaa'], 'a reviewer started after its writer: after ["1"]');
+		assert.deepStrictEqual(resolveChatTaskRefs([2, 't-cccccc'], tasks), ['t-bbbbbb', 't-cccccc'], 'numbers and task ids together');
+		assert.deepStrictEqual(resolveChatTaskRefs('1', tasks), ['t-aaaaaa'], 'one string');
+		assert.deepStrictEqual(resolveChatTaskRefs(['3'], tasks), ['3'], 'a position with no task is left for the decider to refuse');
+		assert.deepStrictEqual(resolveChatTaskRefs(['1', 't-aaaaaa'], tasks), ['t-aaaaaa'], 'one task named twice waits once');
+		assert.deepStrictEqual(resolveChatTaskRefs(undefined, tasks), []);
+	});
+
+	test('the spares warmed for a delegate_task call follow the request: read-only, editing, or both', () => {
+		assert.deepStrictEqual(subagentSpareKinds(true, 'Answer four questions about src. Do not edit any file.', 3), { work: 0, readonly: 3 });
+		assert.deepStrictEqual(subagentSpareKinds(true, 'Fix the three bugs with three subagents. Each subagent fixes only its own file.', 3), { work: 3, readonly: 0 });
+		assert.deepStrictEqual(subagentSpareKinds(true, 'A writer adds formatReceipt; a reviewer (never edits files) checks it. Do not edit files yourself.', 3), { work: 2, readonly: 1 }, 'the parent not editing does not make the work read-only');
+		assert.deepStrictEqual(subagentSpareKinds(false, 'Fix it.', 3), { work: 0, readonly: 3 }, 'an Ask or Plan chat delegates read-only work only');
+		assert.deepStrictEqual(subagentSpareKinds(true, undefined, 3), { work: 3, readonly: 0 });
+		assert.deepStrictEqual(subagentSpareKinds(true, 'This is a read-only audit.', 3), { work: 0, readonly: 3 });
+		assert.deepStrictEqual(subagentSpareKinds(true, '1. Writer: add formatReceipt to src/money.ts.\n2. Reviewer (never edits files): review all of src/money.ts.\nDo not edit files yourself.', 3), { work: 2, readonly: 1 }, 'one read-only part is not a read-only request');
+		assert.deepStrictEqual(subagentSpareKinds(true, 'Each subagent fixes only its own file and must not edit the tests or any other file.', 3), { work: 3, readonly: 0 });
+	});
+
+	test('as many spares as the request names parts or agents, within the cap', () => {
+		assert.strictEqual(subagentSpareCount('Use Volt\'s delegate_task to run the four work items in parallel, one subagent per item.', 3, 4), 4);
+		assert.strictEqual(subagentSpareCount('Work on them in parallel with up to 4 agents, one agent per item.', 3, 4), 4);
+		assert.strictEqual(subagentSpareCount('Fix the three bugs with three subagents.', 3, 4), 3);
+		assert.strictEqual(subagentSpareCount('Run two agents in parallel on it.', 3, 4), 2);
+		assert.strictEqual(subagentSpareCount('Split it into six parallel tasks.', 3, 4), 4, 'capped');
+		assert.strictEqual(subagentSpareCount('Answer four questions about src.', 3, 4), 3, 'questions are not parts');
+		assert.strictEqual(subagentSpareCount('Delegate each file to its own agent.', 3, 4), 3);
+		assert.strictEqual(subagentSpareCount(undefined, 3, 4), 3);
+		// Worktree spares are made only for the parts a request names (one worktree task alone warms none).
+		assert.strictEqual(namedSubagentCount('Do it in a worktree with a subagent.'), undefined);
+		assert.strictEqual(namedSubagentCount('Split it into six parallel tasks.'), 6);
+	});
+
+	test('a request that asks for subagents outright warms their agents with the run', () => {
+		for (const text of ['Fix the three bugs with three subagents.', 'Use Volt\'s delegate_task: ONE call with four tasks.', 'Do it with a writer sub-agent and a reviewer.', 'Run two agents in parallel on it.', 'Delegate each file to its own agent.']) {
+			assert.strictEqual(requestAsksForSubagents(text), true, text);
+		}
+		for (const text of [undefined, '', 'Reply with exactly: OK', 'Fix the failing test in src/pricing.ts.', 'Run the tests in parallel.', 'What is a user agent string?']) {
+			assert.strictEqual(requestAsksForSubagents(text), false, String(text));
+		}
+	});
+
+	test('a waiting task tool call of a Claude parent blocks longer', () => {
+		// Up to 4 min per call (under fetch's 5 min); other agents stay under cursor-agent's 60 s.
+		assert.deepStrictEqual([taskWaitMs(true), taskWaitMs(false)], [240_000, 45_000]);
+	});
+
+	test('delegate_task, wait_tasks and message_task are always loaded in top-level chats, and delegate_task stays short', () => {
+		const byName = new Map<string, (typeof AGENT_TASK_TOOLS)[number]>(AGENT_TASK_TOOLS.map(tool => [tool.name, tool]));
+		for (const name of ['delegate_task', 'wait_tasks', 'message_task']) {
+			assert.strictEqual(byName.get(name)?.alwaysLoad, 'top', name);
+		}
+		assert.strictEqual(byName.get('task_status')?.alwaysLoad, undefined);
+		// In every request of a top-level chat: 5.7 KB, 2,078 tokens in round 3; 1.9 KB now (count_tokens, Haiku 5.5: see the round-4 report).
+		const size = ['delegate_task', 'wait_tasks', 'message_task'].reduce((sum, name) => sum + JSON.stringify({ name: `mcp__volt__${name}`, description: byName.get(name)!.description, input_schema: byName.get(name)!.inputSchema }).length, 0);
+		assert.ok(size < 2_000, `${size} characters`);
+		// The options that are not typed in the schema are still named, so a task that needs one finds it.
+		const delegate = byName.get('delegate_task')!;
+		const typed = Object.keys((delegate.inputSchema as { properties: object }).properties);
+		// isolation stays typed: named only in the description, leads made their own git worktrees instead.
+		assert.deepStrictEqual((delegate.inputSchema as { properties: Record<string, { enum?: string[] }> }).properties.isolation?.enum, ['shared', 'worktree']);
+		for (const option of ['task', 'title', 'role', 'after', 'model', 'models', 'previous_task_id', 'isolation', 'wait', 'goal', 'scope', 'files', 'constraints', 'done_when', 'verify', 'context', 'budget_usd', 'fallback_models']) {
+			assert.ok(typed.includes(option) || delegate.description.includes(option), option);
+		}
+		assert.match(delegate.description, /one call each, in one message/);
+		// One subagent per call: a `tasks` list held every part back until the whole list was written.
+		assert.ok(!typed.includes('tasks') && !/in one call/.test(delegate.description));
+	});
+
+	test('a subagent\'s report is its final message, unless that message is not the report', () => {
+		const notes = 'Reading pricing.ts first.';
+		const report = '## Outcome\nDone.\n\n## Changes\n- src/pricing.ts: pct / 100';
+		assert.strictEqual(subagentReport(`${notes}\n\n${report}`, report), report, 'notes between tool calls stay out of the report');
+		assert.strictEqual(subagentReport(report, report), undefined, 'the whole reply is the report');
+		assert.strictEqual(subagentReport(`${notes}\n\n${report}\n\nAll tests pass.`, 'All tests pass.'), `${report}\n\nAll tests pass.`, 'a last line after one more check does not drop the report written before it');
+		assert.strictEqual(subagentReport(`${report}\n\nAll tests pass.`, 'All tests pass.'), undefined);
+		assert.strictEqual(subagentReport(`${notes}\n\nFixed it: pct / 100.`, 'Fixed it: pct / 100.'), 'Fixed it: pct / 100.', 'no report headings: the final message');
+		assert.strictEqual(subagentReport(notes, ''), undefined, 'no text after the last tool call: the whole reply');
 	});
 
 	test('the parent capsule carries the user\'s request, the plan, the latest reply and the siblings, within its budget', () => {
@@ -212,6 +309,50 @@ suite('Volt orchestrator: budgets, dependencies and fallbacks', () => {
 		assert.ok(sim.spawn('root', 'x', { after: ['t-nope'] }).rejected?.includes('not a task of this chat'));
 	});
 
+	test('the parts of one delegate_task call wake the parent once, with every report; other tasks still report on their own', () => {
+		const sim = new OrchSim();
+		sim.submit('root', 'go');
+		sim.start('root');
+		const parts = ['a', 'b', 'c'].map(name => sim.spawn('root', `part ${name}`, { batch: 'b-1' }).taskId!);
+		const solo = sim.spawn('root', 'unrelated work').taskId!;
+		assert.strictEqual(sim.state.tasks[parts[0]].batch, 'b-1');
+		assert.strictEqual(sim.state.tasks[solo].batch, undefined);
+		sim.complete('root');
+		sim.complete(sim.childOf(parts[0]), 'done', 'report A');
+		sim.complete(sim.childOf(parts[1]), 'done', 'report B');
+		assert.strictEqual(sim.thread('root').active, undefined, 'two of three parts done: no wake-up yet');
+		assert.strictEqual(isDeliverable(sim.state, sim.state.tasks[parts[0]]), false);
+		assert.strictEqual(sim.state.tasks[parts[0]].delivery, 'pending');
+		sim.complete(sim.childOf(solo), 'done', 'solo report');
+		assert.deepStrictEqual(sim.thread('root').active?.taskIds, [solo], 'a task from another call is not held back');
+		sim.complete('root');
+		sim.complete(sim.childOf(parts[2]), 'failed', '');
+		const wake = sim.thread('root').active;
+		assert.deepStrictEqual([...wake?.taskIds ?? []].sort(), [...parts].sort(), 'a failed part ends the wait like a finished one');
+		assert.ok(wake?.prompt.text.includes('report A') && wake.prompt.text.includes('report B'));
+
+		// The batch id survives a save and load, so a restart does not split the parts up.
+		const loaded = parseRootSnapshot(JSON.parse(JSON.stringify(extractRoot(sim.state, 'root', [], sim.now))))!;
+		assert.strictEqual(loaded.tasks.find(item => item.id === parts[1])!.batch, 'b-1');
+	});
+
+	test('a part waiting for the user, or for a slot, behaves as the batch says: the first does not hold the others, the second does', () => {
+		const sim = new OrchSim({ ...DEFAULT_ORCH_LIMITS, runningPerParent: 2 });
+		sim.submit('root', 'go');
+		sim.start('root');
+		const [asking, working, later] = ['asks', 'works', 'later'].map(name => sim.spawn('root', `part ${name}`, { batch: 'b-1' }).taskId!);
+		assert.strictEqual(sim.state.tasks[later].state, 'queued', 'over the per-chat limit');
+		sim.complete('root');
+		sim.start(sim.childOf(asking));
+		sim.run({ type: 'input.opened', threadId: sim.childOf(asking), inputId: 'q', kind: 'question' });
+		assert.strictEqual(sim.state.tasks[asking].state, 'waiting');
+		sim.complete(sim.childOf(working), 'done', 'worked');
+		assert.strictEqual(sim.state.tasks[later].state, 'running', 'the freed slot goes to the queued part');
+		assert.strictEqual(sim.thread('root').active, undefined, 'a part that has not run yet holds the report back');
+		sim.complete(sim.childOf(later), 'done', 'later done');
+		assert.deepStrictEqual([...sim.thread('root').active?.taskIds ?? []].sort(), [working, later].sort(), 'the part waiting for the user does not hold the rest');
+	});
+
 	test('a task whose upstream failed does not start, and says why', () => {
 		const sim = new OrchSim();
 		sim.submit('root', 'go');
@@ -261,5 +402,51 @@ suite('Volt orchestrator: budgets, dependencies and fallbacks', () => {
 		assert.deepStrictEqual([task.after, task.budgetUsd, task.contract, task.fallbacks], [[first], 3, { goal: 'g', doneWhen: ['d'] }, [{ ref: 'x:y', label: 'Y' }]]);
 		assert.deepStrictEqual(loaded.tasks.find(item => item.id === first)!.usage, usage(2));
 		assert.strictEqual(loaded.threads.find(thread => thread.id === 'root')!.spend?.usd, 2);
+	});
+});
+
+suite('Volt orchestrator: what agents write into delegate_task', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('Claude Code\'s Agent-tool names (prompt, description) count as task and title, at the top and in tasks entries', () => {
+		assert.deepStrictEqual(delegateArgsWithAliases({ prompt: 'Fix a.js', description: 'Fix a' }), { task: 'Fix a.js', title: 'Fix a', description: 'Fix a' });
+		assert.deepStrictEqual(delegateArgsWithAliases({ tasks: [{ prompt: 'one' }, { task: 'two', prompt: 'ignored' }, 'bad'] }).tasks, [{ task: 'one' }, { task: 'two', prompt: 'ignored' }, 'bad']);
+		assert.deepStrictEqual(delegateArgsWithAliases({ task: 'kept', title: 'T' }), { task: 'kept', title: 'T' });
+	});
+
+	test('a model named the way agents write it finds the catalog entry, and an unknown one finds nothing', () => {
+		const items = [
+			{ ref: 'agent:seed-claude-code:claude-haiku-4-5-20251001', id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', providerLabel: 'Claude', providerId: 'claude-code' },
+			{ ref: 'agent:seed-claude-code:claude-sonnet-5-5', id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', qualifier: 'Medium', providerLabel: 'Claude', providerId: 'claude-code' },
+			{ ref: 'agent:seed-cursor:sonnet-5-5', id: 'sonnet-5-5', label: 'Sonnet 5.5', providerLabel: 'Cursor', providerId: 'cursor-acp' },
+			{ ref: 'agent:seed-grok:grok-4.7', id: 'grok-4.7', label: 'Grok 4.7', providerLabel: 'Grok', providerId: 'grok' },
+		];
+		const ref = (value: string) => matchTaskModel(items, value)?.ref;
+		assert.strictEqual(ref('Claude Haiku 4.5'), items[0].ref);
+		assert.strictEqual(ref('claude-haiku-4-5'), items[0].ref);
+		assert.strictEqual(ref('Haiku 4.5'), items[0].ref);
+		assert.strictEqual(ref('Sonnet 5.5 Medium'), items[1].ref);
+		assert.strictEqual(ref('Cursor Sonnet 5.5'), items[2].ref, 'the provider the name mentions wins');
+		assert.strictEqual(ref('grok-4.7'), items[3].ref);
+		assert.strictEqual(ref('GPT 9'), undefined);
+		assert.strictEqual(ref('4.5'), items[0].ref, 'a bare fragment still matches by substring, as before');
+	});
+
+	test('a task title skips the "In <path>:" a brief opens with', () => {
+		assert.strictEqual(titleFromBrief('In /private/tmp/repo: edit src/a.js so charge() throws'), 'Edit src/a.js so charge() throws');
+		assert.strictEqual(titleFromBrief('Working in ~/code/app, review the auth flow'), 'Review the auth flow');
+		assert.strictEqual(titleFromBrief('In this repo, nothing to strip'), 'In this repo, nothing to strip');
+	});
+
+	test('the saved audit trail keeps long prompts short and leaves other events as they are', () => {
+		const long = 'x'.repeat(ORCH_EVENT_PROMPT_CHARS * 5);
+		const turn = { seq: 1, at: 1, commandId: 'c', event: { type: 'turn.dispatched' as const, threadId: 't', turn: { id: 'u', kind: 'brief' as const, prompt: { text: long, display: { text: 'shown' } }, at: 1, phase: 'dispatching' as const } } };
+		const compact = compactEnvelope(turn);
+		const text = compact.event.type === 'turn.dispatched' ? compact.event.turn.prompt.text : '';
+		assert.ok(text.length < ORCH_EVENT_PROMPT_CHARS + 40 && text.endsWith(`[${long.length} chars]`), text.slice(-30));
+		assert.strictEqual(turn.event.turn.prompt.text, long, 'the live event is not changed');
+		const short = { seq: 2, at: 1, commandId: 'c', event: { type: 'turn.cancelled' as const, threadId: 't', turnId: 'u' } };
+		assert.strictEqual(compactEnvelope(short as never), short);
 	});
 });

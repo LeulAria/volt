@@ -205,7 +205,7 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 
 	test('NET-4: IPv4-mapped addresses are judged as IPv4', async () => {
 		const r = await route(['*', 'mapped.test', '::/0', '0.0.0.0/0']);
-		for (const literal of ['[::ffff:127.0.0.1]:443', '[::ffff:7f00:1]:443', '[::ffff:10.0.0.1]:443', '[0:0:0:0:0:ffff:c0a8:101]:443', '[::FFFF:192.168.1.1]:443']) {
+		for (const literal of ['[::ffff:127.0.0.1]:443', '[::ffff:7f00:1]:443', '[::ffff:10.0.0.1]:443', '[0:0:0:0:0:ffff:c0a8:101]:443', '[::FFFF:192.168.1.1]:443', '[::ffff:0:127.0.0.1]:443', '[::ffff:0:a00:1]:443', '[::ffff:0:a9fe:a9fe]:80']) {
 			assert.match((await open(r.port, connect(r, literal))).line, /403/, literal);
 		}
 		resolves('mapped.test', [{ address: '::ffff:192.168.1.1', family: 6 }]);
@@ -229,6 +229,30 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		}
 		assert.deepStrictEqual(lookups, [], 'nothing was resolved');
 		assert.deepStrictEqual(connected, []);
+	});
+
+	test('NET-21: localhost aliases: names, short and numeric forms, IPv6 spellings and zone ids never reach this machine, even under *', async () => {
+		const r = await route(['*', '::/0', '0.0.0.0/0']);
+		// Names a public DNS answers with loopback (nip.io, a .localhost name): judged by the answer.
+		resolves('127.0.0.1.nip.io', [{ address: '127.0.0.1', family: 4 }]);
+		resolves('foo.localhost', [{ address: '127.0.0.1', family: 4 }, { address: '::1', family: 6 }]);
+		const aliases = ['127.0.0.1.nip.io:443', 'foo.localhost:443', '127.1:443', '0x7f000001:443', '0:443', '0.0.0.0:443', '[::]:443', '[::1]:443', '[0:0:0:0:0:0:0:1]:443', '[::127.0.0.1]:443', '[::ffff:127.0.0.1]:443', '[::ffff:0:127.0.0.1]:443', '[64:ff9b::7f00:1]:443', '[fe80::1%25lo0]:443', '[fe80::1]:443', '127.0.0.1%2f@x.test:443', '127%2e0%2e0%2e1:443'];
+		for (const authority of aliases) {
+			assert.match((await open(r.port, connect(r, authority))).line, /^HTTP\/1\.1 4\d\d/, authority);
+		}
+		assert.ok(denials.every(denial => !denial.promptable), '"Allow host" never opens this machine');
+		// The system resolver's own `localhost` (the hosts file), as a client would name it.
+		const system = makeBroker({ lookup: undefined });
+		try {
+			const s = await route(['*'], {}, system);
+			for (const authority of ['localhost:443', 'LOCALHOST.:443', 'LocalHost:80']) {
+				assert.match((await open(s.port, connect(s, authority))).line, /^HTTP\/1\.1 4\d\d/, authority);
+			}
+		} finally {
+			system.dispose();
+		}
+		assert.deepStrictEqual(connected, [], 'nothing was connected');
+		assert.strictEqual(upstream.hits(), 0);
 	});
 
 	test('NET-7: CONNECT smuggling: only host:port is a CONNECT target', async () => {
@@ -603,6 +627,42 @@ suite('Volt network broker (I.4, NET-1..20)', function () {
 		// The view's subject is the route's own: a view naming another subject cannot lend it that subject's declarations.
 		const forged = await route([], { principal: principal('plugin:acme.forged@local', 't2'), view: { manifest: { subject: 'firstparty:volt.provider-openrouter', declared: [], network: 'broker' } } });
 		assert.match((await open(forged.port, connect(forged, 'openrouter.ai:443'))).line, /403/);
+	});
+
+	test('NET-FP-1: a built-in reaches what it declares within its first-party ceiling with no prompt; beyond it is refused, never prompted', async () => {
+		// volt.usage declares `net.connect` with no targets (each provider's usage endpoint); its ceiling holds every host.
+		const usage: SubjectKey = 'firstparty:volt.usage';
+		const u = await route([], { principal: principal(usage, 't2'), view: { manifest: { subject: usage, declared: [{ id: 'net.connect' }, { id: 'usage.report' }], network: 'broker' } } });
+		assert.match((await open(u.port, connect(u, 'api.anthropic.com:443'))).line, /200/, `declared and in the ceiling: ${denials.at(-1)?.message}`);
+		assert.match((await open(u.port, connect(u, 'chatgpt.com:443'))).line, /200/);
+		assert.strictEqual(denials.length, 0, 'nothing refused, nothing offered');
+		// The floor still holds for a built-in: loopback, private and metadata addresses, and exfil hosts by wildcard.
+		for (const authority of ['127.0.0.1:443', '10.0.0.1:443', '169.254.169.254:80', '[::1]:443', 'pastebin.com:443']) {
+			assert.match((await open(u.port, connect(u, authority))).line, /403/, authority);
+			assert.strictEqual(denials.at(-1)?.promptable, false, `${authority}: refused, not prompted`);
+		}
+		// A built-in whose ceiling names hosts: another host is refused and never prompted, even when its manifest was tampered with.
+		const skills: SubjectKey = 'firstparty:volt.skills-and-plugins';
+		const s = await route([], { principal: principal(skills, 't2'), view: { manifest: { subject: skills, declared: [{ id: 'net.connect', targets: ['skills.sh', '*.skills.sh', 'github.com', '*.githubusercontent.com', 'evil.test', '*'] }], network: 'broker' } } });
+		assert.match((await open(s.port, connect(s, 'skills.sh:443'))).line, /200/);
+		assert.match((await open(s.port, connect(s, 'raw.githubusercontent.com:443'))).line, /200/);
+		denials.length = 0;
+		for (const authority of ['evil.test:443', 'example.com:443', 'skills.sh:8443']) {
+			assert.match((await open(s.port, connect(s, authority))).line, /403/, authority);
+		}
+		assert.deepStrictEqual(denials.map(d => [d.destination, d.promptable]), [['evil.test', false], ['example.com', false], ['skills.sh', false]], 'beyond the ceiling: refused, never offered');
+		assert.ok(audit.some(event => event.decision === 'deny' && event.subject === skills && event.destination === 'evil.test'), 'audited');
+		const approval = await s.approve(denials[0].denialId, broker.epoch);
+		assert.ok(!approval.ok, 'nothing to approve for a built-in');
+		const epoch = broker.epoch;
+		assert.strictEqual(await s.allowHosts(['evil.test']), epoch, '"Allow host" commits nothing for a built-in');
+		assert.match((await open(s.port, connect(s, 'evil.test:443'))).line, /403/);
+		// The same request from a third party that declares the host: an install-time grant (low); an undeclared host is promptable.
+		const third: SubjectKey = 'plugin:acme.skills@local';
+		const t = await route([], { principal: principal(third, 't2'), view: { manifest: { subject: third, declared: [{ id: 'net.connect', targets: ['skills.sh'] }], network: 'broker' } } });
+		assert.match((await open(t.port, connect(t, 'skills.sh:443'))).line, /200/);
+		assert.match((await open(t.port, connect(t, 'evil.test:443'))).line, /403/);
+		assert.strictEqual(denials.at(-1)?.promptable, true, 'a third party is asked');
 	});
 
 	test('NET-VIEW-2: an MCP principal from a registered provider: its approved hosts, never wider than its parent chat; revoking the provider closes its tunnels', async () => {

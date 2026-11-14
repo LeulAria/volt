@@ -26,6 +26,8 @@ export const SANDBOX_EXEC_PATH = '/usr/bin/sandbox-exec';
 
 /** Every Volt denial carries this prefix plus the run's tag, so `log stream` can attribute it. */
 export const SEATBELT_TAG_PREFIX = 'VOLTSBX-';
+/** Appended to a run's tag on its refusals of connections to this machine's own addresses. */
+export const SEATBELT_LOCAL_SUFFIX = '-local';
 
 /**
  * Device files every process reads or writes (its controlling terminal as `/dev/tty`, /dev/null,
@@ -226,33 +228,32 @@ function mergeFilters(filters: readonly SeatbeltFilter[]): string[] {
 }
 
 /**
- * Merged groups by their exact input: suffix, case mode and the set of prefixes (the merge sorts
- * and dedupes them, so their order does not matter). Most of a launch's groups (credentials, the
- * `.env` patterns of every root) are the same on every launch; a run's own folders miss.
+ * Merged groups by their inputs. The merge is a pure function of the suffix, the case rule and the
+ * set of prefixes, and most groups are the same in every launch (the credential denies under the
+ * home folder, the protections of one workspace, the git allow list): building their prefix trees
+ * again was most of the profile text's cost (about 10 ms of an agent launch). Bounded; the oldest
+ * entry goes first.
  */
 const mergedGroups = new Map<string, readonly string[]>();
-const MERGED_GROUPS_KEPT = 256;
+const MAX_MERGED_GROUPS = 256;
 
-function groupRegexes(group: readonly IPathRegex[]): readonly string[] {
+function groupRegexes(group: readonly IPathRegex[]): string[] {
 	const { suffix, caseInsensitive } = group[0];
-	// Paths never hold control characters (the resolver refuses them), so these separators are unambiguous.
-	const key = `${caseInsensitive ? 'i' : 's'}\u0001${suffix}\u0001${[...new Set(group.map(filter => filter.prefix))].sort().join('\u0000')}`;
+	// Paths never hold a NUL (the resolver refuses control characters), so it separates the key's parts.
+	const key = `${caseInsensitive ? 'i' : 's'}\u0000${suffix}\u0000${[...new Set(group.map(filter => filter.prefix))].sort().join('\u0000')}`;
 	const known = mergedGroups.get(key);
 	if (known) {
-		mergedGroups.delete(key);
-		mergedGroups.set(key, known);
-		return known;
+		return [...known];
 	}
-	const merged = Object.freeze(mergeGroup(group));
-	mergedGroups.set(key, merged);
-	if (mergedGroups.size > MERGED_GROUPS_KEPT) {
+	const merged = mergeGroup(group, suffix, caseInsensitive);
+	if (mergedGroups.size >= MAX_MERGED_GROUPS) {
 		mergedGroups.delete(mergedGroups.keys().next().value!);
 	}
-	return merged;
+	mergedGroups.set(key, merged);
+	return [...merged];
 }
 
-function mergeGroup(group: readonly IPathRegex[]): string[] {
-	const { suffix, caseInsensitive } = group[0];
+function mergeGroup(group: readonly IPathRegex[], suffix: string, caseInsensitive: boolean): string[] {
 	const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 	const below = coversBelow(suffix);
 	// Shortest first, so a prefix is only dropped for one already kept.
@@ -329,9 +330,25 @@ function patternFilters(patterns: readonly IResolvedPattern[], caseInsensitive: 
 	return [...byRoot].map(([root, names]) => ({
 		prefix: root === '/' ? '' : root,
 		// Never empty, never optional as a whole: a plain concatenation or one group.
-		suffix: `/(.*/)?${literalAlternation([...names].map(name => literalChars(name, caseInsensitive)))}(/.*)?`,
+		suffix: `/(.*/)?${namesAlternation([...names], caseInsensitive)}(/.*)?`,
 		caseInsensitive,
 	}));
+}
+
+/** The same few name lists (`.env`-style files, git internals) recur under every root and launch. */
+const nameAlternations = new Map<string, string>();
+
+function namesAlternation(names: readonly string[], caseInsensitive: boolean): string {
+	const key = `${caseInsensitive ? 'i' : 's'}\u0000${names.join('\u0000')}`;
+	let text = nameAlternations.get(key);
+	if (text === undefined) {
+		text = literalAlternation(names.map(name => literalChars(name, caseInsensitive)));
+		if (nameAlternations.size >= MAX_MERGED_GROUPS) {
+			nameAlternations.delete(nameAlternations.keys().next().value!);
+		}
+		nameAlternations.set(key, text);
+	}
+	return text;
 }
 
 /**
@@ -375,8 +392,10 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 			'(allow file-read* (literal "/"))',
 			'(allow file-read-metadata)',
 			'(allow sysctl-read)',
-			// User and group lookups (whoami, git, ssh), the system logger, power assertions.
-			'(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.logger") (global-name "com.apple.PowerManagement.control"))',
+			// User and group lookups (whoami, git, ssh), the system logger, power assertions, and where
+			// the user's temp folder is (`confstr(_CS_DARWIN_USER_TEMP_DIR)`): without it the `/usr/bin`
+			// developer shims cannot find xcrun's cache and run `xcodebuild -find` for every `git` (2-9 s).
+			'(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.logger") (global-name "com.apple.PowerManagement.control") (global-name "com.apple.bsd.dirhelper"))',
 			// Python's multiprocessing semaphores.
 			'(allow ipc-posix-sem)',
 			'(allow pseudo-tty)',
@@ -402,6 +421,12 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		if (read.length) {
 			out.push(rule('allow file-read*', read));
 		}
+		// Listing a folder's entries (`readdir` is `file-read-data` on the folder itself): its names
+		// only, nothing below it. The resolver keeps only folders here.
+		const list = (policy.list ?? []).map(path => `(literal ${sbplString(path)})`);
+		if (list.length) {
+			out.push(rule('allow file-read-data', list));
+		}
 	}
 
 	// Writes: everything else is denied (by default, or explicitly with system services on).
@@ -414,6 +439,11 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		...policy.writeFiles.flatMap((file): SeatbeltFilter[] => [`(literal ${sbplString(file)})`, { prefix: file, suffix: '\\.(lock|tmp|backup|bak|swp)[^/]*', caseInsensitive: false }]),
 	];
 	out.push(rule('allow file-read* file-write*', write));
+	// Permission bits only (`chmod`), on the folder itself: no write, rename or removal of it or below it.
+	const chmod = (policy.chmod ?? []).map(path => `(literal ${sbplString(path)})`);
+	if (chmod.length) {
+		out.push(rule('allow file-write-mode', chmod));
+	}
 
 	// `.git` as an allow list (B-03): read-only except what commits, merges, rebases and fetches
 	// write. Name patterns, so a `commondir`, hook or config created later is covered as well, and
@@ -469,6 +499,11 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		if (policy.systemServices) {
 			out.push(`(deny network* ${message})`);
 		}
+		// The kernel logs a refused connection as `remote:*:<port>`, without the address. A refusal to
+		// one of this machine's own addresses (Seatbelt's `localhost` matches loopback and every
+		// address of the machine, measured on macOS 26.6) carries its own message, so the warning can
+		// say "a port on this machine" (a local database, another app's server) instead of nothing.
+		out.push(`(deny network-outbound (with message ${sbplString(`${SEATBELT_TAG_PREFIX}${options.tag}${SEATBELT_LOCAL_SUFFIX}`)}) (remote ip "localhost:*"))`);
 		const ports = [...(options.proxyPort ? [options.proxyPort] : []), ...policy.network.loopbackPorts];
 		if (ports.length) {
 			out.push('(allow system-socket)', `(allow network-outbound\n\t${[...new Set(ports)].map(port => `(remote ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`);
@@ -491,7 +526,13 @@ export function buildSeatbeltProfile(policy: IResolvedSandboxPolicy, options: IS
 		}
 		const listenPorts = [...new Set(policy.network.listenPorts ?? [])].filter(port => Number.isInteger(port) && port > 0 && port < 65536);
 		if (listenPorts.length) {
-			out.push('(allow system-socket)', `(allow network-bind network-inbound\n\t${listenPorts.map(port => `(local ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`);
+			// `listen()` is checked as network-inbound on the socket's local address, which macOS 26.6
+			// reports as `*:<port>` for some ports (measured: 63000 and 65351, not 64000 or 65535), so a
+			// `localhost:` filter alone refused a granted port by its number. The bind rule is what limits
+			// the address; the inbound rule names the port both ways.
+			out.push('(allow system-socket)',
+				`(allow network-bind\n\t${listenPorts.map(port => `(local ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`,
+				`(allow network-inbound\n\t${listenPorts.flatMap(port => [`(local ip ${sbplString(`localhost:${port}`)})`, `(local ip ${sbplString(`*:${port}`)})`]).join('\n\t')})`);
 		}
 	}
 
@@ -526,7 +567,7 @@ export interface ISeatbeltViolation {
 	readonly pid: number;
 	/** `file-write-create`, `file-read-data`, `network-outbound`, ... */
 	readonly operation: string;
-	/** Path, or `ip:port` for network denials. */
+	/** Path, or `remote:*:<port>` for network denials (`localhost:<port>` when it was one of this machine's addresses). */
 	readonly target: string;
 }
 
@@ -539,8 +580,12 @@ export function parseSeatbeltLogLine(line: string): ISeatbeltViolation | undefin
 	const trimmed = line.trim();
 	if (trimmed.startsWith('{')) {
 		try {
-			const parsed = JSON.parse(trimmed) as { eventMessage?: unknown };
+			const parsed = JSON.parse(trimmed) as { eventMessage?: unknown; processID?: unknown; senderImagePath?: unknown };
 			if (typeof parsed.eventMessage !== 'string') {
+				return undefined;
+			}
+			// Only the kernel's Sandbox.kext reports refusals; any process can write the same text with `logger`.
+			if (parsed.processID !== 0 || typeof parsed.senderImagePath !== 'string' || !/\/Sandbox$/.test(parsed.senderImagePath)) {
 				return undefined;
 			}
 			message = parsed.eventMessage;
@@ -552,12 +597,19 @@ export function parseSeatbeltLogLine(line: string): ISeatbeltViolation | undefin
 	if (!match) {
 		return undefined;
 	}
+	const local = match[5].endsWith(SEATBELT_LOCAL_SUFFIX);
+	let target = (match[4] ?? '').trim();
+	if (local) {
+		// `remote:*:5432`: the kernel leaves the address out; the rule that refused it says it was this machine.
+		const port = /:(\d+)$/.exec(target)?.[1];
+		target = port ? `localhost:${port}` : 'localhost';
+	}
 	return {
 		process: match[1],
 		pid: Number(match[2]),
 		operation: match[3],
-		target: (match[4] ?? '').trim(),
-		tag: match[5],
+		target,
+		tag: local ? match[5].slice(0, -SEATBELT_LOCAL_SUFFIX.length) : match[5],
 	};
 }
 

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { isLiveTaskState, ITaskContract } from './agentTasks.js';
-import { IOrchConflict, IOrchEventEnvelope, IOrchLimitPark, IOrchModelChoice, IOrchMove, IOrchMoveResult, IOrchQueueItem, IOrchRescue, IOrchSpend, IOrchState, IOrchTask, IOrchTaskUsage, IOrchThread, IOrchTurn, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
+import { IOrchConflict, IOrchEventEnvelope, IOrchLimitPark, IOrchModelChoice, IOrchMove, IOrchMoveResult, IOrchQueueItem, IOrchRescue, IOrchSpend, IOrchState, IOrchTask, IOrchTaskUsage, IOrchThread, IOrchTurn, IOrchVerification, ORCHESTRATOR_STATE_VERSION } from './orchestrator.js';
 
 /**
  * Orchestration is persisted per root chat: the chat, its subagents' chats and their tasks in one
@@ -36,6 +36,32 @@ export interface IOrchIndex {
 	readonly live: readonly string[];
 	/** Every root with a file, most recently saved last. */
 	readonly roots: readonly string[];
+}
+
+/** Prompt text an audit-trail event keeps; the full text is in the turn itself and the chat's history. */
+export const ORCH_EVENT_PROMPT_CHARS = 400;
+
+/**
+ * An event as the audit trail keeps it: a turn's or queued message's prompt clipped. A subagent's
+ * framed brief is kilobytes and rode along twice (queued, then dispatched), so the trail was most
+ * of a tree's file, rewritten on every save. Events that carry no long prompt are returned as is.
+ */
+export function compactEnvelope(envelope: IOrchEventEnvelope): IOrchEventEnvelope {
+	const event = envelope.event;
+	const clip = <T extends { readonly prompt: { readonly text: string; readonly display?: unknown } }>(holder: T): T => {
+		const text = holder.prompt.text;
+		const { display: _display, ...prompt } = holder.prompt;
+		return { ...holder, prompt: { ...prompt, text: `${text.slice(0, ORCH_EVENT_PROMPT_CHARS)}… [${text.length} chars]` } };
+	};
+	const long = (prompt: { readonly text: string } | undefined) => !!prompt && typeof prompt.text === 'string' && prompt.text.length > ORCH_EVENT_PROMPT_CHARS;
+	switch (event.type) {
+		case 'turn.dispatched':
+			return long(event.turn.prompt) ? { ...envelope, event: { ...event, turn: clip(event.turn) } } : envelope;
+		case 'queue.added':
+			return long(event.item.prompt) ? { ...envelope, event: { ...event, item: clip(event.item) } } : envelope;
+		default:
+			return envelope;
+	}
 }
 
 export function rootIdsOf(state: IOrchState): string[] {
@@ -449,6 +475,24 @@ function parseTask(value: unknown): IOrchTask | undefined {
 		...(Array.isArray(task.failedOn) && task.failedOn.length ? { failedOn: task.failedOn.filter((label): label is string => typeof label === 'string') } : {}),
 		...(Array.isArray(task.blind) && task.blind.length ? { blind: task.blind.filter((id): id is string => typeof id === 'string') } : {}),
 		...(str(task.team) ? { team: task.team as string } : {}),
+		...(str(task.batch) ? { batch: task.batch as string } : {}),
 		...(task.quiet === true ? { quiet: true } : {}),
+		...(Array.isArray(task.verify) && task.verify.some(item => typeof item === 'string') ? { verify: task.verify.filter((command): command is string => typeof command === 'string') } : {}),
+		...optional('verification', parseVerification(task.verification)),
+	};
+}
+
+const VERIFICATION_STATES = new Set(['running', 'passed', 'failed', 'skipped']);
+
+function parseVerification(value: unknown): IOrchVerification | undefined {
+	const verification = value as Record<string, unknown> | undefined;
+	if (!verification || typeof verification !== 'object' || !VERIFICATION_STATES.has(verification.state as string) || num(verification.round) === undefined || num(verification.at) === undefined) {
+		return undefined;
+	}
+	return {
+		round: verification.round as number,
+		state: verification.state as IOrchVerification['state'],
+		at: verification.at as number,
+		...(str(verification.summary) ? { summary: verification.summary as string } : {}),
 	};
 }

@@ -11,7 +11,9 @@ import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { isLinux, isMacintosh } from '../../../../../base/common/platform.js';
 import { localize } from '../../../../../nls.js';
+import { agentSandboxRefusal } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -123,6 +125,8 @@ export interface IAgentModelPickerHost {
 		/** Undefined when several models can be picked now, else why not. */
 		unavailableReason(): string | undefined;
 	};
+	/** Whether the chat the pick is for runs in the OS sandbox: models whose agent can't are marked. */
+	readonly sandboxed?: () => boolean;
 }
 
 export function catalogToOption(item: IVoltCatalogItem): IModelOption {
@@ -1094,10 +1098,14 @@ export class AgentModelPicker extends Disposable {
 	}
 
 	private modelSubtitle(model: IModelOption): string | undefined {
+		// An agent this OS's sandbox cannot hold (Antigravity's random port on macOS): said before it is picked.
+		const unsandboxable = model.providerId && this.host.sandboxed?.() && agentSandboxRefusal(model.providerId, isMacintosh ? 'darwin' : isLinux ? 'linux' : 'win32')
+			? localize('voltAgent.sandboxOffOnly', "Runs only with the sandbox off")
+			: undefined;
 		if (this.pickerProviderId === PICKER_FAVORITES_TAB) {
-			return this.modelProviderLabel(model);
+			return [this.modelProviderLabel(model), unsandboxable].filter(Boolean).join(' · ') || undefined;
 		}
-		return undefined;
+		return unsandboxable;
 	}
 
 	private modelRowLabel(model: IModelOption): string {

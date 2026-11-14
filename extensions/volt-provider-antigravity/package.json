@@ -76,7 +76,8 @@
 						"GEMINI_API_KEY",
 						"GOOGLE_API_KEY",
 						"GOOGLE_CLOUD_PROJECT"
-					]
+					],
+					"ephemeralListen": "its language server listens on a random port"
 				},
 				"models": {
 					"source": "acp"

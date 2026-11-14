@@ -114,6 +114,7 @@ export class ExtHostVolt implements ExtHostVoltShape {
 			read: chatId => call('chats.read', chatId),
 			send: (chatId, message) => call('chats.send', chatId, message),
 			start: options => call('chats.start', options),
+			pickModel: options => call('chats.pickModel', options),
 			onDidStartTurn: turnEvent('start'),
 			onDidEndTurn: turnEvent('finish'),
 		};

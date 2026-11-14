@@ -1,0 +1,15 @@
+{
+ "chat": "Long thread 41k",
+ "marker": "LONGTHREAD-END long41k",
+ "cold": false,
+ "copies": false,
+ "runs": 3,
+ "load": "56.94 42.20 47.00",
+ "settled": null,
+ "firstVisible": null,
+ "results": [
+  null,
+  null,
+  null
+ ]
+}

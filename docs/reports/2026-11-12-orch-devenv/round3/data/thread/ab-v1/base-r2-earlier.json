@@ -1,0 +1,32 @@
+{
+ "mode": "earlier",
+ "chat": "Long thread 45k",
+ "runs": 2,
+ "load": "7.85 11.40 16.62",
+ "turnsPerS": {
+  "n": 2,
+  "median": 0,
+  "min": 0,
+  "max": 0
+ },
+ "results": [
+  {
+   "turnsPerS": 0,
+   "turns": 0,
+   "wheelEvents": 245,
+   "gapsOver33": 4,
+   "frames": 571,
+   "maxGap": 84,
+   "longTaskMs": 151
+  },
+  {
+   "turnsPerS": 0,
+   "turns": 0,
+   "wheelEvents": 268,
+   "gapsOver33": 0,
+   "frames": 598,
+   "maxGap": 25,
+   "longTaskMs": 0
+  }
+ ]
+}

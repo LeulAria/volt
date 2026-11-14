@@ -75,6 +75,8 @@ export interface IHttpSendOptions {
 	readonly timeoutMs?: number;
 	/** The folder whose request files and environments apply (a chat's); the window's folders when absent. */
 	readonly root?: URI;
+	/** An agent chat's project: the same as `root` (the name the HTTP Client tab's first callers used). */
+	readonly project?: URI;
 	/** The environment for this send only; the user's selected one when absent. */
 	readonly environment?: string;
 	readonly confined?: IHttpConfinement;
@@ -233,9 +235,10 @@ export class VoltHttpService extends Disposable implements IVoltHttpService {
 
 	async send(request: IHttpRequestSpec, options?: IHttpSendOptions): Promise<IHttpExchange> {
 		const confined = options?.confined;
-		const envs = await this.environments(options?.root, confined?.readable);
+		const root = options?.root ?? options?.project;
+		const envs = await this.environments(root, confined?.readable);
 		const source = options?.source && (!confined || await confined.readable(options.source)) ? options.source : undefined;
-		const fileVariables = options?.fileVariables ?? (source ? (await this.index(options?.root)).find(entry => entry.uri.toString() === source.toString())?.variables : undefined) ?? {};
+		const fileVariables = options?.fileVariables ?? (source ? (await this.index(root)).find(entry => entry.uri.toString() === source.toString())?.variables : undefined) ?? {};
 		let responses = this.responses;
 		if (confined) {
 			responses = this.confinedResponses.get(confined.key) ?? new Map<string, IHttpResponseRecord>();

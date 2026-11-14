@@ -18,15 +18,16 @@
 
 import assert from 'assert';
 import { execFile, spawn } from 'child_process';
-import { promises as fs } from 'fs';
+import { existsSync, promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { chatSubject, IPrincipal } from '../../common/principals.js';
 import { builtinProfile } from '../../common/sandboxProfiles.js';
-import { ISandboxResourceSample } from '../../common/sandboxWorkloads.js';
+import { ISandboxResourceSample, ISandboxWorkloadInfo, isUserFacingDenial } from '../../common/sandboxWorkloads.js';
 import { SandboxFault } from '../../node/sandboxBackends.js';
 import { processAlive, SandboxManager } from '../../node/sandboxManager.js';
+import { parseStatsAnswer } from '../../node/seatbeltBackend.js';
 import { ISandboxHostFacts, sandboxHostFacts } from '../../node/sandboxResolver.js';
 import { HostStartResult, IHostExit, IHostStartRequest, ISandboxedHost, ISandboxSupervisorOptions, killTagged, parseCpuTime, SandboxSupervisor } from '../../node/supervisor.js';
 import { PrincipalRegistry } from '../../node/principalRegistry.js';
@@ -211,6 +212,39 @@ suite('Volt sandbox supervisor (C5, real processes)', function () {
 		assert.strictEqual(supervisor.list().length, 0, 'a stopped host leaves the list');
 	});
 
+	test('DENY-HOST-1: what the sandbox refuses a running host is on its row (the window warns from it), without the runtime\'s own noise', async () => {
+		const supervisor = supervisorWith();
+		await fs.mkdir(join(home, '.ssh'), { recursive: true });
+		await fs.writeFile(join(home, '.ssh', 'id_ed25519'), 'CANARY-SSH\n');
+		const outside = join(root, 'outside-deny.txt');
+		// A host that tries, a few times (the kernel's denial log is best effort), then stays up.
+		// The workspace profile gives the host a home of its own: name the real one's key.
+		const attempts = `for i in 1 2 3 4 5; do cat "${join(home, '.ssh', 'id_ed25519')}"; echo x > "${outside}"; sleep 0.3; done; sleep 30`;
+		let changes = 0;
+		store.add(supervisor.onDidChange(() => changes++));
+		const h = await started(await supervisor.start(nodeHost({ command: { file: '/bin/sh', args: ['-c', attempts] }, ipc: false })));
+		try {
+			let row: ISandboxWorkloadInfo | undefined;
+			const end = Date.now() + 20_000;
+			while (Date.now() < end) {
+				row = (await supervisor.workloads()).find(r => r.id === h.id);
+				if (row?.denials?.some(d => d.kind === 'read' && d.target.endsWith('/.ssh/id_ed25519')) && row.denials.some(d => d.kind === 'write' && d.target.endsWith('outside-deny.txt'))) {
+					break;
+				}
+				await new Promise(resolve => setTimeout(resolve, 200));
+			}
+			assert.ok(row?.denials?.some(d => d.kind === 'read' && d.target === '~/.ssh/id_ed25519'), `the key read, home shown as ~: ${JSON.stringify(row?.denials)}`);
+			assert.ok(row?.denials?.some(d => d.kind === 'write' && d.target.endsWith('outside-deny.txt')), `the write outside: ${JSON.stringify(row?.denials)}`);
+			assert.ok(row!.denials!.every(d => isUserFacingDenial(d)), 'no canary, Mach lookups or preference reads');
+			assert.ok((row!.deniedCount ?? 0) >= row!.denials!.length, 'the total counts repeats');
+			assert.ok(row!.denials!.every(d => d.count >= 1 && d.at > 0));
+			assert.ok(changes > 0, 'the window hears of it');
+			assert.ok(!existsSync(outside), 'and the write did not happen');
+		} finally {
+			await h.terminate();
+		}
+	});
+
 	test('IPC-CHAN-1: NODE_CHANNEL_FD round-trips, as the fd after the launch protocol\'s, and only after the go byte', async () => {
 		const supervisor = supervisorWith();
 		const h = await started(await supervisor.start(nodeHost()));
@@ -325,12 +359,44 @@ suite('Volt sandbox supervisor (C5, real processes)', function () {
 		assert.ok(first.memoryBytes > 10 * 1024 * 1024, `memory ${first.memoryBytes}`);
 		assert.ok(first.processes >= 1);
 		assert.ok(first.cpuMs >= 0);
-		assert.deepStrictEqual(first.sources, ['poll']);
+		// macOS: the helper's tracking measures the tree (no `ps` spawn); elsewhere the process table.
+		assert.deepStrictEqual(first.sources, [process.platform === 'darwin' ? 'tracking' : 'poll']);
 		h.send({ op: 'grow' });
 		const exit = await exited;
 		assert.strictEqual(exit.reason, 'resource');
 		assert.strictEqual(exit.restarting, false);
 		assert.strictEqual(h.state, 'broken');
+	});
+
+	(process.platform === 'darwin' ? test : test.skip)('RES-TRACK-1: macOS samples come from the helper\'s tracking: the tree\'s CPU grows with its work, a child counts', async () => {
+		const supervisor = supervisorWith();
+		const h = await started(await supervisor.start(nodeHost({ restart: { maxPerMinute: 0 } })));
+		const samples: ISandboxResourceSample[] = [];
+		store.add(h.onResource(sample => samples.push(sample)));
+		assert.ok(await waitFor(() => samples.length >= 1, 10_000), 'a first sample');
+		const before = samples.at(-1)!;
+		assert.deepStrictEqual(before.sources, ['tracking']);
+		await request(h, { op: 'child' }, 'child');
+		await request(h, { op: 'grow' }, 'grown');
+		assert.ok(await waitFor(() => { const last = samples.at(-1)!; return last.processes > before.processes && last.cpuMs > before.cpuMs && last.memoryBytes > before.memoryBytes + 100 * 1024 * 1024; }, 10_000), `samples: ${JSON.stringify([before, samples.at(-1)])}`);
+		await h.terminate('stopped');
+	});
+
+	test('RES-IDLE-1: an idle host is sampled ten times less often than a running one, and at the running rate once it wakes', async () => {
+		const at: number[] = [];
+		const counting = { id: 'count', sample: async (roots: readonly number[]) => { at.push(Date.now()); return new Map(roots.map(root => [root, { cpuMs: 0, memoryBytes: 1, processes: 1 }])); } };
+		const supervisor = supervisorWith({ resourceSources: [counting] });
+		const h = await started(await supervisor.start(nodeHost({ idle: { afterMs: 300, stopAfterMs: 60_000 } })));
+		assert.ok(await waitFor(() => h.state === 'idle', 4_000), `state ${h.state}`);
+		const idleFrom = Date.now();
+		await new Promise(resolve => setTimeout(resolve, 2_500));
+		const whileIdle = at.filter(t => t > idleFrom).length;
+		// sampleMs 100: a running host gets about 25 samples in 2.5 s, an idle one 2 or 3 (every 1 s).
+		assert.ok(whileIdle >= 1 && whileIdle <= 4, `samples while idle: ${whileIdle}`);
+		await request(h, { op: 'ping', n: 1 }, 'pong');
+		const wokeAt = Date.now();
+		assert.ok(await waitFor(() => at.filter(t => t > wokeAt).length >= 2, 1_000), 'running again: sampled at the running rate');
+		await h.terminate('stopped');
 	});
 
 	// --- idle, budget -------------------------------------------------------------------------
@@ -496,6 +562,13 @@ suite('Volt sandbox supervisor helpers', () => {
 		assert.strictEqual(parseCpuTime('1:02.50'), 62_500);
 		assert.strictEqual(parseCpuTime('01:00:00'), 3_600_000);
 		assert.strictEqual(parseCpuTime('2-00:00:01'), 2 * 86_400_000 + 1_000);
+	});
+
+	test('the helper\'s stats answer parses with and without its CPU field', () => {
+		assert.deepStrictEqual(parseStatsAnswer('3 1048576 0 4 250'), { members: 3, footprint: 1048576, exceeded: false, peak: 4, cpuMs: 250 });
+		assert.deepStrictEqual(parseStatsAnswer('1 2048 1 2'), { members: 1, footprint: 2048, exceeded: true, peak: 2 });
+		assert.throws(() => parseStatsAnswer('1 2 3'));
+		assert.throws(() => parseStatsAnswer('1 2 x 4'));
 	});
 
 	test('killTagged refuses a tag that is not one', async () => {

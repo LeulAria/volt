@@ -119,10 +119,11 @@
 }
 
 /* Long hints wrap inside the box's max-width; a long URL breaks anywhere. The shortcut keeps its line. */
+/* A hint written as lines (a sandboxed process's details, a run's log) keeps them. */
 .volt-agent-tooltip:not(.files):not(.pill):not(.card):not(.beside) .volt-agent-tooltip-row:not(.file) > .volt-agent-tooltip-label {
 	flex: 0 1 auto;
 	min-width: 0;
-	white-space: normal;
+	white-space: pre-line;
 	overflow-wrap: anywhere;
 }
 
@@ -253,11 +254,25 @@
 	border-color: rgba(0, 0, 0, 0.2);
 }
 
+/* The card is where a title its row cuts short is read whole ("Ping loopback for a while and report
+ * the su…" was cut here too): it wraps, up to three lines. */
 .volt-agent-tooltip-card-title {
 	margin-bottom: 2px;
 	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+/* A hint at the card's foot (what a click does): muted like a detail line, wrapped rather than cut. */
+.volt-agent-tooltip-card-note {
+	font-size: 12px;
+	line-height: 16px;
+	color: color-mix(in srgb, currentColor 55%, transparent);
+	white-space: normal;
+	overflow-wrap: anywhere;
 }
 
 /* A block of text with its own line breaks (a commit message's body); the card scrolls past 450px. */
@@ -323,6 +338,17 @@
 .volt-agent-tooltip-card-detail {
 	font-size: 12px;
 	color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+/* A muted line (a subagent's step or outcome, a chat's folder) is read whole here, like the title:
+ * the row it hovers already cut it. Up to three lines. */
+.volt-agent-tooltip-card-text > .volt-agent-tooltip-label.muted {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 3;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	line-height: 16px;
 }
 
 .volt-agent-tooltip-card-detail {

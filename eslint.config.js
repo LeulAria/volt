@@ -1285,7 +1285,7 @@ export default tseslint.config(
 					]
 				},
 				{
-					'target': 'src/{bootstrap-cli.ts,bootstrap-esm.ts,bootstrap-fork.ts,bootstrap-import.ts,bootstrap-meta.ts,bootstrap-node.ts,bootstrap-server.ts,cli.ts,main.ts,server-cli.ts,server-main.ts,volt-agent-server-main.ts}',
+					'target': 'src/{bootstrap-cli.ts,bootstrap-esm.ts,bootstrap-fork.ts,bootstrap-import.ts,bootstrap-meta.ts,bootstrap-node.ts,bootstrap-server.ts,bootstrap-window.ts,cli.ts,main.ts,server-cli.ts,server-main.ts,volt-agent-server-main.ts}',
 					'restrictions': [
 						'vs/**/common/*',
 						'vs/**/node/*',

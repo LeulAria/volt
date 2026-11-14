@@ -126,6 +126,12 @@ export interface IVoltAgentStateContribution {
 	readonly quietPaths?: { readonly processes: readonly string[]; readonly paths: readonly string[]; readonly readPaths?: readonly string[] };
 	/** H.12 shorthand for a provider without seeds: keys merged back to the real config after a turn. */
 	readonly mergeBack?: readonly string[];
+	/** It lists the home folder's entries at start (names only). */
+	readonly listHome?: boolean;
+	/** State folders it sets the permission bits of at start (only the mode, never a write). */
+	readonly chmodFolders?: readonly string[];
+	/** Why it listens on a random port: it then runs sandboxed only where the OS can keep that port to the sandbox. */
+	readonly ephemeralListen?: string;
 }
 
 /**
@@ -358,6 +364,9 @@ export const VOLT_CONTRIBUTION_SCHEMAS: Readonly<Record<keyof IVoltContributes, 
 						envKeys: { type: 'array', items: ENV_NAME },
 						quietPaths: { type: 'object', required: ['processes', 'paths'], additionalProperties: false, properties: { processes: STRINGS, paths: STRINGS, readPaths: STRINGS } },
 						mergeBack: STRINGS,
+						listHome: { type: 'boolean' },
+						chmodFolders: STRINGS,
+						ephemeralListen: { type: 'string', minLength: 1 },
 					},
 				},
 				probe: {
@@ -531,7 +540,7 @@ function agentRuleErrors(agent: IVoltAgentContribution, path: string): string[] 
 		}
 	}
 	const state = agent.state;
-	for (const [field, list] of [['writable', state?.writable], ['writableFiles', state?.writableFiles], ['readable', state?.readable], ['credentials', state?.credentials], ['link', state?.link]] as const) {
+	for (const [field, list] of [['writable', state?.writable], ['writableFiles', state?.writableFiles], ['readable', state?.readable], ['credentials', state?.credentials], ['link', state?.link], ['chmodFolders', state?.chmodFolders]] as const) {
 		for (const entry of list ?? []) {
 			if (!isPlainRelativePath(entry)) {
 				errors.push(`${path}.state.${field}: ${JSON.stringify(entry)} is not a plain relative path`);

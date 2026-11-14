@@ -1,0 +1,1 @@
+Use Volt's delegate_task to start one subagent with isolation worktree. Its task: create the file NOTE.md containing the single line "smoke" and commit it. When it is done, merge its branch into main yourself and reply DONE.

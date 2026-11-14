@@ -1,0 +1,41 @@
+{
+ "chat": "Cold medium <run>",
+ "marker": "LONGTHREAD-END long41k",
+ "cold": false,
+ "copies": "medium",
+ "hover": 0,
+ "runs": 1,
+ "load": "11.27 16.11 15.91",
+ "settled": {
+  "n": 1,
+  "median": 75.2,
+  "min": 75.2,
+  "max": 75.2
+ },
+ "firstVisible": {
+  "n": 1,
+  "median": 16.5,
+  "min": 16.5,
+  "max": 16.5
+ },
+ "paintedBy": {
+  "n": 1,
+  "median": 60.2,
+  "min": 60.2,
+  "max": 60.2
+ },
+ "results": [
+  {
+   "settled": 75.20000000149594,
+   "firstVisible": 16.500000001484295,
+   "paintedBy": 60.20000000149594,
+   "firstNew": 16.500000001484295,
+   "blankFrames": 0,
+   "frames": 123,
+   "longTaskMs": 0,
+   "maxGap": 44,
+   "loadBefore": 11.27,
+   "loadAfter": "11.27 16.11 15.91"
+  }
+ ]
+}

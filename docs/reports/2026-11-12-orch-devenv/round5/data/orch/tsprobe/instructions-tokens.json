@@ -1,0 +1,1 @@
+{"before":{"chars":1950,"tokens":703},"after":{"chars":2033,"tokens":730},"delta":27,"model":"claude-haiku-5-5","method":"count_tokens of the instructions as system text, hi as message"}

@@ -151,6 +151,16 @@ export class NativeExtensionService extends AbstractExtensionService implements 
 
 	protected override _onExtensionHostCrashed(extensionHost: IExtensionHostManager, code: number, signal: string | null): void {
 
+		if (this._isVoltSandboxedHost(extensionHost)) {
+			// Volt (H.9): a sandboxed extension's host is of the local-process kind, but its end is its own:
+			// it was stopped (Security page, the sandbox's warning) or it crashed, and it stays stopped until
+			// a reload. Restarting "the extension host" here restarted every host, the main one included,
+			// and brought back the extension the user had just stopped.
+			super._onExtensionHostCrashed(extensionHost, code, signal);
+			this._logService.info(`A sandboxed extension host ended (code ${code}); it stays stopped until the window reloads.`);
+			return;
+		}
+
 		const activatedExtensions: ExtensionIdentifier[] = [];
 		const extensionsStatus = this.getExtensionsStatus();
 		for (const key of Object.keys(extensionsStatus)) {

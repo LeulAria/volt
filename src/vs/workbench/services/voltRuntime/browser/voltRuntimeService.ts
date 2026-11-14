@@ -40,20 +40,23 @@ import { DEFAULT_MODEL_CAPABILITIES } from '../common/capabilities.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, pickGenerationParams, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
+import { ORCH_WARM_SUBAGENTS_SETTING } from '../common/orchestration/orchestrator.js';
+import { namedSubagentCount, requestAsksForSubagents, subagentReport, subagentSpareCount, subagentSpareKinds } from '../common/orchestration/agentTasks.js';
 import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
-import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, VoltProviderState } from '../common/providers.js';
+import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, subagentProfile, VoltProviderState, VoltSubagentProfile } from '../common/providers.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, newChatSandboxDefaults, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isSandboxUnavailableError, sandboxRefusedMessage } from '../common/access/sandboxRefusal.js';
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
-import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
+import { IAgentPrewarmOptions, IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService, runGitThrough, VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { chatExec, IChatExec, voltExec } from '../common/execContext.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
-import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, lspPolicy, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
+import { codeIndexEnabled, editCheckPhase, INSTANT_GREP_TOOL_NAME, lspPolicy, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
 import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
+import { retrievalAddsToMessage } from '../common/search/contextRetrieval.js';
 import { ISearchIndex, VoltSearch } from './search/voltSearch.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
 import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompactCommand } from '../common/compaction.js';
@@ -62,7 +65,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import './git/agentWorktreeSetupService.js';
 import { withPlanModeInstruction } from '../common/plans.js';
-import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostFlowApproval, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, VISUAL_TOOL_NAMES } from '../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AWAIT_ANSWERS_TOOL_NAME, IVoltHostFlowApproval, IVoltHostToolApproval, IVoltHostToolInvocation, IVoltHostToolService, SUBAGENT_HOST_TOOL_GROUPS, VISUAL_TOOL_NAMES, VoltHostToolGroup } from '../common/hostTools.js';
 import { POLICY_AUTHORITY_MODE_SETTING, readPolicyAuthorityMode } from '../common/hostToolAuthority.js';
 import { IVoltMemoryService } from '../common/memory/voltMemory.js';
 import { AgentQuestionDraft, answeredQuestions, IAgentQuestionRequest, IAgentQuestionResponse } from '../common/questions.js';
@@ -70,7 +73,7 @@ import { AcpAgentProvider, IAcpBackgroundTask, IAcpFileWrite, IAcpSupervisionOpt
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
 import { LOOP_NOTICE_TITLE } from '../common/harness/supervisor.js';
 import { DeepseekDirective, IDeepseekStep, IDeepseekStreamOptions, PROMPT_CACHE_KEEPALIVE_SETTING, runDeepseekLoop, watchedStream } from '../common/deepseek/loop.js';
-import { EditBaselineTracker } from './editBaselines.js';
+import { EditBaselineTracker, uriInsideRoot } from './editBaselines.js';
 import './host/hostToolService.js';
 import './memory/voltMemoryService.js';
 import { clearClaudeModelCache } from './agents/claudeCatalog.js';
@@ -80,7 +83,7 @@ import { loadProjectCheckFiles, loadWorkspaceRunPlan } from './host/workspaceRun
 import { classifyIntent, IIntent, mergeGrantedGroups } from '../common/harness/intent.js';
 import { buildAcpLead, IContextPackInput, IEnvironmentFacts } from '../common/harness/contextPack.js';
 import { formatPrimerFiles, IPreflightPlan, IPrimerEntry, preflightPlan, PRIMER_SKIP_DIRS, primerCandidate, rankPrimerFiles, selectPrimerFiles } from '../common/harness/preflight.js';
-import { formatWorkspaceContext, IWorkspaceSnapshot, WORKSPACE_SNAPSHOT_COMMAND_ID, workspaceContextKey } from '../common/harness/workspaceContext.js';
+import { IWorkspaceSnapshot, WORKSPACE_SNAPSHOT_COMMAND_ID, workspaceContextKey, workspaceLeadText } from '../common/harness/workspaceContext.js';
 import { INativeLoopMessage } from '../common/harness/nativeLoop.js';
 import { nativeToModelMessages } from '../common/harness/providerMessages.js';
 import { PathLocks, runToolBatch } from '../common/harness/toolRuntime.js';
@@ -98,7 +101,7 @@ import { applyCompaction, clearOldToolResults, COMPACTION_SYSTEM, compactionBoun
 import { chooseEffort, EffortLevel, higherEffort } from '../common/deepseek/effort.js';
 import { IToolDocuments, runtimeToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
-import { createRuntimeCodeIntel, IRuntimeCodeIntel } from './host/codeIntelHost.js';
+import { createRuntimeCodeIntel, DIAGNOSED_EXTENSIONS, IRuntimeCodeIntel } from './host/codeIntelHost.js';
 import { IMcpChat, McpHost } from './host/mcpHost.js';
 import { SANDBOX_SUPERVISOR_SETTING } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import { isMcpTrustAttestedByApproval, IVoltMcpApprovalRecord, VoltMcpApprovalStore } from '../common/harness/mcpApprovals.js';
@@ -125,6 +128,7 @@ import { IProofReview, IReceiptLine, IRunReceipt, isReceiptWorthShowing, NO_CODE
 import { PROOF_REVIEW_SYSTEM, parseProofReview, proofReviewRequest, reviewDiff } from '../common/harness/proofReview.js';
 import { decideContinuation, detectProjectChecks, ICheckReport, IProjectChecks, isSameCommand, ITodoEntry, mayMutateWorkspace, parseCheckOutput, regressionVerdict } from '../common/harness/verification.js';
 import { AgentPool, ISpareRequest } from './agentPool.js';
+import { IWorktreeSpare, WorktreeSpares } from '../common/orchestration/worktreeSpares.js';
 import { RunTraceJournal } from './history/runTraceJournal.js';
 import { ProofCaseJournal } from './history/proofCases.js';
 import { isAcpTurnRestartable } from '../common/harness/sessionRetry.js';
@@ -174,11 +178,18 @@ const TAB_PREDICTION_SESSION_ID = 'volt-tab-prediction';
 /** Bumped whenever the built-in profile list changes so existing installs pick it up. */
 const CLI_SEED_VERSION = 5;
 
-/** Idle chat agents kept warm per window, most recently used first. */
+/** Idle chat agents kept warm per window, most recently used first (agents that cannot resume, see IDLE_AGENT_GRACE_MS). */
 const MAX_IDLE_AGENTS = 3;
 /** An idle chat agent older than this is stopped even within the cap. */
 const IDLE_AGENT_TTL_MS = 15 * 60_000;
 const IDLE_AGENT_CHECK_MS = 60_000;
+/**
+ * An idle agent that can resume its session later (Claude Code, Codex: ACP `session/resume`) and is
+ * not the most recently used one stops this long after its last turn or prewarm. Its process (the
+ * ACP adapter and the CLI, a few hundred MB and some CPU at rest) comes back with the conversation
+ * intact when the chat is opened, focused or sent to (see `releasedAgent`).
+ */
+const IDLE_AGENT_GRACE_MS = 30_000;
 /** Appended to a native fast-lane request: a small change is edited, checked and answered without a test run or browser. */
 const FAST_LANE_NOTE = '[Volt] Small, well-scoped change: make the edit, check the files you changed for errors, and answer in a line or two. No test runs, builds, servers or browser unless the user asked for them.';
 /** The second opinion's wait: past it the run finishes with its items claimed, not reviewed. */
@@ -192,6 +203,18 @@ const NATIVE_IDLE_TTL_MS = 15 * 60_000;
 /** Warm spare agents for new chats (see AgentPool), across all models and folders. */
 const MAX_SPARE_AGENTS = 2;
 const SPARE_AGENT_TTL_MS = 10 * 60_000;
+/**
+ * Subagent spares started when a chat is about to call delegate_task (see prewarmSubagents), on
+ * top of MAX_SPARE_AGENTS. Three Claude subagents starting together cold took 8-21 s before their
+ * first request (harness bench, 2026-11-12), all of it on the run's critical path.
+ */
+const SUBAGENT_SPARES = 3;
+/** At most this many, when the request names more parts or agents (see subagentSpareCount). */
+const MAX_SUBAGENT_SPARES = 4;
+/** Unused subagent spares stop sooner: they were started for one delegate_task call. */
+const SUBAGENT_SPARE_TTL_MS = 90_000;
+/** Claude Code's name for Volt's delegate_task (`mcp__<server>__delegate_task`), or the bare name. */
+const DELEGATE_TOOL_NAME = /(^|__)delegate_task$/;
 /** How long a new run waits for a cancelled one to let go of its agent session. */
 const SETTLE_WAIT_AGENT_MS = 3_000;
 const SETTLE_WAIT_NATIVE_MS = 1_500;
@@ -225,6 +248,22 @@ const ACP_SUPERVISION: IAcpSupervisionOptions = {
 };
 /** Paths whose changes do not invalidate a cached check result. */
 const CHECK_NOISE = /\/(?:node_modules|\.git|coverage|\.nyc_output|dist|build|out|target|__pycache__|\.pytest_cache|\.next|\.turbo|\.cache)(?:\/|$)/;
+
+/**
+ * The session to resume for a start of this provider, model and folder, from the chat's stopped agent,
+ * with the sandbox config overlay that holds its transcript (a pooled spare's, when the chat's agent began as one).
+ */
+export function resumeFields(released: { readonly providerId: string; readonly ref: string; readonly cwd: string | undefined; readonly providerSessionId: string; readonly stateKey?: string } | undefined, providerId: string, ref: string, cwd: string | undefined): Pick<IAgentStartRequest, 'resumeSessionId' | 'resumeStateKey'> {
+	if (!released || released.providerId !== providerId || released.ref !== ref || released.cwd !== cwd) {
+		return {};
+	}
+	return { resumeSessionId: released.providerSessionId, ...(released.stateKey ? { resumeStateKey: released.stateKey } : {}) };
+}
+
+/** How many of the chat's messages a newly bound agent has seen: those its resumed session saw, else none. */
+export function resumedSynced(released: { readonly providerSessionId: string; readonly synced: number } | undefined, handle: IAgentSessionHandle): number {
+	return released && handle.resumed && handle.providerSessionId === released.providerSessionId ? released.synced : 0;
+}
 
 function isRunActive(session: ISessionState): boolean {
 	const status = session.activeRun?.status;
@@ -301,7 +340,7 @@ interface IParkedAgent {
 }
 
 type AgentTurnResult =
-	| { readonly kind: 'end'; readonly reason: 'done' | 'abort' | 'fail'; readonly assistant: string; readonly incomplete?: 'steps' }
+	| { readonly kind: 'end'; readonly reason: 'done' | 'abort' | 'fail'; readonly assistant: string; readonly incomplete?: 'steps'; /** The text after the turn's last tool call: a subagent's report. */ readonly final: string }
 	| { readonly kind: 'restart' }
 	| { readonly kind: 'stale' };
 
@@ -339,6 +378,8 @@ interface ISessionState extends IVoltSession {
 	agentJoinedLate?: IAgentSessionHandle;
 	/** The user restarted the agent while a turn held it: the next prompt starts a fresh one. */
 	restartPending?: boolean;
+	/** A Volt subagent's chat (a delegated task): its agent starts lean (see `IAgentStartRequest.subagent`). */
+	subagent?: VoltSubagentProfile;
 	/** Files the context retriever already showed this chat's agent with their code. */
 	retrievalSeen?: Set<string>;
 	/** Catalog ref the live agent session was started for. */
@@ -349,6 +390,12 @@ interface ISessionState extends IVoltSession {
 	agentSandboxKey?: string;
 	/** Last time the live agent started or finished a run; idle agents are let go oldest first. */
 	agentUsedAt?: number;
+	/**
+	 * The agent session the chat had before Volt stopped its idle process: the next start for the
+	 * same model and folder continues it (`IAgentStartRequest.resumeSessionId`), having seen `synced`
+	 * of the chat's messages, instead of a new session briefed with a recap.
+	 */
+	releasedAgent?: { readonly providerId: string; readonly ref: string; readonly cwd: string | undefined; readonly providerSessionId: string; readonly stateKey?: string; readonly synced: number };
 	/** Last time a native run ended (or its transcript was read back); idle transcripts go to disk oldest first. */
 	nativeUsedAt?: number;
 	/** One notice after a checkout is created or restored. */
@@ -371,6 +418,8 @@ interface ISessionState extends IVoltSession {
 	continuedFrom?: IVoltSeedOptions['continuedFrom'];
 	/** What the agent last heard about the window around the chat (see workspaceLead). */
 	workspaceSent?: { readonly handle: IAgentSessionHandle; readonly key: string };
+	/** The lead's standing notes this agent session has heard (see buildAcpLead); forgotten when it compacts. */
+	leadHeard?: { readonly handle: IAgentSessionHandle; readonly ids: Set<string> };
 }
 
 /** Native-model conversation state that outlives a single run. */
@@ -513,8 +562,6 @@ const REPLAY_TIMEOUT_MS = 20_000;
 const INTERRUPTED_BY_RESTART = 'Volt restarted while this call was running, so it was cut off before it returned. It may have taken effect in part or in full: check its effect first (read the file, git status, list the output), then run it again only if it is still needed.';
 const NOT_STARTED_BEFORE_RESTART = 'Volt restarted before this call started, so it did not run. Make it again if it is still needed.';
 
-/** Languages whose editor services report diagnostics worth waiting for. */
-const DIAGNOSED_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|cs|c|cc|cpp|h|hpp|php|rb|swift|dart|vue|svelte|css|scss|less|json)$/i;
 const SUBAGENT_TOOLS = ['read_file', 'list_dir', 'grep', 'glob', 'diagnostics', 'code_nav', 'git_status', 'git_diff', 'git_log', 'git_show', 'skill', 'state_read'];
 /** Claude Code tool names in a subagent's `tools:` list, as Volt's tools. */
 const SUBAGENT_TOOL_ALIASES: Record<string, readonly string[]> = {
@@ -556,6 +603,18 @@ const MAX_PARKED_PER_CHAT = 2;
 
 /** v2: the default for new chats is on (macOS, Linux); an `off` saved before it was the old default, not a choice. */
 const SANDBOX_DEFAULTS_VERSION = 2;
+
+/** What a spare for a chat's subagents starts with (`subagentSpareSetup`). */
+interface ISubagentSpareSetup {
+	readonly provider: IAgentProvider;
+	readonly profile: IProviderProfile;
+	readonly item: IVoltCatalogItem;
+	readonly options: IVoltModelOptions | undefined;
+	readonly settings: IVoltSandboxSettings;
+	readonly cwd: string | undefined;
+	readonly sandbox: IAgentSandboxStart | undefined;
+	readonly request: string | undefined;
+}
 
 export class AgentRuntimeService extends Disposable implements IAgentRuntimeService {
 
@@ -661,6 +720,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly postRunChecks = new Map<string, string>();
 	/** Title generation waiting for the chat's first reply text, or for the end of its run (see send). */
 	private readonly deferredTitles = new Map<string, { readonly start: () => void; readonly until: 'reply' | 'end' }>();
+	/** Tool searches in flight (`<chat>\0<call id>`): one that loads delegate_task means subagents soon. */
+	private readonly toolSearches = new Set<string>();
+	/** When each chat last warmed spares for its subagents (prewarmSubagents). */
+	private readonly subagentsWarmedAt = new Map<string, number>();
+	/** Worktrees made ahead, with a warm agent in each, for the worktree subagents a chat is about to start. */
+	private readonly worktreeSpares: WorktreeSpares;
+	/** Per chat, the worktree tasks its current run started (warmWorktreeSpares). */
+	private readonly worktreeTasksSeen = new Map<string, { readonly runId: string; readonly started: number }>();
 
 	private readonly _onDidChangeCatalog = this._register(new Emitter<void>());
 	readonly onDidChangeCatalog: Event<void> = this._onDidChangeCatalog.event;
@@ -737,10 +804,23 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.appState = new AgentAppStateStore(joinPath(environmentService.userRoamingDataHome, 'voltState'), fileService, logService);
 		this.agentPool = this._register(new AgentPool({
 			maxSpares: MAX_SPARE_AGENTS,
+			maxBurst: MAX_SUBAGENT_SPARES,
 			ttlMs: SPARE_AGENT_TTL_MS,
 			newAlias: () => `volt-pool-${generateUuid()}`,
 			onError: err => this.logService.trace('[volt] spare agent failed', err),
 		}));
+		this.worktreeSpares = new WorktreeSpares({
+			create: repoRoot => this.worktrees.create(repoRoot),
+			head: async repoRoot => {
+				const result = await this.worktrees.git(repoRoot, ['rev-parse', 'HEAD']);
+				return result.exitCode === 0 ? result.stdout.trim() || undefined : undefined;
+			},
+			moveTo: async (spare, commit) => (await this.worktrees.git(spare.path, ['reset', '--hard', '-q', commit])).exitCode === 0,
+			remove: async (repoRoot, spare) => {
+				await this.worktrees.remove(repoRoot, spare.path, spare.branch, { deleteBranch: true, force: true, ownsBranch: true });
+			},
+		}, SUBAGENT_SPARE_TTL_MS, err => this.logService.trace('[volt] worktree spare failed', err));
+		this._register({ dispose: () => this.worktreeSpares.clear() });
 		this.editBaselines = new EditBaselineTracker(fileService, (sessionId, path) => this.editableUri(sessionId, path));
 		this.registerProviders();
 		this.hostTools.setApprover({
@@ -806,6 +886,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	/** Each chat keeps its agent process warm for follow-ups; this keeps that from growing without bound. */
 	private readonly agentReaper = this._register(new RunOnceScheduler(() => this.releaseIdleAgents(), IDLE_AGENT_CHECK_MS));
+	private agentReaperDue = 0;
+
+	/** Runs the reaper within `delay`; an earlier check already scheduled is kept (finishing runs never postpone it). */
+	private scheduleReaper(delay = IDLE_AGENT_CHECK_MS): void {
+		const due = Date.now() + delay;
+		if (this.agentReaper.isScheduled() && this.agentReaperDue <= due) {
+			return;
+		}
+		this.agentReaperDue = due;
+		this.agentReaper.schedule(delay);
+	}
 
 	private releaseIdleAgents(): void {
 		const now = Date.now();
@@ -822,7 +913,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.releaseNative(session);
 		}
 		if (warmKept) {
-			this.agentReaper.schedule();
+			this.scheduleReaper();
 		}
 		// Sessions parked by a model switch: kept while fresh, at most MAX_IDLE_AGENTS over all chats.
 		const parked = [...this.sessions.values()].flatMap(session => (session.parkedAgents ?? []).map(agent => ({ session, agent })))
@@ -836,15 +927,28 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			.filter(session => session.agentHandle && !isRunActive(session))
 			.sort((a, b) => (b.agentUsedAt ?? 0) - (a.agentUsedAt ?? 0));
 		let kept = 0;
-		for (const session of idle) {
-			if (kept < MAX_IDLE_AGENTS && now - (session.agentUsedAt ?? 0) < IDLE_AGENT_TTL_MS) {
-				kept++;
-				continue;
+		let next = Infinity;
+		idle.forEach((session, index) => {
+			const age = now - (session.agentUsedAt ?? 0);
+			const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
+			if (index > 0 && session.agentHandle && provider?.canResume?.(session.agentHandle)) {
+				// Not the chat in use, and it comes back intact: stop it after a short grace.
+				if (age >= IDLE_AGENT_GRACE_MS) {
+					this.releaseAgent(session, true);
+				} else {
+					next = Math.min(next, IDLE_AGENT_GRACE_MS - age);
+				}
+				return;
 			}
-			this.releaseAgent(session);
-		}
-		if (kept) {
-			this.agentReaper.schedule();
+			if (kept < MAX_IDLE_AGENTS && age < IDLE_AGENT_TTL_MS) {
+				kept++;
+				next = Math.min(next, IDLE_AGENT_TTL_MS - age);
+				return;
+			}
+			this.releaseAgent(session, true);
+		});
+		if (next !== Infinity) {
+			this.scheduleReaper(Math.min(IDLE_AGENT_CHECK_MS, Math.max(1_000, next + 100)));
 		}
 	}
 
@@ -883,7 +987,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.releaseParked(session, agent => agent.ref === parked.ref && agent.cwd === parked.cwd);
 		session.parkedAgents = [parked, ...session.parkedAgents ?? []];
 		this.releaseParked(session, agent => session.parkedAgents!.indexOf(agent) >= MAX_PARKED_PER_CHAT);
-		this.agentReaper.schedule();
+		this.scheduleReaper();
 	}
 
 	/** A parked session of exactly this model, folder and sandbox that is still alive, taken out of the parking. */
@@ -901,10 +1005,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return parked;
 	}
 
-	/** Stops a chat's idle agent. Its next prompt starts a new one and recaps the conversation. */
-	private releaseAgent(session: ISessionState): void {
+	/**
+	 * Stops a chat's idle agent. With `resumable`, an agent that can continue its session later is
+	 * remembered: the chat's next start resumes it (see `releasedAgent`). Otherwise the next prompt
+	 * starts a new one and recaps the conversation.
+	 */
+	private releaseAgent(session: ISessionState, resumable = false): void {
 		const handle = session.agentHandle;
 		const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
+		session.releasedAgent = resumable && handle?.providerSessionId && provider && session.agentRef && provider.canResume?.(handle)
+			? { providerId: provider.id, ref: session.agentRef, cwd: session.agentCwd, providerSessionId: handle.providerSessionId, ...(handle.stateKey ? { stateKey: handle.stateKey } : {}), synced: session.agentSynced ?? 0 }
+			: undefined;
 		session.agentHandle = undefined;
 		session.agentProviderId = undefined;
 		session.agentRef = undefined;
@@ -1140,6 +1251,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
 		session.mode = request.mode;
 		session.providerRef = request.providerRef ?? session.providerRef ?? this.defaultRef(request.mode);
+		if (request.subagent) {
+			session.subagent = subagentProfile(request.subagent);
+		}
 		// A native run reads follow-ups between steps; there is nothing to restart.
 		if (session.run && this.steer(sessionId, request.text)) {
 			return session.run.runId;
@@ -1153,7 +1267,15 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.messages.push({ role: 'user', content: request.text });
 		const catalogItem = this.catalog.find(item => item.ref === session.providerRef && item.enabled) ?? this.catalog.find(item => item.enabled);
 		const userMessages = session.messages.filter(message => message.role === 'user');
-		if (!session.titleState && userMessages.length === 1) {
+		// A subagent's chat is named after its task (the orchestrator sets it): naming it again is a
+		// `claude -p` / `codex exec` process per subagent, started while the subagents start.
+		if (!session.titleState && userMessages.length === 1 && this.history.isSubagentSession?.(sessionId)) {
+			session.titleState = 'done';
+		} else if (!session.titleState && userMessages.length === 1 && isVagueMessage(request.text) && !attachmentNames(request).length) {
+			// "hi", "continue": a model can only answer "Quick question" (a `claude -p` call of ~1.3k
+			// tokens). The first line stays the title until the next message titles the chat from both.
+			session.titleRetry = 'due';
+		} else if (!session.titleState && userMessages.length === 1) {
 			session.titleState = 'pending';
 			session.titleRetry = isVagueMessage(request.text) ? 'due' : undefined;
 			this.startTitle(session, catalogItem, buildTitlePrompt(request.text, attachmentNames(request)), true);
@@ -1400,7 +1522,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * bound to this chat until a send adopts it. For a native model it fills the caches a send
 	 * reads before its request instead (see prewarmNative).
 	 */
-	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void {
+	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode, options?: IAgentPrewarmOptions): void {
+		const ttlMs = options?.ttlMs;
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
 		if (session.run && !session.run.ended) {
 			return;
@@ -1418,33 +1541,41 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const cwd = this.executionRoot(session)?.fsPath;
 		if (session.agentHandle && session.agentRef === item.ref && session.agentCwd === cwd && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true)) {
+			// The chat is in use: its agent is the one kept warm (see releaseIdleAgents).
+			if (!isRunActive(session)) {
+				session.agentUsedAt = Date.now();
+			}
 			return;
 		}
-		// A new agent's first prompt says whether the project is indexed: ask now, not on the send.
+		// A new agent's first prompt says whether the project is indexed and carries the memory notes:
+		// read both now, not on the send (the notes' sandboxed host takes ~0.5 s to start).
 		void this.largeIndexedProject(this.executionRoot(session));
+		void this.memory.context().catch(() => undefined);
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
-		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox);
-		if (this.agentPool.has(spare.key)) {
+		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox, session.subagent);
+		// A chat whose idle agent was stopped gets it back (session/resume): only a spare for this chat can.
+		const resuming = !!this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode, sandbox).resumeSessionId;
+		if (!resuming && this.agentPool.has(spare.key)) {
+			// Asked again: a short-lived spare (see IAgentPrewarmOptions.ttlMs) gets this ask's time to live.
+			this.agentPool.ensure(spare, ttlMs ? { ttlMs } : undefined);
 			return;
 		}
 		// A spare under an alias serves whichever chat sends first, but its browser tools reach the
 		// chat only when the host tool service follows aliases. Otherwise park one for this chat in
 		// the provider (its host MCP URL names the chat), which `start` adopts.
 		const perChat = provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'prewarmSpare' | 'hasSpare'>>;
-		if (!this.aliasHost() && perChat.prewarmSpare && perChat.hasSpare) {
+		if ((resuming || !this.aliasHost()) && perChat.prewarmSpare && perChat.hasSpare) {
 			// One chat in view at a time: stop spares other providers parked for chats left behind.
 			for (const other of this.agentProviders.values()) {
 				if (other !== provider) {
 					(other as Partial<Pick<AcpAgentProvider, 'releaseSpares'>>).releaseSpares?.(session.sessionId);
 				}
 			}
-			const request = this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode, sandbox);
-			if (!perChat.hasSpare(request)) {
-				void perChat.prewarmSpare(request);
-			}
+			// Parks a spare, or gives the one parked this ask's time to live.
+			void perChat.prewarmSpare(this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode, sandbox), ttlMs);
 			return;
 		}
-		this.agentPool.ensure(spare);
+		this.agentPool.ensure(spare, ttlMs ? { ttlMs } : undefined);
 	}
 
 	/**
@@ -1461,7 +1592,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		void this.apiKey(profile).catch(() => undefined);
 	}
 
-	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart): IAgentStartRequest {
+	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart, subagent = (this.sessions.get(sessionId) as ISessionState | undefined)?.subagent): IAgentStartRequest {
+		const resume = resumeFields((this.sessions.get(sessionId) as ISessionState | undefined)?.releasedAgent, profile.providerId, item.ref, cwd);
 		return {
 			sessionId,
 			mode,
@@ -1470,6 +1602,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			modelId: item.id === profile.providerId ? undefined : item.id,
 			options: this.resolvedOptions(item, options),
 			...(sandbox ? { sandbox } : {}),
+			...(subagent ? { subagent } : {}),
+			...resume,
 		};
 	}
 
@@ -1494,18 +1628,19 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** Pool key: an agent can serve a chat when all of these match. */
-	private poolKey(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined): string {
+	private poolKey(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined, subagent: VoltSubagentProfile | undefined): string {
 		const resolved = this.resolvedOptions(item, options);
 		const sorted = Object.keys(resolved).sort().map(key => [key, resolved[key]]);
-		return JSON.stringify([provider.id, profile.id, item.ref, cwd ?? '', sorted, sandboxLaunchKey(sandbox?.settings)]);
+		return JSON.stringify([provider.id, profile.id, item.ref, cwd ?? '', sorted, sandboxLaunchKey(sandbox?.settings), ...(subagent ? [`subagent:${subagent}`] : [])]);
 	}
 
-	private spareRequest(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined): ISpareRequest {
+	/** A spare for a subagent's chat starts lean like the chat's own agent would, and only subagents adopt it. */
+	private spareRequest(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, sandbox: IAgentSandboxStart | undefined, subagent: VoltSubagentProfile | undefined): ISpareRequest {
 		return {
-			key: this.poolKey(provider, profile, item, cwd, options, sandbox),
+			key: this.poolKey(provider, profile, item, cwd, options, sandbox, subagent),
 			providerId: provider.id,
 			start: async alias => {
-				const handle = await provider.start(this.agentStartRequest(alias, profile, item, cwd, options, 'agent', sandbox));
+				const handle = await provider.start(this.agentStartRequest(alias, profile, item, cwd, options, 'agent', sandbox, subagent));
 				try {
 					await provider.applyAccessPolicy?.(handle, this.policyFor(undefined));
 				} catch (err) {
@@ -1549,8 +1684,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.agentCwd = cwd;
 		session.agentSandboxKey = sandboxKey;
 		session.agentUsedAt = Date.now();
-		// A fresh agent process has seen nothing of this conversation yet.
-		session.agentSynced = 0;
+		// A fresh agent process has seen nothing of this conversation yet; a resumed one saw what it had seen before it stopped.
+		session.agentSynced = resumedSynced(session.releasedAgent, handle);
+		// The chat's agent is this one now: an older stopped session is never resumed over it.
+		session.releasedAgent = undefined;
 	}
 
 	/** Lets go of the chat's current agent, if any. */
@@ -1590,6 +1727,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session.agentHandle && (session.agentSynced ?? 0) > session.messages.length) {
 			this.disposeSessionAgent(session);
 			session.agentSynced = 0;
+		}
+		if (session.releasedAgent && session.releasedAgent.synced > session.messages.length) {
+			session.releasedAgent = undefined;
 		}
 		this.releaseParked(session, agent => agent.synced > session.messages.length);
 	}
@@ -1865,7 +2005,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * One stateless completion. Chat models go through HTTP with `messages` as they are. Agent refs
 	 * go to the predictor's warm ACP session, which knows `task` from its skill.
 	 */
-	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken, task: PredictorTask): AsyncIterable<IVoltEvent> {
+	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken, task?: PredictorTask): AsyncIterable<IVoltEvent> {
 		const item = this.catalog.find(c => c.ref === ref);
 		if (!item) {
 			throw new Error(`Unknown catalog ref ${ref}`);
@@ -1875,7 +2015,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			throw new Error(`Missing profile for catalog ref ${ref}`);
 		}
 		if (item.kind === 'agent') {
-			yield* this.predictor.ask(item.ref, task, predictorRequest(task, messages), token);
+			// Without a task (an older caller) the request names none and queues like a typing task.
+			yield* this.predictor.ask(item.ref, task ?? 'code', predictorRequest(task, messages), token);
 			return;
 		}
 		const provider = this.modelProviders.get(profile.providerId);
@@ -2555,7 +2696,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	private onHostToolResult(call: IVoltHostToolInvocation): void {
 		const session = this.sessions.get(this.chatFor(call.sessionId));
-		if (!session || call.name === ASK_QUESTION_TOOL_NAME || call.name === AWAIT_ANSWERS_TOOL_NAME) {
+		// An edit check from Claude Code's hooks is not a call the agent made.
+		if (!session || call.name === ASK_QUESTION_TOOL_NAME || call.name === AWAIT_ANSWERS_TOOL_NAME || editCheckPhase(call.name, call.args)) {
 			return;
 		}
 		// A page or chart spec can be hundreds of KB; the visual's stored copy is what the transcript keeps.
@@ -4692,7 +4834,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session.messages.some(message => message.role === 'assistant')) {
 			return undefined;
 		}
-		const plan = preflightPlan(request.text, intent);
+		const plan = preflightPlan(request.text, intent, { delegating: !session.subagent });
 		const root = this.executionRoot(session);
 		if (!plan || !root || root.scheme !== Schemas.file) {
 			return undefined;
@@ -4766,25 +4908,39 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * What the user has open beside the chat (right-panel tabs, the device and its app, terminals,
 	 * git), for agents that cannot see Volt's window. Sent when this agent session has not heard it
 	 * or it changed, so an unchanged window costs nothing; workspace_status has the details. The
-	 * window answers within a bounded time or the turn goes without.
+	 * window is asked when the run starts ({@link askWorkspaceSnapshot}), so its round trip overlaps
+	 * the agent's start; the prompt then waits a bounded time for the answer or goes without.
 	 */
-	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle): Promise<string | undefined> {
+	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle, asked: Promise<IWorkspaceSnapshot | undefined> | undefined, agentHasGitStatus: boolean): Promise<string | undefined> {
+		if (!asked) {
+			return undefined;
+		}
 		// A busy window answers late: this turn goes without, and the next one sends it (nothing was marked sent).
-		const snapshot = await raceTimeout(this.commandService.executeCommand<IWorkspaceSnapshot | undefined>(WORKSPACE_SNAPSHOT_COMMAND_ID, session.sessionId).catch(() => undefined), WORKSPACE_LEAD_WAIT_MS);
+		const snapshot = await raceTimeout(asked, WORKSPACE_LEAD_WAIT_MS);
 		if (!snapshot) {
 			return undefined;
 		}
-		const key = workspaceContextKey(snapshot);
-		if (session.workspaceSent?.handle === handle && session.workspaceSent.key === key) {
+		const sentKey = session.workspaceSent?.handle === handle ? session.workspaceSent.key : undefined;
+		session.workspaceSent = { handle, key: workspaceContextKey(snapshot) };
+		return workspaceLeadText(snapshot, sentKey, agentHasGitStatus);
+	}
+
+	/** Asks the chat's window what the user has open, for {@link workspaceLead}; undefined when the turn goes without. */
+	private askWorkspaceSnapshot(session: ISessionState, request: IVoltSendRequest, intent: IIntent): Promise<IWorkspaceSnapshot | undefined> | undefined {
+		// A subagent reports to another agent, not to the user looking at the window. "hi" or "thanks"
+		// needs no workspace either (~160 tokens): nothing is marked sent, so the next real request carries it.
+		if (session.subagent || intent.smallTalk || isCompactCommand(request.text) || isVoltNote(request.text)) {
 			return undefined;
 		}
-		session.workspaceSent = { handle, key };
-		return formatWorkspaceContext(snapshot);
+		return this.commandService.executeCommand<IWorkspaceSnapshot | undefined>(WORKSPACE_SNAPSHOT_COMMAND_ID, session.sessionId).catch(() => undefined);
 	}
 
 	/** What `buildAcpLead` reads, and nothing else: the lead is built on every turn's critical path. */
 	private async contextPackInput(session: ISessionState, mode: VoltMode, intent: IIntent, withMemory: boolean, indexed: Promise<boolean>): Promise<IContextPackInput> {
 		const root = this.executionRoot(session);
+		// A subagent's agent has only its profile's host tool groups: its notes name only those tools.
+		const groups = session.subagent ? SUBAGENT_HOST_TOOL_GROUPS[session.subagent] : undefined;
+		const has = (group: VoltHostToolGroup) => !groups || groups.includes(group);
 		return {
 			...(withMemory ? { memory: await raceTimeout(this.memory.context().catch(() => undefined), MEMORY_WAIT_MS) } : {}),
 			mode,
@@ -4793,11 +4949,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			environment: this.environmentFacts(root),
 			...(intent.shape ? { shape: intent.shape } : {}),
 			...(mode === 'multitask' ? { taskModels: [...new Set(this.listCatalog().filter(item => item.enabled).map(item => item.label))] } : {}),
-			visuals: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
+			visuals: has('visuals') && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.group === 'visuals'),
 			...(withMemory && await indexed ? { codeIndexed: true } : {}),
-			...(this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'code_nav') ? { ideTools: true } : {}),
-			browserTools: this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run'),
-			...(intent.wantsGit && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'propose_commits') ? { commitReview: true } : {}),
+			...(this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'code_nav') ? { ideTools: true, ...(!has('ide') || this.getSandboxSettings(session.sessionId).level !== 'off' ? { sandboxed: true } : {}) } : {}),
+			browserTools: has('browser') && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'browser_run'),
+			...(intent.wantsGit && has('pullRequests') && this.hostTools.getMcpServers().length > 0 && this.hostTools.listTools().some(tool => tool.name === 'propose_commits') ? { commitReview: true } : {}),
 		};
 	}
 
@@ -4904,6 +5060,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const retrieval = isCompactCommand(request.text) || isVoltNote(request.text) ? undefined : this.retrieveContext(session, run, request.text, true);
 		// Asked now, so its wait overlaps the agent's start instead of following it (only a new agent's lead uses it).
 		const indexed = this.largeIndexedProject(this.executionRoot(session));
+		// The window's round trip too: what it shows at Enter, ready when the agent is.
+		const workspace = this.askWorkspaceSnapshot(session, request, intent);
 		// Another model from the same CLI is another agent session: restart it; the recap carries the thread over.
 		const hasLiveAgent = () => !!session.agentHandle && session.agentProviderId === provider.id && session.agentRef === item.ref
 			&& session.agentCwd === this.executionRoot(session)?.fsPath && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true);
@@ -4961,6 +5119,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						return;
 					}
 					run.metrics.mark('agentReady');
+					if (requestAsksForSubagents(request.text)) {
+						// The subagents are one model request away: their agents start now, not when the call streams.
+						this.prewarmSubagents(session);
+					}
 					provider.setRunContext?.(handle, { sessionId: session.sessionId, runId: run.runId, mode: request.mode });
 					const handoff = this.contextHandoff(session, item, reused);
 					if (handoff && !reused) {
@@ -4973,18 +5135,25 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					const leadStarted = Date.now();
 					const leadParts: string[] = [];
 					const timed = <T>(name: string, promise: Promise<T>) => promise.finally(() => leadParts.push(`${name} ${Date.now() - leadStarted}ms`));
-					const [primer, pack, workspace, retrieved] = await Promise.all([
+					const [primer, pack, workspaceText, retrieved] = await Promise.all([
 						// The turn primer (first turn only): the relevant files and the app open in the chat's browser.
 						attempt === 0 ? timed('primer', this.turnPrimer(session, run, request, intent)) : undefined,
 						timed('context', this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused, indexed)),
-						timed('workspace', this.workspaceLead(session, handle)),
+						// Claude Code starts each session with its own git status.
+						timed('workspace', this.workspaceLead(session, handle, workspace, profile.providerId === 'claude-code')),
 						// The retriever's deadline is soft (searches already running finish): cut it here.
 						retrieval ? timed('retrieval', raceTimeout(retrieval, AGENT_RETRIEVAL_DEADLINE_MS)) : undefined,
 					]);
 					if (Date.now() - leadStarted >= SLOW_LEAD_MS) {
 						this.logService.info(`[volt] lead for run ${run.runId} took ${Date.now() - leadStarted}ms (${leadParts.join(', ')})`);
 					}
-					const lead = [handoff?.text, moved, buildAcpLead(pack), retrieved?.text, primer, workspace].filter(Boolean).join('\n\n') || undefined;
+					// Standing notes go to an agent session once (a new or restarted agent hears them again).
+					if (session.leadHeard?.handle !== handle) {
+						session.leadHeard = { handle, ids: new Set() };
+					}
+					// A block that only lists the files the message names by path tells the agent nothing.
+					const context = retrieved && retrievalAddsToMessage(retrieved.files, request.text) ? retrieved.text : undefined;
+					const lead = [handoff?.text, moved, buildAcpLead(pack, session.leadHeard.ids), context, primer, workspaceText].filter(Boolean).join('\n\n') || undefined;
 					if (moved && session.moved?.model === moved) {
 						session.moved = undefined;
 					}
@@ -5008,6 +5177,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						continue;
 					}
 					turns.push(first.assistant);
+					let final = first.final;
 					let reason = first.reason;
 					let incomplete = first.incomplete;
 					// The agent wants to stop. Volt's checks may send it back once per reason. A run cut at its
@@ -5026,6 +5196,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 							break;
 						}
 						turns.push(next.assistant);
+						final = next.final || final;
 						reason = next.reason;
 						incomplete = next.incomplete;
 					}
@@ -5035,7 +5206,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					const assistant = turns.filter(text => text.trim()).join('\n\n');
 					const agentActivity = this.runActivity(run);
 					if (assistant || agentActivity) {
-						session.messages.push({ role: 'assistant', content: assistant, model: item.label, ...(agentActivity ? { activity: agentActivity } : {}) });
+						// A subagent's report is its final message, as its brief says: not the notes it wrote between tool calls.
+						const report = session.subagent ? subagentReport(assistant, final) : undefined;
+						session.messages.push({ role: 'assistant', content: assistant, model: item.label, ...(agentActivity ? { activity: agentActivity } : {}), ...(report ? { report } : {}) });
 					}
 					session.agentSynced = session.messages.length;
 					if (voltCompaction && reason === 'done' && assistant.trim()) {
@@ -5082,6 +5255,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private async agentTurn(session: ISessionState, run: IRunState, provider: IAgentProvider, handle: IAgentSessionHandle, profile: IProviderProfile, item: IVoltCatalogItem, message: IAgentMessage, mayRestart: boolean): Promise<AgentTurnResult> {
 		const token = run.cancel.token;
 		let assistant = '';
+		// Where the text after the last tool call starts in `assistant` (undefined: no text since).
+		let finalFrom: number | undefined;
 		let textId: string | undefined;
 		let restart = false;
 		let reason: 'done' | 'abort' | 'fail' | undefined;
@@ -5122,8 +5297,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					if (textId !== undefined && event.id !== textId && assistant && !assistant.endsWith('\n')) {
 						assistant += '\n\n';
 					}
+					if (finalFrom === undefined) {
+						finalFrom = assistant.length;
+					}
 					textId = event.id;
 					assistant += event.delta;
+				}
+				if (event.type === 'tool.start') {
+					finalFrom = undefined;
+				}
+				if (event.type === 'context.compaction' && event.status === 'completed' && session.leadHeard?.handle === handle) {
+					// The summary may have dropped the standing notes: the next turn sends them again.
+					session.leadHeard = undefined;
 				}
 				if (event.type === 'title' && session.agentJoinedLate === handle) {
 					// Codex titled a handed-off chat "<conversation_so_far> This conversation started...".
@@ -5145,7 +5330,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return { kind: 'restart' };
 		}
 		trace.end(reason ?? 'done');
-		return { kind: 'end', reason: reason ?? 'done', assistant, ...(incomplete ? { incomplete } : {}) };
+		return { kind: 'end', reason: reason ?? 'done', assistant, final: finalFrom === undefined ? '' : assistant.slice(finalFrom).trim(), ...(incomplete ? { incomplete } : {}) };
 	}
 
 	/** A warm spare when one fits (or is about to), otherwise a cold start bound to this chat. */
@@ -5297,12 +5482,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private async acquireAgent(session: ISessionState, run: IRunState, provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, request: IVoltSendRequest, intent: IIntent, restart: boolean): Promise<void> {
 		const cwd = this.executionRoot(session)?.fsPath;
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
-		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options, sandbox);
+		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options, sandbox, session.subagent);
 		run.spare = spareRequest;
-		// A spare's browser tools reach this chat only when the host tool service maps its alias.
-		const usePool = this.aliasHost() || !(intent.wantsPreview || intent.matchesDesign);
+		const startRequest = this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode, sandbox);
+		// A spare's browser tools reach this chat only when the host tool service maps its alias. A chat
+		// whose idle agent was stopped resumes it instead of taking a pooled stranger.
+		const usePool = !startRequest.resumeSessionId && (this.aliasHost() || !(intent.wantsPreview || intent.matchesDesign));
 		// The provider may hold a spare it parked for this chat (prewarmAgent without alias support).
-		const parked = (provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'hasSpare'>>).hasSpare?.(this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode, sandbox));
+		const parked = (provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'hasSpare'>>).hasSpare?.(startRequest);
 		if (!(usePool && this.agentPool.isReady(spareRequest.key)) && !parked) {
 			// No agent is up for this chat: one starts now, and the chat says so until it has the prompt.
 			this.emitStarting(session, run);
@@ -5372,11 +5559,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		if (session.agentHandle) {
 			session.agentUsedAt = Date.now();
-			this.agentReaper.schedule();
+			// Soon: the agents of other chats whose grace is over go now that this one is the most recent.
+			this.scheduleReaper(1_000);
 		}
 		if (run.engine === 'native' && session.deepseek) {
 			session.nativeUsedAt = Date.now();
-			this.agentReaper.schedule();
+			this.scheduleReaper();
 		}
 		this.emit(session, run.runId, { type: 'lifecycle', phase: reason === 'done' ? 'completed' : reason === 'abort' ? 'cancelled' : 'failed' });
 		this.emit(session, run.runId, { type: 'run.end', runId: run.runId, reason, ...(incomplete && reason === 'done' ? { incomplete } : {}) });
@@ -5425,6 +5613,138 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 	}
 
+	/**
+	 * Spots a chat about to delegate: its delegate_task call has started streaming, or a tool search
+	 * just loaded delegate_task (the first call in a Claude Code session; about 5 s before the tasks
+	 * exist). Either way the subagents are seconds away, so their spares start now.
+	 */
+	private noteDelegation(session: ISessionState, event: Extract<IVoltEvent, { type: 'tool.start' | 'tool.end' }>): void {
+		const key = `${session.sessionId}\0${event.callId}`;
+		if (event.type === 'tool.start') {
+			if (event.name === 'ToolSearch') {
+				if (this.toolSearches.size > 100) {
+					this.toolSearches.clear();
+				}
+				this.toolSearches.add(key);
+			} else if (DELEGATE_TOOL_NAME.test(event.name)) {
+				this.prewarmSubagents(session);
+			}
+			return;
+		}
+		if (this.toolSearches.delete(key) && /delegate_task/.test(JSON.stringify(event.result ?? event.output ?? ''))) {
+			this.prewarmSubagents(session);
+		}
+	}
+
+	/**
+	 * Starts spares for the subagents `session` is about to start: the chat's own model, options,
+	 * folder and sandbox (a subagent inherits them unless the call names others), so one
+	 * delegate_task call with several tasks finds them warm instead of starting each cold. Spares a
+	 * call does not use stop after SUBAGENT_SPARE_TTL_MS. Worktree subagents get theirs from their
+	 * first task on (see warmWorktreeSpares).
+	 */
+	private prewarmSubagents(session: ISessionState): void {
+		const now = Date.now();
+		// A subagent rarely delegates (depth-limited), and one call's spares serve the whole call.
+		if (now - (this.subagentsWarmedAt.get(session.sessionId) ?? 0) < 30_000) {
+			return;
+		}
+		const setup = this.subagentSpareSetup(session);
+		if (!setup) {
+			return;
+		}
+		this.subagentsWarmedAt.set(session.sessionId, now);
+		// The call's roles are still streaming: an Ask or Plan chat's subagents are all read-only (see
+		// `subagentProfileForTask`); elsewhere the request says whether its parts edit, read, or both.
+		const kinds = subagentSpareKinds(modePolicy(session.mode).allowWrites, setup.request, subagentSpareCount(setup.request, SUBAGENT_SPARES, MAX_SUBAGENT_SPARES));
+		for (const kind of ['work', 'readonly'] as const) {
+			if (kinds[kind]) {
+				this.agentPool.ensure(this.subagentSpareRequest(setup, kind), { count: kinds[kind], ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
+			}
+		}
+	}
+
+	/** What a spare for `session`'s subagents starts with; undefined when they get none. */
+	private subagentSpareSetup(session: ISessionState): ISubagentSpareSetup | undefined {
+		if (session.subagent || this.configurationService.getValue<boolean>(ORCH_WARM_SUBAGENTS_SETTING) === false) {
+			return undefined;
+		}
+		const item = session.agentRef ? this.catalog.find(candidate => candidate.ref === session.agentRef && candidate.enabled) : undefined;
+		const profile = item ? this.profiles.find(candidate => candidate.id === item.profileId) : undefined;
+		const provider = profile ? this.agentProviders.get(profile.providerId) : undefined;
+		if (!item || item.kind !== 'agent' || !profile || !provider) {
+			return undefined;
+		}
+		let request: string | undefined;
+		for (let i = session.messages.length - 1; i >= 0 && request === undefined; i--) {
+			const message = session.messages[i];
+			if (message.role === 'user' && !message.steer) {
+				request = message.content;
+			}
+		}
+		const cwd = this.executionRoot(session)?.fsPath;
+		const settings = this.getSandboxSettings(session.sessionId);
+		const sandbox: IAgentSandboxStart | undefined = settings.level === 'off' ? undefined : { settings, workspaceRoots: sandboxWorkspaceRoots(cwd, this.projectRoot(session)?.fsPath, !!session.worktreePath) };
+		return { provider, profile, item, options: this.getModelOptions(item.ref), settings, cwd, sandbox, request };
+	}
+
+	private subagentSpareRequest(setup: ISubagentSpareSetup, kind: VoltSubagentProfile): ISpareRequest {
+		return this.spareRequest(setup.provider, setup.profile, setup.item, setup.cwd, setup.options, setup.sandbox, kind);
+	}
+
+	/**
+	 * A worktree made ahead for a worktree subagent of `repoRoot` (see WorktreeSpares), at the
+	 * repository's HEAD, with a warm agent in it; undefined when there is none, and the caller makes one.
+	 * Each worktree task of `parentSessionId` also warms worktrees for the parts still to come.
+	 */
+	takeWorktreeSpare(repoRoot: string, parentSessionId?: string): Promise<IWorktreeSpare | undefined> {
+		const taking = this.worktreeSpares.take(repoRoot);
+		if (parentSessionId) {
+			this.warmWorktreeSpares(repoRoot, parentSessionId);
+		}
+		return taking;
+	}
+
+	/**
+	 * A chat's parts run in worktrees of their own: the spares warmed in its folder never fit them (an
+	 * agent's folder is fixed). From its first worktree task on, the parts its request names that have
+	 * not started yet get a worktree made ahead each, with an agent starting in it, and the folder's
+	 * work spares stop. Only for a request that names how many parts it has: one worktree task alone
+	 * warms nothing it would not use. (Guessing worktrees from the request's words warmed four that
+	 * went unused when the lead made its own worktrees and ran its parts shared, ADEMark C1.)
+	 */
+	private warmWorktreeSpares(repoRoot: string, parentSessionId: string): void {
+		const session = this.sessions.get(parentSessionId) as ISessionState | undefined;
+		const setup = session && !session.worktreePath ? this.subagentSpareSetup(session) : undefined;
+		const named = namedSubagentCount(setup?.request);
+		if (!session || !setup || !named) {
+			return;
+		}
+		const runId = session.run?.runId ?? '';
+		const seen = this.worktreeTasksSeen.get(parentSessionId);
+		const started = (seen?.runId === runId ? seen.started : 0) + 1;
+		if (this.worktreeTasksSeen.size > 100) {
+			this.worktreeTasksSeen.clear();
+		}
+		this.worktreeTasksSeen.set(parentSessionId, { runId, started });
+		if (started === 1) {
+			this.agentPool.discard(this.subagentSpareRequest(setup, 'work').key);
+		}
+		const want = Math.min(named, MAX_SUBAGENT_SPARES) - started;
+		if (want > 0) {
+			this.worktreeSpares.fill(repoRoot, want, spare => this.warmWorktreeSpare(setup.provider, setup.profile, setup.item, setup.options, setup.settings, repoRoot, spare));
+		}
+	}
+
+	/** A work subagent's spare agent in a worktree made ahead for it; returns what stops it. */
+	private warmWorktreeSpare(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, options: IVoltModelOptions | undefined, settings: IVoltSandboxSettings, repoRoot: string, spare: IWorktreeSpare): () => void {
+		// As `sandboxStart` gives the subagent once it works there.
+		const sandbox: IAgentSandboxStart | undefined = settings.level === 'off' ? undefined : { settings, workspaceRoots: sandboxWorkspaceRoots(spare.path, repoRoot, true) };
+		const request = this.spareRequest(provider, profile, item, spare.path, options, sandbox, 'work');
+		this.agentPool.ensure(request, { count: 1, ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
+		return () => this.agentPool.discard(request.key);
+	}
+
 	private emit(session: ISessionState, runId: string, event: IVoltEvent): void {
 		const envelope: IVoltEventEnvelope = {
 			seq: ++session.seq,
@@ -5441,6 +5761,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			listener(envelope);
 		}
 		this._onDidEmit.fire(envelope);
+		if (event.type === 'tool.start' || event.type === 'tool.end') {
+			this.noteDelegation(session, event);
+		}
 		if (this.deferredTitles.size && (event.type === 'text.delta' || event.type === 'run.end')) {
 			const deferred = this.deferredTitles.get(session.sessionId);
 			if (deferred && (event.type === 'run.end' || deferred.until === 'reply')) {
@@ -5838,7 +6161,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			: posix.isAbsolute(path) || /^[a-zA-Z]:[\\/]/.test(path)
 				? root.with({ path: URI.file(path).path })
 				: joinPath(root, path.replace(/^\.\//, ''));
-		return isEqualOrParent(uri, root) ? uri : undefined;
+		return uriInsideRoot(uri, root);
 	}
 
 	private onAcpFileWrite(write: IAcpFileWrite): void {
@@ -5880,6 +6203,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			provider.setFileWriteObserver(write => this.onAcpFileWrite(write));
 			provider.setQuestionAsker((sessionId, runId, draft) => this.askQuestions(sessionId, runId, draft));
 			provider.setSupervisionOptions(ACP_SUPERVISION);
+			// Claude Code plugins Volt passes to its sessions (claudeLazyToolsPlugin); read-only in the sandbox (AGENT_FOOTPRINTS).
+			provider.setClaudePluginsRoot(async () => {
+				const home = await this.pathService.userHome().catch(() => undefined);
+				return home && joinPath(home, '.volt', 'claude-plugins');
+			});
 			this._register(provider.onDidChangeBackgroundTasks(task => this.onAgentBackgroundTask(provider, task)));
 			this.agentProviders.set(provider.id, provider);
 		}

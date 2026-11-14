@@ -11,7 +11,7 @@ import { basename, dirname, isAbsolute, join, resolve } from '../../../base/comm
 import { isWindowsPathInside } from '../common/mxc.js';
 import type { ISandboxContainedPath } from '../common/compile.js';
 import { SandboxUnavailableError } from '../common/sandboxBackend.js';
-import { isReservedEnvName, isSecretEnvName, systemReadPaths } from '../common/sandboxProfiles.js';
+import { isReservedEnvName, isSecretEnvName, systemReadPaths, XCRUN_CACHE } from '../common/sandboxProfiles.js';
 import { IResolvedGitDir, IResolvedPattern, IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { IVoltSandboxPolicy } from '../common/sandboxSchema.js';
 
@@ -95,12 +95,16 @@ export async function canonicalPath(path: string, realpath: Realpath = p => fs.r
 }
 
 /**
- * {@link canonicalPath} for one resolution: each path's lookups start at most once and run
- * concurrently, so a policy's hundred-odd paths cost about one file-system round trip instead of
- * one each. Answers are the ones a serial walk would get from the same file system.
+ * {@link canonicalPath} for one resolution: each path's answer is looked up once, and every lookup
+ * of the run can be in flight together. A profile names a few hundred paths, most below the same
+ * missing parents (`~/.config/…`); one at a time that was 560 `realpath` calls in a row for the
+ * agent profile, about 50 ms of a busy machine's launch. Nothing is kept past the resolution, so
+ * a path the workload changes later is read again by the next run. Answers are the ones a serial
+ * walk would get from the same file system.
  */
-function canonicalizer(): (path: string) => Promise<ICanonical> {
+function canonicalResolver(): (path: string) => Promise<ICanonical> {
 	const reals = new Map<string, Promise<string>>();
+	const answers = new Map<string, Promise<ICanonical>>();
 	const realpath: Realpath = path => {
 		let real = reals.get(path);
 		if (!real) {
@@ -110,7 +114,6 @@ function canonicalizer(): (path: string) => Promise<ICanonical> {
 		}
 		return real;
 	};
-	const answers = new Map<string, Promise<ICanonical>>();
 	return path => {
 		let answer = answers.get(path);
 		if (!answer) {
@@ -153,27 +156,27 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	const notes: string[] = [];
 	const refuse = (message: string): never => { throw new SandboxUnavailableError(message, 'unavailable'); };
 	const home = host.home;
-	const canonical = canonicalizer();
-	for (const root of context.workspaceRoots) {
-		if (isAbsolute(root)) {
-			void canonical(root);
-		}
-	}
+	const canonical = canonicalResolver();
+	/** Every path of `paths` canonicalised, together, in order. */
+	const canonicalAll = (paths: readonly string[]) => Promise.all(paths.map(canonical));
 
 	const workspaceRoots: string[] = [];
 	for (const root of context.workspaceRoots) {
 		if (!isAbsolute(root)) {
 			refuse(`Workspace root is not absolute: ${root}`);
 		}
-		const resolved = await canonical(root);
-		if (!resolved.exists || !resolved.isDirectory) {
+	}
+	const workspaceAnswers = await canonicalAll(context.workspaceRoots);
+	for (const [i, root] of context.workspaceRoots.entries()) {
+		const answer = workspaceAnswers[i];
+		if (!answer.exists || !answer.isDirectory) {
 			notes.push(`workspace root does not exist: ${root}`);
 			continue;
 		}
-		if (resolved.path === '/' || isInside(home, resolved.path)) {
-			refuse(`Refusing a workspace that is / or contains the home folder: ${resolved.path}`);
+		if (answer.path === '/' || isInside(home, answer.path)) {
+			refuse(`Refusing a workspace that is / or contains the home folder: ${answer.path}`);
 		}
-		workspaceRoots.push(resolved.path);
+		workspaceRoots.push(answer.path);
 	}
 	let storage: string | undefined;
 	if (context.storageDir) {
@@ -183,14 +186,24 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	await fs.mkdir(join(runTmp, 'home'), { recursive: true, mode: 0o700 });
 
 	const hostPath = host.platform === 'win32' ? Object.entries(context.hostEnv).find(([key]) => key.toLowerCase() === 'path')?.[1] : context.hostEnv.PATH;
-	const [pathDirs, systemCanonical] = await Promise.all([
+	const [pathDirs, systemAnswers] = await Promise.all([
 		toolchainDirs(hostPath, home, notes, pathDelimiter(host.platform), canonical),
-		Promise.all(systemReadPaths(host.platform, context.hostEnv).map(canonical)),
+		canonicalAll(systemReadPaths(host.platform, context.hostEnv)),
 	]);
-	const systemDirs = systemCanonical.filter(c => c.exists).map(c => c.path);
+	const systemDirs = systemAnswers.filter(c => c.exists).map(c => c.path);
 	if (host.platform === 'darwin' && host.developerDir && host.developerDir.startsWith('/Applications/')) {
 		// `/usr/bin/git` and friends are shims that load frameworks from the selected Xcode.
 		systemDirs.push(dirname(host.developerDir));
+	}
+	if (host.platform === 'darwin') {
+		// The shims' cache of where each tool is (`xcrun_db` in the user's temp folder): without it
+		// every `/usr/bin/git` ran `xcodebuild -find git`, 2-9 s (measured 2026-11-12). Readable as
+		// the file itself, never writable (`xcrunCacheEntries`), and only a plain file: a symlink
+		// planted there must not make its target readable.
+		const cache = join(host.tmpRoot, XCRUN_CACHE);
+		if (await fs.lstat(cache).then(stat => stat.isFile(), () => false)) {
+			systemDirs.push(cache);
+		}
 	}
 
 	const expand = (entry: string): string[] => {
@@ -214,52 +227,39 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 		}
 	};
 
-	// Every path below is looked up at once; the loops then take the answers in order.
-	const unmask = new Set(policy.filesystem.unmask);
-	const namedPaths = [
-		...policy.filesystem.read.filter(e => e !== '/'),
-		...policy.filesystem.write,
-		...[...policy.filesystem.deny, ...policy.filesystem.protect].filter(entry => !unmask.has(entry) && !entry.startsWith('**/')),
-		...policy.host.unixSockets,
-	];
-	for (const entry of namedPaths) {
-		for (const path of expand(entry)) {
-			void canonical(path);
-		}
-	}
-	if (context.cwd) {
-		void canonical(context.cwd);
-	}
-
 	// Reads.
 	const readAll = policy.filesystem.read.includes('/');
-	const read: string[] = [];
-	for (const entry of policy.filesystem.read.filter(e => e !== '/')) {
-		for (const path of expand(entry)) {
-			const c = await canonical(path);
-			if (c.exists) {
-				read.push(c.path);
-			}
-		}
-	}
+	// Every path the policy names, looked up together before the rules below go through them in order.
+	const readPaths = policy.filesystem.read.filter(e => e !== '/').flatMap(expand);
+	const writePaths = policy.filesystem.write.flatMap(expand);
+	const unmask = new Set(policy.filesystem.unmask);
+	const namedPaths = (entries: readonly string[]) => entries.filter(entry => !unmask.has(entry) && !entry.startsWith('**/')).flatMap(expand);
+	const denyPaths = namedPaths(policy.filesystem.deny);
+	const protectPaths = namedPaths(policy.filesystem.protect);
+	const socketPaths = policy.host.unixSockets.flatMap(expand);
+	const listPaths = (policy.filesystem.list ?? []).flatMap(expand);
+	const chmodPaths = (policy.filesystem.chmod ?? []).flatMap(expand);
+	const [readAnswers, writeAnswers, denyAnswers, protectAnswers, socketAnswers, listAnswers, chmodAnswers] = await Promise.all([readPaths, writePaths, denyPaths, protectPaths, socketPaths, listPaths, chmodPaths].map(canonicalAll));
+
+	const read: string[] = readAnswers.filter(c => c.exists).map(c => c.path);
+	// Listing and mode changes are for folders: on a file, listing would read its contents.
+	const list: string[] = listAnswers.filter(c => c.exists && c.isDirectory).map(c => c.path);
+	const chmod: string[] = chmodAnswers.filter(c => c.exists && c.isDirectory && c.path !== home && !isInside(home, c.path)).map(c => c.path);
 
 	// Writes: folders, or single files. The run's own temp folder is private to it and always writable.
 	const write: string[] = [runTmp];
 	const writeFiles: string[] = [];
-	for (const entry of policy.filesystem.write) {
-		for (const path of expand(entry)) {
-			const c = await canonical(path);
-			if (c.path === '/' || isInside(home, c.path)) {
-				refuse(`Refusing to make ${c.path === '/' ? '/' : 'the home folder or one of its parents'} writable`);
-			}
-			if (c.exists && c.isDirectory) {
-				write.push(c.path);
-			} else if (c.exists || /\.[a-z0-9]{1,8}(?:-(?:wal|shm|journal))?$/i.test(c.path)) {
-				// A file to be created, named with an extension; SQLite's `-wal`/`-shm`/`-journal` exist only while the database is open.
-				writeFiles.push(c.path);
-			} else {
-				notes.push(`write path does not exist, skipped: ${c.path}`);
-			}
+	for (const c of writeAnswers) {
+		if (c.path === '/' || isInside(home, c.path)) {
+			refuse(`Refusing to make ${c.path === '/' ? '/' : 'the home folder or one of its parents'} writable`);
+		}
+		if (c.exists && c.isDirectory) {
+			write.push(c.path);
+		} else if (c.exists || /\.[a-z0-9]{1,8}(?:-(?:wal|shm|journal))?$/i.test(c.path)) {
+			// A file to be created, named with an extension (a lock); SQLite's `-wal`/`-shm`/`-journal` exist only while the database is open (LIFE-WRITE-1).
+			writeFiles.push(c.path);
+		} else {
+			notes.push(`write path does not exist, skipped: ${c.path}`);
 		}
 	}
 
@@ -290,9 +290,11 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	const patternRootsFor = (kind: 'deny' | 'protect'): string[] => kind === 'protect'
 		? write.filter(root => !isTemp(root))
 		: unique(readAll ? ['/'] : [...write, ...read.filter(root => !systemDirs.includes(root) && !pathDirs.includes(root))]);
-	for (const [kind, entries] of [['deny', policy.filesystem.deny], ['protect', policy.filesystem.protect]] as const) {
+	for (const [kind, entries, named, answers] of [['deny', policy.filesystem.deny, denyPaths, denyAnswers], ['protect', policy.filesystem.protect, protectPaths, protectAnswers]] as const) {
 		const paths = kind === 'deny' ? deny : protect;
 		const patterns = kind === 'deny' ? denyPatterns : protectPatterns;
+		// `named[i]` (as expanded, in entry order) and its answer `answers[i]`.
+		let next = 0;
 		for (const entry of entries) {
 			if (unmask.has(entry)) {
 				continue;
@@ -304,8 +306,9 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 				}
 				continue;
 			}
-			for (const path of expand(entry)) {
-				const c = await canonical(path);
+			for (let n = expand(entry).length; n > 0; n--, next++) {
+				const path = named[next];
+				const c = answers[next];
 				paths.push(c.path);
 				if (c.path !== path) {
 					paths.push(path);
@@ -316,8 +319,8 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 
 	// Git: the repository's real layout decides what runs later.
 	const workspaceWrites = workspaceRoots.filter(root => write.some(w => isInside(root, w)));
-	for (const root of workspaceWrites) {
-		protect.push(...await gitProtections(root, home, write));
+	for (const paths of await Promise.all(workspaceWrites.map(root => gitProtections(root, home, write)))) {
+		protect.push(...paths);
 	}
 	const guardsGit = policy.filesystem.protect.includes('**/.git/config');
 	// `.git` as an allow list (B-03), wherever the git protections apply: every `.git` below a
@@ -333,14 +336,11 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 
 	// Sockets.
 	const unixSockets: string[] = [];
-	for (const entry of policy.host.unixSockets) {
-		for (const path of expand(entry)) {
-			const c = await canonical(path);
-			if (c.exists) {
-				unixSockets.push(c.path);
-			} else {
-				notes.push(`socket does not exist, skipped: ${path}`);
-			}
+	for (const [i, c] of socketAnswers.entries()) {
+		if (c.exists) {
+			unixSockets.push(c.path);
+		} else {
+			notes.push(`socket does not exist, skipped: ${socketPaths[i]}`);
 		}
 	}
 
@@ -411,7 +411,7 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 	}
 
 	// Paths reach a Seatbelt profile or bubblewrap arguments; one that cannot be expressed exactly is refused.
-	for (const path of [...read, ...write, ...writeFiles, ...deny, ...protect, ...unixSockets, cwd, ...denyPatterns.map(p => p.root), ...protectPatterns.map(p => p.root)]) {
+	for (const path of [...read, ...write, ...writeFiles, ...list, ...chmod, ...deny, ...protect, ...unixSockets, cwd, ...denyPatterns.map(p => p.root), ...protectPatterns.map(p => p.root)]) {
 		if (/["\u0000-\u001f\u007f]/.test(path)) {
 			refuse(`Paths with a double quote or a control character cannot be sandboxed: ${JSON.stringify(path)}`);
 		}
@@ -425,6 +425,8 @@ export async function resolveSandboxPolicy(policy: IVoltSandboxPolicy, context: 
 			read: unique(read),
 			write: unique(write),
 			writeFiles: unique(writeFiles),
+			...(list.length ? { list: unique(list) } : {}),
+			...(chmod.length ? { chmod: unique(chmod) } : {}),
 			deny: finalDeny,
 			protect: finalProtect,
 			denyPatterns,
@@ -459,9 +461,9 @@ async function toolchainDirs(pathVar: string | undefined, home: string, notes: s
 	const out: string[] = [];
 	const isRoot = (path: string) => path === '/' || dirname(path) === path;
 	const dirs = (pathVar ?? '').split(delimiter).filter(dir => isAbsolute(dir));
-	const answers = await Promise.all(dirs.map(dir => canonical(dir)));
-	for (const [index, dir] of dirs.entries()) {
-		const c = answers[index];
+	const answers = await Promise.all(dirs.map(canonical));
+	for (const [i, dir] of dirs.entries()) {
+		const c = answers[i];
 		if (!c.exists || !c.isDirectory || isRoot(c.path) || c.path === home) {
 			continue;
 		}

@@ -6,12 +6,14 @@
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
-import { relativePath } from '../../../../../base/common/resources.js';
+import { isAbsolute } from '../../../../../base/common/path.js';
+import { joinPath, relativePath } from '../../../../../base/common/resources.js';
+import { guardToolText } from '../../../../services/voltRuntime/common/ide/toolOutput.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
-import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { IMarkerService } from '../../../../../platform/markers/common/markers.js';
 import { IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { chatExec, IChatExec, voltExec } from '../../../../services/voltRuntime/common/execContext.js';
@@ -52,14 +54,17 @@ import { ITestService } from '../../../testing/common/testService.js';
 import { TestResultState } from '../../../testing/common/testTypes.js';
 import { IDebugArgs, IdeDebug } from './ideDebug.js';
 import { IdeTasks } from './ideTasks.js';
-import { IdeTests, ITestConfinement } from './ideTests.js';
+import { IdeTests, ITestConfinement, ITestRunArgs } from './ideTests.js';
 import { IdeCli, IIdeCapability, IIdeCapabilityContext, IIdeConfinement, NO_PROJECT_FOLDER } from './capabilities/capability.js';
+import { DatabaseCapability } from './capabilities/databaseCapability.js';
 import { EditorCapability } from './capabilities/editorCapability.js';
 import { GitCapability } from './capabilities/gitCapability.js';
 import { CiCapability, DockerCapability, KubernetesCapability } from './capabilities/infraCapabilities.js';
 import { NotebookCapability } from './capabilities/notebookCapability.js';
 import { RemoteCapability } from './capabilities/remoteCapability.js';
-import { AnalyzeCapability, CoverageCapability, ProfileCapability } from './capabilities/qualityCapabilities.js';
+import { AnalyzeCapability, CoverageCapability } from './capabilities/qualityCapabilities.js';
+import { ProfileCapability } from './capabilities/profileCapability.js';
+import { IVoltProfilerService } from '../profiler/voltProfilerService.js';
 import { ExtensionsCapability, HttpCapability } from './capabilities/workbenchCapabilities.js';
 import { IAgentTestRun, refusedTestRuns, VoltTestController } from './voltTestController.js';
 
@@ -172,6 +177,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 	private readonly logs = new Map<string, IAgentIdeLogEntry[]>();
 	private readonly _onDidLog = this._register(new Emitter<{ readonly chatId: string; readonly key: AgentIdeTabKey }>());
 	readonly onDidLog = this._onDidLog.event;
+	private readonly fileService: IFileService;
 
 	constructor(
 		@IVoltHostToolService hostTools: IVoltHostToolService,
@@ -190,6 +196,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 		@IInstantiationService instantiationService: IInstantiationService,
 	) {
 		super();
+		this.fileService = fileService;
 		this.tests = new IdeTests(testService, testResults, testProfiles);
 		this.debug = new IdeDebug(debugService, fileService);
 		this.tasks = new IdeTasks(taskService, terminalService);
@@ -208,7 +215,11 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			new KubernetesCapability(),
 			new CiCapability(),
 			instantiationService.invokeFunction(accessor => whileHttpClientOn(new HttpCapability(accessor.get(IVoltHttpService)), accessor.getIfExists(IVoltFeatureService))),
-			instantiationService.invokeFunction(accessor => new ProfileCapability(fileService, accessor.get(IEnvironmentService), accessor.get(IEditorService))),
+			new DatabaseCapability(),
+			instantiationService.invokeFunction(accessor => {
+				const configuration = accessor.get(IConfigurationService);
+				return new ProfileCapability(fileService, accessor.get(IVoltProfilerService), () => configuration.getValue<boolean>(IDE_AUTO_OPEN_SETTING) !== false);
+			}),
 			instantiationService.invokeFunction(accessor => new AnalyzeCapability(fileService, accessor.get(IMarkerService))),
 			new CoverageCapability(fileService),
 			instantiationService.invokeFunction(accessor => new RemoteCapability(accessor.get(IWorkbenchEnvironmentService), fileService, accessor.get(IPathService))),
@@ -219,11 +230,26 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 		this._register(hostTools.registerToolProvider({
 			tools: IDE_TOOLS,
 			invoke: (name, args, call) => this.invokeLogged(name, args, call),
-			// Some ops ask every time, whatever the access mode (cluster deletes, editor commands).
+			// Some ops ask every time, whatever the access mode (cluster deletes, editor commands). A sandboxed
+			// chat's ops that would run outside its sandbox are refused by the gate (hostToolSandbox.ts), not asked.
 			needsApproval: async (name, args) => name === IDE_GATEWAY_TOOL_NAME ? ideOp(String(args.capability ?? ''), String(args.op ?? ''))?.confirm : undefined,
 		}));
 		this._register(hostTools.onDidInvokeTool(invocation => this.onGateRefusal(invocation)));
 		this._register({ dispose: () => this.activities.forEach(entry => entry.store.dispose()) });
+	}
+
+	// --- Sandbox -----------------------------------------------------------------------------
+
+	/** A linked worktree's `.git` is a file naming its gitdir; commits write to the main repository's. */
+	private async gitCommonDir(root: URI): Promise<string[]> {
+		const pointer = await Promise.resolve().then(() => this.fileService.readFile(joinPath(root, '.git'))).then(file => file.value.toString(), () => undefined);
+		const gitdir = pointer && /^gitdir:\s*(.+)$/m.exec(pointer)?.[1].trim();
+		if (!gitdir) {
+			return [];
+		}
+		const absolute = isAbsolute(gitdir) ? gitdir : joinPath(root, gitdir).fsPath;
+		const common = /^(.*\/\.git)\/worktrees\/[^/]+\/?$/.exec(absolute.replace(/\\/g, '/'))?.[1];
+		return common ? [common] : [];
 	}
 
 	// --- Tools -------------------------------------------------------------------------------
@@ -231,7 +257,9 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 	/** Runs a call, records it in the chat's tab for that capability, and opens the tab beside the chat. */
 	private async invokeLogged(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		const started = Date.now();
-		const result = await this.invoke(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) }));
+		const raw = await this.invoke(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) }));
+		// Credentials in an env dump or a CI log never reach the model, and no single call floods its context.
+		const result: IVoltHostToolResult = { ...raw, ...(raw.text !== undefined ? { text: guardToolText(raw.text) } : {}), ...(raw.error !== undefined ? { error: guardToolText(raw.error) } : {}) };
 		this.record(name, args, call, result, started);
 		return result;
 	}
@@ -290,7 +318,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 	 * chat's sandbox: the call's sandbox, or Volt's record of the chat's when the call carries none,
 	 * whichever confines (`IdeCli`, the tests' controller).
 	 */
-	private scope(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): ICallScope | string {
+	private async scope(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<ICallScope | string> {
 		const chatId = call?.sessionId ? this.runtime.chatFor(call.sessionId) : undefined;
 		const root = call?.cwd ? URI.file(call.cwd) : call?.sessionId || isSandboxed(call?.sandbox) ? undefined : this.workspace.getWorkspace().folders[0]?.uri;
 		if (!root) {
@@ -307,7 +335,8 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			}
 			sandbox = { level: recorded.sandbox.level, network: recorded.sandbox.network };
 		}
-		const exec = sandbox ? chatExec(chatId, sandbox, recorded?.sandbox?.workspaceRoots ?? [root.fsPath], 'agent-shell') : recorded ?? voltExec('agent-shell');
+		// A linked worktree's commits write to its main repository's .git: the sandbox lets the chat's git reach it.
+		const exec = sandbox ? chatExec(chatId, sandbox, recorded?.sandbox?.workspaceRoots ?? [root.fsPath, ...await this.gitCommonDir(root)], 'agent-shell') : recorded ?? voltExec('agent-shell');
 		const key = chatId ?? call?.external?.grantId ?? 'external';
 		const confinement: IIdeConfinement | undefined = sandbox ? {
 			sandbox,
@@ -324,7 +353,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			// Help and unknown ops answer without a folder: nothing runs.
 			return this.invokeCapability(args, undefined);
 		}
-		const scope = this.scope(name, args, call);
+		const scope = await this.scope(name, args, call);
 		if (typeof scope === 'string') {
 			return { error: `${name} was not run: ${scope}` };
 		}
@@ -340,12 +369,12 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 					return toResult(await this.tests.resultsFor(key, root, str(args.target), confinement));
 				}
 				if (op === 'run') {
-					const targets = Array.isArray(args.targets) ? args.targets.filter((item): item is string => typeof item === 'string') : typeof args.targets === 'string' ? [args.targets] : undefined;
 					// The run's commands are the chat's: Volt's controller runs them with this exec, in the chat's sandbox when it has one.
 					const as: IAgentTestRun & ITestConfinement = { exec, ...(confinement?.readRefusal ? { readRefusal: confinement.readRefusal } : {}), ...(confinement?.tmpdir ? { tmpdir: confinement.tmpdir } : {}) };
-					const result = await this.tests.run(key, root, { targets, failed: args.failed === true, coverage: args.coverage === true }, chatId ? { started: (live, title) => this.trackTests(chatId, key, live, title, root, as) } : undefined, token, as);
+					const runArgs = testRunArgs(args);
+					const result = await this.tests.run(key, root, runArgs, chatId ? { started: (live, title) => this.trackTests(chatId, key, live, title, root, as) } : undefined, token, as);
 					if (result.isError && chatId && confinement && /^The tests did not run: /.test(result.text)) {
-						this.refused(chatId, 'tests', targets?.join(', ') || 'All tests', result.text);
+						this.refused(chatId, 'tests', runArgs.targets?.join(', ') || 'All tests', result.text);
 					}
 					return toResult(result);
 				}
@@ -584,6 +613,11 @@ function str(value: unknown): string | undefined {
 
 function num(value: unknown): number | undefined {
 	return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function testRunArgs(args: Record<string, unknown>): ITestRunArgs {
+	const targets = Array.isArray(args.targets) ? args.targets.filter((item): item is string => typeof item === 'string') : typeof args.targets === 'string' ? [args.targets] : undefined;
+	return { targets, failed: args.failed === true, coverage: args.coverage === true };
 }
 
 registerSingleton(IAgentIdeService, AgentIdeService, InstantiationType.Delayed);

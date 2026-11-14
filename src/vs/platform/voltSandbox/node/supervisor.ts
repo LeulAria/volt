@@ -10,15 +10,16 @@ import { promises as fs } from 'fs';
 import { promisify } from 'util';
 import type { Socket } from 'net';
 import { Emitter, Event } from '../../../base/common/event.js';
-import { Disposable } from '../../../base/common/lifecycle.js';
+import { Disposable, IDisposable } from '../../../base/common/lifecycle.js';
 import { basename, dirname, join } from '../../../base/common/path.js';
 import { IPrincipal, SubjectKey } from '../common/principals.js';
 import { composeSandboxPolicy } from '../common/sandboxComposition.js';
-import { IAttestation, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
+import { IAttestation, ISandboxRunDenial, redactSandboxText, SandboxBackendId, SandboxUnavailableError } from '../common/sandboxBackend.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer, SandboxDimension } from '../common/sandboxSchema.js';
-import { isLiveWorkloadState, ISandboxResourceSample, ISandboxWorkloadInfo, SandboxExitReason, SandboxWorkloadState, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
+import { isLiveWorkloadState, ISandboxResourceSample, ISandboxWorkloadDenial, ISandboxWorkloadInfo, isUserFacingDenial, MAX_WORKLOAD_DENIALS, SandboxExitReason, SandboxWorkloadState, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
 import type { INetworkPrincipalView, NetworkRoute } from './networkBroker.js';
 import { PrincipalRegistry } from './principalRegistry.js';
+import type { ISandboxTreeUsage } from './sandboxBackends.js';
 import { IPreparedSandbox, ISandboxLogger, processAlive, RUN_LEDGER_NAME, SandboxManager } from './sandboxManager.js';
 import { ISandboxRunContext } from './sandboxResolver.js';
 
@@ -197,12 +198,26 @@ export interface ISandboxSupervisorOptions {
 }
 
 const DEFAULT_MAX_HOSTS = 24;
+/** An idle host is sampled this many times less often than a running one (10 s at the default 1 s). */
+export const IDLE_SAMPLE_FACTOR = 10;
 const DEFAULT_RESTARTS_PER_MINUTE = 3;
 const STDERR_TAIL_BYTES = 64 * 1024;
 /** Where a `stream` host finds its channel. */
 export const HOST_CHANNEL_FD_ENV = 'VOLT_HOST_CHANNEL_FD';
 /** How long a stopping host may take before its exit counts as done anyway. */
 const STOP_TIMEOUT_MS = 5_000;
+/** How long a host's denials gather before the window hears of them. */
+const DENIAL_COALESCE_MS = 250;
+/** How long a host that crashed may take to read the OS's refusals of it (`log show`) before its restart. */
+const HOST_EXIT_DENIAL_READ_MS = 3_000;
+/** How long one read of a running host's refusals may take. */
+const HOST_DENIAL_READ_MS = 10_000;
+/** When a launch's refusals are read in its first seconds (ms after the launch). */
+const HOST_START_READS_MS = [3_000, 20_000];
+/** A host that works is read this long after its first message... */
+const HOST_QUIET_READ_MS = 2_000;
+/** ...and never more often than this (a read is about 0.3-0.6 s of CPU in `log`/`logd`). */
+const HOST_READ_GAP_MS = 30_000;
 const LEDGER_VERSION = 1;
 
 /** One host's record in its run folder, read back by the next start of Volt (F.11). */
@@ -223,8 +238,12 @@ export class SandboxSupervisor extends Disposable {
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	/** A host started, changed state or went away. */
 	readonly onDidChange: Event<void> = this._onDidChange.event;
-	private sampler: ReturnType<typeof setInterval> | undefined;
+	private sampler: ReturnType<typeof setTimeout> | undefined;
+	/** When the pending sampler tick is due (ms since epoch). */
+	private samplerDue = 0;
 	private sampling = false;
+	/** The last time each idle host was sampled: idle hosts are sampled {@link IDLE_SAMPLE_FACTOR} times less often. */
+	private readonly sampledAt = new WeakMap<SandboxHost, number>();
 	private readonly sources: readonly ISandboxResourceSource[];
 	private disposing = false;
 
@@ -384,7 +403,8 @@ export class SandboxSupervisor extends Disposable {
 	/** Called by a host whose state changed. */
 	changed(host: SandboxHost): void {
 		if (host.state === 'running') {
-			this.ensureSampler();
+			// A host that wakes up is sampled at the running rate again, not at the end of an idle wait.
+			this.ensureSampler(this.options.sampleMs ?? 1_000);
 		}
 		this._onDidChange.fire();
 	}
@@ -404,32 +424,64 @@ export class SandboxSupervisor extends Disposable {
 		return true;
 	}
 
-	private ensureSampler(): void {
+	private ensureSampler(delayMs = this.options.sampleMs ?? 1_000): void {
 		const ms = this.options.sampleMs ?? 1_000;
-		if (this.sampler || ms <= 0) {
+		if (ms <= 0 || this.disposing) {
 			return;
 		}
-		this.sampler = setInterval(() => void this.tick(), ms);
+		const due = Date.now() + delayMs;
+		if (this.sampler !== undefined) {
+			if (this.samplerDue <= due) {
+				return;
+			}
+			clearTimeout(this.sampler);
+		}
+		this.samplerDue = due;
+		this.sampler = setTimeout(() => {
+			this.sampler = undefined;
+			void this.tick().finally(() => this.scheduleNextTick());
+		}, delayMs);
 		// Accounting must not keep Volt (or a test run) alive.
 		(this.sampler as { unref?(): void }).unref?.();
+	}
+
+	/** Running hosts every `sampleMs`; when every live host is idle, every {@link IDLE_SAMPLE_FACTOR} x `sampleMs`; none: no timer. */
+	private scheduleNextTick(): void {
+		const ms = this.options.sampleMs ?? 1_000;
+		const live = [...this.hosts.values()].filter(host => (host.state === 'running' || host.state === 'idle') && host.pid);
+		if (!live.length || this.disposing) {
+			return;
+		}
+		this.ensureSampler(live.some(host => host.state === 'running') ? ms : ms * IDLE_SAMPLE_FACTOR);
 	}
 
 	private async tick(): Promise<void> {
 		if (this.sampling) {
 			return;
 		}
-		const running = [...this.hosts.values()].filter(host => (host.state === 'running' || host.state === 'idle') && host.pid);
-		if (!running.length) {
-			// No timers while nothing runs.
-			clearInterval(this.sampler);
-			this.sampler = undefined;
+		const ms = this.options.sampleMs ?? 1_000;
+		const now = Date.now();
+		// An idle host has no calls in flight and the memory cap applies to running hosts only (recordSample), so it
+		// needs no sample a second: a `ps` spawn per second for a host nobody uses was most of the agent server's
+		// CPU at rest (round 4, A6). Its CPU budget window (10 s) still gets a sample at least every window.
+		const due = [...this.hosts.values()].filter(host => host.pid && (host.state === 'running'
+			|| host.state === 'idle' && now - (this.sampledAt.get(host) ?? 0) >= ms * IDLE_SAMPLE_FACTOR - ms / 2));
+		if (!due.length) {
 			return;
 		}
 		this.sampling = true;
 		try {
-			const samples = await this.sample(running.map(host => host.pid!));
-			for (const host of running) {
-				const sample = host.pid ? samples.get(host.pid) : undefined;
+			// The backend's own tracking first (Seatbelt: one request to the helper, a few syscalls), so a host at rest
+			// costs no `ps` spawn (about 20 ms of CPU each, every 10 s); the process table only for the hosts it cannot
+			// measure. Configured sources (a kernel layer) keep the merged path.
+			const at = Date.now();
+			const tracked = this.options.resourceSources ? [] : await Promise.all(due.map(host => host.trackedUsage().catch(() => undefined)));
+			const rest = due.filter((_, i) => !tracked[i]);
+			const samples = rest.length ? await this.sample(rest.map(host => host.pid!)) : new Map<number, ISandboxResourceSample>();
+			for (const [i, host] of due.entries()) {
+				const usage = tracked[i];
+				const sample = usage ? { at, ...usage, sources: ['tracking'] } : host.pid ? samples.get(host.pid) : undefined;
+				this.sampledAt.set(host, now);
 				if (sample) {
 					host.recordSample(sample);
 				}
@@ -470,7 +522,7 @@ export class SandboxSupervisor extends Disposable {
 		// Once: `dispose` (synchronous, for the owner's disposables) and an owner awaiting it share the same kills.
 		this.shutdownDone ??= (async () => {
 			this.disposing = true;
-			clearInterval(this.sampler);
+			clearTimeout(this.sampler);
 			this.sampler = undefined;
 			await Promise.all([...this.hosts.values()].map(host => host.terminate('quit').catch(() => undefined)));
 		})();
@@ -510,6 +562,13 @@ class SandboxHost implements ISandboxedHost {
 	private _restarts = 0;
 	private _lastResources: ISandboxResourceSample | undefined;
 	private detail: string | undefined;
+	/** What the sandbox refused it (user-facing only), by kind and target, least recent first. */
+	private readonly denials = new Map<string, ISandboxWorkloadDenial>();
+	private deniedCount = 0;
+	/** Listens to one launch's denials; ends with that launch's sandbox. */
+	private denialListener: { readonly prepared: IPreparedSandbox; readonly listener: IDisposable } | undefined;
+	/** A burst of denials is one change for the window, not one per refusal. */
+	private denialTimer: ReturnType<typeof setTimeout> | undefined;
 	private disposed = false;
 	/** Its process has exited and the exit is being handled: it is not a host anyone can stop now. */
 	private _exiting = false;
@@ -569,6 +628,11 @@ class SandboxHost implements ISandboxedHost {
 	get channelId(): string | undefined { return this._channelId; }
 	get lastResources(): ISandboxResourceSample | undefined { return this._lastResources; }
 
+	/** The tree's numbers from the sandbox backend's own tracking; undefined when it has none (then `ps`). */
+	async trackedUsage(): Promise<ISandboxTreeUsage | undefined> {
+		return this._state === 'running' || this._state === 'idle' ? this.prepared?.usage?.() : undefined;
+	}
+
 	stderrTail(): string {
 		return this.stderr;
 	}
@@ -576,6 +640,12 @@ class SandboxHost implements ISandboxedHost {
 	info(): ISandboxWorkloadInfo {
 		const policy = this.prepared?.policy;
 		const unenforced = this.unenforced;
+		// The broker routes its declared and approved hosts; the policy itself lists none of them.
+		const view = this.request.networkView;
+		const routed = view && view.manifest.network === 'broker' ? [
+			...view.manifest.declared.filter(cap => cap.id === 'net.connect').flatMap(cap => cap.targets ?? []),
+			...(view.grants ?? []).filter(grant => grant.capability.startsWith('net.connect@')).flatMap(grant => grant.scope.targets ?? []),
+		] : [];
 		return {
 			id: this.id,
 			principalId: this._principal.id,
@@ -588,12 +658,49 @@ class SandboxHost implements ISandboxedHost {
 			status: unenforced.length ? 'partial' : 'sandboxed',
 			unenforced,
 			...(this._attestation ? { attestation: this._attestation } : {}),
-			policy: policy ? summarizeSandboxPolicy(policy) : { name: this.label, network: 'none', allowedHosts: 0, readsEverything: false, read: [], write: [], denied: 0, limits: {} },
+			policy: policy ? summarizeSandboxPolicy(policy, routed) : { name: this.label, network: 'none', allowedHosts: 0, readsEverything: false, read: [], write: [], denied: 0, limits: {} },
 			startedAt: this.startedAt,
 			restarts: this._restarts,
 			...(this._lastResources ? { resources: this._lastResources } : {}),
 			...(this.detail ? { detail: this.detail } : {}),
+			...(this.deniedCount ? { denials: [...this.denials.values()], deniedCount: this.deniedCount } : {}),
 		};
+	}
+
+	/**
+	 * A refusal of this host's (kernel or network broker): kept for the window, which warns the user
+	 * at runtime (the Security page lists it too). Noise the runtime itself causes is left out.
+	 */
+	private recordDenial(denial: ISandboxRunDenial, home: string | undefined): void {
+		if (this.disposed || !isUserFacingDenial(denial)) {
+			return;
+		}
+		const target = home ? redactSandboxText(denial.target, home) : denial.target;
+		const key = `${denial.kind}\u0000${target}`;
+		const previous = this.denials.get(key);
+		this.denials.delete(key);
+		this.denials.set(key, { kind: denial.kind, target, at: Date.now(), count: (previous?.count ?? 0) + 1 });
+		if (this.denials.size > MAX_WORKLOAD_DENIALS) {
+			this.denials.delete(this.denials.keys().next().value!);
+		}
+		this.deniedCount++;
+		if (!previous) {
+			this.logger.warn(`[volt-sandbox] host ${this.label} was denied ${denial.kind} ${target}`);
+		}
+		this.denialTimer ??= setTimeout(() => {
+			this.denialTimer = undefined;
+			if (!this.disposed) {
+				this.supervisor.changed(this);
+			}
+		}, DENIAL_COALESCE_MS);
+	}
+
+	/** Stops listening for denials: any launch's, or only `prepared`'s (a restart may already listen to a newer one). */
+	private stopDenials(prepared?: IPreparedSandbox): void {
+		if (this.denialListener && (!prepared || this.denialListener.prepared === prepared)) {
+			this.denialListener.listener.dispose();
+			this.denialListener = undefined;
+		}
 	}
 
 	private setState(state: SandboxWorkloadState): void {
@@ -654,6 +761,15 @@ class SandboxHost implements ISandboxedHost {
 		}
 		this.prepared = prepared;
 		this.tag = prepared.tag;
+		this.stopDenials();
+		// A host disposed while its sandbox was being prepared takes no listener (it would leak).
+		if (!this.disposed) {
+			this.denialListener = { prepared, listener: prepared.onDenial(denial => this.recordDenial(denial, prepared.policy.home)) };
+			this.launchedAt = this.denialReadFrom = Date.now();
+			clearTimeout(this.denialReadTimer);
+			this.denialReadTimer = undefined;
+			this.scheduleDenialRead(this.launchedAt + HOST_START_READS_MS[0]);
+		}
 		this._backend = prepared.backend;
 		const piped = request.stdio === 'pipe';
 		let child: ChildProcess;
@@ -668,6 +784,7 @@ class SandboxHost implements ISandboxedHost {
 				windowsHide: true,
 			});
 		} catch (err) {
+			this.stopDenials(prepared);
 			await prepared.dispose();
 			this.prepared = undefined;
 			return this.fail('launch', (err as Error).message);
@@ -814,6 +931,12 @@ class SandboxHost implements ISandboxedHost {
 			this._channelId = undefined;
 		}
 		this._channel = undefined;
+		if (wasRunning && !this.stopReason && !this.relaunching && code !== 0) {
+			// It died on its own: what the sandbox refused it is often why. The OS's refusals are read
+			// on demand (no resident kernel-log watch), so read them before its listener goes.
+			await prepared.flushDenials(HOST_EXIT_DENIAL_READ_MS).catch(() => undefined);
+		}
+		this.stopDenials(prepared);
 		await prepared.dispose();
 		if (this.prepared === prepared) {
 			this.child = undefined;
@@ -886,7 +1009,41 @@ class SandboxHost implements ISandboxedHost {
 			this.setState('running');
 		}
 		this.scheduleIdle();
+		// What the host was refused while it works: read shortly after, then at most every HOST_READ_GAP_MS while it keeps working.
+		this.scheduleDenialRead(Math.max(this.lastActivity + HOST_QUIET_READ_MS, this.lastDenialRead + HOST_READ_GAP_MS));
 	}
+
+	/**
+	 * The OS's refusals of this host are read on demand (`flushDenials`), not watched the whole time
+	 * it lives: in its first seconds (when a plugin most often reaches for what it may not), after
+	 * it worked, and when it crashes. A host at rest costs no reads.
+	 */
+	private scheduleDenialRead(at: number): void {
+		if (this.denialReadTimer || this.disposed) {
+			return;
+		}
+		this.denialReadTimer = setTimeout(() => {
+			this.denialReadTimer = undefined;
+			const listening = this.denialListener;
+			if (!listening || this.disposed) {
+				return;
+			}
+			const from = this.denialReadFrom;
+			this.lastDenialRead = this.denialReadFrom = Date.now();
+			void listening.prepared.flushDenials(HOST_DENIAL_READ_MS, from).catch(() => undefined);
+			const sinceLaunch = Date.now() - this.launchedAt;
+			const next = HOST_START_READS_MS.find(at => at > sinceLaunch);
+			if (next !== undefined) {
+				this.scheduleDenialRead(this.launchedAt + next);
+			}
+		}, Math.max(0, at - Date.now()));
+	}
+
+	private denialReadTimer: ReturnType<typeof setTimeout> | undefined;
+	/** The current launch's refusals before this moment were read. */
+	private denialReadFrom = 0;
+	private lastDenialRead = 0;
+	private launchedAt = 0;
 
 	private scheduleIdle(): void {
 		const idle = this.request.idle;
@@ -1017,6 +1174,9 @@ class SandboxHost implements ISandboxedHost {
 		this.disposed = true;
 		clearTimeout(this.idleTimer);
 		clearTimeout(this.backoffTimer);
+		clearTimeout(this.denialTimer);
+		clearTimeout(this.denialReadTimer);
+		this.stopDenials();
 		for (const emitter of [this._onDidChangeState, this._onExit, this._onResource, this._onMessage, this._onStdout] as Emitter<unknown>[]) {
 			emitter.dispose();
 		}

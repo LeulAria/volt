@@ -46,7 +46,7 @@ suite('Agent pool', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 	let aliases = 0;
 	let now = 0;
-	const pool = (maxSpares = 2, ttlMs = 1_000) => store.add(new AgentPool({ maxSpares, ttlMs, newAlias: () => `a${++aliases}`, now: () => now }));
+	const pool = (maxSpares = 2, ttlMs = 1_000, maxBurst = 0) => store.add(new AgentPool({ maxSpares, maxBurst, ttlMs, newAlias: () => `a${++aliases}`, now: () => now }));
 
 	setup(() => {
 		aliases = 0;
@@ -64,6 +64,22 @@ suite('Agent pool', () => {
 		assert.deepStrictEqual({ alias: spare?.alias, handle: spare?.handle.id, waited: spare?.waitedMs }, { alias: 'a1', handle: 'h-a1', waited: 0 });
 		assert.strictEqual(p.has('k'), false);
 		assert.strictEqual(await p.take('k'), undefined);
+	});
+
+	test('discard stops the spares of one key, ready or still starting', async () => {
+		const agents = new FakeAgents();
+		const p = pool(3);
+		p.ensure(agents.request('k'));
+		p.ensure(agents.request('other'));
+		await flush();
+		agents.manual = true;
+		p.ensure(agents.request('k'), { count: 2 });
+		p.discard('k');
+		agents.pending.get('a3')!.complete({ id: 'h-a3' });
+		await flush();
+		assert.deepStrictEqual(agents.disposed.sort(), ['h-a1', 'h-a3']);
+		assert.strictEqual(p.has('k'), false);
+		assert.strictEqual(p.has('other'), true);
 	});
 
 	test('a spare still starting is awaited rather than starting another', async () => {
@@ -110,6 +126,26 @@ suite('Agent pool', () => {
 		assert.deepStrictEqual(agents.disposed, ['h-a1', 'h-a2']);
 	});
 
+	test('a short-lived spare stops after its own time to live unless asked for again with a longer one', async () => {
+		const agents = new FakeAgents();
+		const p = pool(2, 1_000);
+		p.ensure(agents.request('restored'), { ttlMs: 100 });
+		await flush();
+		now = 150;
+		p.sweep();
+		assert.deepStrictEqual([p.has('restored'), agents.disposed], [false, ['h-a1']], 'nobody touched the window');
+		p.ensure(agents.request('restored'), { ttlMs: 100 });
+		await flush();
+		now = 200;
+		p.ensure(agents.request('restored'));
+		now = 900;
+		p.sweep();
+		assert.deepStrictEqual([p.has('restored'), agents.started], [true, ['a1', 'a2']], 'the first key kept it, no second start');
+		now = 1_200;
+		p.sweep();
+		assert.strictEqual(p.has('restored'), false, 'then the pool\'s own time to live from its start');
+	});
+
 	test('a spare dropped while starting is disposed once it arrives; dispose clears everything', async () => {
 		const agents = new FakeAgents();
 		agents.manual = true;
@@ -123,5 +159,59 @@ suite('Agent pool', () => {
 		assert.deepStrictEqual(p.readySpares().map(spare => spare.handle.id), ['h-a2']);
 		p.clear();
 		assert.deepStrictEqual(agents.disposed, ['h-a1', 'h-a2']);
+	});
+
+	test('a burst keeps several spares of one key, past the cap by the burst room, for its own time to live', async () => {
+		const agents = new FakeAgents();
+		const p = pool(1, 10_000, 2);
+		p.ensure(agents.request('parent'));
+		await flush();
+		now = 10;
+		p.ensure(agents.request('sub'), { count: 3, ttlMs: 100 });
+		await flush();
+		// Cap 1 + 2 burst: the other key's spare makes room for the third.
+		assert.deepStrictEqual([p.has('parent'), p.size], [false, 3]);
+		assert.deepStrictEqual(agents.started, ['a1', 'a2', 'a3', 'a4']);
+		p.ensure(agents.request('sub'), { count: 3, ttlMs: 100 });
+		assert.strictEqual(agents.started.length, 4, 'three are already there');
+		const taken = await Promise.all([p.take('sub'), p.take('sub')]);
+		assert.deepStrictEqual(taken.map(spare => spare?.alias), ['a2', 'a3']);
+		// The unused third stops after the burst's time to live, not the pool's.
+		now = 200;
+		p.sweep();
+		assert.deepStrictEqual([p.has('sub'), agents.disposed], [false, ['h-a1', 'h-a4']]);
+		// A plain ensure keeps to the cap without the burst room.
+		p.ensure(agents.request('other'));
+		p.ensure(agents.request('another'));
+		await flush();
+		assert.deepStrictEqual([p.has('other'), p.has('another'), p.size], [false, true, 1]);
+	});
+
+	test('a burst across two keys (editing and read-only subagents) keeps both within the burst room', async () => {
+		const agents = new FakeAgents();
+		const p = pool(1, 10_000, 3);
+		p.ensure(agents.request('parent'));
+		await flush();
+		p.ensure(agents.request('work'), { count: 2, ttlMs: 100, burst: true });
+		p.ensure(agents.request('readonly'), { count: 1, ttlMs: 100, burst: true });
+		await flush();
+		// Cap 1 + 3: the read-only spare does not push out the editing ones it was started with.
+		assert.deepStrictEqual([p.has('parent'), p.has('work'), p.has('readonly'), p.size], [true, true, true, 4]);
+		assert.deepStrictEqual(agents.disposed, []);
+	});
+
+	test('a ready spare is handed out before one still starting', async () => {
+		const agents = new FakeAgents();
+		agents.manual = true;
+		const p = pool(1, 1_000, 2);
+		p.ensure(agents.request('sub'), { count: 2 });
+		agents.pending.get('a2')!.complete({ id: 'h-a2' });
+		await flush();
+		const first = await p.take('sub');
+		assert.strictEqual(first?.handle.id, 'h-a2');
+		const second = p.take('sub');
+		agents.pending.get('a1')!.complete({ id: 'h-a1' });
+		assert.strictEqual((await second)?.handle.id, 'h-a1');
+		assert.strictEqual(p.size, 0);
 	});
 });

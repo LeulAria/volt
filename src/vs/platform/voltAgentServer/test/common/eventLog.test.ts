@@ -12,16 +12,29 @@ suite('AgentServerEventLog', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
 
 	function seqs(decision: ReturnType<AgentServerEventLog['resume']>): number[] | string {
-		return decision.kind === 'replay' ? decision.events.map(e => e.event.seq) : decision.reason;
+		return decision.kind === 'replay' ? decision.events.map(e => e.seq) : decision.reason;
 	}
 
 	test('numbers events contiguously from 1', () => {
 		const log = new AgentServerEventLog('e1');
 		assert.strictEqual(log.seq, 0);
-		assert.strictEqual(log.append('col', { a: 1 }).event.seq, 1);
-		assert.strictEqual(log.append('session', {}).event.seq, 2);
+		assert.strictEqual(log.append('col', { a: 1 }).seq, 1);
+		assert.strictEqual(log.append('session', {}).seq, 2);
 		assert.strictEqual(log.seq, 2);
 		assert.deepStrictEqual(JSON.parse(log.append('server', 'x').text), { t: 'evt', seq: 3, topic: 'server', data: 'x' });
+	});
+
+	test('keeps the frame, not the data (a patch\'s text slice would keep the whole reply alive)', () => {
+		const log = new AgentServerEventLog('e1');
+		const reply = 'word '.repeat(10_000);
+		const data = { edits: [{ p: ['t'], s: reply.slice(reply.length - 20), at: reply.length - 20 }] };
+		log.append('session', data);
+		const decision = log.resume({ epoch: 'e1', seq: 0 });
+		assert.ok(decision.kind === 'replay');
+		const [stored] = decision.events;
+		assert.deepStrictEqual(Object.keys(stored).sort(), ['seq', 'text', 'topic']);
+		assert.deepStrictEqual(JSON.parse(stored.text).data, data);
+		assert.strictEqual(stored.topic, 'session');
 	});
 
 	test('replays exactly the events after the cursor', () => {

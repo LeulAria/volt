@@ -1,0 +1,34 @@
+{
+ "id": "scratch",
+ "tag": "before",
+ "run": 2,
+ "access": "supervised",
+ "load": "41.38 47.87 42.77",
+ "wallMs": 36321,
+ "outcome": "done",
+ "approvals": 1,
+ "picked": false,
+ "voltErrors": 0,
+ "host": [
+  "scratch_read"
+ ],
+ "shell": [
+  "ToolSearch | ToolSearch"
+ ],
+ "cost": 0.00674496,
+ "output": 857,
+ "cacheRead": 100706,
+ "toolUses": {
+  "ToolSearch": 1,
+  "mcp__volt__scratch_read": 1
+ },
+ "changed": "",
+ "chat": "agent-a654fc62-7931-4005-b372-0d846ac7e3af.jsonl",
+ "answer": "The login, token and profile flow is already on your Scratch board in the frame \"Login, token and profile flow (server.mjs)\", and it matches the code, so I didn't redraw it. It covers both steps with their status codes, the tokens map, the 404 for other routes, and three notes on token format, password exposure and plain-text passwords. If you want a different layout or more detail, say which and I'll redraw it in place.",
+ "hostCalls": [
+  {
+   "name": "scratch_read",
+   "args": {}
+  }
+ ]
+}

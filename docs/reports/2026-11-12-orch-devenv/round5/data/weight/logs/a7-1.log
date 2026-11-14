@@ -1,0 +1,22 @@
+== a7 minbefore round 1 2026-11-14T17:35:10Z load 6.17 7.36 7.28
+{"pid":6701,"ms":2165,"load":"6.07 7.32 7.27"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":14532,"ms":1065,"load":"7.33 7.48 7.33"}
+{"arm":"minbefore","test":"A7","at":"2026-11-14T17:39:31.355Z","load":"7.64 7.56 7.36","loadEnd":"7.95 7.78 7.49","ticks":720,"appP95":2301,"agentsP95":1084,"totalP95":3337,"agentCountMedian":6,"mem":{"swapUsedMiB":0,"swapTotalMiB":0,"freePct":58,"pressure":1},"memEnd":{"swapUsedMiB":0,"swapTotalMiB":0,"freePct":61,"pressure":1},"csv":"/Users/leularia/Desktop/VOLT/volt-e5-weight/docs/reports/2026-11-12-orch-devenv/round5/data/weight/raw/a7-minbefore-1794677789057.csv","roles":[["main",2],["gpu",1],["network service",1],["renderer",1],["agent server",1],["node utility (shared process/file watcher/pty)",1],["sandbox helper",2],["log stream (sandbox denials)",1],["extension host",1],["other: bash",1],["code index",1],["ACP adapter (node)",6],["sandbox watchdog sh",5],["claude CLI",6],["other: rg",1],["other: caffeinate",1],["other: git",2],["other: ioreg",1]]}
+== a7 min2 round 1 2026-11-14T17:40:11Z load 6.07 7.31 7.33
+{"pid":28739,"ms":1764,"load":"5.99 7.27 7.31"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":36779,"ms":1050,"load":"7.62 7.52 7.40"}
+{"arm":"min2","test":"A7","at":"2026-11-14T17:44:31.496Z","load":"6.97 7.41 7.37","loadEnd":"6.46 7.03 7.21","ticks":720,"appP95":1992,"agentsP95":1070,"totalP95":3016,"agentCountMedian":6,"mem":{"swapUsedMiB":0,"swapTotalMiB":0,"freePct":63,"pressure":1},"memEnd":{"swapUsedMiB":0,"swapTotalMiB":0,"freePct":63,"pressure":1},"csv":"/Users/leularia/Desktop/VOLT/volt-e5-weight/docs/reports/2026-11-12-orch-devenv/round5/data/weight/raw/a7-min2-1794678089152.csv","roles":[["main",1],["gpu",1],["network service",1],["renderer",1],["agent server",1],["node utility (shared process/file watcher/pty)",1],["sandbox helper",2],["log stream (sandbox denials)",1],["extension host",1],["other: bash",1],["code index",1],["ACP adapter (node)",6],["sandbox watchdog sh",5],["claude CLI",6],["other: git",1],["other: caffeinate",1]]}
+== a7block done 2026-11-14T17:44:38Z
+chain done Sat Nov 14 21:44:38 +04 2026

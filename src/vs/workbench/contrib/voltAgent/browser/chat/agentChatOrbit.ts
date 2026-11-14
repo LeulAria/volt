@@ -25,6 +25,8 @@ const MAX_SIDE_CROP = 1.4;
 const MAX_FRAMES_PER_SECOND = 30;
 /** Sharper than this is lost under the dim layer. */
 const MAX_PIXEL_RATIO = 2;
+/** Held this long at rest before the canvas is traded for a picture (never during a launch's first frames). */
+const ORBIT_REST_DELAY_MS = 5_000;
 
 const BACKGROUND = '#060607';
 const INK = '#ffffff';
@@ -93,6 +95,33 @@ const CALLOUT_DETAIL = [
 ];
 const MIDDLE_DOT = String.fromCharCode(0xb7);
 
+/** A stop's name fades out over this many CSS pixels as it comes near the chat's controls or the callout. */
+const CLEAR_FADE = 14;
+/** How often the controls' boxes are read again while the scene moves. */
+const CLEAR_REFRESH_MS = 250;
+
+/** A box in CSS pixels. */
+export interface IOrbitBox {
+	readonly left: number;
+	readonly top: number;
+	readonly right: number;
+	readonly bottom: number;
+}
+
+/**
+ * How visible a stop is, 0 to 1: 0 on or over any of `keepClear`, rising to 1 at `fade` pixels away.
+ * Names never draw over the chat's own controls or the callout's text, so the two never read as one.
+ */
+export function orbitStopVisibility(box: IOrbitBox, keepClear: readonly IOrbitBox[], fade: number): number {
+	let nearest = Infinity;
+	for (const other of keepClear) {
+		const dx = Math.max(other.left - box.right, box.left - other.right, 0);
+		const dy = Math.max(other.top - box.bottom, box.top - other.bottom, 0);
+		nearest = Math.min(nearest, Math.hypot(dx, dy));
+	}
+	return nearest === Infinity ? 1 : Math.min(1, nearest / fade);
+}
+
 /** Points on the unit sphere in rows of latitude, each row half a step round from the last: x, y (up), z. */
 const PLANET_DOTS = (() => {
 	const points: number[] = [];
@@ -119,8 +148,9 @@ interface IPoint {
 /**
  * Draws the scene at `seconds` over the whole canvas, which is `width` by `height` CSS pixels at
  * `pixelRatio`: as tall as the canvas, or across it when the canvas is narrow (centered, 30% down).
+ * `keepClear`: boxes on the canvas, in CSS pixels, where no stop's name may draw (the chat's controls).
  */
-export function drawAgentChatOrbit(context: CanvasRenderingContext2D, width: number, height: number, pixelRatio: number, seconds: number): void {
+export function drawAgentChatOrbit(context: CanvasRenderingContext2D, width: number, height: number, pixelRatio: number, seconds: number, keepClear: readonly IOrbitBox[] = []): void {
 	context.setTransform(1, 0, 0, 1, 0, 0);
 	context.globalAlpha = 1;
 	context.fillStyle = BACKGROUND;
@@ -138,16 +168,23 @@ export function drawAgentChatOrbit(context: CanvasRenderingContext2D, width: num
 
 	drawMeasures(context, pixel, -offsetX / scale, (width - offsetX) / scale, -offsetY / scale, (height - offsetY) / scale);
 	const callout = placeCallout(context, pixel);
+	// In scene units, with the callout's text: what the stops' names stay off.
+	const clear: IOrbitBox[] = [callout, ...keepClear.map(box => ({
+		left: (box.left - offsetX) / scale,
+		top: (box.top - offsetY) / scale,
+		right: (box.right - offsetX) / scale,
+		bottom: (box.bottom - offsetY) / scale,
+	}))];
 	const stops = RINGS.flatMap(ring => ring.stops.map(stop => ({ label: stop.label, point: ringPoint(ring, stop.at + seconds / ring.turn) })));
 	for (const ring of RINGS) {
 		drawRing(context, ring, seconds, pixel, false);
 	}
-	drawStops(context, stops.filter(stop => stop.point.depth < 0), pixel, callout);
+	drawStops(context, stops.filter(stop => stop.point.depth < 0), pixel, clear);
 	drawPlanet(context, seconds, pixel);
 	for (const ring of RINGS) {
 		drawRing(context, ring, seconds, pixel, true);
 	}
-	drawStops(context, stops.filter(stop => stop.point.depth >= 0), pixel, callout);
+	drawStops(context, stops.filter(stop => stop.point.depth >= 0), pixel, clear);
 	drawCallout(context, callout);
 	context.globalAlpha = 1;
 }
@@ -242,27 +279,33 @@ function drawRing(context: CanvasRenderingContext2D, ring: IOrbitRing, seconds: 
 }
 
 /**
- * The stops on the rings, each a dot with its step's name; the ones in front brighter. A name
- * passing over the callout's text fades, so the two never read as one.
+ * The stops on the rings, each a dot with its step's name; the ones in front brighter. A stop
+ * coming near the callout's text or one of the chat's controls (`clear`, scene units) fades out,
+ * dot and name, so a name never draws over other text.
  */
-function drawStops(context: CanvasRenderingContext2D, stops: readonly { readonly label: string; readonly point: IPoint }[], pixel: number, callout: ICallout): void {
+function drawStops(context: CanvasRenderingContext2D, stops: readonly { readonly label: string; readonly point: IPoint }[], pixel: number, clear: readonly IOrbitBox[]): void {
 	const size = Math.max(11, 9 * pixel);
 	context.font = `500 ${size}px ${FONT}`;
 	context.letterSpacing = '1.6px';
+	const radius = Math.max(2.6, 2 * pixel);
 	for (const { label, point } of stops) {
 		if (isHidden(point)) {
 			continue;
 		}
-		const front = point.depth >= 0;
-		context.globalAlpha = front ? 1 : 0.55;
-		context.beginPath();
-		context.arc(point.x, point.y, Math.max(2.6, 2 * pixel), 0, Math.PI * 2);
-		context.fill();
 		const text = label.toLocaleUpperCase();
 		const x = point.x + 10;
 		const y = point.y - 9;
-		const overCallout = x < callout.right && x + context.measureText(text).width > callout.left && y > callout.top && y - size < callout.bottom;
-		context.globalAlpha = (front ? 0.85 : 0.5) * (overCallout ? 0.2 : 1);
+		const box = { left: point.x - radius, top: y - size, right: x + context.measureText(text).width, bottom: point.y + radius };
+		const visible = orbitStopVisibility(box, clear, CLEAR_FADE * pixel);
+		if (visible <= 0) {
+			continue;
+		}
+		const front = point.depth >= 0;
+		context.globalAlpha = (front ? 1 : 0.55) * visible;
+		context.beginPath();
+		context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+		context.fill();
+		context.globalAlpha = (front ? 0.85 : 0.5) * visible;
 		context.fillText(text, x, y);
 	}
 	context.letterSpacing = '0px';
@@ -379,13 +422,28 @@ export class AgentChatOrbit extends Disposable {
 	private playingSince: number | undefined;
 	private frame: number | undefined;
 	private lastFrameTime = 0;
+	private keepClear: readonly IOrbitBox[] = [];
+	private keepClearAt = 0;
+	/** At rest (see {@link rest}): the picture shown in the canvas's place. */
+	private resting: { readonly picture: HTMLImageElement; readonly url: string } | undefined;
+	private restTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Bumped by every wake: a rest still encoding its picture is dropped. */
+	private restGeneration = 0;
 
-	constructor(parent: HTMLElement, private readonly still: () => boolean) {
+	/** `keepClear`: the chat's controls on the canvas, in CSS pixels (read at most every 250 ms). */
+	constructor(parent: HTMLElement, private readonly still: () => boolean, private readonly readKeepClear: () => readonly IOrbitBox[] = () => [], private readonly restDelayMs = ORBIT_REST_DELAY_MS) {
 		super();
 		this.canvas = append(parent, $<HTMLCanvasElement>('canvas.volt-agent-chat-orbit', { 'aria-hidden': 'true' }));
 		this.context = this.canvas.getContext('2d', { alpha: false });
 		this._register(toDisposable(() => {
 			this.pause();
+			this.restGeneration++;
+			clearTimeout(this.restTimer);
+			if (this.resting) {
+				this.resting.picture.remove();
+				URL.revokeObjectURL(this.resting.url);
+				this.resting = undefined;
+			}
 			this.canvas.remove();
 		}));
 	}
@@ -398,14 +456,85 @@ export class AgentChatOrbit extends Disposable {
 		this.width = width;
 		this.height = height;
 		this.pixelRatio = pixelRatio;
-		this.canvas.width = Math.max(1, Math.round(width * pixelRatio));
-		this.canvas.height = Math.max(1, Math.round(height * pixelRatio));
+		this.wake();
 		this.draw();
+	}
+
+	/**
+	 * Held until the next input: the canvas (a window-sized bitmap, about 100 MB of the GPU's memory
+	 * with its buffers at 2x) goes, and a picture of the same frame shows in its place. Playing,
+	 * drawing again or resizing brings the canvas back with that frame first, in the same task.
+	 */
+	rest(): void {
+		if (this.playingSince !== undefined || this.still() || this.resting || this.restTimer !== undefined) {
+			return;
+		}
+		this.restTimer = setTimeout(() => {
+			this.restTimer = undefined;
+			void this.trade();
+		}, this.restDelayMs);
+	}
+
+	private async trade(): Promise<void> {
+		if (this.playingSince !== undefined || !this.context || this.canvas.width <= 1 || !this.canvas.isConnected) {
+			return;
+		}
+		const generation = ++this.restGeneration;
+		const blob = await new Promise<Blob | null>(resolve => this.canvas.toBlob(resolve, 'image/png'));
+		if (!blob || generation !== this.restGeneration || this.playingSince !== undefined) {
+			return;
+		}
+		const url = URL.createObjectURL(blob);
+		const picture = $<HTMLImageElement>('img.volt-agent-chat-orbit-still', { alt: '', 'aria-hidden': 'true', draggable: 'false' });
+		picture.src = url;
+		try {
+			await picture.decode();
+		} catch {
+			URL.revokeObjectURL(url);
+			return;
+		}
+		if (generation !== this.restGeneration || this.playingSince !== undefined || !this.canvas.isConnected) {
+			URL.revokeObjectURL(url);
+			return;
+		}
+		this.canvas.after(picture);
+		this.resting = { picture, url };
+		// A 0x0 canvas lets its bitmap go; its CSS box (inset 0, 100%) keeps the layout.
+		this.canvas.width = 0;
+		this.canvas.height = 0;
+	}
+
+	/** The canvas back at its size (its frame is drawn by the caller), the picture gone; a pending rest is dropped. */
+	private wake(): void {
+		this.restGeneration++;
+		if (this.restTimer !== undefined) {
+			clearTimeout(this.restTimer);
+			this.restTimer = undefined;
+		}
+		const width = Math.max(1, Math.round(this.width * this.pixelRatio));
+		const height = Math.max(1, Math.round(this.height * this.pixelRatio));
+		if (this.canvas.width !== width || this.canvas.height !== height) {
+			this.canvas.width = width;
+			this.canvas.height = height;
+		}
+		if (this.resting) {
+			const { picture, url } = this.resting;
+			this.resting = undefined;
+			// Drawn before the picture goes, in this task: the next frame shows the canvas, never a gap.
+			queueMicrotask(() => {
+				picture.remove();
+				URL.revokeObjectURL(url);
+			});
+		}
 	}
 
 	play(): void {
 		if (this.playingSince !== undefined) {
 			return;
+		}
+		if (this.resting || this.restTimer !== undefined) {
+			this.wake();
+			this.draw();
 		}
 		if (this.still()) {
 			this.draw();
@@ -445,9 +574,25 @@ export class AgentChatOrbit extends Disposable {
 		});
 	}
 
+	/** The controls moved (the composer grew, a picker changed): read their boxes on the next frame. */
+	invalidateKeepClear(): void {
+		this.keepClearAt = 0;
+		if (this.playingSince === undefined) {
+			this.draw();
+		}
+	}
+
 	private draw(): void {
+		if (this.resting || this.restTimer !== undefined) {
+			this.wake();
+		}
 		if (this.context && this.width > 0 && this.height > 0) {
-			drawAgentChatOrbit(this.context, this.width, this.height, this.pixelRatio, this.seconds());
+			const now = Date.now();
+			if (now - this.keepClearAt >= CLEAR_REFRESH_MS) {
+				this.keepClearAt = now;
+				this.keepClear = this.readKeepClear();
+			}
+			drawAgentChatOrbit(this.context, this.width, this.height, this.pixelRatio, this.seconds(), this.keepClear);
 		}
 	}
 }

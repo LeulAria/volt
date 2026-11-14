@@ -107,6 +107,16 @@ module.exports.activate = function (volt) {
 
 const TOOLS = ['note_write', 'note_read', 'note_list', 'ws_write', 'ws_read', 'forge_raw', 'echo', 'empty', 'hang', 'crash', 'spin', 'globals'];
 
+suite('Volt T2 plugin host limits', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('H.2: an idle host is stopped within 90 s of its last call, not kept through a rest', () => {
+		// A host kept 5 minutes held its process, a sandbox watchdog and the denial monitor at rest (ADEMark A5).
+		assert.ok(T2_LIMITS.idleStopMs <= 90_000, `stopped after ${T2_LIMITS.idleStopMs} ms`);
+		assert.ok(T2_LIMITS.idleStopMs > T2_LIMITS.idleAfterMs, 'idle comes before the stop');
+	});
+});
+
 suite('Volt T2 plugin host (P1, real sandboxes)', function () {
 
 	this.timeout(180_000);

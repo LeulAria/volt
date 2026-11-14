@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { bm25, idf, IRankedFile, packRetrieval, parsePorcelainZ, planRetrieval, rankEvidence, snippetsFor, stemTerm } from '../../../common/search/contextRetrieval.js';
+import { bm25, idf, IRankedFile, packRetrieval, parsePorcelainZ, planRetrieval, rankEvidence, retrievalAddsToMessage, snippetsFor, stemTerm } from '../../../common/search/contextRetrieval.js';
 
 suite('Volt context retrieval', () => {
 
@@ -125,6 +125,19 @@ suite('Volt context retrieval', () => {
 			const twice = rankEvidence([{ path: 'a.ts', kind: 'declaration', term: 'X', line: 1 }, { path: 'a.ts', kind: 'declaration', term: 'X', line: 1 }], { wantsTests: false });
 			assert.strictEqual(once[0].score, twice[0].score);
 		});
+
+		test('the order searches finish in does not change the block (prompt cache)', () => {
+			const evidence = [
+				{ path: 'src/dates.ts', kind: 'term' as const, term: 'date', weight: 2 },
+				{ path: 'src/dates.ts', kind: 'term' as const, term: 'number', weight: 2 },
+				{ path: 'src/dates.ts', kind: 'declaration' as const, term: 'parseDate', line: 4 },
+			];
+			const block = (items: typeof evidence) => packRetrieval(rankEvidence(items, { wantsTests: false }).map(file => ({ file, snippets: [] })), 1000)?.text;
+			const forward = block(evidence);
+			assert.strictEqual(block([...evidence].reverse()), forward);
+			assert.strictEqual(block([evidence[1], evidence[2], evidence[0]]), forward);
+			assert.ok(forward?.includes('src/dates.ts - declares parseDate (line 4); mentions "date"; mentions "number"'));
+		});
 	});
 
 	suite('snippets and packing', () => {
@@ -162,6 +175,14 @@ suite('Volt context retrieval', () => {
 			const packed = packRetrieval([{ file: file('a.ts', []), snippets: [] }], 1_000, { partial: true });
 			assert.ok(packed?.text.includes('cut short'));
 		});
+	});
+
+	test('a block that lists only files the message names by path adds nothing for an agent', () => {
+		const message = 'Read src/paginate.ts and src/dates.ts. Explain what each function does and list every bug you find.';
+		assert.strictEqual(retrievalAddsToMessage(['src/paginate.ts', 'src/dates.ts'], message), false);
+		assert.strictEqual(retrievalAddsToMessage(['src/paginate.ts', 'src/invoices.ts'], message), true, 'a file the message does not name is news');
+		assert.strictEqual(retrievalAddsToMessage(['src/dates.ts'], 'fix the date bug in dates.ts'), true, 'a bare file name: the block says where it is');
+		assert.strictEqual(retrievalAddsToMessage(['src/dates.ts'], 'look at src\\dates.ts'), false, 'Windows separators');
 	});
 
 	test('git status -z: changed, untracked, renamed and quoted-free paths with spaces', () => {

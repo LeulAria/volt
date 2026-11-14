@@ -88,6 +88,10 @@ export function isNoiseDenial(denial: ISandboxDenial): boolean {
 	}
 	const target = denial.target;
 	return !target
+		// Claude Code knocks on every other session's socket in `/tmp/cc-socks` at start (its peer
+		// messaging). They stay unreachable: a sandboxed chat must not hand a prompt to the user's
+		// unsandboxed sessions. The knock is the CLI's, not the agent's, so no "Blocked" card.
+		|| denial.kind === 'network' && /^\/(private\/)?tmp\/cc-socks\/[^/]+\.sock$/.test(target)
 		|| target.startsWith('/dev/')
 		|| /\/Library\/(Caches|Saved Application State|HTTPStorages|Preferences)\//.test(target)
 		|| /\/\.DS_Store$/.test(target)

@@ -229,6 +229,14 @@ const KIND_WEIGHT: Record<EvidenceKind, number> = { location: 12, mentioned: 10,
 const TEST_PATH = /(^|\/)(__tests__|tests?|spec)\/|\.(test|spec)\.[^/]+$|_test\.(go|py)$/i;
 const GENERATED_PATH = /(^|\/)(dist|build|out|coverage|vendor|\.next|target|__generated__|generated)\/|\.min\.(js|css)$|\.d\.ts$|\.lock$|-lock\.json$/i;
 
+/** Strongest kind first, then heavier, then by term and line: an order that does not depend on which search finished first. */
+function compareEvidence(a: IRetrievalEvidence, b: IRetrievalEvidence): number {
+	return KIND_WEIGHT[b.kind] - KIND_WEIGHT[a.kind]
+		|| (b.weight ?? 0) - (a.weight ?? 0)
+		|| (a.term ?? '').localeCompare(b.term ?? '')
+		|| (a.line ?? 0) - (b.line ?? 0);
+}
+
 /**
  * One score per file: the strongest kinds of evidence count fully, repeats less; a term found in
  * many files counts little; tests rank up only when the message is about tests; generated and
@@ -245,9 +253,11 @@ export function rankEvidence(evidence: readonly IRetrievalEvidence[], options: {
 	}
 	const ranked: IRankedFile[] = [];
 	for (const [path, items] of byPath) {
+		// Searches finish in any order: sort, so the same message gives the same block (and the prompt cache holds).
+		items.sort(compareEvidence);
 		let score = 0;
 		const seenTerms = new Set<string>();
-		for (const item of [...items].sort((a, b) => KIND_WEIGHT[b.kind] - KIND_WEIGHT[a.kind])) {
+		for (const item of items) {
 			let weight = item.kind === 'term' ? item.weight ?? KIND_WEIGHT.term : KIND_WEIGHT[item.kind];
 			if (item.kind === 'match' && item.spread) {
 				weight *= 1 / Math.log2(1 + item.spread);
@@ -381,6 +391,18 @@ export function packRetrieval(inputs: readonly IPackInput[], budgetTokens: numbe
 		return undefined;
 	}
 	return { text: [head, ...parts, tail].join('\n'), tokens, files, withCode };
+}
+
+/**
+ * Whether a headline-only block (what a CLI agent gets) tells the agent more than its message: not
+ * when every file it lists is one the message names by its path. "Read src/paginate.ts and
+ * src/dates.ts..." got a block listing those two files, which the agent reads anyway, and the block
+ * came or went with the search's deadline, so the same prompt sent a different first message and
+ * rewrote the prompt cache (about 8k tokens, $0.06 on Opus 5.5, in 2 of 3 runs, 2026-11-14).
+ */
+export function retrievalAddsToMessage(files: readonly string[], message: string): boolean {
+	const text = message.replace(/\\/g, '/');
+	return files.some(path => !text.includes(path));
 }
 
 /** `git status --porcelain=v1 -z` -> workspace-relative paths of changed files. */

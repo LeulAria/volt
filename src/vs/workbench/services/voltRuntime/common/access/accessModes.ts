@@ -12,7 +12,7 @@ export const VOLT_ACCESS_MODES: readonly VoltAccessMode[] = [
 	'full-access',
 ];
 
-export const DEFAULT_ACCESS_MODE: VoltAccessMode = 'full-access';
+export const DEFAULT_ACCESS_MODE: VoltAccessMode = 'supervised';
 
 export const VOLT_ACCESS_MODE_STORAGE_KEY = 'volt.runtime.accessMode';
 /** Per-chat overrides of the default access mode, keyed by session id. */
@@ -36,14 +36,9 @@ export interface IAccessModeOption {
 
 export const ACCESS_MODE_OPTIONS: readonly IAccessModeOption[] = [
 	{
-		id: 'full-access',
-		label: 'Full access',
-		description: 'Allows commands and edits without prompts.',
-	},
-	{
-		id: 'auto',
-		label: 'Auto',
-		description: 'Supported providers approve routine actions; others still ask.',
+		id: 'supervised',
+		label: 'Supervised',
+		description: 'Ask before commands and file changes.',
 	},
 	{
 		id: 'auto-accept-edits',
@@ -51,12 +46,19 @@ export const ACCESS_MODE_OPTIONS: readonly IAccessModeOption[] = [
 		description: 'Auto-approve edits, ask before other actions.',
 	},
 	{
-		id: 'supervised',
-		label: 'Supervised',
-		description: 'Ask before commands and file changes.',
+		id: 'auto',
+		label: 'Auto',
+		description: 'Supported providers approve routine actions; others still ask.',
+	},
+	{
+		id: 'full-access',
+		label: 'Full access',
+		description: 'Allows commands and edits without prompts.',
 	},
 ];
 
 export function accessModeOption(mode: VoltAccessMode): IAccessModeOption {
-	return ACCESS_MODE_OPTIONS.find(option => option.id === mode) ?? ACCESS_MODE_OPTIONS[ACCESS_MODE_OPTIONS.length - 1];
+	return ACCESS_MODE_OPTIONS.find(option => option.id === mode)
+		?? ACCESS_MODE_OPTIONS.find(option => option.id === DEFAULT_ACCESS_MODE)
+		?? ACCESS_MODE_OPTIONS[0];
 }

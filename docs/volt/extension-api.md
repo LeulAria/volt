@@ -89,10 +89,14 @@ const current = await volt.chats.current();                          // [agents.
 const transcript = await volt.chats.read(current!.id);                // [agents.read:current] (another chat: agents.read:any)
 await volt.chats.send(current!.id, 'Also update the changelog.');     // [agents.send]
 await volt.chats.start({ title: 'Release notes', message: 'Draft the notes for 0.0.3' }); // [agents.create]
+const model = await volt.chats.pickModel({ placeHolder: 'Model for the release notes' }); // [ui.contribute] Volt's model picker
+if (model) { await volt.chats.start({ title: 'Release notes', model: model.id }); }  // { id, label, provider } or undefined
 
 volt.chats.onDidStartTurn(turn => { /* { chatId, turnId, kind } */ });            // [agents.read:any]
 volt.chats.onDidEndTurn(turn => { /* { chatId, turnId, kind, outcome } */ });  // outcome: done | failed | cancelled | interrupted
 ```
+
+`pickModel` shows the models the user connected and shows in the composer's picker, titled "<Your extension> asks you to pick a model"; the extension learns only the model picked (no list of the user's models), so it needs no capability.
 
 `Chat` is `{ id, title, status, createdAt, updatedAt, turnCount, project? }`. A message you send shows in the chat as coming from your extension ("Notes (extension)"), and the agent is told it isn't the user. Starts and sends are rate-limited like other outside callers. Turn events need `agents.read:any`; the check runs when you add the first listener, and a refusal is logged (no events arrive).
 

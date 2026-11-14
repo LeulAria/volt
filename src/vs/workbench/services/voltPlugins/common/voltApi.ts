@@ -83,6 +83,14 @@ export interface IVoltTurnEvent {
 	readonly outcome?: string;
 }
 
+/** A model the user picked in Volt's model picker: what `create` takes as `model`. */
+export interface IVoltPickedModel {
+	readonly id: string;
+	readonly label: string;
+	/** The provider or agent harness that runs it. */
+	readonly provider: string;
+}
+
 /** Other chats, through the same tools agents use (`thread_*`) and the chats list. */
 export interface IVoltAgentsApi {
 	/** `agents.read:any`. */
@@ -97,6 +105,8 @@ export interface IVoltAgentsApi {
 	send(chatId: string, message: string): Promise<IVoltHostToolResult>;
 	/** `agents.create`. */
 	create(options: { readonly title: string; readonly message?: string; readonly model?: string; readonly project?: string }): Promise<IVoltHostToolResult>;
+	/** `ui.contribute`: Volt's model picker; the user's pick (the extension learns only that one), or undefined. */
+	pickModel(options?: { readonly title?: string; readonly placeHolder?: string }): Promise<IVoltPickedModel | undefined>;
 	/** `agents.read:any`, checked when a listener is added. */
 	readonly onDidStartTurn: Event<IVoltTurnEvent>;
 	readonly onDidFinishTurn: Event<IVoltTurnEvent>;
@@ -483,6 +493,7 @@ export interface IVoltApiBackend {
 	// `VoltApiUnavailableError` (after its capability check, so a refusal is still a refusal).
 	listChats?(options: { readonly query?: string; readonly limit?: number }): Promise<readonly IVoltChatSummary[]>;
 	currentChat?(): IVoltChatSummary | undefined;
+	pickModel?(options: { readonly title?: string; readonly placeHolder?: string }, caller: IVoltApiCaller): Promise<IVoltPickedModel | undefined>;
 	readonly onDidStartTurn?: Event<IVoltTurnEvent>;
 	readonly onDidFinishTurn?: Event<IVoltTurnEvent>;
 	listMemories?(scope: VoltMemoryScope | 'all'): Promise<readonly IVoltMemoryNote[]>;
@@ -658,6 +669,11 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		create(options) {
 			check({ api: 'agents.create', capability: 'agents.create' });
 			return backend.invokeTool('thread_launch', { title: options.title, ...(options.message ? { message: options.message } : {}), ...(options.model ? { model: options.model } : {}), ...(options.project ? { project: options.project } : {}) }, caller());
+		},
+		pickModel(options) {
+			// The user chooses; the extension learns only the model picked, as with a file picker.
+			check({ api: 'agents.pickModel', capability: 'ui.contribute' });
+			return bound(backend.pickModel, 'agents.pickModel').call(backend, { ...(options?.title ? { title: options.title } : {}), ...(options?.placeHolder ? { placeHolder: options.placeHolder } : {}) }, caller());
 		},
 		onDidStartTurn: checkedEvent(() => backend.onDidStartTurn, 'agents.onDidStartTurn', 'agents.read:any'),
 		onDidFinishTurn: checkedEvent(() => backend.onDidFinishTurn, 'agents.onDidFinishTurn', 'agents.read:any'),

@@ -13,7 +13,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/c
 import { NullLogService } from '../../../log/common/log.js';
 import { IVoltStorageContext } from '../../common/voltStorage.js';
 import { worktreeRepoKey } from '../../common/voltStorageRules.js';
-import { measurePath, VoltStorageService } from '../../node/voltStorageService.js';
+import { checkoutsToMeasure, measurePath, measurePathsWithDu, parseDuOutput, VoltStorageService } from '../../node/voltStorageService.js';
 
 const EMPTY: IVoltStorageContext = { openWorkspaceIds: [], worktrees: [], sessionIds: [], runningSessionIds: [] };
 
@@ -63,6 +63,29 @@ suite('VoltStorageService on real folders', function () {
 		assert.strictEqual(measured.bytes, du);
 		assert.strictEqual(measured.files, 2);
 		assert.deepStrictEqual(await measurePath(join(root, 'missing')), { bytes: 0, files: 0 });
+	});
+
+	(process.platform === 'win32' ? test.skip : test)('measures checkouts in one du process, the same as the walk, and leaves out what it cannot read', async () => {
+		const a = join(root, 'a'), b = join(root, 'b');
+		await mkdir(join(a, 'sub'), { recursive: true });
+		await mkdir(b, { recursive: true });
+		await writeFile(join(a, 'sub', 'x.bin'), Buffer.alloc(70_000));
+		await writeFile(join(b, 'y.bin'), Buffer.alloc(9_000));
+		const sizes = await measurePathsWithDu([a, b, join(root, 'missing')]);
+		assert.ok(sizes);
+		assert.strictEqual(sizes.get(a), (await measurePath(a)).bytes);
+		assert.strictEqual(sizes.get(b), (await measurePath(b)).bytes);
+		assert.strictEqual(sizes.has(join(root, 'missing')), false);
+	});
+
+	test('du output parses to bytes per path, paths with spaces included', () => {
+		assert.deepStrictEqual([...parseDuOutput('12\t/a/b c\n0\t/d\n\nnoise\n')], [['/a/b c', 12 * 1024], ['/d', 0]]);
+	});
+
+	test('a checkout is measured again only when new or when its chat ran since', () => {
+		const cache = new Map([['/w/old', { bytes: 1, at: 1_000 }], ['/w/ran', { bytes: 1, at: 1_000 }], ['/w/orphan', { bytes: 1, at: 1_000 }]]);
+		const context = { worktrees: [{ path: '/w/old', sessionId: 's1', archived: false, updatedAt: 500 }, { path: '/w/ran', sessionId: 's2', archived: false, updatedAt: 2_000 }] };
+		assert.deepStrictEqual(checkoutsToMeasure(['/w/old', '/w/ran', '/w/orphan', '/w/new'], cache, context), ['/w/ran', '/w/new']);
 	});
 
 	test('cleans old logs but keeps this session\'s', async () => {

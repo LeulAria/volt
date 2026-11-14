@@ -13,7 +13,8 @@ import { SymbolNameIndex } from '../common/symbolNameIndex.js';
 import { literalTrigramQuery, regexTrigramQuery, toByteString, TrigramQuery } from '../common/regexQuery.js';
 import { extractSymbols, hasSymbolRules, SYMBOL_KINDS } from '../common/symbolExtract.js';
 import { createJsMatcher, IJsMatcher, matchText } from '../common/textMatch.js';
-import { IVoltCodeIndexFileHits, IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeSymbol, VoltCodeIndexState, VoltCodeSymbolKind } from '../common/voltCodeIndex.js';
+import { IVoltCodeImportersRequest, IVoltCodeImportersResult, IVoltCodeIndexFileHits, IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeStructuralRequest, IVoltCodeStructuralResult, IVoltCodeStructureRequest, IVoltCodeStructureResult, IVoltCodeSymbol, VoltCodeIndexState, VoltCodeSymbolKind } from '../common/voltCodeIndex.js';
+import { CodeStructure } from './codeStructure.js';
 import { safeOpenRead } from '../../voltFiles/node/safeOpen.js';
 import { deleteSegment, ISegmentSymbols, mergeSegments, NEXT_BIT, PostingCache, releaseBuildMemory, rotl8, Segment, SegmentBuilder, TrigramTable, trigramBits } from './indexFormat.js';
 import { IGNORE_FILE_NAMES, listFiles, searchFiles } from './ripgrep.js';
@@ -839,6 +840,7 @@ export class RootIndex {
 	}
 
 	private markChanged(path: string): void {
+		this.structureLayer?.invalidate(path);
 		const at = this.live.get(path);
 		if (at) {
 			this.kill(at);
@@ -852,6 +854,7 @@ export class RootIndex {
 	}
 
 	private removePath(path: string): void {
+		this.structureLayer?.invalidate(path);
 		const at = this.live.get(path);
 		if (at) {
 			this.kill(at);
@@ -1341,6 +1344,13 @@ export class RootIndex {
 		};
 	}
 
+	/** One file, with globs matched against its name (as they are against paths below a folder). */
+	private fileFilter(file: string, includes: readonly string[] | undefined, excludes: readonly string[] | undefined): (path: string) => boolean {
+		const slash = file.lastIndexOf('/');
+		const inFolder = this.pathFilter(slash < 0 ? '' : file.slice(0, slash), includes, excludes);
+		return path => path === file && inFolder(path);
+	}
+
 	private hasFilesUnder(folder: string): boolean {
 		if (!folder) {
 			return this.listed.size > 0;
@@ -1386,7 +1396,9 @@ export class RootIndex {
 			return { kind: 'fallback', reason: notReady };
 		}
 		const folder = this.folderOf(request.folder);
-		if (folder === undefined || !this.hasFilesUnder(folder)) {
+		// `instant_grep` with `path` set to one file: a sandboxed chat (no ripgrep) refused it as "not indexed".
+		const file = folder && this.listed.has(folder) ? folder : undefined;
+		if (folder === undefined || (!file && !this.hasFilesUnder(folder))) {
 			return { kind: 'fallback', reason: 'not indexed' };
 		}
 		const caseInsensitive = !request.caseSensitive;
@@ -1396,7 +1408,7 @@ export class RootIndex {
 		if (query.op === 'all' && !filtered && !matcher) {
 			return { kind: 'fallback', reason: 'unselective' }; // nothing to look up: ripgrep's full scan is faster
 		}
-		const keep = this.pathFilter(folder, request.includes, request.excludes);
+		const keep = file ? this.fileFilter(file, request.includes, request.excludes) : this.pathFilter(folder, request.includes, request.excludes);
 
 		const candidates: string[] = [];
 		if (query.op === 'all') {
@@ -1493,7 +1505,7 @@ export class RootIndex {
 			result = { ...await this.verify(unique, matcher, context, request.maxMatches, maxLineChars), engine: 'index' };
 		} else if (this.options.confined) {
 			// ripgrep opens files by path, through any symlink a sandboxed chat swaps in.
-			return { kind: 'fallback', reason: 'this pattern needs ripgrep, which a sandboxed chat\'s search does not run' };
+			return { kind: 'fallback', reason: loneBrace(request.pattern, request.isRegExp) ? 'a `{` or `}` that is not a repetition must be escaped as \\{ or \\} (ripgrep rejects it too)' : 'this pattern needs ripgrep, which a sandboxed chat\'s search does not run' };
 		} else {
 			try {
 				result = { ...await ripgrep(unique, request.maxMatches), scanned: unique.length, engine: 'ripgrep' };
@@ -1750,6 +1762,101 @@ export class RootIndex {
 
 	//#endregion
 
+	//#region Structure (tree-sitter)
+
+	private structureLayer: CodeStructure | undefined;
+
+	private get codeStructure(): CodeStructure {
+		this.structureLayer ??= new CodeStructure({
+			readText: path => this.readText(path),
+			stamp: async path => {
+				try {
+					if (this.options.confined) {
+						const file = await this.openConfined(path);
+						try {
+							const stat = await file.stat();
+							return `${stat.size}:${stat.mtimeMs}`;
+						} finally {
+							await file.close();
+						}
+					}
+					const stat = await fs.stat(join(this.root, path));
+					return stat.isFile() ? `${stat.size}:${stat.mtimeMs}` : undefined;
+				} catch {
+					return undefined;
+				}
+			},
+			isListed: path => this.listed.has(path),
+			listed: () => this.listed,
+			filesContaining: async (pattern, extensions, folder, limit, regex) => {
+				const found = await this.doSearch({
+					root: this.root,
+					...(folder ? { folder: join(this.root, folder) } : {}),
+					pattern,
+					isRegExp: !!regex,
+					caseSensitive: true,
+					multiline: false,
+					includes: extensions.map(extension => `**/*.${extension}`),
+					maxMatches: limit * 8,
+					maxLineChars: 1,
+					options: this.options,
+				});
+				return found.kind === 'results' ? found.files.map(file => file.path).slice(0, limit) : undefined;
+			},
+		});
+		return this.structureLayer;
+	}
+
+	async structure(request: IVoltCodeStructureRequest): Promise<IVoltCodeStructureResult> {
+		try {
+			const notReady = await this.prepare(request.waitMs);
+			if (notReady) {
+				return { kind: 'fallback', reason: notReady };
+			}
+			const path = request.path.replace(/^\.?\/+/, '');
+			if (!this.listed.has(path)) {
+				return { kind: 'fallback', reason: 'not indexed' };
+			}
+			return await this.codeStructure.structure(path);
+		} catch (err) {
+			return this.queryFailed(err);
+		}
+	}
+
+	async importers(request: IVoltCodeImportersRequest): Promise<IVoltCodeImportersResult> {
+		try {
+			const notReady = await this.prepare(request.waitMs);
+			if (notReady) {
+				return { kind: 'fallback', reason: notReady };
+			}
+			const folder = this.folderOf(request.folder);
+			if (folder === undefined) {
+				return { kind: 'fallback', reason: 'not indexed' };
+			}
+			return await this.codeStructure.importers(request, folder || undefined);
+		} catch (err) {
+			return this.queryFailed(err);
+		}
+	}
+
+	async structural(request: IVoltCodeStructuralRequest): Promise<IVoltCodeStructuralResult> {
+		try {
+			const notReady = await this.prepare(request.waitMs);
+			if (notReady) {
+				return { kind: 'fallback', reason: notReady };
+			}
+			const folder = this.folderOf(request.folder);
+			if (folder === undefined) {
+				return { kind: 'fallback', reason: 'not indexed' };
+			}
+			return await this.codeStructure.structural(request, folder || undefined, this.pathFilter(folder, request.includes, request.excludes));
+		} catch (err) {
+			return this.queryFailed(err);
+		}
+	}
+
+	//#endregion
+
 	private indexedBytes(): number {
 		let bytes = 0;
 		for (const { seg, doc } of this.live.values()) {
@@ -1821,3 +1928,12 @@ function fuzzyMatcher(query: string): (name: string) => number | undefined {
 
 /** Used by tests: the folded byte string the index would store for `text`. */
 export const indexedForm = toByteString;
+
+/** A regex with a brace that is neither a repetition (`{2}`, `{1,3}`) nor part of an escape (`\p{L}`): ripgrep refuses it. */
+export function loneBrace(pattern: string, isRegExp: boolean): boolean {
+	if (!isRegExp) {
+		return false;
+	}
+	const stripped = pattern.replace(/\\[pPxuN]\{[^}]*\}|\\./g, '').replace(/\[(?:\\.|[^\]])*\]/g, '').replace(/\{\d+(?:,\d*)?\}/g, '');
+	return /[{}]/.test(stripped);
+}

@@ -294,3 +294,40 @@ export function splitMarkdownChunks(text: string): string[] {
 	// Pieces were split on '\n'; put the separators back so joining is lossless.
 	return chunks.map((chunk, index) => index < chunks.length - 1 ? chunk + '\n' : chunk);
 }
+
+/**
+ * Joins consecutive `splitMarkdownChunks` pieces into as few parts as fit `max` characters each
+ * (the markdown renderer cuts a string past 100,000). A piece longer than `max` alone (one block
+ * with no blank line in it) is cut at line ends. Joining the parts gives back the pieces' text.
+ */
+export function groupMarkdownChunks(pieces: readonly string[], max: number): string[] {
+	const parts: string[] = [];
+	let current = '';
+	const push = (piece: string) => {
+		if (current && current.length + piece.length > max) {
+			parts.push(current);
+			current = '';
+		}
+		current += piece;
+	};
+	for (const piece of pieces) {
+		if (piece.length <= max) {
+			push(piece);
+			continue;
+		}
+		let start = 0;
+		while (start < piece.length) {
+			let end = Math.min(piece.length, start + max);
+			if (end < piece.length) {
+				const lineEnd = piece.lastIndexOf('\n', end - 1);
+				end = lineEnd >= start ? lineEnd + 1 : end;
+			}
+			push(piece.slice(start, end));
+			start = end;
+		}
+	}
+	if (current) {
+		parts.push(current);
+	}
+	return parts;
+}

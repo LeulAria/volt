@@ -10,3 +10,5 @@ import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../.
 registerMainProcessRemoteService(IVoltGitService, VOLT_GIT_CHANNEL_NAME);
 
 registerMainProcessRemoteService(IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME);
+
+// The HTTP client's main-process transport is registered in contrib/voltHttp/electron-browser/voltHttpTransport.contribution.ts.

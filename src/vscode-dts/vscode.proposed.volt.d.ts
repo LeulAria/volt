@@ -112,8 +112,24 @@ declare module 'vscode' {
 			readonly outcome?: string;
 		}
 
+		/** A model the user picked in Volt's model picker. */
+		export interface PickedModel {
+			/** What {@link chats.start} takes as `model`. */
+			readonly id: string;
+			/** The name the picker showed, e.g. "Claude Sonnet 4.6". */
+			readonly label: string;
+			/** The provider or agent harness that runs it, e.g. `claude-code`. */
+			readonly provider: string;
+		}
+
 		/** Volt's chats and their agents. */
 		export namespace chats {
+			/**
+			 * Shows Volt's model picker (the models the user connected and shows in the composer) and
+			 * returns the one the user picks, or undefined when they close it. The extension learns only
+			 * the model picked. Capability: `ui.contribute` (none).
+			 */
+			export function pickModel(options?: { readonly title?: string; readonly placeHolder?: string }): Thenable<PickedModel | undefined>;
 			/** Newest first. Capability: `agents.read:any`. */
 			export function list(options?: { readonly query?: string; readonly limit?: number }): Thenable<readonly Chat[]>;
 			/** The chat the user has in front. Capability: `agents.read:current`. */

@@ -13,6 +13,8 @@ export const PROXY_BLOCK_MESSAGE = (host: string) => `Blocked by Volt sandbox: n
 
 /** A tunnel with no traffic either way for this long is closed (I.4 limits). */
 export const PROXY_TUNNEL_IDLE_MS = 120_000;
+/** An allowed host must accept the connection within this, else 504. */
+export const PROXY_CONNECT_TIMEOUT_MS = 20_000;
 /** A client must finish its request headers within this (I.4 limits; slowloris). */
 export const PROXY_HEADER_TIMEOUT_MS = 15_000;
 
@@ -164,7 +166,14 @@ export class SandboxNetworkProxy {
 			return;
 		}
 		const upstream = this.open(target, port);
+		// An allowed host that does not answer: the agent gets a 504 instead of waiting for the idle timeout.
+		const connectTimer = setTimeout(() => {
+			client.end('HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n');
+			upstream.destroy();
+		}, PROXY_CONNECT_TIMEOUT_MS);
+		upstream.once('close', () => clearTimeout(connectTimer));
 		upstream.once('connect', () => {
+			clearTimeout(connectTimer);
 			client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 			if (head.length) {
 				upstream.write(head);

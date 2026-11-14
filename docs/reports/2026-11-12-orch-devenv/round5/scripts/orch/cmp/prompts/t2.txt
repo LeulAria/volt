@@ -1,0 +1,3 @@
+Benchmark task in /tmp/v5orch/w/t2 (a node project; `npm test` runs node:test). Three tests fail: there is exactly one bug in each of src/pricing.ts, src/inventory.ts and src/checkout.ts (the doc comments say what the code should do).
+{{DELEGATION}}
+Each subagent fixes only its own file and must not edit the tests or any other file. Do not run anything yourself before the subagents finish. When all three are done, run `npm test` in /tmp/v5orch/w/t2 yourself and reply in one line with the pass and fail counts.

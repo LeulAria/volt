@@ -41,6 +41,11 @@ export interface IBundleESMTaskOpts {
 	 * boilerplate makes the file larger in the end.
 	 */
 	skipTSBoilerplateRemoval?: (entryPointName: string) => boolean;
+	/**
+	 * Relative imports of an entry point that stay separate files instead of
+	 * being bundled into it (they must be entry points of their own).
+	 */
+	keepSeparate?: (entryPointName: string) => RegExp | undefined;
 }
 
 const DEFAULT_FILE_HEADER = [
@@ -116,6 +121,12 @@ function bundleESMTask(opts: IBundleESMTaskOpts): NodeJS.ReadWriteStream {
 					build.onResolve({ filter: /^minimist$/ }, () => {
 						return { path: path.join(REPO_ROOT_PATH, 'node_modules', 'minimist', 'index.js'), external: false };
 					});
+
+					// Imports that load another entry point at runtime keep their path.
+					const separate = opts.keepSeparate?.(entryPoint.name);
+					if (separate) {
+						build.onResolve({ filter: separate }, args => ({ path: args.path, external: true }));
+					}
 				},
 			};
 

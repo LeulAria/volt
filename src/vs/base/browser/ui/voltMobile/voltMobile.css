@@ -1,0 +1,379 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Volt's phone surfaces: bottom sheets, full-screen pages, and the touch ripple. They mount inside
+ * the workbench, so the theme's colors reach them; the variables (safe areas, keyboard) come from
+ * voltViewport.ts and default to 0 anywhere it is not installed.
+ *
+ * Motion: press feedback 100-150ms, small transitions 160-220ms, sheets and pages on a spring.
+ */
+
+.volt-sheet-layer,
+.volt-page-layer,
+.volt-ripple-layer {
+	--volt-spring: cubic-bezier(0.32, 0.72, 0, 1);
+	--volt-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+	.volt-sheet-layer,
+	.volt-page-layer {
+		/* A spring (damping 0.82, response 0.42s) sampled over its 576ms settle: 1% overshoot. */
+		--volt-spring: linear(0, 0.053, 0.174, 0.32, 0.467, 0.6, 0.712, 0.802, 0.871, 0.922, 0.958, 0.982, 0.997, 1.005, 1.01, 1.011, 1.011, 1.01, 1.008, 1.006, 1.005, 1.004, 1.002, 1.002, 1);
+	}
+}
+
+/* ---- Bottom sheet ---------------------------------------------------------------------- */
+
+.volt-sheet-layer {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: var(--volt-keyboard, 0px);
+	z-index: 2702;
+	pointer-events: none;
+}
+
+.volt-sheet-layer.set-aside {
+	visibility: hidden;
+}
+
+.volt-sheet-backdrop {
+	position: absolute;
+	inset: 0 0 calc(-1 * var(--volt-keyboard, 0px)) 0;
+	background: rgba(0, 0, 0, 0.42);
+	opacity: 0;
+	transition: opacity 240ms ease-out;
+	pointer-events: auto;
+	-webkit-tap-highlight-color: transparent;
+}
+
+.volt-sheet-layer.open .volt-sheet-backdrop {
+	opacity: 1;
+}
+
+.volt-sheet-layer.closing .volt-sheet-backdrop {
+	opacity: 0;
+	transition-duration: 200ms;
+	pointer-events: none;
+}
+
+.volt-sheet {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	max-width: 640px;
+	margin: 0 auto;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	padding: 0 var(--volt-safe-right, 0px) var(--volt-safe-bottom, 0px) var(--volt-safe-left, 0px);
+	background: var(--vscode-editorWidget-background, var(--vscode-menu-background, #252526));
+	color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+	border-top: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, transparent));
+	border-radius: 14px 14px 0 0;
+	box-shadow: 0 -10px 36px rgba(0, 0, 0, 0.3);
+	outline: none;
+	pointer-events: auto;
+	touch-action: none;
+	transform: translate3d(0, 0, 0);
+	transition: transform 440ms var(--volt-spring), height 320ms var(--volt-spring);
+	will-change: transform;
+}
+
+/* Under the sheet's bottom edge, so the spring's overshoot never shows the page through. */
+.volt-sheet::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 100%;
+	height: 64px;
+	background: inherit;
+}
+
+.volt-sheet.entering,
+.volt-sheet-layer.closing .volt-sheet {
+	transform: translate3d(0, 100%, 0);
+}
+
+.volt-sheet-layer.closing .volt-sheet {
+	transition: transform 240ms var(--volt-exit);
+}
+
+.volt-sheet.dragging,
+.volt-sheet.no-transition,
+.volt-sheet.entering {
+	transition: none;
+}
+
+.volt-sheet-grabber {
+	flex: none;
+	height: 22px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: grab;
+}
+
+.volt-sheet-grabber::before {
+	content: '';
+	width: 36px;
+	height: 5px;
+	border-radius: 3px;
+	background: var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.4));
+}
+
+.volt-sheet-header {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 32px;
+	padding: 0 16px 8px;
+}
+
+.volt-sheet-header.empty {
+	display: none;
+}
+
+.volt-sheet-title {
+	flex: 1;
+	min-width: 0;
+	font-size: 15px;
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-sheet-body {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	overscroll-behavior: contain;
+	touch-action: pan-y;
+}
+
+.volt-sheet-layer.reduced-motion .volt-sheet {
+	transition: opacity 150ms ease-out;
+}
+
+.volt-sheet-layer.reduced-motion .volt-sheet.entering,
+.volt-sheet-layer.reduced-motion.closing .volt-sheet {
+	transform: none;
+	opacity: 0;
+}
+
+/* Tablets: a sheet is a card lifted off the bottom edge, not a full-width drawer. */
+@media (min-width: 700px) {
+	.volt-sheet {
+		bottom: max(16px, var(--volt-safe-bottom, 0px));
+		padding-bottom: 8px;
+		border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, transparent));
+		border-radius: 14px;
+	}
+
+	.volt-sheet::after {
+		display: none;
+	}
+
+	.volt-sheet.entering,
+	.volt-sheet-layer.closing .volt-sheet {
+		transform: translate3d(0, calc(100% + 32px), 0);
+	}
+}
+
+/* ---- Full-screen page ------------------------------------------------------------------- */
+
+.volt-page-layer {
+	position: fixed;
+	inset: 0;
+	z-index: 2702;
+	pointer-events: none;
+}
+
+.volt-page {
+	position: absolute;
+	inset: 0;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	padding: 0 var(--volt-safe-right, 0px) 0 var(--volt-safe-left, 0px);
+	background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+	color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+	box-shadow: -10px 0 28px rgba(0, 0, 0, 0.28);
+	outline: none;
+	pointer-events: auto;
+	touch-action: none;
+	transform: translate3d(0, 0, 0);
+	transition: transform 420ms var(--volt-spring);
+	will-change: transform;
+}
+
+.volt-page.entering,
+.volt-page-layer.closing .volt-page {
+	transform: translate3d(100%, 0, 0);
+}
+
+.volt-page.entering,
+.volt-page.dragging {
+	transition: none;
+}
+
+.volt-page-layer.closing .volt-page {
+	transition: transform 260ms var(--volt-exit);
+}
+
+.volt-page-layer.reduced-motion .volt-page {
+	transition: opacity 150ms ease-out;
+}
+
+.volt-page-layer.reduced-motion .volt-page.entering,
+.volt-page-layer.reduced-motion.closing .volt-page {
+	transform: none;
+	opacity: 0;
+}
+
+.volt-page-header {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 48px;
+	padding: var(--volt-safe-top, 0px) 4px 0;
+	box-sizing: content-box;
+	border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border, transparent));
+}
+
+.volt-page-back,
+.volt-page-action {
+	flex: none;
+	width: 44px;
+	height: 44px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: none;
+	color: inherit;
+	cursor: pointer;
+}
+
+.monaco-workbench .volt-page-header .volt-page-back .codicon[class*='codicon-'],
+.monaco-workbench .volt-page-header .volt-page-action .codicon[class*='codicon-'] {
+	font-size: 20px;
+}
+
+.volt-page-back:focus-visible,
+.volt-page-action:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -2px;
+}
+
+.volt-page-title {
+	flex: 1;
+	min-width: 0;
+	margin: 0 0 0 2px;
+	font-size: 16px;
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-page-actions {
+	flex: none;
+	display: flex;
+}
+
+.volt-page-body {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	overscroll-behavior: contain;
+	touch-action: pan-y;
+	padding-bottom: var(--volt-safe-bottom, 0px);
+}
+
+/* A page that is a destination of the bottom navigation stops above it. */
+.volt-page-layer.above-bottom-bar {
+	bottom: var(--volt-bottom-bar, 0px);
+}
+
+.volt-page-layer.above-bottom-bar .volt-page {
+	box-shadow: none;
+}
+
+.volt-page-layer.above-bottom-bar .volt-page-body {
+	padding-bottom: max(0px, calc(var(--volt-safe-bottom, 0px) - var(--volt-bottom-bar, 0px)));
+}
+
+/* ---- Touch ripple ----------------------------------------------------------------------- */
+
+.volt-ripple-layer {
+	position: fixed;
+	inset: 0;
+	z-index: 10000;
+	pointer-events: none;
+	overflow: hidden;
+}
+
+.volt-ripple {
+	position: fixed;
+	overflow: hidden;
+	pointer-events: none;
+}
+
+.volt-ripple-wave {
+	position: absolute;
+	border-radius: 50%;
+	background: currentColor;
+	opacity: 0.16;
+	transform: scale(0.12);
+	transition: transform 420ms cubic-bezier(0.2, 0, 0, 1), opacity 260ms ease-out;
+}
+
+.volt-ripple.spreading .volt-ripple-wave {
+	transform: scale(1);
+}
+
+.volt-ripple.fading .volt-ripple-wave {
+	opacity: 0;
+	transition: transform 420ms cubic-bezier(0.2, 0, 0, 1), opacity 280ms ease-out 80ms;
+}
+
+.volt-ripple.cancelled .volt-ripple-wave {
+	opacity: 0;
+	transition: opacity 100ms linear;
+}
+
+.volt-ripple.reduced .volt-ripple-wave {
+	transform: scale(1);
+	transition: opacity 150ms linear;
+}
+
+/* Icon buttons dip under the finger; cards sink a little. Individual `scale`, so a control's own transform stays. */
+.volt-pressed-icon {
+	scale: 0.92;
+	transition: scale 100ms ease-out;
+}
+
+.volt-touch-card.volt-pressed {
+	scale: 0.985;
+	transition: scale 120ms ease-out;
+}
+
+.volt-mobile-reduced-motion .volt-pressed-icon,
+.volt-mobile-reduced-motion .volt-touch-card.volt-pressed {
+	scale: none;
+}

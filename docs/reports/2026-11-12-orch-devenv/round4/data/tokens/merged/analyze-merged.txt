@@ -1,0 +1,29 @@
+merged-b1 1 6 MAIN claude-opus-5-5 {"input":2,"cache_write":14222,"cache_write_1h":14222,"cache_read":0,"output":61} 10
+merged-b1 2 51 MAIN claude-opus-5-5 {"input":2,"cache_write":5642,"cache_write_1h":5642,"cache_read":8411,"output":72} 10
+merged-b1 3 96 MAIN claude-opus-5-5 {"input":2,"cache_write":0,"cache_write_1h":0,"cache_read":14053,"output":62} 10
+merged-b3 1 141 side claude-haiku-5-5 {"input":2,"cache_write":580,"cache_write_1h":580,"cache_read":2206,"output":9} 0
+merged-b3 1 142 MAIN claude-opus-5-5 {"input":2,"cache_write":7673,"cache_write_1h":7673,"cache_read":7540,"output":154} 10
+merged-b3 1 146 MAIN claude-opus-5-5 {"input":2,"cache_write":1426,"cache_write_1h":1426,"cache_read":15213,"output":681} 10
+merged-b3 1 148 MAIN claude-opus-5-5 {"input":2,"cache_write":731,"cache_write_1h":731,"cache_read":16639,"output":1368} 10
+merged-b3 1 150 side claude-haiku-5-5 {"input":2,"cache_write":1315,"cache_write_1h":1315,"cache_read":0,"output":20} 0
+merged-b3 2 194 MAIN claude-opus-5-5 {"input":2,"cache_write":7772,"cache_write_1h":7772,"cache_read":7540,"output":154} 10
+merged-b3 2 195 MAIN claude-opus-5-5 {"input":2,"cache_write":1426,"cache_write_1h":1426,"cache_read":15312,"output":546} 10
+merged-b3 2 197 MAIN claude-opus-5-5 {"input":2,"cache_write":571,"cache_write_1h":571,"cache_read":16738,"output":1547} 10
+merged-b3 2 199 side claude-haiku-5-5 {"input":2,"cache_write":0,"cache_write_1h":0,"cache_read":1315,"output":20} 0
+merged-b3 3 243 MAIN claude-opus-5-5 {"input":2,"cache_write":7772,"cache_write_1h":7772,"cache_read":7540,"output":154} 10
+merged-b3 3 244 MAIN claude-opus-5-5 {"input":2,"cache_write":1426,"cache_write_1h":1426,"cache_read":15312,"output":810} 10
+merged-b3 3 246 MAIN claude-opus-5-5 {"input":2,"cache_write":930,"cache_write_1h":930,"cache_read":16738,"output":1593} 10
+merged-b3 3 248 side claude-haiku-5-5 {"input":2,"cache_write":0,"cache_write_1h":0,"cache_read":1315,"output":20} 0
+| Label | Rep | Model | Fresh | Cache write | Cache read | Output | Main calls | Side tokens (calls) | Total | $ | Canary | Side kinds |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| merged-b1 | 1 | claude-opus-5-5 | 2 | 14222 | 0 | 61 | 1 | 0 (0) | 14.3K | 0.1150 | yes |  |
+| merged-b1 | 2 | claude-opus-5-5 | 2 | 5642 | 8411 | 72 | 1 | 0 (0) | 14.1K | 0.0483 | yes |  |
+| merged-b1 | 3 | claude-opus-5-5 | 2 | 0 | 14053 | 62 | 1 | 0 (0) | 14.1K | 0.0041 | yes |  |
+| merged-b3 | 1 | claude-opus-5-5 | 6 | 9830 | 39392 | 2203 | 3 | 4134 (2) | 55.6K | 0.1310 | yes | volt-predictor 2797, volt-title 1337 |
+| merged-b3 | 2 | claude-opus-5-5 | 6 | 9769 | 39590 | 2247 | 3 | 1337 (1) | 52.9K | 0.1311 | yes | volt-title 1337 |
+| merged-b3 | 3 | claude-opus-5-5 | 6 | 10128 | 39590 | 2557 | 3 | 1337 (1) | 53.6K | 0.1401 | yes | volt-title 1337 |
+
+| Arm | N | Median total (range) | Median main | Median side | Median $ |
+|---|---|---|---|---|---|
+| merged-b1 claude-opus-5-5 | 3 | 14.1K (14.1K-14.3K) | 14.1K | 0.0K | 0.0483 |
+| merged-b3 claude-opus-5-5 | 3 | 53.6K (52.9K-55.6K) | 51.6K | 1.3K | 0.1311 |

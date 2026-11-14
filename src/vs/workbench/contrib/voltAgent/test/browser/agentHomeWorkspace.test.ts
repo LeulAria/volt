@@ -6,7 +6,9 @@
 import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+import { typedFolder } from '../../browser/home/agentHomeWorkspaceMenu.js';
 import {
+	agentHomeFolderLocation,
 	agentHomeWorkspaceEntries,
 	claudeHistoryFolderKind,
 	claudeHistoryFolders,
@@ -154,5 +156,39 @@ suite('Agent home workspace menu', () => {
 		assert.strictEqual(gitErrorSummary(`Cloning into '/Users/me/repo'...\nremote: Repository not found.\nfatal: repository 'https://github.com/x/y/' not found\n`), `repository 'https://github.com/x/y/' not found`);
 		assert.strictEqual(gitErrorSummary('zsh: command not found: git\n'), 'zsh: command not found: git');
 		assert.strictEqual(gitErrorSummary(''), undefined);
+	});
+
+	test('a typed absolute or ~ path reads as a folder; names and relative paths do not', () => {
+		const home = URI.file('/Users/me');
+		assert.strictEqual(typedFolder('/tmp/bench/fx/', home)?.fsPath, URI.file('/tmp/bench/fx').fsPath);
+		assert.strictEqual(typedFolder('  ~/Desktop/app ', home)?.fsPath, URI.file('/Users/me/Desktop/app').fsPath);
+		assert.strictEqual(typedFolder('~', home)?.fsPath, home.fsPath);
+		assert.strictEqual(typedFolder('~/x', undefined), undefined);
+		assert.strictEqual(typedFolder('~other/x', home), undefined);
+		assert.strictEqual(typedFolder('hotel', home), undefined);
+		assert.strictEqual(typedFolder('src/app', home), undefined);
+		assert.strictEqual(typedFolder('/', home), undefined);
+		assert.ok(typedFolder('C:\\work\\app', home));
+	});
+
+	test('a row shows where the folder is, shortened at whole segments', () => {
+		assert.strictEqual(agentHomeFolderLocation('~/Desktop/Projects/FALCON/gifty'), '~/Desktop/Projects/FALCON');
+		assert.strictEqual(agentHomeFolderLocation('~/Desktop/Projects/Personal Projects/Portfolio'), '~/\u2026/Personal Projects');
+		assert.strictEqual(agentHomeFolderLocation('/Volumes/Work/clients/acme/2026/website/app'), '/\u2026/clients/acme/2026/website');
+		assert.strictEqual(agentHomeFolderLocation('~/Desktop/Agent-Test'), '~/Desktop');
+		assert.strictEqual(agentHomeFolderLocation('~/volt'), '~');
+		assert.strictEqual(agentHomeFolderLocation('/srv'), '/');
+		assert.strictEqual(agentHomeFolderLocation('C:\\Users\\me\\source\\repos\\company\\product\\app'), 'C:\\\u2026\\repos\\company\\product');
+	});
+
+	test('a long last segment is kept whole, never cut mid-word', () => {
+		const location = agentHomeFolderLocation('~/Desktop/a-folder-name-much-longer-than-the-row/app');
+		assert.strictEqual(location, '~/\u2026/a-folder-name-much-longer-than-the-row');
+		for (const path of ['~/Desktop/Projects/FALCON/gifty', '~/Library/Mobile Documents/com~apple~CloudDocs/Work/site']) {
+			const shown = agentHomeFolderLocation(path);
+			for (const part of shown.split('/')) {
+				assert.ok(part === '~' || part === '\u2026' || path.split('/').includes(part), `${shown} cuts a segment of ${path}`);
+			}
+		}
 	});
 });

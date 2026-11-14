@@ -1,0 +1,5 @@
+Do these three parts in parallel with subagents, then give me a short summary of what changed and what the review found:
+1. src/a.js: make charge() and refund() throw a RangeError when the amount is negative or not an integer; add tests for that to test/a.test.js.
+2. Write unit tests for src/b.js (slugify, truncate) in test/b.test.js, covering edge cases.
+3. Review src/c.js for bugs. Read-only: report each bug with the line and a fix, do not change the file.
+When the parts are done, run `npm test` once and include the result.

@@ -19,6 +19,7 @@ import { IBulkEditService, ResourceEdit } from '../../../../editor/browser/servi
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { FileSystemProviderCapabilities, IFileContent, IFileService } from '../../../../platform/files/common/files.js';
 import { ExtensionIdentifier } from '../../../../platform/extensions/common/extensions.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { NullLogService } from '../../../../platform/log/common/log.js';
 import { UriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentityService.js';
 import { IURLService } from '../../../../platform/url/common/url.js';
@@ -117,6 +118,8 @@ suite('Volt: a sandboxed extension host can\'t act outside its sandbox through t
 			new NullLogService(),
 			uriIdentity,
 			workspace,
+			// VoltSandboxedEditGuard lets everything through here: this test checks the host-level rule.
+			{ createInstance: () => ({ allows: () => true }) } as unknown as IInstantiationService,
 		);
 		const text = (path: string): IWorkspaceEditDto => ({ edits: [{ resource: URI.file(path), textEdit: { range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 }, text: 'x' }, versionId: undefined }] });
 		const sandboxed = make(true);

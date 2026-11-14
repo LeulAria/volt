@@ -1,0 +1,10 @@
+[
+ {"id":"t1-impact","kind":"read","prompt":"I want to add a required second parameter to resolveThreadSessionKeys in src/routing/session-key.ts. Which files would have to change, and which test files should I run afterwards?"},
+ {"id":"t2-importers","kind":"read","prompt":"Which non-test source files import src/logger.ts directly? Give the count and the list."},
+ {"id":"t3-callers","kind":"read","prompt":"List every function that calls sanitizeAgentId (src/routing/session-key.ts) directly, with file:line, and say which exported function of src/routing/resolve-route.ts reaches it and through which function."},
+ {"id":"t4-body","kind":"read","prompt":"In src/infra/heartbeat-runner.ts, in which cases does resolveHeartbeatIntervalMs return null, and in what order does it pick the interval setting it parses?"},
+ {"id":"t5-structural","kind":"read","prompt":"In src/ (excluding test files), list every setTimeout call whose delay argument is a numeric literal of 1000 ms or more. Give file:line and the delay for each."},
+ {"id":"t6-implementations","kind":"read","prompt":"What implements the MemorySearchManager interface from src/memory/types.ts? List each implementation with file:line."},
+ {"id":"t7-rename","kind":"edit","prompt":"Rename the function buildGroupHistoryKey (src/routing/session-key.ts) to buildGroupHistoryStoreKey everywhere it is used in the code (not docs). Do not run builds or tests."},
+ {"id":"t8-signature","kind":"edit","prompt":"Add a required second parameter fallback: string to sanitizeAgentId in src/routing/session-key.ts, returned instead of DEFAULT_AGENT_ID in both places in its body, and update every call site in the code to pass DEFAULT_AGENT_ID (import it where needed). Do not run builds or tests."}
+]

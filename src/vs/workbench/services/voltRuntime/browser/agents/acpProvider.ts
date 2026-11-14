@@ -3,7 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { claudeWorkRulesMeta } from '../../common/harness/claudeWorkRules.js';
+import { CLAUDE_SESSION_OPTIONS, CLAUDE_SESSION_TITLE, claudeLazyToolsPlugin, claudeWorkRulesMeta, isClaudePlaceholderTitle } from '../../common/harness/claudeWorkRules.js';
+import { joinPath } from '../../../../../base/common/resources.js';
 import { bareTaskToolName } from '../../common/orchestration/agentTasks.js';
 import { raceTimeout, timeout } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
@@ -25,14 +26,15 @@ import { IVoltEvent } from '../../common/events.js';
 import { parseTokenUsage } from '../../common/tokenUsage.js';
 import { VoltMode } from '../../common/modes.js';
 import { IProviderProfile } from '../../common/profiles.js';
-import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo } from '../../common/providers.js';
-import { sandboxPlatformUnavailable, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
+import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, subagentProfile } from '../../common/providers.js';
+import { isSandboxUnavailableError, sandboxPlatformUnavailable, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
 import { IVoltExecContext, IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { voltExec } from '../../common/execContext.js';
 import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey, sandboxStrategy, SandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
-import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer } from '../../common/hostTools.js';
+import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer, SUBAGENT_HOST_TOOL_GROUPS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { isVoltReadOnlyHostTool } from '../../common/hostToolSandbox.js';
 import { AgentQuestionDraft, cursorAskQuestionResult, elicitationResult, elicitationToQuestions, IAgentQuestionResponse, parseQuestionDraft } from '../../common/questions.js';
 import { mapAcpToolKind } from '../../common/harness/workLog.js';
 import { ACP_IDLE_TIMINGS, ACP_STALL_NOTICE_TITLE, declaredToolWaitMs, IdleWatchdog, IIdleStageInfo, IIdleWatchdogTimings, IWatchdogClock, realWatchdogClock } from '../../common/harness/acpStall.js';
@@ -45,6 +47,7 @@ import { AcpJsonRpcClient, AcpRequestAbandonedError, IAcpIncomingRequest } from 
 import { listClaudeModels } from './claudeCatalog.js';
 import { acpLaunchFor, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listFxModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
 import { listCodexModels } from './codexAppServer.js';
+import { sandboxRefusalLikely } from '../../common/sandboxDenialCheck.js';
 import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
 import { IModelOptionDescriptor, MODEL_OPTION_REASONING, unionDescriptors } from '../../common/models/modelOptions.js';
 import { advertisedModelVariant, applyContextWindowSuffix, applyOptionsToParameterizedId, configUpdatesForOptions, descriptorsFromAcpModel, flattenChoices, formatAgentModelLabel, IAcpAvailableModel, IAcpConfigOption, IAcpModelMeta, isModelConfigOption, metadataForAcpModel, parseParameterizedModelId } from './acpModels.js';
@@ -83,12 +86,18 @@ interface IAcpSession {
 	settling?: Promise<void>;
 	/** The to-do list as it changed between turns (a background subagent's TaskUpdate): the next turn starts from it. */
 	pendingPlan?: Extract<IVoltEvent, { type: 'plan' }>;
+	/** Volt's lead sent with the last prompt: an agent title cut from it is not the chat's title. */
+	lastLead?: string;
 	/** Sandbox warnings and denials from before a turn ran (a spawn's `partial` warning): the next turn shows them. */
 	pendingSandbox?: IVoltSandboxEvent[];
+	/** The config overlay merge of the last turn (`syncSandboxStateAfterTurn`); the next prompt waits for it. */
+	stateSync?: Promise<void>;
+	/** Notices that came after a turn ended (what that merge kept in the chat): the next turn shows them. */
+	pendingNotices?: IAcpNotice[];
 	/** Pool key of the setup this session was started with (spares are matched on it). */
 	setupKey?: string;
 	/** The host MCP servers `session/new` connected (JSON), and what they were derived from. */
-	hostMcp?: { readonly sessionId?: string; readonly capabilities?: IAcpMcpCapabilities; readonly servers: string };
+	hostMcp?: { readonly sessionId?: string; readonly capabilities?: IAcpMcpCapabilities; readonly servers: string; readonly groups?: readonly VoltHostToolGroup[] };
 	/** The agent takes `_session/steering`: a message goes into the running turn without stopping it (Claude, Codex). */
 	steering?: boolean;
 	/** The agent takes `session/resume` (`sessionCapabilities.resume`): the conversation can continue in another folder. */
@@ -104,6 +113,10 @@ interface IAcpSession {
 	 * with no tools, so Volt's modes and access policy have nothing to switch.
 	 */
 	textOnly?: { readonly ownPrompt: boolean };
+	/** A read of the OS sandbox's refusals is under way (`checkSandboxDenials`); `again`: one more after it, from then; `done`: all of them read. */
+	sandboxCheck?: { again?: number; readonly done: Promise<void> };
+	/** When each running tool call of a sandboxed agent started (a refusal check reads only its time). */
+	toolStarts?: Map<string, number>;
 }
 
 /** States of an AIR async task; the last three are final. */
@@ -150,6 +163,8 @@ interface IAcpSpare {
 	readonly startedAt: number;
 	readonly session: Promise<IAcpSession>;
 	expiry?: ReturnType<typeof setTimeout>;
+	/** When `expiry` stops the spare. */
+	expiresAt?: number;
 }
 
 /** Knobs for supervision; tests swap the clock and shorten the timings. */
@@ -270,6 +285,10 @@ const ACP_CLIENT_CAPABILITIES = {
 };
 
 const MODEL_PROBE_TIMEOUT_MS = 8000;
+/** The longest the next prompt waits for the last turn's config overlay merge (`syncSandboxStateAfterTurn`). */
+const SANDBOX_STATE_SYNC_WAIT_MS = 3_000;
+/** A merge slower than this is logged: it holds up a follow-up prompt that comes quickly. */
+const SANDBOX_STATE_SYNC_SLOW_MS = 1_000;
 const MAX_TRANSPORT_RESUMES = 2;
 const TRANSPORT_RESUME_DELAY_MS = 1500;
 
@@ -285,6 +304,13 @@ const SPARE_TTL_MS = 10 * 60_000;
 const MAX_SPARES = 2;
 /** Sandbox events kept per session (or spawn) until a turn shows them. */
 const MAX_PENDING_SANDBOX_EVENTS = 20;
+/** A failed call whose start Volt did not see: its refusal check reads this far back. */
+const SANDBOX_CHECK_LOOKBACK_MS = 2 * 60_000;
+/** A background command that failed may have been refused any time since it started. */
+const SANDBOX_BACKGROUND_LOOKBACK_MS = 15 * 60_000;
+/** How long a turn's end waits for a refusal read still under way (`log show` takes 0.8-2.6 s here). */
+const SANDBOX_CHECK_END_WAIT_MS = 4_000;
+const MAX_TRACKED_TOOL_STARTS = 200;
 /** Spawn ids whose sandbox events wait for a session; older ones are dropped first. */
 const MAX_EARLY_SANDBOX_SPAWNS = 16;
 
@@ -337,18 +363,29 @@ export function isAgentTransportError(message: string): boolean {
 
 export type AcpQuestionAsker = (sessionId: string, runId: string, draft: AgentQuestionDraft) => Promise<IAgentQuestionResponse>;
 
-/** A permission prompt for one of Volt's own MCP tools (`volt-browser_click: browser_click`, `mcp__volt__ask_question`). */
-function isVoltHostToolPermission(params: unknown): boolean {
+/**
+ * A permission prompt for one of Volt's own MCP tools (`volt-browser_click: browser_click`,
+ * `mcp__volt__ask_question`, Grok's `volt__find_symbol`). Volt judges those calls itself (the host
+ * tool gate: sandbox rules, approval in read-only modes), so the agent's own prompt is answered here.
+ * The code tools and the Scratch board were missing: in a Supervised chat every code_nav,
+ * instant_grep and diagnostics call stopped on a "Run mcp__volt__code_nav?" card, and "Always Run"
+ * could not be saved (Claude writes it to the project's `.claude/settings.local.json`, which the
+ * sandbox protects).
+ */
+export function isVoltHostToolPermission(params: unknown): boolean {
 	const toolCall = (params as { toolCall?: { title?: unknown; rawInput?: { providerIdentifier?: unknown; toolName?: unknown } } } | undefined)?.toolCall;
 	if (!toolCall) {
 		return false;
 	}
+	const known = (name: string) => isVoltHostTool(name) || !!bareTaskToolName(name) || isVoltReadOnlyHostTool(name);
 	const raw = toolCall.rawInput;
 	if (raw && raw.providerIdentifier === 'volt' && typeof raw.toolName === 'string') {
-		return isVoltHostTool(raw.toolName) || !!bareTaskToolName(raw.toolName);
+		return known(raw.toolName);
 	}
 	const title = typeof toolCall.title === 'string' ? toolCall.title.trim() : '';
-	return /^(volt[-:]|mcp__volt__|volt__)/i.test(title) && (isVoltHostTool(title) || !!bareTaskToolName(title));
+	// Without the code tools here, Grok's find_symbol in a council seat (Ask mode) was judged a shell
+	// command, refused as "User rejected", and Grok ended its turn: the seat came back cancelled.
+	return /^(volt[-:]|mcp__volt__|volt__)/i.test(title) && known(title);
 }
 
 function allowOncePermission(params: unknown): unknown {
@@ -362,6 +399,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 		promise,
 		new Promise<T>((_, reject) => setTimeout(() => reject(new Error('ACP request timed out')), ms)),
 	]);
+}
+
+/** Whether an agent's session title is the start of Volt's lead (an agent cuts its title from the first prompt block). */
+export function isTitleFromLead(title: string, lead: string): boolean {
+	const flat = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase();
+	const head = flat(title).replace(/(\.\.\.|…)$/, '').trim();
+	return head.length >= 6 && flat(lead).startsWith(head);
 }
 
 export class AcpAgentProvider implements IAgentProvider {
@@ -388,6 +432,8 @@ export class AcpAgentProvider implements IAgentProvider {
 	private readonly unconfinedProcesses = new Set<string>();
 	/** Spawns in flight: only while one is, an unknown spawn id may be one of ours. */
 	private spawning = 0;
+	private claudePluginsRoot: (() => Promise<URI | undefined>) | undefined;
+	private lazyToolsPlugin: Promise<string | undefined> | undefined;
 	private readonly _onDidChangeBackgroundTasks = new Emitter<IAcpBackgroundTask>();
 	/**
 	 * A background task of one of this provider's sessions started, reported progress or ended,
@@ -463,7 +509,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		const sessionId = live.handle.providerSessionId ?? live.handle.id;
 		const config = this.bridge.translate(policy, { configOptions: live.configOptions, modes: live.modes });
 		const strategy = this.sandboxStrategyOf(live);
-		const updates = (config.configOptions ?? []).map(update => ({ id: update.id, value: codexSandboxValue(update.id, update.value, strategy) }));
+		// Codex's own sandbox switches off inside Volt's (its `mode` and `sandbox` values). Other agents'
+		// options of those names mean other things: Claude's `mode` is its permission mode.
+		const updates = (config.configOptions ?? []).map(update => ({ id: update.id, value: this.id === 'codex' ? codexSandboxValue(update.id, update.value, strategy) : update.value }));
 		// Independent settings (permission mode, approval policy, sandbox, session mode) go out together
 		// instead of one round trip after another; values the session already has are not sent at all.
 		const applied = await Promise.all([
@@ -582,9 +630,42 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (adopted) {
 			return adopted.handle;
 		}
-		const live = await this.createSession(req);
+		const live = await this.createOrResume(req);
 		this.sessions.set(live.handle.id, live);
 		return live.handle;
+	}
+
+	/**
+	 * `createSession`, continuing `req.resumeSessionId` when it is set. A session the agent cannot
+	 * resume (its transcript is gone, the agent has no `session/resume`) starts new instead: the
+	 * handle then has no `resumed`, and the runtime briefs it with a recap as before.
+	 */
+	private async createOrResume(req: IAgentStartRequest): Promise<IAcpSession> {
+		if (!req.resumeSessionId) {
+			return this.createSession(req);
+		}
+		try {
+			return await this.createSession(req);
+		} catch (err) {
+			if (isSandboxUnavailableError(err)) {
+				throw err;
+			}
+			this.logService.info(`[ACP] ${this.id} could not resume ${req.resumeSessionId}; starting a new session: ${err instanceof Error ? err.message : String(err)}`);
+			return this.createSession({ ...req, resumeSessionId: undefined, resumeStateKey: undefined });
+		}
+	}
+
+	/** The agent can continue this session in a new process (`session/resume`) after it was stopped. */
+	canResume(session: IAgentSessionHandle): boolean {
+		const live = this.sessions.get(session.id);
+		if (!live || live.resumable !== true || live.textOnly || live.client.isDead) {
+			return false;
+		}
+		// Work the process still does between turns (a `run_in_background` command, a background
+		// subagent) would end with it: such a session is not stopped to be resumed.
+		const background = [...live.backgroundTasks?.values() ?? []].some(task => task.state === 'running')
+			|| [...live.children?.values() ?? []].some(child => !child.ended);
+		return !background;
 	}
 
 	/**
@@ -601,7 +682,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		let live: IAcpSession;
 		try {
-			live = await this.createSession(req, old.handle.providerSessionId ?? old.handle.id);
+			// Its transcript is in the overlay the old process ran with (a pooled spare's is the pool's).
+			live = await this.createSession(old.handle.stateKey ? { ...req, resumeStateKey: old.handle.stateKey } : req, old.handle.providerSessionId ?? old.handle.id);
 		} catch (err) {
 			this.logService.info(`[ACP] ${this.id} could not resume ${session.id} in ${req.cwd}: ${err instanceof Error ? err.message : String(err)}`);
 			return undefined;
@@ -620,7 +702,8 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * Starts a session for `req` ahead of time (spawn, `initialize`, `session/new`, model and
 	 * options) and parks it. The next {@link start} with the same setup adopts it instantly instead
 	 * of paying the cold start (about 5 s for cursor-agent's `session/new` alone). One spare per
-	 * setup; an unadopted spare is stopped after {@link SPARE_TTL_MS}.
+	 * setup; an unadopted spare is stopped after `ttlMs` ({@link SPARE_TTL_MS} by default). Asking
+	 * again with a longer `ttlMs` (a short-lived spare, then the user acts) extends its life to that.
 	 *
 	 * The setup includes the host MCP servers, whose URL names the chat. A spare made for chat A is
 	 * not handed to chat B, so pass the `sessionId` the spare is meant for. Spares parked for other
@@ -628,33 +711,42 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * adapter and MCP servers) costs several hundred MB, so clicking through old chats must not
 	 * leave one running per chat visited.
 	 */
-	prewarmSpare(req: IAgentStartRequest): Promise<void> {
+	prewarmSpare(req: IAgentStartRequest, ttlMs = SPARE_TTL_MS): Promise<void> {
 		const key = this.setupKey(req);
 		const existing = this.spares.get(key);
-		if (existing && Date.now() - existing.startedAt < SPARE_TTL_MS) {
-			return existing.session.then(() => undefined, () => undefined);
-		}
 		if (existing) {
-			this.dropSpare(key, existing);
+			this.expireSpare(key, existing, ttlMs);
+			return existing.session.then(() => undefined, () => undefined);
 		}
 		this.releaseSpares(req.sessionId);
 		while (this.spares.size >= MAX_SPARES) {
 			const [oldestKey, oldest] = [...this.spares.entries()].sort((x, y) => x[1].startedAt - y[1].startedAt)[0];
 			this.dropSpare(oldestKey, oldest);
 		}
-		const spare: IAcpSpare = { key, sessionId: req.sessionId, startedAt: Date.now(), session: this.createSession(req) };
+		const spare: IAcpSpare = { key, sessionId: req.sessionId, startedAt: Date.now(), session: this.createOrResume(req) };
 		this.spares.set(key, spare);
-		spare.expiry = setTimeout(() => {
-			if (this.spares.get(key) === spare) {
-				this.dropSpare(key, spare);
-			}
-		}, SPARE_TTL_MS);
+		this.expireSpare(key, spare, ttlMs);
 		return spare.session.then(live => {
 			live.client.whenDead(() => this.forgetSpare(key, spare));
 		}, err => {
 			this.forgetSpare(key, spare);
 			this.logService.trace('[ACP] spare session failed', err);
 		});
+	}
+
+	/** Stops the spare `ttlMs` after it started, unless it was already due later. */
+	private expireSpare(key: string, spare: IAcpSpare, ttlMs: number): void {
+		const at = spare.startedAt + ttlMs;
+		if (spare.expiresAt !== undefined && spare.expiresAt >= at) {
+			return;
+		}
+		clearTimeout(spare.expiry);
+		spare.expiresAt = at;
+		spare.expiry = setTimeout(() => {
+			if (this.spares.get(key) === spare) {
+				this.dropSpare(key, spare);
+			}
+		}, Math.max(0, at - Date.now()));
 	}
 
 	/** True when a spare for this setup is parked or starting. */
@@ -731,8 +823,11 @@ export class AcpAgentProvider implements IAgentProvider {
 			cwd,
 			req.modelId ?? '',
 			Object.entries(req.options ?? {}).sort(([x], [y]) => x.localeCompare(y)),
-			req.textOnly ? req.textOnly.systemPrompt : this.hostTools?.getMcpServers(req.sessionId) ?? [],
+			req.textOnly ? req.textOnly.systemPrompt : this.hostTools?.getMcpServers(req.sessionId, hostToolOptions(req)) ?? [],
 			sandboxLaunchKey(req.sandbox?.settings),
+			subagentProfile(req.subagent) ?? false,
+			// A spare that continues one chat's conversation serves only that chat's start.
+			req.resumeSessionId ?? '',
 		]);
 	}
 
@@ -761,6 +856,9 @@ export class AcpAgentProvider implements IAgentProvider {
 					persistSession: false,
 					thinking: { type: 'disabled' },
 					effort: 'low',
+					// No title or next-prompt call of Claude Code's own for a title, prediction or summary.
+					title: CLAUDE_SESSION_TITLE,
+					...CLAUDE_SESSION_OPTIONS,
 					// An agent entry without a model list would run the account's default (often Opus).
 					...(req.modelId ? optionalModel(this.claudeModel(req)) : { model: 'haiku' }),
 				},
@@ -771,13 +869,63 @@ export class AcpAgentProvider implements IAgentProvider {
 	/**
 	 * `_meta` for `session/new` and `session/resume`: a text-only session's prompt, or for every
 	 * other Claude Code session Volt's working rules (batched steps, file tools, no polling) for
-	 * the main agent and, through a SubagentStart hook, for each subagent it starts.
+	 * the main agent and, through a SubagentStart hook, for each subagent it starts. `voltAsks`: the
+	 * session has Volt's ask_question.
 	 */
-	private sessionMeta(req: IAgentStartRequest): Record<string, unknown> | undefined {
+	private sessionMeta(req: IAgentStartRequest, voltAsks: boolean, lazyToolsPlugin: string | undefined): Record<string, unknown> | undefined {
 		if (req.textOnly) {
 			return this.textOnlyMeta(req);
 		}
-		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req)) : undefined;
+		// Edits are checked by the window's language servers through the volt MCP server. Not gated on the
+		// window's tools being listed now: warm sessions start before the window registers them, and a
+		// hook whose tool is missing only fails quietly (the model never sees it).
+		const editChecks = voltAsks;
+		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req), { subagent: subagentProfile(req.subagent), voltAsks, lazyToolsPlugin, editChecks }) : undefined;
+	}
+
+	/**
+	 * Where Volt writes the Claude Code plugins it passes to its sessions (`~/.volt/claude-plugins`).
+	 * Set by the runtime; without it, or off the local disk, sessions start without them.
+	 */
+	setClaudePluginsRoot(root: () => Promise<URI | undefined>): void {
+		this.claudePluginsRoot = root;
+		if (this.takesSystemPrompt()) {
+			// Written before the first chat needs it.
+			void this.lazyToolsPluginPath();
+		}
+	}
+
+	/**
+	 * The folder of {@link claudeLazyToolsPlugin} for a main chat's session, written once per
+	 * content (the folder is named after it). Undefined, and the tools stay loaded, when it cannot be written.
+	 */
+	private lazyToolsPluginPath(): Promise<string | undefined> {
+		const rootOf = this.claudePluginsRoot;
+		if (!this.takesSystemPrompt() || !rootOf) {
+			return Promise.resolve(undefined);
+		}
+		this.lazyToolsPlugin ??= (async () => {
+			try {
+				const root = await rootOf();
+				if (root?.scheme !== Schemas.file) {
+					return undefined;
+				}
+				const plugin = claudeLazyToolsPlugin();
+				const dir = joinPath(root, plugin.name);
+				const [last] = plugin.files.at(-1)!;
+				if (!await this.fileService.exists(joinPath(dir, ...last.split('/')))) {
+					for (const [path, text] of plugin.files) {
+						await this.fileService.writeFile(joinPath(dir, ...path.split('/')), VSBuffer.fromString(text));
+					}
+				}
+				return dir.fsPath;
+			} catch (err) {
+				this.logService.warn(`[volt] could not write Claude Code's lazy-tools plugin; its tools stay loaded: ${err instanceof Error ? err.message : String(err)}`);
+				this.lazyToolsPlugin = undefined;
+				return undefined;
+			}
+		})();
+		return this.lazyToolsPlugin;
 	}
 
 	/**
@@ -793,9 +941,14 @@ export class AcpAgentProvider implements IAgentProvider {
 		return applyContextWindowSuffix(applyOptionsToParameterizedId(req.modelId, req.options), req.options);
 	}
 
-	/** Spawns the agent and opens a session; with `resume`, continues that session (in `req.cwd`) instead of a new one. */
-	private async createSession(req: IAgentStartRequest, resume?: string): Promise<IAcpSession> {
+	/** Spawns the agent and opens a session; with `resume` (or `req.resumeSessionId`), continues that session (in `req.cwd`) instead of a new one. */
+	private async createSession(req: IAgentStartRequest, resume = req.resumeSessionId): Promise<IAcpSession> {
+		// Where a cold start's time goes (launch command, spawn with the sandbox, initialize, session/new, setup), for the log line below.
+		const started = Date.now();
+		const steps: number[] = [];
+		const step = () => steps.push(Date.now());
 		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
+		step();
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
 		const env = cliAgentDefinition(this.id)?.acpEnv;
 		const settings = req.sandbox?.settings;
@@ -814,6 +967,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		} finally {
 			this.spawning--;
 		}
+		step();
 		// Ours now: its events wait here through initialize and session/new.
 		if (!this.earlySandboxEvents.has(processId)) {
 			this.earlySandboxEvents.set(processId, []);
@@ -855,21 +1009,27 @@ export class AcpAgentProvider implements IAgentProvider {
 				clientCapabilities: ACP_CLIENT_CAPABILITIES,
 				clientInfo: { name: 'volt', title: 'Volt', version: '0.1.0' },
 			}, ACP_INITIALIZE_TIMEOUT_MS);
+			step();
 			const capabilities = initialized.agentCapabilities?.mcpCapabilities;
 			// A text-only session never calls Volt's tools: no server, and nothing to go stale.
-			const mcpServers = req.textOnly ? [] : this.hostMcpServers(req.sessionId, capabilities);
-			hostMcp = req.textOnly ? undefined : { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers) };
+			const groups = hostToolOptions(req)?.groups;
+			const mcpServers = req.textOnly ? [] : this.hostMcpServers(req.sessionId, capabilities, groups);
+			hostMcp = req.textOnly ? undefined : { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers), ...(groups ? { groups } : {}) };
+			// Volt's ask_question reaches the same question tray as Claude's AskUserQuestion: with it, the built-in goes.
+			const voltAsks = mcpServers.length > 0 && (!groups || groups.includes('core'));
+			const lazyToolsPlugin = req.textOnly || subagentProfile(req.subagent) ? undefined : await this.lazyToolsPluginPath();
 			if (resume) {
 				if (!initialized.agentCapabilities?.sessionCapabilities?.resume) {
 					throw new Error('the agent cannot resume sessions');
 				}
-				const meta = this.sessionMeta(req);
+				const meta = this.sessionMeta(req, voltAsks, lazyToolsPlugin);
 				const resumed = await client.request<Partial<ISessionNewResponse>>('session/resume', { sessionId: resume, cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 				created = { ...resumed, sessionId: resumed?.sessionId ?? resume };
 			} else {
-				const meta = this.sessionMeta(req);
+				const meta = this.sessionMeta(req, voltAsks, lazyToolsPlugin);
 				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 			}
+			step();
 		} catch (err) {
 			client.dispose();
 			this.forgetProcess(processId);
@@ -880,6 +1040,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		const handle: IAgentSessionHandle = {
 			id: created.sessionId,
 			providerSessionId: created.sessionId,
+			...(resume ? { resumed: true } : {}),
+			...(sandbox?.stateKey ? { stateKey: sandbox.stateKey } : {}),
 		};
 		const live: IAcpSession = {
 			handle,
@@ -922,7 +1084,12 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		// What the agent actually runs, for model-variant parity checks against its own CLI.
 		const config = (live.configOptions ?? []).filter(option => option.id !== 'mode').map(option => `${option.id}=${String(option.currentValue ?? '')}`).join(' ');
-		this.logService.info(`[ACP] ${this.id} session ${handle.id}: ${command} ${args.join(' ')} | ${config}`);
+		step();
+		const [launched, spawned, initDone, sessionDone, ready] = steps.map(at => at - started);
+		const timing = `launch ${launched}ms, spawn ${spawned - launched}ms, initialize ${initDone - spawned}ms, ${resume ? 'session/resume' : 'session/new'} ${sessionDone - initDone}ms, setup ${ready - sessionDone}ms`;
+		// A `data:` preload (claudeAcpPatch.ts) is kilobytes of base64: logged by its kind only.
+		const shown = args.map(arg => arg.startsWith('data:') ? `${arg.slice(0, arg.indexOf(',') + 1)}...` : arg);
+		this.logService.info(`[ACP] ${this.id} session ${handle.id}: ${command} ${shown.join(' ')} | ${config} | ${timing}`);
 		return live;
 	}
 
@@ -934,11 +1101,11 @@ export class AcpAgentProvider implements IAgentProvider {
 	isLive(session: IAgentSessionHandle): boolean {
 		const live = this.sessions.get(session.id);
 		return !!live && !live.client.isDead
-			&& (!live.hostMcp || JSON.stringify(this.hostMcpServers(live.hostMcp.sessionId, live.hostMcp.capabilities)) === live.hostMcp.servers);
+			&& (!live.hostMcp || JSON.stringify(this.hostMcpServers(live.hostMcp.sessionId, live.hostMcp.capabilities, live.hostMcp.groups)) === live.hostMcp.servers);
 	}
 
-	private hostMcpServers(sessionId: string | undefined, capabilities: IAcpMcpCapabilities | undefined): IVoltMcpServer[] {
-		return acceptedMcpServers(this.hostTools?.getMcpServers(sessionId) ?? [], capabilities);
+	private hostMcpServers(sessionId: string | undefined, capabilities: IAcpMcpCapabilities | undefined, groups?: readonly VoltHostToolGroup[]): IVoltMcpServer[] {
+		return acceptedMcpServers(this.hostTools?.getMcpServers(sessionId, groups ? { groups } : undefined) ?? [], capabilities);
 	}
 
 	/** The OS wrapper for this agent process; undefined when the chat is unconfined or the agent sandboxes itself. */
@@ -956,33 +1123,52 @@ export class AcpAgentProvider implements IAgentProvider {
 			...(settings.extraWritableRoots?.length ? { extraWritableRoots: settings.extraWritableRoots } : {}),
 			...(settings.allowedDomains?.length ? { allowedDomains: settings.allowedDomains } : {}),
 			...(settings.listenPorts?.length ? { listenPorts: settings.listenPorts } : {}),
-			loopbackPorts: (this.hostTools?.getMcpServers(req.sessionId) ?? []).map(server => loopbackPort(server.url)).filter((port): port is number => port !== undefined),
+			loopbackPorts: (this.hostTools?.getMcpServers(req.sessionId, hostToolOptions(req)) ?? []).map(server => loopbackPort(server.url)).filter((port): port is number => port !== undefined),
 			// The chat's own copy of the CLI's config (B-05): what the agent changes there stays in this chat.
-			stateKey: req.sessionId ?? 'default',
+			// A resumed session goes on in the copy that holds its transcript (a pooled spare's copy, then adopted by this chat).
+			stateKey: req.resumeStateKey ?? req.sessionId ?? 'default',
 		};
 	}
 
 	/**
 	 * After a turn: what the agent changed in its config overlay goes back to the user's config only
-	 * for the allowed keys (session ids, counters); everything else is listed in the transcript.
+	 * for the allowed keys (session ids, counters); everything else is listed in the next turn.
+	 *
+	 * It runs after the turn has ended, never before its `run.end`: the merge takes a lock on the
+	 * user's own config, and every turn of a subagent that edits files waited out its 3 s cap here
+	 * before its report could go up (harness bench round 3). The next prompt of the session waits
+	 * for it (`send`), so a turn never starts while the last one's state is still being merged.
 	 */
-	private async syncSandboxState(live: IAcpSession, turn: AcpPromptTurn): Promise<void> {
+	private syncSandboxStateAfterTurn(live: IAcpSession): void {
 		if (!live.sandbox || live.sandbox.settings.level === 'off' || !this.stdio.syncSandboxState) {
 			return;
 		}
-		try {
-			const result = await raceTimeout(this.stdio.syncSandboxState(live.processId), 3_000);
-			if (result?.dropped.length) {
-				const shown = result.dropped.slice(0, 8).join(', ');
-				this.pushNotice(live, turn, {
-					severity: 'info',
-					title: 'Sandbox kept config changes in this chat',
-					description: `The agent changed ${this.label}'s own settings (${shown}${result.dropped.length > 8 ? `, and ${result.dropped.length - 8} more` : ''}). They stay in this chat's sandbox and were not applied to your ${this.label} config. Make such changes from a chat with the sandbox off, or in ${this.label} itself.`,
-				});
+		const started = Date.now();
+		const sync = (async () => {
+			try {
+				const result = await raceTimeout(this.stdio.syncSandboxState!(live.processId), SANDBOX_STATE_SYNC_WAIT_MS);
+				const took = Date.now() - started;
+				if (took >= SANDBOX_STATE_SYNC_SLOW_MS) {
+					this.logService.info(`[ACP] sandbox state sync took ${took}ms${result ? '' : ' (gave up waiting)'}`);
+				}
+				if (result?.dropped.length) {
+					const shown = result.dropped.slice(0, 8).join(', ');
+					(live.pendingNotices ??= []).push({
+						severity: 'info',
+						title: 'Sandbox kept config changes in this chat',
+						description: `The agent changed ${this.label}'s own settings (${shown}${result.dropped.length > 8 ? `, and ${result.dropped.length - 8} more` : ''}). They stay in this chat's sandbox and were not applied to your ${this.label} config. Make such changes from a chat with the sandbox off, or in ${this.label} itself.`,
+					});
+				}
+			} catch (err) {
+				this.logService.warn('[ACP] sandbox state sync failed', err);
 			}
-		} catch (err) {
-			this.logService.warn('[ACP] sandbox state sync failed', err);
-		}
+		})();
+		live.stateSync = sync;
+		void sync.finally(() => {
+			if (live.stateSync === sync) {
+				live.stateSync = undefined;
+			}
+		});
 	}
 
 	private sandboxStrategyOf(session: IAcpSession): SandboxStrategy {
@@ -1083,11 +1269,76 @@ export class AcpAgentProvider implements IAgentProvider {
 		this.deliverSandboxEvent(session, turn, event);
 	}
 
+	/**
+	 * A sandboxed agent's tool call that failed, or whose output reads like a refusal: the OS's
+	 * refusals are read now and arrive as `sandbox.denial` cards (onSandboxEvent). Volt no longer
+	 * watches the kernel log the whole time a sandboxed agent lives (0.9-2.1 % of a core at rest).
+	 * The read covers the call's own time (its start, when seen): its cost grows with the window.
+	 * One read at a time per agent; calls during a read make one more after it.
+	 */
+	private checkSandboxAfterTool(live: IAcpSession, callId: string | undefined, result: unknown, error: string | undefined): void {
+		const started = callId ? live.toolStarts?.get(callId) : undefined;
+		if (callId) {
+			live.toolStarts?.delete(callId);
+		}
+		if (!this.sandboxedProcesses.has(live.processId) || !this.stdio.checkSandboxDenials || !sandboxRefusalLikely(result, error)) {
+			return;
+		}
+		const since = started ?? Date.now() - SANDBOX_CHECK_LOOKBACK_MS;
+		if (live.sandboxCheck) {
+			live.sandboxCheck.again = Math.min(live.sandboxCheck.again ?? Infinity, since);
+			return;
+		}
+		let settle!: () => void;
+		const state: { again?: number; done: Promise<void> } = live.sandboxCheck = { done: new Promise<void>(resolve => settle = resolve) };
+		const read = (from: number): void => {
+			void this.stdio.checkSandboxDenials!(live.processId, from).catch(() => undefined).finally(() => {
+				const again = state.again;
+				if (again !== undefined && this.sandboxedProcesses.has(live.processId)) {
+					state.again = undefined;
+					read(again);
+				} else {
+					if (live.sandboxCheck === state) {
+						live.sandboxCheck = undefined;
+					}
+					settle();
+				}
+			});
+		};
+		read(since);
+	}
+
+	/**
+	 * A turn that ends while its refusals are being read waits for them (at most
+	 * {@link SANDBOX_CHECK_END_WAIT_MS}), so the "Blocked by the sandbox" card lands in the turn whose
+	 * command was refused rather than in the next one. Only turns with a failed command wait.
+	 */
+	private async settleSandboxCheck(live: IAcpSession): Promise<void> {
+		const pending = live.sandboxCheck?.done;
+		if (pending) {
+			await Promise.race([pending, timeout(SANDBOX_CHECK_END_WAIT_MS)]);
+		}
+	}
+
+	/** Records when a sandboxed agent's tool call started, so a refusal check reads only its time. */
+	private noteToolStart(live: IAcpSession, callId: string): void {
+		if (!this.sandboxedProcesses.has(live.processId)) {
+			return;
+		}
+		const starts = live.toolStarts ??= new Map();
+		starts.set(callId, Date.now());
+		if (starts.size > MAX_TRACKED_TOOL_STARTS) {
+			starts.delete(starts.keys().next().value!);
+		}
+	}
+
 	private deliverSandboxEvent(session: IAcpSession, turn: AcpPromptTurn, event: IVoltSandboxEvent): void {
 		if (event.denial) {
 			this.pushActivity(session, turn, { type: 'sandbox.denial', denial: event.denial });
 		} else if (event.warning) {
 			this.pushActivity(session, turn, { type: 'notice', severity: 'warning', title: 'Sandbox', description: event.warning });
+		} else if (event.note) {
+			this.pushActivity(session, turn, { type: 'notice', severity: 'info', title: event.note.title, description: event.note.detail });
 		}
 	}
 
@@ -1110,9 +1361,8 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	private startArgs(req: IAgentStartRequest): string[] {
 		const args = req.profile.args?.length ? [...req.profile.args] : [...this.defaultArgs];
-		if (this.id === 'antigravity' && req.modelId) {
-			args.push('--model', this.antigravityModelLabel(req));
-		}
+		// Antigravity's model is set on the session (`applySelection`, its `model` config option): `agy acp`
+		// 1.5 has no --model flag and exits at once with one ("flags provided but not defined: -model").
 		if (this.id === 'cursor-acp') {
 			const model = this.cursorModelArg(req);
 			const acp = args.lastIndexOf('acp');
@@ -1303,6 +1553,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			this.endTurn(live, previous, 'abort');
 		}
 		await live.settling;
+		await live.stateSync;
 		if (token.isCancellationRequested || live.client.isDead) {
 			yield { type: 'run.end', runId: session.id, reason: token.isCancellationRequested ? 'abort' : 'fail' };
 			return;
@@ -1329,6 +1580,11 @@ export class AcpAgentProvider implements IAgentProvider {
 		live.pendingSandbox = undefined;
 		for (const event of pendingSandbox ?? []) {
 			this.deliverSandboxEvent(live, turn, event);
+		}
+		const pendingNotices = live.pendingNotices;
+		live.pendingNotices = undefined;
+		for (const notice of pendingNotices ?? []) {
+			this.pushNotice(live, turn, notice);
 		}
 		const cancel = token.onCancellationRequested(() => this.cancelTurn(live, turn, 'user'));
 		// Not awaited at the end: once `run.end` is out, a cancelled prompt may still be settling.
@@ -1376,6 +1632,11 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (task) {
 			// Not the turn's: a background command runs on after its turn, and its updates arrive between turns.
 			this.onBackgroundTaskUpdate(live, task.kind, task.update);
+			if (task.kind === 'state' && task.update.state === 'failed') {
+				const id = `background:${String(task.update.asyncTaskId)}`;
+				(live.toolStarts ??= new Map()).set(id, Date.now() - SANDBOX_BACKGROUND_LOOKBACK_MS);
+				this.checkSandboxAfterTool(live, id, undefined, 'failed');
+			}
 			return;
 		}
 		const turn = live.turn;
@@ -1401,6 +1662,16 @@ export class AcpAgentProvider implements IAgentProvider {
 		for (const event of this.mapUpdate(params)) {
 			if (event.type === 'notice') {
 				this.pushNotice(live, turn, event);
+				continue;
+			}
+			if (event.type === 'tool.start') {
+				this.noteToolStart(live, event.callId);
+			} else if (event.type === 'tool.end') {
+				this.checkSandboxAfterTool(live, event.callId, event.result, event.error);
+			}
+			// Claude Code titles a session from its first prompt block, which is Volt's lead when one was sent
+			// ("[Volt] This looks like a question..."): Volt's own title from the user's words stays.
+			if (event.type === 'title' && live.lastLead && isTitleFromLead(event.text, live.lastLead)) {
 				continue;
 			}
 			if (event.type === 'tool.start') {
@@ -1517,6 +1788,11 @@ export class AcpAgentProvider implements IAgentProvider {
 			// Claude keeps one task list per session: a subagent's TaskUpdate sends the whole chat's list, so the parent's Tasks card takes it too.
 			const sharedPlan = isChatPlanUpdate(params, root);
 			for (const event of this.mapUpdate(params)) {
+				if (event.type === 'tool.start') {
+					this.noteToolStart(live, event.callId);
+				} else if (event.type === 'tool.end') {
+					this.checkSandboxAfterTool(live, event.callId, event.result, event.error);
+				}
 				if (event.type === 'text.delta' && event.delta && child) {
 					child.text += event.delta;
 				}
@@ -1759,7 +2035,9 @@ export class AcpAgentProvider implements IAgentProvider {
 				if (usage) {
 					turn.push(usage);
 				}
-				await this.syncSandboxState(live, turn);
+				// Off the turn's path: the run ends now and the next prompt waits for the merge (see `stateSync`).
+				this.syncSandboxStateAfterTurn(live);
+				await this.settleSandboxCheck(live);
 				this.endTurn(live, turn, result?.stopReason === 'cancelled' || turn.userCancelled ? 'abort' : 'done');
 				return;
 			}
@@ -1869,7 +2147,10 @@ export class AcpAgentProvider implements IAgentProvider {
 		// A slash command only runs when it opens the prompt, so it goes without the lead.
 		const command = /^\/([\w:-]+)(?:\s|$)/.exec(msg.text)?.[1];
 		const lead = command && live.commands?.has(command) ? undefined : msg.lead;
-		const blocks: IAcpPromptBlock[] = [{ type: 'text', text: lead ? `${lead}\n\n${msg.text}` : msg.text }];
+		// Volt's lead is its own block, so the user's words reach the model as they typed them (as Claude
+		// Code sends its reminders): gateways and replay tools that match on the user's text still see it.
+		const blocks: IAcpPromptBlock[] = lead ? [{ type: 'text', text: lead }, { type: 'text', text: msg.text }] : [{ type: 'text', text: msg.text }];
+		live.lastLead = lead;
 		// `images` arrives structurally until `IAgentMessage` declares it (WP5).
 		const images = (msg as IAgentMessage & { images?: readonly IModelImage[] }).images;
 		if (live.promptImages && images?.length) {
@@ -1970,6 +2251,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (live.turn) {
 			this.endTurn(live, live.turn, 'abort');
 		}
+		// A subagent is often closed right after its last turn: let that turn's config merge finish
+		// (it is capped at SANDBOX_STATE_SYNC_WAIT_MS) before the sandbox and its overlay go away.
+		await live.stateSync;
 		await this.stopSession(live);
 	}
 
@@ -2063,7 +2347,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			}
 		} else if (kind === 'session_info_update') {
 			const title = typeof update.title === 'string' ? update.title.trim() : '';
-			if (title) {
+			// Volt's own fixed session title (claudeWorkRules) is not a name for the chat.
+			if (title && !isClaudePlaceholderTitle(title)) {
 				events.push({ type: 'title', text: title });
 			}
 		} else if (kind === 'usage_update' || kind === 'state_update') {
@@ -2400,6 +2685,12 @@ export function planFromCursorTodos(params: unknown): Extract<IVoltEvent, { type
 			};
 		}),
 	};
+}
+
+/** A Volt subagent's agent gets only its profile's host tool groups (`SUBAGENT_HOST_TOOL_GROUPS`); everyone else all of them. */
+export function hostToolOptions(req: Pick<IAgentStartRequest, 'subagent' | 'textOnly'>): { readonly groups: readonly VoltHostToolGroup[] } | undefined {
+	const profile = req.textOnly ? undefined : subagentProfile(req.subagent);
+	return profile ? { groups: SUBAGENT_HOST_TOOL_GROUPS[profile] } : undefined;
 }
 
 /**

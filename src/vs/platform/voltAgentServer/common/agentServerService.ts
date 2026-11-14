@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { createDecorator } from '../../instantiation/common/instantiation.js';
+import type { ISandboxWorkloadInfo } from '../../voltSandbox/common/sandboxWorkloads.js';
 import type { IVoltExtensionHostTicket } from './protocol.js';
 
 export const IVoltAgentServerMainService = createDecorator<IVoltAgentServerMainService>('voltAgentServerMainService');
@@ -55,4 +56,11 @@ export interface IVoltAgentServerMainService {
 	 * server's workbench, with its port and connection token. Starts the server if needed.
 	 */
 	createExtensionHostTicket(): Promise<IVoltExtensionHostTicket & { readonly port: number }>;
+	/**
+	 * The sandboxed hosts the running server runs (its sandboxed extension hosts, P6), with what their
+	 * sandbox refused them. Never starts the server: none when it isn't running.
+	 */
+	sandboxWorkloads(): Promise<readonly ISandboxWorkloadInfo[]>;
+	/** Stops one of {@link sandboxWorkloads} and its whole process tree. */
+	stopSandboxWorkload(id: string): Promise<boolean>;
 }

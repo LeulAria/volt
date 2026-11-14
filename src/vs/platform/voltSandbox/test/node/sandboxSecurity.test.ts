@@ -32,6 +32,8 @@ import { AgentStateOverlay } from '../../node/agentStateOverlay.js';
 import { IVoltSandboxPolicy, parseSandboxPolicyLayer } from '../../common/sandboxSchema.js';
 import { sshPrivateKeys, sshReadablePaths } from '../../node/sandboxLauncher.js';
 import { SandboxManager } from '../../node/sandboxManager.js';
+import { SEATBELT_DENIAL_PREDICATE } from '../../node/seatbeltBackend.js';
+import { SandboxProxyLookup } from '../../node/sandboxProxy.js';
 import { SandboxPolicyFiles } from '../../node/sandboxPolicyFiles.js';
 import { composeLaunchLayers } from '../../common/compile.js';
 import { ISandboxHostFacts, sandboxHostFacts } from '../../node/sandboxResolver.js';
@@ -268,6 +270,52 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		const result = await sh(agent(false), `ln '${join(f.home, '.aws', 'credentials')}' ${f.ws}/hl; cat ${f.ws}/hl`);
 		assert.ok(!result.stdout.includes('CANARY'));
 		assert.ok(!await exists(join(f.ws, 'hl')));
+	});
+
+	test('ESC-LINK-1: no hard link to a readable file it may not write (a toolchain, the CLI\'s linked config, an rc file, git config) is made', async () => {
+		const toolchain = join(f.home, '.cargo', 'bin', 'cargo-canary');
+		const toolchainBefore = await sha(toolchain);
+		// Each is readable to at least one of these policies and writable to none: a link inside the
+		// workspace would make it writable under the workspace's name (and git config runs code later).
+		const targets = [toolchain, join(f.home, '.claude', 'settings.json'), join(f.home, '.zshrc'), join(f.outside, 'secret.txt'), join(f.ws, '.git', 'config')];
+		for (const policy of [workspace(), agent(false), agent(true)]) {
+			const result = await sh(policy, targets.map((target, i) => `ln '${target}' ${f.ws}/hl-${i} && echo LINKED-${i}; echo evil >> ${f.ws}/hl-${i}`).join('; '));
+			assert.ok(!/LINKED/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+			for (let i = 0; i < targets.length; i++) {
+				const made = await fs.stat(join(f.ws, `hl-${i}`)).catch(() => undefined);
+				assert.ok(!made || made.nlink === 1, `${policy.name}: hl-${i} is a link to ${targets[i]}`);
+				await fs.rm(join(f.ws, `hl-${i}`), { force: true });
+			}
+		}
+		assert.strictEqual(await sha(toolchain), toolchainBefore, 'the toolchain binary');
+		await assertHostUnchanged();
+	});
+
+	test('ESC-LINK-2: writes through symlinks planted in the workspace reach nothing outside: another folder, ~/.ssh, ~/.aws', async () => {
+		await fs.mkdir(join(f.outside, 'dir'), { recursive: true });
+		try {
+			for (const policy of [workspace(), agent(false), agent(true)]) {
+				const result = await sh(policy, [
+					`ln -s ${f.outside}/dir ${f.ws}/l-dir; echo x > ${f.ws}/l-dir/planted && echo WROTE-DIR`,
+					`ln -s ${f.home}/.ssh ${f.ws}/l-ssh; echo 'ssh-ed25519 AAAA evil' >> ${f.ws}/l-ssh/authorized_keys && echo WROTE-SSH`,
+					`ln -s ${f.home}/.aws ${f.ws}/l-aws; printf '[default]\\ncredential_process = touch ${f.outside}/pwned\\n' > ${f.ws}/l-aws/config && echo WROTE-AWS`,
+					// And straight at them (agent(true) can read ~/.ssh for git over SSH: never write it).
+					`echo 'ssh-ed25519 AAAA evil' >> ${f.home}/.ssh/authorized_keys && echo WROTE-SSH-DIRECT`,
+					`echo x > ${f.home}/.ssh/config && echo WROTE-SSH-CONFIG`,
+					`mkdir ${f.home}/.ssh/x && echo MKDIR-SSH`,
+				].join('; '));
+				assert.ok(!/WROTE|MKDIR/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+				for (const name of ['l-dir', 'l-ssh', 'l-aws']) {
+					await fs.rm(join(f.ws, name), { force: true });
+				}
+			}
+			assert.deepStrictEqual(await fs.readdir(join(f.outside, 'dir')), []);
+			assert.deepStrictEqual(await fs.readdir(join(f.home, '.ssh')), ['id_ed25519']);
+			assert.deepStrictEqual(await fs.readdir(join(f.home, '.aws')), ['credentials']);
+		} finally {
+			await fs.rm(join(f.outside, 'dir'), { recursive: true, force: true });
+		}
+		await assertHostUnchanged();
 	});
 
 	test('SSH-1, SSH-2: with the network on, an agent reads only ssh\'s configs (and what they include), known hosts and public keys; keys in any format, name, folder or link, and anything made after the launch, stay unreadable', async () => {
@@ -577,6 +625,14 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		}
 		const granted = await sh(agent(true, 'claude-code', { listenPorts: [port] }), listen(port));
 		assert.ok(granted.stdout.includes(`LISTENING-${port}`), `a granted port works: ${granted.stderr}`);
+		// Ports macOS reports as `*:<port>` at listen() (63000, 65351 on macOS 26.6) work when granted too, with the network on and off.
+		for (const fixed of [63000, 65351]) {
+			// Busy on this machine is fine (EADDRINUSE); refused by the sandbox (EPERM) is not.
+			for (const network of [true, false]) {
+				const result = await sh(agent(network, 'claude-code', { listenPorts: [fixed] }), listen(fixed));
+				assert.ok(result.stdout.includes(`LISTENING-${fixed}`) || /Address already in use/.test(result.stderr), `granted ${fixed}, network ${network}: ${result.stderr}`);
+			}
+		}
 	});
 
 	test('ENV-1: an agent gets only allow-listed variables; *_KEY, *_PAT and *_JWT never pass', async () => {
@@ -686,7 +742,100 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		await assertHostUnchanged();
 	});
 
+	test('ESC-GIT-1: .git and its hooks cannot be moved aside and replaced; config cannot be swapped in by rename or link', async () => {
+		const { repo } = await gitRepo('escgit');
+		const config = join(repo, '.git', 'config');
+		const before = await sha(config);
+		for (const policy of gitPolicies(repo)) {
+			const result = await sh(policy, [
+				`mv ${repo}/.git ${repo}/.git-old && echo MOVED-GIT`,
+				`mv ${repo}/.git/hooks ${repo}/.git/hooks-old && echo MOVED-HOOKS`,
+				`printf '[core]\\n\\tfsmonitor = touch ${f.outside}/pwned\\n' > ${repo}/evil-config; mv ${repo}/evil-config ${config} && echo SWAPPED`,
+				`ln -f ${repo}/a.txt ${config} && echo LINKED`,
+				`ln -s ${f.outside} ${repo}/.git/commondir && echo COMMONDIR`,
+			].join('; '), { workspaceRoots: [repo] });
+			assert.ok(!/SWAPPED|LINKED/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+			assert.strictEqual(await sha(config), before, `${policy.name}: config`);
+			if (isLinux) {
+				// bubblewrap binds the names that exist at launch: a folder moved aside takes its binds along and
+				// a new name is the protectNew residual (HostGit refuses what it plants on the host, GIT-1..4).
+				assert.ok(result.unenforced.includes('filesystem.protectNew'), `${policy.name}: the run reports the gap`);
+				if (await exists(join(repo, '.git-old'))) {
+					await fs.rm(join(repo, '.git'), { recursive: true, force: true });
+					await fs.rename(join(repo, '.git-old'), join(repo, '.git'));
+				}
+			} else {
+				assert.ok(!/MOVED|COMMONDIR/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+				assert.ok(await exists(join(repo, '.git', 'hooks')), `${policy.name}: hooks still in place`);
+				assert.ok(!await exists(join(repo, '.git-old')) && !await exists(join(repo, '.git', 'hooks-old')), policy.name);
+			}
+			await fs.rm(join(repo, 'evil-config'), { force: true });
+		}
+		assert.ok(!await exists(join(f.outside, 'pwned')));
+		await assertHostUnchanged();
+	});
+
 	// bubblewrap cannot guard paths that do not exist yet: filesystem.protectNew (documented).
+	macTest('ESC-GIT-2: a nested .git pointing outside cannot be planted as a symlink or a gitdir file (macOS)', async () => {
+		await sh(workspace(), `mkdir -p ${f.ws}/sub/inner; ln -s ${f.outside} ${f.ws}/sub/inner/.git; echo 'gitdir: ${f.outside}' > ${f.ws}/sub/inner/.Git`);
+		for (const name of ['.git', '.Git']) {
+			assert.ok(!await exists(join(f.ws, 'sub', 'inner', name)), name);
+		}
+		await fs.rm(join(f.ws, 'sub', 'inner'), { recursive: true, force: true });
+	});
+
+	// bubblewrap cannot guard paths that do not exist yet: filesystem.protectNew (documented).
+	macTest('GIT-SHIM-1: the /usr/bin developer shims run in a sandbox (they read whether the Xcode license was accepted)', async function () {
+		if (!await exists('/Library/Preferences/com.apple.dt.Xcode.plist') || !await exists('/usr/bin/git')) {
+			this.skip(); // no accepted license on this machine: the shim refuses outside a sandbox too
+		}
+		const result = await sh(workspace(), '/usr/bin/git --version');
+		assert.strictEqual(result.exitCode, 0, result.stderr);
+		assert.match(result.stdout, /^git version /);
+	});
+
+	macTest('GIT-SHIM-2: a shim finds xcrun\'s cache from a deny-default sandbox (no `xcodebuild -find` per call); agents may read the cache, never write it', async function () {
+		if (!await exists('/Library/Preferences/com.apple.dt.Xcode.plist') || !await exists('/usr/bin/git')) {
+			this.skip();
+		}
+		// Before: `com.apple.bsd.dirhelper` was refused, xcrun could not find the user's temp folder and
+		// every `git` in an extension host ran xcodebuild (3.7-9.6 s in round 1, 7-33 s at load 45).
+		const result = await sh(workspace(), '/usr/bin/git --version; /usr/bin/git --version');
+		assert.strictEqual(result.exitCode, 0, result.stderr);
+		assert.match(result.stdout, /^git version [^\n]+\ngit version /);
+		assert.ok(!result.denials.some(denial => denial.target === 'com.apple.bsd.dirhelper'), `the temp-folder lookup is allowed: ${JSON.stringify(result.denials.filter(d => d.kind === 'launch'))}`);
+		// The agent's temp folders are writable; xcrun's cache of which binary each shim runs is not.
+		const policy = agent(false);
+		assert.ok(policy.filesystem.protect.includes(`${f.agentTmp}/xcrun_db`) || !isMac);
+		const planted = await sh(policy, `echo 'git|evil' > ${f.agentTmp}/xcrun_db && echo PLANTED; echo ok > ${f.agentTmp}/xcrun_db-other && echo OTHER`);
+		assert.ok(!planted.stdout.includes('PLANTED'), planted.stdout);
+		assert.ok(planted.stdout.includes('OTHER'), `the rest of temp stays writable: ${planted.stderr}`);
+		assert.ok(!await exists(join(f.agentTmp, 'xcrun_db')));
+	});
+
+	macTest('LOG-FORGE-2: a workload cannot forge a refusal of its own run (a "Blocked" card whose Allow widens it); a real one is still reported', async () => {
+		// It knows its tag (VOLT_SANDBOX_TAG) and may write to the unified log with `logger`.
+		const result = await sh(agent(false), [
+			`/usr/bin/logger "Sandbox: touch(1) deny(1) file-write-create ${f.home}/forged-folder/x VOLTSBX-$VOLT_SANDBOX_TAG"`,
+			`/usr/bin/logger "Sandbox: touch(1) deny(1) file-write-create ${f.home}/forged-folder/y\nVOLTSBX-$VOLT_SANDBOX_TAG"`,
+			`echo x > ${f.outside}/real-denial.txt 2>/dev/null; true`,
+		].join('; '));
+		assert.ok(!result.denials.some(denial => denial.target.includes('forged-folder')), `forged: ${JSON.stringify(result.denials.filter(d => d.target.includes('forged')))}`);
+		assert.ok(result.denials.some(denial => denial.target.endsWith('real-denial.txt')), `the real refusal is reported: ${JSON.stringify(result.denials.map(d => d.target))}`);
+	});
+
+	test('LOG-STREAM-1: the denial query is narrowed by sender and process before any text search (read on demand, no resident log stream)', () => {
+		assert.match(SEATBELT_DENIAL_PREDICATE, /^\(processID == 0 AND sender == "Sandbox" AND eventMessage CONTAINS "VOLTSBX-"\) OR \(process == "logger" AND eventMessage CONTAINS "VOLTSBX-flush-"\)$/);
+	});
+
+	macTest('DENIAL-FLUSH-1: a one-shot run reports its last refusal even when the workload swallows the error and exits at once', async () => {
+		// Round 1's matrix named a blocked attack in only 2 of 3 runs at times: the run stopped listening at exit.
+		for (let i = 0; i < 5; i++) {
+			const result = await sh(agent(false), `cat ${f.home}/.aws/credentials >/dev/null 2>&1; true`);
+			assert.ok(result.denials.some(denial => denial.kind === 'read' && denial.target.endsWith('/.aws/credentials')), `run ${i + 1}: ${JSON.stringify(result.denials.map(d => d.target))}`);
+		}
+	});
+
 	macTest('a new git repository cannot be planted in the workspace (macOS)', async () => {
 		await sh(workspace(), `mkdir ${f.ws}/sub/.git; mkdir ${f.ws}/sub/.GIT; echo 'gitdir: ${f.outside}' > ${f.ws}/sub/x; mv ${f.ws}/sub/x ${f.ws}/sub/.git`);
 		assert.ok(!await exists(join(f.ws, 'sub', '.git')) && !await exists(join(f.ws, 'sub', '.GIT')));
@@ -750,6 +899,30 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		}
 	});
 
+	test('ESC-PROC-1: agent profiles cannot signal, stop or list host processes, nor read their command lines', async () => {
+		// A host process with a secret on its command line (`mysql -pSECRET` style) and in its environment.
+		const secret = `CANARY-ARGV-${process.pid}`;
+		const victim = spawn(PERL, ['-e', 'sleep 300', secret], { stdio: 'ignore', env: { PATH: '/usr/bin:/bin', CANARY_ENV_SECRET: secret } });
+		try {
+			await new Promise(resolve => setTimeout(resolve, 200));
+			for (const policy of [agent(false), agent(true)]) {
+				const result = await sh(policy, [
+					`kill -STOP ${victim.pid} 2>/dev/null && echo STOPPED`,
+					`kill -TERM ${victim.pid} 2>/dev/null && echo SIGNALLED`,
+					`kill -0 ${victim.pid} 2>/dev/null && echo CAN-SEE`,
+					'ps -axww -o pid=,command= 2>/dev/null',
+					'ps -axwwE -o command= 2>/dev/null',
+				].join('; '));
+				assert.ok(!/STOPPED|SIGNALLED|CAN-SEE/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+				assert.ok(!result.stdout.includes(secret), `${policy.name}: another process's command line or environment through ps`);
+				assert.strictEqual(victim.exitCode, null);
+				assert.strictEqual(victim.signalCode, null, `${policy.name}: the host process is untouched`);
+			}
+		} finally {
+			victim.kill('SIGKILL');
+		}
+	});
+
 	test('no inherited file descriptors beyond stdio', async () => {
 		const result = await sh(workspace(), `${PERL} -e 'for (3..64) { open(my $h, "<&=", $_) and print "$_\\n" }'`);
 		assert.strictEqual(result.stdout.trim(), '', `open fds: ${result.stdout}`);
@@ -806,6 +979,100 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		} finally {
 			await canary.close();
 		}
+	});
+
+	test('NET-AGENT-1: an agent with its network on reaches its API, the registries and the user\'s hosts; other hosts, raw and IPv6 addresses, rebinding names, loopback and other ports are refused and reported; clearing the proxy variables reaches nothing', async () => {
+		// Every allowed connection lands on `upstream` (the broker's connector is the test's); `canary` is a local service.
+		const upstream = await canaryListener();
+		const canary = await canaryListener();
+		const resolved: string[] = [];
+		const lookup: SandboxProxyLookup = async host => {
+			resolved.push(host);
+			switch (host) {
+				case 'registry.npmjs.org': case 'api.anthropic.com': case 'docs.example.com': case 'evil.example': return [{ address: '104.16.0.1', family: 4 }];
+				// DNS rebinding: a public answer next to loopback.
+				case 'rebind.example': return [{ address: '104.16.0.2', family: 4 }, { address: '127.0.0.1', family: 4 }];
+				default: throw new Error(`ENOTFOUND ${host}`);
+			}
+		};
+		const manager = new SandboxManager(undefined, { runRoot: f.runRoot, host: f.host, proxy: { lookup, connect: () => net.connect(upstream.port, '127.0.0.1') } });
+		const targets = [
+			'registry.npmjs.org:443', 'api.anthropic.com:443', 'docs.example.com:443',
+			'evil.example:443', 'rebind.example:443', '1.1.1.1:443', '[2606:4700:4700::1111]:443', `[::1]:${canary.port}`, `127.0.0.1:${canary.port}`, 'registry.npmjs.org:22',
+		];
+		const connectThroughProxy = `for t in ${targets.map(t => `'${t}'`).join(' ')}; do ${PERL} -MIO::Socket::INET -MMIME::Base64 -e '($a,$h)=$ENV{HTTPS_PROXY}=~m{//([^@]+)@([^/]+)}; $s=IO::Socket::INET->new(PeerAddr=>$h, Timeout=>3) or exit 1; print $s "CONNECT $ARGV[0] HTTP/1.1\\r\\nHost: $ARGV[0]\\r\\nProxy-Authorization: Basic ".encode_base64($a,"")."\\r\\n\\r\\n"; $l=<$s>; print "CONNECT $ARGV[0] $l"' "$t"; done`;
+		// The proxy variables cleared: direct connections to loopback, the internet and the resolver.
+		const direct = [
+			`env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY -u https_proxy -u http_proxy -u all_proxy ${PERL} -MIO::Socket::INET -e 'IO::Socket::INET->new(PeerAddr=>"127.0.0.1:${canary.port}", Timeout=>2) and print "DIRECT-LOOPBACK\\n"'`,
+			`env -u HTTPS_PROXY ${PERL} -MIO::Socket::INET -e 'IO::Socket::INET->new(PeerAddr=>"1.1.1.1:443", Timeout=>3) and print "DIRECT-INTERNET\\n"'`,
+			`env -u HTTPS_PROXY ${PERL} -e 'gethostbyname("volt-sbx-$$.example.com") and print "DIRECT-DNS\\n"'`,
+		].join('; ');
+		try {
+			const result = await manager.run({
+				command: '/bin/sh',
+				args: ['-c', `echo volt-sandbox-ran; ${connectThroughProxy}; ${direct}`],
+				policy: agent(true, 'claude-code', { allowedDomains: ['docs.example.com', 'rebind.example'] }),
+				context: { workspaceRoots: [f.ws], hostEnv: hostEnv() },
+			}, { timeoutMs: 60_000 });
+			assert.strictEqual(result.status, 'completed', `${result.error ?? ''} ${result.stderr}`);
+			const status = (target: string) => new RegExp(`^CONNECT ${target.replace(/[[\].]/g, '\\$&')} HTTP/1\\.1 (\\d{3})`, 'm').exec(result.stdout)?.[1];
+			for (const target of ['registry.npmjs.org:443', 'api.anthropic.com:443', 'docs.example.com:443']) {
+				assert.strictEqual(status(target), '200', `${target} passes: ${result.stdout}`);
+			}
+			for (const target of targets.slice(3)) {
+				assert.ok(/^4\d\d$/.test(status(target) ?? ''), `${target} is refused: ${result.stdout}`);
+			}
+			assert.ok(!/DIRECT-/.test(result.stdout), `around the proxy: ${result.stdout}`);
+			assert.strictEqual(canary.hits(), 0, 'the local service was never reached');
+			assert.strictEqual(upstream.hits(), 3, 'only the three allowed hosts were connected');
+			assert.ok(!resolved.includes('evil.example'), 'a host outside the rules is not even resolved');
+			const proxied = result.denials.filter(denial => denial.source === 'proxy').map(denial => denial.target);
+			assert.ok(proxied.some(target => target.startsWith('evil.example')), `the refusal names the host: ${proxied.join(', ')}`);
+			assert.ok(proxied.some(target => target.startsWith('rebind.example')), `the rebinding name is reported: ${proxied.join(', ')}`);
+			const evil = result.denials.find(denial => denial.source === 'proxy' && denial.target.startsWith('evil.example'));
+			assert.ok(evil?.denialId && evil.promptable !== false, 'a host outside the rules can be allowed from the warning');
+			if (isMac) {
+				// The kernel's refusal of the direct loopback connect names the port on this machine.
+				assert.ok(result.denials.some(denial => denial.source === 'os' && denial.kind === 'network' && denial.target === `localhost:${canary.port}`), `reported as a port on this machine: ${JSON.stringify(result.denials.filter(d => d.kind === 'network'))}`);
+			}
+		} finally {
+			await manager.dispose();
+			await upstream.close();
+			await canary.close();
+		}
+	});
+
+	test('FX-1: fx lists the home folder and sets ~/.fx\'s mode; it reads, writes, moves or re-modes nothing else', async function () {
+		if (!isMac) {
+			// bubblewrap's home is a folder of binds, listable as such; a mode change on a read-only bind fails (fx is macOS-only here).
+			this.skip();
+		}
+		await fs.mkdir(join(f.home, '.fx', 'sessions'), { recursive: true });
+		await fs.writeFile(join(f.home, '.fx', 'settings.json'), '{}');
+		const before = (await fs.stat(join(f.home, '.zshrc'))).mode;
+		const result = await sh(agent(true, 'fx'), [
+			`ls ${f.home} | sed 's/^/LIST:/'`,
+			`chmod 700 ${f.home}/.fx && echo CHMOD-FX`,
+			`cat ${f.home}/.zshrc`,
+			`cat ${f.home}/other-project/notes.md`,
+			`cat ${f.home}/.ssh/id_ed25519`,
+			`mv ${f.home}/.fx ${f.agentTmp}/stolen-fx && echo MOVED`,
+			`echo x > ${f.home}/.fx/planted && echo PLANTED`,
+			`chmod 777 ${f.home}/.zshrc && echo CHMOD-RC`,
+			`chmod 777 ${f.home}/other-project && echo CHMOD-OTHER`,
+			`ls ${f.home}/other-project | sed 's/^/INNER:/'`,
+		].join('; '));
+		assert.ok(result.stdout.includes('LIST:other-project'), `it lists the home folder: ${result.stderr}`);
+		assert.ok(result.stdout.includes('CHMOD-FX'), `it sets its folder's mode: ${result.stderr}`);
+		for (const leak of ['canary rc', 'CANARY-OTHER-PROJECT', 'CANARY-SSH', 'MOVED', 'PLANTED', 'CHMOD-RC', 'CHMOD-OTHER', 'INNER:notes.md']) {
+			assert.ok(!result.stdout.includes(leak), `${leak}: ${result.stdout}`);
+		}
+		assert.ok(await exists(join(f.home, '.fx', 'settings.json')) && !await exists(join(f.agentTmp, 'stolen-fx')));
+		assert.strictEqual((await fs.stat(join(f.home, '.zshrc'))).mode, before);
+		// Every other agent still cannot list it.
+		const other = await sh(agent(true, 'claude-code'), `ls ${f.home} | sed 's/^/LIST:/'`);
+		assert.ok(!other.stdout.includes('LIST:other-project'));
+		await assertHostUnchanged();
 	});
 
 	test('SRV-1: a granted loopback port (the chat\'s own MCP bridge) opens only that port; Volt\'s other loopback servers (another chat\'s MCP, the agent server, a CDP/inspect port) stay unreachable, and the agent-server token stays unreadable', async () => {
@@ -1056,6 +1323,26 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 	});
 
 	// --- macOS escape hatches --------------------------------------------------------------------
+
+	macTest('ESC-MAC-1: launchd, LaunchServices and Apple Events run nothing outside for the workspace and network-off agent profiles either', async () => {
+		const label = `volt.sbx.esc.${process.pid}`;
+		for (const policy of [workspace(), agent(false)]) {
+			await sh(policy, [
+				`launchctl submit -l ${label} -- /usr/bin/touch ${f.outside}/canary-launchd 2>&1`,
+				`launchctl bootstrap gui/$(id -u) ${f.ws}/x.plist 2>&1`,
+				`open -a Terminal ${f.outside} 2>&1`,
+				`open -b com.apple.TextEdit ${f.outside}/secret.txt 2>&1`,
+				`osascript -e 'do shell script "touch ${f.outside}/canary-osascript"' 2>&1`,
+				`osascript -e 'tell application "Terminal" to do script "touch ${f.outside}/canary-terminal"' 2>&1`,
+			].join('; '));
+			try { execFileSync('/bin/launchctl', ['remove', label], { stdio: 'ignore' }); } catch { /* not there */ }
+		}
+		await new Promise(resolve => setTimeout(resolve, 1_500));
+		for (const name of ['canary-launchd', 'canary-osascript', 'canary-terminal']) {
+			assert.ok(!await exists(join(f.outside, name)), name);
+		}
+		await assertHostUnchanged();
+	});
 
 	macTest('macOS: Apple Events, LaunchServices, launchd jobs, preferences and the pasteboard are closed to agents', async () => {
 		const domain = `volt.sbx.test.${process.pid}`;

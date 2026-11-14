@@ -1,0 +1,135 @@
+{
+ "kind": "mockAttacks-start",
+ "at": "2026-11-12T09:04:11.763Z",
+ "value": {
+  "through": [],
+  "results": [
+   {
+    "id": "start:read-ssh-key",
+    "what": "read a private SSH key (canary)",
+    "outcome": "blocked",
+    "detail": "EPERM",
+    "ms": 7
+   },
+   {
+    "id": "start:read-aws",
+    "what": "read AWS credentials (canary)",
+    "outcome": "blocked",
+    "detail": "EPERM",
+    "ms": 8
+   },
+   {
+    "id": "start:read-real-ssh-dir",
+    "what": "list the real ~/.ssh folder",
+    "outcome": "blocked",
+    "detail": "EPERM",
+    "ms": 11
+   },
+   {
+    "id": "start:env-secrets",
+    "what": "read secret environment variables",
+    "outcome": "blocked",
+    "detail": "NONE",
+    "ms": 0
+   },
+   {
+    "id": "start:exfil-https",
+    "what": "send data to a host nobody allowed (example.com)",
+    "outcome": "blocked",
+    "detail": "VOLT_PROXY_403",
+    "ms": 61
+   },
+   {
+    "id": "start:exfil-fetch",
+    "what": "fetch() to a host nobody allowed (example.org)",
+    "outcome": "blocked",
+    "detail": "TypeError",
+    "ms": 41
+   },
+   {
+    "id": "start:spawn-curl",
+    "what": "start curl to a host nobody allowed",
+    "outcome": "blocked",
+    "detail": 56,
+    "ms": 139
+   },
+   {
+    "id": "start:spawn-sh-write-home",
+    "what": "start sh to write in the home folder",
+    "outcome": "blocked",
+    "detail": 1,
+    "ms": 168
+   },
+   {
+    "id": "start:git-hook-fs",
+    "what": "write .git/hooks/pre-commit (Node fs)",
+    "outcome": "blocked",
+    "detail": "EPERM",
+    "ms": 2
+   },
+   {
+    "id": "start:tasks-json-fs",
+    "what": "write .vscode/tasks.json (Node fs)",
+    "outcome": "blocked",
+    "detail": "EPERM",
+    "ms": 1
+   },
+   {
+    "id": "start:git-hook-edit",
+    "what": "create .git/hooks/post-merge (WorkspaceEdit, applied by the window)",
+    "outcome": "blocked",
+    "detail": "REFUSED",
+    "ms": 431
+   },
+   {
+    "id": "start:tasks-json-edit",
+    "what": "create .vscode/tasks.json (WorkspaceEdit, applied by the window)",
+    "outcome": "blocked",
+    "detail": "REFUSED",
+    "ms": 245
+   },
+   {
+    "id": "start:git-hook-api",
+    "what": "write .git/hooks/post-checkout (workspace.fs API)",
+    "outcome": "blocked",
+    "detail": "NoPermissions",
+    "ms": 5
+   },
+   {
+    "id": "start:launch-agent",
+    "what": "install a LaunchAgent (persistence)",
+    "outcome": "blocked",
+    "detail": "EPERM",
+    "ms": 0
+   },
+   {
+    "id": "start:docker:var",
+    "what": "reach the Docker socket (/var/run/docker.sock)",
+    "outcome": "blocked",
+    "detail": "EPERM",
+    "ms": 1
+   },
+   {
+    "id": "start:docker:.docker",
+    "what": "reach the Docker socket (~/.docker/run/docker.sock)",
+    "outcome": "blocked",
+    "detail": "EPERM",
+    "ms": 2
+   },
+   {
+    "id": "start:api-memory-write",
+    "what": "write Volt memory (not declared)",
+    "outcome": "blocked",
+    "detail": "VoltCapabilityError",
+    "ms": 5
+   },
+   {
+    "id": "start:api-automation",
+    "what": "schedule an automation (not declared)",
+    "outcome": "blocked",
+    "detail": "VoltCapabilityError",
+    "ms": 8
+   }
+  ]
+ }
+}

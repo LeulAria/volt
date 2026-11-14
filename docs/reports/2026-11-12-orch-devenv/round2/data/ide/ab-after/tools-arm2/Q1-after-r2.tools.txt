@@ -1,0 +1,17 @@
+mcp__volt__code_nav | mcp__volt__code_nav
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__code_nav | mcp__volt__code_nav
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__code_nav | mcp__volt__code_nav
+mcp__volt__code_nav | mcp__volt__code_nav
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__code_nav | mcp__volt__code_nav
+mcp__volt__code_nav | mcp__volt__code_nav
+Read File | Read apps/api/src/routes/sync.ts
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read apps/api/src/routes/sync.ts
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__instant_grep | mcp__volt__instant_grep
+Read File | Read apps/api/src/routes/sync.ts
+Read File | Read apps/web/src/sync/useCommand.ts

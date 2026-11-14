@@ -42,6 +42,9 @@ import { IAgentChatForkService } from '../orchestration/agentChatFork.js';
 import { buildTranscriptRows, hasSignInNotice, ITranscriptSteer, TranscriptRow, withoutFailureNotice } from '../chrome/agentTranscript.js';
 import { fallbackSubagentView, ITranscriptHost, LiveTranscript, renderTranscript, tickElapsed } from '../chrome/agentTranscriptView.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
+import { mark } from '../../../../../base/common/performance.js';
+import { Range } from '../../../../../editor/common/core/range.js';
+import { isWindowSnapshotShown, readSnapshotInput, removeWindowSnapshot } from '../../../../../platform/voltWindowSnapshot/browser/windowSnapshotPaint.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { DropIntoEditorController } from '../../../../../editor/contrib/dropOrPasteInto/browser/dropIntoEditorController.js';
 import { InlineCompletionsController } from '../../../../../editor/contrib/inlineCompletions/browser/controller/inlineCompletionsController.js';
@@ -83,6 +86,7 @@ import { peekTurnDisplay } from '../orchestration/agentTurnDisplays.js';
 import { IAgentSubagentChatService } from '../orchestration/agentSubagentChats.js';
 import { AgentHistoryCodec, resolveActivityImage } from '../history/agentHistoryCodec.js';
 import { agentRow, dockModel, formatElapsed as formatOrchElapsed, isMultitaskTask } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
+import { orchTasksOf } from '../../../../services/voltRuntime/common/orchestration/orchestratorQueries.js';
 import { jobWakeEnd } from '../../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { harnessSubagentChatId, harnessTaskOfChat, isHarnessSubagentChatId } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
 import { createReportStackIcon, isLiveSubagentState, isResumableSubagent, isRetryableSubagentState, ISubagentView, renderCursorSubagentRow, resumeSubagentTask, retryHarnessSubagent, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView } from '../chrome/agentSubagents.js';
@@ -130,6 +134,8 @@ import { searchFilesAndFolders } from '../../../search/browser/searchFilesAndFol
 import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from './agentEditorInput.js';
 import { OPEN_CONNECTED_AGENTS_COMMAND_ID } from '../orchestration/agentExternalCaller.js';
 import { createAgentTitleActionViewItem } from './agentTitleActions.js';
+import { hasUserInput, watchForUserInput } from './agentUserInput.js';
+import { intentWantsPrewarm, openPrewarmDelay, PREWARM_ON_OPEN_MS } from './agentPrewarmIntent.js';
 import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
@@ -146,6 +152,7 @@ import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/
 import { FRESH_TEXT_CLASS, FreshTextTracker, settleFreshText } from '../chrome/agentFreshText.js';
 import { reconcileChildren, TranscriptReuse } from '../chrome/agentTranscriptReuse.js';
 import { IAgentPendingFile } from '../review/agentEditsService.js';
+import { AgentCaretRest } from '../composer/agentCaretRest.js';
 import { AgentComposerLists } from '../composer/agentComposerLists.js';
 import { renderInlineMarkdown } from '../composer/agentInlineMarkdown.js';
 import { fillBrandLink, splitTextLinks } from '../blocks/agentLinkLogos.js';
@@ -174,13 +181,15 @@ import { agentEmptyComposerChips } from '../composer/agentSuggestChips.js';
 import { createHomeAutomationsIcon, createHomeNewChatIcon } from '../home/agentHomeIcons.js';
 import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentLandingRecents } from '../home/agentLandingRecents.js';
-import { IAgentThreadLifecycleService } from '../home/agentThreadLifecycle.js';
+import { IAgentThreadLifecycleService, needsBringBack } from '../home/agentThreadLifecycle.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
+import { composerDraftShape } from './agentComposerDraft.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
+import { readFirstScreen } from './agentFirstScreen.js';
 import { setShownAgentChat, shownAgentChat } from './agentShownChat.js';
-import { deferredHeadStart } from './agentThreadWindow.js';
+import { deferredHeadStart, keepExchangeHeights } from './agentThreadWindow.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
 import { agentTurnScope, messageFileChangesSignature } from '../review/agentSessionChanges.js';
@@ -193,7 +202,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { IAgentTurnReveal, onDidRequestAgentTurnReveal, takeAgentTurnReveal } from '../search/agentTurnReveal.js';
 import { AgentThreadView } from './agentThreadView.js';
-import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip, setIconButtonTooltip } from '../chrome/agentTooltip.js';
 import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
@@ -334,10 +343,23 @@ const HEAD_DEFER_MIN_EXCHANGES = 4;
 const DRAWN_EXCHANGES_MAX = 40;
 /** What a trim leaves drawn; the gap to the max keeps a running chat from trimming on every turn. */
 const DRAWN_EXCHANGES_KEEP = 24;
+/**
+ * A frame's drawing time while the reader asked for the first message (Scroll Chat to Top): more
+ * than the 12ms a scroll gets, as nothing else moves meanwhile, yet still about 30 frames a second.
+ */
+const HEAD_JUMP_FRAME_MS = 32;
 /** Exchanges a chat parked by a switch keeps drawn while it follows its end. */
 const STASHED_DRAWN_EXCHANGES = 12;
 /** Shows the pane even if the first chat's history never finishes loading. */
 const RESTORE_REVEAL_TIMEOUT_MS = 1500;
+/** An "ago" label older than this reads in hours or days, so the clock redoes it only every {@link AGO_OLD_SWEEP_MS}. */
+const AGO_OLD_MS = 60 * 60_000;
+const AGO_OLD_SWEEP_MS = 60_000;
+/** An "ago" label younger than this changes within the second's pace ("a few seconds ago", "a minute ago"). */
+const AGO_SECONDS_MS = 90_000;
+/** The chat clock's pace while something on screen changes by the second, and otherwise (labels in minutes). */
+const CLOCK_FAST_MS = 1_000;
+const CLOCK_SLOW_MS = 10_000;
 /** How long the background picture's fade on a new chat's first send may run (420ms in agentChatBackground.css). */
 const CHAT_BACKDROP_FADE_MS = 600;
 
@@ -642,15 +664,16 @@ const REVERT_ON_EDIT_ALWAYS_KEY = 'voltAgent.checkpoint.revertOnEditAlways';
 const CHECKPOINT_RESTORE_COMMAND = 'voltAgent.checkpoint.restore';
 const CHECKPOINT_HAS_CHANGES_COMMAND = 'voltAgent.checkpoint.hasChangesSince';
 
-/**
- * A chat that stays open this long gets its agent started, so the first send skips the cold start.
- * Clicking through chats and projects faster than this starts (and stops) no agent process.
- */
-const PREWARM_ON_OPEN_MS = 300;
 /** A model picked in the composer gets its agent started this soon (stepping through models starts none). */
 const PREWARM_ON_MODEL_MS = 100;
 /** Typing asks the runtime for a warm agent at most this often (it may have been taken or stopped since). */
 const PREWARM_ON_TYPE_MS = 5000;
+/**
+ * The chat a window restores at launch warms its agent, so a message sent right away gets its first word
+ * as fast as in any warm chat; nobody has picked that chat yet, so the agent stops again if no keystroke
+ * comes within this long (the composer's first keystroke keeps it).
+ */
+const UNTOUCHED_WARM_TTL_MS = 30_000;
 
 export type IAgentMessage = IAgentUserMessage | IAgentAssistantMessage;
 
@@ -670,6 +693,8 @@ const SCROLL_SYNC_PRIORITY = -1000;
 
 /** While a reply streams the context meter is redrawn at most this often; the turn's end redraws it at once. */
 const CONTEXT_USAGE_STREAM_MS = 1_000;
+/** How often typing recounts the draft in the context meter. */
+const DRAFT_USAGE_MS = 150;
 
 /** How long the composer's ghost text reuses the prompts it read; a send refreshes them at once. */
 const PREDICTION_PROMPTS_TTL_MS = 10_000;
@@ -864,6 +889,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	 * freezing one takes longer: a prompt still on its way lands before it is edited, moved or removed.
 	 */
 	private submitChain: Promise<unknown> = Promise.resolve();
+	/** Sends in {@link submitChain} that have not settled: a send goes out at once only when none is. */
+	private submitsInFlight = 0;
+	/** The draft's {@link composerDraftShape} at the composer's last layout. */
+	private composerLaidOutShape: string | undefined;
 	/** Per chat: queue changes whose orchestrator call has not answered yet, shown in the card at once. */
 	private readonly queueOverlays = new Map<string, AgentQueueOverlay>();
 	/**
@@ -895,14 +924,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** Arrow Up/Down through earlier prompts. */
 	private readonly promptHistory = new AgentPromptHistoryNavigator();
 	private prewarmTimer: IDisposable | undefined;
-	/** When this editor last asked the runtime for a warm agent (see PREWARM_ON_TYPE_MS). */
+	/** When this editor last asked the runtime for a warm agent (see PREWARM_ON_TYPE_MS); 0 after a short-lived warm. */
 	private prewarmedAt = 0;
+	/** When a sign of intent short of a press or key (the pointer on the composer, the window to the front) last warmed the agent. */
+	private intentWarmedAt = 0;
+	/** When the last chat this editor showed was opened by a click (see openPrewarmDelay). */
+	private lastClickedOpenAt: number | undefined;
 	/** An edited prompt is waiting on the "Revert files to this message?" dialog. */
 	private committingEdit = false;
 	private readonly _onDidChangeQueue = this._register(new Emitter<void>());
 	readonly onDidChangeQueue: Event<void> = this._onDidChangeQueue.event;
 
 	private inputEditor: ICodeEditor | undefined;
+	/** Holds the composer's caret still once it has been left alone a while (see AgentCaretRest). */
+	private caretRest: AgentCaretRest | undefined;
 	private inputModel: ITextModel | undefined;
 	private mentionController: AgentMentionController | undefined;
 	private composerLists: AgentComposerLists | undefined;
@@ -933,6 +968,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** Redraws the live turn when its reply text has gone quiet, so the live line comes back. */
 	private textQuietTimer: IDisposable | undefined;
 	private dockSyncAt = 0;
+	/** What this chat's subagent rows show (state, activity, report), so a task change redraws the transcript only when a row would change. */
+	private ownTaskStates = '';
 	private findWidget!: AgentFindWidget;
 	private findMatches: HTMLElement[] = [];
 	private currentFindIndex = 0;
@@ -1015,7 +1052,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** setInput is focusing the composer of the chat it shows: not a sign a message is coming. */
 	private focusingForSwitch = false;
 	/** How the last shown chat's thread came back, for the switch timing line. */
-	private threadRestore: 'stashed' | 'stale tail' | 'tail first' | 'full' = 'full';
+	private threadRestore: 'stashed' | 'stale tail' | 'tail first' | 'full' | 'first screen' = 'full';
+	/** The load of the chat shown from its first screen, until its transcript replaced it (sends wait for it). */
+	private firstScreenLoad: Promise<void> | undefined;
 	private readonly headScrollDraw = this._register(new MutableDisposable());
 	/** The messages drawn above the live exchange, so a new turn can tell they are unchanged and keep their DOM. */
 	private settledMessages: readonly IAgentMessage[] = [];
@@ -1025,7 +1064,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private mentionPreview: MentionCodePreview | undefined;
 	/** The card beside a `/skill` token in a sent message; made on first hover. */
 	private skillHoverCard: AgentSkillHoverCard | undefined;
-	private clockTimer: IDisposable | undefined;
+	private readonly clockTimer = this._register(new MutableDisposable());
+	/** The clock ticks every second (else every {@link CLOCK_SLOW_MS}). */
+	private clockFast = false;
+	/** When "ago" labels over an hour old were last redone (once a minute). */
+	private agoOldSweptAt = 0;
 	private statusRotateTimer: IDisposable | undefined;
 	private readonly statusMotion = new Map<string, { text: string; from?: string; started?: number }>();
 	/** Replies that streamed in this editor: their "Worked for" fold starts open, as Cursor's does right after a run. */
@@ -1127,6 +1170,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				this.schedulePrewarm(PREWARM_ON_MODEL_MS);
 			},
 			multi: { unavailableReason: () => this.runGroupUnavailableReason() },
+			sandboxed: () => this.runtime.getSandboxSettings(this.sessionKey).level !== 'off',
 		}));
 		this._register(this.sessionContext.onDidChangeActiveProject(() => {
 			this.renderSuggestChips();
@@ -1142,6 +1186,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 
 	protected override createEditor(parent: HTMLElement): void {
 		parent.classList.add('volt-agent-editor-instance');
+		watchForUserInput(getWindow(parent));
+		// The window coming to the front is the user coming back to the chat on screen: a short-lived warm.
+		this._register(addDisposableListener(getWindow(parent), 'focus', () => this.prewarmOnIntent()));
 		this.container = append(parent, $('.volt-agent-editor'));
 		this.container.dataset.mode = normalizeVoltMode(this.currentMode);
 		// Until the first chat's history is read the thread is empty, which lays out the
@@ -1199,7 +1246,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.turnNav = this._register(new AgentTurnNav(this.threadView));
 		// Jobs the idle agent left running, under its last reply.
 		this.jobWaitRows = this._register(this.instantiationService.createInstance(AgentJobWaitRows, this.threadInner, () => this.scheduleScrollSync(this.stickToBottom)));
-		this.turnNav.setUndrawn({ count: () => this.headUsers, draw: () => this.flushDeferredHead() });
+		this.turnNav.setUndrawn({ count: () => this.headUsers, draw: () => this.flushDeferredHead(), drawInFrames: done => this.drawHeadInFrames(done) });
 		this._register(new AgentThreadSelectionActions(this.threadEl, {
 			isVisible: () => this.isVisible(),
 			onAddToChat: (text, source) => this.addChatSelection(text, this.sessionKey, source),
@@ -1354,9 +1401,22 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this._register(toDisposable(() => dockObserver.disconnect()));
 		syncAgentsInDock();
 		this._register(this.orchestrator.onDidChange(change => {
+			const ownTasks = change.tasks.some(taskId => this.orchestrator.getTask(taskId)?.parentId === this.sessionKey);
 			// The prompt's Stop follows the turn and this chat's subagents, not only the stream.
-			if (change.threads.includes(this.sessionKey) || change.tasks.some(taskId => this.orchestrator.getTask(taskId)?.parentId === this.sessionKey)) {
+			if (change.threads.includes(this.sessionKey) || ownTasks) {
 				this.syncStreamingClass();
+			}
+			if (ownTasks && !change.threads.includes(this.sessionKey)) {
+				// A subagent started, settled or waits: the agent server's task changes name no thread, so the
+				// agents chip, the "N subagents running" card and the transcript rows follow the tasks themselves
+				// (they lagged until the parent's own thread next changed, 25 s into a wait).
+				this.syncAgentViews();
+				// What a row shows: its state and its line (the latest activity, then the report or the error).
+				const states = JSON.stringify(orchTasksOf(this.orchestrator.getState(), this.sessionKey).map(task => [task.id, task.state, task.activity, task.result?.length, task.error]));
+				if (states !== this.ownTaskStates) {
+					this.ownTaskStates = states;
+					this.scheduleThreadRender();
+				}
 			}
 			if (change.threads.includes(this.sessionKey)) {
 				this.followAgentHandoff();
@@ -1501,7 +1561,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.toolbarStartEl = append(this.toolbarEl, $('.volt-agent-toolbar-start'));
 		this.toolbarEndEl = append(this.toolbarEl, $('.volt-agent-toolbar-end'));
 		this.plusButton = append(this.toolbarStartEl, $('button.volt-agent-plus')) as HTMLButtonElement;
-		setAgentTooltip(this.plusButton, localize('voltAgent.add', "Add"));
+		setIconButtonTooltip(this.plusButton, localize('voltAgent.add', "Add"));
 		this.plusButton.appendChild(createPlusIcon());
 		this.modeButton = append(this.toolbarStartEl, $('button.volt-agent-mode')) as HTMLButtonElement;
 		this.modelButton = append(this.toolbarStartEl, $('button.volt-agent-model')) as HTMLButtonElement;
@@ -1555,12 +1615,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}));
 
 		this.attachButton = append(this.toolbarEndEl, $('button.volt-agent-icon-btn.volt-agent-attach-btn')) as HTMLButtonElement;
-		setAgentTooltip(this.attachButton, localize('voltAgent.attach', "Add context"));
+		setIconButtonTooltip(this.attachButton, localize('voltAgent.attach', "Add context"));
 		this.attachButton.appendChild(renderIcon(Codicon.attach));
 
 		this.micButton = append(this.toolbarEndEl, $('button.volt-agent-icon-btn.volt-agent-mic-btn')) as HTMLButtonElement;
 		this.micButton.type = 'button';
-		setAgentTooltip(this.micButton, localize('voltAgent.voice', "Voice"));
+		setIconButtonTooltip(this.micButton, localize('voltAgent.voice', "Voice"));
 		this.micButton.appendChild(createMicIcon());
 
 		this.sendButton = append(this.toolbarEndEl, $('button.volt-agent-send')) as HTMLButtonElement;
@@ -1801,10 +1861,24 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			return;
 		}
 		this.contextUsageTimer = disposableTimeout(() => {
+			this.contextUsageTimer?.dispose();
 			this.contextUsageTimer = undefined;
 			this.refreshContextUsageNow();
 		}, wait);
 	}
+
+	/**
+	 * The draft counts toward the context meter: recounted at most every {@link DRAFT_USAGE_MS} while
+	 * the user types, not on the keystroke (about 1 ms of every key, reading the model's options).
+	 */
+	private refreshContextUsageForDraft(): void {
+		this.draftUsageTimer ??= disposableTimeout(() => {
+			this.draftUsageTimer = undefined;
+			this.refreshContextUsage();
+		}, DRAFT_USAGE_MS);
+	}
+
+	private draftUsageTimer: IDisposable | undefined;
 
 	private refreshContextUsageNow(): void {
 		this.contextUsageAt = Date.now();
@@ -2112,6 +2186,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			wrappingIndent: 'none',
 			cursorStyle: 'line',
 			cursorWidth: 1,
+			cursorBlinking: forEdit ? editorConfiguration.cursorBlinking : this.caretRest?.override() ?? editorConfiguration.cursorBlinking,
 			renderLineHighlight: 'none',
 			renderLineHighlightOnlyWhenFocus: false,
 			guides: {
@@ -2192,12 +2267,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		input.scheduleDraftSave();
 	}
 
-	private restoreInputState(input: AgentEditorInput): void {
+	/** Shows chat `input` in the pane: its thread (from `firstScreen` while its transcript is still read), mode and draft. */
+	private restoreInputState(input: AgentEditorInput, firstScreen?: IAgentMessage[]): void {
 		this.clearFindHighlights();
 		this.resetCompactChip();
 		this.stashThread();
 		this.thinkingStore.clear();
-		this.messages = input.messages;
+		this.messages = firstScreen ?? input.messages;
 		this.stateInput = input;
 		this.sessionTokensUsed = input.contextUsed;
 		this.sessionTokensWindow = input.contextWindow;
@@ -2209,15 +2285,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const followTail = chat.followTail !== false;
 		this.stickToBottom = followTail;
 		this.restoringChat = true;
-		// A chat keeps its own mode; a new one starts in Agent, as Cursor's do, not in the last chat's Debug or Plan.
-		const savedMode = input.chosenMode ?? input.restoredMode;
-		const mode = (savedMode && MODE_OPTIONS.find(item => item.id.toLowerCase() === savedMode.toLowerCase())?.id) || MODE_OPTIONS[0].id;
-		if (mode !== this.currentMode) {
-			this.currentMode = mode;
-			this.updateModeButton();
-			this.updateInputPlaceholder();
-			this.composerQueue?.setMode(mode);
-		}
+		this.applyChatMode(input);
 		this.syncComposerPlacement();
 		const stashed = this.adoptStashedThread(input);
 		if (!stashed || (stashed.stale && !this.canRenderTail() && !this.canAppendThread())) {
@@ -2259,6 +2327,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		input.setHasUnsavedContent(!!input.draft.trim());
 		this.updateInputPlaceholder();
 		this.refreshContextUsage();
+	}
+
+	/** A chat keeps its own mode; a new one starts in Agent, as Cursor's do, not in the last chat's Debug or Plan. */
+	private applyChatMode(input: AgentEditorInput): void {
+		const savedMode = input.chosenMode ?? input.restoredMode;
+		const mode = (savedMode && MODE_OPTIONS.find(item => item.id.toLowerCase() === savedMode.toLowerCase())?.id) || MODE_OPTIONS[0].id;
+		if (mode !== this.currentMode) {
+			this.currentMode = mode;
+			this.updateModeButton();
+			this.updateInputPlaceholder();
+			this.composerQueue?.setMode(mode);
+		}
 	}
 
 	private inputPlaceholderText(): string {
@@ -3393,6 +3473,33 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		});
 	}
 
+	/**
+	 * Draws every exchange still waiting above the drawn ones, {@link HEAD_JUMP_FRAME_MS} of them a
+	 * frame with the view held still, then calls `done`: "Scroll Chat to Top" in a long chat. Gliding
+	 * up while they were drawn on the way kept the view on what it showed (each drawn exchange pushes
+	 * the scroll down), so one press landed a few hundred messages up and the first message took
+	 * a press per few hundred. A chat switch (a new head generation) drops it.
+	 */
+	private drawHeadInFrames(done: () => void): void {
+		const generation = this.headGeneration;
+		const step = () => {
+			this.headScrollDraw.value = undefined;
+			if (generation !== this.headGeneration) {
+				return;
+			}
+			if (this.headEnd > 0) {
+				const until = Date.now() + HEAD_JUMP_FRAME_MS;
+				this.drawHead(() => Date.now() < until);
+			}
+			if (this.headEnd > 0) {
+				this.headScrollDraw.value = scheduleAtNextAnimationFrame(getWindow(this.threadInner), step);
+			} else {
+				done();
+			}
+		};
+		this.headScrollDraw.value = scheduleAtNextAnimationFrame(getWindow(this.threadInner), step);
+	}
+
 	/** Draws every exchange still waiting above the drawn ones, now: for find, an edit, a jump to a turn. */
 	private flushDeferredHead(): void {
 		if (this.headEnd > 0) {
@@ -3948,6 +4055,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.resetDeferredHead();
 		this.dropStashedThread(input.sessionId);
 		parkVisualFrames(this.threadInner, this.visualParking);
+		keepExchangeHeights(this.threadInner);
 		const elements = this.threadInner.getElementsByTagName('*').length;
 		const nodes = this.threadInner.ownerDocument.createDocumentFragment();
 		nodes.append(...this.threadInner.childNodes);
@@ -4633,7 +4741,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const end = append(toolbar, $('.volt-agent-toolbar-end'));
 
 		this.editPlusButton = append(start, $('button.volt-agent-plus')) as HTMLButtonElement;
-		setAgentTooltip(this.editPlusButton, localize('voltAgent.add', "Add"));
+		setIconButtonTooltip(this.editPlusButton, localize('voltAgent.add', "Add"));
 		this.editPlusButton.appendChild(createPlusIcon());
 		this.editEditorDisposables.add(addDisposableListener(this.editPlusButton, 'click', e => {
 			e.preventDefault();
@@ -4665,7 +4773,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.editSendButton = append(end, $('button.volt-agent-send')) as HTMLButtonElement;
 		this.editSendButton.type = 'button';
 		this.editSendButton.appendChild(createSendIcon());
-		setAgentTooltip(this.editSendButton, localize('voltAgent.send', "Send"));
+		setIconButtonTooltip(this.editSendButton, localize('voltAgent.send', "Send"));
 		this.editEditorDisposables.add(addDisposableListener(this.editSendButton, 'click', () => this.sendUserEdit()));
 		const editBlankSurfaces = new Set<EventTarget>([this.editInputBox, this.editMonacoHost, toolbar, start, end]);
 		this.editEditorDisposables.add(addDisposableListener(this.editInputBox, 'mousedown', e => {
@@ -5244,6 +5352,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			}
 			if (role === 'out') {
 				motionEl.setAttribute('aria-hidden', 'true');
+				// Gone once it has slid out: left in the grid, a longer old phrase kept the line as wide
+				// as itself and pushed the timer away ("Thinking        · 5s") until the next redraw.
+				motionEl.addEventListener('animationend', e => {
+					if (e.target === motionEl) {
+						motionEl.remove();
+					}
+				}, { once: true });
 			}
 			const status = append(motionEl, $('span.volt-agent-activity-progress.shimmer'));
 			status.style.animationDelay = `${-((now - shimmerAnchor) % 900)}ms`;
@@ -5266,6 +5381,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const wait = Math.max(32, STATUS_ROTATE_MS - elapsed + 24);
 		this.statusRotateTimer?.dispose();
 		this.statusRotateTimer = disposableTimeout(() => {
+			this.statusRotateTimer?.dispose();
 			this.statusRotateTimer = undefined;
 			if (this.isStreaming()) {
 				this.scheduleThreadRender();
@@ -5748,7 +5864,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (!duration) {
 			duration = append(line, $('span.volt-agent-worked-duration.volt-agent-searchable'));
 		}
-		duration.textContent = formatWorkedDuration(ms);
+		const text = formatWorkedDuration(ms);
+		if (duration.textContent !== text) {
+			duration.textContent = text;
+		}
 		line.querySelector('.volt-agent-token-chip')?.remove();
 	}
 
@@ -5926,37 +6045,75 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 	}
 
+	/**
+	 * Starts the chat clock, or moves it to its one-second pace when it was slow: something just drawn (a live
+	 * counter, a fresh "ago" label) may change within the second.
+	 */
 	private ensureClock(): void {
-		if (this.clockTimer) {
+		if (this.clockTimer.value && this.clockFast) {
 			return;
 		}
-		const win = getWindow(this.container);
-		const id = win.setInterval(() => this.tickMeta(), 1000);
-		this.clockTimer = toDisposable(() => win.clearInterval(id));
-		this._register(this.clockTimer);
+		this.scheduleClock(CLOCK_FAST_MS);
 	}
 
-	private tickMeta(): void {
+	/**
+	 * The clock ticks every second while something drawn changes by the second (a run's counters, "a few seconds
+	 * ago"), and every {@link CLOCK_SLOW_MS} otherwise: a chat left alone showed only labels in minutes and hours,
+	 * yet woke the window every second for them (round 4, A6).
+	 */
+	private scheduleClock(ms: number): void {
+		const win = getWindow(this.container);
+		this.clockFast = ms <= CLOCK_FAST_MS;
+		const id = win.setTimeout(() => {
+			const fast = this.tickMeta();
+			this.scheduleClock(fast ? CLOCK_FAST_MS : CLOCK_SLOW_MS);
+		}, ms);
+		this.clockTimer.value = toDisposable(() => win.clearTimeout(id));
+	}
+
+	/** Redraws the thread's time labels; true while one of them changes by the second. */
+	private tickMeta(): boolean {
 		if (!this.threadInner) {
-			return;
+			return false;
 		}
-		tickElapsed(this.threadInner);
-		for (const el of this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-worked')) {
+		// Rewriting each label, even with the same text, laid a 1,000-turn chat out again every second
+		// while it sat idle; now a label is written only when its text changes, the lookups are live
+		// collections (cached until nodes change), and labels over an hour old, which change by the
+		// hour, are redone once a minute.
+		const now = Date.now();
+		const sweepOld = now - this.agoOldSweptAt >= AGO_OLD_SWEEP_MS;
+		if (sweepOld) {
+			this.agoOldSweptAt = now;
+		}
+		let fast = tickElapsed(this.threadInner, now) > 0;
+		for (const el of this.threadInner.getElementsByClassName('volt-agent-worked')) {
+			if (!isHTMLElement(el)) {
+				continue;
+			}
 			const started = Number(el.dataset.startedAt);
 			if (!Number.isFinite(started)) {
 				continue;
 			}
-			const ended = el.dataset.endedAt ? Number(el.dataset.endedAt) : Date.now();
+			fast ||= !el.dataset.endedAt;
+			const ended = el.dataset.endedAt ? Number(el.dataset.endedAt) : now;
 			this.fillWorkedLine(el, ended - started);
 		}
-		for (const el of this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-ago')) {
-			const when = Number(el.dataset.endedAt);
-			if (!Number.isFinite(when)) {
+		for (const el of this.threadInner.getElementsByClassName('volt-agent-ago')) {
+			if (!isHTMLElement(el)) {
 				continue;
 			}
+			const when = Number(el.dataset.endedAt);
+			if (!Number.isFinite(when) || (!sweepOld && now - when > AGO_OLD_MS)) {
+				continue;
+			}
+			fast ||= now - when < AGO_SECONDS_MS;
 			const text = el.querySelector('.volt-agent-searchable') ?? el;
-			text.textContent = dayjs(when).fromNow();
+			const label = dayjs(when).fromNow();
+			if (text.textContent !== label) {
+				text.textContent = label;
+			}
 		}
+		return fast;
 	}
 
 	private async openWorkspaceFile(path: string, startLine?: number, endLine?: number): Promise<void> {
@@ -6289,8 +6446,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const startedAt = lastAgent?.startedAt;
 		const endedAt = lastAgent?.endedAt;
 		const durationMs = lastAgent?.durationMs ?? (startedAt ? (endedAt ?? Date.now()) - startedAt : undefined);
+		const activity = lastAgent?.activity;
+		// The transcript tail's own words: the raw status is the last tool's title, past tense
+		// ("Waited for tasks" beside the tail's "Waiting · 37s").
 		const status = streaming
-			? (lastAgent?.activity?.status || localize('voltAgent.working', "Working"))
+			? (activity?.status ? streamingActivityLines('', activity.status, activity.items ?? [], Date.now(), activity.shimmerStartedAt ?? Date.now(), activity.statusPinned === true).phrase : localize('voltAgent.working', "Working"))
 			: lastAgent?.cancelled
 				? localize('voltAgent.cancelled', "Cancelled")
 				: durationMs !== undefined
@@ -6421,6 +6581,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const modelUri = URI.from({ scheme: 'volt-agent-input', path: `input-${this.sessionKey}-${Date.now()}` });
 		this.inputModel = this.modelService.createModel('', null, modelUri, true);
 		this.inputEditor.setModel(this.inputModel);
+		this.caretRest = this.editorDisposables.add(new AgentCaretRest(this.inputEditor, () => this.getWorkbenchEditorOptions().cursorBlinking));
 		this.editorDisposables.add(registerComposerContext(modelUri, () => this.composerPredictionContext()));
 		this.mentionController = this.editorDisposables.add(this.instantiationService.createInstance(AgentMentionController, this.inputEditor));
 		this.mentionController.setHost(this.mentionHost(this.inputBox));
@@ -6435,22 +6596,30 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.inputBox.classList.add('focused');
 			// Focus means a message is coming: start a CLI agent now so the first send skips its cold start.
 			// A switch focuses the composer too; then the open timer decides (see schedulePrewarm).
-			if (!this.focusingForSwitch) {
+			// Not the focus a window gives its restored chat at launch: nobody picked that chat yet.
+			if (!this.focusingForSwitch && hasUserInput(getWindow(this.inputBox))) {
 				this.prewarmAgent();
 			}
 		}));
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
+		// The pointer reaching the composer comes before the click into it: a short-lived warm starts here.
+		this.editorDisposables.add(addDisposableListener(this.inputBox, 'pointerenter', () => this.prewarmOnIntent()));
 		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
 			// Typing is the surest sign a message is coming: make sure an agent is (still) warm. Cheap
 			// when one is: the runtime returns at once for a live or pooled agent.
 			if (Date.now() - this.prewarmedAt > PREWARM_ON_TYPE_MS && !this.isStreaming() && this.inputEditor?.getModel()?.getValueLength()) {
 				this.prewarmAgent();
 			}
-			this.layoutInputEditor();
+			// A taller or shorter draft lays the composer out from onDidContentSizeChange below. A key that
+			// changes neither the height nor the draft's shape changes nothing to lay out: the full pass (two
+			// editor layouts and the reads around them) cost about 19 ms of every keystroke.
+			if (composerDraftShape(this.inputModel?.getValue() ?? '') !== this.composerLaidOutShape) {
+				this.layoutInputEditor();
+			}
 			this.updateInputPlaceholder();
 			this.updateSendButton();
 			this.syncUnsavedState();
-			this.refreshContextUsage();
+			this.refreshContextUsageForDraft();
 		}));
 		this.editorDisposables.add(this.inputEditor.onDidContentSizeChange(e => {
 			if (e.contentHeightChanged) {
@@ -6702,6 +6871,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (media) {
 			this.submitting = true;
 			void media.finally(() => {
+				this.submitting = false;
+				this.send();
+			});
+			return;
+		}
+		// A chat on its first screen sends once its transcript is read (the send goes after the real last turn).
+		const loading = this.firstScreenLoad;
+		if (loading) {
+			this.submitting = true;
+			void loading.finally(() => {
+				if (this.firstScreenLoad === loading) {
+					this.firstScreenLoad = undefined;
+				}
 				this.submitting = false;
 				this.send();
 			});
@@ -7348,12 +7530,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			...(request.options ? { options: request.options } : {}),
 			...(Object.keys(host).length ? { host } : {}),
 		};
+		// The prompt goes to the agent server before the pending turn is drawn: drawing it (and the
+		// layout it forces) held the send back by a large part of Enter's task, and the server and the
+		// agent waited for that. Only when nothing has to happen first: no earlier send still on its
+		// way (prompts go out in order), no chat to bring back, no mentions to freeze.
+		const sentAtOnce = !display && this.submitsInFlight === 0 && !needsBringBack(this.orchestrator.getThread(threadId)?.blocked, this.history.get(threadId))
+			? this.orchestrator.submit(threadId, prompt, delivery, turnId)
+			: undefined;
+		sentAtOnce?.catch(() => undefined);
 		const pending = delivery !== 'queue' ? this.showPendingTurn(input, threadId, turnId, value, display, mode) : undefined;
 		// Until the orchestrator answers (a round trip to the agent server), the prompt shows where it is going.
 		const shown = pending ? undefined : this.showPendingDelivery(threadId, turnId, display ? { ...prompt, display: { text: display.text } } : prompt, display, delivery);
+		this.submitsInFlight++;
 		const submitted = this.submitChain.then(async () => {
 			await broughtBack;
-			const result = await this.orchestrator.submit(threadId, display ? { ...prompt, display: await frozen } : prompt, delivery, turnId);
+			const result = await (sentAtOnce ?? this.orchestrator.submit(threadId, display ? { ...prompt, display: await frozen } : prompt, delivery, turnId));
 			pending?.settle(result.outcome === 'started');
 			shown?.(result.outcome);
 			if (result.outcome === 'rejected') {
@@ -7366,7 +7557,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			shown?.(undefined);
 			this.logService.warn('[volt agent] sending the prompt failed', err);
 			return false;
-		});
+		}).finally(() => this.submitsInFlight--);
 		this.submitChain = submitted.then(() => undefined);
 		return submitted;
 	}
@@ -7754,6 +7945,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			return;
 		}
 		void this.orchestrator.dispatch({ type: 'task.cancel', taskId: task.id, reason: 'The user stopped it.' });
+	}
+
+	/** The composer's agents card and chip, from this chat's live tasks. */
+	private syncComposerAgents(): void {
+		if (!this.composerQueue) {
+			return;
+		}
+		const dock = dockModel(this.orchestrator.getState(), this.sessionKey);
+		const agentViews = dock.agents.map(row => subagentView(row, ref => this.providerOf(ref)));
+		this.composerQueue.setAgents({ views: agentViews, conflicts: dock.conflicts });
+		this.syncAgentsChip(agentViews);
 	}
 
 	/** "3 multitasks running" above the text area while this chat's agents work. */
@@ -8325,7 +8527,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		if (this.micButton.classList.contains('recording') !== active) {
 			this.micButton.classList.toggle('recording', active);
-			setAgentTooltip(this.micButton, active ? localize('voltAgent.voiceStop', "Stop dictation") : localize('voltAgent.voice', "Voice"));
+			setIconButtonTooltip(this.micButton, active ? localize('voltAgent.voiceStop', "Stop dictation") : localize('voltAgent.voice', "Voice"));
 			this.updateSendButton();
 		}
 	}
@@ -8359,7 +8561,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.sendKind = kind;
 		this.sendButton.replaceChildren();
 		this.sendButton.classList.remove('stop');
-		setAgentTooltip(this.sendButton, !canSend
+		setIconButtonTooltip(this.sendButton, !canSend
 			? localize('voltAgent.makingScratchFolder', "Making a folder for this chat...")
 			: kind === 'send'
 				? localize('voltAgent.send', "Send")
@@ -8509,14 +8711,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			modelRef: item.prompt.modelRef,
 			modelLabel: this.queuedModelLabel(item.prompt.modelRef),
 		})));
-		this.renderSubagentBar();
-		const dock = dockModel(this.orchestrator.getState(), this.sessionKey);
-		const agentViews = dock.agents.map(row => subagentView(row, ref => this.providerOf(ref)));
-		this.composerQueue.setAgents({ views: agentViews, conflicts: dock.conflicts });
-		this.syncAgentsChip(agentViews);
+		this.syncAgentViews();
 		this.composerQueue.setState(this.queueState());
 		this.updateInputPlaceholder();
 		this._onDidChangeQueue.fire();
+	}
+
+	/** The subagent bar, the "N subagents running" card and the agents chip, from the orchestrator's tasks. */
+	private syncAgentViews(): void {
+		this.renderSubagentBar();
+		this.syncComposerAgents();
 	}
 
 	private clearComposer(): void {
@@ -8823,6 +9027,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (!this.inputEditor) {
 			return;
 		}
+		this.composerLaidOutShape = composerDraftShape(this.inputModel?.getValue() ?? '');
 		const empty = !(this.inputModel?.getValue().trim());
 		if (empty && !this.composerZoomed && this.composerHeight !== undefined) {
 			this.composerHeight = undefined;
@@ -8916,11 +9121,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.persistInputState();
 		// The chat's history is read before the pane takes it. Until then the last chat stays whole
 		// (thread, composer, tools, its row in the Agents list), and none of it is written into this one.
-		try {
-			await input.ensureLoaded();
-		} catch (err) {
+		// A chat not read yet whose first screen a window kept (agentFirstScreen.ts) is drawn from that at
+		// once, and from its transcript when that is read. A screen kept before the chat last changed is not used.
+		const firstScreen = input.isLoaded ? undefined : readFirstScreen<IAgentMessage>(this.storageService, input.sessionId, this.history.get(input.sessionId)?.updatedAt);
+		const loading = input.ensureLoaded().catch(err => {
 			// A broken history entry must never block opening the editor.
 			this.logService.warn('[volt agent] failed to load session history', err);
+		});
+		if (!firstScreen) {
+			await loading;
 		}
 		if (token.isCancellationRequested) {
 			return;
@@ -8947,7 +9156,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.refreshMcpApprovals();
 		this.limitChip?.render();
 		this.ensureInputEditor();
-		this.restoreInputState(input);
+		this.restoreInputState(input, firstScreen);
+		this.firstScreenLoad = firstScreen ? loading : undefined;
+		if (firstScreen) {
+			this.threadRestore = 'first screen';
+			void loading.then(() => this.drawOverFirstScreen(input, firstScreen));
+		}
 		const drawn = performance.now();
 		this.followThreadModel();
 		this.container.classList.remove('restoring');
@@ -8973,9 +9187,103 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				this.focusingForSwitch = false;
 			}
 		}
-		this.schedulePrewarm();
+		// A chat clicked open warms its agent at once (a stopped agent's resume takes about a second); a programmatic
+		// open, or clicks stepping through chats, wait out the open timer. A chat drawn from its first screen is not
+		// read yet (its model, mode and folder come with the transcript): its agent is warmed once the transcript
+		// replaces the first screen (drawOverFirstScreen).
+		if (!firstScreen) {
+			this.schedulePrewarm(openPrewarmDelay(clickedAt, this.lastClickedOpenAt));
+		}
+		this.lastClickedOpenAt = clickedAt ?? this.lastClickedOpenAt;
 		this.revealRequestedTurn(input.sessionId);
+		this.takeOverWindowSnapshot();
 		this.logSwitchTiming(input, clickedAt ?? started, clickedAt !== undefined, started, loaded, drawn);
+	}
+
+	/**
+	 * The window started with a picture of the screen it left (see IVoltWindowSnapshot): the chat is
+	 * drawn now, so it takes over. What was typed into the picture's composer moves into this one,
+	 * with its selection, and an Enter pressed there sends.
+	 */
+	private takeOverWindowSnapshot(): void {
+		const window = getWindow(this.container);
+		if (window !== mainWindow || !isWindowSnapshotShown(window.document) || this.shownSessionId === undefined) {
+			return;
+		}
+		const typed = readSnapshotInput(window.document);
+		const model = this.inputModel;
+		if (typed && model && this.inputEditor) {
+			if (typed.changed) {
+				model.setValue(typed.text);
+				const start = model.getPositionAt(typed.selectionStart);
+				const end = model.getPositionAt(typed.selectionEnd);
+				this.inputEditor.setSelection(Range.fromPositions(start, end));
+			}
+			if (typed.focused) {
+				this.inputEditor.focus();
+			}
+		}
+		// Removed in the frame that paints this chat, after the editors' own frame work.
+		scheduleAtNextAnimationFrame(window, () => {
+			if (removeWindowSnapshot(window.document)) {
+				mark('code/voltDidHandOffWindowSnapshot');
+			}
+			if (typed?.send && this.input) {
+				this.send();
+			}
+		});
+	}
+
+	/** The composer as the window's snapshot keeps it: its box, its text lines and its draft. */
+	windowSnapshotComposer(): { readonly editor: HTMLElement; readonly linesElement: HTMLElement | undefined; readonly text: string; readonly placeholder: string; readonly placeholderElement?: HTMLElement } | undefined {
+		const editor = this.inputEditor?.getDomNode();
+		if (!editor || !this.inputModel || !this.monacoHost.isConnected) {
+			return undefined;
+		}
+		return {
+			editor: this.monacoHost,
+			linesElement: editor.querySelector<HTMLElement>('.view-lines') ?? undefined,
+			text: this.inputModel.getValue(),
+			placeholder: this.inputPlaceholderText(),
+			placeholderElement: this.placeholderEl,
+		};
+	}
+
+	/**
+	 * The transcript of a chat drawn from its first screen has been read: it replaces the first screen, in one task,
+	 * with what came with it (mode, draft, context). Nothing happens when the pane moved on in the meantime.
+	 */
+	private drawOverFirstScreen(input: AgentEditorInput, firstScreen: IAgentMessage[]): void {
+		if (this.firstScreenLoad && this.stateInput === input) {
+			this.firstScreenLoad = undefined;
+		}
+		if (this.input !== input || this.stateInput !== input || this.messages !== firstScreen || this._store.isDisposed) {
+			return;
+		}
+		this.messages = input.messages;
+		this.sessionTokensUsed = input.contextUsed;
+		this.sessionTokensWindow = input.contextWindow;
+		this.applyChatMode(input);
+		this.renderThread(this.stickToBottom, this.stickToBottom);
+		if (this.inputModel && !this.inputModel.getValue() && input.draft) {
+			const draft = input.draft;
+			const mentions = input.draftMentions;
+			this.inputModel.setValue(draft);
+			this.mentionController?.restoreMentions(mentions);
+			input.draft = draft;
+			input.draftMentions = this.mentionController?.displayMentions() ?? mentions;
+		}
+		this.migrateDraftQueue(input);
+		this.syncQueueStack();
+		this.composerChips.setNewChat(this.messages.length === 0);
+		this.syncStatusChip();
+		this.publishSessionChanges();
+		this.syncTasksCard();
+		this.renderSuggestChips();
+		this.updateSendButton();
+		this.updateInputPlaceholder();
+		this.refreshContextUsage();
+		this.schedulePrewarm();
 	}
 
 	/**
@@ -9046,18 +9354,36 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private schedulePrewarm(delay = PREWARM_ON_OPEN_MS): void {
 		this.prewarmTimer?.dispose();
 		this.prewarmTimer = disposableTimeout(() => {
+			this.prewarmTimer?.dispose();
 			this.prewarmTimer = undefined;
-			if (this.isVisible() && !this.isStreaming() && this.composerCanSend()) {
-				this.prewarmAgent();
+			if (this.isVisible() && !this.isStreaming() && this.composerCanSend() && this.container) {
+				// A chat only restored with the window (no key or click yet) warms for a short while only (see UNTOUCHED_WARM_TTL_MS).
+				this.prewarmAgent(hasUserInput(getWindow(this.container)) ? undefined : UNTOUCHED_WARM_TTL_MS);
 			}
 		}, delay);
 	}
 
-	private prewarmAgent(): void {
-		this.prewarmedAt = Date.now();
+	/**
+	 * A sign that a message may come that is not a press or a key: the pointer reaching the composer, the window
+	 * coming to the front. A chat whose agent is stopped starts it now, short-lived (UNTOUCHED_WARM_TTL_MS): the
+	 * click and the keys that follow keep it, and nothing stays up if they never come.
+	 */
+	private prewarmOnIntent(): void {
+		const now = Date.now();
+		if (!intentWantsPrewarm(now, this.intentWarmedAt, this.prewarmedAt) || !this.container || !this.isVisible() || this.isStreaming() || !this.composerCanSend()) {
+			return;
+		}
+		this.intentWarmedAt = now;
+		this.prewarmAgent(UNTOUCHED_WARM_TTL_MS);
+	}
+
+	/** With `ttlMs`, the warm agent stops after that long unless a later prewarm (the user acting) keeps it. */
+	private prewarmAgent(ttlMs?: number): void {
+		// A short-lived warm is followed by a full one on the first keystroke.
+		this.prewarmedAt = ttlMs === undefined ? Date.now() : 0;
 		// The turn's workspace summary (its git status) is read now too, so the send finds it ready.
 		void this.commandService.executeCommand(WORKSPACE_SNAPSHOT_COMMAND_ID, this.sessionKey).catch(() => undefined);
-		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
+		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode, ttlMs === undefined ? undefined : { ttlMs });
 		this.refreshMcpApprovals();
 	}
 
@@ -9310,12 +9636,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.tailListeners.dispose();
 		this.reuse.dispose();
 		this.eventDisposable?.dispose();
-		this.clockTimer?.dispose();
+		this.clockTimer.clear();
 		this.statusRotateTimer?.dispose();
 		this.renderHandle?.dispose();
 		this.slowTurnTimer?.dispose();
 		this.textQuietTimer?.dispose();
 		this.contextUsageTimer?.dispose();
+		this.draftUsageTimer?.dispose();
 		this.scrollSyncFrame?.dispose();
 		this.prewarmTimer?.dispose();
 		this.dismissSnapshotPreview();

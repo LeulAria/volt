@@ -51,7 +51,13 @@ export interface IIntent {
 	readonly wantsLongJob?: boolean;
 	/** Committing, pushing, naming the branch or opening a pull request: Volt's commit review and branch naming. */
 	readonly wantsGit?: boolean;
+	/** IDE tools that fit the request (a failing test, slowness, an .http file, a container, a database): one hint line each. */
+	readonly ideWork?: readonly IdeWork[];
+	/** A greeting or acknowledgement ("hi", "thanks", "ok"): a few words, no question, nothing to look up or change. */
+	readonly smallTalk?: boolean;
 }
+
+export type IdeWork = 'tests' | 'debug' | 'profile' | 'http' | 'docker' | 'db' | 'notebook' | 'rename';
 
 export interface IIntentContext {
 	/** A workspace folder is open. Without one there is nothing to edit or run. */
@@ -95,6 +101,19 @@ const PATH_RE = /(^|[\s"'`(])((\.{1,2}|~)?\/?[\w.-]+\/[\w./-]+|[\w-]+\.(ts|tsx|j
 
 const MENTION_RE = /(^|\s)@[\w./-]+/;
 
+/**
+ * Code named in prose: a `backticked` identifier, a camelCase name (`assertTransition`), a
+ * PascalCase name with a code suffix or three or more humps (`FolioService`, `NightAuditService`),
+ * a snake_case name (`max_occupancy`) or a member (`rooms.id`, `ReservationService.cancel`). In a
+ * workspace that is a question about the project: benchmarks saw "which methods call
+ * `assertTransition`?" routed as a web lookup ("search and fetch primary sources") with no hint
+ * of the code index. Brand names (iPhone, YouTube, PlayStation) do not count.
+ */
+const CODE_IDENTIFIER = /`[A-Za-z_$][\w$]*(?:[.:#][\w$]+)*(?:\(\))?`|\b[a-z]{2,}(?:[A-Z][a-z0-9]+)+\b|\b(?:[A-Z][a-z0-9]+)+(?:Service|Module|Controller|Provider|Repository|Gateway|Adapter|Listener|Handler|Factory|Manager|Store|Client|Dto|DTO|Entity|Schema|Component|Hook|Context|Props|Guard|Pipe|Middleware|Resolver|Worker|Queue|Event|Command|Query|Interface|Impl|Helper|Config|Options|Error|Exception)\b|\b(?:[A-Z][a-z0-9]+){3,}\b|\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b|\b[A-Za-z_]\w+\.(?!(?:js|ts|io|com|org|net|dev|app|ai|md|py|co|uk|me|sh|json|html|css)\b)[a-z_]\w+\b/;
+
+/** Tests named only to leave them out ("non-test files", "ignore *.spec.ts"): not a request about tests. */
+const EXCLUDED_TESTS = /\bnon-?tests?\b|\b(?:ignor(?:e|ing)|exclud(?:e|ing)|except|without|skip(?:ping)?|other than|not)\s+(?:the\s+|any\s+)?(?:tests?|specs?)(?:\s+files)?\b|\*\.(?:spec|test|e2e-spec)\.[jt]sx?\b/gi;
+
 const WORKSPACE_REF = /\b(this|the|our|my) (repo|repository|code ?base|project|app|application|file|function|class|component|module|package|service|folder|directory|workspace|test|tests|branch|pr|pull request)\b|\bin (here|the code)\b/i;
 
 /**
@@ -107,6 +126,30 @@ const GIT_INTENT = /\b(?:commit(?:s|ting)?|push(?:ed|ing)?|pull request|(?:raise
 const LONG_JOB_INTENT = /\b(?:bench(?:mark)?(?:s|ing)?|perf(?:ormance)? (?:tests?|runs?)|load tests?|stress tests?|train(?:ing)? (?:the |a )?(?:model|run)|fine-?tun(?:e|ing)|backfill|deploy(?:ment|ing)?|ci (?:runs?|pipeline|jobs?)|(?:release|production|prod|ios|android|docker|xcode|gradle) builds?|build (?:the |a )?(?:ios|android|release|docker|image|ipa|apk)|full (?:test )?suite|long[- ]running|in the background|overnight|crawl(?:er|ing)?|scrap(?:e|er|ing)|(?:render|export|encode|transcode) (?:the |a )?video)\b/i;
 const SERVICE_INTENT = /\b(?:docker|compose|container|kubernetes|k8s|dev ?server|web ?server|(?:start|run|launch|boot|restart|spin up)\b[^.?!]{0,30}\b(?:server|service|api|backend|database|db|redis|postgres|mongo|stack|worker|queue|app)|watch mode|watcher|hot reload|localhost:\d+)\b/i;
 const PREVIEW_INTENT = /\b(?:preview|open|show|see|view|look at)\b[^.?!]{0,40}\b(?:app|site|website|page|server|project|frontend|front-end|ui|it|this|the (?:thing|result|game|demo)|in (?:the |a )?browser|locally|on localhost)\b|\b(?:run|start|launch|serve|spin up|boot)\b[^.?!]{0,30}\b(?:app|site|website|page|(?:dev |web |http )?server|frontend|front-end|ui|game|demo|locally|on localhost|in (?:the |a )?browser)\b|\b(?:check|test)\b[^.?!]{0,30}\b(?:in (?:the |a )?browser|on localhost|the (?:ui|page|site|website|frontend))\b|\b(?:dev server|localhost|live preview|hot reload|in the browser|show me (?:the|what|how it looks))\b|\bmake it (?:run|work)\b|\bcan i see\b|\blet'?s see it\b/i;
+
+/**
+ * Requests an IDE tool answers better than a shell command. Agents picked those tools 1 run in 13
+ * (2026-11-12 test pass, round 1): they ran `npm test`, `curl` and `sqlite3`, and natural questions
+ * ("why does the container keep restarting?") went to the chat lane, which got no IDE guide at all.
+ * A code question that only mentions tests or a database ("each non-test implementation ... passes
+ * it into runCommand", "renamed in the database schema") is not that work: the verbs are words, not
+ * prefixes, "non-test"/"test-only" are not tests, and a database's schema or columns are code.
+ */
+const IDE_WORK: readonly (readonly [IdeWork, RegExp])[] = [
+	['tests', /(?<![-\w])(?:tests?|specs?|test suite|vitest|jest|pytest|mocha)\b(?!-)[^.?!]{0,60}\b(?:fail(?:s|ed|ing|ures?)?|break(?:s|ing)?|broken|red|pass(?:es|ed|ing)?|run(?:s|ning)?)\b|\b(?:fail(?:s|ed|ing)?|run|rerun)\b[^.?!]{0,40}(?<![-\w])(?:tests?|specs?|test suite)\b(?!-)/i],
+	['debug', /\b(?:debug(?:ger|ging)?|breakpoints?|step (?:through|into|over)|runtime values?|(?:inspect|watch) (?:the )?(?:values?|variables?|state|locals))\b/i],
+	['profile', /\b(?:slow(?:ness|er|est)?|too long|takes? (?:so |too |very )?long|profil(?:er|ing)|profile (?:it|this|that|the (?:script|app|code|function|server|query|build))|(?:cpu|heap|memory) profiles?|hot ?spots?|bottlenecks?|cpu (?:time|usage)|memory (?:leak|usage)|(?:speed|perf(?:ormance)?) (?:issue|problem)s?)\b/i],
+	['http', /\.(?:http|rest)\b|\bhttp (?:requests?|client)\b|\b(?:call|hit|request|query|send|log ?in to|test)\b[^.?!]{0,40}\b(?:endpoints?|(?:local |the )?api)\b/i],
+	['docker', /\b(?:docker|containers?|docker-compose|compose (?:file|service|stack))\b/i],
+	['db', /\.(?:db|sqlite3?|db3)\b|\b(?:sqlite|postgres(?:ql)?|mysql|database|sql quer(?:y|ies))\b(?!\s+(?:schemas?|migrations?|columns?|models?|types?|layer|code|clients?|drivers?))/i],
+	['notebook', /\.ipynb\b|\b(?:jupyter|notebook)\b/i],
+	// A path's dots ("in src/cart.ts to lineAmount") do not end the sentence.
+	['rename', /\brename\b(?:[^.?!]|\.(?=\w)){0,60}\b(?:to|as|everywhere|across)\b/i],
+];
+
+/** Node's own test runner, which the volt tests tool does not run (agents tried the tool first, then the shell). */
+const UNCOVERED_TEST_RUNNER = /\bnode(?::test\b| --test\b)/i;
+const COVERED_TEST_RUNNER = /\b(?:vitest|jest|mocha|pytest|go test|cargo test)\b/i;
 
 const CODE_FENCE = /```/;
 
@@ -134,6 +177,9 @@ const SCREENS_INTENT = /\b(?:(?:all|every|each) (?:of )?(?:the |our |my )?(?:app
 const VISUAL_EXPLANATION = /\b(?:explain|show|teach|illustrate|walk (?:me|us) through|help (?:me|us) understand|break down)\b[^.?!]{0,80}?\bvisual(?:ly)?\b|\bvisual(?:ly)?\s+(?:explain|show|illustrate|compare|break down)\b/gi;
 const UI_WORK = /\b(?:buttons?|click(?:ing|s)?|pages?|layout|ui|ux|css|styles?|styling|responsive|mobile|phones?|tablet|viewport|overflow|scroll(?:s|ing)? sideways|horizontal scroll|forms?|modal|dialog|dropdown|navbar|nav ?bar|header|footer|widget|component|frontend|front-end|accessib\w*|a11y|contrast|screen ?reader|dark mode|prototype|mock ?ups?|draft|landing page|html|in the browser|e2e|end[- ]to[- ]end|user flow|sign ?up|log ?in|checkout|loading state|empty state|error state|renders?|visual(?:ly)?)\b/i;
 
+/** At most this many words, with no question and nothing to look up, is small talk (see `IIntent.smallTalk`). */
+const SMALL_TALK_WORDS = 3;
+
 export function classifyIntent(text: string, mode: VoltMode, context: IIntentContext = {}): IIntent {
 	const raw = text.trim();
 	const signals: string[] = [];
@@ -150,7 +196,8 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	const hasFence = CODE_FENCE.test(raw);
 	const smashedQuestion = !raw.includes(' ') && QUESTION_STEM.test(raw);
 	const questionShape = QUESTION_START.test(raw) || raw.endsWith('?') || smashedQuestion;
-	const referencesWorkspace = hasPath || hasMention || hasFence || WORKSPACE_REF.test(raw) || (questionShape && SMASHED_WORKSPACE.test(raw));
+	const namesCode = hasWorkspace && CODE_IDENTIFIER.test(raw);
+	const referencesWorkspace = hasPath || hasMention || hasFence || WORKSPACE_REF.test(raw) || (questionShape && SMASHED_WORKSPACE.test(raw)) || namesCode;
 	const codingVerb = CODING_VERBS.test(raw);
 	const sentences = raw.split(/[.!?]+\s|\n+/).filter(s => s.trim().length > 0).length;
 	const words = raw.split(/\s+/).filter(Boolean).length;
@@ -161,7 +208,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	if (hasPath) { signals.push('path'); }
 	if (hasMention) { signals.push('mention'); }
 	if (hasFence) { signals.push('code-fence'); }
-	if (referencesWorkspace && !hasPath && !hasMention && !hasFence) { signals.push('workspace-ref'); }
+	if (referencesWorkspace && !hasPath && !hasMention && !hasFence) { signals.push(namesCode && !WORKSPACE_REF.test(raw) ? 'code-identifier' : 'workspace-ref'); }
 	if (codingVerb) { signals.push('coding-verb'); }
 	if (questionShape) { signals.push('question'); }
 
@@ -196,7 +243,7 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	const broadChange = hasWorkspace && mode !== 'ask' && mode !== 'plan' && BROAD_CHANGE.test(raw);
 	if (broadChange) { signals.push('broad-change'); }
 
-	const mentionsTests = hasWorkspace && mode !== 'ask' && mode !== 'plan' && TESTS_REF.test(raw);
+	const mentionsTests = hasWorkspace && mode !== 'ask' && mode !== 'plan' && TESTS_REF.test(raw.replace(EXCLUDED_TESTS, ' '));
 	if (mentionsTests) { signals.push('tests'); }
 
 	const wantsMockups = MOCKUP_INTENT.test(raw);
@@ -209,6 +256,13 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	if (wantsScratch) { signals.push('scratch'); }
 	const wantsDevice = surfaceSkills.has('device') || DEVICE_INTENT.test(raw);
 	if (wantsDevice) { signals.push('device'); }
+
+	// Questions (and Ask/Plan mode) do not rename anything, whatever they mention.
+	// Node's own runner (node --test) is not the tests tool's: no hint that sends the agent there first.
+	const ideWork = hasWorkspace ? IDE_WORK.filter(([kind, pattern]) => pattern.test(raw)
+		&& !(kind === 'rename' && (questionShape || mode === 'ask' || mode === 'plan'))
+		&& !(kind === 'tests' && UNCOVERED_TEST_RUNNER.test(raw) && !COVERED_TEST_RUNNER.test(raw))).map(([kind]) => kind) : [];
+	if (ideWork.length) { signals.push(`ide:${ideWork.join(',')}`); }
 
 	let lane: VoltLane;
 
@@ -239,6 +293,9 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		// Statements with no coding verb and no workspace anchor ("thanks", "nissan kicks uae price")
 		lane = 'chat';
 		signals.push('no-coding-signal');
+		if (words <= SMALL_TALK_WORDS && !questionShape && !hasUrl && !wantsWeb && !shape.lookup) {
+			signals.push('small-talk');
+		}
 	} else if (!wantsPreview && !mentionsTests && isFast(raw, { codingVerb, sentences, words, hasPath, conjunctions, bullets })) {
 		lane = 'fast';
 	} else {
@@ -292,6 +349,8 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 		...(wantsServices ? { wantsServices } : {}),
 		...(wantsLongJob ? { wantsLongJob } : {}),
 		...(wantsGit ? { wantsGit } : {}),
+		...(ideWork.length ? { ideWork } : {}),
+		...(lane === 'chat' && signals.includes('small-talk') ? { smallTalk: true } : {}),
 		shape,
 	};
 }

@@ -21,6 +21,8 @@ import { ThemeIcon } from '../../../../../../base/common/themables.js';
 import { localize } from '../../../../../../nls.js';
 import { IContextViewService } from '../../../../../../platform/contextview/browser/contextView.js';
 import { defaultInputBoxStyles, getListStyles } from '../../../../../../platform/theme/browser/defaultStyles.js';
+import { VoltSheet } from '../../../../../../base/browser/ui/voltMobile/voltSheet.js';
+import { isVoltCompact } from '../../../../../../base/browser/ui/voltMobile/voltViewport.js';
 
 export interface IVoltMenuItem<T> {
 	readonly id: string;
@@ -77,6 +79,8 @@ export interface IVoltMenuSection<T> {
 	readonly searchOnly?: boolean;
 	/** Shown in place of items when the section is empty. */
 	readonly emptyMessage?: string;
+	/** Rows made from what was typed (a folder path), listed first while searching and never filtered out. */
+	readonly fromQuery?: (query: string) => readonly IVoltMenuItem<T>[];
 }
 
 /**
@@ -169,8 +173,8 @@ type Row<T> =
 
 const ROW_HEIGHT = 30;
 const TWO_LINE_ROW_HEIGHT = 46;
-/** What a row grows by under a finger (a touch screen has no pointer precision); see voltMenu.css `.coarse`. */
-const COARSE_ROW_EXTRA = 10;
+/** What a row grows by under a finger (a 44px target; a touch screen has no pointer precision); see voltMenu.css `.coarse`. */
+const COARSE_ROW_EXTRA = 14;
 const HEADER_HEIGHT = 22;
 const SEPARATOR_HEIGHT = 1;
 const MAX_LIST_HEIGHT = 360;
@@ -194,6 +198,10 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 	if (openMenu?.anchor === options.anchor) {
 		openMenu.hide();
 		return { refresh: () => { }, dispose: () => { } };
+	}
+	// A phone has no room beside the anchor: the same menu rises from the bottom edge instead.
+	if (isVoltCompact()) {
+		return showVoltMenuSheet(options);
 	}
 	let widget: VoltMenuWidget<T> | undefined;
 	let hidden = false;
@@ -292,6 +300,67 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 	};
 }
 
+/**
+ * The menu as a bottom sheet (a phone): the same rows, search, prompts and footer; a submenu slides
+ * over the list with a Back row instead of flying out beside it. No row is highlighted and the
+ * search field waits for a tap, so the keyboard stays down until the user wants to type.
+ */
+function showVoltMenuSheet<T>(options: IVoltMenuOptions<T>): IVoltMenuHandle {
+	const container = options.anchor.closest<HTMLElement>('.monaco-workbench') ?? options.anchor.ownerDocument.body;
+	let widget: VoltMenuWidget<T> | undefined;
+	const sheet = new VoltSheet({
+		container,
+		ariaLabel: options.ariaLabel,
+		className: ['volt-menu-sheet', options.className].filter(Boolean).join(' '),
+		canDragFrom: () => widget?.atTop() ?? true,
+	});
+	const hide = () => sheet.hide();
+	options.anchor.classList.add('open');
+	options.anchor.setAttribute('aria-expanded', 'true');
+	openMenu = { anchor: options.anchor, hide };
+	const host = append(sheet.body, $('.volt-menu-host.in-sheet'));
+	widget = new VoltMenuWidget<T>(host, options, {
+		hide,
+		relayout: () => {
+			widget?.fit();
+			sheet.layout();
+		},
+		room: () => ({ preferred: sheet.maxBodyHeight(), other: 0 }),
+		setAside: async run => {
+			sheet.setAside(true);
+			try {
+				await run();
+			} finally {
+				sheet.setAside(false);
+			}
+		},
+		pick: item => options.onPick(item),
+		className: options.className,
+		ariaLabel: options.ariaLabel,
+		sheet: true,
+	});
+	const sizing = sheet.onDidResize(() => widget?.fit());
+	sheet.onDidHide(() => {
+		sizing.dispose();
+		widget?.dispose();
+		widget = undefined;
+		options.anchor.classList.remove('open');
+		options.anchor.setAttribute('aria-expanded', 'false');
+		if (openMenu?.anchor === options.anchor) {
+			openMenu = undefined;
+		}
+		sheet.dispose();
+		options.onHide?.();
+	});
+	sheet.show();
+	widget.fit();
+	sheet.layout(false);
+	return {
+		refresh: () => widget?.refresh(),
+		dispose: hide,
+	};
+}
+
 /** Height in px a menu may take beside its anchor: on its preferred side and on the other one. */
 interface IVoltMenuRoom {
 	readonly preferred: number;
@@ -314,6 +383,8 @@ interface IWidgetContext<T> {
 	readonly prompt?: (prompt: IVoltMenuPrompt) => void;
 	/** Set on hover-opened flyouts: no row is highlighted until the pointer or keyboard enters. */
 	readonly idle?: boolean;
+	/** In a bottom sheet (a phone): full width, flyouts slide over the list, nothing focused or highlighted at first. */
+	readonly sheet?: boolean;
 }
 
 class VoltMenuWidget<T> extends Disposable {
@@ -351,17 +422,31 @@ class VoltMenuWidget<T> extends Disposable {
 		private readonly context: IWidgetContext<T>,
 	) {
 		super();
-		this.idle = !!context.idle;
+		this.idle = !!context.idle || !!context.sheet;
 		this.root = append(host, $('.volt-menu'));
 		this.root.classList.toggle('coarse', coarsePointer());
+		this.root.classList.toggle('in-sheet', !!context.sheet);
 		if (context.className) {
 			this.root.classList.add(...context.className.split(' '));
 		}
-		this.root.style.width = `${options.width ?? 300}px`;
+		if (!context.sheet) {
+			this.root.style.width = `${options.width ?? 300}px`;
+		}
+		// A submenu in a sheet slides over its parent: a Back row leads it.
+		if (context.sheet && context.back) {
+			const back = append(this.root, $('button.volt-menu-sheet-back')) as HTMLButtonElement;
+			back.type = 'button';
+			back.appendChild(renderIcon(Codicon.chevronLeft));
+			append(back, $('span.label')).textContent = context.ariaLabel;
+			back.setAttribute('aria-label', localize('voltMenu.back', "Back to the previous menu"));
+			const goBack = context.back;
+			this._register(addDisposableListener(back, 'click', () => goBack()));
+		}
 		this.root.tabIndex = -1;
 		this.root.setAttribute('role', 'dialog');
 		this.root.setAttribute('aria-label', context.ariaLabel);
 		this._register(toDisposable(() => {
+			this.footerRows.forEach(row => disposeRowLabel(row.element));
 			if (this.flyoutTimer) {
 				clearTimeout(this.flyoutTimer);
 			}
@@ -393,6 +478,10 @@ class VoltMenuWidget<T> extends Disposable {
 					return;
 				}
 				this.closeFlyout();
+				// A sheet highlights nothing until the user types: then Enter picks the best match.
+				if (context.sheet && this.query) {
+					this.idle = false;
+				}
 				if (options.search?.remote) {
 					this.load();
 				} else {
@@ -505,10 +594,21 @@ class VoltMenuWidget<T> extends Disposable {
 		this._register(addDisposableListener(this.root, 'keydown', e => this.onKeyDown(e)));
 
 		this.load(true);
-		scheduleAtNextAnimationFrame(getWindow(this.root), () => this.focus());
+		// In a sheet the search field waits for a tap: focusing it would raise the keyboard over the rows.
+		scheduleAtNextAnimationFrame(getWindow(this.root), () => context.sheet ? this.root.focus({ preventScroll: true }) : this.focus());
+	}
+
+	/** The list is scrolled to its top, so a pull down moves the sheet holding the menu. */
+	atTop(): boolean {
+		return (this.flyoutWidget?.atTop() ?? true) && this.list.scrollTop <= 0;
 	}
 
 	focus(): void {
+		// A sheet keeps the keyboard down: the search field takes focus only from a tap.
+		if (this.context.sheet) {
+			this.root.focus({ preventScroll: true });
+			return;
+		}
 		if (this.idle) {
 			this.idle = false;
 			if (this.active < 0) {
@@ -584,7 +684,9 @@ class VoltMenuWidget<T> extends Disposable {
 			if (section.searchOnly && !query) {
 				continue;
 			}
-			const items: Row<T>[] = [];
+			const items: Row<T>[] = query && section.fromQuery
+				? section.fromQuery(query).map(item => ({ kind: 'item', id: `${section.id}:${item.id}`, item }))
+				: [];
 			for (const item of section.items) {
 				if (!query || !filterLocally) {
 					items.push({ kind: 'item', id: `${section.id}:${item.id}`, item });
@@ -663,7 +765,9 @@ class VoltMenuWidget<T> extends Disposable {
 	private showRows(rows: Row<T>[]): void {
 		this.rows = rows;
 		this.list.splice(0, this.list.length, rows);
-		this.naturalListHeight = Math.min(this.options.maxListHeight ?? MAX_LIST_HEIGHT, rows.reduce((sum, row) => sum + rowHeight(row), 0));
+		// A sheet is as tall as the screen allows; fit() caps it there.
+		const cap = this.context.sheet ? Number.MAX_SAFE_INTEGER : this.options.maxListHeight ?? MAX_LIST_HEIGHT;
+		this.naturalListHeight = Math.min(cap, rows.reduce((sum, row) => sum + rowHeight(row), 0));
 		this.listHeight = -1;
 		this.fit();
 	}
@@ -694,6 +798,7 @@ class VoltMenuWidget<T> extends Disposable {
 	}
 
 	private renderFooter(): void {
+		this.footerRows.forEach(row => disposeRowLabel(row.element));
 		clearNode(this.footerHost);
 		this.footerRows.length = 0;
 		const footer = this.options.footer ?? [];
@@ -960,6 +1065,8 @@ class VoltMenuWidget<T> extends Disposable {
 			className: submenu.className,
 			ariaLabel: item.label,
 			idle: !focus,
+			sheet: this.context.sheet,
+			room: this.context.sheet ? this.context.room : undefined,
 			back: () => {
 				this.closeFlyout();
 				this.focus();
@@ -985,10 +1092,21 @@ class VoltMenuWidget<T> extends Disposable {
 		}
 		this.flyoutItem = undefined;
 		this.flyout.clear();
+		if (this.context.sheet) {
+			this.host.style.minHeight = '';
+		}
 	}
 
 	/** Beside the row, 4px clear of this menu as the agent list's filter menu does; flipped to the left, or over the menu, when the window is too narrow. */
 	private placeFlyout(host: HTMLElement, row: HTMLElement): void {
+		if (this.context.sheet) {
+			// Over the whole sheet (voltMenu.css `.in-sheet > .volt-menu-flyout`), which grows to hold it.
+			this.flyoutWidget?.fit();
+			const menu = host.firstElementChild;
+			this.host.style.minHeight = isHTMLElement(menu) && menu.offsetHeight ? `${menu.offsetHeight}px` : '';
+			this.context.relayout();
+			return;
+		}
 		const hostRect = this.host.getBoundingClientRect();
 		const menuRect = this.root.getBoundingClientRect();
 		const rowRect = row.getBoundingClientRect();
@@ -1159,7 +1277,17 @@ class ItemRenderer<T> implements IListRenderer<Row<T>, HTMLElement> {
 		renderItem(element, row.item, row.matches);
 	}
 
-	disposeTemplate(): void { }
+	disposeTemplate(element: HTMLElement): void {
+		disposeRowLabel(element);
+	}
+}
+
+/** Each row's label (a disposable widget): replaced when the row is drawn again, disposed with the row. */
+const rowLabels = new WeakMap<HTMLElement, IDisposable>();
+
+function disposeRowLabel(host: HTMLElement): void {
+	rowLabels.get(host)?.dispose();
+	rowLabels.delete(host);
 }
 
 function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatch[] | undefined): void {
@@ -1177,7 +1305,9 @@ function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatc
 	// Two-line rows stack the label line over the subtitle; one-line rows lay it out in the row.
 	const text = item.subtitle ? append(host, $('span.volt-menu-text')) : undefined;
 	const line = text ? append(text, $('span.volt-menu-line')) : host;
+	disposeRowLabel(host);
 	const label = new HighlightedLabel(append(line, $('span.volt-menu-label')));
+	rowLabels.set(host, label);
 	label.set(item.label, matches);
 	if (item.description) {
 		// Marked left-to-right so a path keeps its slashes in place while it ellipsizes on the left.
@@ -1289,7 +1419,9 @@ class DestinationRenderer<T> implements IListRenderer<Row<T>, HTMLElement> {
 		}, undefined);
 	}
 
-	disposeTemplate(): void { }
+	disposeTemplate(element: HTMLElement): void {
+		disposeRowLabel(element);
+	}
 }
 
 class MessageRenderer<T> implements IListRenderer<Row<T>, HTMLElement> {

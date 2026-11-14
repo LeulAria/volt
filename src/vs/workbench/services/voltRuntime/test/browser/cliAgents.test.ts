@@ -10,6 +10,8 @@ import { isWindows } from '../../../../../base/common/platform.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { acpLaunchFor, cliAgentDefinition, cliLoginForNotice, grokAcpArgs, npxCachedLaunchScript, runCli } from '../../browser/agents/cliAgents.js';
+import { taskWaitMs } from '../../common/orchestration/agentTasks.js';
+import { acpAdapterPreload } from '../../common/claudeAcpPatch.js';
 
 /** Emits the process output from inside spawn(), before the caller learns the id: the IPC race. */
 class FastStdio implements IVoltStdioService {
@@ -87,13 +89,27 @@ suite('runCli', () => {
 	test('Claude launches the ACP adapter, never `claude acp`', () => {
 		const claude = cliAgentDefinition('claude-code');
 		assert.deepStrictEqual(acpLaunchFor(claude, 'claude', ['acp'], true), { command: 'claude-agent-acp', args: [] });
-		assertNpxLaunch(acpLaunchFor(claude, 'claude', [], false), 'claude-agent-acp', '@agentclientprotocol/claude-agent-acp@0.81.2');
+		assertNpxLaunch(acpLaunchFor(claude, 'claude', [], false), 'claude-agent-acp', '@agentclientprotocol/claude-agent-acp@0.106.0');
+	});
+
+	test('Claude waits for an MCP tool longer than Volt\'s longest task wait', () => {
+		// Claude Code's own limit is 60 s ("The operation timed out."): a wait_tasks long-poll of
+		// TASK_WAIT_LONG_MS would be cut every minute and the lead woken for nothing.
+		const timeout = Number(cliAgentDefinition('claude-code')?.acpEnv?.MCP_TOOL_TIMEOUT);
+		assert.ok(timeout > taskWaitMs(true) + 30_000, `MCP_TOOL_TIMEOUT ${timeout} must outlast ${taskWaitMs(true)} ms`);
 	});
 
 	test('Codex launches the ACP adapter, never `codex acp`', () => {
 		const codex = cliAgentDefinition('codex');
 		assert.deepStrictEqual(acpLaunchFor(codex, 'codex', ['acp'], true), { command: 'codex-acp', args: [] });
 		assertNpxLaunch(acpLaunchFor(codex, 'codex', ['acp'], false), 'codex-acp', '@agentclientprotocol/codex-acp@1.13.1');
+	});
+
+	test('Claude\'s adapter from npx\'s cache runs on node with Volt\'s preload; other adapters run as they are', () => {
+		const bin = '/home/u/.npm/_npx/abc/node_modules/.bin/claude-agent-acp';
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], false, bin), { command: 'node', args: ['--import', acpAdapterPreload('@agentclientprotocol/claude-agent-acp@0.106.0')!, bin] });
+		const codexBin = '/home/u/.npm/_npx/def/node_modules/.bin/codex-acp';
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('codex'), 'codex', [], false, codexBin), { command: codexBin, args: [] });
 	});
 
 	test('an adapter cached by npx runs directly, without npx as its parent', () => {

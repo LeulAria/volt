@@ -115,4 +115,17 @@ suite('Run metrics and traces', () => {
 		assert.deepStrictEqual(snapshot.retrieval, { ms: 40, tokens: 900, files: 3, used: 2, partial: false }, 'a.ts read and b.ts edited; c.ts only appeared in output');
 		assert.match(formatRunMetrics(snapshot), /retrieval 40ms 900 tokens, 2\/3 files used/);
 	});
+
+	test('an ACP agent: context reports per request, then a turn total that is not a request', () => {
+		const metrics = new RunMetrics('r1', 's', 'agent', 'agent', 0);
+		// A Claude Code subagent's turn as traced: 28.3k growing to 28.9k over its requests, each reported more than once.
+		for (const used of [28_287, 28_337, 28_337, 28_576, 28_942, 28_942]) {
+			metrics.observe({ type: 'usage', input: 0, output: 0, used, size: 1_000_000 }, 1);
+		}
+		metrics.observe({ type: 'usage', input: 4, output: 438, cache: 46_976, cacheWrite: 9_861 }, 2);
+		const snapshot = metrics.snapshot();
+		assert.strictEqual(snapshot.usage?.maxRequestInput, 28_942);
+		assert.strictEqual(snapshot.usage?.requests, 4);
+		assert.deepStrictEqual(snapshot.tokens, { input: 4, output: 438, cache: 46_976 });
+	});
 });

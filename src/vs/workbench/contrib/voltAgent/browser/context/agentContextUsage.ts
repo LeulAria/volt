@@ -190,6 +190,23 @@ export function estimateMessageTokens(message: IContextUsageMessage): number {
 const settledTokens = new WeakMap<IContextUsageMessage, { readonly key: string; readonly tokens: number }>();
 
 /**
+ * Whether counting `messages` would read at least `max` messages never counted before (a chat just opened): each
+ * one re-parses its markdown, about 50 ms for a 41k-item chat, which a first frame should not wait for.
+ */
+export function hasManyUncountedMessages(messages: readonly IContextUsageMessage[], max: number): boolean {
+	let uncounted = 0;
+	for (const message of messages) {
+		const key = settledTokenKey(message);
+		if (key === undefined || settledTokens.get(message)?.key !== key) {
+			if (++uncounted >= max) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+/**
  * What a settled message's count depends on, cheaply: its shape and text sizes. Undefined for a
  * reply still streaming, which changes every frame and is always counted afresh.
  */

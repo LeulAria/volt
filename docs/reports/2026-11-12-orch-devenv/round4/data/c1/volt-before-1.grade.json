@@ -1,0 +1,66 @@
+{
+ "branch": "main",
+ "shipped": 5,
+ "groups": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true,
+  "Integration": true
+ },
+ "handoff": 4,
+ "codesPlaced": 4,
+ "handoffDetail": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true
+ },
+ "placedDetail": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true
+ },
+ "codes": {
+  "W1": "ADM-W1-OLNGPR",
+  "W2": "ADM-W2-OGHAUZ",
+  "W3": "ADM-W3-B6QPAW",
+  "W4": "ADM-W4-HCUJQD"
+ },
+ "npmTest": {
+  "status": 0,
+  "summary": ""
+ },
+ "files": {
+  "w1-limiter": {
+   "pass": true,
+   "failed": []
+  },
+  "w1-api": {
+   "pass": true,
+   "failed": []
+  },
+  "w2-dates": {
+   "pass": true,
+   "failed": []
+  },
+  "w3-cursor": {
+   "pass": true,
+   "failed": []
+  },
+  "w4-create": {
+   "pass": true,
+   "failed": []
+  },
+  "w4-idempotency": {
+   "pass": true,
+   "failed": []
+  },
+  "integration": {
+   "pass": true,
+   "failed": []
+  }
+ },
+ "report": "W1 | volt/58f1572d | ADM-W1-OLNGPR\nW2 | volt/d87e928d | ADM-W2-OGHAUZ\nW3 | volt/ea0ce1a6 | ADM-W3-B6QPAW\nW4 | volt/68b4fbca | ADM-W4-HCUJQD"
+}

@@ -13,6 +13,7 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
+import { IMarkerService } from '../../../../../platform/markers/common/markers.js';
 import { ILogService, NullLogService } from '../../../../../platform/log/common/log.js';
 import { IVoltCodeIndexService } from '../../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
@@ -94,6 +95,7 @@ suite('Volt Code Intelligence module', () => {
 		instantiation.stub(IVoltPluginService, plugins as unknown as IVoltPluginService);
 		instantiation.stub(IExtensionService, { whenInstalledExtensionsRegistered: async () => true } as unknown as IExtensionService);
 		instantiation.stub(ILogService, new NullLogService());
+		instantiation.stub(IMarkerService, new class extends mock<IMarkerService>() { override readonly onMarkerChanged = Event.None; override read() { return []; } });
 		instantiation.stub(ICommandService, { executeCommand: async () => undefined } as unknown as ICommandService);
 		instantiation.stub(IConfigurationService, new TestConfigurationService());
 		instantiation.stub(IWorkspaceContextService, new TestContextService());

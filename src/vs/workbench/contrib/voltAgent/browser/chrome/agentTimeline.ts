@@ -428,7 +428,7 @@ function verbFromStatus(status: string): string | undefined {
 	if (/^(edit|editing|write|wrote|creat|delet|patch|apply)\b/.test(lower)) {
 		return joinVerb(editing, status);
 	}
-	if (/^(wait|waiting|sleep)\b/.test(lower)) {
+	if (/^(wait|waited|waiting|sleep)\b/.test(lower)) {
 		return waiting;
 	}
 	return undefined;

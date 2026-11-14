@@ -8,7 +8,7 @@ import { modePolicy, VoltMode } from '../modes.js';
 import { DOCKER_ENSURE_TOOL_NAME, TERMINAL_OUTPUT_TOOL_NAME, TERMINAL_START_TOOL_NAME, TERMINAL_STOP_TOOL_NAME, TERMINAL_WAIT_TOOL_NAME } from '../terminalTools.js';
 import { WATCH_JOB_TOOL_NAME } from '../jobs/jobWatch.js';
 import { IRunPlan } from '../runPlan.js';
-import { IIntent } from './intent.js';
+import { IdeWork, IIntent } from './intent.js';
 import { laneDefinition } from './lanes.js';
 import { framingForShape, IRequestShape, needsResearch } from './requestShape.js';
 
@@ -56,6 +56,8 @@ export interface IContextPackInput {
 	readonly commitReview?: boolean;
 	/** The agent gets the editor's language servers, tests, debugger and tasks (code_nav, tests, debug...) through the volt MCP server. */
 	readonly ideTools?: boolean;
+	/** The chat runs in Volt's sandbox: the guide says what runs inside it and what asks the user first. */
+	readonly sandboxed?: boolean;
 }
 
 export interface IEnvironmentFacts {
@@ -193,12 +195,29 @@ export function buildSystemPrompt(input: IContextPackInput): string {
 /**
  * ACP agents own their system prompt. Volt prepends at most a short lead to the user's text,
  * and only when the lane or the request calls for it. A plain coding request gets nothing.
+ *
+ * `heard`: the standing notes ({@link STANDING_NOTES}) this agent session has already been sent. A
+ * note in it is not sent again (the agent keeps it in its context), and each note this lead carries
+ * is added to it. Before, every code turn carried the visuals note, the IDE guide and the workspace
+ * scope again: about 700 tokens that stayed in the conversation and were read again by every later
+ * request of the chat. Without `heard`, every note goes out as before.
  */
-export function buildAcpLead(input: IContextPackInput): string | undefined {
+export function buildAcpLead(input: IContextPackInput, heard?: Set<string>): string | undefined {
 	const parts: string[] = [];
+	const note = (id: string, text: string) => {
+		if (!heard?.has(id)) {
+			heard?.add(id);
+			parts.push(`[Volt] ${text}`);
+		}
+	};
 	const allowWrites = modePolicy(input.mode).allowWrites;
 	const shaped = framingForShape(input.shape ?? input.intent.shape, input.intent.wantsWeb, { allowWrites });
-	if (input.intent.lane === 'chat') {
+	// "hi", "thanks": nothing to frame, chart or keep inside the workspace (~400 tokens otherwise).
+	// The mode's contract still applies ("ok" in Plan mode changes nothing).
+	const smallTalk = input.intent.smallTalk === true;
+	if (input.intent.lane === 'chat' && smallTalk) {
+		// No framing.
+	} else if (input.intent.lane === 'chat') {
 		parts.push(`[Volt] ${shaped ?? laneDefinition('chat').framing}`);
 	} else if (input.intent.lane === 'fast') {
 		parts.push(`[Volt] ${laneDefinition('fast').framing.replace(' If it turns out to be larger than it looks, call request_capabilities.', '')}`);
@@ -226,8 +245,8 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 		parts.push(`[Volt] ${input.intent.wantsPreview ? BROWSER_TESTING : BROWSER_TESTING_WHEN_NEEDED}`);
 	}
 	// A fix checked in the browser is answered in a few lines; a chart of it is one more model call.
-	if (input.visuals && input.intent.lane !== 'fast' && !(input.intent.uiWork && input.browserTools)) {
-		parts.push(`[Volt] ${VISUAL_REPLIES}`);
+	if (input.visuals && !smallTalk && input.intent.lane !== 'fast' && !(input.intent.uiWork && input.browserTools)) {
+		note('visuals', VISUAL_REPLIES);
 	}
 	if (input.intent.wantsServices && modePolicy(input.mode).allowTerminal) {
 		parts.push(`[Volt] ${MANAGED_TERMINALS}`);
@@ -240,10 +259,23 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 		parts.push(`[Volt] ${COMMIT_REVIEW}`);
 	}
 	if (input.codeIndexed && input.intent.lane !== 'chat' && input.intent.lane !== 'fast') {
-		parts.push(`[Volt] ${INDEXED_SEARCH}`);
+		note('indexed', INDEXED_SEARCH);
 	}
 	if (input.ideTools && input.intent.lane !== 'chat') {
-		parts.push(`[Volt] ${IDE_TOOLS_GUIDE}`);
+		// The sandboxed guide adds what runs where: a switch of access is news.
+		note(input.sandboxed ? 'ide:sandboxed' : 'ide', input.sandboxed ? IDE_TOOLS_GUIDE_SANDBOXED : IDE_TOOLS_GUIDE);
+	}
+	const codeQuestions = input.intent.lane === 'chat' && input.intent.referencesWorkspace && (input.codeIndexed || input.ideTools);
+	if (codeQuestions) {
+		parts.push(`[Volt] ${CODE_QUESTIONS}`);
+	}
+	const ideHints = input.ideTools && modePolicy(input.mode).allowTerminal ? input.intent.ideWork ?? [] : [];
+	for (const work of ideHints) {
+		parts.push(`[Volt] ${IDE_WORK_HINTS[work]}`);
+	}
+	// The IDE guide says how to load a deferred volt tool; a hint without it does not.
+	if ((codeQuestions || ideHints.length) && !(input.ideTools && input.intent.lane !== 'chat')) {
+		parts.push(`[Volt] ${LOAD_DEFERRED}`);
 	}
 	for (const gallery of galleryHints(input)) {
 		parts.push(`[Volt] ${gallery}`);
@@ -262,9 +294,18 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	}
 	// Benchmarks caught agents running `rg` over the home folder and reading other tools'
 	// transcripts to chase a missing script. Keep them in the project unless asked.
-	parts.push(`[Volt] ${WORKSPACE_SCOPE}`);
-	return parts.join('\n');
+	if (!smallTalk) {
+		note('scope', WORKSPACE_SCOPE);
+	}
+	return parts.length ? parts.join('\n') : undefined;
 }
+
+/**
+ * The lead's notes that say the same thing on every turn they apply to, so an agent session needs
+ * each once ({@link buildAcpLead}'s `heard`). The others depend on the request (its shape, tests,
+ * UI work, a long job, git) and go with each request that calls for them.
+ */
+export const STANDING_NOTES: readonly string[] = ['visuals', 'indexed', 'ide', 'ide:sandboxed', 'scope'];
 
 /**
  * Benchmarks: given a design image, agents spent most of the run decoding the PNG byte by byte
@@ -315,7 +356,43 @@ export const WATCH_LONG_JOBS = `When you end your turn while a job the user wait
 /** Committing and naming the branch go through the user: Volt's commit review, then a question for the branch name. */
 export const COMMIT_REVIEW = 'To commit, group the changes into commits with Conventional Commits messages (type(scope): summary, e.g. feat(cart): apply discount at checkout), one commit when they are one change or belong together and several only where they are separate changes, and make them with git commit. Call propose_commits from the volt MCP server instead only when the user asks to review the commits first (draft commits, /draft-commit, "split them for me to review"); a plain "commit", "commit and push" or "commit and open a PR" is not that. A worktree starts on a placeholder branch (volt/ and 8 hex characters). Before pushing it or opening a pull request from it, ask the user what to call it with ask_question (one question, 4 names you suggest as type/short-kebab-summary, e.g. feat/cart-discounts or fix/login-redirect; they can type their own), then call rename_branch with the answer; never rename it with git yourself. Push with git as usual afterwards.';
 
-export const IDE_TOOLS_GUIDE = 'The volt MCP server gives you the editor itself: code_nav (op inspect: a symbol\'s type, definition with body, references and implementations in one call; callers/callees; supertypes/subtypes; workspace_symbols) answered by the language servers on the user\'s live buffers, diagnostics (type/lint errors in a second after an edit), code_action (rename, organize imports, quick fixes across files), tests (run one test by file:line; structured failures; the user sees the run in the Test Explorer) and debug (breakpoints, step, variables, evaluate, watch: each step returns the new state); ide reaches the rest of the editor by capability (editor highlights, git staging/conflicts/blame, notebooks, docker, k8s, CI logs, HTTP requests, CPU profiles, analyzers, coverage; op help lists arguments). Prefer them to grep-and-read for symbol questions and to raw test commands.';
+/**
+ * Claude Code defers MCP tools behind its tool search: Haiku answered every relationship question
+ * of the hotel benchmark with Bash grep and never loaded code_nav when this named it only as "the
+ * volt MCP server's code_nav". The exact names, how to load them and the question each one answers
+ * are what get them used (docs/reports/2026-11-12-orch-devenv/02-code-intelligence.md,
+ * round2/12-ide-and-code-intel.md). Since round 3 every volt tool is deferred again (each one in
+ * the prompt was every request's cost), so the turns that need them say how to load them.
+ */
+export const IDE_TOOLS_GUIDE = 'The volt MCP server gives you the editor itself (if your client lists its tools as deferred, load them by name first, e.g. ToolSearch "select:mcp__volt__code_nav"). How code relates is code_nav, type-checked, before grep: which routes, procedures or entry points reach X, directly or through other functions, is one call (op callers, symbol X, depth 3: the chain, with the procedures named); every use of one type\'s method or field without look-alikes (op references); what implements an interface (op implementations); a symbol\'s type, body and uses (op inspect); what changing a symbol or file reaches and the tests to run (op impact); one function\'s source, not its file (op body); code by shape across lines (op structural, e.g. setTimeout($F, $MS)). Pass symbol (and path) and it finds the line. Grep stays right for strings, SQL, config and comments. diagnostics gives type/lint errors right after an edit; code_action op rename renames a symbol in every file. tests runs tests (one by file:line) and returns structured failures; debug sets breakpoints, steps and reads variables; ide reaches the rest by capability: http (send requests from .http files, with environments and chaining), db (SQLite/Postgres tables, schema, read-only queries), docker (ps, logs, inspect), profile (cpu: the hottest functions), notebook, git, coverage, analyze (op help lists arguments). Prefer these to raw shell commands for the same job: the user sees each run in the editor.';
+
+/** IDE_TOOLS_GUIDE for a sandboxed chat (Supervised, the default): what runs inside the sandbox and what asks first. */
+export const IDE_TOOLS_GUIDE_SANDBOXED = `${IDE_TOOLS_GUIDE} This chat runs in Volt's sandbox: programs ide runs (profiler, sqlite3, git, analyzers) run inside it with your access; a test run, debug session, task or notebook kernel runs in the editor, outside it, so the first one in this chat asks the user. Docker's socket is outside the sandbox, so docker answers only after the user switches the chat to Full access.`;
+
+/**
+ * One line per IDE tool that fits the request (`IIntent.ideWork`), in every lane: questions like
+ * "why does the container keep restarting?" go to the chat lane, which gets no IDE guide.
+ */
+export const IDE_WORK_HINTS: Readonly<Record<IdeWork, string>> = {
+	tests: 'For the tests: the volt tests tool runs them (op run; targets a file, file:line or name) and returns each failure with expected/actual and the frames; the run shows in the Test Explorer.',
+	debug: 'For runtime values: the volt debug tool (op start with program or command; breakpoints first) pauses and returns the stack and locals; step and evaluate from there.',
+	profile: 'For slowness: measure before changing code with the volt ide tool, capability profile, op cpu (command): it returns the hottest functions with self and total time.',
+	http: 'For HTTP requests: the volt ide tool, capability http (op list, then op send with name and env) sends the requests of .http files with their environment and chained values ({{login.response.body.$.token}}).',
+	docker: 'For containers: the volt ide tool, capability docker (ps, logs, inspect: state, restart count, exit code, env with secrets masked) answers in a call each.',
+	db: 'For the database: the volt ide tool, capability db (tables, schema, query with path to a SQLite file or url for Postgres) runs read-only SQL and returns the rows as a table.',
+	notebook: 'For notebooks: the volt ide tool, capability notebook (cells, run, outputs) reads and runs them in their kernel, as the user sees them.',
+	rename: 'To rename a symbol: code_action op rename (path, line, symbol, new_name) has the language server change every reference, imports included.',
+};
+
+/**
+ * A question about the code (the chat lane, which gets neither INDEXED_SEARCH nor the IDE guide).
+ * Benchmarks on a 1,000-file NestJS repo: told nothing, Claude never touched the volt tools and
+ * answered "who calls / implements / writes X" with Grep-then-Read loops.
+ */
+export const CODE_QUESTIONS = 'Answer questions about this code with the volt MCP server\'s code intelligence instead of reading file after file: find_symbol says where a name is declared, instant_grep is an indexed rg (output_mode files or count keeps the answer short), and code_nav answers who uses, calls or implements a symbol in one call (op references, callers, callees, implementations or inspect, with path, line and symbol), what changing it or a file reaches and the tests to run (op impact), one symbol\'s source (op body), and code by shape across lines (op structural, e.g. setTimeout($F, $MS)). Read only the lines you need to confirm or quote.';
+
+/** With {@link CODE_QUESTIONS} or an IDE hint outside the code lanes, which get the IDE guide's own note. */
+export const LOAD_DEFERRED = 'If your client lists the volt tools as deferred, load the ones named here by name first (e.g. ToolSearch "select:mcp__volt__code_nav,mcp__volt__tests").';
 
 export const INDEXED_SEARCH = 'This project is indexed: search code with instant_grep (regex or literal, the same results as rg), find symbol declarations with find_symbol, and find files by a fuzzy name with find_files, all from the volt MCP server. They answer in milliseconds where Grep, rg and find re-read every file.';
 
@@ -325,9 +402,10 @@ const SCRATCH_DRAW_TOOL_NAME = 'scratch_draw';
 
 /**
  * Tool descriptions say what the visual tools do; this says when to reach for them unasked. Not
- * sent in the fast lane (small edits) or when the agent cannot reach the volt MCP server.
+ * sent in the fast lane (small edits) or when the agent cannot reach the volt MCP server. 372 tokens
+ * until 2026-11-14 (Opus 5.5 count), now 296: the same tools, cases and rules, fewer words.
  */
-export const VISUAL_REPLIES = `When a visual helps explain the answer, render it proactively: call ${RENDER_CHART_TOOL_NAME} from the volt MCP server for numbers over time, comparisons, distributions, flows or hierarchies, including repo and usage analyses; use ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts. When a hand-drawn sketch would read better than a page (a comparison table or scorecard with takeaways, an architecture picture, a flow), draw it with ${SCRATCH_DRAW_TOOL_NAME} instead (\`page\`, \`diagram\`, \`mermaid\`, or your own \`elements\` for anything else: an illustrated explainer, a timeline, a mind map, a hand-drawn chart; be inventive): it shows in the chat as a picture the user can open on their Scratch board. Choose the chart type, variants and style controls to suit the data without asking the user to choose. Use observed data, or clearly label illustrative data. If your provider does not expose the visual tools, a fenced volt-chart block containing the same JSON chart spec renders natively in Volt; use a mermaid fence for diagrams. Render before your final text, then do not restate what it shows. Skip it for short or trivial answers.`;
+export const VISUAL_REPLIES = `When a visual helps explain the answer, render it unasked: ${RENDER_CHART_TOOL_NAME} (volt MCP server) for numbers over time, comparisons, distributions, flows or hierarchies, repo and usage analyses included; ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts; ${SCRATCH_DRAW_TOOL_NAME} when a hand-drawn sketch reads better than a page (a comparison table or scorecard with takeaways, an architecture picture, a flow, a timeline, a mind map: \`page\`, \`diagram\`, \`mermaid\` or your own \`elements\`; be inventive), shown in the chat and openable on the user's Scratch board. Pick the chart type and style yourself; use observed data or label it illustrative. Without the visual tools, a volt-chart fence with the same JSON spec renders in Volt (mermaid fences for diagrams). Render before your final text and do not restate it. Skip it for short or trivial answers.`;
 
 /**
  * Only when the request asks for them: agents otherwise describe five sidebars in prose, or take

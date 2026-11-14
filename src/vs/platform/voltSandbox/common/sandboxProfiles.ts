@@ -117,6 +117,37 @@ function escapeRegex(value: string): string {
 }
 
 /** Every protection, as `protect` entries relative to one writable root token. */
+/** Root names that are also ordinary folders in projects (`refs/`, `objects/`): only bare-repo concerns, not an edit's. */
+const BARE_REPO_NAMES: ReadonlySet<string> = new Set(['HEAD', 'objects', 'refs']);
+const GIT_DIR_PROTECTED = ['config', 'config.worktree', 'hooks', 'modules', 'commondir', 'gitdir', 'info', 'objects/info/alternates', 'objects/info/http-alternates'];
+
+/**
+ * Whether a file an extension edits or creates through Volt's window (a WorkspaceEdit, an editor
+ * edit, a save) is one the host runs or trusts later, the set the sandbox keeps read-only for
+ * sandboxed processes: git config and hooks at any depth, editor tasks and settings, hook managers,
+ * agent configs, shell startup files. A sandboxed extension's own writes are refused by the OS; its
+ * edits go through the window, which must refuse these the same way. Returns the matched name.
+ * `path` is absolute, `/`-separated.
+ */
+export function protectedEditTarget(path: string): string | undefined {
+	const parts = path.split('/').filter(Boolean);
+	for (let i = 0; i < parts.length; i++) {
+		if (parts[i] === '.git') {
+			const rest = parts.slice(i + 1).join('/');
+			const hit = GIT_DIR_PROTECTED.find(name => rest === name || rest.startsWith(`${name}/`));
+			if (hit) {
+				return `.git/${hit}`;
+			}
+		}
+		const tail = parts.slice(i).join('/');
+		const root = PROTECTED_ROOT_NAMES.find(name => !BARE_REPO_NAMES.has(name) && (tail === name || tail.startsWith(`${name}/`)));
+		if (root) {
+			return root;
+		}
+	}
+	return undefined;
+}
+
 export function protectedEntries(root: '${workspace}'): string[] {
 	return [...PROTECTED_ROOT_NAMES.map(name => `${root}/${name}`), ...PROTECTED_GIT_PATTERNS];
 }
@@ -276,6 +307,9 @@ export function systemReadPaths(platform: string, env: Readonly<Record<string, s
 			'/usr', '/bin', '/sbin', '/System', '/Library/Apple', '/Library/Frameworks', '/Library/Developer/CommandLineTools',
 			'/Library/Preferences/SystemConfiguration', '/private/etc', '/private/var/db/timezone', '/private/var/select',
 			'/Applications/Xcode.app/Contents/Developer', '/opt/homebrew', '/usr/local', '/dev',
+			// Whether the Xcode license was accepted (root's, the same for every user): without it
+			// every `/usr/bin` developer shim (git, clang, make) refuses to run in a sandbox.
+			'/Library/Preferences/com.apple.dt.Xcode.plist',
 		];
 	}
 	if (platform === 'win32') {
@@ -284,6 +318,14 @@ export function systemReadPaths(platform: string, env: Readonly<Record<string, s
 	}
 	return ['/usr', '/bin', '/sbin', '/lib', '/lib32', '/lib64', '/libx32', '/etc', '/opt', '/nix/store', '/snap'];
 }
+
+/**
+ * xcrun's cache in the user's temp folder (macOS): which binary each `/usr/bin` developer shim
+ * (`git`, `clang`, `make`) runs. Read by every sandbox (a miss costs an `xcodebuild -find`, 2-9 s),
+ * written by none: an entry that pointed `git` elsewhere would run that program outside the sandbox
+ * the next time the user, or Volt, runs `git`.
+ */
+export const XCRUN_CACHE = 'xcrun_db';
 
 /**
  * System files an agent CLI needs on top of `${system}` (it reaches OS services the workload

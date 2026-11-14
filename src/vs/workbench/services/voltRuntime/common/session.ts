@@ -7,6 +7,7 @@ import type { VoltLane } from './harness/lanes.js';
 import { AgentRunOn, AgentWorktreeTarget } from './git/agentWorktree.js';
 import { IVoltModelOptions } from './models/modelOptions.js';
 import { VoltMode } from './modes.js';
+import type { VoltSubagentProfile } from './providers.js';
 import type { IHandoffActivity } from './contextHandoff.js';
 import type { IVoltResourceAttachment } from './fileAttachments.js';
 
@@ -33,6 +34,8 @@ export interface IVoltSessionMessage {
 	activity?: IHandoffActivity;
 	/** A compacted summary standing in for everything before it. */
 	compacted?: boolean;
+	/** A Volt subagent's reply: its final message only (the text after its last tool call), which goes up as its report. */
+	report?: string;
 }
 
 /** User turns in `messages`: user messages that were not steering a live run. */
@@ -81,4 +84,6 @@ export interface IVoltSendRequest {
 	runOn?: AgentRunOn;
 	/** With `runOn: 'worktree'`: the branch the new checkout uses. */
 	worktreeTarget?: AgentWorktreeTarget;
+	/** The chat is a Volt subagent's (a delegated task): its agent starts lean (see `IAgentStartRequest.subagent`). */
+	subagent?: boolean | VoltSubagentProfile;
 }

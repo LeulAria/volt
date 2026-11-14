@@ -113,7 +113,6 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	instant_grep: 'reads',
 	find_symbol: 'reads',
 	find_files: 'reads',
-
 	// Pull requests: Volt's links and watches (gh reads). The stack tools run git checkout, rebase and push here.
 	link_pull_request: 'safe',
 	unlink_pull_request: 'safe',
@@ -261,6 +260,21 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	unwatch_job: 'safe',
 };
 
+/**
+ * A tool Volt serves that only reads (the chat's folder, as its sandbox allows) or changes Volt's
+ * own state: code search, the language servers' answers, the Scratch board, task status. Its
+ * agent-side permission prompt is answered by Volt (`isVoltHostToolPermission`), since the host
+ * tool gate judges each call. `name` may carry the MCP prefix (`mcp__volt__code_nav`).
+ */
+export function isVoltReadOnlyHostTool(name: string): boolean {
+	const id = name.trim().replace(/^(?:mcp__volt__|volt__|volt[-_:]\s*|volt\.)/i, '').toLowerCase();
+	if (!Object.prototype.hasOwnProperty.call(HOST_TOOL_SANDBOX_CLASSES, id)) {
+		return false;
+	}
+	const kind = HOST_TOOL_SANDBOX_CLASSES[id];
+	return kind === 'safe' || kind === 'reads';
+}
+
 /** What one call would do outside the sandbox. */
 export interface IHostToolSandboxUse {
 	readonly kind: HostToolSandboxClass;
@@ -365,7 +379,8 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 		case 'thread_search':
 			return { kind, readsAnyChat: true };
 		case 'spawn_team':
-			return { kind: spawnKind(args.isolation === 'worktree') };
+			// The team's `isolation`, or any member's own.
+			return { kind: spawnKind(args.isolation === 'worktree' || asList(args.members).some(member => member.isolation === 'worktree')) };
 		case 'council':
 			// Its seats work in this chat's checkout: a council takes no `isolation`.
 			return { kind: spawnKind(false) };

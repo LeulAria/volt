@@ -18,7 +18,7 @@ import { placeMessageMentions } from '../../browser/composer/agentMentionImages.
 import { formatImageSize, imageExtension } from '../../browser/composer/agentImageAttachments.js';
 import { formatDuration, keptRanges, mapRangesToSource, mergeRanges, normalizeVideoMime, rangesDuration, videoExtensionForMime, videoFrameCount, videoFrameTimes } from '../../browser/composer/agentVideoAttachments.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { formatWorkedTime } from '../../browser/chrome/agentTranscriptView.js';
+import { ELAPSED_CLASS, formatWorkedTime, tickElapsed } from '../../browser/chrome/agentTranscriptView.js';
 import { describeTodoUpdate, isTodoTool } from '../../browser/editor/agentSessionController.js';
 import { planFromCursorTodos } from '../../../../services/voltRuntime/browser/agents/acpProvider.js';
 
@@ -437,5 +437,21 @@ suite('Agent transcript run controls', () => {
 		appendProviderNotice(segments, { severity: 'error', title: 'Agent looping detected: same edit failed 3 times' });
 		assert.strictEqual(segments.length, 1);
 		assert.ok(segments[0].kind === 'notice' && segments[0].supervision === 'loop');
+	});
+	test('the elapsed clock writes a label only when its text changes', () => {
+		const root = document.createElement('div');
+		const label = document.createElement('span');
+		label.className = ELAPSED_CLASS;
+		label.dataset.startedAt = '1000';
+		root.appendChild(label);
+		tickElapsed(root, 6000);
+		const text = label.firstChild;
+		assert.ok(text && label.textContent);
+		// Same second: the node stays (a write, even of the same text, would lay the thread out again).
+		tickElapsed(root, 6400);
+		assert.strictEqual(label.firstChild, text);
+		assert.strictEqual(tickElapsed(root, 8000), 1, 'a live counter keeps the chat clock at one second');
+		assert.notStrictEqual(label.firstChild, text);
+		assert.strictEqual(tickElapsed(document.createElement('div'), 8000), 0, 'none: the clock may slow down');
 	});
 });

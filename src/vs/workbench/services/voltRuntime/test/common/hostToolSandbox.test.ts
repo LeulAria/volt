@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
-import { CODE_INTELLIGENCE_TOOLS, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, LANGUAGE_SERVER_TOOL_NAMES } from '../../common/codeIntelligence.js';
+import { CODE_INTELLIGENCE_TOOLS, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, isVoltWorktreePath, LANGUAGE_SERVER_TOOL_NAMES } from '../../common/codeIntelligence.js';
 import { IDE_CAPABILITIES } from '../../common/ide/ideCapabilities.js';
 import { IDE_TOOL_NAMES, IDE_TOOLS } from '../../common/ide/ideTools.js';
 import { JOB_WATCH_TOOL_NAMES, JOB_WATCH_TOOLS } from '../../common/jobs/jobWatch.js';
@@ -14,7 +14,7 @@ import { CAPTURE_TOOL_NAMES, DEVICE_TOOL_NAMES } from '../../common/deviceTools.
 import { DESKTOP_TOOL_NAMES } from '../../common/desktopTools.js';
 import { WORKSPACE_STATUS_TOOL_NAME } from '../../common/harness/workspaceContext.js';
 import { AUTOMATION_TOOL_NAMES, canonicalHostToolName, COMMIT_PLAN_TOOL_NAMES, PULL_REQUEST_TOOL_NAMES, THREAD_TOOL_NAMES, VISUAL_TOOL_NAMES, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
-import { HOST_TOOL_SANDBOX_CLASSES, hostToolSandboxUse, ISandboxPathContext, sandboxBrowserUrlRefusal, sandboxCovers, sandboxReadRefusal, sandboxRefusalMessage, sandboxWriteRefusal } from '../../common/hostToolSandbox.js';
+import { HOST_TOOL_SANDBOX_CLASSES, hostToolSandboxUse, isVoltReadOnlyHostTool, ISandboxPathContext, sandboxBrowserUrlRefusal, sandboxCovers, sandboxReadRefusal, sandboxRefusalMessage, sandboxWriteRefusal } from '../../common/hostToolSandbox.js';
 import { MEMORY_TOOL_NAMES } from '../../common/memory/voltMemory.js';
 import { AGENT_TASK_TOOL_NAMES } from '../../common/orchestration/agentTasks.js';
 import { ORCHESTRA_TOOL_NAMES } from '../../common/orchestration/orchestra.js';
@@ -50,6 +50,50 @@ suite('Volt host tool sandbox classes', () => {
 		assert.deepStrictEqual(unknown, [], 'no stale or misspelled names');
 		assert.strictEqual(hostToolSandboxUse('brand_new_tool', {}), undefined);
 		assert.strictEqual(hostToolSandboxUse('render_html', {}), undefined, 'the gate sees canonical names only');
+	});
+
+	test('the IDE tools reach their provider, which runs programs in the sandbox or asks once; the files they name are reads', () => {
+		// They were refused outright ("not cleared to run from a sandboxed chat"), so a Supervised chat had no tests, debugger, profiler or HTTP client.
+		// Each op is classified (DEV-SBX-1): a test run in the chat's sandbox, reads judged, and debug sessions refused as escapes.
+		assert.deepStrictEqual(hostToolSandboxUse('tests', { op: 'run', targets: ['test/cart.test.ts:12', 'adds tax'] }), { kind: 'sandboxed' });
+		assert.strictEqual(hostToolSandboxUse('debug', { op: 'start', program: 'scripts/slow.mjs' })?.kind, 'escapes');
+		assert.deepStrictEqual(hostToolSandboxUse('ide', { capability: 'http', op: 'send', args: { file: 'requests.http', name: 'login' } }), { kind: 'reads', reads: ['requests.http'] });
+		assert.deepStrictEqual(hostToolSandboxUse('ide', { capability: 'editor', op: 'open', args: { path: '/Users/me/.ssh/id_rsa' } }), { kind: 'reads', reads: ['/Users/me/.ssh/id_rsa'] });
+		assert.deepStrictEqual(hostToolSandboxUse('tasks', { op: 'list' }), { kind: 'safe' });
+	});
+
+	test('a rename writes the chat\'s folder: judged as a write there, not refused as an escape', () => {
+		assert.deepStrictEqual(hostToolSandboxUse('code_action', { op: 'rename', path: 'src/cart.ts', symbol: 'lineTotal', new_name: 'lineAmount' }), { kind: 'writes', reads: ['src/cart.ts'], writes: ['src/cart.ts'] });
+		assert.deepStrictEqual(hostToolSandboxUse('code_action', { op: 'fixes', path: 'src/cart.ts' }), { kind: 'reads', reads: ['src/cart.ts'] });
+	});
+
+	test('only Volt\'s worktree checkouts count as worktrees for language servers, not a project the window has no folder for', () => {
+		assert.strictEqual(isVoltWorktreePath('/Users/me/.volt/worktrees/hotel-1a2b/volt-3c4d/src/a.ts'), true);
+		assert.strictEqual(isVoltWorktreePath('C:\\Users\\me\\.volt\\worktrees\\hotel\\x\\a.ts'), true);
+		assert.strictEqual(isVoltWorktreePath('/private/tmp/vbench-hotel/packages/domain/src/commands/query.ts'), false);
+		assert.strictEqual(isVoltWorktreePath('/Users/me/Desktop/Projects/hotel/src/a.ts'), false);
+	});
+
+	test('read-only host tools are told apart by class, with or without the MCP prefix', () => {
+		for (const name of ['code_nav', 'mcp__volt__code_nav', 'instant_grep', 'find_symbol', 'diagnostics', 'scratch_draw', 'mcp__volt__scratch_read', 'workspace_status']) {
+			assert.strictEqual(isVoltReadOnlyHostTool(name), true, name);
+		}
+		for (const name of ['code_action', 'terminal_start', 'docker_ensure', 'app_open', 'memory_write', 'tests', 'Bash', 'mcp__other__code_nav']) {
+			assert.strictEqual(isVoltReadOnlyHostTool(name), false, name);
+		}
+	});
+
+	test('teams and councils run from a sandboxed chat like delegate_task; a worktree team and machine_run do not', () => {
+		const kind = (name: string, args: Record<string, unknown> = {}) => hostToolSandboxUse(name, args)?.kind;
+		assert.strictEqual(kind('spawn_team', { members: [{ model: 'haiku', count: 3 }] }), 'safe');
+		assert.strictEqual(kind('spawn_team', { isolation: 'worktree' }), 'escapes');
+		assert.strictEqual(kind('spawn_team', { members: [{ model: 'haiku', isolation: 'worktree' }] }), 'escapes');
+		assert.strictEqual(kind('council', { question: 'q' }), 'safe');
+		// Team messages and the board reach other members: judged chat by chat (ORCH-SBX-1), not refused outright.
+		assert.strictEqual(kind('team_send', { to: 'all', message: 'm' }), 'delegates');
+		assert.strictEqual(kind('team_board', { op: 'claim' }), 'reads-other');
+		assert.strictEqual(kind('orchestra_status'), 'safe');
+		assert.strictEqual(kind('machine_run', { op: 'run' }), 'escapes');
 	});
 
 	test('the escape routes are classified as such', () => {

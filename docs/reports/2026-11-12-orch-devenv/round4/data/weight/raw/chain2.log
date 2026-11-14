@@ -1,0 +1,317 @@
+== resume before round 1 2026-11-14T05:01:15Z load 7.97 5.48 6.23
+{"pid":83264,"ms":4114,"load":"9.34 5.80 6.34"}
+{"arm":"before","rep":1,"at":"2026-11-14T05:02:49.428Z","load":"12.74 8.97 7.59","underLoad":false,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9911,"swapTotalMiB":11264,"freePct":61,"pressure":1},"ok":true,"firstWordMs":255,"trace":{"agentSource":"live","agentReadyMs":1,"promptMs":43,"firstTextMs":156}}
+{"arm":"before","rep":2,"at":"2026-11-14T05:03:39.819Z","load":"10.88 9.04 7.69","underLoad":false,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9791,"swapTotalMiB":11264,"freePct":61,"pressure":1},"ok":true,"firstWordMs":220,"trace":{"agentSource":"live","agentReadyMs":1,"promptMs":44,"firstTextMs":126}}
+median firstWordMs 237.5
+== resume after round 1 2026-11-14T05:04:03Z load 12.23 9.46 7.87
+{"pid":19483,"ms":7859,"load":"14.90 10.13 8.13"}
+{"arm":"after","rep":1,"at":"2026-11-14T05:05:28.566Z","load":"13.33 10.71 8.51","underLoad":false,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9783,"swapTotalMiB":11264,"freePct":37,"pressure":2},"ok":true,"firstWordMs":5836,"trace":{"agentSource":"pool","agentReadyMs":3292,"promptMs":3292,"firstTextMs":5714}}
+{"arm":"after","rep":2,"at":"2026-11-14T05:06:27.275Z","load":"13.88 11.87 9.13","underLoad":false,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9783,"swapTotalMiB":11264,"freePct":54,"pressure":1},"ok":true,"firstWordMs":237,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":45,"firstTextMs":148}}
+median firstWordMs 3036.5
+== resume before round 2 2026-11-14T05:06:49Z load 14.31 12.15 9.31
+{"pid":51330,"ms":3790,"load":"14.31 12.15 9.31"}
+{"arm":"before","rep":1,"at":"2026-11-14T05:08:01.791Z","load":"15.07 12.88 9.81","underLoad":true,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9687,"swapTotalMiB":11264,"freePct":60,"pressure":1},"ok":true,"firstWordMs":338,"trace":{"agentSource":"live","agentReadyMs":1,"promptMs":51,"firstTextMs":244}}
+{"arm":"before","rep":2,"at":"2026-11-14T05:09:08.690Z","load":"13.90 13.63 10.36","underLoad":false,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9663,"swapTotalMiB":11264,"freePct":60,"pressure":1},"ok":true,"firstWordMs":241,"trace":{"agentSource":"live","agentReadyMs":1,"promptMs":44,"firstTextMs":150}}
+median firstWordMs 289.5
+== resume after round 2 2026-11-14T05:09:31Z load 12.98 13.46 10.40
+{"pid":91334,"ms":5985,"load":"12.98 13.45 10.41"}
+{"arm":"after","rep":1,"at":"2026-11-14T05:10:42.318Z","load":"13.54 13.73 10.75","underLoad":false,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9663,"swapTotalMiB":11264,"freePct":50,"pressure":1},"ok":true,"firstWordMs":233,"trace":{"agentSource":"pool","agentReadyMs":4,"promptMs":50,"firstTextMs":142}}
+{"arm":"after","rep":2,"at":"2026-11-14T05:11:32.951Z","load":"10.17 12.83 10.59","underLoad":false,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9663,"swapTotalMiB":11264,"freePct":49,"pressure":1},"ok":true,"firstWordMs":241,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":45,"firstTextMs":143}}
+median firstWordMs 237
+== resume before round 3 2026-11-14T05:11:55Z load 12.19 13.11 10.76
+{"pid":20781,"ms":3839,"load":"11.61 12.98 10.72"}
+{"arm":"before","rep":1,"at":"2026-11-14T05:12:57.293Z","load":"12.35 12.91 10.83","underLoad":false,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9647,"swapTotalMiB":11264,"freePct":46,"pressure":2},"ok":true,"firstWordMs":313,"trace":{"agentSource":"live","agentReadyMs":2,"promptMs":52,"firstTextMs":215}}
+{"arm":"before","rep":2,"at":"2026-11-14T05:13:47.873Z","load":"13.50 13.09 11.02","underLoad":false,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9647,"swapTotalMiB":11264,"freePct":47,"pressure":1},"ok":true,"firstWordMs":269,"trace":{"agentSource":"live","agentReadyMs":2,"promptMs":49,"firstTextMs":163}}
+median firstWordMs 291
+== resume after round 3 2026-11-14T05:14:10Z load 11.89 12.78 10.97
+{"pid":54790,"ms":5778,"load":"14.06 13.22 11.13"}
+{"arm":"after","rep":1,"at":"2026-11-14T05:15:25.669Z","load":"13.59 13.61 11.46","underLoad":false,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9639,"swapTotalMiB":11264,"freePct":49,"pressure":2},"ok":true,"firstWordMs":232,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":44,"firstTextMs":139}}
+{"arm":"after","rep":2,"at":"2026-11-14T05:16:16.398Z","load":"15.17 13.87 11.67","underLoad":true,"openWaitS":3,"idleS":40,"mem":{"swapUsedMiB":9639,"swapTotalMiB":11264,"freePct":40,"pressure":2},"ok":true,"firstWordMs":1056,"trace":{"agentSource":"pool","agentReadyMs":36,"promptMs":148,"firstTextMs":973}}
+median firstWordMs 644
+== resumeab done 2026-11-14T05:16:26Z
+== a7 before round 1 2026-11-14T05:16:39Z load 14.63 13.78 11.70
+{"pid":85719,"ms":3725,"load":"13.57 13.57 11.65"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":95897,"ms":7380,"load":"13.90 13.60 11.75"}
+{"arm":"before","test":"A7","at":"2026-11-14T05:21:22.113Z","load":"14.00 13.74 11.90","loadEnd":"13.69 14.21 12.49","ticks":720,"appP95":3068,"agentsP95":993,"totalP95":4016,"agentCountMedian":6,"mem":{"swapUsedMiB":9631,"swapTotalMiB":11264,"freePct":48,"pressure":1},"memEnd":{"swapUsedMiB":9631,"swapTotalMiB":11264,"freePct":47,"pressure":1},"csv":"/Users/leularia/Desktop/VOLT/volt-e4-weight/docs/reports/2026-11-12-orch-devenv/round4/data/weight/raw/a7-before-1794633484736.csv","roles":[["code index",1],["ACP adapter (node)",6],["sandbox watchdog sh",6],["claude CLI",9],["other: security",2],["other: git",3],["main",2],["gpu",1],["network service",1],["renderer",1],["agent server",1],["extension host",1],["node utility (shared process/file watcher/pty)",1],["sandbox helper",2],["log stream (sandbox denials)",1],["plugin host (Memory)",1],["other: bash",1],["other: caffeinate",1]]}
+== a7 after round 1 2026-11-14T05:21:42Z load 12.30 13.83 12.39
+{"pid":42573,"ms":5610,"load":"15.51 14.49 12.65"}
+arena|No branch|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":52958,"ms":3731,"load":"19.39 15.82 13.23"}
+{"arm":"after","test":"A7","at":"2026-11-14T05:26:31.740Z","load":"13.82 14.93 13.05","loadEnd":"13.15 14.97 13.54","ticks":720,"appP95":2913,"agentsP95":989,"totalP95":3878,"agentCountMedian":6,"mem":{"swapUsedMiB":9623,"swapTotalMiB":11264,"freePct":63,"pressure":1},"memEnd":{"swapUsedMiB":9623,"swapTotalMiB":11264,"freePct":56,"pressure":1},"csv":"/Users/leularia/Desktop/VOLT/volt-e4-weight/docs/reports/2026-11-12-orch-devenv/round4/data/weight/raw/a7-after-1794633789244.csv","roles":[["main",2],["gpu",1],["network service",1],["renderer",1],["agent server",1],["extension host",1],["node utility (shared process/file watcher/pty)",1],["sandbox helper",2],["code index",1],["ACP adapter (node)",6],["log stream (sandbox denials)",1],["sandbox watchdog sh",6],["plugin host (Memory)",1],["claude CLI",10],["other: git",3],["other: caffeinate",1]]}
+== a7 before round 2 2026-11-14T05:26:52Z load 11.28 14.42 13.37
+{"pid":88138,"ms":3290,"load":"10.68 14.19 13.30"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":1155,"ms":3685,"load":"16.36 15.43 13.82"}
+{"arm":"before","test":"A7","at":"2026-11-14T05:31:20.306Z","load":"12.44 14.57 13.56","loadEnd":"13.30 13.63 13.31","ticks":720,"appP95":2988,"agentsP95":976,"totalP95":3934,"agentCountMedian":6,"mem":{"swapUsedMiB":9623,"swapTotalMiB":11264,"freePct":49,"pressure":1},"memEnd":{"swapUsedMiB":9623,"swapTotalMiB":11264,"freePct":61,"pressure":1},"csv":"/Users/leularia/Desktop/VOLT/volt-e4-weight/docs/reports/2026-11-12-orch-devenv/round4/data/weight/raw/a7-before-1794634097915.csv","roles":[["main",1],["gpu",1],["network service",1],["renderer",1],["agent server",1],["extension host",1],["node utility (shared process/file watcher/pty)",1],["sandbox helper",2],["log stream (sandbox denials)",1],["plugin host (Memory)",1],["sandbox watchdog sh",6],["other: bash",1],["code index",1],["ACP adapter (node)",6],["claude CLI",9],["other: git",6],["other: caffeinate",1],["other: security",2],["other: ioreg",1]]}
+== a7 after round 2 2026-11-14T05:31:40Z load 12.14 13.32 13.21
+{"pid":48672,"ms":4176,"load":"11.65 13.18 13.16"}
+arena|No branch|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":59293,"ms":5797,"load":"12.13 13.12 13.14"}
+{"arm":"after","test":"A7","at":"2026-11-14T05:36:08.457Z","load":"12.65 13.14 13.14","loadEnd":"23.29 16.84 14.59","ticks":720,"appP95":2896,"agentsP95":952,"totalP95":3812,"agentCountMedian":6,"mem":{"swapUsedMiB":9623,"swapTotalMiB":11264,"freePct":65,"pressure":1},"memEnd":{"swapUsedMiB":6695,"swapTotalMiB":8192,"freePct":60,"pressure":1},"csv":"/Users/leularia/Desktop/VOLT/volt-e4-weight/docs/reports/2026-11-12-orch-devenv/round4/data/weight/raw/a7-after-1794634385675.csv","roles":[["main",2],["gpu",1],["network service",1],["renderer",1],["agent server",1],["extension host",1],["node utility (shared process/file watcher/pty)",1],["sandbox helper",2],["code index",1],["ACP adapter (node)",6],["log stream (sandbox denials)",1],["plugin host (Memory)",1],["sandbox watchdog sh",6],["other: caffeinate",1],["claude CLI",13],["other: security",4],["other: git",13]]}
+== a7block done 2026-11-14T05:36:15Z
+== block before 2026-11-14T05:36:28Z load 19.57 16.41 14.49
+{"pid":3842,"ms":3603,"load":"17.23 16.02 14.38"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":12302,"ms":3707,"load":"12.45 14.96 14.06"}
+{"arm":"before","variant":"launch","app":1520,"agents":127,"total":1647,"processes":16,"cpuApp":2.96,"cpuAgents":0.19,"load":"12.99 15.01 14.21"}
+renderer                                         n=1   491 MiB cpu 0.18%
+main                                             n=1   388 MiB cpu 0.46%
+gpu                                              n=1   203 MiB cpu 0.24%
+agent server                                     n=1   161 MiB cpu 0.44%
+claude CLI                                       n=1   127 MiB cpu 0.19%
+extension host                                   n=1    89 MiB cpu 0.08%
+node utility (shared process/file watcher/pty)   n=1    70 MiB cpu 0.08%
+ACP adapter (node)                               n=1    70 MiB cpu 0%
+code index                                       n=1    41 MiB cpu 0%
+plugin host (Memory)                             n=1    25 MiB cpu 0%
+network service                                  n=1    14 MiB cpu 0%
+log stream (sandbox denials)                     n=1     3 MiB cpu 1.37%
+sandbox helper                                   n=2     2 MiB cpu 0.11%
+sandbox watchdog sh                              n=2     2 MiB cpu 0%
+{"arm":"before","ghostMiB":390.1,"left":8,"before":16,"load":"12.84 14.56 14.09"}
+  160.9 agent server 12437
+  127.2 claude CLI 13522
+   69.9 ACP adapter (node) 13298
+   25.6 plugin host (Memory) 12769
+    2.9 log stream (sandbox denials) 12765
+    1.2 sandbox helper 12727
+    1.2 sandbox watchdog sh 12772
+    1.2 sandbox watchdog sh 13299
+{"pid":56267,"ms":3716,"load":"13.62 14.43 14.07"}
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+thread 6: seeded
+thread 7: seeded
+thread 8: seeded
+thread 9: seeded
+thread 10: seeded
+thread 11: seeded
+thread 12: seeded
+thread 13: seeded
+thread 14: seeded
+thread 15: seeded
+{"arm":"before","variant":"a10-rest-20","app":3359,"agents":2418,"total":5773,"processes":66,"cpuApp":5.56,"cpuAgents":4.24,"load":"17.88 16.41 14.93"}
+claude CLI                                       n=17  2413 MiB cpu 4.24%
+ACP adapter (node)                               n=17  1187 MiB cpu 0.53%
+gpu                                              n=1   607 MiB cpu 1.63%
+renderer                                         n=1   577 MiB cpu 0.76%
+main                                             n=1   399 MiB cpu 0.27%
+agent server                                     n=1   236 MiB cpu 0.4%
+extension host                                   n=1   105 MiB cpu 0.11%
+node utility (shared process/file watcher/pty)   n=1    99 MiB cpu 0.07%
+code index                                       n=1    42 MiB cpu 0%
+other: Electron                                  n=1    39 MiB cpu 0%
+plugin host (Memory)                             n=1    26 MiB cpu 0%
+sandbox watchdog sh                              n=17    21 MiB cpu 0%
+network service                                  n=1    14 MiB cpu 0%
+log stream (sandbox denials)                     n=1     3 MiB cpu 1.43%
+sandbox helper                                   n=2     2 MiB cpu 0.37%
+other: caffeinate                                n=1     2 MiB cpu 0%
+other: ioreg                                     n=1     1 MiB cpu 0%
+stopped
+== end before 2026-11-14T05:43:53Z
+== block after 2026-11-14T05:44:07Z load 12.76 15.16 14.58
+{"pid":99982,"ms":3792,"load":"11.87 14.89 14.49"}
+arena|No branch|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":13371,"ms":3835,"load":"34.27 19.66 16.22"}
+{"arm":"after","variant":"launch","app":1367,"agents":0,"total":1367,"processes":8,"cpuApp":2.16,"cpuAgents":0,"load":"12.55 16.50 15.37"}
+renderer                                         n=1   487 MiB cpu 0.51%
+gpu                                              n=1   427 MiB cpu 1%
+agent server                                     n=1   150 MiB cpu 0.13%
+main                                             n=1   132 MiB cpu 0.39%
+extension host                                   n=1    88 MiB cpu 0.07%
+node utility (shared process/file watcher/pty)   n=1    65 MiB cpu 0.06%
+network service                                  n=1    14 MiB cpu 0%
+sandbox helper                                   n=1     1 MiB cpu 0%
+{"arm":"after","ghostMiB":0,"left":0,"before":8,"load":"10.89 15.29 14.99"}
+{"pid":40807,"ms":6077,"load":"9.88 14.05 14.54"}
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+thread 6: seeded
+thread 7: seeded
+thread 8: seeded
+thread 9: seeded
+thread 10: seeded
+thread 11: seeded
+thread 12: seeded
+thread 13: seeded
+thread 14: seeded
+thread 15: seeded
+{"arm":"after","variant":"a10-rest-20","app":2344,"agents":415,"total":2759,"processes":44,"cpuApp":6.57,"cpuAgents":4.69,"load":"14.64 14.79 14.79"}
+claude CLI                                       n=10  1448 MiB cpu 4.69%
+ACP adapter (node)                               n=10   699 MiB cpu 1.47%
+gpu                                              n=1   605 MiB cpu 1.56%
+renderer                                         n=1   526 MiB cpu 1.45%
+main                                             n=1   399 MiB cpu 0.27%
+agent server                                     n=1   248 MiB cpu 0.42%
+extension host                                   n=1   102 MiB cpu 0.09%
+node utility (shared process/file watcher/pty)   n=1    84 MiB cpu 0.09%
+code index                                       n=1    41 MiB cpu 0%
+other: Electron                                  n=1    40 MiB cpu 0%
+plugin host (Memory)                             n=1    26 MiB cpu 0%
+network service                                  n=1    14 MiB cpu 0%
+sandbox watchdog sh                              n=10    12 MiB cpu 0%
+log stream (sandbox denials)                     n=1     3 MiB cpu 0.94%
+sandbox helper                                   n=2     2 MiB cpu 0.29%
+other: caffeinate                                n=1     2 MiB cpu 0%
+stopped
+== end after 2026-11-14T05:51:02Z
+== block before 2026-11-14T05:51:15Z load 10.64 13.42 14.26
+{"pid":75998,"ms":7036,"load":"10.79 13.35 14.22"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":90130,"ms":3633,"load":"16.73 14.73 14.69"}
+{"arm":"before","variant":"launch","app":1370,"agents":128,"total":1498,"processes":15,"cpuApp":3.45,"cpuAgents":0.09,"load":"13.76 15.07 14.88"}
+renderer                                         n=1   494 MiB cpu 0.04%
+gpu                                              n=1   225 MiB cpu 0.09%
+main                                             n=1   184 MiB cpu 0.25%
+agent server                                     n=1   166 MiB cpu 0.59%
+claude CLI                                       n=1   128 MiB cpu 0.09%
+extension host                                   n=1    95 MiB cpu 0.09%
+node utility (shared process/file watcher/pty)   n=1    85 MiB cpu 0.06%
+ACP adapter (node)                               n=1    69 MiB cpu 0%
+plugin host (Memory)                             n=1    25 MiB cpu 0%
+network service                                  n=1    14 MiB cpu 0%
+log stream (sandbox denials)                     n=1     3 MiB cpu 2.18%
+sandbox helper                                   n=2     2 MiB cpu 0.15%
+sandbox watchdog sh                              n=2     2 MiB cpu 0%
+{"arm":"before","ghostMiB":406.7,"left":8,"before":15,"load":"13.93 15.15 14.95"}
+  177.3 agent server 90200
+  128.1 claude CLI 92232
+   69.3 ACP adapter (node) 92044
+   25.4 plugin host (Memory) 90459
+    2.9 log stream (sandbox denials) 90455
+    1.2 sandbox helper 90446
+    1.2 sandbox watchdog sh 90465
+    1.2 sandbox watchdog sh 92045
+{"pid":46225,"ms":8802,"load":"17.73 16.20 15.37"}
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+thread 6: seeded
+thread 7: seeded
+thread 8: seeded
+thread 9: seeded
+thread 10: seeded
+thread 11: seeded
+thread 12: seeded
+thread 13: seeded
+thread 14: seeded
+thread 15: seeded
+{"arm":"before","variant":"a10-rest-20","app":3300,"agents":2472,"total":5744,"processes":65,"cpuApp":5.31,"cpuAgents":4.82,"load":"27.42 19.96 16.94"}
+claude CLI                                       n=17  2472 MiB cpu 4.84%
+ACP adapter (node)                               n=17  1195 MiB cpu 0.71%
+gpu                                              n=1   635 MiB cpu 1.56%
+renderer                                         n=1   530 MiB cpu 0.71%
+main                                             n=1   377 MiB cpu 0.33%
+agent server                                     n=1   240 MiB cpu 0.39%
+extension host                                   n=1    93 MiB cpu 0.01%
+node utility (shared process/file watcher/pty)   n=1    74 MiB cpu 0.02%
+code index                                       n=1    41 MiB cpu 0%
+other: Electron                                  n=1    40 MiB cpu 0%
+plugin host (Memory)                             n=1    26 MiB cpu 0%
+sandbox watchdog sh                              n=17    21 MiB cpu 0%
+network service                                  n=1    14 MiB cpu 0%
+log stream (sandbox denials)                     n=1     3 MiB cpu 1.24%
+sandbox helper                                   n=2     2 MiB cpu 0.35%
+other: caffeinate                                n=1     2 MiB cpu 0%
+stopped
+== end before 2026-11-14T06:01:27Z
+== block after 2026-11-14T06:01:40Z load 16.10 17.65 16.31
+{"pid":91806,"ms":7615,"load":"16.21 17.60 16.32"}
+arena|No branch|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":7593,"ms":3883,"load":"17.10 17.72 16.44"}
+{"arm":"after","variant":"launch","app":1141,"agents":0,"total":1141,"processes":8,"cpuApp":0.66,"cpuAgents":0,"load":"11.95 15.68 15.76"}
+renderer                                         n=1   489 MiB cpu 0.05%
+gpu                                              n=1   202 MiB cpu 0.05%
+agent server                                     n=1   155 MiB cpu 0.09%
+main                                             n=1   129 MiB cpu 0.33%
+extension host                                   n=1    85 MiB cpu 0.07%
+node utility (shared process/file watcher/pty)   n=1    66 MiB cpu 0.07%
+network service                                  n=1    14 MiB cpu 0%
+sandbox helper                                   n=1     1 MiB cpu 0%
+{"arm":"after","ghostMiB":0,"left":0,"before":8,"load":"13.21 15.42 15.66"}
+{"pid":44924,"ms":3740,"load":"12.50 14.77 15.40"}
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+thread 6: seeded
+thread 7: seeded
+thread 8: seeded
+thread 9: seeded
+thread 10: seeded
+thread 11: seeded
+thread 12: seeded
+thread 13: seeded
+thread 14: seeded
+thread 15: seeded
+{"arm":"after","variant":"a10-rest-20","app":2310,"agents":418,"total":2728,"processes":42,"cpuApp":6.31,"cpuAgents":3.94,"load":"13.00 14.29 15.15"}
+claude CLI                                       n=9  1277 MiB cpu 3.94%
+ACP adapter (node)                               n=9   629 MiB cpu 1.05%
+gpu                                              n=1   612 MiB cpu 1.56%
+renderer                                         n=1   515 MiB cpu 1.45%
+main                                             n=1   387 MiB cpu 0.34%
+agent server                                     n=1   237 MiB cpu 0.35%
+extension host                                   n=1    97 MiB cpu 0.08%
+node utility (shared process/file watcher/pty)   n=1    93 MiB cpu 0.09%
+code index                                       n=1    42 MiB cpu 0%
+other: Electron                                  n=1    40 MiB cpu 0%
+plugin host (Memory)                             n=1    26 MiB cpu 0%
+network service                                  n=1    14 MiB cpu 0%
+sandbox watchdog sh                              n=10    12 MiB cpu 0%
+log stream (sandbox denials)                     n=1     3 MiB cpu 1.16%
+sandbox helper                                   n=2     2 MiB cpu 0.22%
+other: caffeinate                                n=1     2 MiB cpu 0%
+stopped
+== end after 2026-11-14T06:08:49Z
+== chain2 done 2026-11-14T06:08:49Z

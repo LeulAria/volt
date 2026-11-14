@@ -1,0 +1,8 @@
+mcp__volt__find_symbol | mcp__volt__find_symbol
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__code_nav | mcp__volt__code_nav
+mcp__volt__code_nav | mcp__volt__code_nav
+Terminal | sed -n 100,115p packages/api/src/routers/bookings/index.ts; echo ---; sed -n 1,12p packages/api/src/routers/bookings/index.ts | grep -n import
+mcp__volt__instant_grep | mcp__volt__instant_grep
+mcp__volt__code_nav | mcp__volt__code_nav
+Terminal | sed -n 94,96p packages/validations/src/bookings/validations.ts; echo ---; sed -n 200,205p packages/api/src/routers/bookings/validations.ts; echo ---; sed -n 8,12p apps/web/src/routes/journey-steps/_journey_layout/booking/_journey/_hooks/useBookingForm.tsx; echo ---; sed -n 12,14p apps/web/src/features/bookings/journey/useFormState.tsx; echo ---; sed -n 14,16p apps/web/src/features/bookings/journey/BookingJourney.tsx; echo ---; sed -n 20,22p apps/web/src/routes/journey-steps/_journey_layout/booking/_journey.tsx; echo ---; sed -n 1,9p packages/api/src/routers/bookings/validations.ts

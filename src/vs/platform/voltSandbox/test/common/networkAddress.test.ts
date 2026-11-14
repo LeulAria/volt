@@ -42,6 +42,8 @@ function ipv4Encodings(b: readonly number[], gen: Gen): { readonly address: stri
 	const address = [
 		dotted, `${dotted}.`,
 		upper(`::ffff:${dotted}`), upper(`::ffff:${h1}:${h2}`), `0:0:0:0:0:ffff:${dotted}`, `[::ffff:${dotted}]`,
+		// SIIT's IPv4-translated form (`::ffff:0:0/96`, RFC 6145): a translator carries it to the IPv4 address.
+		upper(`::ffff:0:${dotted}`), upper(`::ffff:0:${h1}:${h2}`), `[0:0:0:0:ffff:0:${dotted}]`,
 		upper(`64:ff9b::${dotted}`), upper(`64:ff9b::${h1}:${h2}`), `0064:ff9b:0000:0000:0000:0000:${h1}:${h2}`,
 		...local64,
 		upper(`2002:${h1}:${h2}::`), `2002:${h1}:${h2}:${gen.int(0xffff).toString(16)}::${gen.int(0xffff).toString(16)}`,

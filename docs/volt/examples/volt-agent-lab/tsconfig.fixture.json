@@ -1,0 +1,11 @@
+{
+	// The TEST build: the published build plus src/testFixture (mock misbehavior). Never publish it.
+	"extends": "./tsconfig.json",
+	"files": [
+		"src/extension.ts",
+		"src/lab.ts",
+		"src/testFixture/fixture.ts",
+		"../../../../src/vscode-dts/vscode.d.ts",
+		"../../../../apps/volt-extension-api/vscode.proposed.volt.d.ts"
+	]
+}

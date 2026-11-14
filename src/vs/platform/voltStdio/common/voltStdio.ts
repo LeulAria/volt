@@ -177,6 +177,8 @@ export interface IVoltSandboxEvent {
 	readonly id: string;
 	readonly denial?: ISandboxDenial;
 	readonly warning?: string;
+	/** A partial sandbox dimension the user can act on: said once, quietly, with what to do about it. */
+	readonly note?: { readonly title: string; readonly detail: string };
 	/**
 	 * A sandboxed host crashed and the supervisor restarts it (`restarting`), or the new instance runs
 	 * (`restarted`): what the old instance was asked is lost, and a protocol must start over.
@@ -236,6 +238,8 @@ export interface IVoltExecFileRequest {
 	readonly timeoutMs: number;
 	/** Output beyond this many bytes per stream fails the call (default 1 MB). */
 	readonly maxBytes?: number;
+	/** As for {@link IVoltExecRequest.sandbox}. */
+	readonly sandbox?: IVoltSandboxRequest;
 }
 
 export interface IVoltExecFileResult {
@@ -314,6 +318,12 @@ export interface IVoltStdioService {
 	readonly onDidChangeManagedPolicy?: Event<IAdminPolicy>;
 	/** Lets a sandboxed process (network off) reach more hosts, without a restart. */
 	allowSandboxDomains?(id: string, domains: readonly string[]): Promise<void>;
+	/**
+	 * Reads what the OS refused sandboxed spawn `id` so far; the refusals arrive on {@link onSandboxEvent}.
+	 * The kernel's refusals are read on demand, not watched: ask when one is likely (a command failed),
+	 * with `since` (epoch ms) when the failed work started: the read's cost grows with its window.
+	 */
+	checkSandboxDenials?(id: string, since?: number): Promise<void>;
 	/**
 	 * Whether the sandbox of spawn `id` lets it read or write `path`. For file access the agent
 	 * routes through Volt (ACP `fs/*`), which happens outside the agent's process. True when the

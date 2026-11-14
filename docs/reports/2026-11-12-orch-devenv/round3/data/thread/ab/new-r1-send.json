@@ -1,0 +1,39 @@
+{
+ "chat": "Long thread 75k|Turn 1: keep reading the modules",
+ "runs": 2,
+ "load": "11.75 43.32 118.72",
+ "echoMs": {
+  "n": 2,
+  "median": 23.5,
+  "min": 23,
+  "max": 24
+ },
+ "firstWordMs": {
+  "n": 2,
+  "median": 2904,
+  "min": 2242,
+  "max": 3566
+ },
+ "results": [
+  {
+   "echoMs": 23,
+   "firstWordMs": 3566,
+   "firstText": "OK",
+   "longTasksToEcho": [],
+   "longTaskMs": 860,
+   "maxGap": 282,
+   "loadBefore": 9.43,
+   "loadAfter": "9.43 44.51 120.47"
+  },
+  {
+   "echoMs": 24,
+   "firstWordMs": 2242,
+   "firstText": "OK",
+   "longTasksToEcho": [],
+   "longTaskMs": 72,
+   "maxGap": 113,
+   "loadBefore": 11.2,
+   "loadAfter": "11.75 43.32 118.72"
+  }
+ ]
+}

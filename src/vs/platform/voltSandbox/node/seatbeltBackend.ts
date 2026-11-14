@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ChildProcess, execFile, spawn } from 'child_process';
+import { randomBytes } from 'crypto';
 import { existsSync, promises as fs } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { promisify } from 'util';
@@ -19,6 +20,16 @@ import { ISandboxBackend, ISandboxEvidence, ISandboxLaunchOptions, ISandboxLaunc
 import { binaryDigest, osBuild, ProbeCache } from './sandboxProbeCache.js';
 
 const execFileAsync = promisify(execFile);
+/** A marker the denial query's predicate (`VOLTSBX-`) lets through, but no denial line ever carries. */
+const FLUSH_MARKER = `${SEATBELT_TAG_PREFIX}flush-`;
+
+/**
+ * The kernel's refusals (pid 0, sent by Sandbox.kext) and Volt's own flush markers (written by
+ * `logger`). Narrowed by sender and process before any message text is searched: a text search of
+ * every line of the unified log cost about 4 % of a core on a busy Mac as a stream (round 3,
+ * 2026-11-13). Read on demand with `log show` ({@link SeatbeltDenialReader}).
+ */
+export const SEATBELT_DENIAL_PREDICATE = `(processID == 0 AND sender == "Sandbox" AND eventMessage CONTAINS "${SEATBELT_TAG_PREFIX}") OR (process == "logger" AND eventMessage CONTAINS "${FLUSH_MARKER}")`;
 
 /** The watchdog: when Volt's end of its stdin closes (Volt exited or crashed), it kills the run's process group. */
 const WATCHDOG = 'read _ ; kill -KILL -- "-$1" 2>/dev/null';
@@ -30,6 +41,24 @@ const WITHHELD_GO_MS = 750;
 export const FOOTPRINT_POLL_MS = 1_000;
 
 export const SANDBOX_HELPER_ID = 'volt-sandbox-helper';
+
+export interface ISeatbeltTreeStats {
+	readonly members: number;
+	readonly footprint: number;
+	readonly exceeded: boolean;
+	readonly peak: number;
+	/** CPU ms of the live members; absent from a helper built before round 5. */
+	readonly cpuMs?: number;
+}
+
+/** The helper's `stats` answer: `<members> <footprint> <exceeded> <peak> [<cpu ms>]`. */
+export function parseStatsAnswer(answer: string): ISeatbeltTreeStats {
+	const fields = answer.split(' ').map(Number);
+	if ((fields.length !== 4 && fields.length !== 5) || !fields.every(Number.isFinite)) {
+		throw new Error('bad stats answer');
+	}
+	return { members: fields[0], footprint: fields[1], exceeded: fields[2] === 1, peak: fields[3], ...(fields.length === 5 ? { cpuMs: fields[4] } : {}) };
+}
 
 /**
  * TCC-protected folders. A disclaimed process is its own responsible process and has no access
@@ -58,8 +87,6 @@ export class SeatbeltBackend implements ISandboxBackend {
 
 	readonly id = 'seatbelt' as const;
 	private readonly cache = new ProbeCache<ISandboxBackendCapabilities>(capabilities => !capabilities.available);
-	private monitor: ChildProcess | undefined;
-	private readonly listeners = new Map<string, ISandboxLaunchOptions['onDenial']>();
 	private attestor: SeatbeltAttestor | undefined;
 	private macosVersion: Promise<string> | undefined;
 	private helperPath: Promise<string | undefined> | undefined;
@@ -232,19 +259,26 @@ export class SeatbeltBackend implements ISandboxBackend {
 		let pgid: number | undefined;
 		let tracked: number | undefined;
 		let poll: ReturnType<typeof setInterval> | undefined;
+		/** The helper checks the limits every second itself and calls back only when one is crossed. */
+		let watching = false;
 		const memoryLimit = policy.limits.memoryMB;
 		const stopPolling = () => {
 			if (poll) {
 				clearInterval(poll);
 				poll = undefined;
 			}
+			if (watching && tracked !== undefined) {
+				attestor.unwatch(tracked);
+			}
+			watching = false;
 		};
 		let reported = false;
-		// F.8 on macOS: the tree's footprint and size, measured from outside every second; the fork
-		// watchdog in the helper kills a run that passes its process limit at once and says so here.
+		// F.8 on macOS: the tree's footprint and size, measured from outside every second (by the helper; by a
+		// poll here with a helper that cannot watch); the fork watchdog in the helper kills a run that passes its
+		// process limit at once and says so here.
 		const measure = async (root: number, final = false) => {
 			const stats = await attestor.stats(root).catch(() => undefined);
-			if (!stats || reported || (!poll && !final)) {
+			if (!stats || reported || (!poll && !watching && !final)) {
 				return;
 			}
 			let violation: ISandboxResourceViolation | undefined;
@@ -265,12 +299,17 @@ export class SeatbeltBackend implements ISandboxBackend {
 			if (result === undefined) {
 				tracked = pid;
 				if (processLimit !== undefined || memoryLimit !== undefined) {
-					poll = setInterval(() => void measure(pid), FOOTPRINT_POLL_MS);
+					// A timer per limited run here woke Volt every second for as long as the run lived (a plugin host:
+					// all session); the helper's own check costs a few syscalls a second and wakes Volt only when needed.
+					watching = await attestor.watch(pid, memoryLimit === undefined ? undefined : memoryLimit * 1024 * 1024, () => void measure(pid)).then(() => true, () => false);
+					if (!watching) {
+						poll = setInterval(() => void measure(pid), FOOTPRINT_POLL_MS);
+					}
 				}
 			}
 			const footprint: ISandboxLayerState = memoryLimit === undefined
 				? { active: false, detail: 'the run has no memory limit' }
-				: result === undefined ? { active: true, detail: `physical footprint polled every ${FOOTPRINT_POLL_MS / 1000} s against ${memoryLimit} MB` } : { active: false, detail: `the run could not be tracked: ${result}` };
+				: result === undefined ? { active: true, detail: `physical footprint ${watching ? 'checked by the sandbox helper' : 'polled'} every ${FOOTPRINT_POLL_MS / 1000} s against ${memoryLimit} MB` } : { active: false, detail: `the run could not be tracked: ${result}` };
 			return {
 				processTracking: result === undefined
 					? { active: true, detail: `kqueue fork/exit tracking from pid ${pid}, responsible-process sweep${processLimit !== undefined ? `, fork watchdog at ${processLimit} processes` : ''}` }
@@ -288,6 +327,7 @@ export class SeatbeltBackend implements ISandboxBackend {
 			extraStdio: ['pipe', 'pipe'],
 			extraStdioDirections: ['out', 'in'],
 			...(disclaim ? {} : { unenforced: ['platform.tcc'] satisfies SandboxDimension[] }),
+			...(listen ? { flushDenials: (timeoutMs: number, from?: number) => this.flush(timeoutMs, from) } : {}),
 			confirm: async child => {
 				pgid = child.pid;
 				if (pgid) {
@@ -300,6 +340,11 @@ export class SeatbeltBackend implements ISandboxBackend {
 					version: `macOS ${await this.version()} sandbox-exec, ${helper}`,
 				});
 				return result.ok ? result : { ok: false, error: redactSandboxText(result.error, policy.home) };
+			},
+			// The helper's kqueue-tracked tree: CPU, footprint and members in one request, no `ps` spawn.
+			usage: async () => {
+				const stats = tracked !== undefined ? await attestor.stats(tracked).catch(() => undefined) : undefined;
+				return stats?.cpuMs !== undefined ? { cpuMs: stats.cpuMs, memoryBytes: stats.footprint, processes: stats.members } : undefined;
 			},
 			terminate: async child => {
 				stopPolling();
@@ -338,50 +383,202 @@ export class SeatbeltBackend implements ISandboxBackend {
 	// --- denials from the kernel log ------------------------------------------------------------
 
 	private listen(tag: string, onDenial: ISandboxLaunchOptions['onDenial']): void {
-		this.listeners.set(tag, onDenial);
-		if (this.monitor) {
-			return;
-		}
-		const child = spawn('/usr/bin/log', ['stream', '--style', 'ndjson', '--predicate', `eventMessage CONTAINS "${SEATBELT_TAG_PREFIX}"`], { stdio: ['ignore', 'pipe', 'ignore'] });
-		this.monitor = child;
-		let buffer = '';
-		child.stdout?.setEncoding('utf8');
-		child.stdout?.on('data', (data: string) => {
-			buffer += data;
-			const lines = buffer.split('\n');
-			buffer = lines.pop() ?? '';
-			for (const line of lines) {
-				const violation = parseSeatbeltLogLine(line);
-				const listener = violation && this.listeners.get(violation.tag);
-				const kind = violation && denialKindForOperation(violation.operation);
-				if (violation && listener && kind) {
-					listener({ kind: kind === 'launch' ? 'launch' : kind, target: violation.target, source: 'os', process: violation.process });
-				}
-			}
-		});
-		child.on('error', () => undefined);
-		child.on('close', () => {
-			if (this.monitor === child) {
-				this.monitor = undefined;
-			}
-		});
+		this.denials.listen(tag, onDenial);
 	}
 
+	/**
+	 * Every denial logged before now has been delivered (or `timeoutMs` passed). Read on demand
+	 * from the unified log (`log show`), never by a resident `log stream`: that one cost 0.9-2.1 %
+	 * of a core for as long as any sandboxed process lived (rounds 4-5), the largest idle cost.
+	 * Callers ask when a refusal is likely: a one-shot run at its exit, an agent's command that
+	 * failed, a host that crashed.
+	 */
+	private flush(timeoutMs: number, from?: number): Promise<void> {
+		return this.denials.check(timeoutMs, from);
+	}
+
+	private readonly denials = new SeatbeltDenialReader();
+
 	private unlisten(tag: string): void {
+		this.denials.unlisten(tag);
+	}
+
+	dispose(): void {
+		this.denials.dispose();
+		this.attestor?.dispose();
+		this.attestor = undefined;
+	}
+}
+
+/** One `log show` (or a fake in tests): the ndjson lines it printed, or undefined when it failed. */
+export type SeatbeltLogQuery = (startLocal: string, predicate: string) => Promise<string | undefined>;
+
+const LOG_SHOW_TIMEOUT_MS = 20_000;
+/** How far back a query reaches before a listener's last checked moment (clock skew, the log's own lag). */
+const QUERY_OVERLAP_MS = 2_000;
+/** Lines already delivered, so overlapping windows never report one refusal twice. */
+const SEEN_LIMIT = 4_000;
+/** Retries while Volt's marker is not in the datastore yet (the log's own flush lags under load). */
+const MARKER_RETRY_MS = 250;
+/** The longest window one query reads (a 10-minute window cost about 3 s of CPU here). */
+const MAX_LOOKBACK_MS = 15 * 60_000;
+
+/** `log show --start` takes local wall-clock time to the second. */
+export function logShowStart(ms: number): string {
+	const d = new Date(ms);
+	const two = (n: number) => String(n).padStart(2, '0');
+	return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+}
+
+const defaultLogQuery: SeatbeltLogQuery = (startLocal, predicate) => new Promise(resolve => {
+	execFile('/usr/bin/log', ['show', '--style', 'ndjson', '--start', startLocal, '--predicate', predicate], { timeout: LOG_SHOW_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) => resolve(err ? undefined : stdout));
+});
+
+const defaultMarkerWriter = (marker: string) => new Promise<void>(resolve => execFile('/usr/bin/logger', [marker], () => resolve()));
+
+/**
+ * The kernel's refusals of Volt's sandboxes, read from the unified log when someone asks. One
+ * query serves every listening run: it covers the earliest moment any of them has not been
+ * checked for. Volt writes a marker (`logger`) first and the query must see it, so every refusal
+ * logged before the call is in the answer (the datastore lags the kernel under load).
+ *
+ * Only the kernel's own lines (pid 0, Sandbox.kext) become denials: a sandboxed process knows its
+ * tag and may write to the log (`logger`), so a line it forged would otherwise become a "Blocked"
+ * card whose "Allow Folder" widens its own sandbox (`parseSeatbeltLogLine`).
+ */
+export class SeatbeltDenialReader {
+
+	private readonly listeners = new Map<string, { readonly onDenial: ISandboxLaunchOptions['onDenial']; since: number }>();
+	private readonly seen = new Set<string>();
+	/** The query running now, and the one queued behind it for callers who came while it ran. */
+	private running: Promise<void> | undefined;
+	private queued: Promise<void> | undefined;
+	private disposed = false;
+
+	constructor(
+		private readonly query: SeatbeltLogQuery = defaultLogQuery,
+		private readonly writeMarker: (marker: string) => Promise<void> = defaultMarkerWriter,
+		private readonly now: () => number = Date.now,
+	) { }
+
+	get listening(): number {
+		return this.listeners.size;
+	}
+
+	listen(tag: string, onDenial: ISandboxLaunchOptions['onDenial']): void {
+		// From a little before the launch: the run's first refusal may come within its first second.
+		this.listeners.set(tag, { onDenial, since: this.now() - QUERY_OVERLAP_MS });
+	}
+
+	unlisten(tag: string): void {
 		this.listeners.delete(tag);
-		if (!this.listeners.size && this.monitor) {
-			const monitor = this.monitor;
-			this.monitor = undefined;
-			monitor.kill();
+	}
+
+	/**
+	 * Resolves once every refusal logged before this call (since `from`, else since each run's last
+	 * read) reached its listener, or after `timeoutMs`. The query's cost grows with its window (here
+	 * 10 s of log: 0.5 s CPU; an hour: 12 s), so callers pass when the failed work started, and no
+	 * window reaches back more than {@link MAX_LOOKBACK_MS}.
+	 */
+	check(timeoutMs: number, from?: number): Promise<void> {
+		if (!this.listeners.size || this.disposed) {
+			return Promise.resolve();
+		}
+		const wanted = from ?? -Infinity;
+		let next: Promise<void>;
+		if (this.running) {
+			// A query already under way may have read the log before this call: wait for a fresh one.
+			this.queuedFrom = Math.min(this.queuedFrom ?? Infinity, wanted);
+			next = this.queued ??= this.running.then(() => {
+				const queuedFrom = this.queuedFrom;
+				this.queued = undefined;
+				this.queuedFrom = undefined;
+				return this.run(queuedFrom);
+			});
+		} else {
+			next = this.run(wanted);
+		}
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		return Promise.race([next, new Promise<void>(resolve => { timer = setTimeout(resolve, timeoutMs); })]).finally(() => clearTimeout(timer));
+	}
+
+	private queuedFrom: number | undefined;
+
+	private run(from: number | undefined): Promise<void> {
+		const run = this.read(from ?? -Infinity).catch(() => undefined).finally(() => {
+			if (this.running === run) {
+				this.running = undefined;
+			}
+		});
+		this.running = run;
+		return run;
+	}
+
+	private async read(wanted: number): Promise<void> {
+		if (!this.listeners.size || this.disposed) {
+			return;
+		}
+		const asked = this.now();
+		// No run has refusals from before it started, nor unread ones from before its last read.
+		const from = Math.max(wanted, Math.min(...[...this.listeners.values()].map(l => l.since)), asked - MAX_LOOKBACK_MS);
+		const marker = `${FLUSH_MARKER}${randomBytes(8).toString('hex')}`;
+		await this.writeMarker(marker);
+		let output: string | undefined;
+		for (let attempt = 0; attempt < 8 && !this.disposed; attempt++) {
+			output = await this.query(logShowStart(from - QUERY_OVERLAP_MS), SEATBELT_DENIAL_PREDICATE);
+			if (output === undefined || output.includes(marker)) {
+				break;
+			}
+			await new Promise(resolve => setTimeout(resolve, MARKER_RETRY_MS));
+		}
+		if (output === undefined || this.disposed) {
+			return;
+		}
+		for (const line of output.split('\n')) {
+			if (!line.includes(SEATBELT_TAG_PREFIX) || line.includes(FLUSH_MARKER)) {
+				continue;
+			}
+			const violation = parseSeatbeltLogLine(line);
+			const listener = violation && this.listeners.get(violation.tag);
+			const kind = violation && denialKindForOperation(violation.operation);
+			if (!violation || !listener || !kind) {
+				continue;
+			}
+			const key = seenKey(line);
+			if (this.seen.has(key)) {
+				continue;
+			}
+			this.seen.add(key);
+			if (this.seen.size > SEEN_LIMIT) {
+				this.seen.delete(this.seen.values().next().value!);
+			}
+			listener.onDenial({ kind: kind === 'launch' ? 'launch' : kind, target: violation.target, source: 'os', process: violation.process });
+		}
+		if (output.includes(marker)) {
+			// Everything from `from` up to the marker is read: a run with nothing unread before `from`
+			// starts its next query here (minus the overlap).
+			for (const listener of this.listeners.values()) {
+				if (Math.max(listener.since, asked - MAX_LOOKBACK_MS) >= from) {
+					listener.since = Math.max(listener.since, asked);
+				}
+			}
 		}
 	}
 
 	dispose(): void {
-		this.monitor?.kill();
-		this.monitor = undefined;
+		this.disposed = true;
 		this.listeners.clear();
-		this.attestor?.dispose();
-		this.attestor = undefined;
+		this.seen.clear();
+	}
+}
+
+/** One log line's identity: the kernel's timestamp and its text (two refusals in one microsecond are one line). */
+function seenKey(line: string): string {
+	try {
+		const parsed = JSON.parse(line) as { machTimestamp?: unknown; timestamp?: unknown; eventMessage?: unknown };
+		return `${parsed.machTimestamp ?? parsed.timestamp ?? ''}|${parsed.eventMessage ?? ''}`;
+	} catch {
+		return line;
 	}
 }
 
@@ -547,6 +744,8 @@ class SeatbeltAttestor {
 	private buffer = '';
 	private sequence = 0;
 	private readonly pending = new Map<string, (value: string | Error) => void>();
+	/** Watched runs by root pid: called when the helper says one is over a limit. */
+	private readonly watchers = new Map<number, () => void>();
 
 	constructor(private readonly helper: string) { }
 
@@ -595,13 +794,27 @@ class SeatbeltAttestor {
 		await this.answer(`track\t${pid}\t${cap === undefined ? '-' : Math.max(1, Math.floor(cap))}`);
 	}
 
-	/** Live members, their summed physical footprint in bytes, and whether the fork watchdog fired. */
-	async stats(pid: number): Promise<{ readonly members: number; readonly footprint: number; readonly exceeded: boolean; readonly peak: number }> {
-		const fields = (await this.answer(`stats\t${pid}\t-`)).split(' ').map(Number);
-		if (fields.length !== 4 || !fields.every(Number.isFinite)) {
-			throw new Error('bad stats answer');
+	/** Live members, their summed physical footprint in bytes, whether the fork watchdog fired, and their CPU time. */
+	async stats(pid: number): Promise<ISeatbeltTreeStats> {
+		return parseStatsAnswer(await this.answer(`stats\t${pid}\t-`));
+	}
+
+	/**
+	 * The helper checks the run every second against `memoryBytes` and the process cap given to {@link track},
+	 * and `onOver` runs (each second) while it is over one. Rejects with a helper that cannot watch.
+	 */
+	async watch(pid: number, memoryBytes: number | undefined, onOver: () => void): Promise<void> {
+		this.watchers.set(pid, onOver);
+		try {
+			await this.answer(`watch\t${pid}\t${memoryBytes === undefined ? '-' : Math.max(1, Math.floor(memoryBytes))}`);
+		} catch (err) {
+			this.watchers.delete(pid);
+			throw err;
 		}
-		return { members: fields[0], footprint: fields[1], exceeded: fields[2] === 1, peak: fields[3] };
+	}
+
+	unwatch(pid: number): void {
+		this.watchers.delete(pid);
 	}
 
 	/** SIGKILLs every member of the run until none is left; resolves with how many there were. */
@@ -610,6 +823,7 @@ class SeatbeltAttestor {
 	}
 
 	async untrack(pid: number): Promise<void> {
+		this.watchers.delete(pid);
 		await this.answer(`untrack\t${pid}\t-`);
 	}
 
@@ -668,6 +882,11 @@ class SeatbeltAttestor {
 			const lines = this.buffer.split('\n');
 			this.buffer = lines.pop() ?? '';
 			for (const line of lines) {
+				if (line.startsWith('!\t')) {
+					// A watched run is over a limit (`watch`).
+					this.watchers.get(Number(line.split('\t')[1]))?.();
+					continue;
+				}
 				const tab = line.indexOf('\t');
 				const answer = tab > 0 ? this.pending.get(line.slice(0, tab)) : undefined;
 				if (answer) {

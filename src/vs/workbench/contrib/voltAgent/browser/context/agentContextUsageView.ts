@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow, runWhenWindowIdle } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { disposableTimeout } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
@@ -27,6 +27,7 @@ import {
 	formatContextPercent,
 	formatContextTokens,
 	formatContextWindowLabel,
+	hasManyUncountedMessages,
 	IContextOverhead,
 	IContextUsageInput,
 	IContextUsageSnapshot,
@@ -37,6 +38,11 @@ import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { formatCost } from '../usage/agentUsageFormat.js';
 import { buildSessionUsage, ISessionUsageMessage, ISessionUsageModelRef, ISessionUsageOptions, ISessionUsageSummary, sessionModelIds } from './agentSessionUsage.js';
 import { AgentSessionUsagePanel, createSessionUsageIcon } from './agentSessionUsagePanel.js';
+
+/** A refresh that would count this many messages never counted before waits for the window to be idle. */
+const COUNT_NOW_MAX = 200;
+/** It waits at most this long. */
+const COUNT_LATER_TIMEOUT_MS = 250;
 
 const RING_RADIUS = 7.25;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -118,6 +124,8 @@ export class AgentContextUsageView extends Disposable {
 	/** List prices by model id, filled from the usage service; null when the price is unknown. */
 	private readonly rates = new Map<string, IVoltTokenRates | null>();
 	private readonly ratesPending = new Set<string>();
+	/** A count of a just-opened chat waiting for the window to be idle (see {@link refreshNow}). */
+	private readonly countLater = this._register(new MutableDisposable());
 
 	constructor(
 		private readonly host: IAgentContextUsageHost,
@@ -202,15 +210,35 @@ export class AgentContextUsageView extends Disposable {
 	}
 
 	refresh(): void {
-		const hasChat = this.host.getUsageInput().messages.length > 0;
+		this.refreshNow(false);
+	}
+
+	/**
+	 * `countNow` false: a chat whose messages were mostly never counted (one just opened) is counted once the window
+	 * is idle, after its first frame; the meter shows nothing of the last chat meanwhile.
+	 */
+	private refreshNow(countNow: boolean): void {
+		const messages = this.host.getUsageInput().messages;
+		const hasChat = messages.length > 0;
 		this.contextButton.hidden = !hasChat;
 		this.contextButton.classList.toggle('empty', !hasChat);
 		this.refreshSession(hasChat);
 		if (!hasChat) {
+			this.countLater.clear();
+			this.contextButton.classList.remove('counting');
 			this.hidePanel();
 			this.host.onDidRefresh?.(0);
 			return;
 		}
+		if (!countNow && (this.countLater.value || hasManyUncountedMessages(messages, COUNT_NOW_MAX))) {
+			if (!this.countLater.value) {
+				this.contextButton.classList.add('counting');
+				this.countLater.value = runWhenWindowIdle(getWindow(this.contextButton), () => this.refreshNow(true), COUNT_LATER_TIMEOUT_MS);
+			}
+			return;
+		}
+		this.countLater.clear();
+		this.contextButton.classList.remove('counting');
 		const snapshot = this.snapshot();
 		const percent = formatContextPercent(snapshot.percent);
 		const used = formatContextTokens(snapshot.used);

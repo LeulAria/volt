@@ -345,7 +345,15 @@ export class AgentLineageDock extends Disposable {
 				return;
 			}
 			const rootId = orchestrator.getThread(this.sessionId)?.rootId;
-			if (change.threads.some(id => id === this.sessionId || orchestrator.getThread(id)?.rootId === rootId)) {
+			const inTree = (id: string | undefined) => !!id && (id === this.sessionId || orchestrator.getThread(id)?.rootId === rootId);
+			// Task changes too: a task that settles names no thread (the agent server's task changes), and
+			// it ends before its chat's thread settles, so the "N running" heading kept a finished subagent
+			// for up to 2 s after the transcript showed it done.
+			const taskInTree = (taskId: string) => {
+				const task = orchestrator.getTask(taskId);
+				return (rootId !== undefined && task?.rootId === rootId) || inTree(task?.parentId);
+			};
+			if (change.threads.some(inTree) || change.tasks.some(taskInTree)) {
 				this.render(false);
 			}
 		}));

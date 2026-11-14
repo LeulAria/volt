@@ -20,7 +20,7 @@ import { HOST_MCP_TOKEN_RENEW_MS, hostMcpSessionToken, IHostMcpLease, newHostMcp
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IVoltChatFileResult, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, disabledToolCallRefusal, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFlowGrantStore, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolOwner, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, disabledToolCallRefusal, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFlowGrantStore, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolOwner, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, unwrapStuffedArgs, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
 import { hostToolSandboxUse, IHostToolSandboxUse, isSandboxed, ISandboxPathContext, legacyHostToolRefusal, legacySandboxCovers, readTargets, sandboxBrowserUrlRefusal, sandboxReachRefusal, sandboxRefusalMessage } from '../../common/hostToolSandbox.js';
 import { HostToolAuthority, IGateChat, IPolicyShadowDiff, PolicyAuthorityMode } from '../../common/hostToolAuthority.js';
 import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
@@ -137,7 +137,7 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 	async invokeTool(requested: string, input?: unknown, call?: IVoltHostToolCall): Promise<IVoltHostToolResult> {
 		// An agent may still use a tool's earlier name (render_html); it runs, and is recorded, as the current one.
 		const name = canonicalHostToolName(requested);
-		const args = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
+		const args = unwrapStuffedArgs(input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {});
 		const result = await this.run(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) }));
 		if (call?.sessionId && call.source !== 'native') {
 			this._onDidInvokeTool.fire({ sessionId: call.sessionId, name, args, result });

@@ -23,6 +23,7 @@ import { IVoltExecRequest, IVoltExecResult, IVoltStdioService } from '../../../.
 import { AgentRuntimeService } from '../../browser/voltRuntimeService.js';
 import { DEFAULT_ACP_CAPABILITIES, DEFAULT_MODEL_CAPABILITIES } from '../../common/capabilities.js';
 import { LSP_ENABLED_SETTING } from '../../common/codeIntelligence.js';
+import { IWorkspaceSnapshot, WORKSPACE_SNAPSHOT_COMMAND_ID } from '../../common/harness/workspaceContext.js';
 import { IVoltEvent, IVoltEventEnvelope } from '../../common/events.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IAgentMessage, IAgentProvider, IAgentSessionHandle, IAgentStartRequest, IModelProvider, IModelRequest, IVoltCatalogItem } from '../../common/providers.js';
@@ -72,13 +73,23 @@ class FakeAgent implements IAgentProvider {
 	readonly turns: Turn<IAgentMessage>[] = [];
 	private readonly live = new Map<string, number>();
 	maxConcurrent = 0;
+	/** Sessions continue after a stop (ACP `session/resume`): each gets an agent session id, a start with `resumeSessionId` resumes it. */
+	resumable = false;
 	async detect() { return { available: true, authenticated: true }; }
 	async listModels() { return [{ id: 'm1', label: 'M1', capabilities: DEFAULT_ACP_CAPABILITIES }, { id: 'm2', label: 'M2', capabilities: DEFAULT_ACP_CAPABILITIES }]; }
 	async start(request: IAgentStartRequest): Promise<IAgentSessionHandle> {
 		this.starts.push(request);
-		return { id: `h${this.starts.length}` };
+		if (!this.resumable) {
+			return { id: `h${this.starts.length}` };
+		}
+		// Like the ACP provider: the process runs in the config overlay of the chat (or pool alias) it was started for, a resume in the old one.
+		const stateKey = request.resumeStateKey ?? request.sessionId;
+		return request.resumeSessionId
+			? { id: `h${this.starts.length}`, providerSessionId: request.resumeSessionId, resumed: true, stateKey }
+			: { id: `h${this.starts.length}`, providerSessionId: `p${this.starts.length}`, stateKey };
 	}
 	isLive() { return true; }
+	canResume() { return this.resumable; }
 	async *send(handle: IAgentSessionHandle, message: IAgentMessage, _profile: IProviderProfile, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		this.prompts.push(message);
 		this.promptHandles.push(handle.id);
@@ -293,7 +304,7 @@ suite('Agent runtime orchestration', () => {
 
 	test('a model on this machine names the chat after the run, so the title call waits behind no step', async () => {
 		const { service, model, ref, waitEnd } = await setup('model', {}, 'http://127.0.0.1:1234/v1');
-		const runId = await service.send('chat', { text: 'rename the helper', mode: 'agent', providerRef: ref });
+		const runId = await service.send('chat', { text: 'rename the date helper in utils', mode: 'agent', providerRef: ref });
 		assert.strictEqual((await waitEnd(runId)).reason, 'done');
 		await waitFor(() => model.requests.length === 2, 'the title call');
 		const [run, title] = model.requests;
@@ -326,17 +337,68 @@ suite('Agent runtime orchestration', () => {
 		assert.strictEqual(model.titlePrompts.length, 1);
 	});
 
+	test('a first message that names nothing gets no title call; the next one titles the chat from both', async () => {
+		const { service, model, history, ref, waitEnd } = await setup('model');
+		model.titles = ['Fix sidebar list jumping to top', 'Never asked'];
+		await waitEnd(await service.send('chat', { text: 'hey', mode: 'agent', providerRef: ref }));
+		await timeout(20);
+		assert.strictEqual(model.titlePrompts.length, 0, 'no model call can name "hey"');
+		await waitEnd(await service.send('chat', { text: 'the sidebar list jumps to the top when a chat finishes', mode: 'agent', providerRef: ref }));
+		await waitFor(() => history.agentTitles.length === 1, 'the title from both messages');
+		assert.ok(model.titlePrompts[0].includes('First message:\nhey\n\nLatest message:\nthe sidebar list jumps'));
+		await waitEnd(await service.send('chat', { text: 'and keep the selection too', mode: 'agent', providerRef: ref }));
+		await timeout(20);
+		assert.deepStrictEqual(history.agentTitles, ['Fix sidebar list jumping to top']);
+		assert.strictEqual(model.titlePrompts.length, 1, 'no second title call');
+	});
+
+	test('"hi" goes without the workspace summary; the next request carries it, once', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		const snapshot: IWorkspaceSnapshot = { panelOpen: true, tabs: [{ kind: 'browser', title: 'Shop', focused: true, target: 'http://localhost:3000/' }], git: { branch: 'main', changed: 1 } };
+		(service as unknown as { commandService: { executeCommand: (id: string) => Promise<unknown> } }).commandService.executeCommand = async id => id === WORKSPACE_SNAPSHOT_COMMAND_ID ? snapshot : undefined;
+		await waitEnd(await service.send('chat', { text: 'hi', mode: 'agent', providerRef: ref }));
+		await waitEnd(await service.send('chat', { text: 'the add to cart button on the shop page does nothing, fix it', mode: 'agent', providerRef: ref }));
+		await waitEnd(await service.send('chat', { text: 'and make it blue', mode: 'agent', providerRef: ref }));
+		assert.deepStrictEqual(agent.prompts.map(prompt => prompt.lead?.includes('<volt_workspace') ?? false), [false, true, false]);
+	});
+
+	test('the window is asked for the workspace summary while the agent starts, not after it', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		const order: string[] = [];
+		// Plain timers: a spare the service starts after the turn may still be waiting when the test ends.
+		const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+		const start = agent.start.bind(agent);
+		agent.start = async request => {
+			order.push('agent start');
+			await wait(30);
+			order.push('agent ready');
+			return start(request);
+		};
+		const snapshot: IWorkspaceSnapshot = { panelOpen: true, tabs: [{ kind: 'browser', title: 'Shop', focused: true, target: 'http://localhost:3000/' }] };
+		(service as unknown as { commandService: { executeCommand: (id: string) => Promise<unknown> } }).commandService.executeCommand = async id => {
+			if (id !== WORKSPACE_SNAPSHOT_COMMAND_ID) {
+				return undefined;
+			}
+			order.push('window asked');
+			// The window answers after the agent is ready, within the prompt's wait: the turn still carries it.
+			await wait(60);
+			return snapshot;
+		};
+		await waitEnd(await service.send('chat', { text: 'the add to cart button on the shop page does nothing, fix it', mode: 'agent', providerRef: ref }));
+		assert.ok(order.indexOf('window asked') >= 0 && order.indexOf('window asked') < order.indexOf('agent ready'), order.join(', '));
+		assert.ok(agent.prompts[0].lead?.includes('<volt_workspace'));
+	});
+
 	test('a chat the user renamed keeps its name when a short first message is titled again', async () => {
 		const { service, model, history, ref, waitEnd } = await setup('model');
-		model.titles = ['Greeting', 'Fix sidebar list jumping to top'];
+		model.titles = ['Fix sidebar list jumping to top'];
 		await waitEnd(await service.send('chat', { text: 'hey', mode: 'agent', providerRef: ref }));
-		await waitFor(() => history.agentTitles.length === 1, 'the first title');
 		history.userTitle = 'Scroll bug';
 		await waitEnd(await service.send('chat', { text: 'the sidebar list jumps to the top when a chat finishes', mode: 'agent', providerRef: ref }));
-		await waitFor(() => model.titlePrompts.length === 2, 'the retry');
+		await waitFor(() => model.titlePrompts.length === 1, 'the title from both messages');
 		await timeout(20);
 		assert.strictEqual(history.shown, 'Scroll bug');
-		assert.deepStrictEqual(history.agentTitles, ['Greeting']);
+		assert.deepStrictEqual(history.agentTitles, []);
 	});
 
 	test('cancel then immediate resend (native): the cancelled loop cannot write into the new run', async () => {
@@ -576,6 +638,87 @@ suite('Agent runtime orchestration', () => {
 		assert.ok(lead.includes('<conversation_handoff>') && lead.includes('User: one') && lead.includes('Assistant'), 'the fresh agent gets the conversation');
 		assert.deepStrictEqual(service.getOrCreateSession('chat').messages.map(message => message.content), ['one', 'done', 'two', 'done']);
 		assert.strictEqual(await service.restartAgent('never-used'), true, 'a chat with no agent yet has nothing to stop');
+	});
+
+	test('an idle agent of a chat not in use stops after its grace and comes back with its session, no recap', async () => {
+		const { service, internals, agent, ref, waitEnd } = await setup('agent');
+		agent.resumable = true;
+		const otherEnds: string[] = [];
+		store.add(service.onEvent('other', envelope => envelope.event.type === 'run.end' && otherEnds.push(envelope.runId)));
+		await waitEnd(await service.send('chat', { text: 'remember PELICAN', mode: 'agent', providerRef: ref }));
+		const first = agent.promptHandles[0];
+		const firstStart = agent.starts.find(start => start.sessionId === 'chat')!;
+		const otherRun = await service.send('other', { text: 'hello', mode: 'agent', providerRef: ref });
+		await waitFor(() => otherEnds.includes(otherRun), 'the other chat\'s run');
+		const sessions = internals.sessions as unknown as Map<string, { agentUsedAt?: number; releasedAgent?: unknown }>;
+		const reap = () => (service as unknown as { releaseIdleAgents(): void }).releaseIdleAgents();
+
+		reap();
+		assert.ok(!agent.disposed.includes(first), 'within its grace the agent stays');
+		sessions.get('chat')!.agentUsedAt = Date.now() - 31_000;
+		reap();
+		assert.ok(agent.disposed.includes(first), 'past its grace, an agent that can resume stops');
+		assert.ok(sessions.get('chat')!.releasedAgent, 'and the chat remembers its session');
+		const otherHandle = agent.promptHandles[1];
+		sessions.get('other')!.agentUsedAt = Date.now() - 31_000;
+		reap();
+		assert.ok(!agent.disposed.includes(otherHandle), 'the most recently used agent is kept');
+
+		const before = agent.starts.length;
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'what was the word?', mode: 'agent', providerRef: ref }))).reason, 'done');
+		const resumedStart = agent.starts.slice(before).find(start => start.sessionId === 'chat');
+		assert.ok(resumedStart, 'the chat started its agent again');
+		const firstSessionId = `p${agent.starts.indexOf(firstStart) + 1}`;
+		assert.strictEqual(resumedStart.resumeSessionId, firstSessionId, 'it resumed the session it had');
+		assert.strictEqual(resumedStart.resumeStateKey, firstStart.sessionId, 'in the config overlay that holds its transcript');
+		assert.ok(!(agent.prompts.at(-1)!.lead ?? '').includes('<conversation_handoff>'), 'a resumed session needs no recap');
+		assert.strictEqual(sessions.get('chat')!.releasedAgent, undefined);
+	});
+
+	test('a chat whose agent began as a pooled spare resumes it in the pool\'s config overlay, where its transcript is', async () => {
+		const { service, internals, agent, ref, waitEnd } = await setup('agent');
+		agent.resumable = true;
+		service.prewarmAgent('chat', ref, 'agent');
+		await waitFor(() => agent.starts.length === 1, 'the spare to start');
+		const poolKey = agent.starts[0].sessionId!;
+		assert.ok(poolKey.startsWith('volt-pool-'));
+		await waitEnd(await service.send('chat', { text: 'remember PELICAN', mode: 'agent', providerRef: ref }));
+		assert.strictEqual(service.getRunMetrics('chat')[0].agentSource, 'pool');
+		const otherEnds: string[] = [];
+		store.add(service.onEvent('other', envelope => envelope.event.type === 'run.end' && otherEnds.push(envelope.runId)));
+		const otherRun = await service.send('other', { text: 'hello', mode: 'agent', providerRef: ref });
+		await waitFor(() => otherEnds.includes(otherRun), 'the other chat\'s run');
+		const sessions = internals.sessions as unknown as Map<string, { agentUsedAt?: number; releasedAgent?: { stateKey?: string } }>;
+		sessions.get('chat')!.agentUsedAt = Date.now() - 31_000;
+		(service as unknown as { releaseIdleAgents(): void }).releaseIdleAgents();
+		assert.strictEqual(sessions.get('chat')!.releasedAgent?.stateKey, poolKey);
+
+		const before = agent.starts.length;
+		await waitEnd(await service.send('chat', { text: 'what was the word?', mode: 'agent', providerRef: ref }));
+		const resumedStart = agent.starts.slice(before).find(start => start.resumeSessionId);
+		assert.ok(resumedStart, 'the chat resumed its session');
+		assert.strictEqual(resumedStart.sessionId, 'chat');
+		assert.strictEqual(resumedStart.resumeStateKey, poolKey, 'not the chat\'s own overlay, which never saw this session');
+	});
+
+	test('an agent that cannot resume keeps the old cap and wait, and comes back with a recap', async () => {
+		const { service, internals, agent, ref, waitEnd } = await setup('agent');
+		const otherEnds: string[] = [];
+		store.add(service.onEvent('other', envelope => envelope.event.type === 'run.end' && otherEnds.push(envelope.runId)));
+		await waitEnd(await service.send('chat', { text: 'one', mode: 'agent', providerRef: ref }));
+		const first = agent.promptHandles[0];
+		const otherRun = await service.send('other', { text: 'hello', mode: 'agent', providerRef: ref });
+		await waitFor(() => otherEnds.includes(otherRun), 'the other chat\'s run');
+		const sessions = internals.sessions as unknown as Map<string, { agentUsedAt?: number }>;
+		sessions.get('chat')!.agentUsedAt = Date.now() - 5 * 60_000;
+		(service as unknown as { releaseIdleAgents(): void }).releaseIdleAgents();
+		assert.ok(!agent.disposed.includes(first), 'kept within the cap of idle agents');
+		sessions.get('chat')!.agentUsedAt = Date.now() - 16 * 60_000;
+		(service as unknown as { releaseIdleAgents(): void }).releaseIdleAgents();
+		assert.ok(agent.disposed.includes(first), 'stopped after the long wait');
+		await waitEnd(await service.send('chat', { text: 'two', mode: 'agent', providerRef: ref }));
+		assert.ok((agent.prompts.at(-1)!.lead ?? '').includes('<conversation_handoff>'), 'a fresh agent gets the recap');
+		assert.ok(agent.starts.every(start => !start.resumeSessionId));
 	});
 
 	test('switching models: the new session gets a budgeted handoff; switching back resumes the old one with only the missed turns', async () => {

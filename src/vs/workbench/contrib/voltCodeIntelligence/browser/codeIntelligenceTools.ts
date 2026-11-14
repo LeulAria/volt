@@ -3,7 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { raceTimeout } from '../../../../base/common/async.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
+import { ResourceMap } from '../../../../base/common/map.js';
+import { isAbsolute } from '../../../../base/common/path.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
@@ -15,17 +18,27 @@ import { ITextModelService } from '../../../../editor/common/services/resolverSe
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
 import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
-import { CODE_ACTION_TOOL_NAME, CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, lspPolicy, readCodeIndexOptions, readFffSettings } from '../../../services/voltRuntime/common/codeIntelligence.js';
+import { CODE_ACTION_TOOL_NAME, CODE_INDEX_ENABLED_SETTING, CODE_INDEX_HIERARCHICAL_IGNORE_SETTING, CODE_INDEX_IGNORE_SYMLINKS_SETTING, CODE_INTELLIGENCE_TOOLS, codeIndexEnabled, confinedIndexOptions, EditCheckPhase, editCheckPhase, FIND_FILES_TOOL_NAME, FIND_SYMBOL_TOOL_NAME, INSTANT_GREP_TOOL_NAME, lspPolicy, readCodeIndexOptions, readFffSettings } from '../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltHostFileChange, IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { isSandboxed } from '../../../services/voltRuntime/common/hostToolSandbox.js';
 import { IToolContext, IVoltTool } from '../../../services/voltRuntime/common/tools/tool.js';
-import { CodeIntelHost } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
+import { CodeIntelHost, DIAGNOSED_EXTENSIONS } from '../../../services/voltRuntime/browser/host/codeIntelHost.js';
 import { VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
 import { createCodeIndexNav } from '../../../services/voltRuntime/browser/tools/codeIndexNav.js';
 import { createCodeTools, ITextFileChange } from '../../../services/voltRuntime/browser/tools/codeTools.js';
+import { editCheckHookOutput, NO_HOOK_OUTPUT } from '../../../services/voltRuntime/browser/tools/editDiagnostics.js';
 import { IFileToolHost, writeComputedEdit } from '../../../services/voltRuntime/browser/tools/fileTools.js';
+import { displayPath, resolveWorkspaceUri } from '../../../services/voltRuntime/browser/tools/workspacePath.js';
 import { confineCodeIntel, ICodeIntelRules } from './codeIntelConfinement.js';
 import { createSearchTools } from '../../../services/voltRuntime/browser/tools/searchTools.js';
+
+/** The edit's start waits this long for the file's errors as they were (it holds up the edit). */
+const BASELINE_WAIT_MS = 1_500;
+/** A read's check runs in the background and may take this long (a language server still loading the project). */
+const READ_BASELINE_WAIT_MS = 30_000;
+/** The edit's end waits this long for the language server to report on the new text. */
+const AFTER_EDIT_WAIT_MS = 4_000;
+const BASELINE_TTL_MS = 10 * 60_000;
 
 /** Indexes the open project's folders in the background, so the first agent search is already fast. */
 export class CodeIndexWarmup extends Disposable {
@@ -52,7 +65,11 @@ export class CodeIndexWarmup extends Disposable {
 		const options = readCodeIndexOptions(this.configurationService);
 		for (const folder of this.workspace.getWorkspace().folders) {
 			if (folder.uri.scheme === Schemas.file) {
-				void this.codeIndex.warm(folder.uri.fsPath, options);
+				void this.codeIndex.warm(folder.uri.fsPath, options).then(() => {
+					// Sandboxed chats (the default, Supervised) search their own confined index. Unwarmed,
+					// the first search of a big project waited 4 s and then refused ("indexing").
+					void this.codeIndex.warm(folder.uri.fsPath, confinedIndexOptions(options));
+				});
 			}
 		}
 	}
@@ -61,7 +78,8 @@ export class CodeIndexWarmup extends Disposable {
 /**
  * The index for agents that bring their own tools (Claude Code, Codex): `instant_grep` and
  * `find_symbol` on the volt MCP server, run by the same code as the native agent's grep, and the
- * window's language servers (code_nav, diagnostics, code_action).
+ * window's language servers (code_nav, diagnostics, code_action), answered from the buffers the
+ * user sees, and Claude Code's edit-check hooks (`diagnostics` with `hook`, see {@link editCheck}).
  * Registered by the desktop, whose window serves the MCP server's tool calls.
  */
 export class CodeIntelligenceHostTools extends Disposable {
@@ -69,6 +87,8 @@ export class CodeIntelligenceHostTools extends Disposable {
 	private readonly search: VoltSearch;
 	/** The window's language servers, for code_nav / diagnostics / code_action over MCP. */
 	private readonly codeIntel: CodeIntelHost;
+	/** Each file's errors before an edit (see {@link editCheck}). */
+	private readonly baselines = new ResourceMap<{ readonly counts: Map<string, number>; readonly at: number }>();
 
 	constructor(
 		@IVoltHostToolService hostTools: IVoltHostToolService,
@@ -99,6 +119,10 @@ export class CodeIntelligenceHostTools extends Disposable {
 
 	private async invoke(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		const root = call?.cwd ? URI.file(call.cwd) : this.workspace.getWorkspace().folders[0]?.uri;
+		const phase = editCheckPhase(name, args);
+		if (phase) {
+			return { text: await this.editCheck(phase, root, args, call).catch(() => NO_HOOK_OUTPUT) };
+		}
 		// A sandboxed chat searches its own confined index, and sees only results its sandbox may read (B-15);
 		// its language server edits change only files its sandbox may write.
 		let confine: ICodeIntelRules | undefined;
@@ -132,6 +156,65 @@ export class CodeIntelligenceHostTools extends Disposable {
 			return result.isError ? { error: result.text } : { text: result.text, ...(changes.length ? { changes } : {}) };
 		} finally {
 			cancel?.dispose();
+		}
+	}
+
+	/**
+	 * Claude Code's hooks around its file tools (see `EDIT_CHECK_TOOL_NAME`): a read opens the file
+	 * for its language server, the edit's start notes the file's errors, its end answers the errors
+	 * it added, as the hook's context for the model. Silent (`{}`) when there is nothing new or the
+	 * errors before the edit are not known (the end-of-turn check still covers the file), and for a
+	 * sandboxed chat when its sandbox may not read the file (or Volt cannot tell).
+	 */
+	private async editCheck(phase: EditCheckPhase, root: URI | undefined, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<string> {
+		const path = typeof args.path === 'string' ? args.path : undefined;
+		const uri = path ? resolveWorkspaceUri(root, path) ?? (isAbsolute(path) ? URI.file(path) : undefined) : undefined;
+		if (!uri || !DIAGNOSED_EXTENSIONS.test(uri.path) || !this.codeIntel.lspAllowed(uri)) {
+			return NO_HOOK_OUTPUT;
+		}
+		if (call && isSandboxed(call.sandbox) && (!call.readRefusal || await call.readRefusal(uri.fsPath))) {
+			return NO_HOOK_OUTPUT;
+		}
+		this.forgetOldBaselines();
+		switch (phase) {
+			case 'read': {
+				// The file's errors are read now, while the model thinks, so the edit's start need not wait.
+				const at = Date.now();
+				void this.codeIntel.settledErrorCounts(uri, READ_BASELINE_WAIT_MS).then(counts => {
+					if (counts && (this.baselines.get(uri)?.at ?? 0) < at) {
+						this.baselines.set(uri, { counts, at });
+					}
+				});
+				return NO_HOOK_OUTPUT;
+			}
+			case 'before': {
+				const counts = await this.codeIntel.settledErrorCounts(uri, BASELINE_WAIT_MS);
+				if (counts) {
+					this.baselines.set(uri, { counts, at: Date.now() });
+				}
+				// Else the baseline the read (or the last edit) left stays, if any.
+				return NO_HOOK_OUTPUT;
+			}
+			case 'after': {
+				const baseline = this.baselines.get(uri);
+				this.codeIntel.noteWrite(uri);
+				if (!baseline) {
+					return NO_HOOK_OUTPUT;
+				}
+				const added = await raceTimeout(this.codeIntel.newErrors(uri, baseline.counts), AFTER_EDIT_WAIT_MS);
+				// The next edit of this file is compared with the file as this one left it.
+				this.baselines.set(uri, { counts: this.codeIntel.errorCounts(uri), at: Date.now() });
+				return added?.length ? editCheckHookOutput(added, root ? displayPath(root, uri) : uri.fsPath) : NO_HOOK_OUTPUT;
+			}
+		}
+	}
+
+	private forgetOldBaselines(): void {
+		const now = Date.now();
+		for (const [uri, baseline] of this.baselines) {
+			if (now - baseline.at > BASELINE_TTL_MS) {
+				this.baselines.delete(uri);
+			}
 		}
 	}
 

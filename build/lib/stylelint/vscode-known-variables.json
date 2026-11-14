@@ -1423,6 +1423,17 @@
 		"--volt-http-patch",
 		"--volt-http-delete",
 		"--volt-http-muted",
-		"--volt-http-line"
+		"--volt-http-line",
+		"--volt-bottom-bar",
+		"--volt-exit",
+		"--volt-inset-bottom",
+		"--volt-keyboard",
+		"--volt-mobile-nav-count",
+		"--volt-mobile-nav-height",
+		"--volt-safe-bottom",
+		"--volt-safe-left",
+		"--volt-safe-right",
+		"--volt-safe-top",
+		"--volt-spring"
 	]
 }

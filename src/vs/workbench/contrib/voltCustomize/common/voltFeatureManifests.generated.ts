@@ -1184,6 +1184,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						readable: ['.gemini', '.antigravity', '.config/antigravity'],
 						credentials: ['.gemini/oauth_creds.json', '.gemini/antigravity-cli/antigravity-oauth-token', '.gemini/jetski-standalone-oauth-token'],
 						envKeys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT'],
+						ephemeralListen: 'its language server listens on a random port',
 					},
 					models: {
 						source: 'acp',
@@ -1227,10 +1228,11 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 					args: [],
 					acpAdapter: {
 						command: 'claude-agent-acp',
-						package: '@agentclientprotocol/claude-agent-acp@0.81.2',
+						package: '@agentclientprotocol/claude-agent-acp@0.106.0',
 					},
 					env: {
 						CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+						MCP_TOOL_TIMEOUT: '300000',
 					},
 					authProbe: 'claude',
 					login: ['claude', 'auth', 'login'],
@@ -1253,11 +1255,12 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 							identity: 'claude',
 						},
 						writable: ['Library/Caches/claude-cli-nodejs', '.cache/claude-cli-nodejs'],
-						readable: ['.local/share/claude'],
+						readable: ['.local/share/claude', '.volt/claude-plugins'],
 						credentials: ['.claude/.credentials.json'],
 						tmpDirs: ['/private/tmp/claude-${uid}', '/tmp/claude-${uid}', '/private/tmp/cc-socks', '/tmp/cc-socks'],
 						env: {
 							DISABLE_AUTOUPDATER: '1',
+							DISABLE_TELEMETRY: '1',
 						},
 						quietPaths: {
 							processes: ['claude'],
@@ -1383,7 +1386,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						setEnv: {
 							CURSOR_DATA_DIR: '${config}',
 						},
-						writable: ['Library/Application Support/Cursor/User/globalStorage'],
+						writable: ['Library/Application Support/Cursor/User/globalStorage', '.cursor/ai-tracking'],
 						writableFiles: ['.cursor/auth.json', '.config/cursor/auth.json'],
 						readable: ['.local/share/cursor-agent'],
 						credentials: ['.cursor/auth.json', '.config/cursor/auth.json'],
@@ -1438,6 +1441,8 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						readable: ['.fx'],
 						credentials: ['.fx/auth.json', '.fx/mcp-credentials'],
 						envKeys: ['AI_GATEWAY_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY'],
+						listHome: true,
+						chmodFolders: ['.fx'],
 					},
 					models: {
 						source: 'acp',
@@ -1483,7 +1488,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 					apiHosts: ['x.ai', '*.x.ai', 'grok.com', '*.grok.com'],
 					state: {
 						writable: ['.grok/sessions', '.grok/logs', '.grok/memory-v2', '.grok/memtrace', '.grok/grove', '.grok/downloads', '.local/state/grok'],
-						writableFiles: ['.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db', '.grok/worktrees.db-wal', '.grok/worktrees.db-shm', '.grok/models_cache.json', '.grok/settings_cache.json', '.grok/tip_cursor.json', '.grok/agent_id', '.grok/.config-init.lock', '.grok/managed_config.lock', '.grok/.metadata_version'],
+						writableFiles: ['.grok/auth.json', '.grok/auth.json.lock', '.grok/active_sessions.json', '.grok/active_sessions.lock', '.grok/worktrees.db', '.grok/worktrees.db-wal', '.grok/worktrees.db-shm', '.grok/worktrees.db-journal', '.grok/bundled/.lock', '.grok/installed-plugins/registry.lock', '.grok/models_cache.json', '.grok/settings_cache.json', '.grok/tip_cursor.json', '.grok/agent_id', '.grok/.config-init.lock', '.grok/managed_config.lock', '.grok/.metadata_version'],
 						readable: ['.grok'],
 						credentials: ['.grok/auth.json'],
 						envKeys: ['XAI_API_KEY', 'GROK_API_KEY'],

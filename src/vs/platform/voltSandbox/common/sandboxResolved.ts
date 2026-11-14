@@ -22,6 +22,10 @@ export interface IResolvedSandboxPolicy {
 	readonly write: readonly string[];
 	/** Single existing files writable in place (atomic-write siblings `<file>.lock`/`.tmp*` too). */
 	readonly writeFiles: readonly string[];
+	/** Existing folders whose entries may be listed (names only, nothing below them readable). */
+	readonly list?: readonly string[];
+	/** Existing folders whose permission bits may be changed (nothing else about them). */
+	readonly chmod?: readonly string[];
 	/** Neither readable nor writable. May not exist yet. */
 	readonly deny: readonly string[];
 	/** Readable, never writable. May not exist yet. */

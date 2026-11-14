@@ -129,16 +129,16 @@ export class AgentStateOverlay {
 	 */
 	static async prepare(plan: IAgentStatePlan, options: IAgentStateOverlayOptions = {}): Promise<AgentStateOverlay> {
 		const overlay = new AgentStateOverlay(plan, options);
-		for (const dir of [plan.dir, plan.configDir, plan.seedDir, ...(plan.secureDir ? [plan.secureDir] : [])]) {
+		await fs.mkdir(plan.dir, { recursive: true, mode: 0o700 });
+		await fs.chmod(plan.dir, 0o700).catch(() => undefined);
+		await Promise.all([plan.configDir, plan.seedDir, ...(plan.secureDir ? [plan.secureDir] : [])].map(async dir => {
 			await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 			await fs.chmod(dir, 0o700).catch(() => undefined);
-		}
+		}));
 		await overlay.sync().catch(err => options.warn?.(`[volt-sandbox] agent state merge before launch failed: ${err}`));
 		await overlay.syncCredentials().catch(err => options.warn?.(`[volt-sandbox] agent login merge before launch failed: ${err}`));
-		await overlay.link();
-		for (const seed of plan.seeds) {
-			await overlay.seed(seed);
-		}
+		// The links (protected names) and the seeds (never protected: `agentStatePlan`) are other files.
+		await Promise.all([overlay.link(), ...plan.seeds.map(seed => overlay.seed(seed))]);
 		for (const credential of plan.credentials) {
 			await overlay.seedCredential(credential);
 		}
@@ -226,17 +226,21 @@ export class AgentStateOverlay {
 			if (after === undefined && !(await exists(seed.path))) {
 				continue;
 			}
+			if (after !== undefined && JSON.stringify(after) === JSON.stringify(snapshot)) {
+				// The run changed nothing in it (the usual case): nothing to merge or drop, no lock on the user's file.
+				continue;
+			}
 			// What the sandbox changed and which of it is allowed back depend only on the snapshot and
 			// the overlay's file; the user's file is read (under its lock) only when something goes back.
-			const changes = mergeAgentState(snapshot, after, {}, seed.mergeBack);
+			const changes = mergeAgentState(snapshot, after, {}, seed.mergeBack, seed.quiet);
 			if (!(await exists(seed.from))) {
 				// Never create the user's config from the sandbox: only report.
-				dropped.push(...mergeAgentState(snapshot, after, {}, []).dropped);
+				dropped.push(...mergeAgentState(snapshot, after, {}, [], seed.quiet).dropped);
 			} else if (!changes.merged) {
 				dropped.push(...changes.dropped);
 			} else {
 				const result = await withLock(seed.from, async () => {
-					const merge = mergeAgentState(snapshot, after, await readJson(seed.from), seed.mergeBack);
+					const merge = mergeAgentState(snapshot, after, await readJson(seed.from), seed.mergeBack, seed.quiet);
 					if (merge.merged) {
 						await writeAtomic(seed.from, JSON.stringify(merge.merged, undefined, 2));
 					}

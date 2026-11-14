@@ -1,0 +1,2 @@
+{"arm":"before","at":"2026-11-14T13:00:32Z","load":"20.72 21.46 27.05","layers":"layers drawing: 13, total CSS px area 1125899629.2 M (window 1512x896)","footprint":"gpu=716 renderer=552 main=169 =1939 ","memdump":"iosurface=288.8 gpu/shared_images=83.9 cc/tile_memory=101.4 "}
+{"arm":"after","at":"2026-11-14T13:03:00Z","load":"14.48 19.07 25.20","layers":"layers drawing: 8, total CSS px area 23 M (window 1512x896)","footprint":"gpu=724 renderer=574 main=178 =1974 ","memdump":"iosurface=282.2 gpu/shared_images=63 cc/tile_memory=95 "}

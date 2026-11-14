@@ -38,8 +38,11 @@ export interface IProtocolMainService {
 	 * `onWillRead` runs on each renderer fetch, before the object is returned.
 	 * It receives the object that will be sent, which may not be the last
 	 * object associated with the window yet.
+	 *
+	 * `existingChannel` reuses a channel a page was given before the object
+	 * existed (Volt's launch window); its calls wait for the first `update`.
 	 */
-	createIPCObjectUrl<T>(onWillRead?: (obj: T | undefined) => Promise<void>): IIPCObjectUrl<T>;
+	createIPCObjectUrl<T>(onWillRead?: (obj: T | undefined) => Promise<void>, existingChannel?: string): IIPCObjectUrl<T>;
 
 	/**
 	 * Adds a path as root to the list of allowed

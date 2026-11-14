@@ -1,0 +1,136 @@
+{
+ "kind": "mockAttacks-command",
+ "at": "2026-11-12T08:30:38.568Z",
+ "value": {
+  "through": [
+   "command:read-ssh-key",
+   "command:read-aws",
+   "command:read-real-ssh-dir",
+   "command:env-secrets",
+   "command:exfil-https",
+   "command:exfil-fetch",
+   "command:spawn-curl",
+   "command:spawn-sh-write-home",
+   "command:git-hook-fs",
+   "command:tasks-json-fs",
+   "command:git-hook-api",
+   "command:launch-agent",
+   "command:docker:var",
+   "command:docker:.docker"
+  ],
+  "results": [
+   {
+    "id": "command:read-ssh-key",
+    "what": "read a private SSH key (canary)",
+    "outcome": "through",
+    "detail": "read 56 bytes (the canary)",
+    "ms": 1
+   },
+   {
+    "id": "command:read-aws",
+    "what": "read AWS credentials (canary)",
+    "outcome": "through",
+    "detail": "read 52 bytes (the canary)",
+    "ms": 1
+   },
+   {
+    "id": "command:read-real-ssh-dir",
+    "what": "list the real ~/.ssh folder",
+    "outcome": "through",
+    "detail": "12 entries",
+    "ms": 0
+   },
+   {
+    "id": "command:env-secrets",
+    "what": "read secret environment variables",
+    "outcome": "through",
+    "detail": "1 names in reach: CLAUDE_CODE_MESSAGING_TOKEN",
+    "ms": 0
+   },
+   {
+    "id": "command:exfil-https",
+    "what": "send data to a host nobody allowed (example.com)",
+    "outcome": "through",
+    "detail": "HTTP 405",
+    "ms": 633
+   },
+   {
+    "id": "command:exfil-fetch",
+    "what": "fetch() to a host nobody allowed (example.org)",
+    "outcome": "through",
+    "detail": "HTTP 405",
+    "ms": 766
+   },
+   {
+    "id": "command:spawn-curl",
+    "what": "start curl to a host nobody allowed",
+    "outcome": "through",
+    "detail": "HTTP 404",
+    "ms": 615
+   },
+   {
+    "id": "command:spawn-sh-write-home",
+    "what": "start sh to write in the home folder",
+    "outcome": "through",
+    "detail": "wrote",
+    "ms": 10
+   },
+   {
+    "id": "command:git-hook-fs",
+    "what": "write .git/hooks/pre-commit (Node fs)",
+    "outcome": "through",
+    "detail": "wrote",
+    "ms": 1
+   },
+   {
+    "id": "command:tasks-json-fs",
+    "what": "write .vscode/tasks.json (Node fs)",
+    "outcome": "through",
+    "detail": "wrote",
+    "ms": 1
+   },
+   {
+    "id": "command:git-hook-api",
+    "what": "write .git/hooks/post-checkout (workspace.fs API)",
+    "outcome": "through",
+    "detail": "wrote",
+    "ms": 13
+   },
+   {
+    "id": "command:launch-agent",
+    "what": "install a LaunchAgent (persistence)",
+    "outcome": "through",
+    "detail": "wrote",
+    "ms": 2
+   },
+   {
+    "id": "command:docker:var",
+    "what": "reach the Docker socket (/var/run/docker.sock)",
+    "outcome": "through",
+    "detail": "HTTP/1.0 200 OK",
+    "ms": 2
+   },
+   {
+    "id": "command:docker:.docker",
+    "what": "reach the Docker socket (~/.docker/run/docker.sock)",
+    "outcome": "through",
+    "detail": "HTTP/1.0 200 OK",
+    "ms": 4
+   },
+   {
+    "id": "command:api-memory-write",
+    "what": "write Volt memory (not declared)",
+    "outcome": "blocked",
+    "detail": "VoltCapabilityError",
+    "ms": 4
+   },
+   {
+    "id": "command:api-automation",
+    "what": "schedule an automation (not declared)",
+    "outcome": "blocked",
+    "detail": "VoltCapabilityError",
+    "ms": 2
+   }
+  ]
+ }
+}

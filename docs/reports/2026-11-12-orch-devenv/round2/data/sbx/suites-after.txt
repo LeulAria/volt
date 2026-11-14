@@ -1,0 +1,758 @@
+23:32  up 1 day,  2:05, 2 users, load averages: 159.88 136.86 98.72
+files: 53
+npm warn Unknown project config "disturl". This will stop working in the next major version of npm.
+npm warn Unknown project config "target". This will stop working in the next major version of npm.
+npm warn Unknown project config "ms_build_id". This will stop working in the next major version of npm.
+npm warn Unknown project config "runtime". This will stop working in the next major version of npm.
+npm warn Unknown project config "build_from_source". This will stop working in the next major version of npm.
+npm warn Unknown project config "timeout". This will stop working in the next major version of npm.
+npm warn Unknown project config "npm_config_node_gyp". This will stop working in the next major version of npm.
+
+> code-oss-dev@0.0.6 electron
+> node build/lib/electron
+
+Found --crash-reporter-directory argument. Setting crashDumps directory to be '/Users/leularia/Desktop/VOLT/volt-e2e-sbx/.build/crashes'
+[54724:1112/233207.909560:INFO:CONSOLE:2] "The vm module of Node.js is unsupported in Electron's renderer process due to incompatibilities with the Blink rendering engine. Crashes are likely and avoiding the module is highly recommended. This module may be removed in a future release.", source: node:electron/js2c/renderer_init (2)
+[54724:1112/233208.644928:INFO:CONSOLE:2] "Platform browser has already been set. Overwriting the platform with [object Object].", source: /Users/leularia/Desktop/VOLT/volt/node_modules/@vscode/vscode-languagedetection/dist/lib/index.js (2)
+(node:54753) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `VOLT Helper (Renderer) --trace-deprecation ...` to show where the warning was created)
+(node:54753) [DEP0025] DeprecationWarning: sys is deprecated. Use util instead.
+(node:54753) ExperimentalWarning: WASI is an experimental feature and might change at any time
+
+[0m[0m
+[0m  Tests are using suiteSetup and setup correctly[0m
+  [32m  ✔[0m[90m assertCleanState - check that registries are clean at the start of test running[0m
+
+[0m  Volt agent state overlay (B-05)[0m
+  [32m  ✔[0m[90m PERS-AGENT-claude-mcp: an MCP server added in the overlay never reaches ~/.claude.json; session ids do[0m[31m (106ms)[0m
+  [32m  ✔[0m[90m PERS-AGENT-claude-md: a CLAUDE.md, settings or hook planted in the overlay is removed at the next launch[0m[31m (204ms)[0m
+  [32m  ✔[0m[90m Claude Code's login (Linux): copied in, and a refresh copied back only for the same account[0m
+  [32m  ✔[0m[90m Claude Code's login (macOS): the keychain item and its fallback file stay where they are[0m
+  [32m  ✔[0m[90m PERS-AGENT-codex: config.toml is read-only through the overlay; a refreshed login goes back, another account does not[0m
+  [32m  ✔[0m[90m a user without a config: nothing is created in their home from the sandbox[0m
+  [32m  ✔[0m[90m old overlays are pruned[0m
+
+[0m  Volt broker audit log (AUDIT-1)[0m
+  [32m  ✔[0m[90m records are JSON lines with a salted target; files are private; the log rotates[0m
+
+[0m  Volt decision log (C2)[0m
+  [32m  ✔[0m[90m POL-DET-1: a day's logged decisions replay to identical decisions from their stored snapshots[0m[31m (124ms)[0m
+  [32m  ✔[0m[90m POL-DET-1: an edited decision, snapshot or context in the log is reported, never silently replayed[0m
+  [32m  ✔[0m[90m rotation: files rotate by size, old ones are dropped, and each file replays on its own[0m[31m (222ms)[0m
+
+[0m  Volt admin policy (G.1 admin layer)[0m
+  [32m  ✔[0m[90m managed preferences: XML and binary plists read the same[0m
+  [32m  ✔[0m[90m the admin layer restricts through the Authority, and only restricts[0m
+  [32m  ✔[0m[90m fails closed: a policy that is there but unreadable, throws, or is malformed leaves third parties nothing[0m
+
+[0m  Volt T3 extension hosts (P2, real sandbox)[0m
+  [32m  ✔[0m[90m T3-HOST-1: one extension alone in an attested host; its connection is handed over on the channel; H.7 reads, writes, exec and network[0m[31m (2210ms)[0m
+  [32m  ✔[0m[90m T3-HOST-2: an untrusted workspace is not readable; "Allow host" opens one destination live[0m[31m (1581ms)[0m
+  [32m  ✔[0m[90m T3-HOST-3: an extension that can't be sandboxed is refused before anything starts[0m
+
+[0m  Volt grant store (C2)[0m
+  [32m  ✔[0m[90m GS-ATOMIC-1: commits write the whole store atomically, 0600, with no temp files left and the epoch file first[0m[31m (316ms)[0m
+  [32m  ✔[0m[90m GS-TORN-1: a torn store loads empty (third party nothing, first party its ceiling), is kept aside, and the epoch still grows[0m[31m (582ms)[0m
+  [32m  ✔[0m[90m GS-EPOCH-1: the epoch never goes back, even when the store file is lost[0m[31m (363ms)[0m
+  [32m  ✔[0m[90m GS-CAS-1: a commit at a stale epoch is refused; update retries so two approvals for different hosts both land, in order[0m[31m (121ms)[0m
+  [32m  ✔[0m[90m GS-CAS-2: two processes sharing the file never lose each other's commits[0m[31m (514ms)[0m
+  [32m  ✔[0m[90m GS-CAS-3: approving the same thing twice is one grant and no new epoch[0m[33m (71ms)[0m
+  [32m  ✔[0m[90m GS-REVOKE-1: revoking is a new epoch announced as narrowing[0m[31m (259ms)[0m
+  [32m  ✔[0m[90m GS-EXPIRY-1: expired grants are dropped at the given time; use moves the unused clock; first party never expires[0m[31m (254ms)[0m
+  [32m  ✔[0m[90m GS-NEWER-2: a newer Volt's store is read-only: no commit writes over it[0m
+  [32m  ✔[0m[90m GS-LOCK-1: a lock left by a crashed process is broken after it goes stale; a live one makes the commit wait, then fail[0m[31m (301ms)[0m
+
+[0m  Volt sandbox security: Windows MXC (adversarial, real containers)[0m
+  [36m  - PROBE-WIN: the backend probes, trials and reports Windows' row honestly[0m
+  [36m  - ATTEST-WIN-1: the workload runs only after external attestation of an AppContainer process[0m
+  [36m  - ATTEST-WIN-2 / FAULT-WIN-1: a prologue outside the sandbox is rejected, and without the go file nothing runs[0m
+  [36m  - WIN-FS-1 / CRED-WIN: credentials, .env files and anything outside the policy are unreadable[0m
+  [36m  - WIN-FS-2 / PERS-WIN: writes land only in the workspace and temp; protected git files stay read-only[0m
+  [36m  - WIN-TMP-1 / WIN-DLL-1: temp is the run's own folder; system folders lead PATH; no current-folder lookup[0m
+  [36m  - WIN-ENV-1: the container cannot open the user's other processes[0m
+  [36m  - NET-WIN-2: network none (Model 3): no loopback, no public connections, no DNS[0m
+  [36m  - NET-WIN-1: network proxy (Model 2): only Volt's proxy is reachable[0m
+  [36m  - NET-WIN-DNS (expected residual, MXC#1666): DNS still resolves in proxy mode[0m
+  [36m  - NET-WIN-3: a sandboxed listener is unreachable from the host[0m
+  [36m  - WIN-SPAWN-1: "no new processes" is refused on Windows, never run without it[0m
+  [36m  - WIN-MSYS-1: Git Bash, MSYS2 and WSL images are refused with a reason[0m
+  [36m  - WIN-MSYS-2: Git Bash on the approved AppContainer-compatible runtime runs, contained, through this backend[0m
+  [36m  - WIN-ESC-1/2: WSL and Task Scheduler cannot be reached from inside[0m
+  [36m  - WIN-ESC-3: WMI Win32_Process.Create cannot start a process outside[0m
+  [36m  - WIN-ESC-4: ShellExecute (url.dll FileProtocolHandler) cannot start a program outside[0m
+  [36m  - WIN-UI-1: the clipboard is closed to the container[0m
+  [36m  - WIN-HANDLE-1: handles the launcher inherited never reach the workload[0m
+  [36m  - WIN-PIPE-1: the container cannot open Volt's named pipes[0m
+  [36m  - TREE-WIN-1: stopping a run ends every process it started, detached ones included[0m
+  [36m  - TREE-WIN-2: when the workload exits, what it left behind is ended too[0m
+  [36m  - RES-WIN-1: a memory limit is enforced by polling the job (best effort)[0m
+  [36m  - WIN-NODE-1: tools that look upward from their folders work (ancestors are listable, not readable)[0m
+  [36m  - HELPER-WIN-1: a wxc-exec that is not the pinned build is refused[0m
+  [36m  - PERF-WIN-1: sandboxed command start-up (p50/p95)[0m
+
+[0m  Volt network broker (I.4, NET-1..20)[0m
+  [32m  ✔[0m[90m NET-1: DNS rebinding: one lookup per connection, every answer public, the checked address is the one connected[0m[31m (171ms)[0m
+  [32m  ✔[0m[90m NET-2: IDNA homographs: a look-alike name is another name; full-width is the same name[0m[33m (69ms)[0m
+  [32m  ✔[0m[90m NET-3: NAT64, both prefixes (64:ff9b::/96 and 64:ff9b:1::/48), as literals and as answers[0m[31m (275ms)[0m
+  [32m  ✔[0m[90m NET-4: IPv4-mapped addresses are judged as IPv4[0m[31m (430ms)[0m
+  [32m  ✔[0m[90m NET-5: 6to4 (2002::/16) is judged as the IPv4 address it carries[0m[33m (72ms)[0m
+  [32m  ✔[0m[90m NET-6: decimal, octal and hex addresses are refused, never resolved[0m[31m (340ms)[0m
+  [32m  ✔[0m[90m NET-21: localhost aliases: names, short and numeric forms, IPv6 spellings and zone ids never reach this machine, even under *[0m[31m (962ms)[0m
+  [32m  ✔[0m[90m NET-7: CONNECT smuggling: only host:port is a CONNECT target[0m[31m (473ms)[0m
+  [32m  ✔[0m[90m NET-8: absolute form and Host must agree; origin form is not a proxy request[0m[31m (150ms)[0m
+  [32m  ✔[0m[90m NET-9: Content-Length with Transfer-Encoding, or two lengths, is refused and never forwarded[0m[31m (264ms)[0m
+  [32m  ✔[0m[90m NET-10: bytes pipelined after CONNECT are tunnel payload, never a second request[0m
+  [32m  ✔[0m[90m NET-11: slowloris: unfinished headers are dropped after the header timeout; idle tunnels close[0m[31m (719ms)[0m
+  [32m  ✔[0m[90m NET-12: a token is valid only on its route: another principal's gets 407 and an audit event naming whose it was[0m[31m (272ms)[0m
+  [32m  ✔[0m[90m NET-13: a live grant applies to the same running client's next connection; approvals are CAS on the epoch[0m[31m (242ms)[0m
+  [32m  ✔[0m[90m NET-14 / REV-1: revoking a host closes its open tunnel within 1 s; a narrower rule set does too[0m[31m (142ms)[0m
+  [32m  ✔[0m[90m NET-14b / REV-1: a revocation in the grant store (another writer) closes the tunnel[0m[31m (150ms)[0m
+  [32m  ✔[0m[90m NET-15: cloud metadata on both families, whatever is granted[0m[31m (380ms)[0m
+  [32m  ✔[0m[90m NET-16: redirects are not followed: a 3xx to a private address goes back, and the client's next request is refused[0m[33m (59ms)[0m
+  [32m  ✔[0m[90m NET-17: a wildcard never spans a public suffix and matches descendants only[0m[31m (425ms)[0m
+  [32m  ✔[0m[90m NET-18: * covers names on 80 and 443 only: no port widening, no addresses[0m[31m (392ms)[0m
+  [32m  ✔[0m[90m NET-19: exfil-capable hosts need a rule naming them exactly, even under * and wide wildcards[0m[31m (572ms)[0m
+  [32m  ✔[0m[90m NET-20: budgets per principal with typed refusals, prompt budget (G.12), and an audit event per connect, deny and close[0m[31m (685ms)[0m
+  [32m  ✔[0m[90m an upstream that ends first: the client still gets every byte in flight, then its end[0m[31m (1220ms)[0m
+  [32m  ✔[0m[90m t2 and t3 principals get H.8 byte budgets; agents none[0m
+  [32m  ✔[0m[90m local network and loopback: a LAN address needs net.local.connect for it and its port; Volt's own ports never[0m[31m (284ms)[0m
+  [32m  ✔[0m[90m NET-VIEW-1: a plugin principal is judged by its manifest view: declared hosts only, none without a view, none for network none[0m[31m (448ms)[0m
+  [32m  ✔[0m[90m NET-FP-1: a built-in reaches what it declares within its first-party ceiling with no prompt; beyond it is refused, never prompted[0m[31m (1405ms)[0m
+  [32m  ✔[0m[90m NET-VIEW-2: an MCP principal from a registered provider: its approved hosts, never wider than its parent chat; revoking the provider closes its tunnels[0m[31m (442ms)[0m
+  [32m  ✔[0m[90m the audit log is one JSON object per line, 0600, rotated by size[0m[31m (286ms)[0m
+  [32m  ✔[0m[90m MemoryGrantSource: commits are compare-and-swap on the epoch[0m
+  [32m  ✔[0m[90m NET-T3-1: an extension host's route is judged by its manifest: network none, named declarations, live "Allow host", never public *[0m[31m (497ms)[0m
+
+[0m  Volt permission UX on the execution host (P4)[0m
+  [32m  ✔[0m[90m UX-GRANT-1: "Allow for This Chat" is a chat grant in the store: it outlives the run and a restart; "Allow" ends with the run[0m[31m (1249ms)[0m
+  [32m  ✔[0m[90m UX-REVOKE-1 / REV-1: revoking on the Access page (the store, from another process) closes the tunnel it allowed[0m[31m (571ms)[0m
+  [32m  ✔[0m[90m UX-APPROVE-1: approvals are by denial id and epoch only; a stale epoch, an unknown id and a private address are refused[0m[31m (512ms)[0m
+  [32m  ✔[0m[90m UX-SIGNER-1: a signer change drops every grant and refusal of the old signer's subject[0m[31m (229ms)[0m
+  [32m  ✔[0m[90m UX-STORE-1: a window records only the user's grants, never a first-party or preset one[0m[31m (89ms)[0m
+  [32m  ✔[0m[90m UX-HISTORY-1: the history merges the decision log and the network and brokers' audit logs, newest first[0m
+
+[0m  Volt principal registry (C2)[0m
+  [32m  ✔[0m[90m mint: 128-bit random ids, frozen records, the execution host and time from core; the user subject is never minted[0m
+  [32m  ✔[0m[90m IPC-1 (registry): the context of a request is the principal on its channel, whatever the payload claims[0m
+  [32m  ✔[0m[90m IPC-3 (registry): the on-behalf-of chain is built by core only; a payload can't extend or forge it[0m
+  [32m  ✔[0m[90m IPC-3 (Authority): a chain the registry built attenuates; the chain a payload would like is not what is evaluated[0m
+  [32m  ✔[0m[90m IPC-4 (registry): closing a channel revokes its principal; the channel is never bound again[0m
+  [32m  ✔[0m[90m IPC-5 (registry): an unknown channel or a principal minted elsewhere has no context[0m
+  [32m  ✔[0m[90m revoking a principal revokes everything started for it[0m
+
+[0m  Volt sandbox attestation and backend hardening (H7, real processes)[0m
+  [32m  ✔[0m[90m ATTEST-1: a run starts only on external evidence, recorded with the policy it ran under[0m[31m (708ms)[0m
+  [32m  ✔[0m[90m ATTEST-2: a forged ready line from an unsandboxed prologue is rejected and the workload never runs[0m[31m (944ms)[0m
+  [32m  ✔[0m[90m ATTEST-3: go byte withheld: the workload's first-syscall marker never appears[0m[31m (2066ms)[0m
+  [32m  ✔[0m[90m ATTEST-4: a wrong go byte: the workload's first-syscall marker never appears[0m[31m (1346ms)[0m
+  [32m  ✔[0m[90m FAULT-1: a failed attestation: the workload's first-syscall marker never appears[0m[31m (1364ms)[0m
+  [32m  ✔[0m[90m ATTEST-3b: without the go byte the prologue waits, alive, and the workload does not run[0m[31m (1153ms)[0m
+  [32m  ✔[0m[90m MAC-TCC-1: the sandbox root is its own TCC-responsible process[0m[31m (2453ms)[0m
+  [32m  ✔[0m[90m MAC-TTY-1: a sandbox can neither read nor write another terminal[0m[31m (2289ms)[0m
+  [32m  ✔[0m[90m MAC-ENV-1 (expected to fail, residual B-12): a sandbox reads another process's environment through KERN_PROCARGS2[0m[31m (2238ms)[0m
+  [32m  ✔[0m[90m SEC-CROSS-1: a sandbox cannot read another run's folder or another principal's cache[0m[31m (697ms)[0m
+  [32m  ✔[0m[90m NET live grant: after "Allow host" the same process connects, without a restart[0m[31m (952ms)[0m
+  [32m  ✔[0m[90m LNX-ENV-1: a .env at depth 9 in a 25k-entry home is masked or the run is refused[0m[31m (10988ms)[0m
+  [36m  - LNX-SECCOMP-VSOCK: socket(AF_VSOCK) and netlink audit fail inside the sandbox; netlink route still lists interfaces[0m
+  [36m  - LNX-BWRAP-CVE: the probe ran the CVE-2026-87766 trial on the system bubblewrap and it held[0m
+  [32m  ✔[0m[90m launch protocol fds are the documented ones[0m
+
+[0m  Volt sandbox LNX-BWRAP-CVE refusal (bubblewrap 0.9.0 image)[0m
+  [36m  - LNX-BWRAP-CVE: a bubblewrap whose trial lands outside the fixture is refused with install guidance[0m
+
+[0m  Volt sandbox pattern walk scope (B-27)[0m
+  [32m  ✔[0m[90m B-27: with narrow reads the unreadable home is not walked, and its toolchains and the shared temp are best effort: none refuses the run[0m[31m (593ms)[0m
+  [32m  ✔[0m[90m B-27: the resolver marks toolchains (also one linked out of the home) and shared temp best effort, never the workspace[0m[31m (200ms)[0m
+  [32m  ✔[0m[90m a CLI's SQLite sidecars stay writable before they exist; a missing name without a file extension is skipped[0m
+
+[0m  Volt sandbox launcher on the Policy Authority (C2 step 4)[0m
+  [32m  ✔[0m[90m LAUNCH-AUTH-1: a launch the Authority denies never reaches a backend[0m[31m (997ms)[0m
+  [32m  ✔[0m[90m AGY-2: an agent with a random listening port is refused on macOS before anything is prepared, with the reason the chat shows[0m[31m (1005ms)[0m
+  [32m  ✔[0m[90m enforce: an allowed launch runs the compiled policy, the principal is sealed with the resolved hash[0m[31m (405ms)[0m
+  [32m  ✔[0m[90m shadow: the earlier composition acts and the Authority's refusal is recorded[0m[31m (308ms)[0m
+  [32m  ✔[0m[90m epochs: an invalidation drops cached compiles and the next launch judges the new policy[0m[31m (1263ms)[0m
+
+[0m  Volt MCP hosts on the launcher (C6, real sandboxes)[0m
+  [32m  ✔[0m[90m MCP-HOST-1-LNCH: tools/list and tools/call round-trip; attested before it ran; its HOME is its own[0m[31m (3192ms)[0m
+  [32m  ✔[0m[90m MCP-5-LIVE: the canary: the home folder and Volt's user data are out of reach; the workspace is not[0m[31m (3213ms)[0m
+  [32m  ✔[0m[90m MCP-HOST-REVOKE: revoking the chat's anchor stops its servers' whole trees, and only its own[0m[31m (6433ms)[0m
+  [32m  ✔[0m[90m MCP-HOST-IDLE: no traffic for the idle budget makes it idle, then stops it[0m[31m (4684ms)[0m
+  [32m  ✔[0m[90m MCP-QUOTA-FSIZE: a file over 100 MB cannot be written (the OS limit, H.8)[0m[31m (4296ms)[0m
+  [31m  1) MCP-QUOTA-MEM: a tree over its polled memory limit is killed (resource) and counts as a crash[0m
+  [32m  ✔[0m[90m MCP-HOST-LEDGER: the next start of Volt leaves a live owner's server alone and reaps a dead owner's[0m[31m (9150ms)[0m
+  [32m  ✔[0m[90m MCP-HOST-POLICY: a chat the Authority will not launch gets no server: typed `policy`, nothing runs[0m[31m (786ms)[0m
+
+[0m  Volt sandbox proxy (B-31)[0m
+  [32m  ✔[0m[90m NET-AUTH: a request without this run's token gets 407, whoever sends it[0m
+  [32m  ✔[0m[90m NET live grant: "Allow host" applies to the next connection of the same proxy[0m
+  [32m  ✔[0m[90m a tunnel with no traffic is closed after the idle timeout[0m[31m (302ms)[0m
+  [32m  ✔[0m[90m 64:ff9b:1::/48 (local-use NAT64) is judged as IPv4 under every placement[0m
+
+[0m  Volt sandbox PTY launch (F.6)[0m
+  [32m  ✔[0m[90m the channels carry the backend's confirmation; the workload runs only after the go line, inside the sandbox[0m[31m (1852ms)[0m
+  [32m  ✔[0m[90m any other line, or the end of input, runs nothing[0m[31m (1734ms)[0m
+  [32m  ✔[0m[90m a launcher that never starts is not confirmed, and ending it releases the channels[0m[31m (15546ms)[0m
+  [32m  ✔[0m[90m evidence written into the channels by something else is not accepted[0m[31m (450ms)[0m
+  [36m  - B-33: a terminal whose workspace is under a shared temp folder is refused, as it cannot be bound race-free[0m
+
+[0m  Volt sandbox second layers (C4, real processes)[0m
+  [32m  ✔[0m[90m TREE-MAC-1: a double-forked, setsid, environment-cleared orphan dies with its run[0m[31m (3807ms)[0m
+  [32m  ✔[0m[90m RES-MAC-1: a run over its memory limit is killed within 2 s, and says why[0m[31m (2017ms)[0m
+  [32m  ✔[0m[90m RES-MAC-1: a run under its memory limit is left alone[0m[31m (2413ms)[0m
+  [32m  ✔[0m[90m RES-MAC-2: a fork bomb is killed at the process limit, the whole tree with it[0m[31m (1100ms)[0m
+  [32m  ✔[0m[90m RES-MAC-2: a run within its process limit keeps working[0m[31m (468ms)[0m
+  [36m  - TREE-LNX-1: a double-forked, setsid, environment-cleared orphan dies with its run, with and without a scope[0m
+  [36m  - RES-LNX-1: memory is a hard limit on the whole tree (cgroup memory.max), and a run over it is killed and says why[0m
+  [36m  - RES-LNX-2: a fork bomb is held at the process limit, then the whole tree goes[0m
+  [36m  - RES-LNX-3: CPU time, file size and open files are kernel limits[0m
+  [36m  - LNX-FS-2 (second layer): with Landlock, a write the mounts would allow outside the policy still fails[0m
+  [36m  - LNX-FS-3: a name created during the run inside a writable root stays best effort, with Landlock too, and the run says so[0m
+  [32m  ✔[0m[90m RES-MAC-3: CPU time, file size and open files are kernel limits[0m[31m (1872ms)[0m
+
+[0m  Volt sandbox supervisor (C5, real processes)[0m
+  [32m  ✔[0m[90m ATTEST-HOST: a Node host starts only on external evidence and is listed with its attestation[0m[31m (373ms)[0m
+  [32m  ✔[0m[90m DENY-HOST-1: what the sandbox refuses a running host is on its row (the window warns from it), without the runtime's own noise[0m[31m (632ms)[0m
+  [32m  ✔[0m[90m IPC-CHAN-1: NODE_CHANNEL_FD round-trips, as the fd after the launch protocol's, and only after the go byte[0m[31m (743ms)[0m
+  [32m  ✔[0m[90m IPC-CHAN-2: another sandbox cannot reach a host's channel: it has no path, and the host process is out of sight[0m[31m (981ms)[0m
+  [32m  ✔[0m[90m IPC-CHAN-3: with a registry, the channel is bound to the principal and closing it revokes the principal[0m[31m (487ms)[0m
+  [32m  ✔[0m[90m RES-6: a crash loop restarts with backoff as new principals, then is broken with its stderr kept[0m[31m (1335ms)[0m
+  [32m  ✔[0m[90m RES-1-POLL: resource samples arrive for a running host, and a tree over its polled memory limit is killed[0m[31m (1118ms)[0m
+  [32m  ✔[0m[90m LIFE-IDLE-1: no activity for the idle budget makes a host idle, then stops it; activity keeps it running[0m[31m (5344ms)[0m
+  [32m  ✔[0m[90m LIFE-BUDGET-1: over the host budget a start is refused unless an idle host can be stopped for it[0m[31m (906ms)[0m
+  [32m  ✔[0m[90m TREE-1: quitting kills every host's whole tree[0m[31m (2038ms)[0m
+  [32m  ✔[0m[90m LIFE-RECOVER-1: the next start reaps a dead owner's hosts by their tag and leaves a live owner's alone[0m[31m (1250ms)[0m
+  [32m  ✔[0m[90m FAULT-HOST-1: a host whose attestation fails is refused, typed, and its workload never runs[0m[31m (693ms)[0m
+  [32m  ✔[0m[90m LIFE-FLAG-1: with the supervisor turned off nothing starts and nothing is reaped[0m
+  [32m  ✔[0m[90m PERF-HOST-1: cold host start to first RPC (budget: 04-performance.md, T2 150/300 ms p50/p95)[0m[31m (13971ms)[0m
+
+[0m  Volt sandbox supervisor helpers[0m
+  [32m  ✔[0m[90m ps CPU time parses every form[0m
+  [32m  ✔[0m[90m killTagged refuses a tag that is not one[0m
+
+[0m  Volt sandbox Seatbelt profile equivalence (SB-EQ-1, real sandbox-exec)[0m
+  [32m  ✔[0m[90m SB-EQ-1: the agent profile (this machine's toolchains, narrow reads) allows and denies what it did before the merge[0m[31m (36410ms)[0m
+  [32m  ✔[0m[90m SB-EQ-1: the workspace profile (deny by default) allows and denies what it did before the merge[0m[31m (13824ms)[0m
+  [32m  ✔[0m[90m SB-EQ-1: every rule kind (git allow list, write files, nested and duplicate roots, multi-name patterns, isolation) is unchanged[0m[31m (32199ms)[0m
+
+[0m  Volt agent state (B-05, INV-17)[0m
+  [32m  ✔[0m[90m K.4 footprint lint: every footprint lists writable subpaths and never config[0m
+  [32m  ✔[0m[90m PERS-AGENT-0: no provider may write a config-bearing name in the real home[0m[31m (102ms)[0m
+  [32m  ✔[0m[90m generic providers get no writable home state, only their config read-only[0m
+  [32m  ✔[0m[90m the overlay plan: Claude Code's config folder per chat, its settings linked read-only, its login kept[0m
+  [32m  ✔[0m[90m Codex and Cursor overlays: CODEX_HOME with its login copied, CURSOR_CONFIG_DIR with its project data[0m
+  [32m  ✔[0m[90m the agent policy with an overlay: writes go to the overlay, the overlay's config names stay protected[0m
+  [32m  ✔[0m[90m merge-back: only listed keys reach the user's config; the rest is reported as dropped[0m
+  [32m  ✔[0m[90m QUIET-1: Claude Code's own bookkeeping (feature caches, counters, seen marks) is never reported; settings still are[0m
+  [32m  ✔[0m[90m merge-back refuses prototype keys, oversized values and a file that is no longer an object[0m
+  [32m  ✔[0m[90m credentials go back only for the same account[0m
+  [32m  ✔[0m[90m ENV-1: the agent environment is an allow list, never `*`, and secret-looking names are caught[0m
+  [32m  ✔[0m[90m NET-LISTEN-1 (policy): agents never listen anywhere by default; granted ports only[0m
+  [32m  ✔[0m[90m narrow reads: system, PATH, toolchains, workspace and own state; never the whole disk or home[0m
+
+[0m  Volt Policy Authority (C2)[0m
+  [32m  ✔[0m[90m PolicyAuthority: epochs only grow, changes are announced, decisions are offered to the log[0m
+  [32m  ✔[0m[90m performance: evaluate p95 <= 50 us, snapshot rebuild <= 5 ms (CI margin x5)[0m[31m (901ms)[0m
+[0m    G.2 layers[0m
+    [32m  ✔[0m[90m 1 floor: unknown capabilities, critical ones on the extension API, credential targets[0m
+    [32m  ✔[0m[90m 2 manifest: undeclared, other targets, unknown subjects (INV-13)[0m
+    [32m  ✔[0m[90m 3 grants: first party is its ceiling; third party needs a valid grant for medium and high[0m
+    [32m  ✔[0m[90m 4 workspace and 5 admin only ever restrict[0m
+    [32m  ✔[0m[90m 8 platform: a dimension the backend cannot enforce refuses confined principals only[0m
+    [32m  ✔[0m[90m G.3: prompts only with a gesture or foreground, for low to high, declared, unrefused, within budget[0m
+    [32m  ✔[0m[90m time-explicit: expiry is judged at the snapshot time, never the clock[0m
+[0m    PERM-FLOW-1: egress compatibility (G.6, B-22)[0m
+    [32m  ✔[0m[90m a network-off chat calling a tool of a plugin with hosts is refused with a card; allowed once or for this chat; revocable[0m
+    [32m  ✔[0m[90m compatible without a card: network on, unconfined, hosts the chat reaches, or a plugin with no egress[0m
+    [32m  ✔[0m[90m an unsandboxed extension reaches everything: a network-off chat always gets the card[0m
+    [32m  ✔[0m[90m a chat prompting another chat: the target must be confined at least as much (INV-11)[0m
+[0m    XPL: no amplification across principals (INV-02)[0m
+    [32m  ✔[0m[90m XPL-1: plugin A calling plugin B on its behalf gets only what A may do[0m
+    [32m  ✔[0m[90m XPL-2: egress is checked on every edge of the chain, not only the first[0m
+    [32m  ✔[0m[90m XPL-3: first party acting for a third party is attenuated to the third party[0m
+    [32m  ✔[0m[90m XPL-4: a callee never borrows its caller's authority[0m
+[0m    laws (K.2)[0m
+    [32m  ✔[0m[90m AUTH-PROP-1: adding a deny anywhere never turns a deny into an allow[0m[31m (618ms)[0m
+    [32m  ✔[0m[90m AUTH-PROP-2: allow(P via chain) implies allow(C) for every C in the chain[0m[31m (405ms)[0m
+    [32m  ✔[0m[90m AUTH-PROP-3: every allowed data-flow edge is egress-compatible[0m[31m (1120ms)[0m
+    [32m  ✔[0m[90m POL-PROP-5 (Authority): no input allows a floor-denied request[0m[31m (389ms)[0m
+    [32m  ✔[0m[90m POL-PROP-6 (Authority): what a first party is allowed lies within its ceiling[0m[31m (198ms)[0m
+    [32m  ✔[0m[90m POL-PROP-7 (Authority): credential paths are denied for every subject and every grant[0m[31m (383ms)[0m
+    [32m  ✔[0m[90m POL-DET-1: logged decisions replay to the same decision from the stored snapshot[0m[31m (1083ms)[0m
+
+[0m  Volt sandbox bubblewrap arguments[0m
+  [32m  ✔[0m[90m namespaces, session, capabilities and the control fds[0m
+  [32m  ✔[0m[90m network: own namespace unless host, or the bridge holder's when bridged[0m
+  [32m  ✔[0m[90m a terminal keeps its session; old bubblewrap gets no --disable-userns[0m
+  [32m  ✔[0m[90m minimal mounts: reads, the host's top-level links, and a frozen root[0m
+  [32m  ✔[0m[90m readAll: the whole filesystem read-only, then masks over socket folders[0m
+  [32m  ✔[0m[90m masks only cover folders the sandbox can see[0m
+  [32m  ✔[0m[90m deny: tmpfs over folders, /dev/null over files, nothing for missing paths, last[0m
+  [32m  ✔[0m[90m protect: read-only binds inside writable roots, after the writes, with pinned parents[0m
+  [32m  ✔[0m[90m pins start at the deepest writable root[0m
+  [32m  ✔[0m[90m pattern matches from the walk are masked and protected[0m
+  [32m  ✔[0m[90m granted unix sockets are bound in; other sockets the walk found are hidden[0m
+  [32m  ✔[0m[90m single writable files are bound only when they exist[0m
+  [32m  ✔[0m[90m the workload runs after --, behind the readiness script and prlimit[0m
+  [32m  ✔[0m[90m C4 Landlock: the helper is the payload, bound read-only before the root is frozen, its rules mirroring the mounts[0m
+  [32m  ✔[0m[90m C4 cgroups: what systemd-run adds to bubblewrap's environment is unset before the policy's own[0m
+  [32m  ✔[0m[90m the readiness script waits for the go byte on its own fd before the workload (B-29)[0m
+  [32m  ✔[0m[90m B-33: roots opened as fds are bound from the fd, read-only or writable as the policy says[0m
+  [32m  ✔[0m[90m B-33: bubblewrap closes a bound fd, so a root bound more than once uses its fd only for the last bind[0m
+  [32m  ✔[0m[90m B-35: an isolated folder is emptied, frozen at the end, and the run's own child is bound back[0m
+  [32m  ✔[0m[90m argument injection: paths are always option values, never options or shell text[0m
+  [32m  ✔[0m[90m commands bubblewrap or a shell could take as options are refused[0m
+  [32m  ✔[0m[90m environment goes through --args, NUL-separated, never on the command line[0m
+  [32m  ✔[0m[90m prlimit options: soft = hard, lowered to the inherited hard limit[0m
+  [32m  ✔[0m[90m refusals: what the backend cannot enforce for this policy[0m
+  [32m  ✔[0m[90m the bridge holder: constant script, ports as arguments, no privileged ports[0m
+
+[0m  Volt policy compiler and launch authority (C2 step 4)[0m
+  [32m  ✔[0m[90m LAUNCH-AUTH-1 (compile): a launch the Authority denies is never compiled[0m
+  [32m  ✔[0m[90m LAUNCH-AUTH-1 (layers): floor, admin and workspace each refuse a launch the chat's settings allow[0m
+  [32m  ✔[0m[90m LAUNCH-AUTH-1 (addresses): a non-public address in the chat's hosts is refused per connection, not at launch[0m[31m (114ms)[0m
+  [32m  ✔[0m[90m POL-DET-1 (compile): a logged launch replays to byte-identical policy[0m[31m (1562ms)[0m
+  [32m  ✔[0m[90m compile cache: keyed by (input digest, subject), frozen entries, dropped by a new epoch[0m
+shadow diff (launch): 3000 cases, 1661 allowed and byte-identical, refusals by cause: 129 admin: denies a host the launch reaches; 974 floor: a credential folder (or `..`) as a workspace or allowed folder; 16 workspace: denies files.write; 39 workspace: denies files.read:workspace; 50 admin: denies net.connect; 40 admin: denies files.read:workspace; 21 admin: denies files.write; 50 workspace: denies net.connect; 8 admin: denies net.listen:3000; 6 workspace: denies net.listen:3000; 1 admin: denies net.listen:5173; 1 workspace: denies net.listen:8080; 2 admin: denies net.listen:8080; 2 workspace: denies net.listen:5173
+  [32m  ✔[0m[90m shadow diff (launch): 0 unexplained differences over seeded launches[0m[31m (4182ms)[0m
+shadow diff (inheritance): 3000 cases, 10 explained differences (a loopback or trailing-dot host the caller lacks; no other)
+  [32m  ✔[0m[90m shadow diff (inheritance): child-chat coverage on the Authority matches the earlier rule, except loopback and spelling[0m
+compile p95: 0.300 ms; cached miss 0.500 ms, hit 0.100 ms; evaluateLaunch 0.200 ms (1000 launches)
+  [32m  ✔[0m[90m compile budget: p95 <= 1 ms (L.1)[0m[31m (1657ms)[0m
+
+[0m  Volt T3 extension host policy (H.7)[0m
+  [32m  ✔[0m[90m T3-PLAN-1: what can be sandboxed, what needs nothing, and what is refused with its reason[0m
+  [32m  ✔[0m[90m T3-POL-1: reads its folder, toolchains and a trusted workspace; writes storage and tmp only; network through the broker with nothing allowed[0m
+  [32m  ✔[0m[90m T3-NET-1: the broker manifest names only declared hosts, never *[0m
+  [32m  ✔[0m[90m T3-NET-2: the Security page counts the hosts the broker routes for it, not only the policy's own list[0m
+  [32m  ✔[0m[90m P8-TIER-1: opt-in is the default; required covers third-party code on macOS and Linux only; built-ins, code-less and "Run Without Sandbox" stay shared[0m
+  [32m  ✔[0m[90m P8-KILL-2: the kill switch moves the tier to ask, never to off; nothing out of scope changes[0m
+  [32m  ✔[0m[90m T3-EXPORTS-1: the exports edges a sandboxed host breaks, both ways, first party marked; code-less and unrelated edges ignored[0m
+  [32m  ✔[0m[90m the opt-in list matches ids case-insensitively and ignores junk[0m
+
+[0m  Volt grants (G.4, G.9)[0m
+  [32m  ✔[0m[90m G.4 expiry: third-party persistent grants 30 days unused, high ones 90 days regardless; first party, admin and ceilings never[0m
+  [32m  ✔[0m[90m G.2 step 3 validity: revoked, later epoch, other workspace or session, critical without a typed confirmation or from a preset[0m
+  [32m  ✔[0m[90m GS-LOAD-1: a missing, torn or foreign file loads empty, never "allow all"[0m
+  [32m  ✔[0m[90m GS-LOAD-2: malformed entries are dropped one by one, each with a note[0m
+  [32m  ✔[0m[90m GS-MIGRATE-1: schema migrations are pure and run in order; a schema with no migration is torn, its epoch kept[0m
+  [32m  ✔[0m[90m GS-MIGRATE-2: capability migrations: narrowing ones apply, widening ones drop the grant so it is asked again[0m
+  [32m  ✔[0m[90m GS-NEWER-1: a store from a newer Volt is read-only, with every third-party grant absent[0m
+  [32m  ✔[0m[90m GS-FORMAT-1: the file is canonical JSON: the same store writes the same bytes and reads back the same[0m
+  [32m  ✔[0m[90m consents become grants: granted is a persistent user grant, refused a refusal[0m
+
+[0m  Volt sandbox: MXC (Windows) translation[0m
+[0m    Windows build floor (PROBE-WIN)[0m
+    [32m  ✔[0m[90m parses ver output and dotted versions[0m
+    [32m  ✔[0m[90m accepts each release at its floor and refuses one update below[0m
+    [32m  ✔[0m[90m the hosted windows-11-arm image (26200.9725) is above the floor[0m
+    [32m  ✔[0m[90m refuses Windows 10, Windows 11 before 24H2 and Windows Server[0m
+    [32m  ✔[0m[90m an unlisted newer build passes the floor but leaves the decision to the trial[0m
+[0m    probe output[0m
+    [32m  ✔[0m[90m needs the BaseContainer tier with deny paths; AppContainer fallbacks are refused[0m
+[0m    image classifier (WIN-MSYS-1, WIN-ESC-1)[0m
+    [32m  ✔[0m[90m refuses MSYS2 images by import and by location, including Git's launchers[0m
+    [32m  ✔[0m[90m refuses Cygwin images[0m
+    [32m  ✔[0m[90m refuses WSL launchers, including System32 bash.exe[0m
+    [32m  ✔[0m[90m native programs, including Git's own git.exe, run[0m
+    [32m  ✔[0m[90m an approved runtime copy is classified but not refused[0m
+    [32m  ✔[0m[90m reads PE headers, delay imports and the ASLR flag; rejects non-PE data[0m
+[0m    Windows paths[0m
+    [32m  ✔[0m[90m normalizes, compares case-insensitively and lists ancestors[0m
+[0m    command lines[0m
+    [32m  ✔[0m[90m quotes like CommandLineToArgvW expects[0m
+    [32m  ✔[0m[90m batch files go through cmd.exe and refuse metacharacters[0m
+[0m    request (J.3)[0m
+    [32m  ✔[0m[90m pins version 1.0.0, BaseContainer, telemetry off and the UI lockdown that keeps Node working[0m
+    [32m  ✔[0m[90m narrow reads: listed folders and the control folder, never a volume root or the profile[0m
+    [32m  ✔[0m[90m reads of everything are refused, not widened[0m
+    [32m  ✔[0m[90m credential denies and pattern matches become deniedPaths[0m
+    [32m  ✔[0m[90m existing protected paths inside writable roots become read-only grants (a child grant wins over its parent)[0m
+    [32m  ✔[0m[90m ancestors of every grant may be listed (tools walk upward), never the grants or denied folders themselves[0m
+    [32m  ✔[0m[90m network none is Model 3: everything denied, host loopback closed[0m
+    [32m  ✔[0m[90m network proxy is Model 2: only Volt's proxy, through runtimeConfig.networkProxy[0m
+    [32m  ✔[0m[90m plain host loopback is never used to reach single ports (MXC#1665)[0m
+    [32m  ✔[0m[90m "no new processes" and unix sockets are refused (WIN-SPAWN-1)[0m
+[0m    workload environment (WIN-TMP-1, WIN-DLL-1)[0m
+    [32m  ✔[0m[90m temp folders are the run's own; MXC's required variables are present[0m
+    [32m  ✔[0m[90m writable folders never precede system folders on PATH[0m
+    [32m  ✔[0m[90m system folders lead PATH even when the host lists them later (WIN-DLL-1)[0m
+    [32m  ✔[0m[90m names Windows cannot carry are refused[0m
+[0m    prologue control and status[0m
+    [32m  ✔[0m[90m control file carries the nonce, files, canary and limits, command last[0m
+    [32m  ✔[0m[90m parses ready, started, limit and exit lines[0m
+    [32m  ✔[0m[90m attestation JSON is the last line of the helper's output[0m
+[0m    external evidence (ATTEST-WIN-1)[0m
+    [32m  ✔[0m[90m accepts an attested AppContainer process at Low integrity in a job, started by this run[0m
+    [32m  ✔[0m[90m rejects a prologue that ran outside the sandbox (forged ready line)[0m
+    [32m  ✔[0m[90m rejects every missing or wrong piece of evidence[0m
+    [32m  ✔[0m[90m rejects a canary that did not fail the expected way[0m
+[0m    optional dimensions[0m
+    [32m  ✔[0m[90m a backend may declare only spec-sanctioned dimensions optional[0m
+
+[0m  Volt network broker: addresses, hosts and rules (I.4)[0m
+  [32m  ✔[0m[90m the special-range table is I.4's, with local-use NAT64 and both metadata families[0m
+  [32m  ✔[0m[90m NET-PROP-1: every encoding of a special address is refused or judged non-public[0m[31m (382ms)[0m
+  [32m  ✔[0m[90m NET-PROP-2: every encoding of a metadata address is metadata[0m[33m (39ms)[0m
+  [32m  ✔[0m[90m public addresses stay public in every encoding[0m[33m (58ms)[0m
+  [32m  ✔[0m[90m hosts: IDNA to lower-case ASCII, one trailing dot, controls and empty labels refused[0m
+  [32m  ✔[0m[90m rules: descendants only, no public suffix, ports explicit, * on the web ports only (B-32)[0m
+  [32m  ✔[0m[90m exfil hosts: only a rule naming the host exactly opens one[0m
+
+[0m  Volt network broker: the Authority's decisions (I.4, C2)[0m
+  [32m  ✔[0m[90m metadata and reserved addresses are floor denials that no grant opens[0m
+  [32m  ✔[0m[90m net.connect never reaches a local or loopback address; net.local.connect needs a grant naming it and its port[0m
+  [32m  ✔[0m[90m broker requests: port-aware, exfil by exact name, live session grants of this principal only[0m
+
+[0m  Volt sandbox policy schema[0m
+  [32m  ✔[0m[90m built-in profiles carry their own names[0m
+  [32m  ✔[0m[90m a minimal policy completes to the most restrictive values[0m
+  [32m  ✔[0m[90m unknown fields, wrong versions and wrong types are errors, never ignored[0m
+  [32m  ✔[0m[90m path entries: absolute or token-anchored, no traversal, no control characters, NFC only[0m
+  [32m  ✔[0m[90m write roots can never be the whole filesystem, home, system folders or PATH[0m
+  [32m  ✔[0m[90m network entries: lower-case hostnames, wildcards with a base, IPv4, optional port[0m
+  [32m  ✔[0m[90m env names and values[0m
+  [32m  ✔[0m[90m oversized and malformed text is refused before parsing[0m
+
+[0m  Volt sandbox policy composition[0m
+  [32m  ✔[0m[90m a repository policy can narrow[0m
+  [32m  ✔[0m[90m a repository policy cannot widen anything; every attempt is recorded[0m
+  [32m  ✔[0m[90m denies and protections only grow, even from a trusted layer[0m
+  [32m  ✔[0m[90m narrowing a proxy allow list keeps only covered hosts[0m
+  [32m  ✔[0m[90m containment helpers[0m
+
+[0m  Volt sandbox capabilities[0m
+  [32m  ✔[0m[90m the install sheet lists valid capabilities by risk and rejects unknown ones[0m
+  [32m  ✔[0m[90m only granted capabilities reach the policy, starting from restricted[0m
+
+[0m  Volt sandbox enforcement check[0m
+  [32m  ✔[0m[90m a dimension the backend cannot enforce blocks the run unless it is best effort[0m
+  [32m  ✔[0m[90m secret-looking variables and reserved names[0m
+
+[0m  Volt sandbox Seatbelt profile[0m
+  [32m  ✔[0m[90m deny-default workload profile: order, reads, writes, protections, network[0m
+  [32m  ✔[0m[90m system services mode: allow-default base with the escape hatches still denied[0m
+  [32m  ✔[0m[90m B-26: other terminals are out of reach in every profile; /dev/tty stays[0m
+  [32m  ✔[0m[90m J.1: the system resolver is closed unless the network is open; the escape services are denied[0m
+  [32m  ✔[0m[90m B-35: an isolated folder is denied except the run's own child[0m
+  [32m  ✔[0m[90m hostile path text cannot break out of a string or regex[0m
+
+[0m  Volt sandbox resolved rules[0m
+  [32m  ✔[0m[90m writes Volt performs for the workload follow the OS rules[0m
+  [32m  ✔[0m[90m .git is an allow list: commits, merges, rebases and fetches write; nothing that runs or redirects git does (B-03)[0m
+  [32m  ✔[0m[90m Seatbelt expresses the .git allow list with name patterns, so later names are covered[0m
+
+[0m  Volt sandbox agent profile[0m
+  [32m  ✔[0m[90m reads the system, toolchains, the workspace and its own state (D-14); writes the workspace, temp and its listed state (B-05)[0m
+  [32m  ✔[0m[90m network on: ssh config readable, private keys denied, ssh-agent granted[0m
+  [32m  ✔[0m[90m NET-HOST-1: network on is hostname rules: its API, the package registries and the user's hosts; never any host, never loopback by name[0m
+  [32m  ✔[0m[90m LIST-HOME-1 / FX-1: fx may list the home folder and chmod ~/.fx, nothing more; other agents neither[0m
+  [32m  ✔[0m[90m AGY-1: an agent with a random listening port is refused a sandbox on macOS, allowed in a Linux namespace[0m
+  [32m  ✔[0m[90m read-only protects the workspace even inside temp; home and / are never roots[0m
+
+[0m  Volt sandbox inheritance[0m
+  [32m  ✔[0m[90m the stricter level wins: read-only > workspace-write > off[0m
+  [32m  ✔[0m[90m off on either side returns the other side unchanged[0m
+  [32m  ✔[0m[90m network off beats on[0m
+  [32m  ✔[0m[90m extra writable folders: only what both grant[0m
+  [32m  ✔[0m[90m allowed hosts: only what both reach[0m
+  [32m  ✔[0m[90m isAtLeastAsStrict[0m
+  [32m  ✔[0m[90m the stricter settings are at least as strict as both sides[0m
+  [32m  ✔[0m[90m inheritedSandboxSettings: only when the parent is sandboxed and the child is weaker[0m
+  [32m  ✔[0m[90m folderGrantError refuses the disk, home and its parents[0m
+  [32m  ✔[0m[90m folderGrantError refuses system folders but not temp[0m
+  [32m  ✔[0m[90m folderGrantError refuses credentials, startup files and folders containing them[0m
+  [32m  ✔[0m[90m folderGrantError refuses Volt's data folder and protected names[0m
+  [32m  ✔[0m[90m folderGrantError refuses parents of the chat's checkout, allows ordinary folders[0m
+
+[0m  Volt sandbox: the T4-MCP policy (C6)[0m
+  [32m  ✔[0m[90m MCP-POL-1: over random chats, a server's policy is never wider than its chat's[0m[31m (1468ms)[0m
+  [32m  ✔[0m[90m MCP-5: no home: not the agent's state, its config overlay, its caches or other projects; only the system, toolchains and the workspace[0m
+  [32m  ✔[0m[90m MCP-6: network: none without approved hosts; with them, the proxy and only hosts the chat may reach[0m
+  [32m  ✔[0m[90m MCP-QUOTA-1: the H.8 limits the OS can enforce are in the policy; process counting is best effort[0m
+
+[0m  Volt sandbox policy[0m
+  [32m  ✔[0m[90m levels normalize to off[0m
+  [32m  ✔[0m[90m cursor: its settings (cli-config.json, with command allow lists) are saved in the chat's overlay, never in place (B-05)[0m
+  [32m  ✔[0m[90m workspace-write: workspace, temp and the agent state are writable; nothing else[0m
+  [32m  ✔[0m[90m code that runs later outside the sandbox is never writable[0m
+  [32m  ✔[0m[90m a worktree's git common dir is writable but its hooks and config are not[0m
+  [32m  ✔[0m[90m read-only: the workspace is not writable, allowed folders and temp still are[0m
+  [32m  ✔[0m[90m read-only holds for a workspace inside temp[0m
+  [32m  ✔[0m[90m the home folder and / are never accepted as roots[0m
+  [32m  ✔[0m[90m agent footprints keep each CLI working[0m
+  [32m  ✔[0m[90m network off: the agent API plus allowed hosts; on: the same plus the package registries[0m
+  [32m  ✔[0m[90m domain patterns[0m
+  [32m  ✔[0m[90m strategy: every agent is wrapped at every sandboxed level, Codex included (B-10, D-16)[0m
+  [32m  ✔[0m[90m paths[0m
+
+[0m  Volt sandbox Seatbelt helpers[0m
+  [32m  ✔[0m[90m quoting[0m
+  [32m  ✔[0m[90m kernel log lines are parsed and attributed by tag[0m
+  [32m  ✔[0m[90m LOG-FORGE-1: a refusal counts only from the kernel's Sandbox.kext; a line any process writes with `logger` is ignored[0m
+  [32m  ✔[0m[90m LOCAL-DENIAL-1: a refused connection to this machine names its port; elsewhere stays as the kernel said[0m
+
+[0m  Volt sandbox denials[0m
+  [32m  ✔[0m[90m denials named in command output[0m
+  [32m  ✔[0m[90m kinds, noise and labels[0m
+  [32m  ✔[0m[90m HOUSEKEEPING-1: the agent CLI's own background state, the run's canary and the home listing are never offered; real edits still are[0m
+  [32m  ✔[0m[90m per-chat settings: folders and hosts are added once, and the launch key follows them[0m
+  [32m  ✔[0m[90m workspace roots: the checkout, plus the main repository git dir for a linked worktree[0m
+  [32m  ✔[0m[90m Codex config values follow the strategy that wraps or keeps its own sandbox[0m
+  [32m  ✔[0m[90m instruction files and hooks other tools run later are never writable[0m
+
+[0m  Volt sandbox: edits through the window and host warnings (e2e review)[0m
+  [32m  ✔[0m[90m EDIT-GUARD-1: an edit to what the sandbox keeps read-only is named; ordinary project files are not[0m
+  [32m  ✔[0m[90m HOST-WARN-1: a host is warned about what it tried, not the runtime's own denials[0m
+
+[0m  Volt sandbox properties (K.2)[0m
+  [32m  ✔[0m[90m POL-PROP-1: untrusted layers compile to a policy within the caller on every dimension[0m[31m (227ms)[0m
+  [32m  ✔[0m[90m POL-PROP-2: untrusted layers never widen, also once symlinks are resolved[0m[31m (163ms)[0m
+  [32m  ✔[0m[90m POL-PROP-3: a symlinked untrusted entry whose real path leaves the trusted roots is dropped[0m[31m (96ms)[0m
+  [32m  ✔[0m[90m POL-PROP-4: `*` covers a host only on ports 80 and 443[0m
+  [32m  ✔[0m[90m POL-PROP-5: the credential floor appears in every output[0m[31m (81ms)[0m
+  [32m  ✔[0m[90m POL-PROP-6: a capability grant never exceeds what was requested (the ceiling)[0m[31m (173ms)[0m
+  [32m  ✔[0m[90m POL-PROP-7: credential paths are denied for every agent request[0m[31m (250ms)[0m
+  [32m  ✔[0m[90m POL-PROP-8: bestEffort never contains a mandatory dimension[0m[31m (137ms)[0m
+  [32m  ✔[0m[90m composition records where each entry came from[0m
+
+[0m  Volt sandbox Seatbelt regex merging (PERF-SB)[0m
+  [32m  ✔[0m[90m PERF-SB law: merged profiles match exactly the paths the unmerged profile did, rule by rule[0m[31m (3518ms)[0m
+  [32m  ✔[0m[90m PERF-SB: an agent-sized profile compiles to few regex filters, each literal under the limit, the same every time[0m[31m (225ms)[0m
+  [32m  ✔[0m[90m PERF-SB: duplicates collapse, nested roots fold into their parent, and hostile text is still refused[0m
+
+[0m  Volt sandbox seccomp filter[0m
+  [32m  ✔[0m[90m serializes struct sock_filter little-endian, 8 bytes each[0m
+  [32m  ✔[0m[90m checks the architecture first and kills on a mismatch[0m
+  [32m  ✔[0m[90m x86_64 refuses the x32 ABI[0m
+  [32m  ✔[0m[90m every denied syscall returns EPERM on both architectures[0m
+  [32m  ✔[0m[90m x86_64-only denials do not hit arm64 syscalls with the same numbers[0m
+  [32m  ✔[0m[90m ordinary syscalls are allowed[0m
+  [32m  ✔[0m[90m clone3 fails with ENOSYS so libc falls back to clone[0m
+  [32m  ✔[0m[90m clone is refused with any namespace flag, allowed for fork and threads[0m
+  [32m  ✔[0m[90m ioctl refuses TIOCSTI and TIOCLINUX, including with high bits set[0m
+  [32m  ✔[0m[90m socket(AF_UNIX) is refused only when asked[0m
+  [32m  ✔[0m[90m NET-LISTEN-1 (Linux, host network): listen is refused only when asked[0m
+  [32m  ✔[0m[90m LNX-SECCOMP-1: socket families outside inet, inet6, granted unix and netlink route fail with EAFNOSUPPORT[0m
+  [32m  ✔[0m[90m LNX-SECCOMP-2: modify_ldt, kcmp, pidfd_getfd, process_madvise, vmsplice and the NUMA calls are refused[0m
+  [32m  ✔[0m[90m jumps are forward, small, and land inside the program[0m
+  [32m  ✔[0m[90m the syscall tables cover every denial with distinct numbers[0m
+  [32m  ✔[0m[90m maps node architectures[0m
+
+[0m  Volt permission UX model (P4, G.7, G.12)[0m
+  [32m  ✔[0m[90m UX-3: budgets: one prompt a minute, three a day, coalesced over 2 s, auto-deny after two refusals until reset[0m
+  [32m  ✔[0m[90m UX-5 / UX-FORGE-2: a gesture token counts once, for its principal, under 1 s, and only if core minted it[0m
+  [32m  ✔[0m[90m UX-STORE-2: a window change may only carry user grants for third parties and chats[0m
+  [32m  ✔[0m[90m UX-ACCESS-1: every subject with its grants: built-ins with their ceilings, extensions, chats with standing grants[0m
+
+[0m  Volt stdio build-entry check (I.6)[0m
+  [32m  ✔[0m[90m BUILD-ENTRY-1: unsandboxed worktree setup is refused while a setup file changed unreviewed; it runs once the user accepts[0m[31m (314ms)[0m
+  [32m  ✔[0m[90m only project-defined setup outside a sandbox needs the review[0m
+
+[0m  Volt MCP servers through the stdio service (C6, real sandboxes)[0m
+  [32m  ✔[0m[90m MCP-HOST-1: tools/list and tools/call round-trip with a stdio server started for a sandboxed chat[0m[31m (1592ms)[0m
+  [32m  ✔[0m[90m MCP-5-LIVE: the canary: the server cannot read or write the home folder outside its policy[0m[31m (683ms)[0m
+  [32m  ✔[0m[90m MCP-HOST-ROW: listed on the Security page with its chat and server name and its attestation; Stop ends it[0m[31m (511ms)[0m
+  [32m  ✔[0m[90m MCP-HOST-CLOSE: closing the chat stops its servers' whole trees, and only its own[0m[31m (3049ms)[0m
+  [32m  ✔[0m[90m MCP-HOST-RESTART: a crash restarts it with backoff (the caller is told, and initializes again); the third crash in a minute is final[0m[31m (6905ms)[0m
+  [32m  ✔[0m[90m MCP-HOST-FLAG: with the supervisor turned off, a sandboxed chat's server is refused (typed) and nothing runs[0m[31m (403ms)[0m
+  [32m  ✔[0m[90m MCP-HOST-REFUSE: a request that is not the sandboxed chat's own is refused before anything runs[0m[31m (375ms)[0m
+
+[0m  Volt exec context (B-04, B-06)[0m
+  [32m  ✔[0m[90m a request says who it runs for; a sandboxed chat's request without its sandbox is refused[0m
+  [32m  ✔[0m[90m the PTY launcher text depends only on the channels, and opens them in their directions[0m
+
+[0m  Volt exec context against real sandboxes (LIFE-PATH, B-04, F.6)[0m
+  [32m  ✔[0m[90m B-04: a sandboxed chat's post-turn check whose test script writes $HOME runs in the sandbox; no marker[0m[31m (9529ms)[0m
+  [32m  ✔[0m[90m a sandboxed chat's command without its sandbox is refused before anything runs (INV-03)[0m
+  [32m  ✔[0m[90m LIFE-PATH (agent-shell): the chat's command runs, and its write outside the workspace fails[0m[31m (969ms)[0m
+  [32m  ✔[0m[90m LIFE-PATH (workflow): the chat's command runs, and its write outside the workspace fails[0m[31m (1652ms)[0m
+  [32m  ✔[0m[90m LIFE-PATH (worktree-setup): the chat's command runs, and its write outside the workspace fails[0m[31m (560ms)[0m
+  [32m  ✔[0m[90m LIFE-PATH (terminal): the chat's command runs, and its write outside the workspace fails[0m[31m (482ms)[0m
+  [32m  ✔[0m[90m LIFE-PATH (hook): the chat's command runs, and its write outside the workspace fails[0m[31m (569ms)[0m
+  [32m  ✔[0m[90m LIFE-PATH (title): the chat's command runs, and its write outside the workspace fails[0m[31m (240ms)[0m
+  [32m  ✔[0m[90m LIFE-PATH-1: a sandboxed chat's terminal runs in its sandbox on a PTY; nothing runs before the go line[0m[31m (1038ms)[0m
+  [32m  ✔[0m[90m F.6: a terminal whose go line never comes, or is wrong, runs nothing[0m[31m (427ms)[0m
+  [32m  ✔[0m[90m F.6: a process that is not the launcher Volt prepared is not confirmed[0m[31m (600ms)[0m
+  [32m  ✔[0m[90m a terminal for a sandboxed chat without its sandbox is refused[0m
+
+[0m  Volt stdio sandbox file access (B-17)[0m
+  [32m  ✔[0m[90m sandboxAllows(unknown) is false; a running unsandboxed process stays unconfined; a gone one is unknown again[0m
+  [32m  ✔[0m[90m the file broker refuses a process that is not a running sandboxed spawn[0m
+  [32m  ✔[0m[90m a sandboxed agent's files: written in its workspace, refused through a link or outside it[0m[31m (1506ms)[0m
+
+[0m  Volt extension code scan (EXT-SCAN)[0m
+  [32m  ✔[0m[90m EXT-SCAN-1: ordinary extension code has no finding[0m
+  [32m  ✔[0m[90m EXT-SCAN-2: credential locations, also built from path pieces[0m
+  [32m  ✔[0m[90m EXT-SCAN-3: eval, Function and vm are dynamic code; Function("return this") is not[0m
+  [32m  ✔[0m[90m EXT-SCAN-4: names hidden by joining, concatenating, reversing or escaping[0m
+  [32m  ✔[0m[90m EXT-SCAN-5: encoded payloads that decode to a host, a command or a name[0m
+  [32m  ✔[0m[90m EXT-SCAN-6: hosts: raw addresses are medium, drop boxes high, declared ones nothing[0m
+  [32m  ✔[0m[90m EXT-SCAN-6b: a bare `*` declares no host, and a drop host is excused only when named exactly[0m
+  [32m  ✔[0m[90m EXT-SCAN-7: child_process, computed require, the whole environment, native bindings[0m
+  [32m  ✔[0m[90m EXT-SCAN-8: vscode.volt calls beyond the manifest, only for extensions that use the volt proposal[0m
+  [32m  ✔[0m[90m EXT-SCAN-9: findings merge by rule and evidence, with the first place and a count[0m
+  [32m  ✔[0m[90m EXT-SCAN-10: template literals, regular expressions and comments do not derail the lexer[0m
+  [32m  ✔[0m[90m EXT-SCAN-11: the digest follows what was found, not where[0m
+  [32m  ✔[0m[90m EXT-SCAN-12: the folder walk reads only code, within its limits[0m
+
+[0m  volt-plugin/1 protocol (H.3)[0m
+  [32m  ✔[0m[90m T2-RPC-1: a frame is a 4-byte big-endian length and UTF-8 JSON; split anywhere, it decodes the same[0m
+  [32m  ✔[0m[90m T2-RPC-2: binary payloads travel as their own frames, named by id; a dangling reference breaks the stream[0m
+  [32m  ✔[0m[90m T2-RPC-3: frames over the 16 MiB limit are refused at both ends: never sent, and fatal when received[0m[31m (833ms)[0m
+  [32m  ✔[0m[90m IPC-1: a payload naming extensionId, principal or caller, at any depth, is refused[0m
+  [32m  ✔[0m[90m IPC-1: identity claimed in the envelope, beside JSON-RPC's fields, is no message: the stream breaks[0m
+  [32m  ✔[0m[90m T2-RPC-4: schemas refuse unknown fields, wrong types, non-NFC and over-long strings, and deep nesting[0m
+  [32m  ✔[0m[90m T2-RPC-5: requests round-trip, with bytes; params that fail the schema come back InvalidArgument; unknown methods NotFound[0m
+  [32m  ✔[0m[90m T2-RPC-6: deadlines: a request past its deadline is DeadlineExceeded and the other end is cancelled; a caller can cancel too[0m[31m (102ms)[0m
+  [32m  ✔[0m[90m T2-RPC-7: backpressure: at most 64 requests in flight per direction, then RateLimited; and a token bucket on calls per second[0m[31m (410ms)[0m
+  [32m  ✔[0m[90m T2-RPC-8: a broken stream is fatal: pending requests fail Cancelled and the channel closes[0m
+  [32m  ✔[0m[90m T2-RPC-9: typed errors keep their type and the capability fields across the wire[0m
+  [32m  ✔[0m[90m H.4: engines.volt ranges against the running API[0m
+
+[0m  Agent Lab test fixture under the extension host sandbox (EXT-LAB-OS)[0m
+  [32m  ✔[0m[90m EXT-LAB-OS-1 positive control: its own folder, the trusted workspace and its storage work[0m[31m (239ms)[0m
+  [32m  ✔[0m[90m EXT-LAB-OS-2 readCanary / readSecrets: the canary, ~/.aws, ~/.npmrc and Volt's grants stay unreadable[0m[31m (324ms)[0m
+  [32m  ✔[0m[90m EXT-LAB-OS-3 readSecrets: secret-looking variables never reach it[0m[31m (623ms)[0m
+  [32m  ✔[0m[90m EXT-LAB-OS-4 exfiltrate / spawnShell / obfuscated: nothing reaches the undeclared host, directly or through the proxy[0m[31m (1436ms)[0m
+  [32m  ✔[0m[90m EXT-LAB-OS-5 persistence: it cannot write outside its storage (shell startup files, Volt's grants, the workspace)[0m[31m (706ms)[0m
+
+[0m  Volt T2 plugin host (P1, real sandboxes)[0m
+  [32m  ✔[0m[90m T2-HOST-1: tools are known from the manifest before anything starts; the first call starts one attested host and activates the plugin[0m[31m (6196ms)[0m
+  [32m  ✔[0m[90m T2-HOST-2 / H.6: two plugins never share a process; each has its own principal and its own storage[0m[31m (5786ms)[0m
+  [32m  ✔[0m[90m IPC-1 / IPC-3: identity fields in a payload are refused at the channel, and no field lets one host act as another[0m[31m (3887ms)[0m
+  [32m  ✔[0m[90m IPC-4 / IPC-5: after a crash the old channel's principal is revoked and its context is gone; the restart is a new principal[0m[31m (3621ms)[0m
+  [32m  ✔[0m[90m T2-HOST-3: workspace files go through the files broker: declared targets only, outside refused with a typed capability error[0m[31m (4115ms)[0m
+  [32m  ✔[0m[90m T2-HOST-4 / H.8: storage over its quota is refused; the plugin keeps running[0m[31m (1909ms)[0m
+  [32m  ✔[0m[90m T2-HOST-5: a deadline ends a call that never answers; engines.volt outside the API refuses to start[0m[31m (2239ms)[0m
+  [32m  ✔[0m[90m T2-HOST-6 / H.9: a crash loop stops at the restart budget, the plugin is broken with its stderr, and Restart brings it back[0m[31m (4577ms)[0m
+  [32m  ✔[0m[90m T2-HOST-7 / H.2: idle hosts stop, and the next call starts them again[0m[31m (1678ms)[0m
+  [32m  ✔[0m[90m T2-HOST-8 / H.8: over half a core for the CPU window is stopped as a resource crash[0m[31m (4439ms)[0m
+
+[ESC-T2-1] {"control":"ok:","secret":"err:EPERM","userData":"err:EPERM","write":"err:EPERM","writeHome":"err:EPERM","network":"err:EPERM","loopback":"err:EPERM","spawn":{"error":"the channel closed"}}
+  [32m  ✔[0m[90m ESC-T2-1: a simulated SES escape (Node fs, net, child_process in reach) hits the OS sandbox's denials[0m[31m (520ms)[0m
+
+[IPC-T2-FORGE] {"own":"ok:{\"text\":\"mine\"}","principal":"err:InvalidArgument","extensionId":"err:InvalidArgument","caller":"err:InvalidArgument","onBehalfOf":"err:InvalidArgument","subject":"err:InvalidArgument","traversal":"err:InvalidArgument","absolute":"err:InvalidArgument","filesAs":"err:InvalidArgument","guessedCall":"err:NotFound","direct":"err:EPERM"}
+  [32m  ✔[0m[90m IPC-1 / IPC-3 / IPC-5 (escaped host): raw requests naming another plugin are refused, its storage is unreachable, and a forged envelope ends the host[0m[31m (1280ms)[0m
+
+[PERF-T2] {"coldMs":2933,"handshakeMs":2930,"activatedMs":2933,"warmP50":0.5,"warmP95":12.4,"callsPerSecond":2765,"messagesPerSecond":5531,"idleMB":73}
+  [32m  ✔[0m[90m PERF-T2-1..5: cold start, warm call, empty round trip, 1 KB throughput and an idle host's memory (reported; generous gates)[0m[31m (6030ms)[0m
+
+[0m  Volt chat sandbox[0m
+  [32m  ✔[0m[90m a child of a sandboxed chat is confined at least as tightly[0m
+  [32m  ✔[0m[90m nothing is written when the parent is unconfined or the child already stricter[0m
+  [32m  ✔[0m[90m a sandboxed chat may not instruct a less sandboxed one[0m
+  [32m  ✔[0m[90m GATE-SPAWN-1: thread_launch {model: codex} from a sandboxed chat runs wrapped, never with Codex's own sandbox[0m
+  [32m  ✔[0m[90m GATE-SPAWN-2: a handoff (or thread_configure) of a sandboxed chat to Codex stays wrapped; to an unsandboxable agent it is refused[0m
+  [32m  ✔[0m[90m GATE-SPAWN-3: project: other from a sandboxed chat runs read-only there[0m
+  [32m  ✔[0m[90m GATE-SPAWN-4: workspace: root from a worktree (the main checkout) runs read-only[0m
+  [32m  ✔[0m[90m GATE-SPAWN-5: existing_worktree of another chat runs read-only; a read-only caller's child is read-only anyway[0m
+  [32m  ✔[0m[90m GATE-SPAWN-6: roots are compared as real paths; a sibling with the same prefix, or an allowed folder, are told apart[0m
+  [32m  ✔[0m[90m refused spawns: the error name survives, the message is recognized[0m
+
+[0m  Volt host tool sandbox classes[0m
+  [32m  ✔[0m[90m every host tool Volt serves is classified, and nothing else[0m
+  [32m  ✔[0m[90m teams and councils run from a sandboxed chat like delegate_task; a worktree team and machine_run do not[0m
+  [32m  ✔[0m[90m the escape routes are classified as such[0m
+  [32m  ✔[0m[90m what one call reads, writes, opens and prompts[0m
+  [32m  ✔[0m[90m a target chat covers the caller only when it is confined at least as much[0m
+  [32m  ✔[0m[90m reads: workspace, allowed folders and temp; never credential folders, never via ..[0m
+  [32m  ✔[0m[90m writes: the rule the OS enforces on the agent itself[0m
+  [32m  ✔[0m[90m browser pages: no local files, and only allowed hosts and granted local ports with the network off[0m
+  [32m  ✔[0m[90m refusals tell the model what to do instead[0m
+
+[0m  Managed terminals of sandboxed chats (LIFE-PATH-1, LIFE-PATH-5, GATE-XCHAT-3)[0m
+  [32m  ✔[0m[90m LIFE-PATH-1: terminal_start from a sandboxed chat starts the terminal in its sandbox, with the chat's rules[0m
+  [32m  ✔[0m[90m the stricter record wins: a call that says sandboxed is sandboxed even when the runtime has no record, and the reverse[0m
+  [32m  ✔[0m[90m a terminal that started outside the sandbox cannot be typed into once the chat is sandboxed[0m
+  [32m  ✔[0m[90m a restart runs the terminal again for its chat, in the chat's sandbox as it is now[0m
+  [32m  ✔[0m[90m GATE-XCHAT-3: terminal_output, terminal_wait and terminal_send reach only the caller's own terminals[0m
+  [32m  ✔[0m[90m LIFE-PATH-5: docker_ensure asks Docker in the chat's sandbox and never starts Docker for it; app_open is refused[0m
+
+[0m  Volt providers as data (M2)[0m
+  [32m  ✔[0m[90m M2-PARITY-1: the agents built from the manifests deep-equal the hand-written list, in order, probes included[0m
+  [32m  ✔[0m[90m M2-PARITY-2: sign-in commands come from the manifests and match the earlier table[0m
+  [32m  ✔[0m[90m M2-PARITY-3: all 12 provider families are built-in manifests; 10 are CLIs, OpenRouter and local models are API providers[0m
+  [32m  ✔[0m[90m M2-PARITY-4: every H3 state field in the manifests equals core's overlay and footprint tables[0m
+  [32m  ✔[0m[90m M2-DETECT-1: each provider is detected exactly as before, from the same lookups and command lines[0m
+  [32m  ✔[0m[90m M2-DETECT-2: the signed-in providers still report their account[0m
+  [32m  ✔[0m[90m M2-TRUST-1: only a volt.* built-in with a first-party ceiling contributes an agent Volt runs[0m
+  [32m  ✔[0m[90m M2-TRUST-2: a third party's voltAgents entry is only the capability requests it implies[0m
+  [32m  ✔[0m[90m M2-SCHEMA-1: an agent may not set loader variables or reach outside its home paths[0m
+
+[0m  Volt: per-extension sandbox opt-in and kill switch (P2, P8)[0m
+  [32m  ✔[0m[90m opting in writes the per-profile user setting; not opted in is the shared host as before[0m
+  [32m  ✔[0m[90m P8-KILL-1: a refusal says why and stays off until the user confirms "Run Without Sandbox"[0m
+  [32m  ✔[0m[90m P8-KILL-3: switching the sandbox off asks first; a held extension says so and offers Run Without Sandbox[0m
+  [32m  ✔[0m[90m P8-MODE-1: under required every third-party extension is in scope where the flip applies; out means Run Without Sandbox, asked first[0m
+
+[0m  Volt extension code scan in the window (EXT-SCAN-SVC)[0m
+  [32m  ✔[0m[90m EXT-SCAN-SVC-1: a third-party folder is scanned; a clean one has no finding[0m
+  [32m  ✔[0m[90m EXT-SCAN-SVC-2: once per version (cached across windows); built-ins and code-less extensions are not scanned[0m
+  [32m  ✔[0m[90m EXT-SCAN-SVC-3: findings read as one line per rule, high first[0m
+
+[0m  Volt extension misbehavior warnings (EXT-WATCH)[0m
+  [32m  ✔[0m[90m EXT-WATCH-1: undeclared and critical calls warn once, naming what was tried, with the sandbox offered[0m[31m (958ms)[0m
+  [32m  ✔[0m[90m EXT-WATCH-2: consent refusals, built-ins and unknown extensions are not warned about[0m[31m (524ms)[0m
+  [32m  ✔[0m[90m EXT-WATCH-3: a sandboxed extension is not offered the sandbox again[0m[31m (480ms)[0m
+
+[0m  Volt T3: the real extension host in the sandbox (P2)[0m
+  [32m  ✔[0m[90m T3-REAL-1: an opted-in extension activates in its own sandboxed host, runs a command and a language server, and is denied the network and home[0m[31m (7694ms)[0m
+
+
+
+!!! T3 smoke: set VOLT_T3_SMOKE_DIR to a folder of unpacked .vsix extensions to run it.
+!!! T3-SMOKE-1 SKIPPED.
+
+[0m  Volt T3 smoke: Open VSX extensions in the sandbox (P2)[0m
+  [36m  - T3-SMOKE-1: each extension activates in the sandbox as it does without it, or the difference is recorded[0m
+
+[0m  Volt agent server: sandboxed extension hosts (P2, P6)[0m
+  [32m  ✔[0m[90m T3-SRV-1: the extension is found in the server's own folders by its manifest id, the newest version, built-ins marked[0m
+  [32m  ✔[0m[90m T3-SRV-2: the host runs the scanned folder with the server's storage and per-extension workspace storage and logs[0m
+  [32m  ✔[0m[90m T3-SRV-3: a sandboxed start needs an extension id and a server that runs sandboxed hosts; URIs map only for a browser window[0m
+  [32m  ✔[0m[90m P6-TICKET-1: a desktop extension host ticket opens one connection, from this computer, and only under /code[0m
+
+[0m  Volt install sheet: Agent Lab and the code scan (UX-SHEET-LAB)[0m
+  [32m  ✔[0m[90m UX-SHEET-LAB-1: every declared capability is listed by class with its reason; Allow grants the two medium ones[0m
+  [32m  ✔[0m[90m UX-SHEET-LAB-2: the code scan's findings come first, the hidden ones marked; Run in a Sandbox opts in and keeps the sheet[0m[31m (174ms)[0m
+  [32m  ✔[0m[90m UX-SHEET-LAB-3: without findings, or once sandboxed, the sheet is as before[0m
+  [32m  ✔[0m[90m UX-SHEET-LAB-4: reviewed and sandboxed before install, the findings alone are said once: no permission rows, only OK[0m[31m (124ms)[0m
+
+[0m  Volt permission UX in the window (P4)[0m
+  [32m  ✔[0m[90m UX-FORGE-1 / UX-1: only a denial the broker recorded gets Allow buttons; an agent-printed one gets none[0m
+  [32m  ✔[0m[90m UX-3: a spent prompt budget offers no Allow, only the way to Settings, Access[0m
+  [32m  ✔[0m[90m UX-2 / UX-5: Allow is inert for 500 ms, and a synthetic click never approves; Skip counts as a refusal[0m[31m (588ms)[0m
+  [32m  ✔[0m[90m UX-4: running outside the sandbox (critical) is never one click: the word must be typed, then a real click[0m
+  [32m  ✔[0m[90m UX-APPROVE-2 / UX-FORGE-2: the trust service approves through the broker only with a token minted for the chat[0m
+  [32m  ✔[0m[90m UX-SHEET-1: the install sheet groups declared capabilities by class; Allow grants the medium ones only[0m
+  [32m  ✔[0m[90m UX-ACCESS-2: the Access page lists subjects and their grants; Revoke narrows the store; opening it resumes prompts[0m[31m (81ms)[0m
+  [32m  ✔[0m[90m UX-GRANT-3: extension consents come from the grant store, judged by the Authority (expiry, refusals, signer subject)[0m
+  [32m  ✔[0m[90m UX-SHEET-2: the review before install says where the code runs (a sandbox recommended), names every capability in Volt's words, and grants nothing[0m[31m (169ms)[0m
+  [32m  ✔[0m[90m UX-SHEET-3: an install waits for the review, and a cancel installs nothing[0m
+  [32m  ✔[0m[90m UX-5b: the consent dialog's Allow needs a real click: a synthetic one answers nothing[0m[31m (559ms)[0m
+  [32m  ✔[0m[90m UX-SEC-1: the Security page says how many permissions are held and what was denied lately[0m
+
+[0m  Volt Security page: sandboxed processes (C5)[0m
+  [32m  ✔[0m[90m SEC-PAGE-1: lists every workload with its principal, backend, attestation and resources; Stop ends it[0m[33m (51ms)[0m
+  [32m  ✔[0m[90m SEC-PAGE-2: a host that reports nothing says so[0m
+  [32m  ✔[0m[90m SEC-PAGE-MCP: an MCP server is listed with its server name and its chat; Stop ends it[0m[31m (109ms)[0m
+  [32m  ✔[0m[90m SEC-PAGE-T3: the agent server's sandboxed extension hosts are listed beside the window's, with what was blocked; Stop goes to the server[0m[33m (61ms)[0m
+  [32m  ✔[0m[90m SEC-DENY-1: the runtime warning names only new refusals of extension and plugin hosts, once each[0m
+
+
+[92m [0m[32m 513 passing[0m[90m (9m)[0m
+[36m [0m[36m 37 pending[0m
+[31m  1 failing[0m
+
+[0m  1) Volt MCP hosts on the launcher (C6, real sandboxes)
+       MCP-QUOTA-MEM: a tree over its polled memory limit is killed (resource) and counts as a crash:
+
+      [31m[0m
+      [32m+ expected[0m [31m- actual[0m
+
+[0m[90m
+  Error: Timeout of 120000ms exceeded. For async tests and hooks, ensure "done()" is called; if returning a Promise, ensure it resolves. (vs/platform/voltSandbox/test/node/sandboxMcpHost.test)
+[0m
+
+
+23:40  up 1 day,  2:14, 2 users, load averages: 135.15 121.36 106.64

@@ -1,0 +1,2 @@
+before steps 15 edits 71 median ms per edit 58 range 19 - 740 total s 7.3
+after steps 12 edits 75 median ms per edit 379 range 58 - 1254 total s 37.5

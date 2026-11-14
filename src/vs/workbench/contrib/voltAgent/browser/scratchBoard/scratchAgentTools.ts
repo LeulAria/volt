@@ -316,6 +316,11 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 	}
 
 	private async read(args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
+		await this.boards.whenReady;
+		if (!args.boardId && !this.boards.index.boards.some(board => !board.deleted && !board.archived)) {
+			// Agents read before they draw: no board yet is an empty board (scratch_draw starts one), not an error.
+			return { text: 'The user has no Scratch board yet, so there is nothing on it. scratch_draw starts one.' };
+		}
 		const boardId = await this.boardFor(args, call);
 		const ref = await this.boards.acquireModel(boardId);
 		try {

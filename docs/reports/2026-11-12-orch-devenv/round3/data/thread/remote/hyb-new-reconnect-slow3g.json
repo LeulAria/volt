@@ -1,0 +1,43 @@
+{
+ "mode": "reconnect",
+ "url": "http://127.0.0.1:9976/code/",
+ "warm": false,
+ "proxied": true,
+ "runs": 3,
+ "load": "11.62 17.34 20.92",
+ "firstMessage": {
+  "n": 3,
+  "median": 913,
+  "min": 892,
+  "max": 931
+ },
+ "results": [
+  {
+   "firstMessage": 892,
+   "sockets": 10,
+   "opened": 1,
+   "banner": false,
+   "uiClearMs": 922,
+   "loadBefore": 11.25,
+   "loadAfter": "13.32 18.75 21.69"
+  },
+  {
+   "firstMessage": 913,
+   "sockets": 5,
+   "opened": 1,
+   "banner": false,
+   "uiClearMs": 933,
+   "loadBefore": 13.32,
+   "loadAfter": "15.66 19.09 21.78"
+  },
+  {
+   "firstMessage": 931,
+   "sockets": 10,
+   "opened": 1,
+   "banner": false,
+   "uiClearMs": 962,
+   "loadBefore": 12.18,
+   "loadAfter": "11.62 17.34 20.92"
+  }
+ ]
+}

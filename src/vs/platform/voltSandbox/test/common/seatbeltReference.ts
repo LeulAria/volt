@@ -102,7 +102,7 @@ export function buildReferenceSeatbeltProfile(policy: IResolvedSandboxPolicy, op
 			'(allow file-read-metadata)',
 			'(allow sysctl-read)',
 			// User and group lookups (whoami, git, ssh), the system logger, power assertions.
-			'(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.logger") (global-name "com.apple.PowerManagement.control"))',
+			'(allow mach-lookup (global-name "com.apple.system.opendirectoryd.libinfo") (global-name "com.apple.system.logger") (global-name "com.apple.PowerManagement.control") (global-name "com.apple.bsd.dirhelper"))',
 			// Python's multiprocessing semaphores.
 			'(allow ipc-posix-sem)',
 			'(allow pseudo-tty)',
@@ -128,6 +128,10 @@ export function buildReferenceSeatbeltProfile(policy: IResolvedSandboxPolicy, op
 		if (read.length) {
 			out.push(`(allow file-read*\n\t${read.join('\n\t')})`);
 		}
+		const list = (policy.list ?? []).map(path => `(literal ${sbplString(path)})`);
+		if (list.length) {
+			out.push(`(allow file-read-data\n\t${list.join('\n\t')})`);
+		}
 	}
 
 	// Writes: everything else is denied (by default, or explicitly with system services on).
@@ -140,6 +144,10 @@ export function buildReferenceSeatbeltProfile(policy: IResolvedSandboxPolicy, op
 		...policy.writeFiles.flatMap(file => [`(literal ${sbplString(file)})`, `(regex ${sbplRegex(file, '\\.(lock|tmp|backup|bak|swp)[^/]*')})`]),
 	];
 	out.push(`(allow file-read* file-write*\n\t${write.join('\n\t')})`);
+	const chmod = (policy.chmod ?? []).map(path => `(literal ${sbplString(path)})`);
+	if (chmod.length) {
+		out.push(`(allow file-write-mode\n\t${chmod.join('\n\t')})`);
+	}
 
 	// `.git` as an allow list (B-03): read-only except what commits, merges, rebases and fetches
 	// write. Name patterns, so a `commondir`, hook or config created later is covered as well, and
@@ -196,6 +204,7 @@ export function buildReferenceSeatbeltProfile(policy: IResolvedSandboxPolicy, op
 		if (policy.systemServices) {
 			out.push(`(deny network* ${message})`);
 		}
+		out.push(`(deny network-outbound (with message ${sbplString(`VOLTSBX-${options.tag}-local`)}) (remote ip "localhost:*"))`);
 		const ports = [...(options.proxyPort ? [options.proxyPort] : []), ...policy.network.loopbackPorts];
 		if (ports.length) {
 			out.push('(allow system-socket)', `(allow network-outbound\n\t${[...new Set(ports)].map(port => `(remote ip ${sbplString(`localhost:${port}`)})`).join('\n\t')})`);

@@ -206,6 +206,20 @@ export function isVisibleInSandbox(policy: IResolvedSandboxPolicy, path: string)
 }
 
 /**
+ * Where a bubblewrap sandbox's listening sockets end up:
+ * - `namespace`: its own network namespace (every mode but `host`): it may listen on any port,
+ *   a random one included, and nothing outside the sandbox can connect (B-30 holds by construction);
+ * - `refused`: the host's namespace with no port granted: seccomp refuses `listen`;
+ * - `host`: the host's namespace with ports granted, which seccomp cannot tell apart: every port.
+ */
+export function bubblewrapListenScope(policy: Pick<IResolvedSandboxPolicy, 'network'>): 'namespace' | 'refused' | 'host' {
+	if (policy.network.mode !== 'host') {
+		return 'namespace';
+	}
+	return !policy.network.listen && !policy.network.listenPorts?.length ? 'refused' : 'host';
+}
+
+/**
  * The `--setenv` arguments for the workload's environment, sent through `--args FD` so values
  * never appear in a command line, and so bubblewrap itself (which runs unsandboxed) is spawned
  * with an empty environment: a policy may set `LD_PRELOAD`, which must reach the workload but

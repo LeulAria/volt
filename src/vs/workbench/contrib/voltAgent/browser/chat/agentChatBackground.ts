@@ -4,11 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import '../media/agentChatBackground.css';
-import { $, append, getWindow } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, EventType, getWindow } from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
-import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { disposableTimeout } from '../../../../../base/common/async.js';
 import { AppResourcePath, FileAccess, Schemas } from '../../../../../base/common/network.js';
 import { isWeb } from '../../../../../base/common/platform.js';
 import { basename, joinPath, toLocalResource } from '../../../../../base/common/resources.js';
@@ -55,6 +56,28 @@ const POSITION_VARIABLE = '--volt-chat-backdrop-position';
 const DIM_VARIABLE = '--volt-chat-backdrop-dim';
 
 const MEDIA = 'vs/workbench/contrib/voltAgent/browser/media/chatBackgrounds';
+
+/** A drawn background moves for this long after the last pointer or key input, then holds its frame. */
+export const BACKDROP_IDLE_MS = 15_000;
+/** And holds still while the user types, until the keys have been quiet this long. */
+export const BACKDROP_TYPING_QUIET_MS = 1_500;
+
+/**
+ * Whether a drawn background moves now: nobody is looking at a window nobody touches, and every
+ * frame (a full-canvas redraw, 30 a second) cost 15-17 % of a core in the renderer and GPU at rest
+ * and stole the main thread from typing. Returns when that answer can next change, if it can.
+ */
+export function backdropMotion(now: number, lastInput: number, lastKey: number): { readonly moves: boolean; readonly recheckIn?: number } {
+	const typingQuietAt = lastKey + BACKDROP_TYPING_QUIET_MS;
+	const idleAt = lastInput + BACKDROP_IDLE_MS;
+	if (now >= idleAt) {
+		return { moves: false };
+	}
+	if (now < typingQuietAt) {
+		return { moves: false, recheckIn: typingQuietAt - now };
+	}
+	return { moves: true, recheckIn: idleAt - now };
+}
 
 /** The longest side of a picture chosen in Settings: a full-width chat on a 5K display. */
 const IMPORT_MAX_SIZE = 3840;
@@ -358,6 +381,9 @@ function shownBackdrop(root: HTMLElement): HTMLElement | undefined {
 	return shown;
 }
 
+/** What Orbit's moving names never draw over: the new chat's controls. */
+const KEEP_CLEAR_SELECTOR = '.volt-agent-landing-chrome > *, .volt-agent-input-box, .volt-agent-suggest-chip, .volt-agent-landing-recents';
+
 /** The chat whose backdrop runs up under each window's title bar (the root's TITLEBAR classes are its). */
 const titlebarChats = new WeakMap<HTMLElement, AgentChatBackdrop>();
 
@@ -382,6 +408,10 @@ export class AgentChatBackdrop extends Disposable {
 	private height = 0;
 	/** The workbench root this chat gave the TITLEBAR classes to. */
 	private titlebarRoot: HTMLElement | undefined;
+	/** The last pointer or key input in the window, and the last key (see {@link backdropMotion}). */
+	private lastInput = Date.now();
+	private lastKey = 0;
+	private readonly motionCheck = this._register(new MutableDisposable());
 
 	constructor(
 		private readonly column: HTMLElement,
@@ -429,7 +459,46 @@ export class AgentChatBackdrop extends Disposable {
 				this.sync();
 			}
 		}));
+		const win = getWindow(column);
+		for (const type of [EventType.POINTER_MOVE, EventType.POINTER_DOWN, EventType.MOUSE_WHEEL]) {
+			this._register(addDisposableListener(win, type, () => this.onInput(false), { capture: true, passive: true }));
+		}
+		this._register(addDisposableListener(win, EventType.KEY_DOWN, () => this.onInput(true), { capture: true, passive: true }));
 		this.sync();
+	}
+
+	private onInput(key: boolean): void {
+		const now = Date.now();
+		const wasMoving = backdropMotion(now, this.lastInput, this.lastKey).moves;
+		this.lastInput = now;
+		if (key) {
+			this.lastKey = now;
+		}
+		// A pointer moving over a window that is already in motion changes nothing: no work per event.
+		if (!this.drawing || (!key && wasMoving && this.motionCheck.value)) {
+			return;
+		}
+		this.syncMotion();
+	}
+
+	/** Plays or holds the drawing by {@link backdropMotion}, and checks again when that can change. */
+	private syncMotion(): void {
+		const motion = backdropMotion(Date.now(), this.lastInput, this.lastKey);
+		if (this.shown && motion.moves) {
+			this.drawing?.view.play();
+		} else {
+			this.drawing?.view.pause();
+			// Held until the next input, not only between keystrokes: its canvas can go (see AgentChatOrbit.rest).
+			if (!this.shown || motion.recheckIn === undefined) {
+				this.drawing?.view.rest?.();
+			}
+		}
+		this.motionCheck.value = this.shown && this.drawing && motion.recheckIn !== undefined
+			? disposableTimeout(() => {
+				this.motionCheck.clear();
+				this.syncMotion();
+			}, motion.recheckIn + 1)
+			: undefined;
 	}
 
 	/** Lays the backdrop fixed over the column and the title bar when the title bar sits right on top of it. */
@@ -457,6 +526,7 @@ export class AgentChatBackdrop extends Disposable {
 		}
 		this.syncTitlebar();
 		this.syncFrost();
+		this.drawing?.view.invalidateKeepClear?.();
 	}
 
 	/**
@@ -487,16 +557,32 @@ export class AgentChatBackdrop extends Disposable {
 		const kind = agentChatDrawing(resolveAgentChatBackground(this.configurationService.getValue(AGENT_CHAT_BACKGROUND_SETTING)));
 		if (this.drawing?.kind !== kind) {
 			this.drawing?.view.dispose();
-			this.drawing = kind ? { kind, view: createAgentChatDrawing(kind, this.element, () => !!this.element.closest('.monaco-workbench.reduce-motion') || getWindow(this.element).matchMedia('(prefers-reduced-motion: reduce)').matches) } : undefined;
+			this.drawing = kind ? { kind, view: createAgentChatDrawing(kind, this.element, () => !!this.element.closest('.monaco-workbench.reduce-motion') || getWindow(this.element).matchMedia('(prefers-reduced-motion: reduce)').matches, () => this.keepClear()) } : undefined;
 			this.drawing?.view.resize(this.width, this.height);
 		}
-		if (this.shown) {
-			this.drawing?.view.play();
-		} else {
-			this.drawing?.view.pause();
-		}
+		this.syncMotion();
 		this.syncTitlebar();
 		this.syncFrost();
+	}
+
+	/**
+	 * The chat's controls over the backdrop, in its CSS pixels: the title bar's when the backdrop runs
+	 * under it, the new chat's pickers, composer, suggestions and recent projects. Orbit's names stay off them.
+	 */
+	private keepClear(): { left: number; top: number; right: number; bottom: number }[] {
+		const origin = this.element.getBoundingClientRect();
+		const boxes: { left: number; top: number; right: number; bottom: number }[] = [];
+		const add = (element: Element | null | undefined) => {
+			const box = element?.getBoundingClientRect();
+			if (box && box.width > 0 && box.height > 0) {
+				boxes.push({ left: box.left - origin.left, top: box.top - origin.top, right: box.right - origin.left, bottom: box.bottom - origin.top });
+			}
+		};
+		if (this.underTitlebar) {
+			add(this.layoutService.getContainer(getWindow(this.column), Parts.TITLEBAR_PART));
+		}
+		this.chat.querySelectorAll(KEEP_CLEAR_SELECTOR).forEach(add);
+		return boxes;
 	}
 
 	private syncTitlebar(): void {

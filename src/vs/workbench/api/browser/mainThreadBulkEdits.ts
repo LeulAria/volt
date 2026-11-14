@@ -18,10 +18,15 @@ import { executionBearingReason } from '../../../platform/voltSandbox/common/exe
 import { isLinux } from '../../../base/common/platform.js';
 import { URI } from '../../../base/common/uri.js';
 import { SerializableObjectWithBuffers } from '../../services/extensions/common/proxyIdentifier.js';
+import { IInstantiationService } from '../../../platform/instantiation/common/instantiation.js';
+import { VoltSandboxedEditGuard } from './voltSandboxedEditGuard.js';
 
 
 @extHostNamedCustomer(MainContext.MainThreadBulkEdits)
 export class MainThreadBulkEdits implements MainThreadBulkEditsShape {
+
+	/** Volt: a sandboxed host's edits may not change what the sandbox keeps read-only (and the user is told). */
+	private readonly _voltEditGuard: VoltSandboxedEditGuard;
 
 	constructor(
 		private readonly _extHostContext: IExtHostContext,
@@ -29,18 +34,26 @@ export class MainThreadBulkEdits implements MainThreadBulkEditsShape {
 		@ILogService private readonly _logService: ILogService,
 		@IUriIdentityService private readonly _uriIdentService: IUriIdentityService,
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
-	) { }
+		@IInstantiationService instantiationService: IInstantiationService,
+	) {
+		this._voltEditGuard = instantiationService.createInstance(VoltSandboxedEditGuard, _extHostContext);
+	}
 
 	dispose(): void { }
 
 	$tryApplyWorkspaceEdit(dto: SerializableObjectWithBuffers<IWorkspaceEditDto>, undoRedoGroupId?: number, isRefactoring?: boolean): Promise<boolean> {
 		const edits = reviveWorkspaceEditDto(dto.value, this._uriIdentService);
+		// A host sandboxed by its running location: edits stay in the workspace and out of files that run code.
 		if (this._extHostContext.voltSandboxed) {
 			const refused = voltSandboxedEditRefusal(edits, this._workspaceContextService);
 			if (refused) {
 				this._logService.warn(`[volt-sandbox] a sandboxed extension's workspace edit was refused: ${refused}`);
 				return Promise.reject(new VoltSandboxedHostError(`A workspace edit of ${refused}`));
 			}
+		}
+		// And never into what the sandbox keeps read-only (git config, hooks, agent configs, shell startup files).
+		if (!this._voltEditGuard.allows(edits.edits.flatMap(edit => ResourceFileEdit.is(edit) ? [edit.oldResource, edit.newResource] : ResourceTextEdit.is(edit) || ResourceNotebookCellEdit.is(edit) ? [edit.resource] : []))) {
+			return Promise.resolve(false);
 		}
 		return this._bulkEditService.apply(edits, { undoRedoGroupId, respectAutoSaveConfig: isRefactoring }).then((res) => res.isApplied, err => {
 			this._logService.warn(`IGNORING workspace edit: ${err}`);

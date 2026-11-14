@@ -138,6 +138,8 @@ Also faster:
 
 ### Changed
 
+- New installs and new chats default to **Supervised** access (ask before edits and commands). A value already saved in
+  Settings is left alone. This matches the README.
 - Agents open Review Draft Commits only when you ask for draft commits, use `/draft-commit` or ask to review them. "Commit
   and open a PR" just commits; the Commit, Push & PR button still asks.
 - New Agent always opens a fresh chat (`volt.agent.composer.restoreUnsentDraft` brings back the old behaviour).

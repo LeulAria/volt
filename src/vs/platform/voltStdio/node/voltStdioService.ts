@@ -58,6 +58,8 @@ const KILL_GRACE_MS = 2_000;
  */
 const EXIT_DRAIN_MS = 250;
 const MAX_WAIT_MS = 10 * 60_000;
+/** How long an on-demand read of a sandboxed agent's refusals may take (`log show` is 0.8-2.6 s here). */
+const SANDBOX_DENIAL_CHECK_MS = 10_000;
 /** After a sandboxed command ends, how long its sandbox (and its denial listener) stays for the kernel log's last reports. */
 const EXEC_DENIAL_GRACE_MS = 750;
 /** A finished sandboxed command whose output reads like a denial, and none arrived yet: how long its result waits for one. */
@@ -466,6 +468,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 				this.logService.info(`[volt-sandbox-spawn] ${id} attested ${attestation.backend} ${JSON.stringify(attestation.evidence)} policy=${attestation.launchPolicyHash.slice(0, 12)}`);
 			}
 			launch.warnings.forEach(warning => this._onSandboxEvent.fire({ id, warning }));
+			launch.notes.forEach(note => this._onSandboxEvent.fire({ id, note }));
 		}
 		this.processes.set(id, child);
 		this.track(child, command);
@@ -601,6 +604,11 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 
 	async allowSandboxDomains(id: string, domains: readonly string[]): Promise<void> {
 		this.sandboxes.get(id)?.allowDomains(domains);
+	}
+
+	async checkSandboxDenials(id: string, since?: number): Promise<void> {
+		// The refusals arrive through onSandboxEvent, as before.
+		await this.sandboxes.get(id)?.flushDenials(SANDBOX_DENIAL_CHECK_MS, since);
 	}
 
 	async sandboxAllows(id: string, path: string, access: 'read' | 'write'): Promise<boolean> {
@@ -838,6 +846,9 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	async execFile(request: IVoltExecFileRequest): Promise<IVoltExecFileResult> {
+		if (request.sandbox) {
+			return this.execFileSandboxed(request, request.sandbox);
+		}
 		const env = { ...await this.env(), ...request.env };
 		return new Promise(resolve => {
 			execFile(request.file, [...request.args], {
@@ -854,6 +865,74 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 					stdout: String(stdout ?? ''),
 					stderr: String(stderr ?? ''),
 					...(failure && typeof failure.code !== 'number' ? { error: failure.killed ? `timed out after ${request.timeoutMs} ms` : failure.message } : {}),
+				});
+			});
+		});
+	}
+
+	/**
+	 * {@link execFile} in the chat's OS sandbox: spawned through the launch protocol (attested before
+	 * the go byte), never run unsandboxed when the sandbox cannot be set up.
+	 */
+	private async execFileSandboxed(request: IVoltExecFileRequest, sandbox: IVoltSandboxRequest): Promise<IVoltExecFileResult> {
+		let launch: ISandboxLaunch;
+		try {
+			await this.snapshotBuildEntries(sandbox);
+			launch = await this.sandbox.prepare(request.file, [...request.args], sandbox, { cwd: request.cwd, hostEnv: await this.env(), env: request.env, label: basename(request.file), kind: 'task' });
+		} catch (err) {
+			return { exitCode: null, stdout: '', stderr: '', error: `Not run: ${(err as Error).message}` };
+		}
+		const maxBytes = request.maxBytes ?? 1024 * 1024;
+		const child = spawn(launch.command, launch.args, {
+			cwd: launch.cwd ?? request.cwd,
+			env: launch.env,
+			stdio: ['ignore', 'pipe', 'pipe', ...launch.extraStdio],
+			detached: process.platform !== 'win32',
+			windowsHide: true,
+		});
+		this.track(child, request.file);
+		return new Promise(resolve => {
+			const out: Buffer[] = [];
+			const err: Buffer[] = [];
+			let outBytes = 0;
+			let errBytes = 0;
+			let error: string | undefined;
+			const stop = (reason: string) => {
+				error ??= reason;
+				void launch.terminate(child);
+			};
+			child.stdout?.on('data', (chunk: Buffer) => {
+				outBytes += chunk.length;
+				if (outBytes > maxBytes) {
+					stop(`stdout exceeded ${maxBytes} bytes`);
+				} else {
+					out.push(chunk);
+				}
+			});
+			child.stderr?.on('data', (chunk: Buffer) => {
+				errBytes += chunk.length;
+				if (errBytes > maxBytes) {
+					stop(`stderr exceeded ${maxBytes} bytes`);
+				} else {
+					err.push(chunk);
+				}
+			});
+			const timer = setTimeout(() => stop(`timed out after ${request.timeoutMs} ms`), request.timeoutMs);
+			void launch.confirm(child).then(confirmation => {
+				if (!confirmation.ok) {
+					stop(`Volt sandbox: ${confirmation.error}`);
+				}
+			});
+			child.once('error', e => stop(e.message));
+			child.once('close', code => {
+				clearTimeout(timer);
+				void launch.terminate(child).finally(() => launch.dispose());
+				const notes = launch.warnings.length ? `${launch.warnings.join('\n')}\n` : '';
+				resolve({
+					exitCode: error ? null : code,
+					stdout: Buffer.concat(out).toString('utf8'),
+					stderr: `${notes}${Buffer.concat(err).toString('utf8')}`,
+					...(error ? { error } : {}),
 				});
 			});
 		});
@@ -896,6 +975,9 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		this.track(child, shell.file);
 		const run = new ExecRun(request.id, request.command, child, started, owner, launch);
 		this.runs.set(request.id, run);
+		if (launch) {
+			launch.warnings.forEach(warning => run.note(`[volt sandbox] ${warning}`));
+		}
 		this.pruneFinishedJobs();
 		if (launch) {
 			const sandboxed = launch;
@@ -907,8 +989,12 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 				}
 			});
 			// Nothing a sandboxed command started outlives it; then its sandbox is torn down, a moment
-			// later, so the kernel log's last denials of the command still reach its result.
-			run.onDone(() => void sandboxed.terminate(child).finally(() => this.retire(sandboxed, EXEC_DENIAL_GRACE_MS)));
+			// later, so the kernel log's last denials of the command still reach its result. The OS's
+			// refusals are read on demand (no resident log stream): those of a command that failed or
+			// whose output reads like a refusal are read before it is torn down.
+			run.onDone(() => void sandboxed.terminate(child)
+				.then(() => process.platform === 'darwin' && (run.exitCode !== 0 || DENIAL_LIKE_OUTPUT.test(run.combined.shaped(request.inlineChars ?? DEFAULT_INLINE_CHARS).text)) ? run.readDenials(SANDBOX_DENIAL_CHECK_MS) : undefined)
+				.finally(() => this.retire(sandboxed, EXEC_DENIAL_GRACE_MS)));
 		}
 		run.onDone(() => {
 			// A command that handed control back stays readable as a job.
@@ -1020,8 +1106,12 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			logPath = await this.spill(request.spillDir ?? join(tmpdir(), 'volt-exec'), request.id, run.combined.full()).catch(() => undefined);
 		}
 		if (process.platform === 'darwin' && run.sandboxed && !run.running && !run.denials.length && DENIAL_LIKE_OUTPUT.test(combined.text)) {
-			// The kernel log reports a denial a moment after the command saw it (macOS only: Linux reports none, so no wait there).
-			await run.waitForDenial(EXEC_DENIAL_WAIT_MS);
+			// The kernel log reports a denial a moment after the command saw it (macOS only: Linux reports none,
+			// so no wait there). Refusals are read on demand: read the command's window, then wait a moment.
+			await run.readDenials(SANDBOX_DENIAL_CHECK_MS);
+			if (!run.denials.length) {
+				await run.waitForDenial(EXEC_DENIAL_WAIT_MS);
+			}
 		}
 		return {
 			id: request.id,
@@ -1179,6 +1269,14 @@ class ExecRun {
 		}
 	}
 
+	private denialRead: Promise<void> | undefined;
+
+	/** Reads the OS's refusals of this command since it started, once (they arrive through `noteDenial`). */
+	readDenials(timeoutMs: number): Promise<void> {
+		this.denialRead ??= this.sandbox ? this.sandbox.flushDenials(timeoutMs, this.startedAt).catch(() => undefined) : Promise.resolve();
+		return this.denialRead;
+	}
+
 	/** Resolves at the first denial, or after `ms`. */
 	waitForDenial(ms: number): Promise<void> {
 		return new Promise(resolve => {
@@ -1215,6 +1313,11 @@ class ExecRun {
 			running: this.running,
 			exitCode: this.exitCode,
 		};
+	}
+
+	/** A line Volt adds to the command's stderr (the sandbox is weaker than asked). */
+	note(text: string): void {
+		this.append(this.stderr, `${text}\n`);
 	}
 
 	private append(log: OutputLog, data: string): void {

@@ -1,0 +1,7 @@
+Benchmark task. Answer four questions about the TypeScript shop in /tmp/v3orch/w/t1/src. Do not edit any file.
+Q1. Read /tmp/v3orch/w/t1/src/pricing.ts. Name the function with a bug and give the one-line fix (at most 3 lines).
+Q2. Read /tmp/v3orch/w/t1/src/*.ts. List which exported functions/classes each file imports from which other file, as 'a.ts -> b.ts: names' (at most 6 lines).
+Q3. Read /tmp/v3orch/w/t1/src/inventory.ts. Which SKUs are in stock, and what does reserve('A1', 3) return when called twice in a row? (at most 3 lines)
+Q4. Using only the answers to Q1-Q3 (no file reads), state what checkout(cart, [['A1', 1]], 10) returns for a cart with one item of 1000 cents, and why (at most 4 lines).
+{{DELEGATION}}
+Final reply: the four answers labeled Q1-Q4, nothing else.

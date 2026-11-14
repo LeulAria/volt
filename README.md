@@ -4,10 +4,10 @@
 
 # Volt
 
-### The open-source agentic editor, built on the VS Code core.
+### The open-source agentic dev environment, built on the VS Code core.
 
-Drive **Claude Code**, **Codex** or **Grok** over ACP, or a **local model through Ollama**,<br />
-then review every change hunk by hunk before it lands. MIT licensed, in public beta.
+Run **Claude Code**, **Codex** or **Grok** agents side by side, or a **local model through Ollama**.<br />
+Debug, sketch, design, review and commit with them in one window. MIT licensed, in public beta.
 
 [![GitHub stars](https://img.shields.io/github/stars/LeulAria/volt?style=social)](https://github.com/LeulAria/volt/stargazers)
 [![Latest release](https://img.shields.io/github/v/release/LeulAria/volt?label=download&color=ff8a5a)](https://github.com/LeulAria/volt/releases/latest)
@@ -19,7 +19,9 @@ then review every change hunk by hunk before it lands. MIT licensed, in public b
 
 <br />
 
-<img src="docs/assets/readme/volt-hero.png" alt="Volt on a tablet: an agent chat beside a toolbar with Files, Terminal, Browser, the branch, Commit and push, Changes and previous agents" width="100%" />
+<a href="docs/assets/readme/volt-demo.mp4"><img src="docs/assets/readme/volt-demo.gif" alt="Volt demo: three agents run in parallel, a breakpoint pauses on a checkout bug, an agent fixes it, then a Scratch architecture sketch, a mobile design on the canvas, a commit chart, the turn review, draft commits, the automations calendar and a workflow graph running in simulation" width="100%" /></a>
+
+<sub>A real session, sped up: three agents in parallel, a breakpoint, a fix, Scratch, the design canvas, charts, turn review, draft commits, automations and workflows. **[Watch the full demo (2:15)](docs/assets/readme/volt-demo.mp4)**</sub>
 
 <br />
 
@@ -73,7 +75,12 @@ macOS is the platform Volt is developed and tested on; Windows and Linux builds 
 | **Bring your own agent** | Claude Code, Codex and Grok (early access) over ACP, or a local model via Ollama. Volt doesn't sell tokens. |
 | **Plan mode** | The agent proposes a plan card you approve, revise, edit or save before anything runs. |
 | **Subagents and parallel agents** | Delegate to subagents and steer them. Give each chat its own Git worktree so parallel agents don't trample each other. |
-| **Hunk-level review** | Every agent edit is pending until you keep or undo it, hunk by hunk. |
+| **Run and debug from the chat** | Start your launch configurations from the chat's side toolbar, set breakpoints and step through code with the real VS Code debugger. |
+| **Scratch board and design canvas** | Agents sketch architecture diagrams on a whiteboard you can edit, and design UI screens on a canvas you can comment on. |
+| **Charts and diagrams in the chat** | Ask about your data or your repo and get interactive charts and diagrams inline, in your theme's colors. |
+| **Hunk-level review** | Every agent edit is pending until you keep or undo it, hunk by hunk. Review the last turn as one diff, or ask an agent to find issues in it. |
+| **Draft commits** | Volt groups the changes into Conventional Commits; you pick which to keep and commit them in one click. |
+| **Automations and workflows** | Agents that run on a schedule or on events from GitHub, Slack, Linear or Sentry, with a day, week and month calendar of their runs. Chain agents, tests and git steps into a workflow on a canvas, and simulate it before it runs for real. |
 | **Git checkpoints** | Each turn is checkpointed in Git, so you can preview, restore or redo any point in a conversation. |
 | **Built-in browser with an element picker** | The agent can drive the in-app browser. You pick an element or draw an area and say what to change. |
 | **MCP** | Connect MCP servers and agents call them like built-in tools, under the same permissions. |

@@ -159,7 +159,10 @@ const bundleVSCodeTask = task.define('bundle-vscode', task.series(
 					...bootstrapEntryPoints
 				],
 				resources: vscodeResources,
-				skipTSBoilerplateRemoval: entryPoint => entryPoint === 'vs/code/electron-browser/workbench/workbench'
+				skipTSBoilerplateRemoval: entryPoint => entryPoint === 'vs/code/electron-browser/workbench/workbench',
+				// Volt: the main entry stays small and opens the launch window before the main process bundle loads
+				// (src/bootstrap-window.ts), so `vs/code/electron-main/main` is an entry point of its own.
+				keepSeparate: entryPoint => entryPoint === 'main' ? /^\.\/vs\/code\/electron-main\/main\.js$/ : undefined
 			}
 		}
 	)

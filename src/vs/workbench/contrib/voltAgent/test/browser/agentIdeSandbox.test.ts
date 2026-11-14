@@ -18,7 +18,9 @@ import { Range } from '../../../../../editor/common/core/range.js';
 import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
 import { ITextModelService } from '../../../../../editor/common/services/resolverService.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
+import { IVoltProfilerService } from '../../browser/profiler/voltProfilerService.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { FileService } from '../../../../../platform/files/common/fileService.js';
@@ -395,9 +397,10 @@ suite('Volt agent IDE tools in the sandbox', () => {
 		instantiation.stub(ICommandService, { executeCommand: async (id: string) => { commands.push(id); } } as unknown as ICommandService);
 		for (const id of [ITestService, ITestResultService, ITestProfileService, IDebugService, ITaskService, ITerminalService, IFileService, IViewsService, IEditorService, ICodeEditorService, ITextFileService,
 			INotebookEditorModelResolverService, INotebookKernelService, INotebookExecutionService, INotebookExecutionStateService, ITextModelService, IContextKeyService, IVoltHttpService, IEnvironmentService,
-			IMarkerService, IWorkbenchEnvironmentService, IPathService, IExtensionService]) {
+			IMarkerService, IWorkbenchEnvironmentService, IPathService, IExtensionService, IVoltProfilerService]) {
 			instantiation.stub(id as ServiceIdentifier<object>, {});
 		}
+		instantiation.stub(IConfigurationService, new TestConfigurationService());
 		store.add(instantiation.createInstance(AgentIdeService));
 		const invoke = async (args: Record<string, unknown>, call: IVoltHostToolCall) => provider!.invoke('ide', args, call);
 		return { invoke, stdio, recorded, commands };

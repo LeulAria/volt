@@ -45,10 +45,11 @@
 				"args": [],
 				"acpAdapter": {
 					"command": "claude-agent-acp",
-					"package": "@agentclientprotocol/claude-agent-acp@0.81.2"
+					"package": "@agentclientprotocol/claude-agent-acp@0.106.0"
 				},
 				"env": {
-					"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"
+					"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1",
+					"MCP_TOOL_TIMEOUT": "300000"
 				},
 				"authProbe": "claude",
 				"login": [
@@ -127,7 +128,8 @@
 						".cache/claude-cli-nodejs"
 					],
 					"readable": [
-						".local/share/claude"
+						".local/share/claude",
+						".volt/claude-plugins"
 					],
 					"credentials": [
 						".claude/.credentials.json"
@@ -139,7 +141,8 @@
 						"/tmp/cc-socks"
 					],
 					"env": {
-						"DISABLE_AUTOUPDATER": "1"
+						"DISABLE_AUTOUPDATER": "1",
+						"DISABLE_TELEMETRY": "1"
 					},
 					"quietPaths": {
 						"processes": [

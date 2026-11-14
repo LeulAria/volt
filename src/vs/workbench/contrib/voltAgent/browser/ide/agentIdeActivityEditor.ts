@@ -106,6 +106,7 @@ function tabMeta(key: AgentIdeTabKey): ITabMeta {
 		case 'extensions': return { title: localize('voltIde.tab.extensions', "Extensions"), icon: Codicon.extensions, actions: [{ label: localize('voltIde.act.extensions', "Extensions View"), icon: Codicon.extensions, run: viewContainer('workbench.view.extensions') }] };
 		case 'http': return { title: localize('voltIde.tab.http', "HTTP Client"), icon: Codicon.send, actions: [] };
 		case 'notebook': return { title: localize('voltIde.tab.notebook', "Notebook"), icon: Codicon.notebook, actions: [] };
+		case 'db': return { title: localize('voltIde.tab.db', "Database"), icon: Codicon.database, actions: [] };
 	}
 	return { title: ideCapability(key)?.summary ?? key, icon: Codicon.tools, actions: [] };
 }
@@ -261,13 +262,15 @@ async function openBeside(accessor: ServicesAccessor, input: EditorInput, reques
 
 registerAction2(class extends Action2 {
 	constructor() {
-		super({ visibility: 'internal', id: OPEN_IDE_ACTIVITY_TAB_COMMAND_ID, title: localize2('voltIde.openTab', "Open Agent IDE Tab") });
+		super({ id: OPEN_IDE_ACTIVITY_TAB_COMMAND_ID, visibility: 'internal', title: localize2('voltIde.openTab', "Open Agent IDE Tab") });
 	}
 
 	override async run(accessor: ServicesAccessor, request?: IOpenTabRequest): Promise<void> {
-		// Remote connections and the editor capability open nothing: the first changes where the
-		// window runs, the second already shows the user the file it points at.
-		if (!request?.chatId || request.key === 'remote' || request.key === 'editor' || accessor.get(IConfigurationService).getValue<boolean>(IDE_AUTO_OPEN_SETTING) === false
+		// Remote connections, the editor and the profiler open no activity tab: the first changes where
+		// the window runs, the second already shows the user the file it points at, and the profiler
+		// opens its own tab (the Profiler) with what the agent recorded, focused or noted. Nothing opens
+		// while the Dev environment feature is off.
+		if (!request?.chatId || request.key === 'remote' || request.key === 'editor' || request.key === 'profile' || accessor.get(IConfigurationService).getValue<boolean>(IDE_AUTO_OPEN_SETTING) === false
 			|| accessor.getIfExists(IVoltFeatureService)?.isEnabled(DEV_ENVIRONMENT_FEATURE_ID) === false) {
 			return;
 		}
@@ -310,7 +313,10 @@ registerAction2(class extends Action2 {
 			input.dispose();
 			return;
 		}
-		input.onWillDispose(() => dismissed.add(dismissKey));
+		const onClose = input.onWillDispose(() => {
+			onClose.dispose();
+			dismissed.add(dismissKey);
+		});
 		await openBeside(accessor, input, request);
 	}
 });

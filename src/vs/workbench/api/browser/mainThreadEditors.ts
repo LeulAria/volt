@@ -339,10 +339,16 @@ export class MainThreadTextEditors implements MainThreadTextEditorsShape {
 		return Promise.resolve(undefined);
 	}
 
+	/** Volt: set for a host that may run a sandboxed extension; its edits may not change what the sandbox keeps read-only. */
+	voltEditGuard: { allows(resources: readonly URI[]): boolean } | undefined;
+
 	$tryApplyEdits(id: string, modelVersionId: number, edits: ISingleEditOperation[], opts: IApplyEditsOptions): Promise<boolean> {
 		const editor = this._editorLocator.getEditor(id);
 		if (!editor) {
 			return Promise.reject(illegalArgument(`TextEditor(${id})`));
+		}
+		if (this.voltEditGuard && !this.voltEditGuard.allows([editor.getModel().uri])) {
+			return Promise.resolve(false);
 		}
 		return Promise.resolve(editor.applyEdits(modelVersionId, edits, opts));
 	}

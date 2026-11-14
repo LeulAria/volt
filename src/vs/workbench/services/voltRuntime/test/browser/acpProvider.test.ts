@@ -16,7 +16,9 @@ import { IVoltSandboxEvent, IVoltSandboxFileResult, IVoltStdioService } from '..
 import { isSandboxUnavailableError, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IAccessDecision } from '../../common/access/accessTypes.js';
-import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent } from '../../browser/agents/acpProvider.js';
+import { presetRules } from '../../common/access/accessPresets.js';
+import { compilePolicy } from '../../common/access/policyCompiler.js';
+import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent, isTitleFromLead, isVoltHostToolPermission } from '../../browser/agents/acpProvider.js';
 import { IVoltEvent } from '../../common/events.js';
 import { ACP_IDLE_TIMINGS } from '../../common/harness/acpStall.js';
 import { isAcpTurnRestartable } from '../../common/harness/sessionRetry.js';
@@ -56,12 +58,18 @@ class FakeAgentStdio {
 	steeringOutcome = 'injected';
 	/** What each new session starts with; every process gets its own copy. */
 	configOptions: Json[] = JSON.parse(JSON.stringify(CONFIG_OPTIONS)) as Json[];
+	/** The session modes each new session lists. */
+	availableModes: Json[] = [{ id: 'agent' }, { id: 'plan' }, { id: 'ask' }];
 	private readonly sessionConfig = new Map<string, Json[]>();
 	/** Runs before the agent answers one of Volt's requests (to send a request of its own first). */
 	beforeAnswer: ((process: string, msg: IWire) => void) | undefined;
 	/** The stdio service's file broker for sandboxed spawns: what it was asked, and what it answers. */
 	readonly brokered: { op: 'read' | 'write'; id: string; path: string; content?: string }[] = [];
 	brokerAnswer: IVoltSandboxFileResult = { ok: true, path: '', content: 'from the broker' };
+	/** The stdio layer's merge of a sandboxed agent's config overlay after a turn (answers at once when unset). */
+	stateSync: ((id: string) => Promise<{ applied: string[]; dropped: string[] } | undefined>) | undefined;
+	/** Processes the provider asked to stop, in order. */
+	readonly killed: string[] = [];
 
 	constructor(private readonly store: Pick<DisposableStore, 'add'>) {
 		this.onDataEmitter = store.add(new Emitter());
@@ -95,7 +103,7 @@ class FakeAgentStdio {
 					this.autoAnswer(process, msg);
 				}
 			},
-			kill: async () => undefined,
+			kill: async (id: string) => { this.killed.push(id); },
 			which: async (command: string) => `/usr/bin/${command}`,
 			sandboxReadFile: async (id: string, path: string) => {
 				this.brokered.push({ op: 'read', id, path });
@@ -105,6 +113,7 @@ class FakeAgentStdio {
 				this.brokered.push({ op: 'write', id, path, content });
 				return this.brokerAnswer;
 			},
+			syncSandboxState: (id: string) => this.stateSync ? this.stateSync(id) : Promise.resolve(undefined),
 		} as unknown as IVoltStdioService;
 	}
 
@@ -121,7 +130,7 @@ class FakeAgentStdio {
 				return reply({ outcome: this.steeringOutcome });
 			case 'session/new':
 				this.sessionConfig.set(process, JSON.parse(JSON.stringify(this.configOptions)) as Json[]);
-				return reply({ sessionId: `acp-${process}`, configOptions: this.sessionConfig.get(process), modes: { currentModeId: 'agent', availableModes: [{ id: 'agent' }, { id: 'plan' }, { id: 'ask' }] } });
+				return reply({ sessionId: `acp-${process}`, configOptions: this.sessionConfig.get(process), modes: { currentModeId: (this.availableModes[0] as { id: string }).id, availableModes: this.availableModes } });
 			case 'session/set_config_option': {
 				const config = this.sessionConfig.get(process) ?? [];
 				const option = config.find(candidate => candidate.id === msg.params?.configId);
@@ -262,6 +271,33 @@ suite('ACP provider supervision', () => {
 		const created = env.agent.written.find(entry => entry.msg.method === 'session/new')!;
 		assert.deepStrictEqual(created.msg.params?._meta, claudeWorkRulesMeta('grok-4.7'));
 		await finish(env, handle);
+	});
+
+	test('a Volt subagent\'s session gets only its profile\'s host tool groups and the lean Claude meta', async () => {
+		const env = setup({
+			getMcpServers: (sessionId?: string, options?: { groups?: readonly string[] }) =>
+				[{ type: 'http', name: 'volt', url: `http://127.0.0.1:4000/mcp/${sessionId}${options?.groups ? `?groups=${options.groups.join(',')}` : ''}`, headers: [] }],
+		} as unknown as IVoltHostToolService, 'claude-code');
+		const sent = () => env.agent.written.filter(entry => entry.msg.method === 'session/new').slice(-1)[0].msg.params;
+		const url = () => (sent()?.mcpServers as { url: string }[])[0].url;
+
+		const readonly = await env.provider.start(request({ sessionId: 's1', subagent: 'readonly' }));
+		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s1?groups=core,tasks,image');
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { subagent: 'readonly' }));
+		// isLive asks for the same groups, so the subagent's session stays live.
+		assert.strictEqual(env.provider.isLive(readonly), true);
+		await finish(env, readonly);
+
+		const work = await env.provider.start(request({ sessionId: 's2', subagent: 'work' }));
+		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s2?groups=core,tasks,image,terminal,ide,browser');
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { subagent: 'work', editChecks: true }));
+		await finish(env, work);
+
+		const main = await env.provider.start(request({ sessionId: 's3' }));
+		assert.strictEqual(url(), 'http://127.0.0.1:4000/mcp/s3', 'the user\'s own chat gets every tool');
+		// ask_question is among them, so Claude Code's own AskUserQuestion goes (a session without Volt's server keeps it, above).
+		assert.deepStrictEqual(sent()?._meta, claudeWorkRulesMeta('grok-4.7', { voltAsks: true, editChecks: true }));
+		await finish(env, main);
 	});
 
 	test('a Claude Code session starts on the exact model picked, not the adapter\'s alias or default', async () => {
@@ -475,6 +511,19 @@ suite('ACP provider supervision', () => {
 		assert.strictEqual(env.provider.hasSpare(request({ cwd: '/elsewhere' })), false);
 	});
 
+	test('a short-lived spare stops on its own unless a later prewarm (the user acting) keeps it', async () => {
+		const env = setup();
+		await env.provider.prewarmSpare(request({ sessionId: 'restored' }), 30);
+		await new Promise(resolve => setTimeout(resolve, 60));
+		assert.strictEqual(env.provider.hasSpare(request({ sessionId: 'restored' })), false, 'nobody touched the window: stopped');
+		await env.provider.prewarmSpare(request({ sessionId: 'restored' }), 30);
+		await env.provider.prewarmSpare(request({ sessionId: 'restored' }));
+		await new Promise(resolve => setTimeout(resolve, 60));
+		assert.strictEqual(env.provider.hasSpare(request({ sessionId: 'restored' })), true, 'the first key kept it');
+		assert.strictEqual(env.agent.spawned.length, 2, 'kept, not restarted');
+		await env.provider.disposeSpares();
+	});
+
 	test('prewarming another chat stops the spare parked for the previous one', async () => {
 		const env = setup();
 		const a = request({ sessionId: 'chat-a', cwd: '/a' });
@@ -656,6 +705,41 @@ suite('ACP provider supervision', () => {
 		await turn.done;
 		await finish(env, handle);
 	});
+
+	test('the lead goes out as its own block before the user\'s words', async () => {
+		const env = setup();
+		const handle = await env.provider.start(request());
+		const cts = store.add(new CancellationTokenSource());
+		const turn = collect(env.provider.send(handle, { text: 'replay:hi', mode: 'agent', lead: '[Volt] framing' }, PROFILE, cts.token));
+		await settle();
+		const prompt = env.agent.written.find(entry => entry.msg.method === 'session/prompt');
+		assert.deepStrictEqual(prompt?.msg.params?.prompt, [{ type: 'text', text: '[Volt] framing' }, { type: 'text', text: 'replay:hi' }]);
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		await finish(env, handle);
+	});
+
+	test('an agent title cut from the lead is dropped; a real one is kept', async () => {
+		const env = setup();
+		const handle = await env.provider.start(request());
+		const cts = store.add(new CancellationTokenSource());
+		const turn = collect(env.provider.send(handle, { text: 'replay:long-2000', mode: 'agent', lead: '[Volt] This looks like a question. Answer it directly.' }, PROFILE, cts.token));
+		await settle();
+		env.agent.update('p1', { sessionUpdate: 'session_info_update', title: '[Volt] This looks like a question...' });
+		env.agent.update('p1', { sessionUpdate: 'session_info_update', title: 'Replay long thread' });
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		assert.deepStrictEqual(turn.events.flatMap(event => event.type === 'title' ? [event.text] : []), ['Replay long thread']);
+		await finish(env, handle);
+	});
+
+	test('isTitleFromLead matches only a cut of the lead', () => {
+		assert.strictEqual(isTitleFromLead('[Volt] This looks like a question…', '[Volt] This looks like a  question. Answer it.'), true);
+		assert.strictEqual(isTitleFromLead('Fix the pagination bug', '[Volt] This looks like a question.'), false);
+		assert.strictEqual(isTitleFromLead('[Volt]', '[Volt] notes'), true);
+		assert.strictEqual(isTitleFromLead('', '[Volt] notes'), false);
+	});
 });
 
 suite('ACP provider sandbox', () => {
@@ -674,6 +758,24 @@ suite('ACP provider sandbox', () => {
 	}
 
 	const sandboxNotices = (events: readonly IVoltEvent[]) => events.flatMap(event => event.type === 'notice' && event.title === 'Sandbox' ? [event.description] : []);
+
+	test('a sandboxed Claude chat on Full access gets bypassPermissions: Codex\'s sandbox values are not applied to Claude\'s `mode`', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const agent = new FakeAgentStdio(store);
+		agent.configOptions = [{ id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: 'auto', options: [{ value: 'auto' }, { value: 'bypassPermissions' }] }];
+		agent.availableModes = [{ id: 'auto' }, { id: 'default' }, { id: 'acceptEdits' }, { id: 'plan' }, { id: 'bypassPermissions' }];
+		const provider = new AcpAgentProvider('claude-code', 'Claude Code', 'claude-agent-acp', [], agent.asService(),
+			{ getWorkspace: () => ({ folders: [] }) } as unknown as IWorkspaceContextService,
+			undefined as unknown as IFileService, new NullLogService());
+		provider.setSupervisionOptions({ clock: new FakeWatchdogClock(), idle: ACP_IDLE_TIMINGS });
+		const handle = await provider.start(request({ ...SANDBOXED, profile: { ...PROFILE, id: 'claude', providerId: 'claude-code' }, modelId: undefined, options: undefined }));
+		await provider.applyAccessPolicy(handle, compilePolicy({ preset: presetRules('full-access') }));
+		const writes = agent.written.filter(entry => entry.msg.method === 'session/set_config_option').map(entry => `${entry.msg.params?.configId}=${entry.msg.params?.value}`);
+		assert.deepStrictEqual(writes, ['mode=bypassPermissions']);
+		await provider.dispose(handle);
+	});
 
 	test('warnings sent while the agent spawns, and between turns, reach its next turn', async function () {
 		if (isWindows) {
@@ -701,6 +803,56 @@ suite('ACP provider sandbox', () => {
 		await again.done;
 		assert.deepStrictEqual(sandboxNotices(again.events), []);
 		await env.provider.dispose(handle);
+	});
+
+	test('a turn ends without waiting for its config overlay merge; the next prompt waits for it and shows what it kept', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const env = setup();
+		let finish: ((result: { applied: string[]; dropped: string[] }) => void) | undefined;
+		env.agent.stateSync = () => new Promise(resolve => finish = resolve);
+		const handle = await env.provider.start(request(SANDBOXED));
+		const cts = store.add(new CancellationTokenSource());
+		const turn = collect(env.provider.send(handle, { text: 'go', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		// Before, run.end waited for the merge (up to 3 s, on every turn of a subagent that edits files).
+		await turn.done;
+		assert.strictEqual(kinds(turn.events).at(-1), 'run.end:done');
+		assert.ok(finish, 'the merge started when the turn ended');
+
+		const again = collect(env.provider.send(handle, { text: 'again', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		assert.strictEqual(env.agent.prompts().length, 1, 'the next prompt waits for the merge');
+		finish!({ applied: [], dropped: ['theme'] });
+		await settle();
+		assert.strictEqual(env.agent.prompts().length, 2);
+		env.agent.answerPrompt(1, { stopReason: 'end_turn' });
+		await again.done;
+		assert.ok(kinds(again.events).includes('notice:Sandbox kept config changes in this chat'), kinds(again.events).join(', '));
+		await env.provider.dispose(handle);
+	});
+
+	test('closing a session right after its turn lets that turn\'s config overlay merge finish first', async function () {
+		if (isWindows) {
+			this.skip();
+		}
+		const env = setup();
+		let finish: ((result: { applied: string[]; dropped: string[] }) => void) | undefined;
+		env.agent.stateSync = () => new Promise(resolve => finish = resolve);
+		const handle = await env.provider.start(request(SANDBOXED));
+		const cts = store.add(new CancellationTokenSource());
+		const turn = collect(env.provider.send(handle, { text: 'go', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		const closed = env.provider.dispose(handle);
+		await settle();
+		assert.deepStrictEqual(env.agent.killed, [], 'the process stays until the merge is done');
+		finish!({ applied: [], dropped: [] });
+		await closed;
+		assert.ok((env.agent.killed as readonly string[]).includes('p1'), 'then the session\'s process stops');
 	});
 
 	test('a spawn refused for its sandbox fails the start; nothing runs unconfined', async () => {
@@ -779,5 +931,38 @@ suite('ACP provider sandbox', () => {
 		const env = setup();
 		await assert.rejects(env.provider.start(request(SANDBOXED)), (err: unknown) => isSandboxUnavailableError(err) && /Windows/.test((err as Error).message));
 		assert.strictEqual(env.agent.spawned.length, 0);
+	});
+
+	test('a permission prompt for one of the volt server\'s code tools is Volt\'s own, whatever the agent prefixes it with', () => {
+		const prompt = (title: string, rawInput?: unknown) => ({ toolCall: { title, rawInput }, options: [{ optionId: 'allow', kind: 'allow_once' }] });
+		// Grok wraps MCP calls in use_tool and titles the prompt with the server-prefixed name.
+		assert.ok(isVoltHostToolPermission(prompt('volt__find_symbol', { tool_name: 'volt__find_symbol', tool_input: { name: 'applyDiscount' } })));
+		assert.ok(isVoltHostToolPermission(prompt('mcp__volt__code_nav')));
+		assert.ok(isVoltHostToolPermission(prompt('x', { providerIdentifier: 'volt', toolName: 'instant_grep' })));
+		assert.ok(isVoltHostToolPermission(prompt('volt__browser_click')), 'the other host tools still are');
+		assert.ok(!isVoltHostToolPermission(prompt('find_symbol')), 'not without the volt server prefix');
+		assert.ok(!isVoltHostToolPermission(prompt('other__find_symbol')));
+		assert.ok(!isVoltHostToolPermission(prompt('volt__rm_rf')));
+	});
+});
+
+suite('ACP permission prompts for Volt\'s own tools', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	const prompt = (title: string, rawInput?: unknown) => ({ toolCall: { title, ...(rawInput ? { rawInput } : {}) }, options: [{ optionId: 'allow', kind: 'allow_once' }] });
+
+	test('the code tools and the Scratch board are Volt\'s, so their prompts never reach the user', () => {
+		// A Supervised chat stopped on "Run mcp__volt__code_nav" before every code_nav, instant_grep and diagnostics call.
+		for (const title of ['mcp__volt__code_nav', 'mcp__volt__instant_grep', 'mcp__volt__find_symbol', 'mcp__volt__diagnostics', 'mcp__volt__scratch_draw', 'mcp__volt__ask_question', 'mcp__volt__tests']) {
+			assert.strictEqual(isVoltHostToolPermission(prompt(title)), true, title);
+		}
+		assert.strictEqual(isVoltHostToolPermission(prompt('code_nav', { providerIdentifier: 'volt', toolName: 'code_nav' })), true);
+	});
+
+	test('other servers\' tools, and Volt tools that run or write, still go to the gate', () => {
+		for (const title of ['mcp__github__code_nav', 'code_nav', 'Bash', 'mcp__volt__code_action', 'mcp__volt__terminal_start', 'mcp__volt__app_open']) {
+			assert.strictEqual(isVoltHostToolPermission(prompt(title)), false, title);
+		}
 	});
 });

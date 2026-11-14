@@ -22,9 +22,14 @@ export interface IClientToolCall {
 	/** The folders the gate's path rules judged by: the window rebuilds the rules from them (its closures do not cross). */
 	readonly sandboxPaths?: IVoltHostToolCall['sandboxPaths'];
 	readonly cancelKey?: string;
+	/**
+	 * Set when the chat is sandboxed: its read rule stays here (a function does not cross the
+	 * socket), and the window asks `hostTools.readRefusals` with this key for the files it found.
+	 */
+	readonly readRuleKey?: string;
 }
 
-export function toClientToolCall(call: IVoltHostToolCall | undefined, cancelKey?: string): IClientToolCall | undefined {
+export function toClientToolCall(call: IVoltHostToolCall | undefined, cancelKey?: string, readRuleKey?: string): IClientToolCall | undefined {
 	if (!call) {
 		return cancelKey ? { cancelKey } : undefined;
 	}
@@ -37,8 +42,12 @@ export function toClientToolCall(call: IVoltHostToolCall | undefined, cancelKey?
 		...(call.sandbox ? { sandbox: call.sandbox } : {}),
 		...(call.sandboxPaths ? { sandboxPaths: call.sandboxPaths } : {}),
 		...(cancelKey ? { cancelKey } : {}),
+		...(readRuleKey ? { readRuleKey } : {}),
 	};
 }
+
+/** At most this many paths are judged per `hostTools.readRefusals` call. */
+const MAX_READ_REFUSALS = 2_000;
 
 /** What a window that cannot say whether its tool needs approval gets asked anyway. */
 const UNKNOWN_APPROVAL_REASON = 'acts in a Volt window';
@@ -61,6 +70,8 @@ export class ServerClientTools extends Disposable {
 	private nextCancelKey = 1;
 	/** Unique to this server process: a window still running a call from a server that restarted keeps it apart. */
 	private readonly cancelPrefix = generateUuid().slice(0, 8);
+	/** The read rules of sandboxed calls a window is running, by `readRuleKey`; gone when the call ends. */
+	private readonly readRules = new Map<string, (path: string) => Promise<string | undefined>>();
 
 	constructor(
 		private readonly protocol: AgentServerProtocol,
@@ -81,6 +92,19 @@ export class ServerClientTools extends Disposable {
 	set(connectionId: number, tools: readonly IVoltHostToolInfo[]): void {
 		this.byConnection.set(connectionId, tools.filter(tool => tool && typeof tool.name === 'string'));
 		this.refresh();
+	}
+
+	/**
+	 * Why the sandboxed call `key` may not read each path (undefined: it may). A key that is not
+	 * running (ended, or never issued) refuses every path, so a window can never widen a sandbox.
+	 */
+	async readRefusals(key: string, paths: readonly unknown[]): Promise<(string | undefined)[]> {
+		const rule = this.readRules.get(key);
+		const list = paths.slice(0, MAX_READ_REFUSALS);
+		if (!rule) {
+			return list.map(() => 'the call that asked has ended');
+		}
+		return Promise.all(list.map(path => typeof path === 'string' ? rule(path).catch(() => 'unreadable') : 'not a path'));
 	}
 
 	/** Only these connections are still there. */
@@ -104,15 +128,17 @@ export class ServerClientTools extends Disposable {
 			this.registration = undefined;
 			const own = new Set(this.hostTools.listTools().map(tool => tool.name));
 			// Every window that serves a name, newest first: the chat's own window, else the newest.
-			const owners = new Map<string, { readonly connectionIds: number[]; tool: IVoltHostToolInfo }>();
+			// neverAsks: no window that serves it asks before a call (code search, code_nav...).
+			const owners = new Map<string, { readonly connectionIds: number[]; tool: IVoltHostToolInfo; neverAsks: boolean }>();
 			for (const [connectionId, tools] of [...this.byConnection].sort((a, b) => b[0] - a[0])) {
 				for (const tool of tools) {
 					if (!own.has(tool.name)) {
 						const owner = owners.get(tool.name);
 						if (owner) {
 							owner.connectionIds.push(connectionId);
+							owner.neverAsks &&= tool.neverAsks === true;
 						} else {
-							owners.set(tool.name, { connectionIds: [connectionId], tool });
+							owners.set(tool.name, { connectionIds: [connectionId], tool, neverAsks: tool.neverAsks === true });
 						}
 					}
 				}
@@ -131,6 +157,10 @@ export class ServerClientTools extends Disposable {
 				// The window's provider decides (desktop control asks every time); the approval itself
 				// is asked here, in the chat, before the window runs anything.
 				needsApproval: async (name, args, call) => {
+					if (owners.get(name)?.neverAsks) {
+						// Nothing to ask the window: a busy one would answer after the timeout, and the user would get a card.
+						return undefined;
+					}
 					const owner = ownerOf(name, call);
 					if (!owner) {
 						return undefined; // invoke reports that no window serves it
@@ -160,12 +190,20 @@ export class ServerClientTools extends Disposable {
 					const cancel = cancelKey ? call!.token!.onCancellationRequested(() => {
 						this.protocol.callConnection(owner.connectionId, 'hostTools.cancel', [cancelKey], NOTICE_TIMEOUT_MS).catch(() => { /* gone */ });
 					}) : undefined;
+					// A sandboxed chat's search tools filter what they find by its read rule: the window asks for it by key.
+					const readRuleKey = call?.readRefusal ? `${this.cancelPrefix}.r${this.nextCancelKey++}.${generateUuid()}` : undefined;
+					if (readRuleKey) {
+						this.readRules.set(readRuleKey, call!.readRefusal!);
+					}
 					try {
-						return fromWire<IVoltHostToolResult>(await this.protocol.callConnection(owner.connectionId, 'hostTools.invoke', [name, toWire(args), toClientToolCall(call, cancelKey)]));
+						return fromWire<IVoltHostToolResult>(await this.protocol.callConnection(owner.connectionId, 'hostTools.invoke', [name, toWire(args), toClientToolCall(call, cancelKey, readRuleKey)]));
 					} catch (err) {
 						return { error: err instanceof Error ? err.message : String(err) };
 					} finally {
 						cancel?.dispose();
+						if (readRuleKey) {
+							this.readRules.delete(readRuleKey);
+						}
 					}
 				},
 			});

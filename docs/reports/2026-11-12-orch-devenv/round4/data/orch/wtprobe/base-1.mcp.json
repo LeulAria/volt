@@ -1,0 +1,1 @@
+{"mcpServers":{"volt":{"command":"node","args":["/tmp/v4orch/wtprobe/server.mjs"],"env":{"VOLT_OUT":"/Users/leularia/Desktop/VOLT/volt-e4-base/out","WT_LOG":"/tmp/v4orch/wtprobe/base-1.calls.jsonl"}}}}

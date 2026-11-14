@@ -64,11 +64,11 @@ import { CustomizeVoltPage } from './customizeVoltPage.js';
 import { CanvasScratchPage } from './canvasScratchPage.js';
 import { ProvidersPage } from './providersPage.js';
 import { ConnectedAgentsPage } from './connectedAgentsPage.js';
+import { OrchestrationPage } from './orchestrationPage.js';
 import { ISandboxWorkloadsKit, SandboxWorkloadsSection } from '../../voltSecurity/browser/sandboxWorkloadsSection.js';
 import { AccessPageSection } from '../../voltSecurity/browser/accessPage.js';
 import { PermissionsSummarySection } from '../../voltSecurity/browser/permissionsSummary.js';
 import { IDevicesPage, IDevicesPageHost, IVoltRemoteDevicesModule, REMOTE_DEVICES_FEATURE_ID, VoltConnectionKind } from '../../voltRemoteDevices/common/voltRemoteDevices.js';
-import { OrchestrationPage } from './orchestrationPage.js';
 import { createSettingsIcon } from './settingsIcons.js';
 import { USAGE_FEATURE_ID, USAGE_SECTION_ID } from '../../voltUsage/common/voltUsage.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
@@ -1135,7 +1135,7 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 	}
 
-	/** Full access · Auto · Accept edits · Supervised, picked like the composer's access menu. */
+	/** Supervised · Accept edits · Auto · Full access, picked like the composer's access menu. */
 	private accessModeControl(host: HTMLElement): void {
 		this.dropdown(host, ACCESS_MODE_OPTIONS.map(option => ({
 			id: option.id,

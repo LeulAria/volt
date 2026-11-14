@@ -1,0 +1,365 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import { IVoltSnapshotComposer, IVoltSnapshotElement, IVoltWindowSnapshot, SNAPSHOT_ALLOWED_ATTRIBUTES, SNAPSHOT_BOXED_TAGS, SNAPSHOT_DROPPED_TAGS, VOLT_WINDOW_SNAPSHOT_ID, VOLT_WINDOW_SNAPSHOT_VERSION, VoltSnapshotNode } from '../common/windowSnapshot.js';
+
+export interface IWindowSnapshotCaptureOptions {
+	readonly key: string;
+	readonly baseTheme: string;
+	readonly sessionId?: string;
+	/** The composer's editor element (`.monaco-editor`) and its draft: the snapshot keeps an empty box there and the draft as text. */
+	readonly composer?: { readonly editor: HTMLElement; readonly linesElement: HTMLElement | undefined; readonly text: string; readonly placeholder: string; readonly placeholderElement?: HTMLElement };
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const CLASS_IN_SELECTOR = /\.(-?[_a-zA-Z][\w-]*)/g;
+
+/**
+ * Takes a snapshot of what the window shows: `root` (the workbench element) and everything in it
+ * that is on screen. Elements outside the window keep their box (so what is on screen stays where
+ * it is) without their content; frames, canvases and media become empty boxes of their size.
+ */
+export function captureWindowSnapshot(win: Window, root: HTMLElement, options: IWindowSnapshotCaptureOptions): IVoltWindowSnapshot {
+	const width = win.innerWidth;
+	const height = win.innerHeight;
+	const classes = new Set<string>();
+	const composerEditor = options.composer?.editor;
+
+	const box = (el: Element, rect: DOMRect, keepClass: boolean): IVoltSnapshotElement => {
+		const style = el.getAttribute('style') ?? '';
+		const display = win.getComputedStyle(el).display;
+		const a: Record<string, string> = {
+			style: `${style};width:${rect.width}px;height:${rect.height}px;min-width:0;min-height:0;overflow:hidden;display:${display === 'inline' ? 'inline-block' : display};box-sizing:border-box`,
+		};
+		const cls = keepClass ? el.getAttribute('class') : null;
+		if (cls) {
+			a.class = cls;
+			addClasses(cls);
+		}
+		return { t: 'div', a };
+	};
+
+	const addClasses = (value: string) => {
+		for (const name of value.split(/\s+/)) {
+			if (name) {
+				classes.add(name);
+			}
+		}
+	};
+
+	/** The element's box when it lies wholly above or below the window and takes space in its parent's flow. */
+	const offscreenInFlow = (el: Element): DOMRect | undefined => {
+		if (el.namespaceURI === SVG_NS || SNAPSHOT_DROPPED_TAGS.has(el.localName) || !el.getClientRects().length) {
+			return undefined;
+		}
+		const rect = el.getBoundingClientRect();
+		if (rect.bottom >= 0 && rect.top <= height) {
+			return undefined;
+		}
+		const position = win.getComputedStyle(el).position;
+		return position === 'absolute' || position === 'fixed' ? undefined : rect;
+	};
+
+	const visit = (el: Element): IVoltSnapshotElement | undefined => {
+		const tag = el.localName;
+		if (SNAPSHOT_DROPPED_TAGS.has(tag) || el.id === VOLT_WINDOW_SNAPSHOT_ID) {
+			return undefined;
+		}
+		const rects = el.getClientRects();
+		if (!rects.length && win.getComputedStyle(el).display !== 'contents') {
+			return undefined; // not drawn (display: none, or detached from layout)
+		}
+		const rect = el.getBoundingClientRect();
+		const svg = el.namespaceURI === SVG_NS;
+		const outside = rects.length > 0 && (rect.bottom < 0 || rect.top > height || rect.right < 0 || rect.left > width);
+		if (outside) {
+			const position = win.getComputedStyle(el).position;
+			return svg || position === 'absolute' || position === 'fixed' ? undefined : box(el, rect, true);
+		}
+		if (el === composerEditor) {
+			return box(el, rect, true);
+		}
+		if (tag === 'input' && /^(text|search|)$/.test((el as HTMLInputElement).type)) {
+			const input = el as HTMLInputElement;
+			const a: Record<string, string> = { readonly: '', tabindex: '-1' };
+			copyAttributes(el, a, addClasses);
+			if (input.placeholder) {
+				a.placeholder = input.placeholder;
+			}
+			if (input.value) {
+				a.value = input.value;
+			}
+			return { t: 'input', a };
+		}
+		if (SNAPSHOT_BOXED_TAGS.has(tag)) {
+			return svg ? undefined : box(el, rect, true);
+		}
+		const a: Record<string, string> = {};
+		copyAttributes(el, a, addClasses);
+		const c: VoltSnapshotNode[] = [];
+		// A run of rows above or below the window (a long chat's older turns) becomes one spacer of the
+		// run's height: the rows on screen stay where they are, and the snapshot stays small.
+		let run: { first: Element; firstRect: DOMRect; last: Element; lastRect: DOMRect; count: number } | undefined;
+		const flush = () => {
+			if (!run) {
+				return;
+			}
+			if (run.count === 1) {
+				c.push(box(run.first, run.firstRect, true));
+			} else {
+				const top = parseFloat(win.getComputedStyle(run.first).marginTop) || 0;
+				const bottom = parseFloat(win.getComputedStyle(run.last).marginBottom) || 0;
+				c.push({ t: 'div', a: { style: `display:block;flex:none;width:${run.firstRect.width}px;height:${run.lastRect.bottom - run.firstRect.top}px;margin:${top}px 0 ${bottom}px 0` } });
+			}
+			run = undefined;
+		};
+		for (let child = el.firstChild; child; child = child.nextSibling) {
+			if (child.nodeType === 3 /* text */) {
+				const text = (child as Text).data;
+				if (run && !text.trim()) {
+					continue; // white space between rows of a run
+				}
+				flush();
+				if (text) {
+					c.push(text);
+				}
+			} else if (child.nodeType === 1 /* element */) {
+				const childEl = child as Element;
+				const childRect = offscreenInFlow(childEl);
+				if (childRect) {
+					if (run) {
+						run.last = childEl;
+						run.lastRect = childRect;
+						run.count++;
+					} else {
+						run = { first: childEl, firstRect: childRect, last: childEl, lastRect: childRect, count: 1 };
+					}
+					continue;
+				}
+				flush();
+				const node = visit(childEl);
+				if (node) {
+					c.push(node);
+				}
+			}
+		}
+		flush();
+		const node: { -readonly [K in keyof IVoltSnapshotElement]: IVoltSnapshotElement[K] } = { t: tag };
+		if (svg) {
+			node.svg = 1;
+		}
+		if (Object.keys(a).length) {
+			node.a = a;
+		}
+		if (c.length) {
+			node.c = c;
+		}
+		if (el.scrollTop || el.scrollLeft) {
+			node.s = [el.scrollTop, el.scrollLeft];
+		}
+		return node;
+	};
+
+	const tree = visit(root) ?? { t: 'div' };
+	const doc = win.document;
+	// Rules may name the page's own classes (`html.volt-layout-agent-window ...`); paint puts them back.
+	addClasses(doc.documentElement.className);
+	addClasses(doc.body.className);
+	return {
+		version: VOLT_WINDOW_SNAPSHOT_VERSION,
+		key: options.key,
+		width,
+		height,
+		devicePixelRatio: win.devicePixelRatio,
+		baseTheme: options.baseTheme,
+		...(options.sessionId ? { sessionId: options.sessionId } : {}),
+		css: collectRuntimeCss(doc, classes),
+		htmlClass: doc.documentElement.className,
+		bodyClass: doc.body.className,
+		root: tree,
+		...(options.composer ? { composer: describeComposer(win, options.composer) } : {}),
+		savedAt: Date.now(),
+	};
+}
+
+function copyAttributes(el: Element, into: Record<string, string>, onClass: (value: string) => void): void {
+	for (const attr of el.attributes) {
+		const name = attr.name;
+		if (!SNAPSHOT_ALLOWED_ATTRIBUTES.has(name)) {
+			continue;
+		}
+		const value = attr.value;
+		if (/url\(\s*['"]?\s*(javascript|blob):/i.test(value)) {
+			continue;
+		}
+		into[name] = value;
+		if (name === 'class') {
+			onClass(value);
+		}
+	}
+}
+
+function describeComposer(win: Window, composer: NonNullable<IWindowSnapshotCaptureOptions['composer']>): IVoltSnapshotComposer {
+	const lines = composer.linesElement ?? composer.editor;
+	const rect = lines.getBoundingClientRect();
+	const editorRect = composer.editor.getBoundingClientRect();
+	const firstLine = lines.querySelector('.view-line span') ?? lines;
+	const style = win.getComputedStyle(firstLine);
+	const lineHeight = parseFloat(win.getComputedStyle(lines.querySelector('.view-line') ?? lines).height) || parseFloat(style.lineHeight) || 20;
+	const placeholderStyle = composer.placeholderElement ? win.getComputedStyle(composer.placeholderElement) : undefined;
+	const cursor = composer.editor.querySelector('.cursor');
+	return {
+		// The lines element spans the editor's width; the text area takes the editor's visible part.
+		rect: [rect.left, editorRect.top, Math.max(0, editorRect.right - rect.left), editorRect.height],
+		text: composer.text,
+		placeholder: composer.placeholder,
+		font: `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`,
+		lineHeight,
+		letterSpacing: style.letterSpacing,
+		color: style.color,
+		placeholderColor: placeholderStyle?.color ?? style.color,
+		caretColor: cursor ? win.getComputedStyle(cursor).backgroundColor : style.color,
+	};
+}
+
+/**
+ * The style rules added at run time (theme colors, icon glyphs, token colors, Volt looks) that can
+ * apply to the snapshot: a rule is kept when every class its selector names is used in it. The
+ * product's own stylesheet is not copied: the window loads it before its first frame.
+ */
+export function collectRuntimeCss(doc: Document, classes: ReadonlySet<string>): string {
+	const out: string[] = [];
+	const sheets = [...doc.styleSheets, ...(doc.adoptedStyleSheets ?? [])];
+	const icons = iconsInUse(sheets, classes);
+	const keep = (rule: CSSRule): string | undefined => {
+		if (rule instanceof CSSStyleRule) {
+			return selectorApplies(rule.selectorText, classes) ? withUsedIconsOnly(rule, icons) : undefined;
+		}
+		if (rule instanceof CSSMediaRule || rule instanceof CSSSupportsRule) {
+			const inner = [...rule.cssRules].map(keep).filter(Boolean);
+			if (!inner.length) {
+				return undefined;
+			}
+			return rule instanceof CSSMediaRule ? `@media ${rule.conditionText}{${inner.join('')}}` : `@supports ${rule.conditionText}{${inner.join('')}}`;
+		}
+		if (rule instanceof CSSFontFaceRule || rule instanceof CSSKeyframesRule) {
+			return rule.cssText;
+		}
+		return undefined;
+	};
+	for (const sheet of sheets) {
+		if (sheet.href) {
+			continue;
+		}
+		let rules: CSSRuleList;
+		try {
+			rules = sheet.cssRules;
+		} catch {
+			continue;
+		}
+		for (const rule of rules) {
+			const text = keep(rule);
+			if (text) {
+				out.push(text);
+			}
+		}
+	}
+	return out.join('\n');
+}
+
+const ICON_VARIABLE = /^--vscode-icon-(.+)-(content|font-family)$/;
+const ICON_REFERENCE = /var\(\s*--vscode-icon-([\w-]+?)-(?:content|font-family)\s*[,)]/g;
+
+/** Icons the product's stylesheet names by variable (`content: var(--vscode-icon-x-content)`); it does not change while the window lives. */
+const productIconReferences = new WeakMap<CSSStyleSheet, readonly string[]>();
+
+function iconReferences(rules: CSSRuleList, into: Set<string>): void {
+	for (const rule of rules) {
+		if (rule instanceof CSSStyleRule) {
+			const text = rule.style.cssText;
+			if (text.includes('--vscode-icon-')) {
+				for (const match of text.matchAll(ICON_REFERENCE)) {
+					into.add(match[1]);
+				}
+			}
+		} else if (rule instanceof CSSGroupingRule) {
+			iconReferences(rule.cssRules, into);
+		}
+	}
+}
+
+/** The icons the snapshot can show: its `codicon-<id>` classes, and every icon a stylesheet names by its variable. */
+function iconsInUse(sheets: readonly CSSStyleSheet[], classes: ReadonlySet<string>): ReadonlySet<string> {
+	const icons = new Set<string>();
+	for (const name of classes) {
+		if (name.startsWith('codicon-')) {
+			icons.add(name.slice('codicon-'.length));
+		}
+	}
+	for (const sheet of sheets) {
+		let found = sheet.href ? productIconReferences.get(sheet) : undefined;
+		if (!found) {
+			const into = new Set<string>();
+			try {
+				iconReferences(sheet.cssRules, into);
+			} catch {
+				continue;
+			}
+			found = [...into];
+			if (sheet.href) {
+				productIconReferences.set(sheet, found);
+			}
+		}
+		for (const id of found) {
+			icons.add(id);
+		}
+	}
+	return icons;
+}
+
+/**
+ * A rule's text without the icon variables (`--vscode-icon-<id>-content`, `-font-family`) of icons
+ * the snapshot does not show. The icon registry declares every icon on `:root` (about 100 KB of a
+ * snapshot otherwise), and the next start parses and applies it before the workbench's own copy.
+ */
+function withUsedIconsOnly(rule: CSSStyleRule, icons: ReadonlySet<string>): string {
+	const style = rule.style;
+	let dropped = false;
+	const kept: string[] = [];
+	for (let i = 0; i < style.length; i++) {
+		const name = style[i];
+		const icon = ICON_VARIABLE.exec(name);
+		if (icon && !icons.has(icon[1])) {
+			dropped = true;
+			continue;
+		}
+		const priority = style.getPropertyPriority(name);
+		kept.push(`${name}: ${style.getPropertyValue(name)}${priority ? ` !${priority}` : ''};`);
+	}
+	if (!dropped) {
+		return rule.cssText;
+	}
+	return kept.length ? `${rule.selectorText} { ${kept.join(' ')} }` : '';
+}
+
+/** Whether a selector list can match inside the snapshot: one of its selectors names only classes the snapshot uses, and no id. */
+export function selectorApplies(selectorText: string, classes: ReadonlySet<string>): boolean {
+	for (const selector of selectorText.split(',')) {
+		if (selector.includes('#')) {
+			continue;
+		}
+		let ok = true;
+		for (const match of selector.matchAll(CLASS_IN_SELECTOR)) {
+			if (!classes.has(match[1])) {
+				ok = false;
+				break;
+			}
+		}
+		if (ok) {
+			return true;
+		}
+	}
+	return false;
+}

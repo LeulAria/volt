@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { ASK_QUESTION_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, isBrowserToolName, isLocalBrowserUrl, isVoltHostTool, voltHostToolName, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, isBrowserToolName, isLocalBrowserUrl, isVoltHostTool, unwrapStuffedArgs, voltHostToolName, VOLT_HOST_TOOLS } from '../../common/hostTools.js';
 
 suite('Volt host tools', () => {
 
@@ -28,6 +28,10 @@ suite('Volt host tools', () => {
 		assert.strictEqual(voltHostToolName('MCP: tool', 'volt: browser_click'), 'browser_click');
 		assert.strictEqual(voltHostToolName('volt-ask_question: ask_question'), 'ask_question');
 		assert.strictEqual(voltHostToolName('MCP: tool'), undefined);
+		// The orchestra's team tools are Volt's own, like delegate_task: no approval card, no "$ mcp__volt__spawn_team" row.
+		assert.strictEqual(voltHostToolName('mcp__volt__spawn_team'), 'spawn_team');
+		assert.strictEqual(voltHostToolName('volt__council'), 'council');
+		assert.strictEqual(isVoltHostTool('mcp__volt__team_board'), true);
 		assert.strictEqual(voltHostToolName('Read File', 'Read foo.ts'), undefined);
 		assert.strictEqual(voltHostToolName('mcp__volt__browser_compare_image'), BROWSER_COMPARE_IMAGE_TOOL_NAME);
 		assert.strictEqual(voltHostToolName('volt: image_inspect'), IMAGE_INSPECT_TOOL_NAME);
@@ -73,5 +77,19 @@ suite('Volt host tools', () => {
 		assert.strictEqual(kind('browser_navigate', { url: 'https://github.com' }, undefined), 'allow');
 		const verdict = browserToolVerdict('browser_navigate', { url: 'https://github.com/x' }, 'ask');
 		assert.ok(verdict.kind === 'ask' && verdict.reason.includes('github.com'));
+	});
+
+	test('a call whose only argument holds the whole call as JSON runs with the arguments inside', () => {
+		const inner = { question: 'A or B?', participants: ['claude-code:claude-haiku-5-5', 'grok:grok-4.7'], rounds: 1 };
+		assert.deepStrictEqual(unwrapStuffedArgs({ question: JSON.stringify(inner) }), inner);
+		// Left alone: other keys beside it, JSON without that key, a question that only looks like JSON, broken JSON, arrays.
+		const asked = { question: '{"x": 1}', rounds: 1 };
+		assert.strictEqual(unwrapStuffedArgs(asked), asked);
+		const other = { question: '{"participants": ["a"]}' };
+		assert.strictEqual(unwrapStuffedArgs(other), other);
+		const broken = { question: '{"question": "x",' };
+		assert.strictEqual(unwrapStuffedArgs(broken), broken);
+		const list = { task: '[{"task": "x"}]' };
+		assert.strictEqual(unwrapStuffedArgs(list), list);
 	});
 });

@@ -15,9 +15,9 @@ import { IInstantiationService } from '../../../../platform/instantiation/common
 import { WorkbenchList } from '../../../../platform/list/browser/listService.js';
 import { SandboxBackendId } from '../../../../platform/voltSandbox/common/sandboxBackend.js';
 import { ISandboxPolicySummary, ISandboxResourceSample, ISandboxWorkloadInfo, SandboxWorkloadState } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
-import { IVoltStdioService } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
+import { describeSandboxDenial, ISandboxWorkloadSource, sandboxWorkloadSources } from './sandboxWorkloadSources.js';
 
 /** What the Security page lends this section (Volt Settings' page kit). */
 export interface ISandboxWorkloadsKit {
@@ -93,6 +93,9 @@ function statusText(row: ISandboxWorkloadInfo): string {
 	if (row.restarts) {
 		parts.push(localize('voltSecurity.restarts', "{0} restarts", row.restarts));
 	}
+	if (row.deniedCount) {
+		parts.push(localize('voltSecurity.blocked', "{0} blocked", row.deniedCount));
+	}
 	return parts.join(', ');
 }
 
@@ -112,6 +115,9 @@ function detailText(row: ISandboxWorkloadInfo): string {
 		localize('voltSecurity.detail.principal', "Principal: {0}", row.subject ? `${row.subject} (${row.principalId})` : row.principalId),
 		...(row.onBehalfOf ? [localize('voltSecurity.detail.onBehalfOf', "Works for: {0}", row.onBehalfOf.label ? `${row.onBehalfOf.label} (${row.onBehalfOf.subject})` : row.onBehalfOf.subject)] : []),
 		localize('voltSecurity.detail.started', "Started: {0}", new Date(row.startedAt).toLocaleString()),
+		// What it was refused, newest first, before the attestation and the policy: those run to dozens
+		// of lines (the read list), and the hover is taller than the window.
+		...[...row.denials ?? []].reverse().map(denial => localize('voltSecurity.detail.denial', "Blocked: {0} ({1}x, {2})", describeSandboxDenial(denial), denial.count, new Date(denial.at).toLocaleTimeString())),
 	];
 	const attestation = row.attestation;
 	if (attestation) {
@@ -226,19 +232,28 @@ export class SandboxWorkloadsSection {
 
 	constructor(
 		private readonly kit: ISandboxWorkloadsKit,
-		@IVoltStdioService private readonly stdio: IVoltStdioService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) { }
 
 	render(): void {
-		const { kit, stdio } = this;
+		const { kit } = this;
 		kit.sectionLabel(localize('voltSecurity.workloads', "Sandboxed processes"));
 		kit.sectionHint(isMacintosh
 			? localize('voltSecurity.workloadsHintMac', "What runs in a sandbox right now and the evidence Volt checked before letting it start. On macOS a sandboxed process can still read the environment of your other processes, so Volt keeps secrets out of environments.")
 			: localize('voltSecurity.workloadsHint', "What runs in a sandbox right now and the evidence Volt checked before letting it start."));
 		const group = kit.settingsGroup();
-		const load = stdio.sandboxWorkloads?.bind(stdio);
-		if (!load) {
+		// The window's own supervisor and, on the desktop, the agent server's (sandboxed extensions run there).
+		const sources = this.instantiationService.invokeFunction(sandboxWorkloadSources);
+		const owner = new Map<string, ISandboxWorkloadSource>();
+		const load = async (): Promise<ISandboxWorkloadInfo[]> => {
+			const lists = await Promise.all(sources.map(async source => ({ source, rows: await source.load() })));
+			owner.clear();
+			return lists.flatMap(({ source, rows }) => rows.map(row => {
+				owner.set(row.id, source);
+				return row;
+			}));
+		};
+		if (!sources.length) {
 			append(group, $('.volt-security-empty')).textContent = localize('voltSecurity.unavailable', "Sandboxed processes are not reported here.");
 			return;
 		}
@@ -255,7 +270,7 @@ export class SandboxWorkloadsSection {
 			}
 			refreshing = (async () => {
 				try {
-					const rows = await load().catch(() => [] as readonly ISandboxWorkloadInfo[]);
+					const rows = await load().catch(() => [] as ISandboxWorkloadInfo[]);
 					if (!kit.isCurrent() || listDisposed) {
 						return;
 					}
@@ -275,7 +290,7 @@ export class SandboxWorkloadsSection {
 			return refreshing;
 		};
 		const stop = (workload: ISandboxWorkloadInfo) => {
-			void (stdio.stopSandboxWorkload?.(workload.id) ?? Promise.resolve(false)).catch(() => false).then(() => refresh());
+			void (owner.get(workload.id)?.stop(workload.id) ?? Promise.resolve(false)).then(() => refresh());
 		};
 		const list = kit.store.add(this.instantiationService.createInstance(WorkbenchList<ISandboxWorkloadInfo>, 'VoltSandboxWorkloads', listHost, new WorkloadDelegate(), [new WorkloadRenderer(stop)], {
 			identityProvider: { getId: (workload: ISandboxWorkloadInfo) => workload.id },
@@ -289,8 +304,10 @@ export class SandboxWorkloadsSection {
 		}));
 		let listDisposed = false;
 		kit.store.add(toDisposable(() => { listDisposed = true; }));
-		if (stdio.onDidChangeSandboxWorkloads) {
-			kit.store.add(stdio.onDidChangeSandboxWorkloads(() => void refresh()));
+		for (const source of sources) {
+			if (source.onDidChange) {
+				kit.store.add(source.onDidChange(() => void refresh()));
+			}
 		}
 		const window = getWindow(listHost);
 		const timer = window.setInterval(() => {

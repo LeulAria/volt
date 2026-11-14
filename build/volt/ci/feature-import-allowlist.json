@@ -62,9 +62,6 @@
 			"src/vs/workbench/services/voltRuntime/common/workflows/workflowTypes.ts"
 		],
 		"codeIntelligence": [
-			"src/vs/workbench/contrib/callHierarchy/common/callHierarchy.ts",
-			"src/vs/workbench/contrib/search/common/search.ts",
-			"src/vs/workbench/contrib/typeHierarchy/common/typeHierarchy.ts",
 			"src/vs/workbench/services/lifecycle/common/lifecycle.ts",
 			"src/vs/workbench/services/search/common/search.ts",
 			"src/vs/workbench/services/textfile/common/textfiles.ts",
@@ -72,8 +69,10 @@
 			"src/vs/workbench/services/voltRuntime/browser/search/voltSearch.ts",
 			"src/vs/workbench/services/voltRuntime/browser/tools/codeIndexNav.ts",
 			"src/vs/workbench/services/voltRuntime/browser/tools/codeTools.ts",
+			"src/vs/workbench/services/voltRuntime/browser/tools/editDiagnostics.ts",
 			"src/vs/workbench/services/voltRuntime/browser/tools/fileTools.ts",
 			"src/vs/workbench/services/voltRuntime/browser/tools/searchTools.ts",
+			"src/vs/workbench/services/voltRuntime/browser/tools/workspacePath.ts",
 			"src/vs/workbench/services/voltRuntime/common/codeIntelligence.ts",
 			"src/vs/workbench/services/voltRuntime/common/execContext.ts",
 			"src/vs/workbench/services/voltRuntime/common/hostToolSandbox.ts",

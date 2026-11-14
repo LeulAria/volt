@@ -120,8 +120,9 @@ import { ICSSDevelopmentService, CSSDevelopmentService } from '../../platform/cs
 import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../platform/voltStdio/common/voltStdio.js';
 import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/voltStdio/electron-main/voltStdioMainService.js';
 import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
-import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME } from '../../platform/voltAgentServer/common/agentServerService.js';
+import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME, VOLT_AGENT_SERVER_ENABLED_SETTING } from '../../platform/voltAgentServer/common/agentServerService.js';
 import { VoltAgentServerMainService } from '../../platform/voltAgentServer/electron-main/agentServerMainService.js';
+import { disposeUnusedEarlyWindow } from '../../platform/windows/electron-main/earlyWindow.js';
 import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
 import { IVoltExternalMcpService, VOLT_EXTERNAL_MCP_CHANNEL_NAME } from '../../platform/voltExternalMcp/common/voltExternalMcp.js';
 import { VoltExternalMcpMainService } from '../../platform/voltExternalMcp/electron-main/voltExternalMcpMainService.js';
@@ -155,6 +156,8 @@ import { IVoltAwakeService, VOLT_AWAKE_CHANNEL_NAME } from '../../platform/voltA
 import { VoltAwakeMainService } from '../../platform/voltAwake/electron-main/voltAwakeMainService.js';
 import { VOLT_WINDOW_SCOPES_CHANNEL_NAME } from '../../platform/voltWindowScope/common/voltWindowScope.js';
 import { IVoltWindowScopesMainService, VoltWindowScopesMainService } from '../../platform/voltWindowScope/electron-main/voltWindowScopesMainService.js';
+import { VOLT_WINDOW_SNAPSHOT_CHANNEL_NAME } from '../../platform/voltWindowSnapshot/common/windowSnapshotService.js';
+import { IVoltWindowSnapshotMainService, VoltWindowSnapshotMainService } from '../../platform/voltWindowSnapshot/electron-main/windowSnapshotMainService.js';
 import { IVoltDiagnosticsService } from '../../platform/voltDiagnostics/common/voltDiagnostics.js';
 import { registerVoltDiagnosticsMain, VoltDiagnosticsMainService } from '../../platform/voltDiagnostics/electron-main/voltDiagnosticsMainService.js';
 import { IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME } from '../../platform/voltStorage/common/voltStorage.js';
@@ -170,6 +173,12 @@ import { VoltCaptureMainService } from '../../platform/voltCapture/electron-main
 import { IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME } from '../../platform/voltSpeech/common/voltSpeech.js';
 import { VoltSpeechMainService } from '../../platform/voltSpeech/electron-main/voltSpeechMainService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
+
+/**
+ * Registered (lowest-priority) macOS defaults that Chromium reads for its text caret's blink period: a period of
+ * about eleven days, so the native caret is shown and does not blink. A blink period the user set wins.
+ */
+const NATIVE_CARET_DEFAULTS = { NSTextInsertionPointBlinkPeriodOn: 1e9, NSTextInsertionPointBlinkPeriodOff: 1e9 };
 
 /** The URLs of a request's frame and its ancestors, innermost first; undefined without a frame. */
 function frameUrls(frame: WebFrameMain | null | undefined): string[] | undefined {
@@ -668,6 +677,19 @@ export class CodeApplication extends Disposable {
 			this.logService.error(error);
 		}
 
+		// Volt: Chromium's own text caret does not blink (the look of macOS's "prefer non-blinking cursor") unless the
+		// user set a blink period, which wins over registered defaults. Every code editor (the agent composer too)
+		// keeps a focused, transparent <textarea> whose native caret blinked twice a second for good: a frame each
+		// time and a display link that never stopped, with nothing visible changing. Monaco draws the caret people
+		// see and blinks it as `editor.cursorBlinking` says. Round 4, A6.
+		try {
+			if (isMacintosh) {
+				systemPreferences.registerDefaults(NATIVE_CARET_DEFAULTS);
+			}
+		} catch (error) {
+			this.logService.error(error);
+		}
+
 		// Main process server (electron IPC based)
 		const mainProcessElectronServer = new ElectronIPCServer();
 		Event.once(this.lifecycleMainService.onWillShutdown)(e => {
@@ -706,6 +728,9 @@ export class CodeApplication extends Disposable {
 		// Init Channels
 		appInstantiationService.invokeFunction(accessor => this.initChannels(accessor, mainProcessElectronServer, sharedProcessClient));
 
+		// Volt: start the agent server now, beside the window loading, instead of when the window asks for it
+		appInstantiationService.invokeFunction(accessor => this.startAgentServerEarly(accessor));
+
 		// Setup Protocol URL Handlers
 		const initialProtocolUrls = await appInstantiationService.invokeFunction(accessor => this.setupProtocolUrlHandlers(accessor, mainProcessElectronServer));
 
@@ -717,6 +742,9 @@ export class CodeApplication extends Disposable {
 
 		// Open Windows
 		await appInstantiationService.invokeFunction(accessor => this.openFirstWindow(accessor, initialProtocolUrls));
+
+		// Volt: the launch window is closed if no window took it
+		disposeUnusedEarlyWindow();
 
 		// Signal phase: after window open
 		this.lifecycleMainService.phase = LifecycleMainPhase.AfterWindowOpen;
@@ -1193,6 +1221,7 @@ export class CodeApplication extends Disposable {
 
 		// Volt window scopes (a New Window keeps its chats and projects until it closes)
 		services.set(IVoltWindowScopesMainService, new SyncDescriptor(VoltWindowScopesMainService, undefined, false /* proxied to other processes */));
+		services.set(IVoltWindowSnapshotMainService, new SyncDescriptor(VoltWindowSnapshotMainService, undefined, true));
 
 		// Volt diagnostics (tracing export, stall log, heap snapshots)
 		services.set(IVoltDiagnosticsService, new SyncDescriptor(VoltDiagnosticsMainService, undefined, false /* proxied to other processes */));
@@ -1411,6 +1440,9 @@ export class CodeApplication extends Disposable {
 		// Volt window scopes
 		mainProcessElectronServer.registerChannel(VOLT_WINDOW_SCOPES_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltWindowScopesMainService), disposables));
 
+		// Volt window snapshots: the screen a window left, painted in its next first frame
+		mainProcessElectronServer.registerChannel(VOLT_WINDOW_SNAPSHOT_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltWindowSnapshotMainService), disposables));
+
 		// Volt storage cleanup and first-run import
 		mainProcessElectronServer.registerChannel(VOLT_STORAGE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltStorageService), disposables));
 		mainProcessElectronServer.registerChannel(VOLT_EDITOR_IMPORT_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltEditorImportService), disposables));
@@ -1585,6 +1617,19 @@ export class CodeApplication extends Disposable {
 			forceProfile,
 			forceTempProfile
 		});
+	}
+
+	/**
+	 * Every desktop window connects to the agent server before it can show its chats; a cold start
+	 * spent the window's whole load (the workbench code, its services, the restore) before asking
+	 * for it. Started here, the server boots while the window loads; the window's own request
+	 * then finds it up (or starting) and shares the start.
+	 */
+	private startAgentServerEarly(accessor: ServicesAccessor): void {
+		if (this.configurationService.getValue<boolean>(VOLT_AGENT_SERVER_ENABLED_SETTING) === false) {
+			return;
+		}
+		accessor.get(IVoltAgentServerMainService).ensureRunning().catch(err => this.logService.warn('[volt agent server] could not start the agent server at launch; the window will retry', err));
 	}
 
 	private afterWindowOpen(): void {

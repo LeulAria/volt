@@ -1,0 +1,47 @@
+{
+ "id": "http",
+ "tag": "before",
+ "run": 3,
+ "access": "supervised",
+ "load": "92.96 60.18 48.07",
+ "wallMs": 41967,
+ "outcome": "done",
+ "approvals": 1,
+ "picked": false,
+ "voltErrors": 0,
+ "host": [
+  "find_files",
+  "find_files"
+ ],
+ "shell": [
+  "Read File | Read requests.http",
+  "Read File | Read http-client.env.json",
+  "Terminal | curl -sS -X POST http://127.0.0.1:9987/api/login -H \"Content-Type: application/json\" -d '{\"username\":\"ada\",\"password\":\"lovelace\"}'",
+  "Terminal | curl -sS http://127.0.0.1:9987/api/profile -H \"Authorization: Bearer tok-ada-1794503341538\""
+ ],
+ "cost": 0.00517652,
+ "output": 764,
+ "cacheRead": 160812,
+ "toolUses": {
+  "mcp__volt__find_files": 2,
+  "Read": 2,
+  "Bash": 2
+ },
+ "changed": "",
+ "chat": "agent-c28f11f2-5429-434f-b265-356325641918.jsonl",
+ "answer": "The `local` environment points at `http://127.0.0.1:9987`. I'll log in first, then use the returned token for the profile request.\nThe profile returns name **Ada Lovelace** and email **ada@example.com**.\n\nI ran the login and profile requests from `requests.http` against the `local` environment (`http://127.0.0.1:9987`), using the username and password from `http-client.env.json`. I ran them with curl rather than through the HTTP client, and didn't change any files.",
+ "hostCalls": [
+  {
+   "name": "find_files",
+   "args": {
+    "query": "requests.http"
+   }
+  },
+  {
+   "name": "find_files",
+   "args": {
+    "query": "http-client.env.json"
+   }
+  }
+ ]
+}

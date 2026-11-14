@@ -69,7 +69,9 @@ function gatewayUse(args: Readonly<Record<string, unknown>>): IHostToolSandboxUs
 	switch (spec.sandbox) {
 		case 'reads': {
 			const fixed = capability === 'coverage' ? ['.', ...COVERAGE_REPORT_FILES] : capability === 'remote' ? ['.', ...DEVCONTAINER_FILES] : [];
-			const named = capability === 'coverage' ? [] : pathsOr(opArgs, ['path', 'paths', 'file'], fixed.length ? [] : ['.']);
+			// A profile op may name its profile files by id (p1, inside the chat's folder as a path) or by path.
+			const keys = capability === 'profile' ? ['path', 'paths', 'file', 'profile', 'base', 'compare_with'] : ['path', 'paths', 'file'];
+			const named = capability === 'coverage' ? [] : pathsOr(opArgs, keys, fixed.length ? [] : ['.']);
 			const use: IHostToolSandboxUse = { kind: 'reads', reads: [...fixed, ...named] };
 			// A request's URL is judged here when the call names it; the capability judges it again once variables are filled in.
 			return capability === 'http' && op === 'send' && text(opArgs.url) ? { ...use, urls: [text(opArgs.url)!] } : use;

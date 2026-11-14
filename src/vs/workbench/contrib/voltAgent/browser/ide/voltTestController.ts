@@ -72,11 +72,18 @@ export const refusedTestRuns = new WeakMap<ITestResult, string>();
 
 /**
  * Folders whose tests Volt's runner discovers besides the window's workspace folders: a chat's
- * project or worktree (the agent window and the agent server have no workspace folder). The tests
- * tool adds the calling chat's folder before it lists or runs; the controller scans it then.
+ * project or worktree (the agent window and the agent server have no workspace folder, so
+ * discovery found no tests at all and the tests tool answered "No test controller found tests in
+ * this workspace" for every project chat, 2026-11-12 IDE round 2). The tests tool adds the calling
+ * chat's folder before it lists or runs; the controller scans it then.
  */
 export const voltTestRoots = new class {
 	private add: ((root: URI) => Promise<void>) | undefined;
+	private readonly roots = new ResourceSet();
+	/** The chats' folders asked for so far: a run of "all tests" in one of them runs its own tests, not every project's. */
+	list(): readonly URI[] {
+		return [...this.roots];
+	}
 	/** Set by the controller. */
 	serve(add: (root: URI) => Promise<void>): IDisposable {
 		this.add = add;
@@ -84,6 +91,9 @@ export const voltTestRoots = new class {
 	}
 	/** Resolves once `root`'s tests are in the Testing view (at once when it already is). */
 	ensure(root: URI): Promise<void> {
+		if (root.scheme === Schemas.file) {
+			this.roots.add(root);
+		}
 		return this.add?.(root) ?? Promise.resolve();
 	}
 };
@@ -240,7 +250,11 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 
 	// --- Discovery ---------------------------------------------------------------------------
 
-	private scan(): Promise<void> {
+	/** `again`: a scan already running started before the latest change, so another follows it. */
+	private scan(again = false): Promise<void> {
+		if (again && this.scanning) {
+			return this.scanning.then(() => this.scan());
+		}
 		this.scanning ??= this.doScan().catch(err => this.logService.warn('[volt tests] discovery failed', err)).finally(() => this.scanning = undefined);
 		return this.scanning;
 	}
@@ -255,13 +269,12 @@ export class VoltTestController extends Disposable implements IWorkbenchContribu
 		// Outside the workspace nothing watches it: test files the agent adds or changes reach the Testing view through this.
 		this._register(this.fileService.watch(root, { recursive: true, excludes: ['**/node_modules/**', '**/.git/**'] }));
 		// A scan already going started without it.
-		await this.scanning;
-		await this.scan();
+		await this.scan(true);
 	}
 
-	/** The workspace folder, or the chat's folder, a file belongs to. */
+	/** The workspace folder, or the chat's folder (the innermost, when one is inside another), a file belongs to. */
 	private folderOf(uri: URI): URI | undefined {
-		return this.workspace.getWorkspaceFolder(uri)?.uri ?? [...this.extraRoots].find(root => isEqualOrParent(uri, root));
+		return this.workspace.getWorkspaceFolder(uri)?.uri ?? [...this.extraRoots].filter(root => isEqualOrParent(uri, root)).sort((a, b) => b.path.length - a.path.length)[0];
 	}
 
 	private async doScan(): Promise<void> {

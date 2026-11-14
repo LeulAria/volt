@@ -19,7 +19,7 @@ export interface IAgentTooltipRow {
 	shortcut?: string;
 	/** Card rows only: leading icon; the detail sits under the label. */
 	icon?: AgentTooltipIcon;
-	/** Card rows only: quieter label (e.g. folder path under the chat title). */
+	/** Card rows only: quieter label (e.g. folder path under the chat title). Without an icon, a hint that wraps instead of being cut. */
 	muted?: boolean;
 	/** Card rows only, without an icon: a "label … value" line (e.g. "Effort  High"). */
 	value?: string;
@@ -354,6 +354,11 @@ export class AgentTooltip extends Disposable {
 			}
 			return;
 		}
+		if (!row.icon && row.muted) {
+			// A hint at the card's foot ("Click to watch its chat beside this one"): quiet, and whole.
+			append(this.domNode, $('.volt-agent-tooltip-card-note')).textContent = row.label;
+			return;
+		}
 		if (!row.icon) {
 			append(this.domNode, $('.volt-agent-tooltip-card-title')).textContent = row.label;
 			return;
@@ -422,7 +427,8 @@ function ensureTooltipDelegate(doc: Document): ITooltipDelegate {
 	delegate = { tooltip: markAsSingleton(new AgentTooltip()), current: undefined };
 	tooltipDelegates.set(doc, delegate);
 	const show = (target: HTMLElement) => {
-		const rows = tooltipRowsFor(target);
+		// A button whose menu is open says nothing: its tooltip would lie over the menu's last rows.
+		const rows = target.getAttribute('aria-expanded') === 'true' ? [] : tooltipRowsFor(target);
 		if (rows.length) {
 			const placement = target.getAttribute(TOOLTIP_PLACEMENT_ATTR);
 			const variant = target.getAttribute(TOOLTIP_VARIANT_ATTR);
@@ -511,6 +517,15 @@ export function bindTruncatedHoverTooltip(element: HTMLElement, text: string, de
 	store.add(addDisposableListener(element, 'mouseleave', hide));
 	store.add(toDisposable(hide));
 	return store;
+}
+
+/**
+ * An icon-only button's tooltip, which is also its accessible name: with no text of its own, a
+ * screen reader otherwise announced the composer's +, mic and send as just "button".
+ */
+export function setIconButtonTooltip(button: HTMLElement, text: string): void {
+	setAgentTooltip(button, text);
+	button.setAttribute('aria-label', text);
 }
 
 /**

@@ -1,0 +1,70 @@
+{
+ "id": "http",
+ "tag": "after3",
+ "run": 3,
+ "access": "supervised",
+ "load": "16.55 26.45 48.24",
+ "wallMs": 10227,
+ "outcome": "done",
+ "approvals": 0,
+ "picked": true,
+ "voltErrors": 0,
+ "host": [
+  "ide:http.list",
+  "ide:http.envs",
+  "ide:http.send",
+  "ide:http.send"
+ ],
+ "shell": [],
+ "cost": 0.00491597,
+ "output": 704,
+ "cacheRead": 141137,
+ "toolUses": {
+  "mcp__volt__ide": 4
+ },
+ "changed": "",
+ "chat": "agent-6b9140bb-8c48-41d0-ac87-d12b04f1650c.jsonl",
+ "answer": "The profile returns **name: Ada Lovelace** and **email: ada@example.com**.\n\nI ran `login` and then `profile` against the `local` environment (`http://127.0.0.1:9987`). Login returned 200 and profile returned 200. The profile's username is `ada`.",
+ "hostCalls": [
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "list"
+   }
+  },
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "envs"
+   }
+  },
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "send",
+    "args": {
+     "name": "login",
+     "env": "local"
+    },
+    "name": "login",
+    "env": "local"
+   }
+  },
+  {
+   "name": "ide",
+   "args": {
+    "capability": "http",
+    "op": "send",
+    "args": {
+     "name": "profile",
+     "env": "local"
+    },
+    "name": "profile",
+    "env": "local"
+   }
+  }
+ ]
+}

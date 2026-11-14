@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { buildDictationPrompt, cleanDictationReply, DICTATION_SYSTEM_PROMPT, dictationReplyIsComplete } from '../../common/prediction/dictationCleanup.js';
-import { PREDICTOR_SKILL, predictorPrimer, predictorRequest, PredictorTask } from '../../common/prediction/predictorSkill.js';
+import { isPredictorTask, PREDICTOR_SKILL, predictorPrimer, predictorRequest, PredictorTask } from '../../common/prediction/predictorSkill.js';
 
 suite('Volt prediction: the predictor agent skill', () => {
 
@@ -25,6 +25,17 @@ suite('Volt prediction: the predictor agent skill', () => {
 			{ role: 'user', content: 'CONTEXT' },
 		]);
 		assert.strictEqual(text, '<task>code</task>\n\nCONTEXT');
+		// No task: no `<task>undefined</task>` (the agent server's API dropped the task until 2026-11-14).
+		assert.strictEqual(predictorRequest(undefined, [{ role: 'user', content: 'CONTEXT' }]), 'CONTEXT');
+	});
+
+	test('a task name from the wire is checked against the known tasks', () => {
+		for (const task of ['code', 'writing', 'composer', 'next-edit', 'voice']) {
+			assert.ok(isPredictorTask(task), task);
+		}
+		for (const value of [undefined, null, 'undefined', 'Composer', 3, {}]) {
+			assert.ok(!isPredictorTask(value), String(value));
+		}
 	});
 
 	test('the primer teaches the skill and asks for a one-word reply', () => {

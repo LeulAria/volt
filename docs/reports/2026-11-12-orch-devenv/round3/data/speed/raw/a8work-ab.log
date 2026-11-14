@@ -1,0 +1,54 @@
+{"arm":"before","at":"2026-11-13T10:56:01.169Z","load":"13.23 20.85 21.57","loadTyping":"14.62 20.57 21.45","secs":10,"busyMsPerS":274,"keys":40,"style":{"n":3314,"ms":1000},"layout":{"n":1089,"ms":157},"paint":{"n":2816,"ms":193},"longTasks":0,"longestMs":0}
+file:///Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/scripts/speed/lib.mjs:86
+		throw new Error('no workbench target');
+		      ^
+
+Error: no workbench target
+    at cdp (file:///Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/scripts/speed/lib.mjs:86:9)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async file:///Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/scripts/speed/a8work.mjs:13:11
+
+Node.js v25.1.0
+failed: 
+node:internal/deps/undici/undici:15845
+      Error.captureStackTrace(err);
+            ^
+
+TypeError: fetch failed
+    at node:internal/deps/undici/undici:15845:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async cdp (file:///Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/scripts/speed/lib.mjs:83:25)
+    at async file:///Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/scripts/speed/a8work.mjs:13:11 {
+  [cause]: Error: connect ECONNREFUSED 127.0.0.1:9956
+      at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16) {
+    errno: -61,
+    code: 'ECONNREFUSED',
+    syscall: 'connect',
+    address: '127.0.0.1',
+    port: 9956
+  }
+}
+
+Node.js v25.1.0
+failed: 
+node:internal/deps/undici/undici:15845
+      Error.captureStackTrace(err);
+            ^
+
+TypeError: fetch failed
+    at node:internal/deps/undici/undici:15845:13
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async cdp (file:///Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/scripts/speed/lib.mjs:83:25)
+    at async file:///Users/leularia/Desktop/VOLT/volt-e3-speed/docs/reports/2026-11-12-orch-devenv/round3/scripts/speed/a8work.mjs:13:11 {
+  [cause]: Error: connect ECONNREFUSED 127.0.0.1:9952
+      at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16) {
+    errno: -61,
+    code: 'ECONNREFUSED',
+    syscall: 'connect',
+    address: '127.0.0.1',
+    port: 9952
+  }
+}
+
+Node.js v25.1.0
+failed: 

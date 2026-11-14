@@ -35,7 +35,12 @@ const OWN = new Set(['${tmp}', '${storage}']);
 
 const NETWORK_ORDER = { none: 0, proxy: 1, host: 2 } as const;
 
-function assertNotWider(chat: IVoltSandboxPolicy, mcp: IVoltSandboxPolicy, label: string): void {
+/**
+ * `approved`: the hosts the user approved for the server, which it may reach when its chat's
+ * network is on (the chat's hostname rules are a default, not a ceiling the user set); with the
+ * chat's network off, nothing beyond the chat's own hosts.
+ */
+function assertNotWider(chat: IVoltSandboxPolicy, mcp: IVoltSandboxPolicy, label: string, approved: readonly string[] = []): void {
 	for (const path of mcp.filesystem.read) {
 		assert.ok(chat.filesystem.read.some(parent => entryInside(path, parent)) || chat.filesystem.write.some(parent => entryInside(path, parent)), `${label}: read ${path} is inside the chat's`);
 	}
@@ -52,7 +57,7 @@ function assertNotWider(chat: IVoltSandboxPolicy, mcp: IVoltSandboxPolicy, label
 	assert.ok(NETWORK_ORDER[mcp.network.mode] <= NETWORK_ORDER[chat.network.mode], `${label}: network ${mcp.network.mode} within ${chat.network.mode}`);
 	if (chat.network.mode === 'proxy') {
 		for (const host of mcp.network.allow) {
-			assert.ok(chat.network.allow.some(parent => allowCovers(parent, host)), `${label}: host ${host} is one the chat may reach`);
+			assert.ok(chat.network.allow.some(parent => allowCovers(parent, host)) || approved.includes(host), `${label}: host ${host} is one the chat may reach or the user approved for it`);
 		}
 	}
 	assert.deepStrictEqual(mcp.network.loopbackPorts, [], `${label}: no loopback ports (not even Volt's MCP port)`);
@@ -91,8 +96,9 @@ suite('Volt sandbox: the T4-MCP policy (C6)', () => {
 				...(gen.bool(0.3) ? { loopbackPorts: [4321] } : {}),
 			};
 			const host: IAgentSandboxHost = { platform: gen.pick(['darwin', 'linux']), home, tempDirs: ['/tmp'], uid: 501, cacheDir: `${home}/.volt/sandbox-cache/a`, ...(network && gen.bool(0.3) ? { sshAuthSock: '/tmp/agent.sock' } : {}) };
-			const { chat, mcp } = policyFor(request, gen.some(hosts, 3), host);
-			assertNotWider(chat, mcp, JSON.stringify(request));
+			const approved = gen.some(hosts, 3);
+			const { chat, mcp } = policyFor(request, approved, host);
+			assertNotWider(chat, mcp, JSON.stringify(request), network ? mcpAllowedHosts(approved) : []);
 		});
 	});
 
@@ -119,6 +125,8 @@ suite('Volt sandbox: the T4-MCP policy (C6)', () => {
 		const open = policyFor(chatRequest({ network: true }), ['api.github.com', 'API.GITHUB.COM', 'localhost', '*']).mcp;
 		assert.strictEqual(open.network.mode, 'proxy', 'through Volt\'s proxy, never the host network');
 		assert.deepStrictEqual(open.network.allow, ['api.github.com'], 'named hosts only: no localhost, no "*"');
+		// The chat itself, network on, reaches only its hostname rules: the server's approved host is the server's alone.
+		assert.ok(!policyFor(chatRequest({ network: true }), ['api.github.com']).chat.network.allow.includes('api.github.com'));
 		const closed = policyFor(chatRequest({ network: false, allowedDomains: ['api.github.com'] }), ['api.github.com', 'evil.com']).mcp;
 		assert.strictEqual(closed.network.mode, 'proxy');
 		assert.deepStrictEqual(closed.network.allow, ['api.github.com'], 'a host the chat cannot reach is dropped');

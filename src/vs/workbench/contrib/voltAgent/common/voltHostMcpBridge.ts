@@ -73,7 +73,7 @@ export class VoltHostMcpBridge extends Disposable {
 
 	private async start(): Promise<void> {
 		try {
-			const tools = this.hostTools.listTools().map(tool => ({ name: tool.name, title: tool.title, description: tool.description, inputSchema: tool.inputSchema, group: tool.group, ...aliasesOf(tool.name) }));
+			const tools = this.hostTools.listTools().map(tool => ({ name: tool.name, title: tool.title, description: tool.description, inputSchema: tool.inputSchema, group: tool.group, ...aliasesOf(tool.name), ...(tool.alwaysLoad ? { _meta: { 'anthropic/alwaysLoad': true }, ...(tool.alwaysLoad === 'top' ? { metaInFullListOnly: true } : {}) } : {}) }));
 			const endpoint = await this.mcp.start(this.serverId, tools);
 			this.hostTools.setMcpEndpoint(endpoint.url, endpoint.token);
 		} catch (err) {

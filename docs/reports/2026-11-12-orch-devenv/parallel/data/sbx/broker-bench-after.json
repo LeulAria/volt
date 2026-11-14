@@ -1,0 +1,28 @@
+{
+	"connect": {
+		"directMedianMs": 0.037582999999997924,
+		"brokerMedianMs": 0.16583300000000634,
+		"overheadMedianMs": 0.1282500000000084,
+		"directP95Ms": 0.062167000000002304,
+		"brokerP95Ms": 0.22991700000000037,
+		"overheadP95Ms": 0.16774999999999807
+	},
+	"throughputLink": {
+		"linkMBps": 125,
+		"directMBps": 124.99597278600179,
+		"brokerMBps": 124.97304878094879,
+		"ratio": 0.9998166020509137
+	},
+	"throughputLoopback": {
+		"directMBps": 6029.251384125352,
+		"bareRelayMBps": 2817.415475169559,
+		"brokerMBps": 3109.2361877101275,
+		"ratio": 0.5156919142393954,
+		"ratioToBareRelay": 1.1035774507212166
+	},
+	"budget": {
+		"overheadMs": 2,
+		"ratio": 0.8
+	},
+	"pass": true
+}

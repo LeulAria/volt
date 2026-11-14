@@ -127,8 +127,9 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 		// One line per question, so the model picks the cheapest mechanism that answers it.
 		tools.push([
 			'- Finding code, cheapest first: exact text or regex -> grep; a name you know -> find_symbol; a file name -> glob.',
-			'  Meaning -> code_nav: op inspect gives a symbol\'s type, definition with body, references by file and implementations in one call;',
-			'  callers/callees, implementations, supertypes/subtypes for structure. Locate with grep/find_symbol, resolve with code_nav, then read only the lines you need.',
+			'  How code relates -> code_nav (type-checked, no look-alikes): callers with depth 2-4 walks callers of callers to the entry points in one call;',
+			'  references on a method or field finds that member only; implementations, supertypes/subtypes for structure; inspect gives type, body and uses at once.',
+			'  Pass symbol (and path) and it finds the line. Locate with grep/find_symbol, resolve with code_nav, then read only the lines you need.',
 		].join('\n'));
 	}
 	if (policy.allowWrites && has('code_action')) {
@@ -148,6 +149,7 @@ export function buildDeepseekSystemPrompt(input: IDeepseekPromptInput): string {
 	}
 	if (has('ide')) {
 		tools.push('- ide reaches the rest of the IDE by capability (editor, git, notebook, docker, k8s, ci, http, profile, analyze, coverage, remote, extensions); call op help on a capability once to learn its arguments.');
+		tools.push('- For "slow", "memory" or "why does this take": measure before changing code (ide profile cpu, heap or sample), fix the hottest function you own, profile again and compare. In the Profiler beside the chat, focus and annotate to point the user at what you found; show turns any data into a flame graph, lines or a heat map instead of an HTML page.');
 	}
 	sections.push(tools.join('\n'));
 

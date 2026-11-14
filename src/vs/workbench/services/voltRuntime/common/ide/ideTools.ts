@@ -63,12 +63,16 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: TESTS_TOOL_NAME,
 		title: 'Tests',
 		group: 'ide',
+		// Behind Claude Code's tool search (~420 tokens in every request otherwise). Agents picked the
+		// deferred IDE tools 1 run in 13 when nothing named them; the IDE guide and the per-request
+		// hint (IDE_WORK_HINTS) name it, and how to load it, on the turns that need it.
 		description: [
 			'The editor\'s test runner (the Testing view: installed test extensions plus Volt\'s runner for vitest, jest, mocha, pytest, go test and cargo test). Runs show live in the Test Explorer for the user.',
 			'op list: frameworks and tests (filter by path or query). op run: runs targets and returns pass/fail counts plus each failure with its message, expected/actual and the stack frames in the workspace;',
 			'targets are files, folders, file:line (the test at that line) or test names; omit targets to run everything; failed: true reruns the last failures.',
 			'op results: the last run again, or one test\'s full messages and output (target).',
-			'Prefer it over running the test command in shell: it targets single tests, returns structured failures and is visible to the user.',
+			'Prefer it over running the test command in shell: it targets single tests, returns structured failures and is visible to the user. Tests it does not cover (node --test, a custom npm test script) run in the shell.',
+			'In a sandboxed chat a run goes through Volt\'s runner inside the chat\'s sandbox; tests a test extension runs (outside the sandbox) are not run there: run those in the shell.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',
@@ -90,6 +94,7 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: DEBUG_TOOL_NAME,
 		title: 'Debugger',
 		group: 'ide',
+		// Rarely needed and ~1.5k tokens: behind tool search, named in the server instructions.
 		description: [
 			'The editor\'s debugger (Debug Adapter Protocol: Node/JS/TS built in, Python, Go and others through their extensions). The user watches the session in the Run and Debug view.',
 			'op start: launch a debug session from a launch.json config (config), a file (program), or a shell command whose Node processes are debugged (command, e.g. "npm test"); breakpoints set first; waits until it pauses or ends.',
@@ -157,6 +162,7 @@ export const IDE_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: IDE_GATEWAY_TOOL_NAME,
 		title: 'IDE',
 		group: 'ide',
+		// ~1k tokens: behind tool search, named in the server instructions and the IDE lead.
 		description: ideGatewayDescription(),
 		inputSchema: IDE_GATEWAY_SCHEMA,
 		approvalInReadOnlyModes: 'acts on the workspace or its services',

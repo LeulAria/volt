@@ -1,0 +1,116 @@
+{"label":"r5a-before-t1-impact","rep":1,"score":1,"why":"7/7 files"}
+{"label":"r5a-after-t1-impact","rep":1,"score":1,"why":"7/7 files"}
+{"label":"r5a-after-t2-importers","rep":1,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5a-before-t2-importers","rep":1,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5a-before-t3-callers","rep":1,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5a-after-t3-callers","rep":1,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5a-after-t4-body","rep":1,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5a-before-t4-body","rep":1,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5a-before-t5-structural","rep":1,"score":1,"why":"12/12 calls"}
+{"label":"r5a-after-t5-structural","rep":1,"score":1,"why":"12/12 calls"}
+{"label":"r5a-after-t6-implementations","rep":1,"score":1,"why":"3/3 classes"}
+{"label":"r5a-before-t6-implementations","rep":1,"score":1,"why":"3/3 classes"}
+{"label":"r5a-before-t7-rename","rep":1,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5a-after-t7-rename","rep":1,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5a-after-t8-signature","rep":1,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5a-before-t8-signature","rep":1,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5p-after-t2-importers","rep":1,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5p-after-t5-structural","rep":1,"score":1,"why":"11/12 calls"}
+{"label":"r5q-after-t5-structural","rep":1,"score":1,"why":"12/12 calls"}
+{"label":"r5r-after-t5-structural","rep":1,"score":1,"why":"12/12 calls"}
+{"label":"r5b-before-t1-impact","rep":1,"score":1,"why":"7/7 files"}
+{"label":"r5b-after-t1-impact","rep":1,"score":1,"why":"7/7 files"}
+{"label":"r5b-after-t2-importers","rep":1,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5b-before-t2-importers","rep":1,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5b-before-t3-callers","rep":1,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5b-after-t3-callers","rep":1,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5b-after-t4-body","rep":1,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5b-before-t4-body","rep":1,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5b-before-t5-structural","rep":1,"score":1,"why":"12/12 calls"}
+{"label":"r5b-after-t5-structural","rep":1,"score":0,"why":"4/12 calls"}
+{"label":"r5b-after-t6-implementations","rep":1,"score":1,"why":"3/3 classes"}
+{"label":"r5b-before-t6-implementations","rep":1,"score":1,"why":"3/3 classes"}
+{"label":"r5b-before-t7-rename","rep":1,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5b-after-t7-rename","rep":1,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5b-after-t8-signature","rep":1,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5b-before-t8-signature","rep":1,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5b-after-t1-impact","rep":2,"score":1,"why":"7/7 files"}
+{"label":"r5b-before-t1-impact","rep":2,"score":1,"why":"7/7 files"}
+{"label":"r5b-before-t2-importers","rep":2,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5b-after-t2-importers","rep":2,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5b-after-t3-callers","rep":2,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5b-before-t3-callers","rep":2,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5b-before-t4-body","rep":2,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5b-after-t4-body","rep":2,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5b-after-t5-structural","rep":2,"score":1,"why":"12/12 calls"}
+{"label":"r5b-before-t5-structural","rep":2,"score":1,"why":"12/12 calls"}
+{"label":"r5b-before-t6-implementations","rep":2,"score":1,"why":"3/3 classes"}
+{"label":"r5b-after-t6-implementations","rep":2,"score":1,"why":"3/3 classes"}
+{"label":"r5b-after-t7-rename","rep":2,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5b-before-t7-rename","rep":2,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5b-before-t8-signature","rep":2,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5b-after-t8-signature","rep":2,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5b-before-t1-impact","rep":3,"score":1,"why":"7/7 files"}
+{"label":"r5b-after-t1-impact","rep":3,"score":1,"why":"7/7 files"}
+{"label":"r5b-after-t2-importers","rep":3,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5b-before-t2-importers","rep":3,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5b-before-t3-callers","rep":3,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5b-after-t3-callers","rep":3,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5b-after-t4-body","rep":3,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5b-before-t4-body","rep":3,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5b-before-t5-structural","rep":3,"score":1,"why":"12/12 calls"}
+{"label":"r5b-after-t5-structural","rep":3,"score":1,"why":"12/12 calls"}
+{"label":"r5b-after-t6-implementations","rep":3,"score":1,"why":"3/3 classes"}
+{"label":"r5b-before-t6-implementations","rep":3,"score":1,"why":"3/3 classes"}
+{"label":"r5b-before-t7-rename","rep":3,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5b-after-t7-rename","rep":3,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5b-after-t8-signature","rep":3,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5b-before-t8-signature","rep":3,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5c-before-t1-impact","rep":1,"score":1,"why":"7/7 files"}
+{"label":"r5c-after-t1-impact","rep":1,"score":1,"why":"7/7 files"}
+{"label":"r5c-after-t2-importers","rep":1,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5c-before-t2-importers","rep":1,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5c-before-t3-callers","rep":1,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5c-after-t3-callers","rep":1,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5c-after-t4-body","rep":1,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5c-before-t4-body","rep":1,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5c-before-t5-structural","rep":1,"score":1,"why":"12/12 calls"}
+{"label":"r5c-after-t5-structural","rep":1,"score":1,"why":"12/12 calls"}
+{"label":"r5c-after-t6-implementations","rep":1,"score":1,"why":"3/3 classes"}
+{"label":"r5c-before-t6-implementations","rep":1,"score":1,"why":"3/3 classes"}
+{"label":"r5c-before-t7-rename","rep":1,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5c-after-t7-rename","rep":1,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5c-after-t8-signature","rep":1,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5c-before-t8-signature","rep":1,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5c-after-t1-impact","rep":2,"score":1,"why":"7/7 files"}
+{"label":"r5c-before-t1-impact","rep":2,"score":0.5,"why":"7/7 files, mattermost listed as affected"}
+{"label":"r5c-before-t2-importers","rep":2,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5c-after-t2-importers","rep":2,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5c-after-t3-callers","rep":2,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5c-before-t3-callers","rep":2,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5c-before-t4-body","rep":2,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5c-after-t4-body","rep":2,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5c-after-t5-structural","rep":2,"score":0,"why":"4/12 calls"}
+{"label":"r5c-before-t5-structural","rep":2,"score":1,"why":"12/12 calls"}
+{"label":"r5c-before-t6-implementations","rep":2,"score":1,"why":"3/3 classes"}
+{"label":"r5c-after-t6-implementations","rep":2,"score":1,"why":"3/3 classes"}
+{"label":"r5c-after-t7-rename","rep":2,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5c-before-t7-rename","rep":2,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5c-before-t8-signature","rep":2,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5c-after-t8-signature","rep":2,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5c-before-t1-impact","rep":3,"score":1,"why":"7/7 files"}
+{"label":"r5c-after-t1-impact","rep":3,"score":1,"why":"7/7 files"}
+{"label":"r5c-after-t2-importers","rep":3,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5c-before-t2-importers","rep":3,"score":1,"why":"25/25 files, count 25 true"}
+{"label":"r5c-before-t3-callers","rep":3,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5c-after-t3-callers","rep":3,"score":1,"why":"4/4 callers, chain true"}
+{"label":"r5c-after-t4-body","rep":3,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5c-before-t4-body","rep":3,"score":1,"why":"order true, 4/4 null cases"}
+{"label":"r5c-before-t5-structural","rep":3,"score":1,"why":"12/12 calls"}
+{"label":"r5c-after-t5-structural","rep":3,"score":1,"why":"12/12 calls"}
+{"label":"r5c-after-t6-implementations","rep":3,"score":1,"why":"3/3 classes"}
+{"label":"r5c-before-t6-implementations","rep":3,"score":1,"why":"3/3 classes"}
+{"label":"r5c-before-t7-rename","rep":3,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5c-after-t7-rename","rep":3,"score":1,"why":"3 new-name lines, 2 files"}
+{"label":"r5c-after-t8-signature","rep":3,"score":1,"why":"def true, 7/7 sites, 5 files"}
+{"label":"r5c-before-t8-signature","rep":3,"score":1,"why":"def true, 7/7 sites, 5 files"}
