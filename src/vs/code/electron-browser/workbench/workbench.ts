@@ -676,8 +676,12 @@ import { EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL } from '../../../platform/w
 
 	// Volt, dev builds: the CSS came with the workbench code, so the window's last screen is painted now.
 	if (configuration.cssModules?.length && configuration.partsSplash?.layoutInfo && isAgentSplash(configuration.partsSplash.layoutInfo) && showVoltWindowSnapshot(configuration, configuration.partsSplash.baseTheme)) {
-		// Let it be drawn before the workbench's own start takes the thread.
-		await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+		// Let it be drawn before the workbench's own start takes the thread. A window that gets no frames (covered, or not
+		// yet shown by the OS) would never fire the animation frame: the start goes on after 50 ms regardless.
+		await new Promise(resolve => {
+			const fallback = setTimeout(resolve, 50);
+			requestAnimationFrame(() => { clearTimeout(fallback); setTimeout(resolve, 0); });
+		});
 	}
 
 	// Load workbench
