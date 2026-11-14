@@ -142,6 +142,12 @@ export interface IAgentStartRequest {
 	 * cannot resume it, a new session starts (its handle has no `resumed`) and the caller briefs it.
 	 */
 	resumeSessionId?: string;
+	/**
+	 * With a resume: the sandbox config overlay the stopped agent ran with (its handle's `stateKey`).
+	 * The agent's transcript lives there, and an agent that began as a pooled spare ran under the
+	 * pool's key, not the chat's: resumed under the chat's key it would find no session.
+	 */
+	resumeStateKey?: string;
 }
 
 /**
@@ -168,6 +174,8 @@ export interface IAgentSessionHandle {
 	providerSessionId?: string;
 	/** The session continues the one `IAgentStartRequest.resumeSessionId` named: it knows the conversation so far. */
 	resumed?: boolean;
+	/** The sandbox config overlay the agent runs with, when Volt wraps it (see `IAgentStartRequest.resumeStateKey`). */
+	stateKey?: string;
 }
 
 export interface IAgentMessage {

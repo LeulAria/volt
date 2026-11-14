@@ -632,7 +632,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				throw err;
 			}
 			this.logService.info(`[ACP] ${this.id} could not resume ${req.resumeSessionId}; starting a new session: ${err instanceof Error ? err.message : String(err)}`);
-			return this.createSession({ ...req, resumeSessionId: undefined });
+			return this.createSession({ ...req, resumeSessionId: undefined, resumeStateKey: undefined });
 		}
 	}
 
@@ -663,7 +663,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		let live: IAcpSession;
 		try {
-			live = await this.createSession(req, old.handle.providerSessionId ?? old.handle.id);
+			// Its transcript is in the overlay the old process ran with (a pooled spare's is the pool's).
+			live = await this.createSession(old.handle.stateKey ? { ...req, resumeStateKey: old.handle.stateKey } : req, old.handle.providerSessionId ?? old.handle.id);
 		} catch (err) {
 			this.logService.info(`[ACP] ${this.id} could not resume ${session.id} in ${req.cwd}: ${err instanceof Error ? err.message : String(err)}`);
 			return undefined;
@@ -961,6 +962,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			id: created.sessionId,
 			providerSessionId: created.sessionId,
 			...(resume ? { resumed: true } : {}),
+			...(sandbox?.stateKey ? { stateKey: sandbox.stateKey } : {}),
 		};
 		const live: IAcpSession = {
 			handle,
@@ -1042,7 +1044,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			...(settings.listenPorts?.length ? { listenPorts: settings.listenPorts } : {}),
 			loopbackPorts: (this.hostTools?.getMcpServers(req.sessionId, hostToolOptions(req)) ?? []).map(server => loopbackPort(server.url)).filter((port): port is number => port !== undefined),
 			// The chat's own copy of the CLI's config (B-05): what the agent changes there stays in this chat.
-			stateKey: req.sessionId ?? 'default',
+			// A resumed session goes on in the copy that holds its transcript (a pooled spare's copy, then adopted by this chat).
+			stateKey: req.resumeStateKey ?? req.sessionId ?? 'default',
 		};
 	}
 

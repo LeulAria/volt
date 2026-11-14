@@ -245,9 +245,15 @@ const ACP_SUPERVISION: IAcpSupervisionOptions = {
 /** Paths whose changes do not invalidate a cached check result. */
 const CHECK_NOISE = /\/(?:node_modules|\.git|coverage|\.nyc_output|dist|build|out|target|__pycache__|\.pytest_cache|\.next|\.turbo|\.cache)(?:\/|$)/;
 
-/** The session to resume for a start of this provider, model and folder, from the chat's stopped agent. */
-export function resumableSessionId(released: { readonly providerId: string; readonly ref: string; readonly cwd: string | undefined; readonly providerSessionId: string } | undefined, providerId: string, ref: string, cwd: string | undefined): string | undefined {
-	return released && released.providerId === providerId && released.ref === ref && released.cwd === cwd ? released.providerSessionId : undefined;
+/**
+ * The session to resume for a start of this provider, model and folder, from the chat's stopped agent,
+ * with the sandbox config overlay that holds its transcript (a pooled spare's, when the chat's agent began as one).
+ */
+export function resumeFields(released: { readonly providerId: string; readonly ref: string; readonly cwd: string | undefined; readonly providerSessionId: string; readonly stateKey?: string } | undefined, providerId: string, ref: string, cwd: string | undefined): Pick<IAgentStartRequest, 'resumeSessionId' | 'resumeStateKey'> {
+	if (!released || released.providerId !== providerId || released.ref !== ref || released.cwd !== cwd) {
+		return {};
+	}
+	return { resumeSessionId: released.providerSessionId, ...(released.stateKey ? { resumeStateKey: released.stateKey } : {}) };
 }
 
 /** How many of the chat's messages a newly bound agent has seen: those its resumed session saw, else none. */
@@ -385,7 +391,7 @@ interface ISessionState extends IVoltSession {
 	 * same model and folder continues it (`IAgentStartRequest.resumeSessionId`), having seen `synced`
 	 * of the chat's messages, instead of a new session briefed with a recap.
 	 */
-	releasedAgent?: { readonly providerId: string; readonly ref: string; readonly cwd: string | undefined; readonly providerSessionId: string; readonly synced: number };
+	releasedAgent?: { readonly providerId: string; readonly ref: string; readonly cwd: string | undefined; readonly providerSessionId: string; readonly stateKey?: string; readonly synced: number };
 	/** Last time a native run ended (or its transcript was read back); idle transcripts go to disk oldest first. */
 	nativeUsedAt?: number;
 	/** One notice after a checkout is created or restored. */
@@ -976,7 +982,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const handle = session.agentHandle;
 		const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
 		session.releasedAgent = resumable && handle?.providerSessionId && provider && session.agentRef && provider.canResume?.(handle)
-			? { providerId: provider.id, ref: session.agentRef, cwd: session.agentCwd, providerSessionId: handle.providerSessionId, synced: session.agentSynced ?? 0 }
+			? { providerId: provider.id, ref: session.agentRef, cwd: session.agentCwd, providerSessionId: handle.providerSessionId, ...(handle.stateKey ? { stateKey: handle.stateKey } : {}), synced: session.agentSynced ?? 0 }
 			: undefined;
 		session.agentHandle = undefined;
 		session.agentProviderId = undefined;
@@ -1554,7 +1560,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart, subagent = (this.sessions.get(sessionId) as ISessionState | undefined)?.subagent): IAgentStartRequest {
-		const resumeSessionId = resumableSessionId((this.sessions.get(sessionId) as ISessionState | undefined)?.releasedAgent, profile.providerId, item.ref, cwd);
+		const resume = resumeFields((this.sessions.get(sessionId) as ISessionState | undefined)?.releasedAgent, profile.providerId, item.ref, cwd);
 		return {
 			sessionId,
 			mode,
@@ -1564,7 +1570,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			options: this.resolvedOptions(item, options),
 			...(sandbox ? { sandbox } : {}),
 			...(subagent ? { subagent } : {}),
-			...(resumeSessionId ? { resumeSessionId } : {}),
+			...resume,
 		};
 	}
 

@@ -82,9 +82,11 @@ class FakeAgent implements IAgentProvider {
 		if (!this.resumable) {
 			return { id: `h${this.starts.length}` };
 		}
+		// Like the ACP provider: the process runs in the config overlay of the chat (or pool alias) it was started for, a resume in the old one.
+		const stateKey = request.resumeStateKey ?? request.sessionId;
 		return request.resumeSessionId
-			? { id: `h${this.starts.length}`, providerSessionId: request.resumeSessionId, resumed: true }
-			: { id: `h${this.starts.length}`, providerSessionId: `p${this.starts.length}` };
+			? { id: `h${this.starts.length}`, providerSessionId: request.resumeSessionId, resumed: true, stateKey }
+			: { id: `h${this.starts.length}`, providerSessionId: `p${this.starts.length}`, stateKey };
 	}
 	isLive() { return true; }
 	canResume() { return this.resumable; }
@@ -641,8 +643,35 @@ suite('Agent runtime orchestration', () => {
 		assert.ok(resumedStart, 'the chat started its agent again');
 		const firstSessionId = `p${agent.starts.indexOf(firstStart) + 1}`;
 		assert.strictEqual(resumedStart.resumeSessionId, firstSessionId, 'it resumed the session it had');
+		assert.strictEqual(resumedStart.resumeStateKey, firstStart.sessionId, 'in the config overlay that holds its transcript');
 		assert.ok(!(agent.prompts.at(-1)!.lead ?? '').includes('<conversation_handoff>'), 'a resumed session needs no recap');
 		assert.strictEqual(sessions.get('chat')!.releasedAgent, undefined);
+	});
+
+	test('a chat whose agent began as a pooled spare resumes it in the pool\'s config overlay, where its transcript is', async () => {
+		const { service, internals, agent, ref, waitEnd } = await setup('agent');
+		agent.resumable = true;
+		service.prewarmAgent('chat', ref, 'agent');
+		await waitFor(() => agent.starts.length === 1, 'the spare to start');
+		const poolKey = agent.starts[0].sessionId!;
+		assert.ok(poolKey.startsWith('volt-pool-'));
+		await waitEnd(await service.send('chat', { text: 'remember PELICAN', mode: 'agent', providerRef: ref }));
+		assert.strictEqual(service.getRunMetrics('chat')[0].agentSource, 'pool');
+		const otherEnds: string[] = [];
+		store.add(service.onEvent('other', envelope => envelope.event.type === 'run.end' && otherEnds.push(envelope.runId)));
+		const otherRun = await service.send('other', { text: 'hello', mode: 'agent', providerRef: ref });
+		await waitFor(() => otherEnds.includes(otherRun), 'the other chat\'s run');
+		const sessions = internals.sessions as unknown as Map<string, { agentUsedAt?: number; releasedAgent?: { stateKey?: string } }>;
+		sessions.get('chat')!.agentUsedAt = Date.now() - 31_000;
+		(service as unknown as { releaseIdleAgents(): void }).releaseIdleAgents();
+		assert.strictEqual(sessions.get('chat')!.releasedAgent?.stateKey, poolKey);
+
+		const before = agent.starts.length;
+		await waitEnd(await service.send('chat', { text: 'what was the word?', mode: 'agent', providerRef: ref }));
+		const resumedStart = agent.starts.slice(before).find(start => start.resumeSessionId);
+		assert.ok(resumedStart, 'the chat resumed its session');
+		assert.strictEqual(resumedStart.sessionId, 'chat');
+		assert.strictEqual(resumedStart.resumeStateKey, poolKey, 'not the chat\'s own overlay, which never saw this session');
 	});
 
 	test('an agent that cannot resume keeps the old cap and wait, and comes back with a recap', async () => {
