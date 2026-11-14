@@ -1,0 +1,34 @@
+-- before
+app 1648 agents 278 total 1926 MiB (17 processes, 2 s)
+  renderer [app]                                       n=1   580 MiB
+  gpu [app]                                            n=1   216 MiB
+-- after
+app 1917 agents 498 total 2408 MiB (31 processes, 2 s)
+  renderer [app]                                       n=1   629 MiB
+  gpu [app]                                            n=1   205 MiB
+01:20:14  renderer [app] n=1 629 MiB  gpu [app] n=1 192 MiB 
+01:20:27  renderer [app] n=1 629 MiB  gpu [app] n=1 192 MiB 
+01:20:40  renderer [app] n=1 608 MiB  gpu [app] n=1 171 MiB 
+01:20:53  renderer [app] n=1 608 MiB  gpu [app] n=1 171 MiB 
+01:21:05  renderer [app] n=1 608 MiB  gpu [app] n=1 171 MiB 
+01:21:17  gpu [app] n=1 680 MiB  renderer [app] n=1 613 MiB 
+01:21:29  gpu [app] n=1 777 MiB  renderer [app] n=1 630 MiB 
+01:21:40  gpu [app] n=1 657 MiB  renderer [app] n=1 636 MiB 
+01:21:52  renderer [app] n=1 636 MiB  gpu [app] n=1 632 MiB 
+01:22:05  renderer [app] n=1 636 MiB  gpu [app] n=1 632 MiB 
+01:22:16  gpu [app] n=1 718 MiB  renderer [app] n=1 636 MiB 
+01:22:28  gpu [app] n=1 638 MiB  renderer [app] n=1 637 MiB 
+01:22:40  renderer [app] n=1 620 MiB  gpu [app] n=1 262 MiB 
+01:22:53  renderer [app] n=1 621 MiB  gpu [app] n=1 250 MiB 
+PRESSURE
+-- before
+app 1737 agents 295 total 2032 MiB (18 processes, 2 s)
+  renderer [app]                                       n=1   621 MiB
+  gpu [app]                                            n=1   250 MiB
+ {"id":1,"result":{}}
+Replay:seed {"id":1,"result":{}}
+browser {"id":1,"result":{}}
+-- after
+app 1737 agents 296 total 2033 MiB (19 processes, 2 s)
+  renderer [app]                                       n=1   621 MiB
+  gpu [app]                                            n=1   250 MiB

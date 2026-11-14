@@ -1,0 +1,4 @@
+01:18:21 app 1648 agents 280 total 1928 MiB (17 processes, 2 s)   gpu [app]                                            n=1   216 MiB 
+01:18:49 app 1660 agents 278 total 1938 MiB (17 processes, 2 s)   gpu [app]                                            n=1   227 MiB 
+01:19:18 app 1648 agents 278 total 1926 MiB (17 processes, 2 s)   gpu [app]                                            n=1   216 MiB 
+01:19:45 app 2094 agents 485 total 2623 MiB (33 processes, 2 s)   gpu [app]                                            n=1   229 MiB 

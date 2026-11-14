@@ -1,0 +1,7 @@
+rest gpu 268 MiB
+== - = -, 3 seed turns
+-- before
+  gpu [app]                                            n=1   259 MiB
+-- after
+  gpu [app]                                            n=1   657 MiB
+peak gpu 750 MiB over        6 samples
