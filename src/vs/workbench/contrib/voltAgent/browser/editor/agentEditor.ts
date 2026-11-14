@@ -144,7 +144,6 @@ import { REVEAL_VOLT_PART_COMMAND_ID, voltPartIdFromContext } from '../../../vol
 import { extractHttpUrl, extractLocalPreviewUrl, sanitizeBrowserUrl } from '../preview/localPreview.js';
 import { completeStreamingBlocks } from './agentSessionController.js';
 import { AgentSurfaceHost, agentSideChatParents } from '../workspace/agentSurfaceHost.js';
-import { noteComposerInput, yieldsToInput } from './agentInputFrame.js';
 import { nativeScrollerTakesWheel, prefersReducedMotion, ThreadFollow } from './agentThreadScroll.js';
 import { openAgentPanel } from '../workspace/agentPanels.js';
 import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
@@ -6602,8 +6601,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}));
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
 		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
-			// The next frame draws this keystroke before any streamed transcript work (agentInputFrame.ts).
-			noteComposerInput(getWindow(this.container));
 			// Typing is the surest sign a message is coming: make sure an agent is (still) warm. Cheap
 			// when one is: the runtime returns at once for a live or pooled agent.
 			if (Date.now() - this.prewarmedAt > PREWARM_ON_TYPE_MS && !this.isStreaming() && this.inputEditor?.getModel()?.getValueLength()) {
@@ -8894,13 +8891,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (this.renderHandle !== undefined) {
 			return;
 		}
-		const win = getWindow(this.threadInner);
-		const render = () => {
-			// The frame that draws a keystroke in the composer carries it alone (agentInputFrame.ts).
-			if (yieldsToInput(win)) {
-				this.renderHandle = scheduleAtNextAnimationFrame(win, render);
-				return;
-			}
+		this.renderHandle = scheduleAtNextAnimationFrame(getWindow(this.threadInner), () => {
 			this.renderHandle = undefined;
 			// Tool arguments streamed since the last frame are parsed once, here.
 			if (this.input instanceof AgentEditorInput) {
@@ -8918,8 +8909,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (syncDock) {
 				this._onDidChangeDock.fire();
 			}
-		};
-		this.renderHandle = scheduleAtNextAnimationFrame(win, render);
+		});
 	}
 
 	/**
