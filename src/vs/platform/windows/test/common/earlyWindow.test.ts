@@ -59,7 +59,8 @@ suite('Launch window (earlyWindow)', () => {
 			appRoot,
 			url,
 			options: { x: 1, y: 2, width: 3, height: 4, show: true, titleBarStyle: 'hidden', backgroundColor: '#1e1e1e', webPreferences: { preload }, fn: () => { } },
-			webPreferences: { preload, sandbox: true, additionalArguments: ['--vscode-window-config=vscode:1234'] }
+			// `show` is what Electron writes into the preferences object of a created view
+			webPreferences: { preload, sandbox: true, additionalArguments: ['--vscode-window-config=vscode:1234'], show: false }
 		});
 		assert.deepStrictEqual(hint.options, { titleBarStyle: 'hidden', backgroundColor: '#1e1e1e' });
 		assert.deepStrictEqual(hint.webPreferences, { preload, sandbox: true });
@@ -94,6 +95,8 @@ suite('Launch window (earlyWindow)', () => {
 	test('the page is kept when its preferences match, apart from the channel and the zoom', () => {
 		const prefs = { preload, sandbox: true, v8CacheOptions: 'bypassHeatCheck', zoomFactor: 1 };
 		assert.strictEqual(matchEarlyWebPreferences(prefs, { ...prefs, zoomFactor: 1.2, additionalArguments: ['--vscode-window-config=vscode:1'] }), true);
+		// A hint written before this rule carries the `show: false` Electron added to the view's preferences
+		assert.strictEqual(matchEarlyWebPreferences({ ...prefs, show: false }, prefs), true);
 		assert.strictEqual(matchEarlyWebPreferences(prefs, { ...prefs, v8CacheOptions: 'none' }), false);
 		assert.strictEqual(matchEarlyWebPreferences(prefs, { ...prefs, preload: `${appRoot}/other.js` }), false);
 	});

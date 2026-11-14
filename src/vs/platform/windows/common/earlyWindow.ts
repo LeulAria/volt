@@ -176,10 +176,17 @@ export function matchEarlyWindowOptions(early: Record<string, unknown>, actual: 
 	return { compatible: conflicts.length === 0, changed, conflicts };
 }
 
+/**
+ * Web preferences that never decide what the page is: the per-window channel, and `show`, which Electron writes into
+ * the preferences object a `WebContentsView` is created with (so a hint written from that object has it, and the
+ * options of the next window do not).
+ */
+const IGNORED_WEB_PREFERENCES = new Set(['additionalArguments', 'show']);
+
 /** Compares the view's web preferences (the per-window channel and the zoom, which can be set later, aside). */
 export function matchEarlyWebPreferences(early: Record<string, unknown>, actual: Record<string, unknown>): boolean {
 	for (const key of new Set([...Object.keys(early), ...Object.keys(actual)])) {
-		if (key === 'additionalArguments' || key === 'zoomFactor') {
+		if (IGNORED_WEB_PREFERENCES.has(key) || key === 'zoomFactor') {
 			continue;
 		}
 		if (!sameValue(early[key], actual[key])) {
@@ -199,7 +206,7 @@ export function toEarlyWindowHint(input: { commit: string | null; appRoot: strin
 	}
 	const webPreferences: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(input.webPreferences)) {
-		if (key !== 'additionalArguments' && isPlainValue(value)) {
+		if (!IGNORED_WEB_PREFERENCES.has(key) && isPlainValue(value)) {
 			webPreferences[key] = value;
 		}
 	}
