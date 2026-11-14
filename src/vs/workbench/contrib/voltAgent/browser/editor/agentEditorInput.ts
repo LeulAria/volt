@@ -178,6 +178,7 @@ export class AgentEditorInput extends EditorInput {
 	private readonly codec: AgentHistoryCodec;
 	private historyHandle: IAgentSessionHandle | undefined;
 	private loading: Promise<void> | undefined;
+	private loadSettled = false;
 	private lastTitle: string | undefined;
 	private lastPartialAt = 0;
 	private lastDraftSignature: string | undefined;
@@ -294,6 +295,12 @@ export class AgentEditorInput extends EditorInput {
 		readAhead.intend(sessionId);
 	}
 
+	/** Chat `sessionId`'s transcript when this window has it loaded. */
+	static loadedMessages(sessionId: string): readonly IAgentMessage[] | undefined {
+		const live = liveInputs.get(sessionId);
+		return live && !live.isDisposed() && live.isLoaded ? live.messages : undefined;
+	}
+
 	/** The pointer left the chat list: a chat still waiting out its dwell is not read. */
 	static cancelReadAhead(): void {
 		readAhead?.cancel();
@@ -329,7 +336,7 @@ export class AgentEditorInput extends EditorInput {
 				next.lastDraftSignature = this.lastDraftSignature;
 			}
 		});
-		next.loading = loaded;
+		void next.setLoading(loaded);
 		void loaded.finally(() => this.dispose());
 		this._controller.setHost(next);
 		return this._controller;
@@ -346,7 +353,7 @@ export class AgentEditorInput extends EditorInput {
 		next.historyHandle = this.historyHandle;
 		next.recordChain = this.recordChain;
 		next.lastPartialAt = this.lastPartialAt;
-		next.loading = Promise.resolve();
+		void next.setLoading(Promise.resolve());
 		this._controller.setHost(next);
 		return this._controller;
 	}
@@ -367,8 +374,23 @@ export class AgentEditorInput extends EditorInput {
 
 	/** Load transcript and draft from disk once. Safe to call repeatedly. */
 	ensureLoaded(): Promise<void> {
-		this.loading ??= this.doLoad();
-		return this.loading;
+		return this.loading ?? this.setLoading(this.doLoad());
+	}
+
+	/** The transcript and draft have been read (or failed to be): {@link messages} is the chat's. */
+	get isLoaded(): boolean {
+		return this.loadSettled;
+	}
+
+	private setLoading(loading: Promise<void>): Promise<void> {
+		this.loading = loading;
+		const settle = () => {
+			if (this.loading === loading) {
+				this.loadSettled = true;
+			}
+		};
+		loading.then(settle, settle);
+		return loading;
 	}
 
 	private async doLoad(): Promise<void> {

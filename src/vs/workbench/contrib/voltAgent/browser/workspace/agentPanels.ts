@@ -9,7 +9,7 @@ import { Disposable, IDisposable, MutableDisposable } from '../../../../../base/
 import { URI } from '../../../../../base/common/uri.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IStorageService, WillSaveStateReason } from '../../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService, WorkbenchState } from '../../../../../platform/workspace/common/workspace.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { EditorsOrder } from '../../../../common/editor.js';
@@ -24,6 +24,7 @@ import { isNewEmptyWindow } from '../../../../browser/parts/titlebar/layoutModeS
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { markAgentSwitch } from '../editor/agentSwitchTiming.js';
+import { saveFirstScreen } from '../editor/agentFirstScreen.js';
 import { AGENT_USAGE_INPUT_ID } from '../../../voltUsage/common/voltUsage.js';
 import { AgentPullRequestsPageInput } from '../pullRequests/agentPullRequestsPageInput.js';
 import { AUTOMATIONS_EDITOR_INPUT_TYPE_ID } from '../../../voltAutomations/common/voltAutomations.js';
@@ -117,8 +118,21 @@ class AgentPanelsContribution extends Disposable {
 		@IAgentWorkspaceService private readonly workspaceService: IAgentWorkspaceService,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
+		@IStorageService storageService: IStorageService,
 	) {
 		super();
+		// The chat on screen when the window closes or reloads is drawn by the next window that shows it before its
+		// transcript is read (agentFirstScreen.ts).
+		this._register(storageService.onWillSaveState(e => {
+			if (e.reason !== WillSaveStateReason.SHUTDOWN) {
+				return;
+			}
+			const active = this.editorGroupsService.mainPart.activeGroup?.activeEditor;
+			const messages = active instanceof AgentEditorInput ? AgentEditorInput.loadedMessages(active.sessionId) : undefined;
+			if (active instanceof AgentEditorInput && messages) {
+				saveFirstScreen(storageService, active.sessionId, messages);
+			}
+		}));
 		this._register(this.editorService.onDidActiveEditorChange(() => this.onActiveEditor()));
 		this._register(onDidChangeShownAgentChat(() => this.onShownChat()));
 		this._register(this.editorService.onDidVisibleEditorsChange(() => this.markVisibleRead()));

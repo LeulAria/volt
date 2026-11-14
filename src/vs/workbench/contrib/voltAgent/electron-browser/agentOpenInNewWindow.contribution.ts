@@ -25,6 +25,8 @@ import { IVoltProjectRecord, IVoltSessionContextService, sessionBelongsToProject
 import { IVoltWindowScopeService } from '../../../services/voltWindowScope/common/voltWindowScope.js';
 import { AgentEditorInput, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID } from '../browser/editor/agentEditorInput.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IStorageService } from '../../../../platform/storage/common/storage.js';
+import { saveFirstScreen } from '../browser/editor/agentFirstScreen.js';
 
 /** The project a chat runs in: its binding, else the project of its saved folder. Scratch chats have none. */
 function chatProject(context: IVoltSessionContextService, session: IAgentSessionMeta): IVoltProjectRecord | undefined {
@@ -56,6 +58,7 @@ registerAction2(class OpenAgentInNewWindowAction extends Action2 {
 		const context = accessor.get(IVoltSessionContextService);
 		const scopes = accessor.get(IVoltWindowScopesService);
 		const nativeHostService = accessor.get(INativeHostService);
+		const storage = accessor.get(IStorageService);
 		const session = history.get(sessionId);
 		if (!session) {
 			return;
@@ -69,6 +72,12 @@ registerAction2(class OpenAgentInNewWindowAction extends Action2 {
 				})
 				.map(meta => meta.id)
 			: [];
+		// The new window draws the chat from this window's copy before it has read the transcript itself.
+		const loaded = AgentEditorInput.loadedMessages(sessionId);
+		if (loaded) {
+			saveFirstScreen(storage, sessionId, loaded);
+			await storage.flush();
+		}
 		await scopes.prepareWindow({
 			openSession: sessionId,
 			sessions: [sessionId, ...sessions.filter(id => id !== sessionId)],

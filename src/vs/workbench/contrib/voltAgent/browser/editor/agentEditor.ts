@@ -182,6 +182,7 @@ import { composerDraftShape } from './agentComposerDraft.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
+import { readFirstScreen } from './agentFirstScreen.js';
 import { setShownAgentChat, shownAgentChat } from './agentShownChat.js';
 import { deferredHeadStart, keepExchangeHeights } from './agentThreadWindow.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
@@ -1039,7 +1040,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** setInput is focusing the composer of the chat it shows: not a sign a message is coming. */
 	private focusingForSwitch = false;
 	/** How the last shown chat's thread came back, for the switch timing line. */
-	private threadRestore: 'stashed' | 'stale tail' | 'tail first' | 'full' = 'full';
+	private threadRestore: 'stashed' | 'stale tail' | 'tail first' | 'full' | 'first screen' = 'full';
+	/** The load of the chat shown from its first screen, until its transcript replaced it (sends wait for it). */
+	private firstScreenLoad: Promise<void> | undefined;
 	private readonly headScrollDraw = this._register(new MutableDisposable());
 	/** The messages drawn above the live exchange, so a new turn can tell they are unchanged and keep their DOM. */
 	private settledMessages: readonly IAgentMessage[] = [];
@@ -2236,12 +2239,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		input.scheduleDraftSave();
 	}
 
-	private restoreInputState(input: AgentEditorInput): void {
+	/** Shows chat `input` in the pane: its thread (from `firstScreen` while its transcript is still read), mode and draft. */
+	private restoreInputState(input: AgentEditorInput, firstScreen?: IAgentMessage[]): void {
 		this.clearFindHighlights();
 		this.resetCompactChip();
 		this.stashThread();
 		this.thinkingStore.clear();
-		this.messages = input.messages;
+		this.messages = firstScreen ?? input.messages;
 		this.stateInput = input;
 		this.sessionTokensUsed = input.contextUsed;
 		this.sessionTokensWindow = input.contextWindow;
@@ -2253,15 +2257,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const followTail = chat.followTail !== false;
 		this.stickToBottom = followTail;
 		this.restoringChat = true;
-		// A chat keeps its own mode; a new one starts in Agent, as Cursor's do, not in the last chat's Debug or Plan.
-		const savedMode = input.chosenMode ?? input.restoredMode;
-		const mode = (savedMode && MODE_OPTIONS.find(item => item.id.toLowerCase() === savedMode.toLowerCase())?.id) || MODE_OPTIONS[0].id;
-		if (mode !== this.currentMode) {
-			this.currentMode = mode;
-			this.updateModeButton();
-			this.updateInputPlaceholder();
-			this.composerQueue?.setMode(mode);
-		}
+		this.applyChatMode(input);
 		this.syncComposerPlacement();
 		const stashed = this.adoptStashedThread(input);
 		if (!stashed || (stashed.stale && !this.canRenderTail() && !this.canAppendThread())) {
@@ -2303,6 +2299,18 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		input.setHasUnsavedContent(!!input.draft.trim());
 		this.updateInputPlaceholder();
 		this.refreshContextUsage();
+	}
+
+	/** A chat keeps its own mode; a new one starts in Agent, as Cursor's do, not in the last chat's Debug or Plan. */
+	private applyChatMode(input: AgentEditorInput): void {
+		const savedMode = input.chosenMode ?? input.restoredMode;
+		const mode = (savedMode && MODE_OPTIONS.find(item => item.id.toLowerCase() === savedMode.toLowerCase())?.id) || MODE_OPTIONS[0].id;
+		if (mode !== this.currentMode) {
+			this.currentMode = mode;
+			this.updateModeButton();
+			this.updateInputPlaceholder();
+			this.composerQueue?.setMode(mode);
+		}
 	}
 
 	private inputPlaceholderText(): string {
@@ -6837,6 +6845,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			});
 			return;
 		}
+		// A chat on its first screen sends once its transcript is read (the send goes after the real last turn).
+		const loading = this.firstScreenLoad;
+		if (loading) {
+			this.submitting = true;
+			void loading.finally(() => {
+				if (this.firstScreenLoad === loading) {
+					this.firstScreenLoad = undefined;
+				}
+				this.submitting = false;
+				this.send();
+			});
+			return;
+		}
 		if (this.startScratchInNewChat() || this.startInScratchFolder()) {
 			return;
 		}
@@ -9069,11 +9090,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.persistInputState();
 		// The chat's history is read before the pane takes it. Until then the last chat stays whole
 		// (thread, composer, tools, its row in the Agents list), and none of it is written into this one.
-		try {
-			await input.ensureLoaded();
-		} catch (err) {
+		// A chat not read yet whose first screen a window kept (agentFirstScreen.ts) is drawn from that at
+		// once, and from its transcript when that is read. A screen kept before the chat last changed is not used.
+		const firstScreen = input.isLoaded ? undefined : readFirstScreen<IAgentMessage>(this.storageService, input.sessionId, this.history.get(input.sessionId)?.updatedAt);
+		const loading = input.ensureLoaded().catch(err => {
 			// A broken history entry must never block opening the editor.
 			this.logService.warn('[volt agent] failed to load session history', err);
+		});
+		if (!firstScreen) {
+			await loading;
 		}
 		if (token.isCancellationRequested) {
 			return;
@@ -9100,7 +9125,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.refreshMcpApprovals();
 		this.limitChip?.render();
 		this.ensureInputEditor();
-		this.restoreInputState(input);
+		this.restoreInputState(input, firstScreen);
+		this.firstScreenLoad = firstScreen ? loading : undefined;
+		if (firstScreen) {
+			this.threadRestore = 'first screen';
+			void loading.then(() => this.drawOverFirstScreen(input, firstScreen));
+		}
 		const drawn = performance.now();
 		this.followThreadModel();
 		this.container.classList.remove('restoring');
@@ -9129,6 +9159,42 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.schedulePrewarm();
 		this.revealRequestedTurn(input.sessionId);
 		this.logSwitchTiming(input, clickedAt ?? started, clickedAt !== undefined, started, loaded, drawn);
+	}
+
+	/**
+	 * The transcript of a chat drawn from its first screen has been read: it replaces the first screen, in one task,
+	 * with what came with it (mode, draft, context). Nothing happens when the pane moved on in the meantime.
+	 */
+	private drawOverFirstScreen(input: AgentEditorInput, firstScreen: IAgentMessage[]): void {
+		if (this.firstScreenLoad && this.stateInput === input) {
+			this.firstScreenLoad = undefined;
+		}
+		if (this.input !== input || this.stateInput !== input || this.messages !== firstScreen || this._store.isDisposed) {
+			return;
+		}
+		this.messages = input.messages;
+		this.sessionTokensUsed = input.contextUsed;
+		this.sessionTokensWindow = input.contextWindow;
+		this.applyChatMode(input);
+		this.renderThread(this.stickToBottom, this.stickToBottom);
+		if (this.inputModel && !this.inputModel.getValue() && input.draft) {
+			const draft = input.draft;
+			const mentions = input.draftMentions;
+			this.inputModel.setValue(draft);
+			this.mentionController?.restoreMentions(mentions);
+			input.draft = draft;
+			input.draftMentions = this.mentionController?.displayMentions() ?? mentions;
+		}
+		this.migrateDraftQueue(input);
+		this.syncQueueStack();
+		this.composerChips.setNewChat(this.messages.length === 0);
+		this.syncStatusChip();
+		this.publishSessionChanges();
+		this.syncTasksCard();
+		this.renderSuggestChips();
+		this.updateSendButton();
+		this.updateInputPlaceholder();
+		this.refreshContextUsage();
 	}
 
 	/**
