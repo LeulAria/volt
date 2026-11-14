@@ -644,8 +644,9 @@ function shortBinding(value: string): string {
 }
 
 /**
- * Nodes shaped like `pattern`, outermost first. `where` keeps only matches whose metavariable's code
- * matches its regular expression; a rejected match's insides are still searched.
+ * Nodes shaped like `pattern`, outermost first, and matches nested in them (a setTimeout inside
+ * another's callback is a match of its own, as in ast-grep). `where` keeps only matches whose
+ * metavariable's code matches its regular expression.
  */
 export function findMatches(pattern: SyntaxNode, root: SyntaxNode, max: number, where: readonly (readonly [string, RegExp])[] = []): IStructuralHit[] {
 	const out: IStructuralHit[] = [];
@@ -653,11 +654,15 @@ export function findMatches(pattern: SyntaxNode, root: SyntaxNode, max: number, 
 	const target = pattern.type === 'expression_statement' && pattern.namedChildCount === 1 ? pattern.namedChildren[0]!.type : pattern.type;
 	const cursor = root.walk();
 	let done = false;
+	// A statement and the expression it holds span the same code: one match.
+	let lastRange = '';
 	while (!done && out.length < max) {
 		const node = cursor.currentNode;
 		if (anyType || node.type === target || node.type === pattern.type) {
 			const vars = new Map<string, string>();
-			if (matchNode(pattern, node, vars) && where.every(([name, test]) => test.test(vars.get(name) ?? ''))) {
+			const range = `${node.startIndex}:${node.endIndex}`;
+			if (range !== lastRange && matchNode(pattern, node, vars) && where.every(([name, test]) => test.test(vars.get(name) ?? ''))) {
+				lastRange = range;
 				const named = [...vars].filter(([name]) => name && name !== '_');
 				out.push({
 					line: node.startPosition.row + 1,
@@ -665,7 +670,10 @@ export function findMatches(pattern: SyntaxNode, root: SyntaxNode, max: number, 
 					text: node.text.split('\n')[0].trim().slice(0, 160),
 					...(named.length ? { vars: Object.fromEntries(named.map(([name, value]) => [name, shortBinding(value)])) } : {}),
 				});
-				// Not inside a match: nested matches of the same pattern would repeat it.
+				// A bare $X matches every node: only the outermost. Any other pattern looks inside too.
+				if (!anyType && cursor.gotoFirstChild()) {
+					continue;
+				}
 				if (cursor.gotoNextSibling()) {
 					continue;
 				}

@@ -130,6 +130,15 @@ suite('Volt code index: structure (tree-sitter)', function () {
 		assert.deepStrictEqual(typeof long === 'string' ? long : long.map(hit => hit.vars), [{ F: '() => { console.log("a long callback bod…', MS: '30_000' }]);
 	});
 
+	test('structural search: a match nested in another match is found too', async () => {
+		const parsers = new TreeSitterParsers();
+		const code = 'setTimeout(() => {\n\tsetTimeout(g, 10_000);\n}, delay);\nfoo(1);\n';
+		const all = await parsers.match('typescript', 'setTimeout($F, $MS)', code, 10);
+		assert.deepStrictEqual(typeof all === 'string' ? all : all.map(hit => `${hit.line} ${hit.vars?.MS}`), ['1 delay', '2 10_000']);
+		const statement = await parsers.match('typescript', 'foo($A);', code, 10);
+		assert.strictEqual(typeof statement === 'string' ? statement : statement.length, 1);
+	});
+
 	test('a pattern that is not code says so', async () => {
 		const parsers = new TreeSitterParsers();
 		const result = await parsers.match('typescript', 'foo(( $A', 'foo(1)', 10);
