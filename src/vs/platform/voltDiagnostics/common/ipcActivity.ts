@@ -76,9 +76,11 @@ export class IpcActivityRecorder {
 		return [];
 	}
 
-	wrapChannel<TContext>(channelName: string, channel: IServerChannel<TContext>, observer?: IpcCallObserver): IServerChannel<TContext> {
+	/** `onWillCall`: runs before each call (the stall monitor wakes for the work it brings). */
+	wrapChannel<TContext>(channelName: string, channel: IServerChannel<TContext>, observer?: IpcCallObserver, onWillCall?: () => void): IServerChannel<TContext> {
 		return {
 			call: <T>(ctx: TContext, command: string, arg?: unknown, cancellationToken?: CancellationToken): Promise<T> => {
+				onWillCall?.();
 				const startTime = this.now();
 				let result: Promise<T> | undefined;
 				try {
@@ -96,9 +98,9 @@ export class IpcActivityRecorder {
 	}
 
 	/** Wraps every channel registered on `server` from now on. Returns a function that stops wrapping new ones. */
-	instrument<TContext>(server: IChannelServer<TContext>, observer?: IpcCallObserver): () => void {
+	instrument<TContext>(server: IChannelServer<TContext>, observer?: IpcCallObserver, onWillCall?: () => void): () => void {
 		const original = server.registerChannel;
-		server.registerChannel = (channelName: string, channel: IServerChannel<TContext>) => original.call(server, channelName, this.wrapChannel(channelName, channel, observer));
+		server.registerChannel = (channelName: string, channel: IServerChannel<TContext>) => original.call(server, channelName, this.wrapChannel(channelName, channel, observer, onWillCall));
 		return () => server.registerChannel = original;
 	}
 }

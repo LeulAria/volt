@@ -693,6 +693,8 @@ const SCROLL_SYNC_PRIORITY = -1000;
 
 /** While a reply streams the context meter is redrawn at most this often; the turn's end redraws it at once. */
 const CONTEXT_USAGE_STREAM_MS = 1_000;
+/** How often typing recounts the draft in the context meter. */
+const DRAFT_USAGE_MS = 150;
 
 /** How long the composer's ghost text reuses the prompts it read; a send refreshes them at once. */
 const PREDICTION_PROMPTS_TTL_MS = 10_000;
@@ -1864,6 +1866,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.refreshContextUsageNow();
 		}, wait);
 	}
+
+	/**
+	 * The draft counts toward the context meter: recounted at most every {@link DRAFT_USAGE_MS} while
+	 * the user types, not on the keystroke (about 1 ms of every key, reading the model's options).
+	 */
+	private refreshContextUsageForDraft(): void {
+		this.draftUsageTimer ??= disposableTimeout(() => {
+			this.draftUsageTimer = undefined;
+			this.refreshContextUsage();
+		}, DRAFT_USAGE_MS);
+	}
+
+	private draftUsageTimer: IDisposable | undefined;
 
 	private refreshContextUsageNow(): void {
 		this.contextUsageAt = Date.now();
@@ -6604,7 +6619,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.updateInputPlaceholder();
 			this.updateSendButton();
 			this.syncUnsavedState();
-			this.refreshContextUsage();
+			this.refreshContextUsageForDraft();
 		}));
 		this.editorDisposables.add(this.inputEditor.onDidContentSizeChange(e => {
 			if (e.contentHeightChanged) {
@@ -9173,8 +9188,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			}
 		}
 		// A chat clicked open warms its agent at once (a stopped agent's resume takes about a second); a programmatic
-		// open, or clicks stepping through chats, wait out the open timer.
-		this.schedulePrewarm(openPrewarmDelay(clickedAt, this.lastClickedOpenAt));
+		// open, or clicks stepping through chats, wait out the open timer. A chat drawn from its first screen is not
+		// read yet (its model, mode and folder come with the transcript): its agent is warmed once the transcript
+		// replaces the first screen (drawOverFirstScreen).
+		if (!firstScreen) {
+			this.schedulePrewarm(openPrewarmDelay(clickedAt, this.lastClickedOpenAt));
+		}
 		this.lastClickedOpenAt = clickedAt ?? this.lastClickedOpenAt;
 		this.revealRequestedTurn(input.sessionId);
 		this.takeOverWindowSnapshot();
@@ -9264,6 +9283,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.updateSendButton();
 		this.updateInputPlaceholder();
 		this.refreshContextUsage();
+		this.schedulePrewarm();
 	}
 
 	/**
@@ -9622,6 +9642,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.slowTurnTimer?.dispose();
 		this.textQuietTimer?.dispose();
 		this.contextUsageTimer?.dispose();
+		this.draftUsageTimer?.dispose();
 		this.scrollSyncFrame?.dispose();
 		this.prewarmTimer?.dispose();
 		this.dismissSnapshotPreview();

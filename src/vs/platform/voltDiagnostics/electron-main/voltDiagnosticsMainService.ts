@@ -58,6 +58,12 @@ function hostArch(): string {
 	}
 }
 
+/**
+ * How long the main stall monitor watches the loop after an IPC call (a window asking for work). At
+ * rest nothing calls and the monitor sleeps: its 100 ms tick was main's most frequent wakeup.
+ */
+const MAIN_STALL_ARM_MS = 10_000;
+
 function fileTimestamp(date = new Date()): string {
 	return date.toISOString().replace(/[:.]/g, '-');
 }
@@ -78,7 +84,7 @@ export class VoltDiagnosticsMainService extends Disposable implements IVoltDiagn
 	private tracingConfig: IVoltTracingConfig;
 	private readonly tracer: VoltTracer;
 	private readonly resource: VoltAttributes;
-	private readonly stallMonitor = this._register(new MutableDisposable<IDisposable>());
+	private readonly stallMonitor = this._register(new MutableDisposable<DriftStallMonitor>());
 	private readonly stallLimiter = new StallRateLimiter();
 	private heapSnapshot: Promise<IVoltHeapSnapshotResult> | undefined;
 
@@ -190,6 +196,11 @@ export class VoltDiagnosticsMainService extends Disposable implements IVoltDiagn
 		this.exporter.value?.add(spans);
 	}
 
+	/** An IPC call is about to run: the stall monitor watches the loop for a while (it rests otherwise). */
+	willHandleIpcCall(): void {
+		this.stallMonitor.value?.poke();
+	}
+
 	/** Observes IPC calls on the traced channels. Called by {@link IpcActivityRecorder.instrument}. */
 	observeIpcCall(channel: string, command: string, startTime: number, result: Promise<unknown>): void {
 		const prefix = TRACED_CHANNELS[channel];
@@ -254,7 +265,7 @@ export class VoltDiagnosticsMainService extends Disposable implements IVoltDiagn
 				}
 				// Traced even when the log line was held back: the collector does its own aggregation.
 				this.traceStall(report);
-			})
+			}, undefined, undefined, MAIN_STALL_ARM_MS)
 			: undefined;
 	}
 
@@ -357,7 +368,7 @@ export class VoltDiagnosticsMainService extends Disposable implements IVoltDiagn
 export function registerVoltDiagnosticsMain(accessor: ServicesAccessor, server: IChannelServer<string>): IDisposable {
 	const service = accessor.get(IVoltDiagnosticsService) as VoltDiagnosticsMainService;
 	const disposables = new DisposableStore();
-	const restore = service.ipcActivity.instrument(server, (channel, command, startTime, result) => service.observeIpcCall(channel, command, startTime, result));
+	const restore = service.ipcActivity.instrument(server, (channel, command, startTime, result) => service.observeIpcCall(channel, command, startTime, result), () => service.willHandleIpcCall());
 	disposables.add(toDisposable(restore));
 	server.registerChannel(VOLT_DIAGNOSTICS_CHANNEL_NAME, ProxyChannel.fromService(service, disposables));
 	return disposables;

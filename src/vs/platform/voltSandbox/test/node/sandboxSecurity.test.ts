@@ -637,7 +637,7 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		assert.ok(result.denials.some(denial => denial.target.endsWith('real-denial.txt')), `the real refusal is reported: ${JSON.stringify(result.denials.map(d => d.target))}`);
 	});
 
-	test('LOG-STREAM-1: the denial stream is narrowed by sender and process before any text search (it runs while any sandboxed process lives)', () => {
+	test('LOG-STREAM-1: the denial query is narrowed by sender and process before any text search (read on demand, no resident log stream)', () => {
 		assert.match(SEATBELT_DENIAL_PREDICATE, /^\(processID == 0 AND sender == "Sandbox" AND eventMessage CONTAINS "VOLTSBX-"\) OR \(process == "logger" AND eventMessage CONTAINS "VOLTSBX-flush-"\)$/);
 	});
 

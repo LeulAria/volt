@@ -16,7 +16,7 @@ import { IVoltSandboxPolicy, SandboxDimension } from '../common/sandboxSchema.js
 import { ISandboxWorkloadInfo, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
 import { BubblewrapBackend } from './bubblewrapBackend.js';
 import { MxcBackend } from './mxcBackend.js';
-import { ISandboxBackend, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
+import { ISandboxBackend, ISandboxLaunchSpec, ISandboxTreeUsage, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
 import { osBuild } from './sandboxProbeCache.js';
 import { IPrincipal, PrincipalKind, SubjectKey } from '../common/principals.js';
 import type { NetworkBrokerMode } from '../common/networkBrokerSetting.js';
@@ -98,8 +98,10 @@ export interface IPreparedSandbox {
 	attestation(): IAttestation | undefined;
 	/** Kills the whole tree: the workload and everything it started. */
 	terminate(child: ChildProcess): Promise<void>;
-	/** Waits (bounded) until every refusal the kernel logged so far reached {@link onDenial}. */
-	flushDenials(timeoutMs: number): Promise<void>;
+	/** Waits (bounded) until every refusal the kernel logged so far (since `from`, when given) reached {@link onDenial}. */
+	flushDenials(timeoutMs: number, from?: number): Promise<void>;
+	/** See {@link ISandboxLaunchSpec.usage}; absent or undefined: the caller measures the tree itself. */
+	usage?(): Promise<ISandboxTreeUsage | undefined>;
 	/** Who the run is: its route, grants and audit lines are about this principal. */
 	readonly principal: IPrincipal;
 	/** Hosts the proxy lets through from now on (network `proxy`): live, the next connection (F.9). */
@@ -150,8 +152,11 @@ export const RUN_LEDGER_NAME = 'ledger.json';
 const SENTINEL_NAME = 'canary';
 /** After the workload exits, how long its output may keep arriving before the run counts as done. */
 const EXIT_DRAIN_MS = 250;
-/** How long a one-shot run waits at most for the kernel log to deliver its last refusals. */
-const DENIAL_FLUSH_MS = 2_000;
+/**
+ * How long a one-shot run waits at most for its refusals, read from the kernel log at its exit
+ * (`log show`: 0.8-2.6 s here, longer under load).
+ */
+const DENIAL_FLUSH_MS = 10_000;
 
 export class SandboxManager {
 
@@ -486,7 +491,8 @@ export class SandboxManager {
 					return confirmation;
 				},
 				terminate: async child => { await launched.terminate(child); },
-				flushDenials: async timeoutMs => { await launched.flushDenials?.(timeoutMs); },
+				flushDenials: async (timeoutMs, from) => { await launched.flushDenials?.(timeoutMs, from); },
+				usage: async () => launched.usage?.(),
 				principal,
 				allowDomains: entries => {
 					proxy?.allow(entries);

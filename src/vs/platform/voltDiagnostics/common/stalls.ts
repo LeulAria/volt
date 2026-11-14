@@ -52,22 +52,67 @@ export class DriftStallDetector {
  */
 export class DriftStallMonitor implements IDisposable {
 
-	private readonly handle: ReturnType<typeof setInterval>;
+	private handle: ReturnType<typeof setInterval> | undefined;
+	private armedUntil = Number.POSITIVE_INFINITY;
+	private readonly interval: number;
 
-	constructor(thresholdMs: number, onStall: (stall: IDriftStall) => void, monotonic: () => number = () => performance.now(), wall: () => number = Date.now) {
-		const interval = stallTickInterval(thresholdMs);
-		const detector = new DriftStallDetector(thresholdMs, interval, monotonic());
+	/**
+	 * `armMs`: the timer runs only for that long after each {@link poke} (work arriving: an IPC call),
+	 * and stops at rest, where a tick every `threshold / 3` ms was the process's most frequent wakeup
+	 * (main: 10 a second). Without it the timer always runs.
+	 */
+	constructor(
+		private readonly thresholdMs: number,
+		private readonly onStall: (stall: IDriftStall) => void,
+		private readonly monotonic: () => number = () => performance.now(),
+		private readonly wall: () => number = Date.now,
+		private readonly armMs?: number,
+	) {
+		this.interval = stallTickInterval(thresholdMs);
+		if (armMs === undefined) {
+			this.start();
+		} else {
+			this.poke();
+		}
+	}
+
+	/** Whether the timer is ticking now. */
+	get armed(): boolean {
+		return this.handle !== undefined;
+	}
+
+	/** Work arrived: watch the loop for the next `armMs`. */
+	poke(): void {
+		if (this.armMs === undefined) {
+			return;
+		}
+		this.armedUntil = this.monotonic() + this.armMs;
+		if (!this.handle) {
+			this.start();
+		}
+	}
+
+	private start(): void {
+		const detector = new DriftStallDetector(this.thresholdMs, this.interval, this.monotonic());
 		this.handle = setInterval(() => {
-			const stall = detector.tick(monotonic());
+			const now = this.monotonic();
+			const stall = detector.tick(now);
 			if (stall) {
-				onStall({ startTime: wall() - stall.durationMs, durationMs: stall.durationMs });
+				this.onStall({ startTime: this.wall() - stall.durationMs, durationMs: stall.durationMs });
+			} else if (now > this.armedUntil) {
+				this.stop();
 			}
-		}, interval);
+		}, this.interval);
 		(this.handle as { unref?: () => void }).unref?.();
 	}
 
-	dispose(): void {
+	private stop(): void {
 		clearInterval(this.handle);
+		this.handle = undefined;
+	}
+
+	dispose(): void {
+		this.stop();
 	}
 }
 

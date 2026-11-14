@@ -27,6 +27,7 @@ import { builtinProfile } from '../../common/sandboxProfiles.js';
 import { ISandboxResourceSample, ISandboxWorkloadInfo, isUserFacingDenial } from '../../common/sandboxWorkloads.js';
 import { SandboxFault } from '../../node/sandboxBackends.js';
 import { processAlive, SandboxManager } from '../../node/sandboxManager.js';
+import { parseStatsAnswer } from '../../node/seatbeltBackend.js';
 import { ISandboxHostFacts, sandboxHostFacts } from '../../node/sandboxResolver.js';
 import { HostStartResult, IHostExit, IHostStartRequest, ISandboxedHost, ISandboxSupervisorOptions, killTagged, parseCpuTime, SandboxSupervisor } from '../../node/supervisor.js';
 import { PrincipalRegistry } from '../../node/principalRegistry.js';
@@ -358,12 +359,27 @@ suite('Volt sandbox supervisor (C5, real processes)', function () {
 		assert.ok(first.memoryBytes > 10 * 1024 * 1024, `memory ${first.memoryBytes}`);
 		assert.ok(first.processes >= 1);
 		assert.ok(first.cpuMs >= 0);
-		assert.deepStrictEqual(first.sources, ['poll']);
+		// macOS: the helper's tracking measures the tree (no `ps` spawn); elsewhere the process table.
+		assert.deepStrictEqual(first.sources, [process.platform === 'darwin' ? 'tracking' : 'poll']);
 		h.send({ op: 'grow' });
 		const exit = await exited;
 		assert.strictEqual(exit.reason, 'resource');
 		assert.strictEqual(exit.restarting, false);
 		assert.strictEqual(h.state, 'broken');
+	});
+
+	(process.platform === 'darwin' ? test : test.skip)('RES-TRACK-1: macOS samples come from the helper\'s tracking: the tree\'s CPU grows with its work, a child counts', async () => {
+		const supervisor = supervisorWith();
+		const h = await started(await supervisor.start(nodeHost({ restart: { maxPerMinute: 0 } })));
+		const samples: ISandboxResourceSample[] = [];
+		store.add(h.onResource(sample => samples.push(sample)));
+		assert.ok(await waitFor(() => samples.length >= 1, 10_000), 'a first sample');
+		const before = samples.at(-1)!;
+		assert.deepStrictEqual(before.sources, ['tracking']);
+		await request(h, { op: 'child' }, 'child');
+		await request(h, { op: 'grow' }, 'grown');
+		assert.ok(await waitFor(() => { const last = samples.at(-1)!; return last.processes > before.processes && last.cpuMs > before.cpuMs && last.memoryBytes > before.memoryBytes + 100 * 1024 * 1024; }, 10_000), `samples: ${JSON.stringify([before, samples.at(-1)])}`);
+		await h.terminate('stopped');
 	});
 
 	test('RES-IDLE-1: an idle host is sampled ten times less often than a running one, and at the running rate once it wakes', async () => {
@@ -546,6 +562,13 @@ suite('Volt sandbox supervisor helpers', () => {
 		assert.strictEqual(parseCpuTime('1:02.50'), 62_500);
 		assert.strictEqual(parseCpuTime('01:00:00'), 3_600_000);
 		assert.strictEqual(parseCpuTime('2-00:00:01'), 2 * 86_400_000 + 1_000);
+	});
+
+	test('the helper\'s stats answer parses with and without its CPU field', () => {
+		assert.deepStrictEqual(parseStatsAnswer('3 1048576 0 4 250'), { members: 3, footprint: 1048576, exceeded: false, peak: 4, cpuMs: 250 });
+		assert.deepStrictEqual(parseStatsAnswer('1 2048 1 2'), { members: 1, footprint: 2048, exceeded: true, peak: 2 });
+		assert.throws(() => parseStatsAnswer('1 2 3'));
+		assert.throws(() => parseStatsAnswer('1 2 x 4'));
 	});
 
 	test('killTagged refuses a tag that is not one', async () => {

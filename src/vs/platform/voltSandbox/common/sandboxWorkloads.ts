@@ -56,7 +56,7 @@ export interface ISandboxResourceSample {
 	readonly at: number;
 	/** User + system CPU of every process in the tree, cumulative, in milliseconds. */
 	readonly cpuMs: number;
-	/** Resident memory of the tree. */
+	/** Resident memory of the tree (`poll`), or its physical footprint (`tracking`: the macOS helper). */
 	readonly memoryBytes: number;
 	/** Processes in the tree, the root included. */
 	readonly processes: number;

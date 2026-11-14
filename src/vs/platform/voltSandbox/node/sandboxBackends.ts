@@ -50,6 +50,13 @@ export type SandboxConfirmation =
 	| { readonly ok: true; readonly detail: string; readonly attestation?: ISandboxEvidence }
 	| { readonly ok: false; readonly error: string };
 
+export interface ISandboxTreeUsage {
+	readonly cpuMs: number;
+	/** Physical footprint (Seatbelt), in bytes. */
+	readonly memoryBytes: number;
+	readonly processes: number;
+}
+
 export interface ISandboxLaunchSpec {
 	/** What to spawn: `/usr/bin/bwrap`, `/usr/bin/sandbox-exec`. */
 	readonly command: string;
@@ -83,10 +90,16 @@ export interface ISandboxLaunchSpec {
 	/** Dimensions this launch cannot enforce beyond the backend's report (shown, never blocking). */
 	readonly unenforced?: readonly SandboxDimension[];
 	/**
-	 * Waits (at most `timeoutMs`) until every denial the kernel logged before this call has been
-	 * delivered: a one-shot run's last refusals can reach the log stream after the workload exited.
+	 * Waits (at most `timeoutMs`) until every denial the kernel logged before this call (since
+	 * `from`, epoch ms, when given) has been delivered. The kernel's refusals are read on demand,
+	 * so a run's refusals reach `onDenial` only through this call.
 	 */
-	flushDenials?(timeoutMs: number): Promise<void>;
+	flushDenials?(timeoutMs: number, from?: number): Promise<void>;
+	/**
+	 * The tree's CPU time so far, memory and process count from the backend's own tracking (Seatbelt: the
+	 * helper's kqueue-tracked members), without a process-table spawn. Undefined when it cannot tell.
+	 */
+	usage?(): Promise<ISandboxTreeUsage | undefined>;
 	/** Kills the whole process tree; resolves once every process found is signalled. Safe to call more than once and after exit. */
 	terminate(child: ChildProcess): Promise<void> | void;
 	/** Closes fds, stops bridges, deletes the backend's temp files. */

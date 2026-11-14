@@ -25,7 +25,14 @@
 //         NOTE_FORK and NOTE_EXIT on the root and on every descendant it finds, so a process that
 //         forks and exits at once still has its children recorded. With a cap, a fork that takes
 //         the run past it kills the run at once (the fork watchdog, RES-MAC-2). Answers 0.
-//       - `<id>\tstats\t<root pid>\t-`: `<members> <phys footprint bytes> <cap exceeded 0|1> <peak tracked>`.
+//       - `<id>\tstats\t<root pid>\t-`: `<members> <phys footprint bytes> <cap exceeded 0|1> <peak tracked>
+//         <CPU ms of the live members>`. The responsible-process sweep runs only after a member forked, or
+//         every 10 s (SWEEP_INTERVAL_NS); otherwise the tracked members are read (a few syscalls, not one per
+//         process on the system), so a 1 Hz footprint poll costs next to nothing at rest.
+//       - `<id>\twatch\t<root pid>\t<memory limit bytes or ->`: the helper checks the run every second
+//         itself (a kqueue timer, armed while a watched run exists) and writes an unsolicited
+//         `!\t<root pid>\t<stats answer>` line while the run is over its memory limit, past its process
+//         cap, or its fork watchdog fired. Answers 0. Volt then needs no timer of its own per run.
 //       - `<id>\tmembers\t<root pid>\t-`: the run's live pids, space separated.
 //       - `<id>\tkill\t<root pid>\t-`: SIGKILLs every member until none is left; answers the count.
 //       - `<id>\tuntrack\t<root pid>\t-`: forgets the run. Answers 0.
@@ -51,6 +58,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <libproc.h>
+#include <mach/mach_time.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdint.h>
@@ -60,6 +68,7 @@
 #include <sys/event.h>
 #include <sys/resource.h>
 #include <sys/sysctl.h>
+#include <time.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -186,7 +195,22 @@ typedef struct {
 	uint64_t *ids;
 	int count;
 	int capacity;
+	/** A member forked since the last responsible-process sweep: a child may have left before it was adopted. */
+	int dirty;
+	/** When `stats` last swept for members by responsible process (CLOCK_MONOTONIC_RAW ns). */
+	uint64_t sweptAt;
+	/** `watch`: checked every second by the helper itself; `memoryLimit` in bytes, 0 for none. */
+	int watched;
+	unsigned long long memoryLimit;
 } Run;
+
+/**
+ * How long `stats` goes without the responsible-process sweep while no member forks. The sweep reads every
+ * process on the system (about 1 ms of CPU for 600 processes); a member that escaped the fork tracking can
+ * only appear through a fork, which marks the run dirty and brings the sweep back on the next `stats`. The
+ * interval bounds the rest (a process started for the run some other way).
+ */
+#define SWEEP_INTERVAL_NS (10ull * 1000000000ull)
 
 static Run runs[MAX_RUNS];
 static int kq = -1;
@@ -289,6 +313,7 @@ static void onProcessEvent(const struct kevent *event) {
 		if (event->fflags & NOTE_EXIT) {
 			dropPid(run, pid);
 		} else if (event->fflags & NOTE_FORK) {
+			run->dirty = 1;
 			pid_t children[512];
 			int found = proc_listchildpids(pid, children, (int)sizeof(children));
 			for (int k = 0; k < found && k < 512; k++) {
@@ -308,13 +333,18 @@ static int rootPidIsOurs(const Run *run) {
  * The run's live members: tracked pids that are still the processes we saw, and every other
  * process the root is responsible for, created after it.
  */
-static int members(Run *run, pid_t *out, int capacity) {
+static int trackedMembers(Run *run, pid_t *out, int capacity) {
 	int count = 0;
 	for (int i = 0; i < run->count && count < capacity; i++) {
 		if (uniqueId(run->pids[i]) == run->ids[i]) {
 			out[count++] = run->pids[i];
 		}
 	}
+	return count;
+}
+
+static int members(Run *run, pid_t *out, int capacity) {
+	int count = trackedMembers(run, out, capacity);
 	responsible_fn responsible = responsibleFor();
 	if (!responsible || !rootPidIsOurs(run)) {
 		return count;
@@ -409,6 +439,93 @@ static void killMembers(Run *run) {
 	free(list);
 }
 
+typedef struct {
+	int members;
+	unsigned long long footprint;
+	unsigned long long cpuMs;
+} RunStats;
+
+/**
+ * The run's live members, their summed physical footprint and CPU time. The responsible-process sweep runs
+ * only when a member forked since the last one, or every SWEEP_INTERVAL_NS; what it finds is tracked from
+ * then on (so its own forks are seen too, and it counts against the fork watchdog's cap as the run's members
+ * always did). Otherwise it reads the tracked members: a few syscalls instead of one per process on the system.
+ */
+static RunStats runStats(Run *run) {
+	RunStats stats = { 0, 0, 0 };
+	pid_t *list = malloc(MEMBER_LIMIT * sizeof(pid_t));
+	if (!list) {
+		return stats;
+	}
+	int count;
+	uint64_t now = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
+	if (run->dirty || now - run->sweptAt >= SWEEP_INTERVAL_NS) {
+		run->dirty = 0;
+		run->sweptAt = now;
+		count = members(run, list, MEMBER_LIMIT);
+		for (int i = 0; i < count && !run->exceeded; i++) {
+			adopt(run, list[i], 1);
+		}
+	} else {
+		count = trackedMembers(run, list, MEMBER_LIMIT);
+	}
+	uint64_t cpu = 0;
+	for (int i = 0; i < count; i++) {
+		struct rusage_info_v4 usage;
+		if (proc_pid_rusage(list[i], RUSAGE_INFO_V4, (rusage_info_t *)&usage) == 0) {
+			stats.footprint += usage.ri_phys_footprint;
+			cpu += usage.ri_user_time + usage.ri_system_time;
+		}
+	}
+	free(list);
+	stats.members = count;
+	// rusage times are in mach time units (nanoseconds on Intel, 1/24 MHz ticks on Apple silicon).
+	mach_timebase_info_data_t timebase;
+	if (mach_timebase_info(&timebase) == KERN_SUCCESS && timebase.denom) {
+		stats.cpuMs = (unsigned long long)((__uint128_t)cpu * timebase.numer / timebase.denom / 1000000u);
+	}
+	return stats;
+}
+
+/** The kqueue timer that checks watched runs (`watch`), armed only while one exists. */
+#define WATCH_TIMER_ID 1
+#define WATCH_INTERVAL_MS 1000
+static int watchTimerArmed = 0;
+
+static void armWatchTimer(int on) {
+	if (on == watchTimerArmed) {
+		return;
+	}
+	struct kevent change;
+	EV_SET(&change, WATCH_TIMER_ID, EVFILT_TIMER, on ? EV_ADD : EV_DELETE, 0, WATCH_INTERVAL_MS, NULL);
+	if (kevent(kq, &change, 1, NULL, 0, NULL) == 0 || !on) {
+		watchTimerArmed = on;
+	}
+}
+
+/**
+ * Every watched run, once a second: a run over its memory limit, past its process cap, or whose fork
+ * watchdog fired gets an unsolicited `!\t<root>\t<stats answer>` line (again each second while it stays
+ * over). Volt then measures and stops it; nothing in Volt wakes up for a run within its limits.
+ */
+static void onWatchTimer(void) {
+	int any = 0;
+	for (int i = 0; i < MAX_RUNS; i++) {
+		Run *run = &runs[i];
+		if (!run->root || !run->watched) {
+			continue;
+		}
+		any = 1;
+		RunStats stats = runStats(run);
+		if (run->exceeded || (run->cap > 0 && stats.members > run->cap) || (run->memoryLimit && stats.footprint > run->memoryLimit)) {
+			printf("!\t%d\t%d %llu %d %d %llu\n", run->root, stats.members, stats.footprint, run->exceeded, run->peak, stats.cpuMs);
+		}
+	}
+	if (!any) {
+		armWatchTimer(0);
+	}
+}
+
 static void handleTracking(const char *id, const char *verb, const char *pidText, const char *argument) {
 	char *end = NULL;
 	long root = strtol(pidText, &end, 10);
@@ -432,6 +549,7 @@ static void handleTracking(const char *id, const char *verb, const char *pidText
 		run->root = (pid_t)root;
 		run->rootId = rootId;
 		run->cap = strcmp(argument, "-") == 0 ? 0 : atoi(argument);
+		run->dirty = 1;
 		adopt(run, (pid_t)root, 0);
 		printf("%s\t0\n", id);
 		return;
@@ -441,17 +559,14 @@ static void handleTracking(const char *id, const char *verb, const char *pidText
 		return;
 	}
 	if (strcmp(verb, "stats") == 0) {
-		pid_t *list = malloc(MEMBER_LIMIT * sizeof(pid_t));
-		int count = list ? members(run, list, MEMBER_LIMIT) : 0;
-		uint64_t footprint = 0;
-		for (int i = 0; i < count; i++) {
-			struct rusage_info_v4 usage;
-			if (proc_pid_rusage(list[i], RUSAGE_INFO_V4, (rusage_info_t *)&usage) == 0) {
-				footprint += usage.ri_phys_footprint;
-			}
-		}
-		free(list);
-		printf("%s\t%d %llu %d %d\n", id, count, (unsigned long long)footprint, run->exceeded, run->peak);
+		RunStats stats = runStats(run);
+		printf("%s\t%d %llu %d %d %llu\n", id, stats.members, stats.footprint, run->exceeded, run->peak, stats.cpuMs);
+	} else if (strcmp(verb, "watch") == 0) {
+		// The limits checked here every second; `!` lines say when the run is over one.
+		run->memoryLimit = strcmp(argument, "-") == 0 ? 0 : strtoull(argument, NULL, 10);
+		run->watched = 1;
+		armWatchTimer(1);
+		printf("%s\t0\n", id);
 	} else if (strcmp(verb, "members") == 0) {
 		pid_t *list = malloc(MEMBER_LIMIT * sizeof(pid_t));
 		int count = list ? members(run, list, MEMBER_LIMIT) : 0;
@@ -515,7 +630,7 @@ static void handleLine(char *line, sandbox_check_fn check, int flags) {
 		}
 		return;
 	}
-	if (strcmp(fields[1], "track") == 0 || strcmp(fields[1], "stats") == 0 || strcmp(fields[1], "members") == 0 || strcmp(fields[1], "kill") == 0 || strcmp(fields[1], "untrack") == 0) {
+	if (strcmp(fields[1], "track") == 0 || strcmp(fields[1], "stats") == 0 || strcmp(fields[1], "watch") == 0 || strcmp(fields[1], "members") == 0 || strcmp(fields[1], "kill") == 0 || strcmp(fields[1], "untrack") == 0) {
 		handleTracking(fields[0], fields[1], fields[2], fields[3]);
 		return;
 	}
@@ -579,6 +694,10 @@ static int serve(void) {
 		for (int i = 0; i < ready; i++) {
 			if (events[i].filter == EVFILT_PROC) {
 				onProcessEvent(&events[i]);
+				continue;
+			}
+			if (events[i].filter == EVFILT_TIMER) {
+				onWatchTimer();
 				continue;
 			}
 			if (length == capacity) {

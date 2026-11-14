@@ -11,7 +11,7 @@ import type { Socket } from 'net';
 import { cpus, homedir, hostname, totalmem } from 'os';
 import { promisify } from 'util';
 import { CancellationToken } from '../../../base/common/cancellation.js';
-import { Event } from '../../../base/common/event.js';
+import { Emitter, Event } from '../../../base/common/event.js';
 import { parse as parseJsonc } from '../../../base/common/json.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
 import { FileAccess } from '../../../base/common/network.js';
@@ -115,6 +115,14 @@ export class ServerWorkbench extends Disposable {
 	/** The remote connection's sockets, by the device whose cookie opened them. */
 	private readonly sockets = new Map<Socket, string>();
 	private readonly isBuilt = !process.env['VSCODE_DEV'];
+	private readonly _onDidAddDeviceSocket = this._register(new Emitter<void>());
+	/** A paired device opened a workbench connection: the device sweep must run. */
+	readonly onDidAddDeviceSocket: Event<void> = this._onDidAddDeviceSocket.event;
+
+	/** Workbench connections opened by paired devices (the device sweep runs while there are any). */
+	get deviceSockets(): number {
+		return this.sockets.size;
+	}
 
 	constructor(
 		private readonly options: IServerWorkbenchOptions,
@@ -263,6 +271,7 @@ export class ServerWorkbench extends Disposable {
 		if (deviceId) {
 			this.sockets.set(socket, deviceId);
 			socket.once('close', () => this.sockets.delete(socket));
+			this._onDidAddDeviceSocket.fire();
 		}
 		this.ensureServer().then(server => server.handleUpgrade(req, socket), err => {
 			this.logService.error('[volt agent server] the workbench server failed to start', err);

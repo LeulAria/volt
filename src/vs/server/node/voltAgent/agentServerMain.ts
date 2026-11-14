@@ -138,6 +138,7 @@ import { IPairingHttpContext, isLoopbackAddress, machineLabel, ServerPairing } f
 import { handleSignIn } from './serverSignIn.js';
 import { ServerTunnels } from './serverTunnels.js';
 import { ServerWorkbench } from './serverWorkbench.js';
+import { OnDemandSweep } from './onDemandSweep.js';
 import { ServerRender } from './serverRender.js';
 import { COMPRESSIBLE, CompressedCopies, preferredEncoding } from './serverCompression.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
@@ -622,12 +623,15 @@ export async function main(argv: string[]): Promise<void> {
 	await writeAgentServerRuntime(paths, info);
 	logService.info(`[volt agent server] listening on http://${httpContext.network ? '127.0.0.1' : args.host}:${port} (epoch ${epoch})`);
 	// A revoked device, or one whose token expired, is disconnected within 5 s (INV-08): its socket
-	// and the browser workbench's connections opened with its cookie.
-	const sweep = setInterval(() => {
+	// and the browser workbench's connections opened with its cookie. Only while a device is connected:
+	// the desktop's own server, with no device, does not wake for it.
+	const sweep = disposables.add(new OnDemandSweep(DEVICE_SWEEP_MS, () => protocol.listClients().some(client => !!client.deviceId) || workbench.deviceSockets > 0, () => {
 		protocol.closeWhere(client => !!client.deviceId && !pairing.isActive(client.deviceId), AgentServerCloseCode.Unauthorized, 'device removed or expired');
 		workbench.closeInactive(deviceId => pairing.isActive(deviceId));
-	}, DEVICE_SWEEP_MS);
-	disposables.add(toDisposable(() => clearInterval(sweep)));
+	}));
+	disposables.add(protocol.onDidChangeClients(() => sweep.wake()));
+	disposables.add(workbench.onDidAddDeviceSocket(() => sweep.wake()));
+	sweep.wake();
 
 	//#endregion
 

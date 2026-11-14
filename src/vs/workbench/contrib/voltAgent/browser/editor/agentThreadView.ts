@@ -10,6 +10,12 @@ import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
 
 /** Runs after the frame's redraw and scroll sync, so the sticky pass reads a settled layout once. */
 const STUCK_SYNC_PRIORITY = -2000;
+/**
+ * After the frame's redraw and scroll sync (-1000), whose size read already laid the thread out, so
+ * reading the native scroll position costs nothing; before the follow (-1500), so a native scroll
+ * (find, a footnote) is adopted before the follow could write over it.
+ */
+const NATIVE_SCROLL_CHECK_PRIORITY = -1200;
 /** Drag-select autoscroll starts this far inside the top edge, and inside the bottom one, where the composer's chips and the fade cover the rows. */
 const SELECT_SCROLL_EDGE_TOP = 24;
 const SELECT_SCROLL_EDGE_BOTTOM = 56;
@@ -60,19 +66,39 @@ export class AgentThreadView extends Disposable {
 		// the edge, scroll anchoring as an off-screen exchange is laid out) moves the element under
 		// the scrollable; catch the scrollable up, or the next wheel turn would jump back. Its sizes
 		// are read first: an anchoring scroll can land past the height the scrollable last knew.
-		this._register(addDisposableListener(this.inner, 'scroll', () => {
-			const scrollTop = this.inner.scrollTop;
-			if (Math.abs(this.scroll.getScrollPosition().scrollTop - scrollTop) > 1) {
-				this.scroll.scanDomNode();
-				this.adoptingNative = true;
-				try {
-					this.scroll.setScrollPosition({ scrollTop });
-				} finally {
-					this.adoptingNative = false;
-				}
-			}
-		}));
+		// Checked in the next frame's pass, not in the event: while a reply streams, nearly every scroll
+		// is the follow's own write, and reading scrollTop in the event forced a style and layout pass
+		// of the thread on every frame (5 % of a core with 5 chats streaming); after the frame's redraw
+		// and scroll sync the layout is clean and the read is free.
+		this._register(addDisposableListener(this.inner, 'scroll', () => this.scheduleNativeScrollCheck()));
+		this._register(toDisposable(() => this.nativeScrollFrame?.dispose()));
 		this._register(this.autoScrollSelection());
+	}
+
+	private nativeScrollFrame: IDisposable | undefined;
+
+	private scheduleNativeScrollCheck(): void {
+		if (this.nativeScrollFrame) {
+			return;
+		}
+		this.nativeScrollFrame = runAtThisOrScheduleAtNextAnimationFrame(getWindow(this.inner), () => {
+			this.nativeScrollFrame = undefined;
+			this.adoptNativeScroll();
+		}, NATIVE_SCROLL_CHECK_PRIORITY);
+	}
+
+	/** Catches the scrollable up with a scroll it did not make (see the constructor). */
+	adoptNativeScroll(): void {
+		const scrollTop = this.inner.scrollTop;
+		if (Math.abs(this.scroll.getScrollPosition().scrollTop - scrollTop) > 1) {
+			this.scroll.scanDomNode();
+			this.adoptingNative = true;
+			try {
+				this.scroll.setScrollPosition({ scrollTop });
+			} finally {
+				this.adoptingNative = false;
+			}
+		}
 	}
 
 	/**

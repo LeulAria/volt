@@ -159,6 +159,8 @@ suite('Volt sandbox second layers (C4, real processes)', function () {
 		assert.ok(result.denials.some(denial => denial.kind === 'limit' && denial.target === 'memory 64 MB'), JSON.stringify(result.denials));
 		assert.ok(result.unenforced.includes('limits.memory'), 'best effort, so reported partial');
 		assert.strictEqual(result.attestation?.layers.footprint?.active, true, JSON.stringify(result.attestation?.layers));
+		// The helper checks the limit itself: Volt keeps no timer per limited run.
+		assert.match(result.attestation?.layers.footprint?.detail ?? '', /checked by the sandbox helper every 1 s/);
 		assert.ok(await waitFor(() => strayProcesses('memory').length === 0, 3_000), strayProcesses('memory').join(' | '));
 	});
 
@@ -167,6 +169,17 @@ suite('Volt sandbox second layers (C4, real processes)', function () {
 		assert.strictEqual(result.status, 'completed', result.error);
 		assert.strictEqual(result.resourceViolation, undefined, JSON.stringify(result.resourceViolation));
 		assert.ok(result.stdout.includes('kept'), result.stderr);
+	});
+
+	macTest('RES-MAC-1: an orphan that left the tree (double fork, setsid, no environment) still counts against the memory limit', async () => {
+		// The helper reads the tracked members between forks and sweeps by responsible process after one:
+		// the orphan is found by that sweep, and its footprint kills the run.
+		const started = Date.now();
+		const orphan = `${PERL} -e 'use POSIX; exit 0 if fork(); POSIX::setsid(); exit 0 if fork(); %ENV = (); $0 = "${MARKER}-" . "fat"; my $x = "x" x (256 * 1024 * 1024); sleep 60'`;
+		const result = await run(limited({ memoryMB: 64, wallClockSeconds: 60 }, ['limits.memory']), `${orphan}; sleep 30`);
+		assert.strictEqual(result.resourceViolation?.dimension, 'limits.memory', JSON.stringify(result.resourceViolation));
+		assert.ok(Date.now() - started < 8_000, `killed after ${Date.now() - started} ms`);
+		assert.ok(await waitFor(() => strayProcesses('fat').length === 0, 5_000), strayProcesses('fat').join(' | '));
 	});
 
 	macTest('RES-MAC-2: a fork bomb is killed at the process limit, the whole tree with it', async () => {
