@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { describeTab, formatWorkspaceContext, formatWorkspaceStatus, IWorkspaceSnapshot, IWorkspaceTab, workspaceContextKey } from '../../../common/harness/workspaceContext.js';
+import { describeTab, formatWorkspaceContext, formatWorkspaceStatus, IWorkspaceSnapshot, IWorkspaceTab, workspaceContextKey, workspaceLeadText } from '../../../common/harness/workspaceContext.js';
 
 const iphone: IWorkspaceTab = {
 	kind: 'device',
@@ -46,6 +46,18 @@ suite('Volt workspace context', () => {
 		assert.ok(text.includes('- In front: Device preview: iPhone 16 (iOS 18.5 simulator, booted, device: "U1"), floating over the chat as a mini device'));
 		assert.ok(text.includes('mean this device. Use the device_* tools'));
 		assert.ok(text.includes('device_install_app'));
+	});
+
+	test('an agent with its own git status hears no first block that has only git; later changes still go out', () => {
+		const gitOnly: IWorkspaceSnapshot = { panelOpen: false, tabs: [], git: { branch: 'main', changed: 0 } };
+		assert.strictEqual(workspaceLeadText(gitOnly, undefined, true), undefined, 'Claude Code already said the branch and status');
+		assert.strictEqual(workspaceLeadText(gitOnly, undefined, false), formatWorkspaceContext(gitOnly), 'an agent without one hears it');
+		// Heard (or skipped as heard): unchanged sends nothing; another branch or a tab is news.
+		assert.strictEqual(workspaceLeadText(gitOnly, workspaceContextKey(gitOnly), true), undefined);
+		const switched: IWorkspaceSnapshot = { ...gitOnly, git: { branch: 'feat/x', changed: 0 } };
+		assert.strictEqual(workspaceLeadText(switched, workspaceContextKey(gitOnly), true), formatWorkspaceContext(switched));
+		const withTab: IWorkspaceSnapshot = { ...gitOnly, panelOpen: true, tabs: [browser] };
+		assert.strictEqual(workspaceLeadText(withTab, undefined, true), formatWorkspaceContext(withTab), 'tabs are never in the agent\'s own status');
 	});
 
 	test('nothing open and no git: no block', () => {
