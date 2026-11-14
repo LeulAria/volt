@@ -1,0 +1,4 @@
+{"label":"sdk-min","flags":[],"rep":0,"load":"47.96 54.00 64.87","mainReqMs":591,"firstTextMs":661,"before":1}
+{"label":"sdk-min","flags":[],"rep":1,"load":"43.57 52.86 64.34","mainReqMs":918,"firstTextMs":1052,"before":1}
+{"label":"sdk-settings-mcp","flags":["settings","mcp"],"rep":0,"load":"48.73 53.57 64.39","mainReqMs":1064,"firstTextMs":1216,"before":1}
+{"label":"sdk-settings-mcp","flags":["settings","mcp"],"rep":1,"load":"44.22 52.44 63.86","mainReqMs":241,"firstTextMs":503,"before":1}
