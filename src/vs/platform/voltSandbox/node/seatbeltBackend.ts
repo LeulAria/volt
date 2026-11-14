@@ -255,19 +255,26 @@ export class SeatbeltBackend implements ISandboxBackend {
 		let pgid: number | undefined;
 		let tracked: number | undefined;
 		let poll: ReturnType<typeof setInterval> | undefined;
+		/** The helper checks the limits every second itself and calls back only when one is crossed. */
+		let watching = false;
 		const memoryLimit = policy.limits.memoryMB;
 		const stopPolling = () => {
 			if (poll) {
 				clearInterval(poll);
 				poll = undefined;
 			}
+			if (watching && tracked !== undefined) {
+				attestor.unwatch(tracked);
+			}
+			watching = false;
 		};
 		let reported = false;
-		// F.8 on macOS: the tree's footprint and size, measured from outside every second; the fork
-		// watchdog in the helper kills a run that passes its process limit at once and says so here.
+		// F.8 on macOS: the tree's footprint and size, measured from outside every second (by the helper; by a
+		// poll here with a helper that cannot watch); the fork watchdog in the helper kills a run that passes its
+		// process limit at once and says so here.
 		const measure = async (root: number, final = false) => {
 			const stats = await attestor.stats(root).catch(() => undefined);
-			if (!stats || reported || (!poll && !final)) {
+			if (!stats || reported || (!poll && !watching && !final)) {
 				return;
 			}
 			let violation: ISandboxResourceViolation | undefined;
@@ -288,12 +295,17 @@ export class SeatbeltBackend implements ISandboxBackend {
 			if (result === undefined) {
 				tracked = pid;
 				if (processLimit !== undefined || memoryLimit !== undefined) {
-					poll = setInterval(() => void measure(pid), FOOTPRINT_POLL_MS);
+					// A timer per limited run here woke Volt every second for as long as the run lived (a plugin host:
+					// all session); the helper's own check costs a few syscalls a second and wakes Volt only when needed.
+					watching = await attestor.watch(pid, memoryLimit === undefined ? undefined : memoryLimit * 1024 * 1024, () => void measure(pid)).then(() => true, () => false);
+					if (!watching) {
+						poll = setInterval(() => void measure(pid), FOOTPRINT_POLL_MS);
+					}
 				}
 			}
 			const footprint: ISandboxLayerState = memoryLimit === undefined
 				? { active: false, detail: 'the run has no memory limit' }
-				: result === undefined ? { active: true, detail: `physical footprint polled every ${FOOTPRINT_POLL_MS / 1000} s against ${memoryLimit} MB` } : { active: false, detail: `the run could not be tracked: ${result}` };
+				: result === undefined ? { active: true, detail: `physical footprint ${watching ? 'checked by the sandbox helper' : 'polled'} every ${FOOTPRINT_POLL_MS / 1000} s against ${memoryLimit} MB` } : { active: false, detail: `the run could not be tracked: ${result}` };
 			return {
 				processTracking: result === undefined
 					? { active: true, detail: `kqueue fork/exit tracking from pid ${pid}, responsible-process sweep${processLimit !== undefined ? `, fork watchdog at ${processLimit} processes` : ''}` }
@@ -721,6 +733,8 @@ class SeatbeltAttestor {
 	private buffer = '';
 	private sequence = 0;
 	private readonly pending = new Map<string, (value: string | Error) => void>();
+	/** Watched runs by root pid: called when the helper says one is over a limit. */
+	private readonly watchers = new Map<number, () => void>();
 
 	constructor(private readonly helper: string) { }
 
@@ -764,12 +778,31 @@ class SeatbeltAttestor {
 		return parseStatsAnswer(await this.answer(`stats\t${pid}\t-`));
 	}
 
+	/**
+	 * The helper checks the run every second against `memoryBytes` and the process cap given to {@link track},
+	 * and `onOver` runs (each second) while it is over one. Rejects with a helper that cannot watch.
+	 */
+	async watch(pid: number, memoryBytes: number | undefined, onOver: () => void): Promise<void> {
+		this.watchers.set(pid, onOver);
+		try {
+			await this.answer(`watch\t${pid}\t${memoryBytes === undefined ? '-' : Math.max(1, Math.floor(memoryBytes))}`);
+		} catch (err) {
+			this.watchers.delete(pid);
+			throw err;
+		}
+	}
+
+	unwatch(pid: number): void {
+		this.watchers.delete(pid);
+	}
+
 	/** SIGKILLs every member of the run until none is left; resolves with how many there were. */
 	async kill(pid: number): Promise<number> {
 		return Number(await this.answer(`kill\t${pid}\t-`));
 	}
 
 	async untrack(pid: number): Promise<void> {
+		this.watchers.delete(pid);
 		await this.answer(`untrack\t${pid}\t-`);
 	}
 
@@ -828,6 +861,11 @@ class SeatbeltAttestor {
 			const lines = this.buffer.split('\n');
 			this.buffer = lines.pop() ?? '';
 			for (const line of lines) {
+				if (line.startsWith('!\t')) {
+					// A watched run is over a limit (`watch`).
+					this.watchers.get(Number(line.split('\t')[1]))?.();
+					continue;
+				}
 				const tab = line.indexOf('\t');
 				const answer = tab > 0 ? this.pending.get(line.slice(0, tab)) : undefined;
 				if (answer) {

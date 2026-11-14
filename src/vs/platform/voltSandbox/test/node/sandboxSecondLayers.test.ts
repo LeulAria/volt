@@ -159,6 +159,8 @@ suite('Volt sandbox second layers (C4, real processes)', function () {
 		assert.ok(result.denials.some(denial => denial.kind === 'limit' && denial.target === 'memory 64 MB'), JSON.stringify(result.denials));
 		assert.ok(result.unenforced.includes('limits.memory'), 'best effort, so reported partial');
 		assert.strictEqual(result.attestation?.layers.footprint?.active, true, JSON.stringify(result.attestation?.layers));
+		// The helper checks the limit itself: Volt keeps no timer per limited run.
+		assert.match(result.attestation?.layers.footprint?.detail ?? '', /checked by the sandbox helper every 1 s/);
 		assert.ok(await waitFor(() => strayProcesses('memory').length === 0, 3_000), strayProcesses('memory').join(' | '));
 	});
 
