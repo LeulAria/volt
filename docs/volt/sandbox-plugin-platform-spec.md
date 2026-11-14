@@ -1420,7 +1420,7 @@ Invocation C → P allowed iff  egress(P) ⊆ egress(C) ∪ FlowApprovals(C → 
 - **Contributions are data.** Tools (`contributes.voltTools` with JSON schemas), commands, settings, slot items, surfaces, dock sections and agent providers come from the manifest. An agent's tool list is complete before any plugin starts; today `hostTools.ts:1029` reads tools at session start.
 - **Activation events** (`onTool:<name>`, `onCommand:<id>`, `onView:<id>`, `onLanguage:<id>`, `onStartupFinished` for first party only) start the host lazily. The first tool call waits for activation, with a budget (Part L).
 - **Idle stop:**
-  - T2 hosts stop after 5 minutes with no RPC, no visible UI and no registered live resource (watchers, timers longer than 60 s).
+  - T2 hosts stop after 90 seconds with no RPC, no visible UI and no registered live resource (watchers, timers longer than 60 s). (Was 5 minutes until round 5: a host kept that long held its process, a sandbox watchdog and the denial monitor through every rest.)
   - T3 hosts stop when none of their activation conditions are live, for example no open editor of their languages and no visible view.
   - State that must survive lives in storage.
 - **Host budget.** At most N concurrently running plugin hosts (default 24; Part L). Over budget, the least recently used idle host is stopped. If none is idle, the new activation is refused with a message, **never co-hosted**.
