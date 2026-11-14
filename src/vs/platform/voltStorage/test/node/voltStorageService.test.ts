@@ -13,7 +13,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/c
 import { NullLogService } from '../../../log/common/log.js';
 import { IVoltStorageContext } from '../../common/voltStorage.js';
 import { worktreeRepoKey } from '../../common/voltStorageRules.js';
-import { checkoutsToMeasure, measurePath, measurePathsWithDu, parseDuOutput, VoltStorageService } from '../../node/voltStorageService.js';
+import { checkoutsToMeasure, measurePath, measurePathsWithDu, parseDuOutput, readCheckoutSizes, VoltStorageService, writeCheckoutSizes } from '../../node/voltStorageService.js';
 
 const EMPTY: IVoltStorageContext = { openWorkspaceIds: [], worktrees: [], sessionIds: [], runningSessionIds: [] };
 
@@ -80,6 +80,19 @@ suite('VoltStorageService on real folders', function () {
 
 	test('du output parses to bytes per path, paths with spaces included', () => {
 		assert.deepStrictEqual([...parseDuOutput('12\t/a/b c\n0\t/d\n\nnoise\n')], [['/a/b c', 12 * 1024], ['/d', 0]]);
+	});
+
+	test('checkout sizes survive a relaunch: saved beside the user data, read back, other versions ignored', async () => {
+		const file = join(data, 'sizes', 'volt-checkout-sizes.json');
+		const sizes = new Map([['/w/a', { bytes: 1_024, at: 1_000 }], ['/w/b c', { bytes: 2_048, at: 2_000 }]]);
+		await writeCheckoutSizes(file, sizes);
+		assert.deepStrictEqual([...await readCheckoutSizes(file)], [...sizes]);
+		assert.strictEqual(existsSync(`${file}.${process.pid}.tmp`), false, 'written atomically');
+		await writeFile(file, JSON.stringify({ version: 99, sizes: { '/w/a': { bytes: 1, at: 1 } } }));
+		assert.strictEqual((await readCheckoutSizes(file)).size, 0, 'another version is measured afresh');
+		await writeFile(file, '{not json');
+		assert.strictEqual((await readCheckoutSizes(file)).size, 0, 'a broken file is measured afresh');
+		assert.strictEqual((await readCheckoutSizes(join(data, 'missing.json'))).size, 0, 'no file: first run');
 	});
 
 	test('a checkout is measured again only when new or when its chat ran since', () => {
