@@ -56,6 +56,7 @@ import { chatExec, IChatExec, voltExec } from '../common/execContext.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, isVoltWorktreePath, lspAllowedFor, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
 import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
+import { retrievalAddsToMessage } from '../common/search/contextRetrieval.js';
 import { ISearchIndex, VoltSearch } from './search/voltSearch.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
 import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompactCommand } from '../common/compaction.js';
@@ -5147,7 +5148,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					if (session.leadHeard?.handle !== handle) {
 						session.leadHeard = { handle, ids: new Set() };
 					}
-					const lead = [handoff?.text, moved, buildAcpLead(pack, session.leadHeard.ids), retrieved?.text, primer, workspaceText].filter(Boolean).join('\n\n') || undefined;
+					// A block that only lists the files the message names by path tells the agent nothing.
+					const context = retrieved && retrievalAddsToMessage(retrieved.files, request.text) ? retrieved.text : undefined;
+					const lead = [handoff?.text, moved, buildAcpLead(pack, session.leadHeard.ids), context, primer, workspaceText].filter(Boolean).join('\n\n') || undefined;
 					if (moved && session.moved?.model === moved) {
 						session.moved = undefined;
 					}
