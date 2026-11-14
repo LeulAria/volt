@@ -5,6 +5,7 @@
 
 import assert from 'assert';
 import { $ } from '../../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../../base/browser/window.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { AgentThreadView } from '../../browser/editor/agentThreadView.js';
 
@@ -27,5 +28,40 @@ suite('Agent thread view', () => {
 		thread.restore();
 		assert.strictEqual(thread.element.parentElement, column);
 		assert.strictEqual(thread.element.nextElementSibling, composer);
+	});
+
+	test('a native scroll is adopted in the next frame, without a layout read in the scroll event', async () => {
+		const thread = store.add(new AgentThreadView());
+		thread.element.style.height = '100px';
+		thread.inner.style.height = '100px';
+		thread.inner.style.overflow = 'hidden';
+		mainWindow.document.body.appendChild(thread.element);
+		try {
+			const content = thread.inner.appendChild($('div'));
+			content.style.height = '1000px';
+			thread.scroll.scanDomNode();
+			let reads = 0;
+			const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')!;
+			Object.defineProperty(thread.inner, 'scrollTop', {
+				configurable: true,
+				get() { reads++; return descriptor.get!.call(this); },
+				set(value: number) { descriptor.set!.call(this, value); },
+			});
+			// A scrollIntoView or find moves the element under the scrollable.
+			thread.inner.scrollTop = 300;
+			thread.inner.dispatchEvent(new Event('scroll'));
+			assert.strictEqual(reads, 0, 'nothing is read in the event');
+			await new Promise(resolve => mainWindow.requestAnimationFrame(() => setTimeout(resolve, 0)));
+			assert.strictEqual(thread.scroll.getScrollPosition().scrollTop, 300, `the scrollable caught up (element at ${descriptor.get!.call(thread.inner)})`);
+			// Several scroll events in one frame share one read.
+			reads = 0;
+			for (let i = 0; i < 5; i++) {
+				thread.inner.dispatchEvent(new Event('scroll'));
+			}
+			await new Promise(resolve => mainWindow.requestAnimationFrame(() => setTimeout(resolve, 0)));
+			assert.strictEqual(reads, 1);
+		} finally {
+			thread.element.remove();
+		}
 	});
 });
