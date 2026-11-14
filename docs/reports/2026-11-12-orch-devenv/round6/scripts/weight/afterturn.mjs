@@ -14,8 +14,10 @@ const pids = () => {
 };
 const stat = pid => {
 	const [cpu, rss] = execSync(`ps -o cputime=,rss= -p ${pid}`).toString().trim().split(/\s+/);
-	const [h, m, s] = cpu.split(':').map(Number);
-	return { cpuS: h * 3600 + m * 60 + s, rssMiB: Math.round(Number(rss) / 1024) };
+	// ps prints mm:ss.cc, or hh:mm:ss past an hour.
+	const parts = cpu.split(':').map(Number);
+	const cpuS = parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
+	return { cpuS, rssMiB: Math.round(Number(rss) / 1024) };
 };
 const footprint = pid => Number(/Footprint:\s*(\d+)/.exec(execSync(`footprint -p ${pid} 2>/dev/null | head -5`).toString())?.[1]);
 const p = pids();
