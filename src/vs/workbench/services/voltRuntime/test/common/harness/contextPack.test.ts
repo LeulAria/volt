@@ -276,4 +276,10 @@ suite('Volt context pack', () => {
 		assert.ok(codeLead.includes(IDE_WORK_HINTS.tests) && codeLead.includes(IDE_TOOLS_GUIDE) && IDE_TOOLS_GUIDE.includes('ToolSearch'), codeLead);
 		assert.ok(!codeLead.includes(LOAD_DEFERRED), 'said once');
 	});
+
+	test('the code hints name code_nav\'s impact and body ops, so agents check a change\'s reach and read one symbol', () => {
+		for (const hint of [CODE_QUESTIONS, IDE_TOOLS_GUIDE]) {
+			assert.ok(hint.includes('(op impact)') && hint.includes('(op body)'), hint);
+		}
+	});
 });
