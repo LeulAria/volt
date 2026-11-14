@@ -2004,7 +2004,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * One stateless completion. Chat models go through HTTP with `messages` as they are. Agent refs
 	 * go to the predictor's warm ACP session, which knows `task` from its skill.
 	 */
-	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken, task: PredictorTask): AsyncIterable<IVoltEvent> {
+	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken, task?: PredictorTask): AsyncIterable<IVoltEvent> {
 		const item = this.catalog.find(c => c.ref === ref);
 		if (!item) {
 			throw new Error(`Unknown catalog ref ${ref}`);
@@ -2014,7 +2014,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			throw new Error(`Missing profile for catalog ref ${ref}`);
 		}
 		if (item.kind === 'agent') {
-			yield* this.predictor.ask(item.ref, task, predictorRequest(task, messages), token);
+			// Without a task (an older caller) the request names none and queues like a typing task.
+			yield* this.predictor.ask(item.ref, task ?? 'code', predictorRequest(task, messages), token);
 			return;
 		}
 		const provider = this.modelProviders.get(profile.providerId);
