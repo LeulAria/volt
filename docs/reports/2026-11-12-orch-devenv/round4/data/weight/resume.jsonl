@@ -1,0 +1,1 @@
+{"arm":"after-pilot","rep":1,"at":"2026-11-14T00:15:16.240Z","load":"82.15 83.09 80.60","openWaitS":3,"idleS":40,"ok":true,"firstWordMs":4131,"trace":{"agentSource":"pool","agentReadyMs":2453,"promptMs":2454,"firstTextMs":3812}}
