@@ -1,0 +1,18 @@
+10 spawns in 90 s
+21:02:33.551 /Users/leularia/Desktop/VOLT/volt-e5-idle/.build/electron/VOLT.app/Contents/MacOS/Electron /Users/leularia/Desktop/VOLT/volt-e5-idle/out/bootstrap-fork --type=voltCodeIndex  @spawn (node:child_process:800:9) < fork (node:child_process:174:10) < e.fork (node:electron/js2c/node_init:2:19269) < vs/base/parts/ipc/node/ipc.cp.js:131:17)
+21:02:33.563 which claude-agent-acp  @spawn (node:child_process:800:9) < execFile (node:child_process:349:17) < execFile (node:child_process:245:21) < vs/platform/voltStdio/node/voltStdioService.js:834:29)
+21:02:33.673 /usr/bin/sandbox-exec -p (version 1)
+; Volt sandbox: t2-plugin
+(deny default (with message "VOLTSBX-96d6484bdec94114"))
+(allow process-exec process-fork)
+(allow file-read* (literal "  @spawn (node:child_process:800:9) < vs/platform/voltSandbox/node/supervisor.js:630:12) < vs/platform/voltSandbox/node/supervisor.js:107:19) < vs/platform/voltPlugins/node/pluginHost.js:447:19)
+21:02:33.676 /bin/sh -c read _ ; kill -KILL -- "-$1" 2>/dev/null volt-sandbox-watchdog 94456  @spawn (node:child_process:800:9) < vs/platform/voltSandbox/node/seatbeltBackend.js:430:17) < vs/platform/voltSandbox/node/sandboxManager.js:364:42) < vs/platform/voltSandbox/node/supervisor.js:692:39)
+21:02:34.040 /Users/leularia/Desktop/VOLT/volt-e5-idle/out/volt-helpers/volt-sandbox-helper spawn /usr/bin/sandbox-exec -p (version 1)
+; Volt sandbox: agent claude-code workspace-write (system services)
+(allow default)
+(deny signal (with message "VOLTS  @spawn (node:child_process:800:9) < vs/platform/voltStdio/node/voltStdioService.js:405:12) < vs/workbench/services/voltRuntime/browser/agents/acpProvider.js:743:16)
+21:02:34.043 /bin/sh -c read _ ; kill -KILL -- "-$1" 2>/dev/null volt-sandbox-watchdog 94461  @spawn (node:child_process:800:9) < vs/platform/voltSandbox/node/seatbeltBackend.js:430:17) < vs/platform/voltSandbox/node/sandboxManager.js:364:42) < vs/platform/voltSandbox/node/sandboxLauncher.js:702:33)
+21:02:36.687 /usr/bin/logger VOLTSBX-flush-0dcdb176f6475f16  @spawn (node:child_process:800:9) < execFile (node:child_process:349:17) < vs/platform/voltSandbox/node/seatbeltBackend.js:554:66 < new Promise (<anonymous>)
+21:02:36.701 /usr/bin/log show --style ndjson --start 2026-11-15 01:02:31 --predicate (processID == 0 AND sender == "Sandbox" AND eventMessage CONTAINS "VOLTSBX-") OR (process == "logger  @spawn (node:child_process:800:9) < execFile (node:child_process:349:17) < vs/platform/voltSandbox/node/seatbeltBackend.js:541:2 < new Promise (<anonymous>)
+21:02:53.679 /usr/bin/logger VOLTSBX-flush-a5ea208d31c439c1  @spawn (node:child_process:800:9) < execFile (node:child_process:349:17) < vs/platform/voltSandbox/node/seatbeltBackend.js:554:66 < new Promise (<anonymous>)
+21:02:53.691 /usr/bin/log show --style ndjson --start 2026-11-15 01:02:34 --predicate (processID == 0 AND sender == "Sandbox" AND eventMessage CONTAINS "VOLTSBX-") OR (process == "logger  @spawn (node:child_process:800:9) < execFile (node:child_process:349:17) < vs/platform/voltSandbox/node/seatbeltBackend.js:541:2 < new Promise (<anonymous>)

@@ -1,0 +1,10 @@
+timer fires: 71 in 60.0 s (1.18/s), distinct callbacks 9
+   30   0.50/s T every 2000 ms  () => { if (!restarting && changedAt !== undefined && Date.now() - changedAt >= SETTLE_MS && idle()) { restarting = true; logService.info("[volt agent server] restarting to load th @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+   12   0.20/s T every 0 ms  function () { [native code] } @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+   12   0.20/s T every 0 ms  () => { if (disposed) { return; } const end = Date.now() + 15; const deadline = { didTimeout: true, timeRemaining() { return Math.max(0, end - Date.now()); } }; runner(Object.freez @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+    6   0.10/s T every 30000 ms  function () { [native code] } @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+    3   0.05/s T every 20000 ms  () => { runner(); } @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+    3   0.05/s T every 20000 ms  () => { if (this.missedPongs >= 2) { this.socket.destroy(); return; } this.missedPongs++; this.writeFrame(Op.Ping, Buffer.alloc(0)); } @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+    3   0.05/s T every 0 ms  () => { clearTimeout(timer); this.waiters.delete(done); resolve(); } @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+    1   0.02/s T every 60000 ms  () => void this.refreshManagedPolicy().catch(() => undefined) @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+    1   0.02/s T every 60000 ms  () => { if (stopped) { return; } if (options.clients().length > 0) { lonelySince = undefined; return; } lonelySince ??= Date.now(); if (Date.now() - lonelySince < lonelyFor || !opt @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)

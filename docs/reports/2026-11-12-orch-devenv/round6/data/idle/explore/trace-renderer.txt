@@ -1,0 +1,46 @@
+{"secs":20,"load":51.26,"state":"{\"vis\":\"visible\",\"focus\":true}","spanMs":20179,"events":10337}
+
+== busy threads (tasks/s, ms/s)
+Browser / CrBrowserMain                                         40.1 /s   52.70 ms/s
+Renderer / CrRendererMain                                        8.2 /s   14.02 ms/s
+GPU Process / CrGpuMain                                         33.9 /s    6.47 ms/s
+GPU Process / VizCompositorThread                               32.4 /s    5.89 ms/s
+Renderer / Compositor                                           22.6 /s    5.50 ms/s
+Renderer / ThreadPoolForegroundWorker                            5.9 /s    1.21 ms/s
+GPU Process / PerfettoTrace                                      3.8 /s    0.62 ms/s
+Browser / ThreadPoolForegroundWorker                             4.8 /s    0.55 ms/s
+Renderer / ThreadPoolServiceThread                               1.3 /s    0.32 ms/s
+Renderer / Chrome_ChildIOThread                                  1.4 /s    0.15 ms/s
+Browser / ThreadPoolServiceThread                                0.9 /s    0.04 ms/s
+Browser / Chrome_DevToolsHandlerThread                           0.1 /s    0.02 ms/s
+Browser / Chrome_IOThread                                        0.5 /s    0.02 ms/s
+
+== renderer main: callbacks (count, ms) over the window
+   26     80.8 ms  TimerFire  :: 
+   20     13.8 ms  FunctionCall  vs/base/common/async.js:862:38 
+    4      7.1 ms  FunctionCall  :: 
+    2      4.3 ms  FunctionCall  vs/workbench/services/extensions/electron-browser/localProcessExtensionHost.js:308:23 
+    2     11.2 ms  FunctionCall onTimeout vs/base/common/async.js:923:11 
+    2      0.6 ms  FunctionCall  vs/workbench/contrib/voltDiagnostics/electron-browser/voltDiagnostics.contribution.js:183:44 
+    1      0.2 ms  FunctionCall  vs/base/common/async.js:258:28 
+    1      3.0 ms  FunctionCall  vs/workbench/contrib/voltAgent/browser/chrome/agentViewSidebars.js:580:42 
+    1     25.7 ms  FunctionCall fn vs/base/common/event.js:328:14 
+    1      3.6 ms  FunctionCall  vs/base/common/async.js:457:27 
+    1      0.1 ms  FunctionCall doFire vs/base/common/event.js:142:15 
+    1     42.8 ms  FunctionCall  vs/workbench/contrib/voltAgent/browser/composer/agentCaretRest.js:75:31 
+    1      3.8 ms  FireAnimationFrame  :: 
+    1      3.8 ms  FunctionCall  vs/base/browser/dom.js:291:39 
+    1     34.0 ms  FireIdleCallback  :: 
+    1     33.9 ms  FunctionCall  vs/platform/storage/common/storage.js:83:51 
+
+== renderer main: rendering passes
+   38      0.1 ms  IntersectionObserverController::computeIntersections
+   30      6.5 ms  Paint
+   19     14.5 ms  UpdateLayoutTree
+   19      3.1 ms  PrePaint
+   19     27.7 ms  Layerize
+   16      2.3 ms  HitTest
+    1      5.1 ms  Layout
+display link callbacks: 683 (34.1/s)
+
+viz DrawAndSwap: 19 (0.9/s)

@@ -57,6 +57,12 @@ lived only in memory.
    is gone; a host that works is still read 2 s after its activity (at most every 30 s) and at its exit.
 4. **`735834661f3` perf(code-index): a status question while no index process runs is answered from the last
    answer** (under 10 minutes old); a live process always answers itself. No more 50 MB fork per agent start.
+5. **`32d5cf55e2a` perf(code-index): the status cache survives a relaunch** (`status-cache.json` in the index's data
+   folder), so the first warm after a launch does not fork either.
+
+Live check on the dev build after a relaunch (spawn census of the agent server across one focus toggle,
+[explore logs](data/idle/explore/)): before, a focus started a code-index fork and two `log show`; after, no fork and
+one `log show`. Main's code index, held 20 minutes before, was gone 3 minutes after launch.
 
 ## Not done, and why
 
