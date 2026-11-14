@@ -47,7 +47,7 @@ function env(home: string, dev?: boolean, extra: Record<string, string> = {}): s
   };
   return Object.entries(vars).flatMap(([k, v]) => ["--env", `${k}=${v}`]);
 }
-/** Exploration arms only: `apps/<arm>/env` holds `K=V` lines (round 5's VOLT_LAUNCH_EXP switches). Headline arms have none. */
+/** Exploration arms only: `apps/<arm>/env` holds `K=V` lines (round 5's VOLT_LAUNCH_EXP switches, since removed from the code). Headline arms have none. */
 function armEnv(app: App): Record<string, string> {
   const file = join(app.bundle, "..", "env");
   if (!existsSync(file)) return {};

@@ -231,7 +231,7 @@ async function startup(codeCachePath: string | undefined, nlsConfig: INLSConfigu
 
 	// Volt: loading the main bundle holds the main thread, and the launch window's page gets its files from it. Let the
 	// page get them first (it then paints the window's last screen without waiting for the main bundle).
-	if (earlyPageStarted && !(process.env['VOLT_LAUNCH_EXP'] ?? '').includes('no-wait')) { // (round 5 exploration switch, removed before the final build)
+	if (earlyPageStarted) {
 		await Promise.race([earlyPageStarted, new Promise(resolve => setTimeout(resolve, EARLY_PAGE_WAIT_MS))]);
 		perf.mark('code/voltDidWaitForLaunchPage');
 	}

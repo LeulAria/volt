@@ -166,31 +166,13 @@ export function openEarlyWindow(plan: IEarlyWindowPlan): Promise<void> {
 		return readSnapshot(plan);
 	});
 
-	// The window, and the view whose page loads the workbench. (Round 5 exploration, removed before the final build:
-	// VOLT_LAUNCH_EXP=view-first starts the page before the window, whose creation holds the main thread.)
-	const viewFirst = (process.env['VOLT_LAUNCH_EXP'] ?? '').includes('view-first');
-	let win!: BrowserWindow;
-	let view!: WebContentsView;
-	const createView = () => {
-		view = new WebContentsView({ webPreferences });
-		if (typeof hint.options.backgroundColor === 'string') {
-			view.setBackgroundColor(hint.options.backgroundColor);
-		}
-	};
-	// The fragment tells the page it is the launch window's (the window code compares and reloads the URL without it).
-	const loadPage = () => view.webContents.loadURL(`${hint.url}#${EARLY_PAGE_FRAGMENT}`);
-	const createWindow = () => {
-		mark('code/voltWillCreateLaunchWindow');
-		win = new BrowserWindow(windowOptions);
-		mark('code/voltDidCreateLaunchWindow');
-	};
-	if (viewFirst) {
-		createView();
-		loadPage();
-		createWindow();
-	} else {
-		createWindow();
-		createView();
+	// The window, and the view whose page loads the workbench
+	mark('code/voltWillCreateLaunchWindow');
+	const win = new BrowserWindow(windowOptions);
+	mark('code/voltDidCreateLaunchWindow');
+	const view = new WebContentsView({ webPreferences });
+	if (typeof hint.options.backgroundColor === 'string') {
+		view.setBackgroundColor(hint.options.backgroundColor);
 	}
 	win.contentView.addChildView(view);
 	const layout = () => {
@@ -234,9 +216,8 @@ export function openEarlyWindow(plan: IEarlyWindowPlan): Promise<void> {
 	view.webContents.once('render-process-gone', fail);
 	(globalThis as Record<string, unknown>)[EARLY_WINDOW_KEY] = state;
 
-	if (!viewFirst) {
-		loadPage();
-	}
+	// The fragment tells the page it is the launch window's (the window code compares and reloads the URL without it)
+	view.webContents.loadURL(`${hint.url}#${EARLY_PAGE_FRAGMENT}`);
 	return whenPageStarted;
 }
 

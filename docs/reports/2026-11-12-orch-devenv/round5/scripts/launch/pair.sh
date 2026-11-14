@@ -5,7 +5,7 @@
 cd ${0:A:h}
 OUT=$1; N=$2; T=$3; shift 3; ARMS=($@)
 LOCK=~/.volt-r5/timing.lock
-take() { until mkdir $LOCK 2>/dev/null; do sleep 20; done; echo "launch pair.sh pid $$ start $(date)" > $LOCK/owner; LT=$(date +%s); }
+take() { until mkdir $LOCK 2>/dev/null; do sleep 2; done; echo "launch pair.sh pid $$ start $(date)" > $LOCK/owner; LT=$(date +%s); }
 drop() { rm -rf $LOCK; }
 trap drop EXIT
 take
