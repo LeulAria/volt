@@ -125,6 +125,19 @@ suite('Volt context retrieval', () => {
 			const twice = rankEvidence([{ path: 'a.ts', kind: 'declaration', term: 'X', line: 1 }, { path: 'a.ts', kind: 'declaration', term: 'X', line: 1 }], { wantsTests: false });
 			assert.strictEqual(once[0].score, twice[0].score);
 		});
+
+		test('the order searches finish in does not change the block (prompt cache)', () => {
+			const evidence = [
+				{ path: 'src/dates.ts', kind: 'term' as const, term: 'date', weight: 2 },
+				{ path: 'src/dates.ts', kind: 'term' as const, term: 'number', weight: 2 },
+				{ path: 'src/dates.ts', kind: 'declaration' as const, term: 'parseDate', line: 4 },
+			];
+			const block = (items: typeof evidence) => packRetrieval(rankEvidence(items, { wantsTests: false }).map(file => ({ file, snippets: [] })), 1000)?.text;
+			const forward = block(evidence);
+			assert.strictEqual(block([...evidence].reverse()), forward);
+			assert.strictEqual(block([evidence[1], evidence[2], evidence[0]]), forward);
+			assert.ok(forward?.includes('src/dates.ts - declares parseDate (line 4); mentions "date"; mentions "number"'));
+		});
 	});
 
 	suite('snippets and packing', () => {

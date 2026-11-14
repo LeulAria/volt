@@ -229,6 +229,14 @@ const KIND_WEIGHT: Record<EvidenceKind, number> = { location: 12, mentioned: 10,
 const TEST_PATH = /(^|\/)(__tests__|tests?|spec)\/|\.(test|spec)\.[^/]+$|_test\.(go|py)$/i;
 const GENERATED_PATH = /(^|\/)(dist|build|out|coverage|vendor|\.next|target|__generated__|generated)\/|\.min\.(js|css)$|\.d\.ts$|\.lock$|-lock\.json$/i;
 
+/** Strongest kind first, then heavier, then by term and line: an order that does not depend on which search finished first. */
+function compareEvidence(a: IRetrievalEvidence, b: IRetrievalEvidence): number {
+	return KIND_WEIGHT[b.kind] - KIND_WEIGHT[a.kind]
+		|| (b.weight ?? 0) - (a.weight ?? 0)
+		|| (a.term ?? '').localeCompare(b.term ?? '')
+		|| (a.line ?? 0) - (b.line ?? 0);
+}
+
 /**
  * One score per file: the strongest kinds of evidence count fully, repeats less; a term found in
  * many files counts little; tests rank up only when the message is about tests; generated and
@@ -245,9 +253,11 @@ export function rankEvidence(evidence: readonly IRetrievalEvidence[], options: {
 	}
 	const ranked: IRankedFile[] = [];
 	for (const [path, items] of byPath) {
+		// Searches finish in any order: sort, so the same message gives the same block (and the prompt cache holds).
+		items.sort(compareEvidence);
 		let score = 0;
 		const seenTerms = new Set<string>();
-		for (const item of [...items].sort((a, b) => KIND_WEIGHT[b.kind] - KIND_WEIGHT[a.kind])) {
+		for (const item of items) {
 			let weight = item.kind === 'term' ? item.weight ?? KIND_WEIGHT.term : KIND_WEIGHT[item.kind];
 			if (item.kind === 'match' && item.spread) {
 				weight *= 1 / Math.log2(1 + item.spread);
