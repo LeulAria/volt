@@ -20,8 +20,10 @@ const PROBE = `(() => {
 		const snap = document.getElementById('volt-window-snapshot');
 		const realShown = document.body && !document.body.classList.contains('volt-window-snapshot-shown');
 		if (!s.transcript) {
-			const fromSnap = snap && [...snap.querySelectorAll('.volt-agent-reply, .volt-agent-user-message, .volt-agent-message')].some(inView);
-			const real = realShown && [...document.querySelectorAll('body > .monaco-workbench .volt-agent-editor .volt-agent-reply')].some(inView);
+			// A row of the chat: a reply, a prompt, or a turn (a long chat's last screen can be all tool steps).
+			const ROWS = '.volt-agent-reply, .volt-agent-user-row, .volt-agent-turn, .volt-agent-user-message, .volt-agent-message';
+			const fromSnap = snap && [...snap.querySelectorAll(ROWS)].some(inView);
+			const real = realShown && [...document.querySelectorAll('body > .monaco-workbench .volt-agent-editor :is(' + ROWS + ')')].some(inView);
 			if (fromSnap || real) { s.transcript = t; s.transcriptFrom = fromSnap ? 'snapshot' : 'workbench'; }
 		}
 		const a = document.activeElement;
