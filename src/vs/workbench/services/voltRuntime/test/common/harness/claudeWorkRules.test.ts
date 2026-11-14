@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, agentDescriptionWithTypes, claudeWorkRulesMeta, compactAgentListing, compactVoltToolNames, isClaudePlaceholderTitle, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
+import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, agentDescriptionWithTypes, claudeWorkRulesMeta, compactAgentListing, compactVoltToolNames, isClaudePlaceholderTitle, voltBypassModeNote, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
 
 /** Claude Code 2.1.322's agent-types reminder (trimmed), with one custom agent whose description runs over two lines. */
 const AGENT_LISTING = [
@@ -158,7 +158,7 @@ suite('Volt Claude work rules', () => {
 		const register = new Function(`${source.replace('export function register', 'function register')}\nreturn register;`)() as (on: (...args: unknown[]) => void) => void;
 		const registrations: { event: unknown; matcher: unknown; handler: (...args: unknown[]) => Promise<unknown> }[] = [];
 		register((event: unknown, matcher: unknown, handler: unknown) => registrations.push({ event, matcher, handler: handler as (...args: unknown[]) => Promise<unknown> }));
-		assert.deepStrictEqual(registrations.map(r => r.event), ['tool.describe', 'prompt.attachment', 'prompt.attachment']);
+		assert.deepStrictEqual(registrations.map(r => r.event), ['tool.describe', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment']);
 		assert.deepStrictEqual(registrations[0].matcher, { tool: [...CLAUDE_MAIN_LAZY_TOOLS] }, 'only these tools reach the module');
 		const next = async (e: { description: string }) => ({ description: `${e.description}!` });
 		assert.deepStrictEqual(await registrations[0].handler({}, { tool: 'Workflow', description: 'Runs a workflow', provider: 'builtin' }, next), { description: 'Runs a workflow!', isDeferred: true });
@@ -178,6 +178,21 @@ suite('Volt Claude work rules', () => {
 		assert.strictEqual(described.isDeferred, true);
 		assert.strictEqual(described.description, agentDescriptionWithTypes(agentPointer, AGENT_LISTING));
 		assert.ok(described.description.includes('Specify search breadth') && described.description.endsWith('When to use'));
+	});
+
+	test('bypass mode\'s "edit through Bash" paragraph becomes one line that keeps the file tools; other mode reminders stay', async () => {
+		const bypass = 'While bypass permissions mode is active:\n\nYou can do much of your work through the Bash tool when it is the simpler route: read files with cat, head, or sed -n, search with grep and find, and make small, mechanical file changes with sed, heredocs, or short scripts instead of the dedicated Read, Edit, or Write tools. The choice is yours: prefer Edit or Write when a shell edit would be fragile.';
+		const note = voltBypassModeNote(bypass);
+		assert.ok(note.startsWith('While bypass permissions mode is active:') && note.includes('Read, Edit and Write') && !note.includes('sed'), note);
+		const auto = 'While auto mode is active:\n\nA classifier reviews each action.';
+		assert.strictEqual(voltBypassModeNote(auto), auto);
+		const files = new Map(claudeLazyToolsPlugin().files);
+		const register = new Function(`${files.get('hooks/register.js')!.replace('export function register', 'function register')}\nreturn register;`)() as (on: (...args: unknown[]) => void) => void;
+		const handlers: { matcher: unknown; handler: (...args: unknown[]) => Promise<unknown> }[] = [];
+		register((_event: unknown, matcher: unknown, handler: unknown) => handlers.push({ matcher, handler: handler as (...args: unknown[]) => Promise<unknown> }));
+		const mode = handlers.find(h => JSON.stringify(h.matcher) === JSON.stringify({ type: ['auto_mode'] }));
+		assert.ok(mode, 'only the mode reminder reaches this handler');
+		assert.deepStrictEqual(await mode.handler({}, { type: 'auto_mode', text: bypass }, async (e: { text: string }) => ({ text: e.text })), { text: note });
 	});
 
 	test('the agent-types reminder keeps every type with the first sentence of its description; the Agent tool gets the full text', () => {

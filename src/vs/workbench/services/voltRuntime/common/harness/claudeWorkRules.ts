@@ -221,6 +221,19 @@ export function agentDescriptionWithTypes(description: string, listing: string |
 }
 
 /**
+ * Claude Code's reminder for bypass-permissions mode (Volt's Full access) tells the model it may read,
+ * search and edit files through Bash with cat, sed and heredocs (about 130 tokens in every request).
+ * Volt asks for the opposite ({@link CLAUDE_MAIN_RULES}: it shows the changes made with Edit and
+ * Write, not shell rewrites), so that paragraph is replaced by one line that keeps the mode's news.
+ * Any other text of this reminder (auto mode's) is left as it is. Self-contained (hooks worker).
+ */
+export function voltBypassModeNote(text: string): string {
+	return /^\s*While bypass permissions mode is active:/.test(text) && /through the Bash tool/.test(text) && /\bsed\b/.test(text)
+		? 'While bypass permissions mode is active: tools run without asking. Keep reading and changing files with Read, Edit and Write.'
+		: text;
+}
+
+/**
  * A `prompt.attachment` handler that rewrites the reminder's text with `fn` and leaves it as Claude Code
  * made it when the rewrite throws. Written out in each `on(...)` call: Claude Code 2.1.322 drops the
  * whole module, silently, when a handler comes from a factory (`rewrite(fn)`), so none is shared.
@@ -237,11 +250,13 @@ const CLAUDE_LAZY_TOOLS_MODULE = [
 	`const compactVoltToolNames = ${compactVoltToolNames.toString()};`,
 	`const compactAgentListing = ${compactAgentListing.toString()};`,
 	`const agentDescriptionWithTypes = ${agentDescriptionWithTypes.toString()};`,
+	`const voltBypassModeNote = ${voltBypassModeNote.toString()};`,
 	'// The agent-types reminder as Claude Code wrote it (the last one), for the Agent tool\'s description.',
 	'let agentListing;',
 	'export function register(on) {',
 	'\ton(\'tool.describe\', { tool: LAZY }, async ($, e, next) => { const r = await next(e); try { return e.tool === \'Agent\' && typeof r?.description === \'string\' ? { ...r, isDeferred: true, description: agentDescriptionWithTypes(r.description, agentListing) } : { ...r, isDeferred: true }; } catch { return { ...r, isDeferred: true }; } });',
 	`\ton('prompt.attachment', { type: ['deferred_tools_delta'] }, ${attachmentRewrite('compactVoltToolNames')});`,
+	`\ton('prompt.attachment', { type: ['auto_mode'] }, ${attachmentRewrite('voltBypassModeNote')});`,
 	'\ton(\'prompt.attachment\', { type: [\'agent_listing_delta\'] }, async ($, e, next) => { const r = await next(e); try { if (typeof r?.text !== \'string\') { return r; } if (/^Available agent types/m.test(r.text)) { agentListing = r.text; } return { ...r, text: compactAgentListing(r.text) }; } catch { return r; } });',
 	'}',
 	'',
