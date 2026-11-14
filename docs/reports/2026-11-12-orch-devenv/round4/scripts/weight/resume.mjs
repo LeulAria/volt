@@ -5,9 +5,10 @@
 //   node resume.mjs <arm> [reps=3] [openWait s=3] [idle s=40]   (rows appended to data/weight/resume.jsonl)
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { cdp, DATA, load, newChat, sleep, UD, median } from './lib.mjs';
+import { cdp, DATA, load, mem, newChat, sleep, UD, median } from './lib.mjs';
 
 const [arm = 'after', repsArg = '3', openWaitArg = '3', idleArg = '40'] = process.argv.slice(2);
+const MAX_LOAD = Number(process.env.RESUME_MAX_LOAD ?? 14);
 const c = await cdp();
 
 const rows = () => c.evaluate(`[...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && /Replay/.test(e.getAttribute('aria-label') || '')).length`);
@@ -80,6 +81,9 @@ for (let rep = 1; rep <= Number(repsArg); rep++) {
 	await sleep(1500);
 	if (!await sendAndWait('replay:seed')) { throw new Error('B did not answer'); }
 	await sleep(Number(idleArg) * 1000);
+	// Timed only at a 1-minute load of at most MAX_LOAD: wait for it (at most RESUME_LOAD_WAIT_S), else record the load.
+	const gateUntil = Date.now() + Number(process.env.RESUME_LOAD_WAIT_S ?? 600) * 1000;
+	while (parseFloat(load()) > MAX_LOAD && Date.now() < gateUntil) { await sleep(5000); }
 	// Back to A (now the second row again: B is first).
 	await clickRow(1);
 	await sleep(Number(openWaitArg) * 1000);
@@ -90,7 +94,7 @@ for (let rep = 1; rep <= Number(repsArg); rep++) {
 	let s;
 	for (let i = 0; i < 50; i++) { s = await c.evaluate('window.__rs'); if (s?.raf2) { break; } await sleep(50); }
 	await sleep(1500);
-	const row = { arm, rep, at: new Date(t0).toISOString(), load: loadAvg, openWaitS: Number(openWaitArg), idleS: Number(idleArg), ok, firstWordMs: s?.raf2 && s.enter ? s.raf2 - s.enter : null, trace: lastTrace(t0) };
+	const row = { arm, rep, at: new Date(t0).toISOString(), load: loadAvg, underLoad: parseFloat(loadAvg) > MAX_LOAD,openWaitS: Number(openWaitArg), idleS: Number(idleArg), mem: mem(), ok, firstWordMs: s?.raf2 && s.enter ? s.raf2 - s.enter : null, trace: lastTrace(t0) };
 	out.push(row);
 	appendFileSync(join(DATA, 'resume.jsonl'), JSON.stringify(row) + '\n');
 	console.log(JSON.stringify(row));

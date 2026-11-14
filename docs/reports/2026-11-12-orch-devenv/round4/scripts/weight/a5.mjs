@@ -5,7 +5,7 @@
 import { execFileSync, execSync } from 'child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { DATA, load, sleep, UD, cdp } from './lib.mjs';
+import { DATA, load, mem, sleep, UD, cdp } from './lib.mjs';
 import { role } from './roles.mjs';
 
 const [arm = 'dev', settleArg = '90', windowArg = '60'] = process.argv.slice(2);
@@ -32,6 +32,7 @@ const serverPids = execSync('ps -axo pid=,command=').toString().split('\n').filt
 writeFileSync(rules, JSON.stringify({ rootPids: [pid, ...serverPids], bundlePaths: [], vendorDirs: [], agentExecutables: ['claude', 'codex'], excludeNames: ['crashpad_handler'] }));
 const csv = join(DATA, 'raw', `a5-${arm}-${Date.now()}.csv`);
 const loadAvg = load();
+const memStart = mem();
 const cmds = new Map(execSync('ps -axo pid=,command=', { maxBuffer: 64 << 20 }).toString().split('\n').filter(Boolean).map(l => { const m = /^\s*(\d+)\s+(.*)$/.exec(l); return [Number(m[1]), m[2]]; }));
 const summary = JSON.parse(execFileSync(NATIVE, ['sample', '--rules', rules, '--hz', '4', '--duration-s', windowArg, '--csv', csv], { encoding: 'utf8' }));
 for (const l of execSync('ps -axo pid=,command=', { maxBuffer: 64 << 20 }).toString().split('\n').filter(Boolean)) {
@@ -74,8 +75,11 @@ try { const c = await cdp(); domNodes = await c.evaluate('document.getElementsBy
 const row = {
 	arm, variant: process.env.SPEED_VARIANT ?? 'chat', at: new Date().toISOString(), load: loadAvg, settleS: Number(settleArg), windowS: Number(windowArg),
 	appMedianMiB: Math.round(summary.app_median_b / 1048576), agentsMedianMiB: Math.round(summary.agents_median_b / 1048576), totalMedianMiB: Math.round(summary.total_median_b / 1048576),
-	processes: procs.length, cpuAppPct: cpuTotal('app'), cpuAgentsPct: cpuTotal('agents'), domNodes, byRole, procs, csv,
+	processes: procs.length, cpuAppPct: cpuTotal('app'), cpuAgentsPct: cpuTotal('agents'), domNodes,
+	// ADEMark: invalid if swap grew during the window.
+	mem: memStart, memEnd: mem(), byRole, procs, csv,
 };
+row.swapGrewMiB = row.memEnd.swapUsedMiB - row.mem.swapUsedMiB;
 appendFileSync(join(DATA, 'a5.jsonl'), JSON.stringify(row) + '\n');
 console.log(JSON.stringify({ arm, variant: row.variant, app: row.appMedianMiB, agents: row.agentsMedianMiB, total: row.totalMedianMiB, processes: row.processes, cpuApp: row.cpuAppPct, cpuAgents: row.cpuAgentsPct, load: loadAvg }));
 console.log(Object.entries(byRole).sort((a, b) => b[1].mib - a[1].mib).map(([k, v]) => `${k.padEnd(48)} n=${v.n} ${String(v.mib).padStart(5)} MiB cpu ${v.cpuPct}%`).join('\n'));

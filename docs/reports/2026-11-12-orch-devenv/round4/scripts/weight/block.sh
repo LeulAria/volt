@@ -3,6 +3,8 @@
 # a relaunch, A9 (quit, 60 s), relaunch, A10 (15 more seeded threads, sample at once), stop.
 #   ./block.sh before|after
 cd ${0:A:h}
+# Both arms share CDP 9946: neither may be up (a launch that timed out leaves its instance running).
+for other in before after; do (source ./arm.sh $other; node launch.mjs stop >/dev/null); done
 source ./arm.sh $1
 echo "== block $1 $(date -u +%FT%TZ) load $(uptime | sed 's/.*averages: //')"
 ./prep.sh $1 5 || { echo "prep failed"; node launch.mjs stop; exit 1; }

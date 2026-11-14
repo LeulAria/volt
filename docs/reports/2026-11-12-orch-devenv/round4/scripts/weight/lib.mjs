@@ -21,6 +21,21 @@ export function load() {
 	return execSync('uptime').toString().replace(/.*averages?:\s*/, '').trim();
 }
 
+/**
+ * Swap and memory pressure now. With swap nearly full, phys_footprint undercounts (pages swapped out or
+ * compressed away still belong to the process), so every memory row carries this next to its numbers.
+ * pressure: kern.memorystatus_vm_pressure_level (1 normal, 2 warn, 4 critical); freePct: memory_pressure's.
+ */
+export function mem() {
+	const swap = execSync('sysctl vm.swapusage').toString();
+	const num = re => Number(re.exec(swap)?.[1] ?? NaN);
+	let freePct;
+	try { freePct = Number(/free percentage: (\d+)%/.exec(execSync('memory_pressure').toString())?.[1]); } catch { }
+	let pressure;
+	try { pressure = Number(execSync('sysctl -n kern.memorystatus_vm_pressure_level').toString().trim()); } catch { }
+	return { swapUsedMiB: Math.round(num(/used = ([\d.]+)M/)), swapTotalMiB: Math.round(num(/total = ([\d.]+)M/)), freePct, pressure };
+}
+
 export function writeSettings(extra = {}) {
 	mkdirSync(join(UD, 'User'), { recursive: true });
 	const file = join(UD, 'User', 'settings.json');

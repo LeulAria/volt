@@ -5,7 +5,7 @@
 import { execFileSync, spawn } from 'child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { DATA, UD, cdp, focusComposer, load, newChat, sleep } from './lib.mjs';
+import { DATA, UD, cdp, focusComposer, load, mem, newChat, sleep } from './lib.mjs';
 import { role } from './roles.mjs';
 
 const arm = process.argv[2] ?? 'after';
@@ -20,6 +20,7 @@ const serverPids = execFileSync('ps', ['-axo', 'pid=,command=']).toString().spli
 writeFileSync(rules, JSON.stringify({ rootPids: [mainPid, ...serverPids], bundlePaths: [], vendorDirs: [], agentExecutables: ['claude', 'codex'], excludeNames: ['crashpad_handler'] }));
 const csv = join(DATA, 'raw', `a7-${arm}-${Date.now()}.csv`);
 const loadAtStart = load();
+const memStart = mem();
 const c = await cdp();
 let sampler;
 for (let i = 1; i <= 5; i++) {
@@ -67,7 +68,7 @@ const mib = b => Math.round(b / 1048576);
 const row = {
 	arm, test: 'A7', at: new Date().toISOString(), load: loadAtStart, loadEnd: load(), ticks: all.length,
 	appP95: mib(p(all.map(t => t.app), 0.95)), agentsP95: mib(p(all.map(t => t.agents), 0.95)), totalP95: mib(p(all.map(t => t.app + t.agents), 0.95)),
-	agentCountMedian: p(all.map(t => t.agentRoots), 0.5), csv,
+	agentCountMedian: p(all.map(t => t.agentRoots), 0.5), mem: memStart, memEnd: mem(), csv,
 	roles: Object.entries([...pidRole.entries()].reduce((acc, [, r]) => (acc[r] = (acc[r] ?? 0) + 1, acc), {})),
 };
 appendFileSync(join(DATA, 'a7.jsonl'), JSON.stringify(row) + '\n');

@@ -6,7 +6,7 @@
 import { execFileSync, execSync } from 'child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { DATA, cdp, load, profileProcesses, sleep } from './lib.mjs';
+import { DATA, cdp, load, mem, profileProcesses, sleep } from './lib.mjs';
 import { role } from './roles.mjs';
 
 const arm = process.argv[2] ?? 'after';
@@ -43,7 +43,7 @@ if (left.length) {
 		procs.push({ pid, role: role(cmds.get(pid) ?? ''), mib: Math.round(bytes / 1048576 * 10) / 10, cmd: (cmds.get(pid) ?? '').slice(0, 140) });
 	}
 }
-const row = { arm, test: 'A9', variant: 'no-sessions', at: new Date().toISOString(), load: loadAtQuit, waitS: WAIT_S, before: before.length, left: procs.length, ghostMiB: Math.round(total / 1048576 * 10) / 10, procs };
+const row = { arm, test: 'A9', variant: 'no-sessions', at: new Date().toISOString(), load: loadAtQuit, waitS: WAIT_S, before: before.length, left: procs.length, ghostMiB: Math.round(total / 1048576 * 10) / 10, mem: mem(), procs };
 appendFileSync(join(DATA, 'a9.jsonl'), JSON.stringify(row) + '\n');
 console.log(JSON.stringify({ arm, ghostMiB: row.ghostMiB, left: row.left, before: row.before, load: loadAtQuit }));
 for (const p of procs.sort((a, b) => b.mib - a.mib)) { console.log(String(p.mib).padStart(7), p.role, p.pid); }
