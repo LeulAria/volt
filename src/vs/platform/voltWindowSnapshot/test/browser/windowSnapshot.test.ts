@@ -99,6 +99,33 @@ suite('Volt window snapshot', () => {
 		assert.ok(kept.a?.style.includes('height:30px'));
 	});
 
+	test('rows above the window become one spacer of their height', () => {
+		root.style.height = 'auto';
+		root.style.overflow = 'visible';
+		root.style.top = `${-3000}px`;
+		for (let i = 0; i < 3; i++) {
+			const row = doc.createElement('div');
+			row.style.cssText = 'height:500px;margin:0';
+			row.textContent = `old ${i}`;
+			root.appendChild(row);
+			root.appendChild(doc.createTextNode('\n'));
+		}
+		const onScreen = doc.createElement('div');
+		onScreen.style.cssText = `margin-top:1500px;height:40px`;
+		onScreen.textContent = 'latest';
+		root.appendChild(onScreen);
+		const tree = snapshotOf().root;
+		assert.ok(typeof tree !== 'string');
+		assert.strictEqual(tree.c?.length, 2, 'one spacer, then the row on screen');
+		const spacer = tree.c[0];
+		assert.ok(typeof spacer !== 'string');
+		assert.ok(spacer.a?.style.includes('height:1500px'), spacer.a?.style);
+		assert.strictEqual(spacer.c, undefined);
+		const latest = tree.c[1];
+		assert.ok(typeof latest !== 'string');
+		assert.deepStrictEqual(latest.c, ['latest']);
+	});
+
 	test('paints a snapshot, keeps typed keys and Enter for the composer, and takes it away', () => {
 		const lines = doc.createElement('div');
 		lines.style.cssText = 'position:absolute;left:10px;top:200px;width:300px;height:20px';

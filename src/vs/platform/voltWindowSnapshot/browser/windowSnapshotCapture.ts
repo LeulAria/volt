@@ -49,6 +49,19 @@ export function captureWindowSnapshot(win: Window, root: HTMLElement, options: I
 		}
 	};
 
+	/** The element's box when it lies wholly above or below the window and takes space in its parent's flow. */
+	const offscreenInFlow = (el: Element): DOMRect | undefined => {
+		if (el.namespaceURI === SVG_NS || SNAPSHOT_DROPPED_TAGS.has(el.localName) || !el.getClientRects().length) {
+			return undefined;
+		}
+		const rect = el.getBoundingClientRect();
+		if (rect.bottom >= 0 && rect.top <= height) {
+			return undefined;
+		}
+		const position = win.getComputedStyle(el).position;
+		return position === 'absolute' || position === 'fixed' ? undefined : rect;
+	};
+
 	const visit = (el: Element): IVoltSnapshotElement | undefined => {
 		const tag = el.localName;
 		if (SNAPSHOT_DROPPED_TAGS.has(tag) || el.id === VOLT_WINDOW_SNAPSHOT_ID) {
@@ -86,19 +99,53 @@ export function captureWindowSnapshot(win: Window, root: HTMLElement, options: I
 		const a: Record<string, string> = {};
 		copyAttributes(el, a, addClasses);
 		const c: VoltSnapshotNode[] = [];
+		// A run of rows above or below the window (a long chat's older turns) becomes one spacer of the
+		// run's height: the rows on screen stay where they are, and the snapshot stays small.
+		let run: { first: Element; firstRect: DOMRect; last: Element; lastRect: DOMRect; count: number } | undefined;
+		const flush = () => {
+			if (!run) {
+				return;
+			}
+			if (run.count === 1) {
+				c.push(box(run.first, run.firstRect, true));
+			} else {
+				const top = parseFloat(win.getComputedStyle(run.first).marginTop) || 0;
+				const bottom = parseFloat(win.getComputedStyle(run.last).marginBottom) || 0;
+				c.push({ t: 'div', a: { style: `display:block;flex:none;width:${run.firstRect.width}px;height:${run.lastRect.bottom - run.firstRect.top}px;margin:${top}px 0 ${bottom}px 0` } });
+			}
+			run = undefined;
+		};
 		for (let child = el.firstChild; child; child = child.nextSibling) {
 			if (child.nodeType === 3 /* text */) {
 				const text = (child as Text).data;
+				if (run && !text.trim()) {
+					continue; // white space between rows of a run
+				}
+				flush();
 				if (text) {
 					c.push(text);
 				}
 			} else if (child.nodeType === 1 /* element */) {
-				const node = visit(child as Element);
+				const childEl = child as Element;
+				const childRect = offscreenInFlow(childEl);
+				if (childRect) {
+					if (run) {
+						run.last = childEl;
+						run.lastRect = childRect;
+						run.count++;
+					} else {
+						run = { first: childEl, firstRect: childRect, last: childEl, lastRect: childRect, count: 1 };
+					}
+					continue;
+				}
+				flush();
+				const node = visit(childEl);
 				if (node) {
 					c.push(node);
 				}
 			}
 		}
+		flush();
 		const node: { -readonly [K in keyof IVoltSnapshotElement]: IVoltSnapshotElement[K] } = { t: tag };
 		if (svg) {
 			node.svg = 1;
