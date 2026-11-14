@@ -33,7 +33,7 @@ for (const variant of ['front', 'covered']) {
 console.log('## A8');
 for (const delay of [...new Set(rows('a8.jsonl').map(x => x.delayS ?? 0))].sort((a, b) => a - b)) {
 	console.log(`### streams started ${delay} s after the workbench was up (+8 s)`);
-	for (const arm of ['before', 'after']) {
+	for (const arm of ['before', 'after', 'nogate']) {
 		// Valid only when the chat on screen was seen streaming while the keys went in.
 		const r = rows('a8.jsonl').filter(x => x.arm === arm && x.streamed === true && (x.delayS ?? 0) === delay);
 		const loads = r.map(x => x.loadStart); // the gate is before launch: 5 streams raise the load themselves

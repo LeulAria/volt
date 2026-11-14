@@ -13,6 +13,9 @@ export const HOME = process.env.HOME;
 export const ARMS = {
 	before: '/Users/leularia/Desktop/VOLT/volt-e5-base',
 	after: '/Users/leularia/Desktop/VOLT/volt-e5-idle',
+	// The after tree with the keystroke-first frame gate off (ccbbbbc3749): its out/ file is patched before launch so
+	// yieldsToInput always says false, and restored before an `after` launch. Shares after's profile.
+	nogate: '/Users/leularia/Desktop/VOLT/volt-e5-idle',
 	// The shared minified "before" build (launch agent; read-only, launched with its own profile).
 	minbase: `${process.env.HOME}/.volt-r5/min/base/VOLT.app`,
 };
@@ -21,8 +24,23 @@ export const REPLAY = Number(process.env.SMOOTH_REPLAY ?? 18977);
 export const FOLDER = process.env.SMOOTH_FOLDER ?? `${HOME}/.volt-r5/idle/arena`;
 export const DATA = process.env.SMOOTH_DATA ?? join(here, '../../data/idle');
 export const NATIVE = process.env.SMOOTH_NATIVE ?? `${HOME}/.volt-r4/smooth/native/bin/ademark-native`;
-export const ud = arm => `${HOME}/.volt-r5/idle/ud/${arm}`;
-export const ext = arm => `${HOME}/.volt-r5/idle/ext/${arm}`;
+export const ud = arm => `${HOME}/.volt-r5/idle/ud/${arm === 'nogate' ? 'after' : arm}`;
+export const ext = arm => `${HOME}/.volt-r5/idle/ext/${arm === 'nogate' ? 'after' : arm}`;
+
+const GATE_JS = `${ARMS.after}/out/vs/workbench/contrib/voltAgent/browser/editor/agentInputFrame.js`;
+const GATE_ON = 'return states.get(win)?.yielding ?? false;';
+const GATE_OFF = 'return false; /* a8 nogate arm */';
+/** Turns the after tree's keystroke-first frame gate on or off in out/ (only while no instance of it runs). */
+export function setGate(on) {
+	const src = readFileSync(GATE_JS, 'utf8');
+	const next = on ? src.replace(GATE_OFF, GATE_ON) : src.replace(GATE_ON, GATE_OFF);
+	if (!next.includes(on ? GATE_ON : GATE_OFF)) {
+		throw new Error('gate patch failed');
+	}
+	if (next !== src) {
+		writeFileSync(GATE_JS, next);
+	}
+}
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /** 1-minute load average. */
@@ -106,6 +124,9 @@ export function cleanEnv() {
 export function launch(arm, { keepRendering = false, args = [] } = {}) {
 	mkdirSync(ud(arm), { recursive: true });
 	mkdirSync(ext(arm), { recursive: true });
+	if (arm === 'after' || arm === 'nogate') {
+		setGate(arm === 'after');
+	}
 	const log = openSync(`${ud(arm)}.log`, 'a');
 	const keep = keepRendering ? ['--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-background-timer-throttling'] : [];
 	const inspect = process.env.SMOOTH_INSPECT === '1' ? [`--inspect=${process.env.SMOOTH_INSPECT_PORT ?? 9987}`] : [];
