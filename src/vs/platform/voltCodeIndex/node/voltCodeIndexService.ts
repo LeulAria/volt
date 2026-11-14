@@ -12,8 +12,15 @@ import { ILogService } from '../../log/common/log.js';
 import { IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltFffStatus, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexService, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeImportersRequest, IVoltCodeImportersResult, IVoltCodeStructuralRequest, IVoltCodeStructuralResult, IVoltCodeStructureRequest, IVoltCodeStructureResult, IVoltLspBudget, IVoltLspLimits, IVoltWorkspaceActivity } from '../common/voltCodeIndex.js';
 import type { ICodeIndexWorker } from './codeIndexEngine.js';
 
-/** The index process (and its file watchers) stays up this long after the last use. */
+/** The index process (and its file watchers) stays up this long after the last search. */
 const KEEP_ALIVE_MS = 20 * 60_000;
+/**
+ * After a warm-up alone (a workspace opened, an agent about to start) it stays this long: long enough for the
+ * search that usually follows to find it hot, short enough that a window left alone does not keep a 50-60 MB
+ * process and its watchers for 20 minutes (ADEMark A5/A6, round 6). The index is on disk; the next use forks
+ * the process again and it catches up from file sizes and mtimes.
+ */
+const WARM_KEEP_ALIVE_MS = 90_000;
 /** Then it exits once no call is in flight for this long. */
 const IDLE_EXIT_MS = 30_000;
 /** A workbench that has not reported for this long is forgotten (it crashed or closed). */
@@ -84,17 +91,26 @@ export class VoltCodeIndexService extends Disposable implements IVoltCodeIndexSe
 		return this.worker!;
 	}
 
-	/** Holds the process (and its watchers) open while Volt is using the index. */
-	private use(): ICodeIndexWorker {
+	/** Until when the process is held open; a shorter hold never cuts a longer one. */
+	private keepAliveUntil = 0;
+
+	/** Holds the process (and its watchers) open while Volt is using the index, for `holdMs` after this use. */
+	private use(holdMs = KEEP_ALIVE_MS): ICodeIndexWorker {
 		const worker = this.connect();
 		if (!this.keepAlive) {
 			this.keepAlive = worker.onDidChangeStatus(() => { /* only held to keep the process alive */ });
+			this.keepAliveUntil = 0;
 		}
-		clearTimeout(this.keepAliveTimer);
-		this.keepAliveTimer = setTimeout(() => {
-			this.keepAlive?.dispose();
-			this.keepAlive = undefined;
-		}, KEEP_ALIVE_MS);
+		const until = Date.now() + holdMs;
+		if (until > this.keepAliveUntil) {
+			this.keepAliveUntil = until;
+			clearTimeout(this.keepAliveTimer);
+			this.keepAliveTimer = setTimeout(() => {
+				this.keepAlive?.dispose();
+				this.keepAlive = undefined;
+				this.keepAliveUntil = 0;
+			}, holdMs);
+		}
 		return worker;
 	}
 
@@ -104,7 +120,7 @@ export class VoltCodeIndexService extends Disposable implements IVoltCodeIndexSe
 	}
 
 	async warm(root: string, options?: IVoltCodeIndexOptions): Promise<void> {
-		await this.use().warm(root, options).catch(err => this.logService.warn('[code index] warm failed', err));
+		await this.use(WARM_KEEP_ALIVE_MS).warm(root, options).catch(err => this.logService.warn('[code index] warm failed', err));
 	}
 
 	search(request: IVoltCodeIndexSearchRequest): Promise<IVoltCodeIndexSearchResult> {
