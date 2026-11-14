@@ -231,9 +231,11 @@ function describeComposer(win: Window, composer: NonNullable<IWindowSnapshotCapt
  */
 export function collectRuntimeCss(doc: Document, classes: ReadonlySet<string>): string {
 	const out: string[] = [];
+	const sheets = [...doc.styleSheets, ...(doc.adoptedStyleSheets ?? [])];
+	const icons = iconsInUse(sheets, classes);
 	const keep = (rule: CSSRule): string | undefined => {
 		if (rule instanceof CSSStyleRule) {
-			return selectorApplies(rule.selectorText, classes) ? rule.cssText : undefined;
+			return selectorApplies(rule.selectorText, classes) ? withUsedIconsOnly(rule, icons) : undefined;
 		}
 		if (rule instanceof CSSMediaRule || rule instanceof CSSSupportsRule) {
 			const inner = [...rule.cssRules].map(keep).filter(Boolean);
@@ -247,7 +249,6 @@ export function collectRuntimeCss(doc: Document, classes: ReadonlySet<string>): 
 		}
 		return undefined;
 	};
-	const sheets = [...doc.styleSheets, ...(doc.adoptedStyleSheets ?? [])];
 	for (const sheet of sheets) {
 		if (sheet.href) {
 			continue;
@@ -266,6 +267,81 @@ export function collectRuntimeCss(doc: Document, classes: ReadonlySet<string>): 
 		}
 	}
 	return out.join('\n');
+}
+
+const ICON_VARIABLE = /^--vscode-icon-(.+)-(content|font-family)$/;
+const ICON_REFERENCE = /var\(\s*--vscode-icon-([\w-]+?)-(?:content|font-family)\s*[,)]/g;
+
+/** Icons the product's stylesheet names by variable (`content: var(--vscode-icon-x-content)`); it does not change while the window lives. */
+const productIconReferences = new WeakMap<CSSStyleSheet, readonly string[]>();
+
+function iconReferences(rules: CSSRuleList, into: Set<string>): void {
+	for (const rule of rules) {
+		if (rule instanceof CSSStyleRule) {
+			const text = rule.style.cssText;
+			if (text.includes('--vscode-icon-')) {
+				for (const match of text.matchAll(ICON_REFERENCE)) {
+					into.add(match[1]);
+				}
+			}
+		} else if (rule instanceof CSSGroupingRule) {
+			iconReferences(rule.cssRules, into);
+		}
+	}
+}
+
+/** The icons the snapshot can show: its `codicon-<id>` classes, and every icon a stylesheet names by its variable. */
+function iconsInUse(sheets: readonly CSSStyleSheet[], classes: ReadonlySet<string>): ReadonlySet<string> {
+	const icons = new Set<string>();
+	for (const name of classes) {
+		if (name.startsWith('codicon-')) {
+			icons.add(name.slice('codicon-'.length));
+		}
+	}
+	for (const sheet of sheets) {
+		let found = sheet.href ? productIconReferences.get(sheet) : undefined;
+		if (!found) {
+			const into = new Set<string>();
+			try {
+				iconReferences(sheet.cssRules, into);
+			} catch {
+				continue;
+			}
+			found = [...into];
+			if (sheet.href) {
+				productIconReferences.set(sheet, found);
+			}
+		}
+		for (const id of found) {
+			icons.add(id);
+		}
+	}
+	return icons;
+}
+
+/**
+ * A rule's text without the icon variables (`--vscode-icon-<id>-content`, `-font-family`) of icons
+ * the snapshot does not show. The icon registry declares every icon on `:root` (about 100 KB of a
+ * snapshot otherwise), and the next start parses and applies it before the workbench's own copy.
+ */
+function withUsedIconsOnly(rule: CSSStyleRule, icons: ReadonlySet<string>): string {
+	const style = rule.style;
+	let dropped = false;
+	const kept: string[] = [];
+	for (let i = 0; i < style.length; i++) {
+		const name = style[i];
+		const icon = ICON_VARIABLE.exec(name);
+		if (icon && !icons.has(icon[1])) {
+			dropped = true;
+			continue;
+		}
+		const priority = style.getPropertyPriority(name);
+		kept.push(`${name}: ${style.getPropertyValue(name)}${priority ? ` !${priority}` : ''};`);
+	}
+	if (!dropped) {
+		return rule.cssText;
+	}
+	return kept.length ? `${rule.selectorText} { ${kept.join(' ')} }` : '';
 }
 
 /** Whether a selector list can match inside the snapshot: one of its selectors names only classes the snapshot uses, and no id. */

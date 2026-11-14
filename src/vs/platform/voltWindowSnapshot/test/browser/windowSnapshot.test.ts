@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { mainWindow } from '../../../../base/browser/window.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { captureWindowSnapshot, selectorApplies } from '../../browser/windowSnapshotCapture.js';
+import { captureWindowSnapshot, collectRuntimeCss, selectorApplies } from '../../browser/windowSnapshotCapture.js';
 import { isWindowSnapshotShown, paintWindowSnapshot, readSnapshotInput, removeWindowSnapshot } from '../../browser/windowSnapshotPaint.js';
 import { canPaintVoltWindowSnapshot, IVoltWindowSnapshot, VOLT_WINDOW_SNAPSHOT_ID, VOLT_WINDOW_SNAPSHOT_INPUT_ID, VOLT_WINDOW_SNAPSHOT_SHOWN_CLASS, voltWindowSnapshotKey } from '../../common/windowSnapshot.js';
 
@@ -200,5 +200,25 @@ suite('Volt window snapshot', () => {
 		assert.ok(selectorApplies('.nope, .monaco-workbench .codicon', used));
 		assert.ok(!selectorApplies('.codicon-file::before', used));
 		assert.ok(!selectorApplies('#id .codicon', used));
+	});
+
+	test('keeps the icon variables of icons the snapshot shows or a stylesheet names, drops the rest', () => {
+		const style = mainWindow.document.createElement('style');
+		style.textContent = `:root { --vscode-icon-vsnap-add-content: '+'; --vscode-icon-vsnap-add-font-family: 'codicon'; --vscode-icon-vsnap-close-content: 'x'; --vscode-icon-vsnap-close-font-family: 'codicon'; --vscode-icon-vsnap-chevron-content: 'v'; --vsnap-color: red; }
+			.vsnap-twistie::before { content: var(--vscode-icon-vsnap-chevron-content); }
+			:root { --vsnap-only-plain: 1px; }`;
+		mainWindow.document.head.appendChild(style);
+		try {
+			const css = collectRuntimeCss(mainWindow.document, new Set(['codicon', 'codicon-vsnap-add', 'vsnap-twistie']));
+			assert.ok(css.includes('--vscode-icon-vsnap-add-content'));
+			assert.ok(css.includes('--vscode-icon-vsnap-add-font-family'));
+			assert.ok(css.includes('--vscode-icon-vsnap-chevron-content'), 'named by a rule through var()');
+			assert.ok(css.includes('--vsnap-color: red'));
+			assert.ok(css.includes('--vsnap-only-plain'));
+			assert.ok(!css.includes('--vscode-icon-vsnap-close-content'));
+			assert.ok(!css.includes('--vscode-icon-vsnap-close-font-family'));
+		} finally {
+			style.remove();
+		}
 	});
 });
