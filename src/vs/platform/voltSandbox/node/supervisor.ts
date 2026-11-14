@@ -212,8 +212,12 @@ const DENIAL_COALESCE_MS = 250;
 const HOST_EXIT_DENIAL_READ_MS = 3_000;
 /** How long one read of a running host's refusals may take. */
 const HOST_DENIAL_READ_MS = 10_000;
-/** When a launch's refusals are read in its first seconds (ms after the launch). */
-const HOST_START_READS_MS = [3_000, 20_000];
+/**
+ * When a launch's refusals are read in its first seconds (ms after the launch): once, when the plugins have
+ * loaded. A second read at 20 s cost another `log show` (0.3-0.6 s of CPU, seconds under load) for every host a
+ * warm-up started, while a host that works is read 2 s after its activity anyway (round 6, A6).
+ */
+const HOST_START_READS_MS = [3_000];
 /** A host that works is read this long after its first message... */
 const HOST_QUIET_READ_MS = 2_000;
 /** ...and never more often than this (a read is about 0.3-0.6 s of CPU in `log`/`logd`). */
