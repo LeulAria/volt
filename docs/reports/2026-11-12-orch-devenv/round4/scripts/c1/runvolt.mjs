@@ -187,7 +187,11 @@ async function run(id) {
 	await c.key('a', 'KeyA', 65, 4);
 	await c.key('Backspace', 'Backspace', 8);
 	await sleep(300);
-	await c.send('Input.insertText', { text: prompt });
+	// A paste, as ADEMark's harness does (Cmd+V): typed text (Input.insertText) goes through the composer's
+	// auto-indent, which re-indented nested bullets of the C1 text. A synthetic paste event carries the text in its
+	// own DataTransfer, so the user's clipboard is never touched.
+	const pasted = await c.evaluate(`(() => { const t = [...document.querySelectorAll('textarea.inputarea')].filter(e => e.offsetParent).at(-1); if (!t) { return false; } t.focus(); const dt = new DataTransfer(); dt.setData('text/plain', ${JSON.stringify(prompt)}); t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); return true; })()`);
+	if (!pasted) { throw new Error('could not paste the prompt'); }
 	await sleep(600);
 	const sessionsDir = join(USER, 'agentSessions', 'sessions');
 	mkdirSync(sessionsDir, { recursive: true });

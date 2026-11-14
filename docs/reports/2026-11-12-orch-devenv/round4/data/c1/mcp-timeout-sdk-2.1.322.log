@@ -1,0 +1,13 @@
+2026-11-14T00:31:22.282Z sleep MCP on 19949
+== MCP_TOOL_TIMEOUT=unset 2.1.322 (Claude Code)
+2026-11-14T00:31:29.998Z call 2: sleep 90 s
+2026-11-14T00:32:30.747Z call 2: client hung up after 60.7 s
+The sleep tool returned this error text exactly:
+
+The operation timed out.
+== took 72 s
+== MCP_TOOL_TIMEOUT=600000 2.1.322 (Claude Code)
+2026-11-14T00:32:43.679Z call 2: sleep 90 s
+2026-11-14T00:34:13.682Z call 2: answered after 90.0 s
+slept 90 s
+== took 101 s
