@@ -10,6 +10,7 @@ import { isWindows } from '../../../../../base/common/platform.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { acpLaunchFor, cliAgentDefinition, cliLoginForNotice, grokAcpArgs, npxCachedLaunchScript, runCli } from '../../browser/agents/cliAgents.js';
+import { taskWaitMs } from '../../common/orchestration/agentTasks.js';
 
 /** Emits the process output from inside spawn(), before the caller learns the id: the IPC race. */
 class FastStdio implements IVoltStdioService {
@@ -88,6 +89,13 @@ suite('runCli', () => {
 		const claude = cliAgentDefinition('claude-code');
 		assert.deepStrictEqual(acpLaunchFor(claude, 'claude', ['acp'], true), { command: 'claude-agent-acp', args: [] });
 		assertNpxLaunch(acpLaunchFor(claude, 'claude', [], false), 'claude-agent-acp', '@agentclientprotocol/claude-agent-acp@0.106.0');
+	});
+
+	test('Claude waits for an MCP tool longer than Volt\'s longest task wait', () => {
+		// Claude Code's own limit is 60 s ("The operation timed out."): a wait_tasks long-poll of
+		// TASK_WAIT_LONG_MS would be cut every minute and the lead woken for nothing.
+		const timeout = Number(cliAgentDefinition('claude-code')?.acpEnv?.MCP_TOOL_TIMEOUT);
+		assert.ok(timeout > taskWaitMs(true) + 30_000, `MCP_TOOL_TIMEOUT ${timeout} must outlast ${taskWaitMs(true)} ms`);
 	});
 
 	test('Codex launches the ACP adapter, never `codex acp`', () => {
