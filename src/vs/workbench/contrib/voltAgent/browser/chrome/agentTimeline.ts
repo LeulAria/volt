@@ -56,7 +56,28 @@ export function partitionAssistantText(text: string): Array<{ kind: 'thought' | 
 	return parts;
 }
 
+/**
+ * Paragraphs already classified. A streaming reply is partitioned again on every frame, and every
+ * paragraph but the one being written is the same string as last frame: its kind is looked up, not
+ * found again with the preview-URL and narration scans (1.3 s of a 67 s stream, growing with the reply).
+ */
+const paragraphKinds = new Map<string, 'thought' | 'reply'>();
+const PARAGRAPH_KINDS_MAX = 4096;
+
 function classifyAssistantParagraph(para: string): 'thought' | 'reply' {
+	const known = paragraphKinds.get(para);
+	if (known) {
+		return known;
+	}
+	const kind = classifyAssistantParagraphNow(para);
+	if (paragraphKinds.size >= PARAGRAPH_KINDS_MAX) {
+		paragraphKinds.clear();
+	}
+	paragraphKinds.set(para, kind);
+	return kind;
+}
+
+function classifyAssistantParagraphNow(para: string): 'thought' | 'reply' {
 	if (extractLocalPreviewUrl(para) || looksLikeAnswerForm(para)) {
 		return 'reply';
 	}
