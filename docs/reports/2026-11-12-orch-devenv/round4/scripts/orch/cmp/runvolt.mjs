@@ -50,6 +50,8 @@ const ARMS = {
 	// not the call shape (round 3's said "ONE call"), so each build follows its own tool description.
 	'volt-r4-base': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, project: true, family: 'voltn' },
 	'volt-r4': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, project: true, family: 'voltn' },
+	// e4/orch at 7aa4e6dc999 (a waited delegate_task returns the reports it held back), same instance as volt-r4.
+	'volt-r4b': { model: 'agent:seed-claude-code:claude-haiku-5-5', sub: 'agent:seed-claude-code:claude-haiku-5-5', label: /Haiku 5\.5/, project: true, family: 'voltn' },
 	// Cursor's catalog in Volt (from its ACP model list): base ids, effort/thinking are options.
 	'volt-cursor-sonnet': { model: 'agent:seed-cursor-acp:claude-sonnet-5', sub: 'agent:seed-cursor-acp:claude-sonnet-5', label: /Sonnet 5(?!\.)/ },
 	'volt-cursor-grok': { model: 'agent:seed-cursor-acp:grok-4.7', sub: 'agent:seed-cursor-acp:grok-4.7', label: /Grok 4\.7/ },
