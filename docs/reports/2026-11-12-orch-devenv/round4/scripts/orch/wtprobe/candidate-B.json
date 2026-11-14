@@ -1,0 +1,1 @@
+{"type":"string","enum":["shared","worktree"],"description":"worktree: its own branch and checkout, for parallel edits of the same files; merge the branch it names."}

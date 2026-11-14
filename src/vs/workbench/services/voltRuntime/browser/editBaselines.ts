@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { isMacintosh } from '../../../../base/common/platform.js';
+import { isEqualOrParent } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IVoltEvent, IVoltToolDiff } from '../common/events.js';
@@ -156,6 +158,30 @@ export class EditBaselineTracker {
 }
 
 const NOT_READ = Symbol('notRead');
+
+/** macOS links these top-level folders into /private: one file has both names. */
+const MAC_PRIVATE_LINKS = /^\/(?:tmp|var|etc)(?=\/|$)/;
+
+/**
+ * `uri` named inside `root`, or undefined when it is outside. An agent may name a file by its real
+ * path (`/private/tmp/...` on macOS, since its process resolves its cwd) while the chat's folder is
+ * `/tmp/...`, or the other way round; such a file is in the folder and gets the folder's name.
+ */
+export function uriInsideRoot(uri: URI, root: URI, mac = isMacintosh): URI | undefined {
+	if (isEqualOrParent(uri, root)) {
+		return uri;
+	}
+	if (!mac || uri.scheme !== 'file' || root.scheme !== 'file' || uri.authority !== root.authority) {
+		return undefined;
+	}
+	const real = (path: string) => MAC_PRIVATE_LINKS.test(path) ? `/private${path}` : path;
+	const rootPath = real(root.path).replace(/\/$/, '');
+	const path = real(uri.path);
+	if (path !== rootPath && !path.startsWith(`${rootPath}/`)) {
+		return undefined;
+	}
+	return root.with({ path: root.path.replace(/\/$/, '') + path.slice(rootPath.length) });
+}
 
 function mergeDiffs(existing: IVoltToolDiff[], incoming: readonly IVoltToolDiff[]): IVoltToolDiff[] {
 	const out = [...existing];

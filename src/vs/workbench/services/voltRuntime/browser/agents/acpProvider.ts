@@ -495,7 +495,9 @@ export class AcpAgentProvider implements IAgentProvider {
 		const sessionId = live.handle.providerSessionId ?? live.handle.id;
 		const config = this.bridge.translate(policy, { configOptions: live.configOptions, modes: live.modes });
 		const strategy = this.sandboxStrategyOf(live);
-		const updates = (config.configOptions ?? []).map(update => ({ id: update.id, value: codexSandboxValue(update.id, update.value, strategy) }));
+		// Codex's own sandbox switches off inside Volt's (its `mode` and `sandbox` values). Other agents'
+		// options of those names mean other things: Claude's `mode` is its permission mode.
+		const updates = (config.configOptions ?? []).map(update => ({ id: update.id, value: this.id === 'codex' ? codexSandboxValue(update.id, update.value, strategy) : update.value }));
 		// Independent settings (permission mode, approval policy, sandbox, session mode) go out together
 		// instead of one round trip after another; values the session already has are not sent at all.
 		const applied = await Promise.all([

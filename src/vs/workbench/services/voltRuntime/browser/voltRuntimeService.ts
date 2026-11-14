@@ -72,7 +72,7 @@ import { AcpAgentProvider, IAcpBackgroundTask, IAcpFileWrite, IAcpSupervisionOpt
 import { AcpLoopDetector } from '../common/harness/acpLoopDetector.js';
 import { LOOP_NOTICE_TITLE } from '../common/harness/supervisor.js';
 import { DeepseekDirective, IDeepseekStep, IDeepseekStreamOptions, PROMPT_CACHE_KEEPALIVE_SETTING, runDeepseekLoop, watchedStream } from '../common/deepseek/loop.js';
-import { EditBaselineTracker } from './editBaselines.js';
+import { EditBaselineTracker, uriInsideRoot } from './editBaselines.js';
 import './host/hostToolService.js';
 import './memory/voltMemoryService.js';
 import { clearClaudeModelCache } from './agents/claudeCatalog.js';
@@ -100,7 +100,7 @@ import { applyCompaction, clearOldToolResults, COMPACTION_SYSTEM, compactionBoun
 import { chooseEffort, EffortLevel, higherEffort } from '../common/deepseek/effort.js';
 import { IToolDocuments, runtimeToolDocuments } from './tools/fileTools.js';
 import { ISubagentRequest, NATIVE_ASK_QUESTION_TOOL_NAME } from './tools/metaTools.js';
-import { createRuntimeCodeIntel, IRuntimeCodeIntel } from './host/codeIntelHost.js';
+import { createRuntimeCodeIntel, DIAGNOSED_EXTENSIONS, IRuntimeCodeIntel } from './host/codeIntelHost.js';
 import { IMcpChat, McpHost } from './host/mcpHost.js';
 import { SANDBOX_SUPERVISOR_SETTING } from '../../../../platform/voltSandbox/common/sandboxWorkloads.js';
 import { isMcpTrustAttestedByApproval, IVoltMcpApprovalRecord, VoltMcpApprovalStore } from '../common/harness/mcpApprovals.js';
@@ -527,8 +527,6 @@ const REPLAY_TIMEOUT_MS = 20_000;
 const INTERRUPTED_BY_RESTART = 'Volt restarted while this call was running, so it was cut off before it returned. It may have taken effect in part or in full: check its effect first (read the file, git status, list the output), then run it again only if it is still needed.';
 const NOT_STARTED_BEFORE_RESTART = 'Volt restarted before this call started, so it did not run. Make it again if it is still needed.';
 
-/** Languages whose editor services report diagnostics worth waiting for. */
-const DIAGNOSED_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|cs|c|cc|cpp|h|hpp|php|rb|swift|dart|vue|svelte|css|scss|less|json)$/i;
 const SUBAGENT_TOOLS = ['read_file', 'list_dir', 'grep', 'glob', 'diagnostics', 'code_nav', 'git_status', 'git_diff', 'git_log', 'git_show', 'skill', 'state_read'];
 /** Claude Code tool names in a subagent's `tools:` list, as Volt's tools. */
 const SUBAGENT_TOOL_ALIASES: Record<string, readonly string[]> = {
@@ -5961,7 +5959,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			: posix.isAbsolute(path) || /^[a-zA-Z]:[\\/]/.test(path)
 				? root.with({ path: URI.file(path).path })
 				: joinPath(root, path.replace(/^\.\//, ''));
-		return isEqualOrParent(uri, root) ? uri : undefined;
+		return uriInsideRoot(uri, root);
 	}
 
 	private onAcpFileWrite(write: IAcpFileWrite): void {

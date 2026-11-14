@@ -147,6 +147,10 @@ const IDE_WORK: readonly (readonly [IdeWork, RegExp])[] = [
 	['rename', /\brename\b(?:[^.?!]|\.(?=\w)){0,60}\b(?:to|as|everywhere|across)\b/i],
 ];
 
+/** Node's own test runner, which the volt tests tool does not run (agents tried the tool first, then the shell). */
+const UNCOVERED_TEST_RUNNER = /\bnode(?::test\b| --test\b)/i;
+const COVERED_TEST_RUNNER = /\b(?:vitest|jest|mocha|pytest|go test|cargo test)\b/i;
+
 const CODE_FENCE = /```/;
 
 /** Parts of a UI that alternatives are asked for. */
@@ -254,7 +258,10 @@ export function classifyIntent(text: string, mode: VoltMode, context: IIntentCon
 	if (wantsDevice) { signals.push('device'); }
 
 	// Questions (and Ask/Plan mode) do not rename anything, whatever they mention.
-	const ideWork = hasWorkspace ? IDE_WORK.filter(([kind, pattern]) => pattern.test(raw) && !(kind === 'rename' && (questionShape || mode === 'ask' || mode === 'plan'))).map(([kind]) => kind) : [];
+	// Node's own runner (node --test) is not the tests tool's: no hint that sends the agent there first.
+	const ideWork = hasWorkspace ? IDE_WORK.filter(([kind, pattern]) => pattern.test(raw)
+		&& !(kind === 'rename' && (questionShape || mode === 'ask' || mode === 'plan'))
+		&& !(kind === 'tests' && UNCOVERED_TEST_RUNNER.test(raw) && !COVERED_TEST_RUNNER.test(raw))).map(([kind]) => kind) : [];
 	if (ideWork.length) { signals.push(`ide:${ideWork.join(',')}`); }
 
 	let lane: VoltLane;

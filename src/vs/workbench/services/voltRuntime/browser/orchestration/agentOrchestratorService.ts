@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { DeferredPromise, IntervalTimer, raceTimeout, timeout } from '../../../../../base/common/async.js';
-import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
@@ -178,6 +178,8 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	readonly onDidChangeTasks: Event<readonly string[]> = this._onDidChangeTasks.event;
 	private readonly _onDidStop = this._register(new Emitter<string>());
 	readonly onDidStop: Event<string> = this._onDidStop.event;
+	/** A chat began writing another delegate_task call (its thread and the call's id). */
+	private readonly _onDidStartDelegateCall = this._register(new Emitter<{ readonly threadId: string; readonly callId: string }>());
 
 	constructor(
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
@@ -1439,6 +1441,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 					const calls = this.delegateCalls.get(threadId) ?? [];
 					if (!calls.some(call => call.callId === event.callId)) {
 						calls.push({ callId: event.callId, turnId: thread.active?.id });
+						this._onDidStartDelegateCall.fire({ threadId, callId: event.callId });
 					}
 					this.delegateCalls.set(threadId, calls.slice(-16));
 					return;
@@ -2090,6 +2093,10 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 		const team = typeof args.team === 'string' && args.team.trim() ? args.team.trim() : undefined;
 		const blind = stringListArg(args.blind, MAX_UPSTREAM_BLIND, 40);
 		const quiet = args.quiet === true;
+		// Parts an agent starts in calls of their own in one turn (as it is told to, so each starts as
+		// soon as it is written) report together, as the parts of one call do.
+		const turnId = !single && !multitask ? parent?.active?.id : undefined;
+		batch ??= turnId ? `turn-${turnId}` : undefined;
 		const step = this.apply({
 			type: 'task.spawn',
 			spawn: {
@@ -2141,13 +2148,28 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			return { error: step.decision.rejected };
 		}
 		const id = step.decision.taskId!;
+		let waitCut = false;
 		if (args.wait === true) {
-			await this.waitFor([id], false, this.waitBudget(parentId), token);
+			// Calls of one message run one after another: a wait here would hold back the next task.
+			const cut = new CancellationTokenSource(token);
+			const listener = this._onDidStartDelegateCall.event(started => {
+				if (started.threadId === parentId && started.callId !== toolCallId) {
+					waitCut = true;
+					cut.cancel();
+				}
+			});
+			try {
+				await this.waitFor([id], false, this.waitBudget(parentId), cut.token);
+			} finally {
+				listener.dispose();
+				cut.dispose();
+			}
 		}
 		const task = this.state.tasks[id];
 		const lines = [
 			step.decision.reused ? `This task is already running (task_id: ${id}); it was not started again.` : `Started task ${id}.`,
 			describeTask(task, Date.now(), { includeResult: true }),
+			...(waitCut && !isTerminalTaskState(task.state) ? ['Not waited for: you are starting another task. Call wait_tasks after the last one, or end your turn.'] : []),
 		];
 		if (!step.decision.reused) {
 			const notes = [...lintTaskBrief(brief, role, contract, scope, contextLevel), ...this.scopeOverlaps(task)];
@@ -2156,7 +2178,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 		}
 		if (isTerminalTaskState(task.state)) {
-			this.apply({ type: 'task.ack', taskIds: [id] });
+			// A waited call returns the reports it held back too: its upstream tasks' and its batch mates' that
+			// finished meanwhile and were not delivered (the parent sat in this call). Otherwise the parent asks
+			// wait_tasks for them next, one more model round trip before its answer.
+			const held = args.wait === true ? this.visibleTasks(parentId).filter(other => other.id !== id && isTerminalTaskState(other.state) && other.delivery === 'pending'
+				&& ((task.batch && other.batch === task.batch) || task.after?.includes(other.id))) : [];
+			lines.push(...held.map(other => describeTask(other, Date.now(), { includeResult: true })));
+			this.apply({ type: 'task.ack', taskIds: [id, ...held.map(other => other.id)] });
 		} else {
 			lines.push('Its report is delivered to this chat as a new message when it finishes; you may end your turn. Call wait_tasks only if you need the result before you can continue.');
 		}

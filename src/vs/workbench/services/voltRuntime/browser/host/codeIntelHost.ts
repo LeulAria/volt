@@ -20,10 +20,16 @@ import { ICallEdge, ICodeFix, ICodeIntelHost, ICodeLocation, ICodeRange, ICodeSy
 
 const SYMBOL_KINDS = ['file', 'module', 'namespace', 'package', 'class', 'method', 'property', 'field', 'constructor', 'enum', 'interface', 'function', 'variable', 'constant', 'string', 'number', 'boolean', 'array', 'object', 'key', 'null', 'enum member', 'struct', 'event', 'operator', 'type parameter'];
 
-/** A written file gets this long for its language service to report on the new text. */
+/** A written file counts as just written this long: its next check waits for fresh markers. */
 const FRESH_WRITE_MS = 15_000;
+/** A written file's language service gets this long, counted from the write, to report on the new text. */
 const MARKER_WAIT_MS = 3_000;
 const MARKER_SETTLE_MS = 400;
+/** A document opened this recently may still be activating its language's extension. */
+const ACTIVATION_GRACE_MS = 1_000;
+
+/** Files language services usually check (compilers, type checkers, linters). */
+export const DIAGNOSED_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|cs|c|cc|cpp|h|hpp|php|rb|swift|dart|vue|svelte|css|scss|less|json)$/i;
 /** Opened documents stay open a while so repeated checks are instant. */
 const KEEP_OPEN_MS = 90_000;
 const MAX_OPEN = 24;
@@ -63,6 +69,23 @@ export function setCodeIntelHierarchy(hierarchy: ICodeIntelHierarchy | undefined
 }
 
 /**
+ * Asks a document's language service directly whether its current text has errors. Push-only
+ * services (TypeScript) send nothing for a file that was clean and stays clean, so without this
+ * answer a check can only wait out its cap. Set by the window's code intelligence contribution
+ * (commands live outside this layer).
+ */
+export interface ICodeIntelErrorProbe {
+	/** True: the language service checked this text and found no errors. Undefined: it cannot say. */
+	errorFree(model: ITextModel, token: CancellationToken): Promise<boolean | undefined>;
+}
+
+let codeIntelErrorProbe: ICodeIntelErrorProbe | undefined;
+
+export function setCodeIntelErrorProbe(probe: ICodeIntelErrorProbe | undefined): void {
+	codeIntelErrorProbe = probe;
+}
+
+/**
  * The agent server has no editor models or language servers: it sets a factory whose code
  * intelligence asks an open Volt window. Unset, the runtime uses this window's {@link CodeIntelHost}.
  */
@@ -84,7 +107,9 @@ export function columnOfSymbol(text: string, symbol: string): number | undefined
 export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 
 	private readonly writes = new ResourceMap<number>();
-	private readonly open = new ResourceMap<{ ref: IReference<IResolvedTextEditorModel>; timer: ReturnType<typeof setTimeout> }>();
+	/** When markers last changed on a file written recently. */
+	private readonly reported = new ResourceMap<number>();
+	private readonly open = new ResourceMap<{ ref: IReference<IResolvedTextEditorModel>; timer: ReturnType<typeof setTimeout>; openedAt: number }>();
 	/** Settings > Code Intelligence: which files language servers may be asked about. */
 	private policy: (uri: URI) => boolean = () => true;
 
@@ -96,6 +121,15 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	) {
 		super();
 		this._register({ dispose: () => this.closeAll() });
+		this._register(this.markerService.onMarkerChanged(resources => {
+			if (this.writes.size) {
+				for (const resource of resources) {
+					if (this.writes.has(resource)) {
+						this.reported.set(resource, Date.now());
+					}
+				}
+			}
+		}));
 	}
 
 	setLspPolicy(policy: (uri: URI) => boolean): void {
@@ -123,9 +157,17 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 		return undefined;
 	}
 
-	/** Called for every agent write, so the next diagnostics call waits for fresh results. */
+	/**
+	 * Called for every agent write, so the next diagnostics call waits for fresh results. The file
+	 * is opened for its language service now, so it checks the new text while the agent goes on and
+	 * the check at the turn's end rarely has to wait.
+	 */
 	noteWrite(uri: URI): void {
 		this.writes.set(uri, Date.now());
+		this.reported.delete(uri);
+		if (DIAGNOSED_EXTENSIONS.test(uri.path) && this.policy(uri)) {
+			this.model(uri).catch(() => { /* deleted, or not a text file */ });
+		}
 	}
 
 	/** Error markers on a file right now, counted by message (line numbers shift with edits). */
@@ -448,37 +490,121 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 		}
 	}
 
-	/** Opens the document for its language service and waits for markers when it was just written. */
+	/**
+	 * Opens the document for its language service and, when it was just written, waits for markers
+	 * on the new text: until they settle, at most {@link MARKER_WAIT_MS} after the write. A clean file
+	 * gets no marker event at all, so the wait is counted from the write (when the file was opened,
+	 * see {@link noteWrite}), not from this call. When the language service itself answers that the
+	 * new text has no errors ({@link ICodeIntelErrorProbe}), the wait ends {@link MARKER_SETTLE_MS}
+	 * after the write instead. A file no language service owns is not waited for.
+	 */
 	private async freshen(uri: URI): Promise<void> {
 		const wasOpen = this.open.has(uri);
-		await this.model(uri).catch(() => undefined);
+		const model = await this.model(uri).catch(() => undefined);
 		const written = this.writes.get(uri);
 		const recent = written !== undefined && Date.now() - written < FRESH_WRITE_MS;
-		if (wasOpen && !recent) {
+		if (!model || (wasOpen && !recent)) {
+			this.forgetWrite(uri);
 			return;
 		}
+		const since = recent ? written : Date.now();
+		if (!this.hasLanguageService(model)) {
+			const openedAt = this.open.get(uri)?.openedAt ?? 0;
+			const grace = openedAt + ACTIVATION_GRACE_MS - Date.now();
+			if (grace > 0) {
+				await new Promise(resolve => setTimeout(resolve, grace));
+			}
+			if (!this.hasLanguageService(model)) {
+				this.forgetWrite(uri);
+				return; // nothing will report on it
+			}
+		}
+		const cancel = new CancellationTokenSource();
 		await new Promise<void>(resolve => {
+			let finished = false;
 			let settle: ReturnType<typeof setTimeout> | undefined;
 			const done = () => {
+				if (finished) {
+					return;
+				}
+				finished = true;
 				clearTimeout(cap);
 				if (settle) {
 					clearTimeout(settle);
 				}
 				listener.dispose();
+				cancel.cancel();
 				resolve();
 			};
-			const cap = setTimeout(done, MARKER_WAIT_MS);
+			const settleFrom = (at: number) => {
+				if (settle) {
+					clearTimeout(settle);
+				}
+				settle = setTimeout(done, Math.max(0, at + MARKER_SETTLE_MS - Date.now()));
+			};
+			let cap = setTimeout(done, Math.max(0, since + MARKER_WAIT_MS - Date.now()));
 			const listener = this.markerService.onMarkerChanged(changed => {
 				if (changed.some(resource => resource.toString() === uri.toString())) {
-					if (settle) {
-						clearTimeout(settle);
-					}
-					settle = setTimeout(done, MARKER_SETTLE_MS);
+					settleFrom(Date.now());
+				}
+			});
+			// The language service already reported on the new text while the agent went on.
+			const reported = this.reported.get(uri);
+			if (reported !== undefined && reported >= since) {
+				settleFrom(reported);
+				return;
+			}
+			// A clean file gets no marker event at all: the language service's own answer that the
+			// text has no errors ends the wait. Other providers (linters) still get the settle window
+			// counted from the write, and a marker change in it is still waited for.
+			this.confirmedErrorFree(model, cancel.token).then(clean => {
+				if (clean && !finished && !settle && !this.hasErrorMarkers(uri)) {
+					clearTimeout(cap);
+					cap = setTimeout(done, Math.max(0, since + MARKER_SETTLE_MS - Date.now()));
 				}
 			});
 		});
-		this.writes.delete(uri);
+		cancel.dispose();
+		this.forgetWrite(uri);
 	}
+
+	/**
+	 * The language service checked the text the agent wrote (the open model matches the file on
+	 * disk) and found no errors in it. False when there is no such answer.
+	 */
+	private async confirmedErrorFree(model: ITextModel, token: CancellationToken): Promise<boolean> {
+		const probe = codeIntelErrorProbe;
+		if (!probe) {
+			return false;
+		}
+		const disk = await this.fileService.readFile(model.uri).then(file => file.value.toString(), () => undefined);
+		if (disk === undefined || model.isDisposed() || token.isCancellationRequested || (disk.charCodeAt(0) === 0xFEFF ? disk.slice(1) : disk) !== model.getValue()) {
+			return false; // the model has not caught up with the write yet: its answer would be for older text
+		}
+		const version = model.getVersionId();
+		const clean = await probe.errorFree(model, token).catch(() => undefined);
+		return clean === true && !model.isDisposed() && model.getVersionId() === version;
+	}
+
+	private hasErrorMarkers(uri: URI): boolean {
+		return this.markerService.read({ resource: uri, severities: MarkerSeverity.Error, take: 1 }).length > 0;
+	}
+
+	private forgetWrite(uri: URI): void {
+		this.writes.delete(uri);
+		this.reported.delete(uri);
+	}
+
+	/** Some language service reports on or answers for this document (markers, symbols, hovers, fixes). */
+	private hasLanguageService(model: ITextModel): boolean {
+		return this.markerService.read({ resource: model.uri, take: 1 }).length > 0
+			|| this.languageFeatures.documentSymbolProvider.has(model)
+			|| this.languageFeatures.hoverProvider.has(model)
+			|| this.languageFeatures.definitionProvider.has(model)
+			|| this.languageFeatures.codeActionProvider.has(model);
+	}
+
+	private readonly opening = new ResourceMap<Promise<ITextModel>>();
 
 	private async model(uri: URI): Promise<ITextModel> {
 		const existing = this.open.get(uri);
@@ -487,15 +613,27 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 			existing.timer = setTimeout(() => this.close(uri), KEEP_OPEN_MS);
 			return existing.ref.object.textEditorModel;
 		}
-		const ref = await this.textModelService.createModelReference(uri);
-		if (this.open.size >= MAX_OPEN) {
-			const oldest = [...this.open.keys()][0];
-			if (oldest) {
-				this.close(oldest);
-			}
+		// A write and a check can ask for the same file at once: one reference, not two.
+		const pending = this.opening.get(uri);
+		if (pending) {
+			return pending;
 		}
-		this.open.set(uri, { ref, timer: setTimeout(() => this.close(uri), KEEP_OPEN_MS) });
-		return ref.object.textEditorModel;
+		const opened = this.textModelService.createModelReference(uri).then(ref => {
+			if (this._store.isDisposed) {
+				ref.dispose();
+				throw new Error('code intelligence was disposed');
+			}
+			if (this.open.size >= MAX_OPEN) {
+				const oldest = [...this.open.keys()][0];
+				if (oldest) {
+					this.close(oldest);
+				}
+			}
+			this.open.set(uri, { ref, timer: setTimeout(() => this.close(uri), KEEP_OPEN_MS), openedAt: Date.now() });
+			return ref.object.textEditorModel;
+		}).finally(() => this.opening.delete(uri));
+		this.opening.set(uri, opened);
+		return opened;
 	}
 
 	private close(uri: URI): void {
