@@ -68,6 +68,21 @@ So round 5's "3 adapters at rest-20" were the chat in use, the refilled spare an
   formatted 10-59 s as "12s ago", so `tickMeta` changed its text every second, each a frame. When the frames
   stopped at 60 s ("1m ago"), the GPU let the working set go in one step.
 
+### The thread's fade mask (found, not changed)
+
+At rest the GPU also holds a render pass the size of the chat column (`RenderPassBacking` 2432x1600, 15 MB, plus
+1-3 `RenderPassOverlay` copies of 15 MB each) and twice the raster tiles it needs: `.volt-agent-thread >
+.monaco-scrollable-element` carries a `mask-image` (the transcript fades out over its last 64 px, "instead of
+painting over the translucent window surface", agentEditor.css) and a masked layer gets its own surface, redrawn
+every frame it changes. Setting the mask to `none` in the running window dropped shared images from 212 to 114 MB
+and raster tiles from 22 to 13 (`cssexp-mask.log`); sticky turns and rounded clips were not the cause
+(`cssexp-sticky.log`, `cssexp-radius.log`). A gradient band painted over the transcript would cost nothing, but it
+needs an opaque colour behind the thread, and the agent window has vibrancy by default (`setVibrancy('under-window')`,
+windowImpl.ts), so the band would show over the see-through surface. Left as a design question for the user: the
+fade as it is (about 60-100 MB of GPU memory per visible chat, more while it streams), a band over an opaque chat
+background, or no fade. The replies under a pinned user turn (`has-stuck-turn`) carry the same kind of mask while
+the chat scrolls.
+
 ## Fixes
 
 | Commit | What | Evidence |
