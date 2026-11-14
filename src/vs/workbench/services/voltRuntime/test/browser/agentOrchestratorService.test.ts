@@ -393,6 +393,31 @@ suite('Agent orchestrator service', () => {
 		assert.ok((await alone).includes('b.ts fixed.'), 'a call nothing follows still waits for its report');
 	});
 
+	test('a waiting delegate_task call returns its upstream parts\' reports with its own, so no wait_tasks call is needed for them', async () => {
+		const { service, runtime, host, tool } = await setup();
+		await service.submit('parent', { text: 'answer Q1-Q4' }, 'auto', 'p1');
+		await settle();
+		await tool('parent', 'delegate_task', { task: 'Q1' });
+		await tool('parent', 'delegate_task', { task: 'Q2' });
+		await settle();
+		const [q1, q2] = service.tasksOf('parent');
+		const waiting = tool('parent', 'delegate_task', { task: 'Q3 from the reports', after: [q1.id, q2.id], wait: true });
+		await settle();
+		runtime.finish(q1.childId!, 'Q1 answer.');
+		runtime.finish(q2.childId!, 'Q2 answer.');
+		await settle();
+		const q3 = service.tasksOf('parent')[2];
+		runtime.finish(q3.childId!, 'Q3 answer.');
+		const result = await waiting;
+		for (const answer of ['Q1 answer.', 'Q2 answer.', 'Q3 answer.']) {
+			assert.ok(result.includes(answer), answer);
+		}
+		assert.deepStrictEqual(service.tasksOf('parent').map(task => task.delivery), ['acknowledged', 'acknowledged', 'acknowledged']);
+		runtime.finish('parent', 'Q1-Q3.');
+		await settle();
+		assert.ok(!host.started.some(request => request.turn.kind === 'notification'), 'no wake-up for reports already read');
+	});
+
 	test('wait_tasks returns the report as soon as the subagent finishes, and it is not delivered again', async () => {
 		const { service, runtime, host, tool } = await setup();
 		await service.submit('parent', { text: 'go' }, 'auto', 'p1');

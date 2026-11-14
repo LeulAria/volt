@@ -2178,7 +2178,13 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			}
 		}
 		if (isTerminalTaskState(task.state)) {
-			this.apply({ type: 'task.ack', taskIds: [id] });
+			// A waited call returns the reports it held back too: its upstream tasks' and its batch mates' that
+			// finished meanwhile and were not delivered (the parent sat in this call). Otherwise the parent asks
+			// wait_tasks for them next, one more model round trip before its answer.
+			const held = args.wait === true ? this.visibleTasks(parentId).filter(other => other.id !== id && isTerminalTaskState(other.state) && other.delivery === 'pending'
+				&& ((task.batch && other.batch === task.batch) || task.after?.includes(other.id))) : [];
+			lines.push(...held.map(other => describeTask(other, Date.now(), { includeResult: true })));
+			this.apply({ type: 'task.ack', taskIds: [id, ...held.map(other => other.id)] });
 		} else {
 			lines.push('Its report is delivered to this chat as a new message when it finishes; you may end your turn. Call wait_tasks only if you need the result before you can continue.');
 		}
