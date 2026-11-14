@@ -112,19 +112,49 @@ interface IGitShortStat {
 }
 
 /**
+ * Which of the nine dots (row-major, 3x3) are on in each of the eight frames of Cursor's sine_3x3
+ * wave, 175 ms a frame.
+ */
+const THINKING_DOT_FRAMES: readonly string[] = [
+	'00000111', // dot 1 (top left)
+	'11000001',
+	'01110000',
+	'10001111',
+	'11100011',
+	'11111000',
+	'11011000',
+	'00110110',
+	'10001101', // dot 9 (bottom right)
+];
+
+/** The eight frames side by side as one mask (10.5 units a frame, r 1.125 on a 4 pitch), so one strip can step through them. */
+function thinkingDotsMask(): string {
+	let circles = '';
+	for (let frame = 0; frame < 8; frame++) {
+		for (let dot = 0; dot < 9; dot++) {
+			if (THINKING_DOT_FRAMES[dot][frame] === '1') {
+				circles += `<circle cx="${frame * 10.5 + 1.25 + (dot % 3) * 4}" cy="${1.25 + Math.floor(dot / 3) * 4}" r="1.125"/>`;
+			}
+		}
+	}
+	return `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84 10.5" fill="#000">${circles}</svg>`)}")`;
+}
+
+/**
  * Cursor's in-progress loader for pills (DotGridLoader, sine_3x3): nine dots on a 3x3 grid, same
- * geometry (r 1.125 on a 4 pitch in a 10.5 box). The wave is CSS keyframes per dot (browserEditor.css).
- * The dots are HTML boxes, not SVG circles: an opacity animation on a box runs on the compositor,
- * while the circles cost a style recalc and a repaint of the main thread on every frame for as long
- * as the chat worked (nine of them, 54 times a second, in the A8 trace).
+ * geometry (r 1.125 on a 4 pitch in a 10.5 box), eight frames that switch, not fade. One strip
+ * carries the eight frames as a mask over the text colour and steps sideways under a 10 px window
+ * (browserEditor.css): one transform animation, which runs on the compositor. Nine SVG circles with
+ * an opacity animation each cost the main thread nine style recalcs and a repaint on every frame for
+ * as long as the chat worked (54 times a second in the A8 trace).
  */
 export function createThinkingDots(): HTMLElement {
 	const root = $('span.volt-browser-dock-dots');
 	root.setAttribute('aria-hidden', 'true');
-	const grid = append(root, $('span.volt-browser-dock-dot-grid'));
-	for (let index = 0; index < 9; index++) {
-		append(grid, $(`span.volt-browser-dock-dot.d${index + 1}`));
-	}
+	const strip = append(root, $('span.volt-browser-dock-dot-strip'));
+	const mask = thinkingDotsMask();
+	strip.style.setProperty('-webkit-mask-image', mask);
+	strip.style.setProperty('mask-image', mask);
 	return root;
 }
 
