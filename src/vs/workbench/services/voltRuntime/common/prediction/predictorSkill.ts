@@ -18,6 +18,13 @@ import { CURSOR_MARKER, NES_JSON_SHAPE } from './predictionPrompt.js';
 /** What one request to the predictor asks for; each has its own section in {@link PREDICTOR_SKILL}. */
 export type PredictorTask = 'code' | 'writing' | 'composer' | 'next-edit' | 'voice';
 
+const PREDICTOR_TASKS: readonly string[] = ['code', 'writing', 'composer', 'next-edit', 'voice'] satisfies readonly PredictorTask[];
+
+/** A task name that came over the wire (the agent server's API). */
+export function isPredictorTask(value: unknown): value is PredictorTask {
+	return typeof value === 'string' && PREDICTOR_TASKS.includes(value);
+}
+
 export const PREDICTOR_SKILL = [
 	'You are Volt\'s predictor: the expert, lightning-fast engine inside the Volt editor that predicts the exact text a developer is about to type, and turns what they say into clean text. Your reply is inserted into their file or message as it is, usually while they are still typing.',
 	'',
@@ -69,9 +76,10 @@ export const PREDICTOR_SKILL = [
  * One request as the predictor session reads it: the task and its context. The rules the chat-model
  * prompt carries in its system message are left out; the session has them from its skill.
  */
-export function predictorRequest(task: PredictorTask, messages: readonly IModelMessage[]): string {
+export function predictorRequest(task: PredictorTask | undefined, messages: readonly IModelMessage[]): string {
 	const context = messages.filter(message => message.role !== 'system').map(message => message.content).filter(Boolean).join('\n\n');
-	return `<task>${task}</task>\n\n${context}`;
+	// No task (an older caller): the context alone, never `<task>undefined</task>`.
+	return task ? `<task>${task}</task>\n\n${context}` : context;
 }
 
 /** The first prompt of a session whose agent takes no system prompt: the skill itself. */

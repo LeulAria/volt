@@ -195,9 +195,21 @@ export function buildSystemPrompt(input: IContextPackInput): string {
 /**
  * ACP agents own their system prompt. Volt prepends at most a short lead to the user's text,
  * and only when the lane or the request calls for it. A plain coding request gets nothing.
+ *
+ * `heard`: the standing notes ({@link STANDING_NOTES}) this agent session has already been sent. A
+ * note in it is not sent again (the agent keeps it in its context), and each note this lead carries
+ * is added to it. Before, every code turn carried the visuals note, the IDE guide and the workspace
+ * scope again: about 700 tokens that stayed in the conversation and were read again by every later
+ * request of the chat. Without `heard`, every note goes out as before.
  */
-export function buildAcpLead(input: IContextPackInput): string | undefined {
+export function buildAcpLead(input: IContextPackInput, heard?: Set<string>): string | undefined {
 	const parts: string[] = [];
+	const note = (id: string, text: string) => {
+		if (!heard?.has(id)) {
+			heard?.add(id);
+			parts.push(`[Volt] ${text}`);
+		}
+	};
 	const allowWrites = modePolicy(input.mode).allowWrites;
 	const shaped = framingForShape(input.shape ?? input.intent.shape, input.intent.wantsWeb, { allowWrites });
 	// "hi", "thanks": nothing to frame, chart or keep inside the workspace (~400 tokens otherwise).
@@ -234,7 +246,7 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	}
 	// A fix checked in the browser is answered in a few lines; a chart of it is one more model call.
 	if (input.visuals && !smallTalk && input.intent.lane !== 'fast' && !(input.intent.uiWork && input.browserTools)) {
-		parts.push(`[Volt] ${VISUAL_REPLIES}`);
+		note('visuals', VISUAL_REPLIES);
 	}
 	if (input.intent.wantsServices && modePolicy(input.mode).allowTerminal) {
 		parts.push(`[Volt] ${MANAGED_TERMINALS}`);
@@ -247,10 +259,11 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 		parts.push(`[Volt] ${COMMIT_REVIEW}`);
 	}
 	if (input.codeIndexed && input.intent.lane !== 'chat' && input.intent.lane !== 'fast') {
-		parts.push(`[Volt] ${INDEXED_SEARCH}`);
+		note('indexed', INDEXED_SEARCH);
 	}
 	if (input.ideTools && input.intent.lane !== 'chat') {
-		parts.push(`[Volt] ${input.sandboxed ? IDE_TOOLS_GUIDE_SANDBOXED : IDE_TOOLS_GUIDE}`);
+		// The sandboxed guide adds what runs where: a switch of access is news.
+		note(input.sandboxed ? 'ide:sandboxed' : 'ide', input.sandboxed ? IDE_TOOLS_GUIDE_SANDBOXED : IDE_TOOLS_GUIDE);
 	}
 	const codeQuestions = input.intent.lane === 'chat' && input.intent.referencesWorkspace && (input.codeIndexed || input.ideTools);
 	if (codeQuestions) {
@@ -282,10 +295,17 @@ export function buildAcpLead(input: IContextPackInput): string | undefined {
 	// Benchmarks caught agents running `rg` over the home folder and reading other tools'
 	// transcripts to chase a missing script. Keep them in the project unless asked.
 	if (!smallTalk) {
-		parts.push(`[Volt] ${WORKSPACE_SCOPE}`);
+		note('scope', WORKSPACE_SCOPE);
 	}
 	return parts.length ? parts.join('\n') : undefined;
 }
+
+/**
+ * The lead's notes that say the same thing on every turn they apply to, so an agent session needs
+ * each once ({@link buildAcpLead}'s `heard`). The others depend on the request (its shape, tests,
+ * UI work, a long job, git) and go with each request that calls for them.
+ */
+export const STANDING_NOTES: readonly string[] = ['visuals', 'indexed', 'ide', 'ide:sandboxed', 'scope'];
 
 /**
  * Benchmarks: given a design image, agents spent most of the run decoding the PNG byte by byte
@@ -382,9 +402,10 @@ const SCRATCH_DRAW_TOOL_NAME = 'scratch_draw';
 
 /**
  * Tool descriptions say what the visual tools do; this says when to reach for them unasked. Not
- * sent in the fast lane (small edits) or when the agent cannot reach the volt MCP server.
+ * sent in the fast lane (small edits) or when the agent cannot reach the volt MCP server. 372 tokens
+ * until 2026-11-14 (Opus 5.5 count), now 296: the same tools, cases and rules, fewer words.
  */
-export const VISUAL_REPLIES = `When a visual helps explain the answer, render it proactively: call ${RENDER_CHART_TOOL_NAME} from the volt MCP server for numbers over time, comparisons, distributions, flows or hierarchies, including repo and usage analyses; use ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts. When a hand-drawn sketch would read better than a page (a comparison table or scorecard with takeaways, an architecture picture, a flow), draw it with ${SCRATCH_DRAW_TOOL_NAME} instead (\`page\`, \`diagram\`, \`mermaid\`, or your own \`elements\` for anything else: an illustrated explainer, a timeline, a mind map, a hand-drawn chart; be inventive): it shows in the chat as a picture the user can open on their Scratch board. Choose the chart type, variants and style controls to suit the data without asking the user to choose. Use observed data, or clearly label illustrative data. If your provider does not expose the visual tools, a fenced volt-chart block containing the same JSON chart spec renders natively in Volt; use a mermaid fence for diagrams. Render before your final text, then do not restate what it shows. Skip it for short or trivial answers.`;
+export const VISUAL_REPLIES = `When a visual helps explain the answer, render it unasked: ${RENDER_CHART_TOOL_NAME} (volt MCP server) for numbers over time, comparisons, distributions, flows or hierarchies, repo and usage analyses included; ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts; ${SCRATCH_DRAW_TOOL_NAME} when a hand-drawn sketch reads better than a page (a comparison table or scorecard with takeaways, an architecture picture, a flow, a timeline, a mind map: \`page\`, \`diagram\`, \`mermaid\` or your own \`elements\`; be inventive), shown in the chat and openable on the user's Scratch board. Pick the chart type and style yourself; use observed data or label it illustrative. Without the visual tools, a volt-chart fence with the same JSON spec renders in Volt (mermaid fences for diagrams). Render before your final text and do not restate it. Skip it for short or trivial answers.`;
 
 /**
  * Only when the request asks for them: agents otherwise describe five sidebars in prose, or take

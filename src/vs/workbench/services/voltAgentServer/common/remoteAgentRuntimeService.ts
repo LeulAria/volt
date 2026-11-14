@@ -22,6 +22,7 @@ import type { IVoltMcpApprovalRecord } from '../../voltRuntime/common/harness/mc
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import type { VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { chatExec, IChatExec } from '../../voltRuntime/common/execContext.js';
+import { PredictorTask } from '../../voltRuntime/common/prediction/predictorSkill.js';
 import { IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../../voltRuntime/common/session.js';
 import { IAgentServerClientService } from './agentServerClient.js';
 
@@ -420,8 +421,9 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 	}
 
 	/** One completion, run by the server; its events are replayed here once it finishes. */
-	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken): AsyncIterable<IVoltEvent> {
-		const events = await this.client.call<IVoltEvent[]>('runtime.streamModel', ref, messages, options);
+	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken, task?: PredictorTask): AsyncIterable<IVoltEvent> {
+		// The task goes along: the server's predictor session reads it as `<task>` (without it every request said `<task>undefined</task>`).
+		const events = await this.client.call<IVoltEvent[]>('runtime.streamModel', ref, messages, options, task);
 		for (const event of events) {
 			if (token.isCancellationRequested) {
 				return;

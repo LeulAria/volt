@@ -56,6 +56,7 @@ import { chatExec, IChatExec, voltExec } from '../common/execContext.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, isVoltWorktreePath, lspAllowedFor, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
 import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
+import { retrievalAddsToMessage } from '../common/search/contextRetrieval.js';
 import { ISearchIndex, VoltSearch } from './search/voltSearch.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
 import { agentCompactionPrompt, compactedHistory, compactInstructions, isCompactCommand } from '../common/compaction.js';
@@ -82,7 +83,7 @@ import { loadProjectCheckFiles, loadWorkspaceRunPlan } from './host/workspaceRun
 import { classifyIntent, IIntent, mergeGrantedGroups } from '../common/harness/intent.js';
 import { buildAcpLead, IContextPackInput, IEnvironmentFacts } from '../common/harness/contextPack.js';
 import { formatPrimerFiles, IPreflightPlan, IPrimerEntry, preflightPlan, PRIMER_SKIP_DIRS, primerCandidate, rankPrimerFiles, selectPrimerFiles } from '../common/harness/preflight.js';
-import { formatWorkspaceContext, IWorkspaceSnapshot, WORKSPACE_SNAPSHOT_COMMAND_ID, workspaceContextKey } from '../common/harness/workspaceContext.js';
+import { IWorkspaceSnapshot, WORKSPACE_SNAPSHOT_COMMAND_ID, workspaceContextKey, workspaceLeadText } from '../common/harness/workspaceContext.js';
 import { INativeLoopMessage } from '../common/harness/nativeLoop.js';
 import { nativeToModelMessages } from '../common/harness/providerMessages.js';
 import { PathLocks, runToolBatch } from '../common/harness/toolRuntime.js';
@@ -417,6 +418,8 @@ interface ISessionState extends IVoltSession {
 	continuedFrom?: IVoltSeedOptions['continuedFrom'];
 	/** What the agent last heard about the window around the chat (see workspaceLead). */
 	workspaceSent?: { readonly handle: IAgentSessionHandle; readonly key: string };
+	/** The lead's standing notes this agent session has heard (see buildAcpLead); forgotten when it compacts. */
+	leadHeard?: { readonly handle: IAgentSessionHandle; readonly ids: Set<string> };
 }
 
 /** Native-model conversation state that outlives a single run. */
@@ -2002,7 +2005,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * One stateless completion. Chat models go through HTTP with `messages` as they are. Agent refs
 	 * go to the predictor's warm ACP session, which knows `task` from its skill.
 	 */
-	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken, task: PredictorTask): AsyncIterable<IVoltEvent> {
+	async *streamModel(ref: string, messages: IModelMessage[], options: IVoltModelOptions | undefined, token: CancellationToken, task?: PredictorTask): AsyncIterable<IVoltEvent> {
 		const item = this.catalog.find(c => c.ref === ref);
 		if (!item) {
 			throw new Error(`Unknown catalog ref ${ref}`);
@@ -2012,7 +2015,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			throw new Error(`Missing profile for catalog ref ${ref}`);
 		}
 		if (item.kind === 'agent') {
-			yield* this.predictor.ask(item.ref, task, predictorRequest(task, messages), token);
+			// Without a task (an older caller) the request names none and queues like a typing task.
+			yield* this.predictor.ask(item.ref, task ?? 'code', predictorRequest(task, messages), token);
 			return;
 		}
 		const provider = this.modelProviders.get(profile.providerId);
@@ -4904,7 +4908,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * window is asked when the run starts ({@link askWorkspaceSnapshot}), so its round trip overlaps
 	 * the agent's start; the prompt then waits a bounded time for the answer or goes without.
 	 */
-	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle, asked: Promise<IWorkspaceSnapshot | undefined> | undefined): Promise<string | undefined> {
+	private async workspaceLead(session: ISessionState, handle: IAgentSessionHandle, asked: Promise<IWorkspaceSnapshot | undefined> | undefined, agentHasGitStatus: boolean): Promise<string | undefined> {
 		if (!asked) {
 			return undefined;
 		}
@@ -4913,12 +4917,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!snapshot) {
 			return undefined;
 		}
-		const key = workspaceContextKey(snapshot);
-		if (session.workspaceSent?.handle === handle && session.workspaceSent.key === key) {
-			return undefined;
-		}
-		session.workspaceSent = { handle, key };
-		return formatWorkspaceContext(snapshot);
+		const sentKey = session.workspaceSent?.handle === handle ? session.workspaceSent.key : undefined;
+		session.workspaceSent = { handle, key: workspaceContextKey(snapshot) };
+		return workspaceLeadText(snapshot, sentKey, agentHasGitStatus);
 	}
 
 	/** Asks the chat's window what the user has open, for {@link workspaceLead}; undefined when the turn goes without. */
@@ -5135,14 +5136,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 						// The turn primer (first turn only): the relevant files and the app open in the chat's browser.
 						attempt === 0 ? timed('primer', this.turnPrimer(session, run, request, intent)) : undefined,
 						timed('context', this.contextPackInput(session, request.mode, intent, !reusedAgent && !reused, indexed)),
-						timed('workspace', this.workspaceLead(session, handle, workspace)),
+						// Claude Code starts each session with its own git status.
+						timed('workspace', this.workspaceLead(session, handle, workspace, profile.providerId === 'claude-code')),
 						// The retriever's deadline is soft (searches already running finish): cut it here.
 						retrieval ? timed('retrieval', raceTimeout(retrieval, AGENT_RETRIEVAL_DEADLINE_MS)) : undefined,
 					]);
 					if (Date.now() - leadStarted >= SLOW_LEAD_MS) {
 						this.logService.info(`[volt] lead for run ${run.runId} took ${Date.now() - leadStarted}ms (${leadParts.join(', ')})`);
 					}
-					const lead = [handoff?.text, moved, buildAcpLead(pack), retrieved?.text, primer, workspaceText].filter(Boolean).join('\n\n') || undefined;
+					// Standing notes go to an agent session once (a new or restarted agent hears them again).
+					if (session.leadHeard?.handle !== handle) {
+						session.leadHeard = { handle, ids: new Set() };
+					}
+					// A block that only lists the files the message names by path tells the agent nothing.
+					const context = retrieved && retrievalAddsToMessage(retrieved.files, request.text) ? retrieved.text : undefined;
+					const lead = [handoff?.text, moved, buildAcpLead(pack, session.leadHeard.ids), context, primer, workspaceText].filter(Boolean).join('\n\n') || undefined;
 					if (moved && session.moved?.model === moved) {
 						session.moved = undefined;
 					}
@@ -5294,6 +5302,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				}
 				if (event.type === 'tool.start') {
 					finalFrom = undefined;
+				}
+				if (event.type === 'context.compaction' && event.status === 'completed' && session.leadHeard?.handle === handle) {
+					// The summary may have dropped the standing notes: the next turn sends them again.
+					session.leadHeard = undefined;
 				}
 				if (event.type === 'title' && session.agentJoinedLate === handle) {
 					// Codex titled a handed-off chat "<conversation_so_far> This conversation started...".

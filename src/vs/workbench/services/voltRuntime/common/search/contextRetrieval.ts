@@ -393,6 +393,18 @@ export function packRetrieval(inputs: readonly IPackInput[], budgetTokens: numbe
 	return { text: [head, ...parts, tail].join('\n'), tokens, files, withCode };
 }
 
+/**
+ * Whether a headline-only block (what a CLI agent gets) tells the agent more than its message: not
+ * when every file it lists is one the message names by its path. "Read src/paginate.ts and
+ * src/dates.ts..." got a block listing those two files, which the agent reads anyway, and the block
+ * came or went with the search's deadline, so the same prompt sent a different first message and
+ * rewrote the prompt cache (about 8k tokens, $0.06 on Opus 5.5, in 2 of 3 runs, 2026-11-14).
+ */
+export function retrievalAddsToMessage(files: readonly string[], message: string): boolean {
+	const text = message.replace(/\\/g, '/');
+	return files.some(path => !text.includes(path));
+}
+
 /** `git status --porcelain=v1 -z` -> workspace-relative paths of changed files. */
 export function parsePorcelainZ(output: string): Set<string> {
 	const paths = new Set<string>();

@@ -22,6 +22,7 @@ import { VOLT_MODES, VoltMode } from '../../../workbench/services/voltRuntime/co
 import { IRemoteHostToolCall } from '../../../workbench/services/voltAgentServer/common/remoteVoltHostToolService.js';
 import { IAgentOrchestratorService } from '../../../workbench/services/voltRuntime/common/orchestration/orchestrator.js';
 import { isLiveOnlyEvent } from '../../../workbench/services/voltRuntime/common/events.js';
+import { isPredictorTask } from '../../../workbench/services/voltRuntime/common/prediction/predictorSkill.js';
 import { IAgentRuntimeService } from '../../../workbench/services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService, uriFromStoredRoot } from '../../../workbench/services/voltRuntime/common/sessionContext.js';
 import { ServerEditsJournal } from './serverEditsJournal.js';
@@ -176,9 +177,9 @@ export class AgentServerApi extends Disposable {
 			return this.col('sessions').get(String(sessionId));
 		}));
 		// One completion (Tab predictions in a window): collected here, replayed by the window.
-		this._register(this.protocol.registerMethod('runtime.streamModel', async (_ctx, ref, messages, options) => {
+		this._register(this.protocol.registerMethod('runtime.streamModel', async (_ctx, ref, messages, options, task) => {
 			const events: unknown[] = [];
-			for await (const event of this.runtime.streamModel(String(ref), fromWire(messages), fromWire(options), CancellationToken.None)) {
+			for await (const event of this.runtime.streamModel(String(ref), fromWire(messages), fromWire(options), CancellationToken.None, isPredictorTask(task) ? task : undefined)) {
 				events.push(event);
 			}
 			return toWire(events);

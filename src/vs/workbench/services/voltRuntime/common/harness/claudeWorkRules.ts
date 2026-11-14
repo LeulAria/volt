@@ -146,12 +146,121 @@ export const CLAUDE_MAIN_LAZY_TOOLS: readonly string[] = ['Agent', 'Workflow', '
  */
 export const CLAUDE_MAIN_LAZY_RULE = `- Load on demand: Agent (subagents), Workflow (multi-agent scripts, only when asked for one), ScheduleWakeup (resume later), ReportFindings (code-review findings), ListAgents (running agents). Before the first use, call ToolSearch "select:<exact names, comma-separated>" in the same message as your other first calls.`;
 
+/**
+ * Claude Code's deferred-tools reminder lists one tool per line, Volt's 135 tools as
+ * `mcp__volt__browser_click` and so on: 1,992 tokens in every request of a main chat, 1,748 of them
+ * Volt's names (Opus 5.5, 2026-11-14). This keeps Claude Code's own lines and turns each run of Volt
+ * lines into one line that says the prefix once and lists the short names (about 900 tokens fewer).
+ * Every tool stays listed by name; `select:mcp__volt__<name>` loads it as before. Runs inside Claude
+ * Code's hooks worker as source text (see {@link claudeLazyToolsPlugin}), so it uses nothing from outside.
+ */
+export function compactVoltToolNames(text: string): string {
+	const out: string[] = [];
+	let run: string[] = [];
+	const flush = () => {
+		if (run.length) {
+			out.push(`Volt tools, each named mcp__volt__<name> (select:mcp__volt__${run[0]}): ${run.join(', ')}`);
+			run = [];
+		}
+	};
+	for (const line of text.split('\n')) {
+		const match = /^mcp__volt__([A-Za-z0-9_-]+)$/.exec(line.trim());
+		if (match) {
+			run.push(match[1]);
+		} else {
+			flush();
+			out.push(line);
+		}
+	}
+	flush();
+	return out.join('\n');
+}
+
+/**
+ * Claude Code's agent-types reminder (563 tokens, 1,163 when its `web-fetch` agent is on, which
+ * Claude Code turns on for some sessions and not others) sits in every request of a main chat, though
+ * the main chat loads Agent on demand ({@link CLAUDE_MAIN_LAZY_TOOLS}). This keeps every type with the
+ * first sentence of its description; the full entries go into the Agent tool's own description when
+ * it is loaded ({@link agentDescriptionWithTypes}). Self-contained: it runs in Claude Code's hooks worker.
+ */
+export function compactAgentListing(text: string): string {
+	const out: string[] = [];
+	let inEntry = false;
+	for (const line of text.split('\n')) {
+		const entry = /^- ([^:\n]+): (.*)$/.exec(line);
+		if (entry) {
+			let description = entry[2].replace(/\s*\(Tools: [^)]*\)\s*$/, '');
+			const sentence = /^.*?[.!?](?=\s|$)/.exec(description);
+			description = sentence ? sentence[0] : description;
+			if (description.length > 160) {
+				description = `${description.slice(0, description.lastIndexOf(' ', 157))}…`;
+			}
+			out.push(`- ${entry[1]}: ${description}`);
+			inEntry = true;
+		} else if (inEntry && line.trim() && !line.startsWith('- ')) {
+			// The rest of a description that ran over several lines.
+		} else {
+			inEntry = false;
+			out.push(line);
+		}
+	}
+	return out.join('\n');
+}
+
+/**
+ * The Agent tool's description with the full agent-types reminder in place of its pointer to it
+ * (`listing`: the reminder's text as Claude Code wrote it). Unchanged without a listing.
+ */
+export function agentDescriptionWithTypes(description: string, listing: string | undefined): string {
+	if (!listing || !listing.trim()) {
+		return description;
+	}
+	const pointer = 'Available agent types are listed in <system-reminder> messages in the conversation.';
+	const full = `${listing.trim()}\n(The <system-reminder> list gives each type in one line; this is the full text.)`;
+	return description.includes(pointer) ? description.replace(pointer, full) : `${description}\n\n${full}`;
+}
+
+/**
+ * Claude Code's reminder for bypass-permissions mode (Volt's Full access) tells the model it may read,
+ * search and edit files through Bash with cat, sed and heredocs (about 130 tokens in every request).
+ * Volt asks for the opposite ({@link CLAUDE_MAIN_RULES}: it shows the changes made with Edit and
+ * Write, not shell rewrites), so that paragraph is dropped: an empty text leaves the reminder out.
+ * Claude Code sends it only when the mode changed after the session started (Full access picked
+ * then), so dropping it also keeps the same chat's prompt, and its cache, the same either way (it
+ * came with 1 of 6 runs and rewrote 3.8k cached tokens there, 2026-11-14). Any other text of this
+ * reminder (auto mode's) is left as it is. Self-contained (hooks worker).
+ */
+export function voltBypassModeNote(text: string): string {
+	return /^\s*While bypass permissions mode is active:/.test(text) && /through the Bash tool/.test(text) && /\bsed\b/.test(text)
+		? ''
+		: text;
+}
+
+/**
+ * A `prompt.attachment` handler that rewrites the reminder's text with `fn` and leaves it as Claude Code
+ * made it when the rewrite throws. Written out in each `on(...)` call: Claude Code 2.1.322 drops the
+ * whole module, silently, when a handler comes from a factory (`rewrite(fn)`), so none is shared.
+ */
+function attachmentRewrite(fn: string): string {
+	return `async ($, e, next) => { const r = await next(e); try { return typeof r?.text === 'string' ? { ...r, text: ${fn}(r.text) } : r; } catch { return r; } }`;
+}
+
 /** The hooks module of {@link claudeLazyToolsPlugin}: Claude Code (2.1.322 and later) imports it in its hooks worker. */
 const CLAUDE_LAZY_TOOLS_MODULE = [
-	'// Volt: Claude Code tools the main chat loads with ToolSearch when a task needs them, not in every request.',
+	'// Volt: Claude Code tools the main chat loads with ToolSearch when a task needs them, not in every request,',
+	'// and Volt\'s tool names said once in its deferred-tools reminder. A rewrite that fails leaves the text as it was.',
 	`const LAZY = ${JSON.stringify(CLAUDE_MAIN_LAZY_TOOLS)};`,
+	`const compactVoltToolNames = ${compactVoltToolNames.toString()};`,
+	`const compactAgentListing = ${compactAgentListing.toString()};`,
+	`const agentDescriptionWithTypes = ${agentDescriptionWithTypes.toString()};`,
+	`const voltBypassModeNote = ${voltBypassModeNote.toString()};`,
+	'// The agent-types reminder as Claude Code wrote it (the last one), for the Agent tool\'s description.',
+	'let agentListing;',
 	'export function register(on) {',
-	'\ton(\'tool.describe\', { tool: LAZY }, async ($, e, next) => ({ ...(await next(e)), isDeferred: true }));',
+	'\ton(\'tool.describe\', { tool: LAZY }, async ($, e, next) => { const r = await next(e); try { return e.tool === \'Agent\' && typeof r?.description === \'string\' ? { ...r, isDeferred: true, description: agentDescriptionWithTypes(r.description, agentListing) } : { ...r, isDeferred: true }; } catch { return { ...r, isDeferred: true }; } });',
+	`\ton('prompt.attachment', { type: ['deferred_tools_delta'] }, ${attachmentRewrite('compactVoltToolNames')});`,
+	`\ton('prompt.attachment', { type: ['auto_mode'] }, ${attachmentRewrite('voltBypassModeNote')});`,
+	'\ton(\'prompt.attachment\', { type: [\'agent_listing_delta\'] }, async ($, e, next) => { const r = await next(e); try { if (typeof r?.text !== \'string\') { return r; } if (/^Available agent types/m.test(r.text)) { agentListing = r.text; } return { ...r, text: compactAgentListing(r.text) }; } catch { return r; } });',
 	'}',
 	'',
 ].join('\n');

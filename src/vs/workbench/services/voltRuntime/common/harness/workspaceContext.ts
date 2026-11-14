@@ -213,6 +213,24 @@ export function formatWorkspaceContext(snapshot: IWorkspaceSnapshot): string | u
 }
 
 /**
+ * The block for an agent session's turn, or undefined when it would tell the agent nothing new:
+ * - `sentKey`: the {@link workspaceContextKey} this agent session last heard (undefined: none yet);
+ * - `agentHasGitStatus`: the agent opens its sessions with git status of its own (Claude Code's
+ *   gitStatus: branch, changes, recent commits), so a first block with no tabs, only git, repeats it
+ *   (156 tokens of a real prompt's first request, Opus 5.5, 2026-11-14). A later block still goes out
+ *   when what is open changes, branch included.
+ */
+export function workspaceLeadText(snapshot: IWorkspaceSnapshot, sentKey: string | undefined, agentHasGitStatus: boolean): string | undefined {
+	if (sentKey === workspaceContextKey(snapshot)) {
+		return undefined;
+	}
+	if (sentKey === undefined && agentHasGitStatus && !snapshot.tabs.length) {
+		return undefined;
+	}
+	return formatWorkspaceContext(snapshot);
+}
+
+/**
  * Whether the turn should carry the lines: the agent has not heard them (a new or restarted agent
  * session), or what is open changed since. Git counts alone do not count as a change: the agent
  * makes most of them itself.
