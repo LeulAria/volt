@@ -102,6 +102,8 @@ export function createCodeIndexNav(index: ISearchIndex): ICodeNavIndex {
 				...(request.folder ? { folder: request.folder.fsPath } : {}),
 				...(request.language ? { language: request.language } : {}),
 				...(request.includes ? { includes: request.includes } : {}),
+				...(request.excludes ? { excludes: request.excludes } : {}),
+				...(request.where ? { where: request.where } : {}),
 				maxMatches: request.maxMatches,
 				waitMs: STRUCTURE_WAIT_MS,
 				options: index.options(),

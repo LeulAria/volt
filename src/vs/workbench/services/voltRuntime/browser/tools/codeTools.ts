@@ -136,7 +136,7 @@ export interface ICodeNavIndex {
 	/** Files importing `uri` (depth 2: and files importing those). */
 	importers?(root: URI, uri: URI, depth: number): Promise<(IVoltCodeImporter & { readonly uri: URI })[] | undefined>;
 	/** Code shaped like a pattern; a string says why it could not search. */
-	structural?(root: URI, request: { readonly pattern: string; readonly folder?: URI; readonly language?: string; readonly includes?: readonly string[]; readonly maxMatches: number }): Promise<{ readonly matches: readonly IVoltCodeStructuralMatch[]; readonly limitHit: boolean; readonly scanned: number } | string>;
+	structural?(root: URI, request: { readonly pattern: string; readonly folder?: URI; readonly language?: string; readonly includes?: readonly string[]; readonly excludes?: readonly string[]; readonly where?: Readonly<Record<string, string>>; readonly maxMatches: number }): Promise<{ readonly matches: readonly IVoltCodeStructuralMatch[]; readonly limitHit: boolean; readonly scanned: number } | string>;
 }
 
 /** Writes a computed edit into the workspace like edit_file does (buffers, ledger, change set). */
@@ -170,7 +170,7 @@ export const CODE_NAV_DESCRIPTION = [
 	'inspect (hover + definition with body + references + implementations in one call),',
 	'callers / callees (call hierarchy; depth 2-4 follows callers of callers to the entry points and names the route handlers or procedures the calls are in), supertypes / subtypes,',
 	'symbols (outline of path), workspace_symbols (query: find declarations by name),',
-	'structural (pattern: code with $X for one node and $$$ for any, e.g. fetchUser($ID, $$$): finds code by its shape, not its text; path narrows).',
+	'structural (pattern: code with $X for one node and $$$ for any, e.g. fetchUser($ID, $$$): finds code by its shape across lines, not its text; where filters by a $X\'s code; path and glob narrow).',
 	'Use grep for text, strings, SQL and config.',
 ].join(' ');
 
@@ -183,6 +183,8 @@ export const CODE_NAV_SCHEMA = objectSchema({
 	depth: { type: 'integer', description: 'callers/callees/impact: levels to follow (1-4; default 1, impact 3)' },
 	query: { type: 'string', description: 'workspace_symbols: the name to look for' },
 	pattern: { type: 'string', description: 'structural: the code pattern' },
+	where: { type: 'object', description: 'structural: a regex per metavariable, e.g. {"MS":"^\\\\d"} keeps literal numbers' },
+	glob: { type: 'string', description: 'structural: files, e.g. **/*.ts; !**/*.test.* skips' },
 }, ['op']);
 
 export const DIAGNOSTICS_DESCRIPTION = [
@@ -1301,12 +1303,19 @@ async function structuralSearch(root: URI, args: unknown, nav: ICodeNavIndex | u
 	if (path && !folder) {
 		return fail('code_nav', 'path is outside the workspace.');
 	}
-	const glob = pickString(args, 'glob');
+	// glob: comma-separated; a leading ! skips files (`!**/*.test.*`).
+	const globs = (pickString(args, 'glob') ?? '').split(',').map(glob => glob.trim()).filter(Boolean);
+	const includes = globs.filter(glob => !glob.startsWith('!'));
+	const excludes = globs.filter(glob => glob.startsWith('!')).map(glob => glob.slice(1));
+	const rawWhere = (args as { where?: unknown } | undefined)?.where;
+	const where = rawWhere && typeof rawWhere === 'object' ? Object.fromEntries(Object.entries(rawWhere).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : undefined;
 	const result = await nav.structural(root, {
 		pattern,
 		...(folder ? { folder } : {}),
 		...(pickString(args, 'language', 'lang') ? { language: pickString(args, 'language', 'lang')! } : {}),
-		...(glob ? { includes: [glob] } : {}),
+		...(includes.length ? { includes } : {}),
+		...(excludes.length ? { excludes } : {}),
+		...(where && Object.keys(where).length ? { where } : {}),
 		maxMatches: Math.max(1, Math.min(200, pickNumber(args, 'limit', 'head_limit') ?? MAX_STRUCTURAL_MATCHES)),
 	});
 	if (typeof result === 'string') {

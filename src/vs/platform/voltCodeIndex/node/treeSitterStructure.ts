@@ -246,7 +246,7 @@ export class TreeSitterParsers {
 	}
 
 	/** Places in `text` shaped like `pattern` (see {@link IVoltCodeStructuralRequest.pattern}). */
-	async match(grammar: string, pattern: string, text: string, max: number): Promise<IStructuralHit[] | string> {
+	async match(grammar: string, pattern: string, text: string, max: number, where: readonly (readonly [string, RegExp])[] = []): Promise<IStructuralHit[] | string> {
 		// The pattern's tree must outlive the search: its nodes point into it.
 		const [loaded, language] = await Promise.all([this.load(), this.language(grammar)]);
 		if (!loaded || !language || text.length > MAX_PARSE_BYTES) {
@@ -268,7 +268,7 @@ export class TreeSitterParsers {
 				return [];
 			}
 			try {
-				return findMatches(compiled, tree.rootNode, max);
+				return findMatches(compiled, tree.rootNode, max, where);
 			} finally {
 				tree.delete();
 			}
@@ -637,7 +637,17 @@ function copyInto(target: Map<string, string>, source: Map<string, string>): voi
 	}
 }
 
-export function findMatches(pattern: SyntaxNode, root: SyntaxNode, max: number): IStructuralHit[] {
+/** A binding as the result shows it: on one line, long ones cut (the match's line and range locate the rest). */
+function shortBinding(value: string): string {
+	const flat = value.replace(/\s+/g, ' ');
+	return flat.length > 40 ? `${flat.slice(0, 40)}\u2026` : flat;
+}
+
+/**
+ * Nodes shaped like `pattern`, outermost first. `where` keeps only matches whose metavariable's code
+ * matches its regular expression; a rejected match's insides are still searched.
+ */
+export function findMatches(pattern: SyntaxNode, root: SyntaxNode, max: number, where: readonly (readonly [string, RegExp])[] = []): IStructuralHit[] {
 	const out: IStructuralHit[] = [];
 	const anyType = !!metaOf(pattern);
 	const target = pattern.type === 'expression_statement' && pattern.namedChildCount === 1 ? pattern.namedChildren[0]!.type : pattern.type;
@@ -647,13 +657,13 @@ export function findMatches(pattern: SyntaxNode, root: SyntaxNode, max: number):
 		const node = cursor.currentNode;
 		if (anyType || node.type === target || node.type === pattern.type) {
 			const vars = new Map<string, string>();
-			if (matchNode(pattern, node, vars)) {
+			if (matchNode(pattern, node, vars) && where.every(([name, test]) => test.test(vars.get(name) ?? ''))) {
 				const named = [...vars].filter(([name]) => name && name !== '_');
 				out.push({
 					line: node.startPosition.row + 1,
 					endLine: node.endPosition.row + 1,
 					text: node.text.split('\n')[0].trim().slice(0, 160),
-					...(named.length ? { vars: Object.fromEntries(named.map(([name, value]) => [name, value.length > 80 ? `${value.slice(0, 80)}\u2026` : value])) } : {}),
+					...(named.length ? { vars: Object.fromEntries(named.map(([name, value]) => [name, shortBinding(value)])) } : {}),
 				});
 				// Not inside a match: nested matches of the same pattern would repeat it.
 				if (cursor.gotoNextSibling()) {

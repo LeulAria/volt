@@ -410,6 +410,14 @@ export class CodeStructure {
 		if (request.language && !language) {
 			return { kind: 'fallback', reason: `no grammar named ${request.language}; one of ${STRUCTURE_LANGUAGES.join(', ')}` };
 		}
+		const where: [string, RegExp][] = [];
+		for (const [name, source] of Object.entries(request.where ?? {})) {
+			try {
+				where.push([name.replace(/^\$/, ''), new RegExp(source)]);
+			} catch {
+				return { kind: 'fallback', reason: `where.${name} is not a valid regular expression: ${source}` };
+			}
+		}
 		// The words of the pattern that are not metavariables narrow the files through the trigram index.
 		const words = (request.pattern.replace(/\$\$\$[A-Z0-9_]*|\$[A-Z_][A-Z0-9_]*/g, ' ').match(/[A-Za-z_]\w*/g) ?? []).filter(word => !KEYWORDS.has(word)).sort((a, b) => b.length - a.length);
 		const families = language ? [language] : ['typescript', 'tsx', 'javascript', 'python', 'go', 'rust', 'java', 'c-sharp', 'cpp', 'ruby'];
@@ -440,7 +448,7 @@ export class CodeStructure {
 				continue;
 			}
 			scanned++;
-			const found = await this.parsers.match(grammar, request.pattern, text, request.maxMatches - matches.length).catch(err => String(err));
+			const found = await this.parsers.match(grammar, request.pattern, text, request.maxMatches - matches.length, where).catch(err => String(err));
 			if (typeof found === 'string') {
 				patternErrors.set(grammar, found);
 				continue;

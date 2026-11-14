@@ -118,6 +118,18 @@ suite('Volt code index: structure (tree-sitter)', function () {
 		assert.deepStrictEqual(python.kind === 'results' ? python.matches.map(match => `${match.path}:${match.line} ${match.vars?.F}`) : python, ['pkg/mod.py:7 m']);
 	});
 
+	test('structural search: where keeps matches whose binding fits a regex, excludes skip files, long bindings are cut to one line', async () => {
+		const literal = await engine.structural({ root: ws, pattern: 'foo($A, $N)', where: { N: '^\\d' }, maxMatches: 20, waitMs: 30_000 });
+		assert.deepStrictEqual(literal.kind === 'results' ? literal.matches.map(match => `${match.path}:${match.line} ${match.vars?.N}`) : literal, ['src/b.ts:3 2']);
+		const named = await engine.structural({ root: ws, pattern: 'foo($A)', where: { $A: '^\\d$' }, excludes: ['**/*.test.*'], maxMatches: 20, waitMs: 30_000 });
+		assert.deepStrictEqual(named.kind === 'results' ? named.matches.map(match => match.path) : named, ['src/b.ts']);
+		const bad = await engine.structural({ root: ws, pattern: 'foo($A)', where: { A: '(' }, maxMatches: 20, waitMs: 30_000 });
+		assert.ok(bad.kind === 'fallback' && /where\.A/.test(bad.reason), JSON.stringify(bad));
+		const parsers = new TreeSitterParsers();
+		const long = await parsers.match('typescript', 'setTimeout($F, $MS)', 'setTimeout(() => {\n\tconsole.log("a long callback body that goes on");\n}, 30_000);\nsetTimeout(next, delay);\n', 10, [['MS', /^\d/]]);
+		assert.deepStrictEqual(typeof long === 'string' ? long : long.map(hit => hit.vars), [{ F: '() => { console.log("a long callback bod…', MS: '30_000' }]);
+	});
+
 	test('a pattern that is not code says so', async () => {
 		const parsers = new TreeSitterParsers();
 		const result = await parsers.match('typescript', 'foo(( $A', 'foo(1)', 10);

@@ -269,6 +269,10 @@ export interface IVoltCodeStructuralRequest extends IVoltCodeIndexQueryBase {
 	readonly language?: string;
 	/** Globs over root-relative paths; a file must match one. */
 	readonly includes?: readonly string[];
+	/** Globs over root-relative paths; a file matching one is skipped (tests, generated code). */
+	readonly excludes?: readonly string[];
+	/** Metavariable name to a regular expression its code must match, `{ MS: '^\\d' }` (a literal delay). */
+	readonly where?: Readonly<Record<string, string>>;
 	readonly maxMatches: number;
 }
 

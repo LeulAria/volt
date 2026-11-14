@@ -189,4 +189,15 @@ suite('code_nav impact, body, structural', () => {
 		const bad = await runCodeNav(host(), root, { op: 'structural', pattern: 'f((' }, nav);
 		assert.strictEqual(bad.isError, true);
 	});
+
+	test('structural: glob splits into files to search and files to skip (!), where passes through', async () => {
+		let seen: unknown;
+		const nav: ICodeNavIndex = {
+			definitions: async () => [], references: async () => [], outline: async () => [],
+			structural: async (_root, request) => { seen = request; return { matches: [], limitHit: false, scanned: 2 }; },
+		};
+		await runCodeNav(host(), root, { op: 'structural', pattern: 'setTimeout($F, $MS)', glob: '**/*.ts, !**/*.test.*', where: { MS: '^\\d', bad: 3 } }, nav);
+		const request = seen as { includes?: string[]; excludes?: string[]; where?: Record<string, string> };
+		assert.deepStrictEqual([request.includes, request.excludes, request.where], [['**/*.ts'], ['**/*.test.*'], { MS: '^\\d' }]);
+	});
 });

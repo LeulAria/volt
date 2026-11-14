@@ -1849,7 +1849,7 @@ export class RootIndex {
 			if (folder === undefined) {
 				return { kind: 'fallback', reason: 'not indexed' };
 			}
-			return await this.codeStructure.structural(request, folder || undefined, this.pathFilter(folder, request.includes, undefined));
+			return await this.codeStructure.structural(request, folder || undefined, this.pathFilter(folder, request.includes, request.excludes));
 		} catch (err) {
 			return this.queryFailed(err);
 		}
