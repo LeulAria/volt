@@ -18,6 +18,7 @@ import { isAtLeastAsStrict } from '../../../../../platform/voltSandbox/common/sa
 import { IVoltSandboxSettings, SandboxStrategy, VoltSandboxLevel } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IAgentCloudTasksService } from '../../browser/cloud/agentCloudTasksService.js';
+import { VoltAccessMode } from '../../common/access/accessModes.js';
 import { VoltHostToolService } from '../../browser/host/hostToolService.js';
 import { AgentOrchestraService } from '../../browser/orchestration/agentOrchestraService.js';
 import { AgentOrchestratorService } from '../../browser/orchestration/agentOrchestratorService.js';
@@ -54,6 +55,14 @@ class FakeRuntime {
 			{ ref: 'agent:cursor', kind: 'agent', providerId: 'cursor', profileId: 'p', id: 'grok', label: 'Cursor Grok 4.6', enabled: true },
 		];
 	}
+	listProviderStatuses() { return []; }
+	readonly access = new Map<string, VoltAccessMode>();
+	getAccessMode(threadId?: string): VoltAccessMode { return (threadId ? this.access.get(threadId) : undefined) ?? 'supervised'; }
+	async setAccessMode(mode: VoltAccessMode, threadId?: string) { this.access.set(threadId ?? '', mode); }
+	takeWorktreeSpare() { return undefined; }
+	releaseSession() { }
+	async restartAgent() { }
+	async steerAsync() { return false; }
 	canSteer() { return false; }
 	steer() { return false; }
 	chatFor(id: string) { return id; }

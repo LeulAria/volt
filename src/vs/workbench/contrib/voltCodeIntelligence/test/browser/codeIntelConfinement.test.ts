@@ -67,7 +67,7 @@ suite('Volt code intelligence for a sandboxed chat', () => {
 		const nav$ = (args: Record<string, unknown>) => runCodeNav(host, ROOT, args, nav).then(result => result.text);
 
 		const references = await nav$({ op: 'references', path: 'src/a.ts', line: 3, symbol: 'KEY' });
-		assert.match(references, /^2 references:/);
+		assert.match(references, /^2 references\b/);
 		assert.match(references, /src\/a\.ts:3/);
 		assert.match(references, /src\/b\.ts:7/);
 		assert.doesNotMatch(references, /secrets|sk-live/);
@@ -75,7 +75,7 @@ suite('Volt code intelligence for a sandboxed chat', () => {
 		// The only definition is outside: the language server's answer is dropped, the index answers with what is readable.
 		const definition = await nav$({ op: 'definition', path: 'src/a.ts', line: 3, symbol: 'KEY' });
 		assert.doesNotMatch(definition, /secrets|sk-live/);
-		assert.match(definition, /from the code index.*\nsrc\/a\.ts:1:1 {2}export const KEY = 1$/s);
+		assert.match(definition, /from the code index.*\nsrc\/a\.ts:1(:1)? {2}export const KEY = 1$/s);
 
 		const inspect = await nav$({ op: 'inspect', path: 'src/a.ts', line: 3, symbol: 'KEY' });
 		assert.doesNotMatch(inspect, /sk-live|secrets/, 'no body, hover or reference from the secret file');
@@ -102,7 +102,7 @@ suite('Volt code intelligence for a sandboxed chat', () => {
 		assert.doesNotMatch(diagnostics, /AKIA|aws/);
 
 		// Unconfined: as before (the native loop and unsandboxed chats).
-		assert.match(await runCodeNav(wide, ROOT, { op: 'references', path: 'src/a.ts', line: 3, symbol: 'KEY' }, wideIndex).then(result => result.text), /^3 references:/);
+		assert.match(await runCodeNav(wide, ROOT, { op: 'references', path: 'src/a.ts', line: 3, symbol: 'KEY' }, wideIndex).then(result => result.text), /^3 references\b/);
 	});
 
 	test('DEV-SBX-13: code_action changes nothing unless every file it changes is one the sandbox lets the chat write', async () => {

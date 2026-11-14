@@ -242,7 +242,7 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 
 	/** A linked worktree's `.git` is a file naming its gitdir; commits write to the main repository's. */
 	private async gitCommonDir(root: URI): Promise<string[]> {
-		const pointer = await this.fileService.readFile(joinPath(root, '.git')).then(file => file.value.toString(), () => undefined);
+		const pointer = await Promise.resolve().then(() => this.fileService.readFile(joinPath(root, '.git'))).then(file => file.value.toString(), () => undefined);
 		const gitdir = pointer && /^gitdir:\s*(.+)$/m.exec(pointer)?.[1].trim();
 		if (!gitdir) {
 			return [];
