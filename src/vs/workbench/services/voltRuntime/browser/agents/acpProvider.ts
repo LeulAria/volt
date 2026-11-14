@@ -2038,8 +2038,20 @@ export class AcpAgentProvider implements IAgentProvider {
 					}
 				}
 				this.flushHeld(turn);
-				for (const notice of noticesFromAcpPayload(result)) {
+				const notices = noticesFromAcpPayload(result);
+				for (const notice of notices) {
 					this.pushNotice(live, turn, notice);
+				}
+				const lost = notices.find(notice => notice.failure?.category === 'connection');
+				if (lost && result?.stopReason !== 'cancelled' && !turn.userCancelled) {
+					// claude-agent-acp attaches a `transport_lost` session failure to the prompt response when its
+					// Claude process died mid-turn (killed, crashed), and the response reads as a normal end of turn.
+					// Left as "done", the chat sat idle on a half-done task (ADEMark C4, round 6). It is the process
+					// death it is: the turn fails as a dead process does, and the runtime restarts the agent and sends
+					// the prompt again (`isAcpTurnRestartable`).
+					this.logService.info(`[ACP] ${this.id} lost its agent process mid-turn: ${lost.title}`);
+					this.endTurn(live, turn, 'fail', { message: `ACP session is not running: ${lost.title}`, retryable: true });
+					return;
 				}
 				const usage = parseTokenUsage(result);
 				if (usage) {

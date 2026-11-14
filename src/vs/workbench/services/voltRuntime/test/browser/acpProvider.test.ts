@@ -446,6 +446,19 @@ suite('ACP provider supervision', () => {
 		await finish(env, handle);
 	});
 
+	test('a connection session failure on the prompt response (the adapter\'s usual place for it) fails the turn the same way', async () => {
+		const env = setup();
+		const { handle, turn } = await startTurn(env);
+		env.agent.update('p1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Editing' } });
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn', _meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: 'error', title: 'The connection to Claude was lost.', category: 'connection', actions: ['new_session'] } } } } });
+		await turn.done;
+		const error = turn.events.find(event => event.type === 'error');
+		assert.ok(error?.type === 'error' && isAcpTurnRestartable(error.message), 'restartable');
+		assert.deepStrictEqual(kinds(turn.events), ['text.delta', 'notice:The connection to Claude was lost.', 'error', 'run.end:fail']);
+		await finish(env, handle);
+	});
+
 	test('a service session failure (overloaded) is a notice only; the turn ends as the agent says', async () => {
 		const env = setup();
 		const { handle, turn } = await startTurn(env);
