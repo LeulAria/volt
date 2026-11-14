@@ -11,7 +11,9 @@ const graders = {
 		const files = ['discord/monitor/message-handler.process.ts', 'infra/outbound/outbound-session.ts', 'slack/monitor/message-handler/prepare.ts', 'telegram/bot-handlers.ts', 'telegram/bot-message-context.ts', 'telegram/bot-native-commands.ts', 'prepare.test.ts'];
 		const found = has(a, files).length;
 		// The mattermost extension has its own resolveThreadSessionKeys: listing it as needing a change is wrong, naming it as separate is fine.
-		const mattermostWrong = /mattermost\/monitor\.ts/.test(a) && !/(own|separate|different|local|not (affected|the same)|unrelated|its own)/i.test(a.slice(Math.max(0, a.search(/mattermost/i) - 300), a.search(/mattermost/i) + 400));
+		// Judged by the text around the file's own mention (an earlier "Mattermost" may name src/'s Mattermost resolver).
+		const at = a.search(/mattermost\/monitor\.ts/);
+		const mattermostWrong = at >= 0 && !/(own|separate|different|local|not (affected|the same)|unrelated|its own|no change)/i.test(a.slice(Math.max(0, at - 300), at + 400));
 		return { score: found === 7 && !mattermostWrong ? 1 : found >= 5 ? 0.5 : 0, why: `${found}/7 files${mattermostWrong ? ', mattermost listed as affected' : ''}` };
 	},
 	't2-importers': a => {

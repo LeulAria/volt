@@ -1,0 +1,35 @@
+diff --git a/src/routing/session-key.ts b/src/routing/session-key.ts
+index bd5cf5f4d..656018546 100644
+--- a/src/routing/session-key.ts
++++ b/src/routing/session-key.ts
+@@ -233,7 +233,7 @@ function resolveLinkedPeerId(params: {
+   return null;
+ }
+ 
+-export function buildGroupHistoryKey(params: {
++export function buildGroupHistoryStoreKey(params: {
+   channel: string;
+   accountId?: string | null;
+   peerKind: "group" | "channel";
+diff --git a/src/web/auto-reply/monitor/on-message.ts b/src/web/auto-reply/monitor/on-message.ts
+index 947a56603..82a02eb94 100644
+--- a/src/web/auto-reply/monitor/on-message.ts
++++ b/src/web/auto-reply/monitor/on-message.ts
+@@ -3,7 +3,7 @@ import type { MsgContext } from "../../../auto-reply/templating.js";
+ import { loadConfig } from "../../../config/config.js";
+ import { logVerbose } from "../../../globals.js";
+ import { resolveAgentRoute } from "../../../routing/resolve-route.js";
+-import { buildGroupHistoryKey } from "../../../routing/session-key.js";
++import { buildGroupHistoryStoreKey } from "../../../routing/session-key.js";
+ import { normalizeE164 } from "../../../utils.js";
+ import type { MentionConfig } from "../mentions.js";
+ import type { WebInboundMsg } from "../types.js";
+@@ -75,7 +75,7 @@ export function createWebOnMessageHandler(params: {
+     });
+     const groupHistoryKey =
+       msg.chatType === "group"
+-        ? buildGroupHistoryKey({
++        ? buildGroupHistoryStoreKey({
+             channel: "whatsapp",
+             accountId: route.accountId,
+             peerKind: "group",
