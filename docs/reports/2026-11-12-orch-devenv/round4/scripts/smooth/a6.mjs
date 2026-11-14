@@ -26,9 +26,23 @@ const csv = join(DATA, 'raw', `a6-${arm}-${variant}-${Date.now()}.csv`);
 // The brief's gate: a sample starts only at a 1-minute load of 14 or less.
 const loadStart = await waitQuiet(14);
 let cover;
+const coverTries = [];
 if (variant === 'covered') {
-	cover = new Promise(res => execFile(NATIVE, ['cover', '--pid', String(pid), '--duration-s', String(Number(windowArg) + 4)], { encoding: 'utf8' }, (err, out, stderr) => res(err ? { error: `${String(err).slice(0, 200)} ${String(stderr).slice(0, 300)}`.trim() } : JSON.parse(out))));
-	await sleep(2000);
+	// `cover` gives up after 5 s when it sees no on-screen window of the pid (exit 4, the reason on stdout). That
+	// happened to about half the first covers; retry up to 3 times before the sample starts, and keep each reason.
+	for (let i = 0; i < 3 && !cover; i++) {
+		const p = new Promise(res => execFile(NATIVE, ['cover', '--pid', String(pid), '--duration-s', String(Number(windowArg) + 10)], { encoding: 'utf8' }, (err, out, stderr) => res(err ? { error: `${String(err).slice(0, 200)} ${String(out).slice(0, 300)} ${String(stderr).slice(0, 300)}`.trim() } : JSON.parse(out))));
+		const early = await Promise.race([p, sleep(6000).then(() => undefined)]);
+		if (early?.error) {
+			coverTries.push(early.error);
+			console.error(`cover try ${i + 1} failed: ${early.error}`);
+		} else {
+			cover = p;
+		}
+	}
+	if (!cover) {
+		cover = Promise.resolve({ error: coverTries.at(-1) });
+	}
 }
 const stateDuring = await c.evaluate('JSON.stringify({vis: document.visibilityState, focus: document.hasFocus()})');
 const cmds = new Map(execSync('ps -axo pid=,command=', { maxBuffer: 64 << 20 }).toString().split('\n').filter(Boolean).map(l => { const m = /^\s*(\d+)\s+(.*)$/.exec(l); return [Number(m[1]), m[2]]; }));
@@ -70,7 +84,7 @@ for (const e of perPid.values()) {
 for (const b of Object.values(byRole)) { b.cpuPct = Math.round(b.cpuPct * 1000) / 1000; b.wakeups = Math.round(b.wakeups * 10) / 10; }
 const sum = (g, k) => Math.round(procs.filter(p => p.group === g).reduce((s, p) => s + p[k], 0) * 1000) / 1000;
 const row = {
-	arm, variant, emulateFocus, at: new Date().toISOString(), loadStart, loadEnd, settleS: Number(settleArg), windowS: Number(windowArg), stateDuring, cover: coverResult,
+	arm, variant, emulateFocus, at: new Date().toISOString(), loadStart, loadEnd, settleS: Number(settleArg), windowS: Number(windowArg), stateDuring, cover: coverResult, coverTries,
 	cpuAppPct: sum('app', 'cpuPct'), wakeupsApp: sum('app', 'wakeups'), cpuAgentsPct: sum('agents', 'cpuPct'),
 	appMedianMiB: Math.round(summary.app_median_b / 1048576), processes: procs.length, byRole, procs, csv: csv.replace(/^.*\/data\//, 'data/'),
 };
