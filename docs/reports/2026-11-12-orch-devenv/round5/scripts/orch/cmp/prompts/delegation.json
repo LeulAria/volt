@@ -1,0 +1,27 @@
+{
+  "cc": {
+    "t1": "Run Q1, Q2 and Q3 as three subagents in parallel (the Agent tool, three calls in one message), then Q4 as a fourth subagent (Agent tool) that you give their three answers to.",
+    "t2": "Fix them with three subagents in parallel, one per file (the Agent tool, three calls in one message).",
+    "t3": "Use the Agent tool for the writer and for the reviewer, and relay the reviewer's findings to the writer yourself (continue the same writer agent with SendMessage if you can)."
+  },
+  "cursor": {
+    "t1": "Run Q1, Q2 and Q3 as three subagents in parallel (the Task tool, three calls in one message), then Q4 as a fourth subagent (Task tool) that you give their three answers to.",
+    "t2": "Fix them with three subagents in parallel, one per file (the Task tool, three calls in one message).",
+    "t3": "Use the Task tool for the writer and for the reviewer, and relay the reviewer's findings to the writer yourself."
+  },
+  "hermes": {
+    "t1": "Run Q1, Q2 and Q3 as subagents in parallel with ONE delegate_task call that has a batch of three tasks, then Q4 as a second delegate_task call whose context contains their three answers.",
+    "t2": "Fix them with subagents in parallel: ONE delegate_task call with a batch of three tasks, one per file.",
+    "t3": "Use delegate_task for the writer and for the reviewer. Subagents cannot message each other, so relay the reviewer's findings to the writer yourself in a new delegate_task call."
+  },
+  "volt": {
+    "t1": "Use Volt's delegate_task: ONE call with four tasks (model {{SUBMODEL}}): Q1, Q2 and Q3 run in parallel, and Q4 is the fourth task with after [\"1\",\"2\",\"3\"] so it gets their reports. Then wait for them.",
+    "t2": "Fix them with Volt's delegate_task: ONE call with three tasks run in parallel (model {{SUBMODEL}}, role implementation), one per file. Then wait for them.",
+    "t3": "Use Volt's delegate_task for the writer and for the reviewer (model {{SUBMODEL}}). Send the reviewer's findings to the writer task with message_task; start each re-review with delegate_task and previous_task_id."
+  },
+  "voltn": {
+    "t1": "Use Volt's delegate_task (model {{SUBMODEL}}): Q1, Q2 and Q3 as three subagents in parallel, and Q4 as a fourth subagent that runs after them (after) so it gets their reports. Then wait for them.",
+    "t2": "Fix them with Volt's delegate_task: three subagents in parallel (model {{SUBMODEL}}, role implementation), one per file. Then wait for them.",
+    "t3": "Use Volt's delegate_task for the writer and for the reviewer (model {{SUBMODEL}}). Send the reviewer's findings to the writer task with message_task; start each re-review with delegate_task and previous_task_id."
+  }
+}
