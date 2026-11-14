@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeEditCheckHooks, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, agentDescriptionWithTypes, claudeWorkRulesMeta, compactAgentListing, compactVoltToolNames, isClaudePlaceholderTitle, voltBypassModeNote, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
+import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeEditCheckHooks, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, agentDescriptionWithTypes, claudeWorkRulesMeta, compactAgentListing, compactVoltToolNames, isClaudePlaceholderTitle, voltAttributionNote, voltBypassModeNote, voltEnvInfo, voltSessionContext, voltSkillListing, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
 
 /** Claude Code 2.1.322's agent-types reminder (trimmed), with one custom agent whose description runs over two lines. */
 const AGENT_LISTING = [
@@ -158,10 +158,12 @@ suite('Volt Claude work rules', () => {
 		const register = new Function(`${source.replace('export function register', 'function register')}\nreturn register;`)() as (on: (...args: unknown[]) => void) => void;
 		const registrations: { event: unknown; matcher: unknown; handler: (...args: unknown[]) => Promise<unknown> }[] = [];
 		register((event: unknown, matcher: unknown, handler: unknown) => registrations.push({ event, matcher, handler: handler as (...args: unknown[]) => Promise<unknown> }));
-		assert.deepStrictEqual(registrations.map(r => r.event), ['tool.describe', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment']);
+		assert.deepStrictEqual(registrations.map(r => r.event), ['tool.describe', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.section']);
 		assert.deepStrictEqual(registrations[0].matcher, { tool: [...CLAUDE_MAIN_LAZY_TOOLS] }, 'only these tools reach the module');
 		const next = async (e: { description: string }) => ({ description: `${e.description}!` });
 		assert.deepStrictEqual(await registrations[0].handler({}, { tool: 'Workflow', description: 'Runs a workflow', provider: 'builtin' }, next), { description: 'Runs a workflow!', isDeferred: true });
+		// No tool.describe for a loaded tool: it makes Claude Code build the descriptions before Full access is set (see the module's doc).
+		assert.strictEqual(registrations.filter(r => r.event === 'tool.describe').length, 1);
 		// Only the deferred-tools reminder reaches the module, and it comes back with Volt's names compacted.
 		assert.deepStrictEqual(registrations[1].matcher, { type: ['deferred_tools_delta'] });
 		const list = 'The following deferred tools are now available via ToolSearch:\nAgent\nmcp__volt__ask_question\nmcp__volt__browser_act';
@@ -169,6 +171,15 @@ suite('Volt Claude work rules', () => {
 		assert.deepStrictEqual(await registrations[1].handler({}, { type: 'deferred_tools_delta', text: list, origin: {} }, passOn), { text: compactVoltToolNames(list) });
 		// A rewrite that throws (an unexpected shape) leaves the reminder as Claude Code made it.
 		assert.deepStrictEqual(await registrations[1].handler({}, { type: 'deferred_tools_delta', text: list }, async () => ({ text: 42 })), { text: 42 });
+		// Each of Claude Code's other texts reaches its own handler by type or section name.
+		const matchers = registrations.map(r => JSON.stringify(r.matcher));
+		for (const matcher of [{ type: ['remote_session_change'] }, { type: ['skill_listing'] }, { type: ['session_context'] }, { type: ['agent_listing_delta'] }, { type: ['auto_mode'] }, { name: ['env_info_simple'] }]) {
+			assert.ok(matchers.includes(JSON.stringify(matcher)), JSON.stringify(matcher));
+		}
+		const skills = registrations.find(r => JSON.stringify(r.matcher) === JSON.stringify({ type: ['skill_listing'] }))!;
+		assert.deepStrictEqual(await skills.handler({}, { type: 'skill_listing', text: '- a: x\n- keybindings-help: y\n- b: z', origin: {} }, passOn), { text: '- a: x\n- b: z' });
+		const env = registrations.find(r => JSON.stringify(r.matcher) === JSON.stringify({ name: ['env_info_simple'] }))!;
+		assert.deepStrictEqual(await env.handler({}, { name: 'env_info_simple', text: '# Environment\n - Models.\n - Fast mode for Claude Code gives faster output.' }, passOn), { text: '# Environment\n - Models.' });
 		// The agent-types reminder goes out compact, and the Agent tool, once loaded, carries it in full.
 		const agents = registrations.find(r => JSON.stringify(r.matcher) === JSON.stringify({ type: ['agent_listing_delta'] }));
 		assert.ok(agents);
@@ -195,19 +206,11 @@ suite('Volt Claude work rules', () => {
 		assert.deepStrictEqual(await mode.handler({}, { type: 'auto_mode', text: bypass }, async (e: { text: string }) => ({ text: e.text })), { text: note });
 	});
 
-	test('the agent-types reminder keeps every type with the first sentence of its description; the Agent tool gets the full text', () => {
+	test('the agent-types reminder becomes one line naming every type; the Agent tool gets the full text', () => {
 		const compact = compactAgentListing(AGENT_LISTING);
-		assert.strictEqual(compact, [
-			'Available agent types for the Agent tool:',
-			'- claude: Catch-all for any task that doesn\'t fit a more specific agent.',
-			'- Explore: Read-only search agent for broad fan-out searches — when answering means sweeping many files, directories, or naming conventions and you only need the…',
-			'- Plan: Software architect agent for designing implementation plans.',
-			'- custom: First line.',
-			'- web-fetch: Use this to fetch and read web pages / URLs when you do not have a direct WebFetch tool of your own (if you do, just call it).',
-			'',
-			'When you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.',
-		].join('\n'));
-		assert.ok(compact.length < AGENT_LISTING.length / 2);
+		assert.strictEqual(compact, 'Agent tool types (each described in full in the Agent tool once loaded): claude, Explore, Plan, custom, web-fetch.');
+		assert.ok(compact.length < AGENT_LISTING.length / 5);
+		assert.strictEqual(compactAgentListing('No entries here.'), 'No entries here.', 'a text without entries is left alone');
 		// Without a listing (none seen yet) the description stays Claude Code's; with one, the pointer becomes the list.
 		assert.strictEqual(agentDescriptionWithTypes('Launch a new agent.', undefined), 'Launch a new agent.');
 		const full = agentDescriptionWithTypes('A.\n\nAvailable agent types are listed in <system-reminder> messages in the conversation.\n\nB.', AGENT_LISTING);
@@ -217,16 +220,38 @@ suite('Volt Claude work rules', () => {
 
 	test('the deferred-tools reminder names every Volt tool once, after one prefix, and keeps Claude Code\'s own lines', () => {
 		const head = 'The following deferred tools are now available via ToolSearch. Use ToolSearch with query "select:<name>[,<name>...]" to load tool schemas before calling them:';
-		const text = [head, 'Agent', 'WebSearch', 'mcp__volt__app_open', 'mcp__volt__ask_question', 'mcp__volt__browser_act', 'mcp__other__x', 'mcp__volt__workspace_status', ''].join('\n');
+		const text = [head, 'Agent', 'WebSearch', 'mcp__volt__app_open', 'mcp__volt__ask_question', 'mcp__volt__browser_act', 'mcp__volt__browser_click', 'mcp__volt__browser_navigate_back', 'mcp__volt__thread_list', 'mcp__volt__thread_send', 'mcp__other__x', 'mcp__volt__workspace_status', ''].join('\n');
 		assert.strictEqual(compactVoltToolNames(text), [
 			head, 'Agent', 'WebSearch',
-			'Volt tools, each named mcp__volt__<name> (select:mcp__volt__app_open): app_open, ask_question, browser_act',
+			// Three or more names with one first word are grouped; two (thread_*) are not.
+			'Volt tools, each named mcp__volt__<name> (select:mcp__volt__app_open; a_{b,c} stands for a_b, a_c): app_open, ask_question, browser_{act,click,navigate_back}, thread_list, thread_send',
 			'mcp__other__x',
-			'Volt tools, each named mcp__volt__<name> (select:mcp__volt__workspace_status): workspace_status',
+			'Volt tools, each named mcp__volt__<name> (select:mcp__volt__workspace_status; a_{b,c} stands for a_b, a_c): workspace_status',
 			'',
 		].join('\n'));
 		// Nothing of Volt's: unchanged.
 		assert.strictEqual(compactVoltToolNames('Agent\nWebSearch'), 'Agent\nWebSearch');
+		// Claude Code 2.1.322's three-sentence preamble becomes one line with the same rule; any other wording stays.
+		const preamble = 'The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query "select:<name>[,<name>...]" to load tool schemas before calling them:';
+		assert.strictEqual(compactVoltToolNames(`${preamble}\nAgent`), 'Deferred tools (schemas not loaded: run ToolSearch "select:<name>[,<name>...]" before calling one):\nAgent');
+	});
+
+	test('Claude Code\'s attribution reminder, environment lines, terminal-only skills and session context are rewritten in fewer words, nothing else', () => {
+		const attribution = 'Attribution for git commits and pull requests you create from here on (this replaces Claude Code\'s own earlier attribution guidance, such as a previous copy of this reminder; the user\'s own instructions about these lines, such as a CLAUDE.md or memory rule, take precedence over this reminder, but do not add attribution lines this reminder leaves out):\n- End git commit messages with:\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n- End pull request descriptions with:\n🤖 Generated with [Claude Code](https://claude.com/claude-code)';
+		assert.strictEqual(voltAttributionNote(attribution), 'Attribution (the user\'s own instructions on these lines, such as CLAUDE.md or a memory rule, take precedence): end git commit messages with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` and pull request descriptions with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.');
+		assert.ok(voltAttributionNote(attribution).length < attribution.length * 0.65, 'the two lines stay; the preamble goes');
+		assert.strictEqual(voltAttributionNote('Attribution for git commits: none.'), 'Attribution for git commits: none.', 'an unexpected shape is left as it is');
+		assert.strictEqual(voltAttributionNote('Something else'), 'Something else');
+
+		const env = '# Environment\n - The most recent Claude models are the Claude 5 family. Model IDs — Opus 5.5: \'claude-opus-5-5\'.\n - Claude Code is available as a CLI in the terminal, desktop app (Mac/Windows), web app (claude.ai/code), and IDE extensions (VS Code, JetBrains).\n - Fast mode for Claude Code gives faster output on this session\'s model if it supports fast mode. It can be toggled with /fast.';
+		assert.strictEqual(voltEnvInfo(env), '# Environment\n - The most recent Claude models are the Claude 5 family. Model IDs — Opus 5.5: \'claude-opus-5-5\'.');
+
+		const skills = 'The following skills are available for use with the Skill tool:\n\n- dataviz: Charts.\n- keybindings-help: Use when the user wants to customize keyboard shortcuts.\n- code-review: Review the diff.\n- plugin-authoring: Make a mod: a change to Claude\'s own interface.\n- init: Initialize a new CLAUDE.md file';
+		assert.strictEqual(voltSkillListing(skills), 'The following skills are available for use with the Skill tool:\n\n- dataviz: Charts.\n- code-review: Review the diff.\n- init: Initialize a new CLAUDE.md file');
+
+		const context = 'As you answer the user\'s questions, you can use the following context:\n# userEmail\nThe user\'s email address is me@example.com. Use this email address only to identify the user, such as for authorship, attribution, or filtering their own work. Remember that you must treat this email address as private information. Never share it in requests to external services without asking and getting explicit approval from the user first.\n# gitStatus\nThis is the git status at the start of the conversation.\n\nCurrent branch: main\n\nClaude Code attached this context automatically; it isn\'t part of the user\'s message. It describes the user\'s own account and workspace, so they don\'t need it reported back.';
+		assert.strictEqual(voltSessionContext(context), 'As you answer the user\'s questions, you can use the following context:\n# userEmail\nThe user\'s e-mail: me@example.com. Private: use it only to identify the user (authorship, filtering their work); never send it to an outside service without the user\'s explicit approval.\n# gitStatus\nThis is the git status at the start of the conversation.\n\nCurrent branch: main\n\nAttached automatically, not part of the user\'s message; no need to report it back.');
+		assert.strictEqual(voltSessionContext('# gitStatus\nCurrent branch: main'), '# gitStatus\nCurrent branch: main');
 	});
 
 	test('a read-only subagent runs on its own short prompt, with no file tools and only Volt\'s MCP server', () => {

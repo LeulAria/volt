@@ -23,8 +23,8 @@ export const CLAUDE_MAIN_RULES = [
 	'- Batch: every independent tool call of a step goes in one message (reads, searches, edits to different files). One call per message is the slowest way to work.',
 	'- Read and change files with Read, Edit, Write, Grep and Glob; Bash is for commands (tests, builds, git). Volt shows changes made with Edit and Write; sed or script rewrites are invisible to it.',
 	'- Wait for a long command by running it in the background and reading its output later, not with sleep or until loops.',
-	'- Subagents: give each one the files and what to change in each (paths, symbols, facts you found) so it edits at once instead of exploring again; start independent ones together.',
-	'- Tasks (TaskCreate/TaskUpdate) show in the user\'s Tasks card: mark one in_progress when you start it and completed as soon as it is done. Before you end a turn every task is completed, deleted (status "deleted") if it no longer applies, or open only because it waits on the user. When the user moves on to other work, delete leftover tasks first.',
+	'- Subagents: brief each one with the files and what to change in them (paths, symbols, facts you found) so it edits at once instead of exploring again; start independent ones together.',
+	'- Tasks (TaskCreate/TaskUpdate) show in the user\'s Tasks card: in_progress when you start one, completed as soon as it is done. End a turn with every task completed, deleted (status "deleted") if it no longer applies, or open only because it waits on the user; when the user moves on to other work, delete leftovers first.',
 ].join('\n');
 
 /** Why the Stop hook keeps a turn going: sent to Claude as the reason. No single quotes (see {@link stopHookCommand}). */
@@ -126,7 +126,7 @@ export const CLAUDE_MAIN_DISALLOWED_TOOLS: readonly string[] = ['AskUserQuestion
  * wrote the options into its reply instead of loading the deferred ask_question (0 of 3 runs asked
  * through the tray where AskUserQuestion did 3 of 3, capability check 2026-11-13).
  */
-export const CLAUDE_MAIN_ASK_RULE = '- To ask the user to choose (requirements, preferences, trade-offs), load Volt\'s ask_question (ToolSearch "select:mcp__volt__ask_question") and ask with it instead of writing the options into your reply.';
+export const CLAUDE_MAIN_ASK_RULE = '- To ask the user to choose (requirements, preferences, trade-offs), load Volt\'s ask_question (ToolSearch "select:mcp__volt__ask_question") and ask with it, not by writing the options into your reply.';
 
 /**
  * Claude Code's own tools the main chat loads on demand instead of in every request: their schemas
@@ -144,22 +144,39 @@ export const CLAUDE_MAIN_LAZY_TOOLS: readonly string[] = ['Agent', 'Workflow', '
  * model would not know they exist; with their exact names one ToolSearch call loads them, and in the
  * same message as the step's other calls it costs no extra round trip.
  */
-export const CLAUDE_MAIN_LAZY_RULE = `- Load on demand: Agent (subagents), Workflow (multi-agent scripts, only when asked for one), ScheduleWakeup (resume later), ReportFindings (code-review findings), ListAgents (running agents). Before the first use, call ToolSearch "select:<exact names, comma-separated>" in the same message as your other first calls.`;
+export const CLAUDE_MAIN_LAZY_RULE = `- Loaded on demand: Agent (subagents), Workflow (multi-agent scripts, only when asked for one), ScheduleWakeup (resume later), ReportFindings (code-review findings), ListAgents (running agents). Before the first use, ToolSearch "select:<exact names, comma-separated>" in the same message as your other first calls.`;
 
 /**
  * Claude Code's deferred-tools reminder lists one tool per line, Volt's 135 tools as
  * `mcp__volt__browser_click` and so on: 1,992 tokens in every request of a main chat, 1,748 of them
  * Volt's names (Opus 5.5, 2026-11-14). This keeps Claude Code's own lines and turns each run of Volt
- * lines into one line that says the prefix once and lists the short names (about 900 tokens fewer).
- * Every tool stays listed by name; `select:mcp__volt__<name>` loads it as before. Runs inside Claude
- * Code's hooks worker as source text (see {@link claudeLazyToolsPlugin}), so it uses nothing from outside.
+ * lines into one line that says the prefix once and lists the short names (about 900 tokens fewer);
+ * three or more names with the same first word are written once as `browser_{act,click,...}` (835 to
+ * 665 tokens for the 135 names, Opus 5.5, 2026-11-15). Every tool stays listed; `select:mcp__volt__<name>`
+ * loads it as before. Runs inside Claude Code's hooks worker as source text (see
+ * {@link claudeLazyToolsPlugin}), so it uses nothing from outside.
  */
 export function compactVoltToolNames(text: string): string {
 	const out: string[] = [];
 	let run: string[] = [];
 	const flush = () => {
 		if (run.length) {
-			out.push(`Volt tools, each named mcp__volt__<name> (select:mcp__volt__${run[0]}): ${run.join(', ')}`);
+			const groups = new Map<string, string[]>();
+			for (const name of run) {
+				const cut = name.indexOf('_');
+				const head = cut > 0 ? name.slice(0, cut) : name;
+				const names = groups.get(head);
+				if (names) { names.push(name); } else { groups.set(head, [name]); }
+			}
+			const parts: string[] = [];
+			for (const [head, names] of groups) {
+				if (names.length >= 3 && names.every(name => name.startsWith(`${head}_`))) {
+					parts.push(`${head}_{${names.map(name => name.slice(head.length + 1)).join(',')}}`);
+				} else {
+					parts.push(...names);
+				}
+			}
+			out.push(`Volt tools, each named mcp__volt__<name> (select:mcp__volt__${run[0]}; a_{b,c} stands for a_b, a_c): ${parts.join(', ')}`);
 			run = [];
 		}
 	};
@@ -167,6 +184,10 @@ export function compactVoltToolNames(text: string): string {
 		const match = /^mcp__volt__([A-Za-z0-9_-]+)$/.exec(line.trim());
 		if (match) {
 			run.push(match[1]);
+		} else if (/^The following deferred tools are now available via ToolSearch\. Their schemas are NOT loaded .* Use ToolSearch with query "select:<name>\[,<name>\.\.\.\]" to load tool schemas before calling them:$/.test(line)) {
+			// Claude Code's three-sentence preamble (84 tokens) as one line with the same rule (42).
+			flush();
+			out.push('Deferred tools (schemas not loaded: run ToolSearch "select:<name>[,<name>...]" before calling one):');
 		} else {
 			flush();
 			out.push(line);
@@ -179,33 +200,75 @@ export function compactVoltToolNames(text: string): string {
 /**
  * Claude Code's agent-types reminder (563 tokens, 1,163 when its `web-fetch` agent is on, which
  * Claude Code turns on for some sessions and not others) sits in every request of a main chat, though
- * the main chat loads Agent on demand ({@link CLAUDE_MAIN_LAZY_TOOLS}). This keeps every type with the
- * first sentence of its description; the full entries go into the Agent tool's own description when
- * it is loaded ({@link agentDescriptionWithTypes}). Self-contained: it runs in Claude Code's hooks worker.
+ * the main chat loads Agent on demand ({@link CLAUDE_MAIN_LAZY_TOOLS}). This keeps one line naming
+ * every type (268 tokens with one sentence each until 2026-11-15, now about 40); the full entries go
+ * into the Agent tool's own description when it is loaded ({@link agentDescriptionWithTypes}), where
+ * the model reads them at the moment it picks a type. Self-contained: it runs in Claude Code's hooks worker.
  */
 export function compactAgentListing(text: string): string {
-	const out: string[] = [];
-	let inEntry = false;
+	const names: string[] = [];
 	for (const line of text.split('\n')) {
-		const entry = /^- ([^:\n]+): (.*)$/.exec(line);
+		const entry = /^- ([^:\n]+): /.exec(line);
 		if (entry) {
-			let description = entry[2].replace(/\s*\(Tools: [^)]*\)\s*$/, '');
-			const sentence = /^.*?[.!?](?=\s|$)/.exec(description);
-			description = sentence ? sentence[0] : description;
-			if (description.length > 160) {
-				description = `${description.slice(0, description.lastIndexOf(' ', 157))}…`;
-			}
-			out.push(`- ${entry[1]}: ${description}`);
-			inEntry = true;
-		} else if (inEntry && line.trim() && !line.startsWith('- ')) {
-			// The rest of a description that ran over several lines.
-		} else {
-			inEntry = false;
-			out.push(line);
+			names.push(entry[1]);
 		}
 	}
-	return out.join('\n');
+	return names.length ? `Agent tool types (each described in full in the Agent tool once loaded): ${names.join(', ')}.` : text;
 }
+
+/**
+ * Claude Code's attribution reminder (544 characters, 210 tokens in every request: what to end commit
+ * messages and pull request descriptions with, and a paragraph on which earlier guidance it replaces)
+ * in a quarter of the words, with the same two lines and the same rule that the user's own instructions
+ * win. Any other text of this attachment type is left as it is. Self-contained (hooks worker).
+ */
+export function voltAttributionNote(text: string): string {
+	if (!/^\s*Attribution for git commits/.test(text)) {
+		return text;
+	}
+	const lines = text.split('\n');
+	const commitAt = lines.findIndex(line => /^- End git commit messages with:/.test(line));
+	const prAt = lines.findIndex(line => /^- End pull request descriptions with:/.test(line));
+	const commit = commitAt >= 0 ? lines[commitAt + 1] : undefined;
+	const pr = prAt >= 0 ? lines[prAt + 1] : undefined;
+	if (!commit?.trim() || !pr?.trim() || /^- /.test(commit) || /^- /.test(pr)) {
+		return text;
+	}
+	return `Attribution (the user's own instructions on these lines, such as CLAUDE.md or a memory rule, take precedence): end git commit messages with \`${commit.trim()}\` and pull request descriptions with \`${pr.trim()}\`.`;
+}
+
+/**
+ * Claude Code's "# Environment" prompt section (`env_info_simple`, 620 characters) tells the model which
+ * Claude models exist, that Claude Code comes as a CLI, desktop app, web app and IDE extensions, and
+ * how to toggle fast mode with `/fast`. Inside Volt the last two describe another product (there is no
+ * `/fast`), so only the model line stays. Self-contained (hooks worker).
+ */
+export function voltEnvInfo(text: string): string {
+	return text.split('\n').filter(line => !/Claude Code is available as a CLI|Fast mode for Claude Code/.test(line)).join('\n');
+}
+
+/**
+ * Bundled skills of Claude Code's terminal that have nothing to act on inside Volt: `keybindings-help`
+ * edits the terminal's `keybindings.json`, `plugin-authoring` writes mods for its panes and status
+ * line. Their lines leave the skills listing (about 130 tokens per request); every other skill stays,
+ * with its description as Claude Code lists it. Self-contained (hooks worker).
+ */
+export function voltSkillListing(text: string): string {
+	return text.split('\n').filter(line => !/^- (keybindings-help|plugin-authoring): /.test(line)).join('\n');
+}
+
+/**
+ * Claude Code's session context reminder (`session_context`: the user's e-mail and the git status) in
+ * fewer words: the e-mail's four-sentence privacy paragraph becomes one line with the same rule, and the
+ * closing note that the context is not the user's message is kept short. The git status is untouched.
+ * Self-contained (hooks worker).
+ */
+export function voltSessionContext(text: string): string {
+	return text
+		.replace(/^The user's email address is (\S+)\. Use this email address only to identify the user, [^\n]*?Never share it in requests to external services[^\n]*$/m, 'The user\'s e-mail: $1. Private: use it only to identify the user (authorship, filtering their work); never send it to an outside service without the user\'s explicit approval.')
+		.replace(/^Claude Code attached this context automatically; it isn't part of the user's message\. It describes the user's own account and workspace, so they don't need it reported back\.$/m, 'Attached automatically, not part of the user\'s message; no need to report it back.');
+}
+
 
 /**
  * The Agent tool's description with the full agent-types reminder in place of its pointer to it
@@ -245,7 +308,24 @@ function attachmentRewrite(fn: string): string {
 	return `async ($, e, next) => { const r = await next(e); try { return typeof r?.text === 'string' ? { ...r, text: ${fn}(r.text) } : r; } catch { return r; } }`;
 }
 
-/** The hooks module of {@link claudeLazyToolsPlugin}: Claude Code (2.1.322 and later) imports it in its hooks worker. */
+/**
+ * The hooks module of {@link claudeLazyToolsPlugin}: Claude Code (2.1.322 and later) imports it in its
+ * hooks worker. Its events, found by a probe module against the 2.1.322 binary (2026-11-15):
+ * `prompt.section` `{ name, text }` for the named sections of Claude Code's system prompt (`pronouns`,
+ * `action_caution`, `user_privacy`, `session_guidance`, `memory`, `env_info_simple`, `env_info_model`,
+ * `context_management`, `act_dont_rederive`, `heron_brook` for the reasoning-effort text; the opening
+ * block with the security policy and "# Harness" is not a section); `prompt.attachment` `{ type, text }`
+ * for each per-request attachment (`deferred_tools_delta`, `agent_listing_delta`, `skill_listing`,
+ * `mcp_instructions_delta`, `environment`, `model`, `date`, `instructions`, `session_context`,
+ * `remote_session_change` for the attribution reminder, `auto_mode`); `tool.describe` `{ tool }`;
+ * `attribution.text` `{ kind, text }`. A matcher names what reaches the module.
+ *
+ * `tool.describe` is used only for the deferred tools: a handler for a loaded built-in (ToolSearch,
+ * tried 2026-11-15 to cut its result-format paragraph, 84 tokens) made Claude Code build every tool's
+ * description at session start, before Volt had set Full access, and Claude Code picks its shorter
+ * Bash description (116 tokens fewer: no "avoid cat, sed..." line) only when bypass mode is on at that
+ * moment. Measured on "hi": 11,460 tokens with the handler, 11,390 without.
+ */
 const CLAUDE_LAZY_TOOLS_MODULE = [
 	'// Volt: Claude Code tools the main chat loads with ToolSearch when a task needs them, not in every request,',
 	'// and Volt\'s tool names said once in its deferred-tools reminder. A rewrite that fails leaves the text as it was.',
@@ -254,13 +334,21 @@ const CLAUDE_LAZY_TOOLS_MODULE = [
 	`const compactAgentListing = ${compactAgentListing.toString()};`,
 	`const agentDescriptionWithTypes = ${agentDescriptionWithTypes.toString()};`,
 	`const voltBypassModeNote = ${voltBypassModeNote.toString()};`,
+	`const voltAttributionNote = ${voltAttributionNote.toString()};`,
+	`const voltEnvInfo = ${voltEnvInfo.toString()};`,
+	`const voltSkillListing = ${voltSkillListing.toString()};`,
+	`const voltSessionContext = ${voltSessionContext.toString()};`,
 	'// The agent-types reminder as Claude Code wrote it (the last one), for the Agent tool\'s description.',
 	'let agentListing;',
 	'export function register(on) {',
 	'\ton(\'tool.describe\', { tool: LAZY }, async ($, e, next) => { const r = await next(e); try { return e.tool === \'Agent\' && typeof r?.description === \'string\' ? { ...r, isDeferred: true, description: agentDescriptionWithTypes(r.description, agentListing) } : { ...r, isDeferred: true }; } catch { return { ...r, isDeferred: true }; } });',
 	`\ton('prompt.attachment', { type: ['deferred_tools_delta'] }, ${attachmentRewrite('compactVoltToolNames')});`,
 	`\ton('prompt.attachment', { type: ['auto_mode'] }, ${attachmentRewrite('voltBypassModeNote')});`,
+	`\ton('prompt.attachment', { type: ['remote_session_change'] }, ${attachmentRewrite('voltAttributionNote')});`,
+	`\ton('prompt.attachment', { type: ['skill_listing'] }, ${attachmentRewrite('voltSkillListing')});`,
+	`\ton('prompt.attachment', { type: ['session_context'] }, ${attachmentRewrite('voltSessionContext')});`,
 	'\ton(\'prompt.attachment\', { type: [\'agent_listing_delta\'] }, async ($, e, next) => { const r = await next(e); try { if (typeof r?.text !== \'string\') { return r; } if (/^Available agent types/m.test(r.text)) { agentListing = r.text; } return { ...r, text: compactAgentListing(r.text) }; } catch { return r; } });',
+	`\ton('prompt.section', { name: ['env_info_simple'] }, ${attachmentRewrite('voltEnvInfo')});`,
 	'}',
 	'',
 ].join('\n');
