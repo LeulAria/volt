@@ -32,6 +32,10 @@ const GATE_ON = 'return states.get(win)?.yielding ?? false;';
 const GATE_OFF = 'return false; /* a8 nogate arm */';
 /** Turns the after tree's keystroke-first frame gate on or off in out/ (only while no instance of it runs). */
 export function setGate(on) {
+	if (!existsSync(GATE_JS)) {
+		// The gate was reverted (ce91ce68668): nothing to switch; a nogate arm is the after arm.
+		return;
+	}
 	const src = readFileSync(GATE_JS, 'utf8');
 	const next = on ? src.replace(GATE_OFF, GATE_ON) : src.replace(GATE_ON, GATE_OFF);
 	if (!next.includes(on ? GATE_ON : GATE_OFF)) {

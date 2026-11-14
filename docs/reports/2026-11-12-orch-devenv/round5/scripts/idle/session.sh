@@ -16,7 +16,8 @@ while true; do
 		echo "idle session.sh pid $$ start $(date)" > "$LOCK/owner"
 		break
 	fi
-	sleep 20
+	# Every 3 s, as the other areas' lock waiters poll (at 20 s this one never won the lock).
+	sleep 3
 done
 trap 'rm -rf "$LOCK"' EXIT
 echo "== lock taken $(date) load $(load1)"
