@@ -1,0 +1,2 @@
+{"arm":"minbefore","test":"A9","variant":"no-sessions","at":"2026-11-14T15:41:19.377Z","load":"4.96 4.50 4.56","waitS":60,"before":13,"left":0,"ghostMiB":0,"mem":{"swapUsedMiB":11662,"swapTotalMiB":13312,"freePct":78,"pressure":1},"procs":[]}
+{"arm":"minafter","test":"A9","variant":"no-sessions","at":"2026-11-14T15:49:03.416Z","load":"5.00 4.31 4.40","waitS":60,"before":13,"left":0,"ghostMiB":0,"mem":{"swapUsedMiB":11630,"swapTotalMiB":13312,"freePct":78,"pressure":1},"procs":[]}
