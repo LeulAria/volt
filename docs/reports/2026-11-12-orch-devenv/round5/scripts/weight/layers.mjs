@@ -6,8 +6,13 @@ const c = await cdp();
 let layers;
 c.on('LayerTree.layerTreeDidChange', p => { if (p.layers) { layers = p.layers; } });
 await c.send('LayerTree.enable');
-await c.send('Runtime.evaluate', { expression: 'document.body.style.outline = document.body.style.outline' });
-for (let i = 0; i < 40 && !layers; i++) { await sleep(100); }
+// A window at rest commits no frame, and the layer tree arrives only with a commit: change a pixel for one frame.
+for (let i = 0; i < 40 && !layers; i++) {
+	if (i % 10 === 0) {
+		await c.send('Runtime.evaluate', { expression: `document.body.style.opacity = '0.999'; requestAnimationFrame(() => requestAnimationFrame(() => document.body.style.opacity = ''))` });
+	}
+	await sleep(100);
+}
 const out = [];
 let total = 0;
 for (const l of layers ?? []) {

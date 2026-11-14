@@ -23,7 +23,10 @@ c.close();
 const quitAt = Date.now();
 await sleep(WAIT_S * 1000);
 const alive = new Set(execSync('ps -axo pid=').toString().split('\n').map(Number).filter(Boolean));
-const left = before.filter(p => alive.has(p.pid));
+// Plus the profile's processes that started after the quit: a built app's agent server is a launchd job, which launchd
+// may start again (ADEMark counts launch agents too).
+const known = new Set(before.map(p => p.pid));
+const left = [...before.filter(p => alive.has(p.pid)), ...profileProcesses().filter(p => !known.has(p.pid))];
 const rules = join(DATA, 'raw', `a9-rules-${arm}.json`);
 writeFileSync(rules, JSON.stringify({ rootPids: left.map(p => p.pid), bundlePaths: [], vendorDirs: [], agentExecutables: ['claude', 'codex'], excludeNames: ['crashpad_handler'] }));
 const csv = join(DATA, 'raw', `a9-${arm}-${Date.now()}.csv`);
