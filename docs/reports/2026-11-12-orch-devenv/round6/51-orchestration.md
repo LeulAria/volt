@@ -1,0 +1,91 @@
+# 51 · Orchestration, round 6: C1 at Opus 5.5 medium, and ADEMark's reliability tests C2-C6
+
+Branch `e6/orch` (worktree `volt-e5-orch`, base `7f07f73d677`), 2026-11-15. Round 5: [`../round5/41-orchestration.md`](../round5/41-orchestration.md).
+
+Status: draft (C1 runs pending the machine's load; C2, C5, C6 pending).
+
+## Summary
+
+(filled in at the end)
+
+## Method
+
+- **Rig:** round 5's C1 rig copied to [`scripts/orch/c1/`](scripts/orch/c1/) with round-6 paths (`~/.volt-r6/orch/c1`, the
+  timing lock `~/.volt-r6/timing.lock`, seeds `ademark-volt-r6-<id>`), plus a new reliability rig
+  [`scripts/orch/crel/crel.mjs`](scripts/orch/crel/crel.mjs) for C2-C6 and the C3 probe, with its own hidden tests
+  (`crel/tests/`: round 5's W1 and W3 tests, and new C2-F1/F2/F3 tests written from TASKS.md's "what each group
+  asserts"). ADEMark's hidden tests are private, so every grade here is on our own tests.
+- **Instance:** a dev build of this branch as a test instance (profile `~/.volt-r6/orch/ud`, CDP 9971), a clean Claude
+  config dir (the live login's access token only, no connectors, skills or plugins), every model request through the
+  capture proxy on 19972 (`ANTHROPIC_BASE_URL`), sandbox Off and Full access as in round 5. The before build is
+  `volt-e5-base` (`7f07f73d677`, profile `~/.volt-r6/orch/ud-base`, CDP 9978).
+- **Model:** Opus 5.5 at **medium** effort (the user's choice for this round; ADEMark's published runs use high) for
+  the lead and every subagent, picked in the model picker ("Opus 5.5 Medium", the default effort of a new chat).
+  Claude Code 2.1.322 inside the global `claude-agent-acp` 0.106.0 on PATH (no preload). The bare CLI arm runs
+  `claude -p --effort medium`.
+- **Faults (C4-C6), ours, not ADEMark's instruments:** C4 kills (`kill -9`) every process with basename `claude`
+  whose cwd is the task clone (ADEMark's default agent executables; in Volt that is the Claude Code binary the
+  adapter spawns, the adapter itself is `node`). C5 cuts the model API at the proxy for 30 s (in-flight streams cut,
+  new connections reset), not with a `pf` anchor (root). C6 sends Cmd-Q, relaunches 5 s after the processes are gone
+  and returns to the thread.
+- **End rule (C2-C6):** the chat ran at least once, nothing is running or queued, every follow-up was sent and the
+  recovery settled, and no model request for 60 s; cap 10 min (C2) / 15 min (C4-C6). Recovery: 60 s after the fault
+  (after the API is back for C5) with no new model request from the chat, `continue` is sent once.
+- **C3 probe:** one `z` typed as a key into the composer every 2 s, its echo timed on the DOM (the composer's
+  rendered text shows it), deleted at once; paused 3 s around each follow-up and each fault. A lock is a probe with
+  no echo within 2 s.
+- **Load:** every C2-C6 row below was taken at a 1-minute load of 45-70 (other areas' minified builds); these are
+  pass/fail rows, not timings. C1 rows are timings and wait for load 14 or less under the timing lock.
+
+## Results
+
+### C4 Agent Killed
+
+| Run | Fault at | Load | Task first ended | Resumed alone | Survival (own W3 tests) | Note |
+|---|---|---|---|---|---|---|
+| crel-c4-1 | 90 s (ADEMark) | 51 | 59 s | no (idle agent killed) | partial | the task was done 31 s before the fault; "continue" at 152 s was answered |
+| crel-c4-30s-1 | 30 s (ours) | 63 | 32.6 s (cut) | no | partial | before the fix: the turn ended "done" on "The connection to Claude was lost."; row marked invalid for a mis-attributed recovery |
+| crel-c4-30s-3 | 30 s (ours) | 66 | 31.8 s (cut) | no | partial | first half of the fix only (session-update path); the adapter puts the failure on the prompt response |
+| crel-c4-30s-4 | 30 s (ours) | (fill) | (fill) | **yes, 11.1 s after the kill** | (fill) | both halves of the fix |
+
+(c4-30s-2 invalid: the agent server restarted mid-run from a source sync.)
+
+### C5 Network Cut, C6 App Restart, C2 Message Delivery, C3 Chat Lock
+
+(pending)
+
+### C1 Orchestrated Build
+
+(pending: 3 Volt after runs, 1 Volt before run, 1 Claude Code solo, all at Opus 5.5 medium, load 14 or less)
+
+## Fixes
+
+### 1. An agent process lost mid-turn fails the turn and restarts the agent (`8a29df5e081`, `ee30c4ec846`)
+
+Cause: `claude-agent-acp` reports a killed or crashed Claude process as a `transport_lost` session failure
+(category `connection`, action `new_session`) in the `_meta` of the prompt response (or of a session update when no
+turn is active), and the prompt response otherwise reads as a normal end of turn. Volt showed the notice ("The
+connection to Claude was lost.") and ended the run as `done`: the chat sat idle on a half-done task, the keep-working
+rescue had nothing to restart, and ADEMark's harness would send `continue` after 60 s (Survival `partial`).
+Change: `acpNotices.ts` keeps the failure's class and actions on the notice; `acpProvider.ts` ends the turn as a
+dead process does (`ACP session is not running: …`, retryable and restartable) when a connection failure arrives
+on the prompt response or a session update mid-turn, so the runtime restarts the agent and sends the prompt again
+(the existing "Agent process died. Restarting and retrying." path). Service failures (overloaded, rate limited)
+stay notices. Tests: `acpProvider.test.ts` (three cases), `acpNotices.test.ts`.
+Numbers: C4 at 30 s, resumed alone 11.1 s after the kill (run 4) against never (runs 1 and 3).
+
+### 2. A subagent gets the user's request whole; the lead names its part (`cc524a5b90b`)
+
+Cause: the brief-level capsule (the default) clipped the user's request at 1,500 characters, so a C1 lead rewrote
+every item's spec into its brief: 2.7-4.5K characters per `delegate_task` call, 9-14 s each, one after another, 47 s
+from the first call to the last worker's start (round 5's run). Change: the capsule carries the request up to 6,000
+characters (9,000 in all), and `delegate_task`'s description says the subagent has it ("for a part the request
+spells out, name it and add only what you found"). `wait_tasks`'s description says what `any=true` buys (merge or
+check each report while the rest run): round 5's lead waited for all four and merged nothing for the 50-70 s between
+the first report and the last. Cost: +42 tokens on every top-level request (the three always-loaded tool texts are
+2.1 KB, cap raised from 2.0 to 2.1 KB in the test), and up to +1.1K cached tokens per subagent request when the
+user's request is that long. Numbers: (C1 runs pending).
+
+## Not done, and why
+
+(filled in at the end)
