@@ -26,7 +26,7 @@ import { parseTokenUsage } from '../../common/tokenUsage.js';
 import { VoltMode } from '../../common/modes.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, subagentProfile } from '../../common/providers.js';
-import { sandboxPlatformUnavailable, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
+import { isSandboxUnavailableError, sandboxPlatformUnavailable, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
 import { IVoltExecContext, IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { voltExec } from '../../common/execContext.js';
@@ -611,9 +611,42 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (adopted) {
 			return adopted.handle;
 		}
-		const live = await this.createSession(req);
+		const live = await this.createOrResume(req);
 		this.sessions.set(live.handle.id, live);
 		return live.handle;
+	}
+
+	/**
+	 * `createSession`, continuing `req.resumeSessionId` when it is set. A session the agent cannot
+	 * resume (its transcript is gone, the agent has no `session/resume`) starts new instead: the
+	 * handle then has no `resumed`, and the runtime briefs it with a recap as before.
+	 */
+	private async createOrResume(req: IAgentStartRequest): Promise<IAcpSession> {
+		if (!req.resumeSessionId) {
+			return this.createSession(req);
+		}
+		try {
+			return await this.createSession(req);
+		} catch (err) {
+			if (isSandboxUnavailableError(err)) {
+				throw err;
+			}
+			this.logService.info(`[ACP] ${this.id} could not resume ${req.resumeSessionId}; starting a new session: ${err instanceof Error ? err.message : String(err)}`);
+			return this.createSession({ ...req, resumeSessionId: undefined });
+		}
+	}
+
+	/** The agent can continue this session in a new process (`session/resume`) after it was stopped. */
+	canResume(session: IAgentSessionHandle): boolean {
+		const live = this.sessions.get(session.id);
+		if (!live || live.resumable !== true || live.textOnly || live.client.isDead) {
+			return false;
+		}
+		// Work the process still does between turns (a `run_in_background` command, a background
+		// subagent) would end with it: such a session is not stopped to be resumed.
+		const background = [...live.backgroundTasks?.values() ?? []].some(task => task.state === 'running')
+			|| [...live.children?.values() ?? []].some(child => !child.ended);
+		return !background;
 	}
 
 	/**
@@ -671,7 +704,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			const [oldestKey, oldest] = [...this.spares.entries()].sort((x, y) => x[1].startedAt - y[1].startedAt)[0];
 			this.dropSpare(oldestKey, oldest);
 		}
-		const spare: IAcpSpare = { key, sessionId: req.sessionId, startedAt: Date.now(), session: this.createSession(req) };
+		const spare: IAcpSpare = { key, sessionId: req.sessionId, startedAt: Date.now(), session: this.createOrResume(req) };
 		this.spares.set(key, spare);
 		spare.expiry = setTimeout(() => {
 			if (this.spares.get(key) === spare) {
@@ -763,6 +796,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			req.textOnly ? req.textOnly.systemPrompt : this.hostTools?.getMcpServers(req.sessionId, hostToolOptions(req)) ?? [],
 			sandboxLaunchKey(req.sandbox?.settings),
 			subagentProfile(req.subagent) ?? false,
+			// A spare that continues one chat's conversation serves only that chat's start.
+			req.resumeSessionId ?? '',
 		]);
 	}
 
@@ -827,8 +862,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		return applyContextWindowSuffix(applyOptionsToParameterizedId(req.modelId, req.options), req.options);
 	}
 
-	/** Spawns the agent and opens a session; with `resume`, continues that session (in `req.cwd`) instead of a new one. */
-	private async createSession(req: IAgentStartRequest, resume?: string): Promise<IAcpSession> {
+	/** Spawns the agent and opens a session; with `resume` (or `req.resumeSessionId`), continues that session (in `req.cwd`) instead of a new one. */
+	private async createSession(req: IAgentStartRequest, resume = req.resumeSessionId): Promise<IAcpSession> {
 		// Where a cold start's time goes (launch command, spawn with the sandbox, initialize, session/new, setup), for the log line below.
 		const started = Date.now();
 		const steps: number[] = [];
@@ -925,6 +960,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		const handle: IAgentSessionHandle = {
 			id: created.sessionId,
 			providerSessionId: created.sessionId,
+			...(resume ? { resumed: true } : {}),
 		};
 		const live: IAcpSession = {
 			handle,

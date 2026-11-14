@@ -176,11 +176,18 @@ const TAB_PREDICTION_SESSION_ID = 'volt-tab-prediction';
 /** Bumped whenever the built-in profile list changes so existing installs pick it up. */
 const CLI_SEED_VERSION = 5;
 
-/** Idle chat agents kept warm per window, most recently used first. */
+/** Idle chat agents kept warm per window, most recently used first (agents that cannot resume, see IDLE_AGENT_GRACE_MS). */
 const MAX_IDLE_AGENTS = 3;
 /** An idle chat agent older than this is stopped even within the cap. */
 const IDLE_AGENT_TTL_MS = 15 * 60_000;
 const IDLE_AGENT_CHECK_MS = 60_000;
+/**
+ * An idle agent that can resume its session later (Claude Code, Codex: ACP `session/resume`) and is
+ * not the most recently used one stops this long after its last turn or prewarm. Its process (the
+ * ACP adapter and the CLI, a few hundred MB and some CPU at rest) comes back with the conversation
+ * intact when the chat is opened, focused or sent to (see `releasedAgent`).
+ */
+const IDLE_AGENT_GRACE_MS = 30_000;
 /** Appended to a native fast-lane request: a small change is edited, checked and answered without a test run or browser. */
 const FAST_LANE_NOTE = '[Volt] Small, well-scoped change: make the edit, check the files you changed for errors, and answer in a line or two. No test runs, builds, servers or browser unless the user asked for them.';
 /** The second opinion's wait: past it the run finishes with its items claimed, not reviewed. */
@@ -237,6 +244,16 @@ const ACP_SUPERVISION: IAcpSupervisionOptions = {
 };
 /** Paths whose changes do not invalidate a cached check result. */
 const CHECK_NOISE = /\/(?:node_modules|\.git|coverage|\.nyc_output|dist|build|out|target|__pycache__|\.pytest_cache|\.next|\.turbo|\.cache)(?:\/|$)/;
+
+/** The session to resume for a start of this provider, model and folder, from the chat's stopped agent. */
+export function resumableSessionId(released: { readonly providerId: string; readonly ref: string; readonly cwd: string | undefined; readonly providerSessionId: string } | undefined, providerId: string, ref: string, cwd: string | undefined): string | undefined {
+	return released && released.providerId === providerId && released.ref === ref && released.cwd === cwd ? released.providerSessionId : undefined;
+}
+
+/** How many of the chat's messages a newly bound agent has seen: those its resumed session saw, else none. */
+export function resumedSynced(released: { readonly providerSessionId: string; readonly synced: number } | undefined, handle: IAgentSessionHandle): number {
+	return released && handle.resumed && handle.providerSessionId === released.providerSessionId ? released.synced : 0;
+}
 
 function isRunActive(session: ISessionState): boolean {
 	const status = session.activeRun?.status;
@@ -363,6 +380,12 @@ interface ISessionState extends IVoltSession {
 	agentSandboxKey?: string;
 	/** Last time the live agent started or finished a run; idle agents are let go oldest first. */
 	agentUsedAt?: number;
+	/**
+	 * The agent session the chat had before Volt stopped its idle process: the next start for the
+	 * same model and folder continues it (`IAgentStartRequest.resumeSessionId`), having seen `synced`
+	 * of the chat's messages, instead of a new session briefed with a recap.
+	 */
+	releasedAgent?: { readonly providerId: string; readonly ref: string; readonly cwd: string | undefined; readonly providerSessionId: string; readonly synced: number };
 	/** Last time a native run ended (or its transcript was read back); idle transcripts go to disk oldest first. */
 	nativeUsedAt?: number;
 	/** One notice after a checkout is created or restored. */
@@ -825,6 +848,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	/** Each chat keeps its agent process warm for follow-ups; this keeps that from growing without bound. */
 	private readonly agentReaper = this._register(new RunOnceScheduler(() => this.releaseIdleAgents(), IDLE_AGENT_CHECK_MS));
+	private agentReaperDue = 0;
+
+	/** Runs the reaper within `delay`; an earlier check already scheduled is kept (finishing runs never postpone it). */
+	private scheduleReaper(delay = IDLE_AGENT_CHECK_MS): void {
+		const due = Date.now() + delay;
+		if (this.agentReaper.isScheduled() && this.agentReaperDue <= due) {
+			return;
+		}
+		this.agentReaperDue = due;
+		this.agentReaper.schedule(delay);
+	}
 
 	private releaseIdleAgents(): void {
 		const now = Date.now();
@@ -841,7 +875,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.releaseNative(session);
 		}
 		if (warmKept) {
-			this.agentReaper.schedule();
+			this.scheduleReaper();
 		}
 		// Sessions parked by a model switch: kept while fresh, at most MAX_IDLE_AGENTS over all chats.
 		const parked = [...this.sessions.values()].flatMap(session => (session.parkedAgents ?? []).map(agent => ({ session, agent })))
@@ -855,15 +889,28 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			.filter(session => session.agentHandle && !isRunActive(session))
 			.sort((a, b) => (b.agentUsedAt ?? 0) - (a.agentUsedAt ?? 0));
 		let kept = 0;
-		for (const session of idle) {
-			if (kept < MAX_IDLE_AGENTS && now - (session.agentUsedAt ?? 0) < IDLE_AGENT_TTL_MS) {
-				kept++;
-				continue;
+		let next = Infinity;
+		idle.forEach((session, index) => {
+			const age = now - (session.agentUsedAt ?? 0);
+			const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
+			if (index > 0 && session.agentHandle && provider?.canResume?.(session.agentHandle)) {
+				// Not the chat in use, and it comes back intact: stop it after a short grace.
+				if (age >= IDLE_AGENT_GRACE_MS) {
+					this.releaseAgent(session, true);
+				} else {
+					next = Math.min(next, IDLE_AGENT_GRACE_MS - age);
+				}
+				return;
 			}
-			this.releaseAgent(session);
-		}
-		if (kept) {
-			this.agentReaper.schedule();
+			if (kept < MAX_IDLE_AGENTS && age < IDLE_AGENT_TTL_MS) {
+				kept++;
+				next = Math.min(next, IDLE_AGENT_TTL_MS - age);
+				return;
+			}
+			this.releaseAgent(session, true);
+		});
+		if (next !== Infinity) {
+			this.scheduleReaper(Math.min(IDLE_AGENT_CHECK_MS, Math.max(1_000, next + 100)));
 		}
 	}
 
@@ -902,7 +949,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.releaseParked(session, agent => agent.ref === parked.ref && agent.cwd === parked.cwd);
 		session.parkedAgents = [parked, ...session.parkedAgents ?? []];
 		this.releaseParked(session, agent => session.parkedAgents!.indexOf(agent) >= MAX_PARKED_PER_CHAT);
-		this.agentReaper.schedule();
+		this.scheduleReaper();
 	}
 
 	/** A parked session of exactly this model, folder and sandbox that is still alive, taken out of the parking. */
@@ -920,10 +967,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return parked;
 	}
 
-	/** Stops a chat's idle agent. Its next prompt starts a new one and recaps the conversation. */
-	private releaseAgent(session: ISessionState): void {
+	/**
+	 * Stops a chat's idle agent. With `resumable`, an agent that can continue its session later is
+	 * remembered: the chat's next start resumes it (see `releasedAgent`). Otherwise the next prompt
+	 * starts a new one and recaps the conversation.
+	 */
+	private releaseAgent(session: ISessionState, resumable = false): void {
 		const handle = session.agentHandle;
 		const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
+		session.releasedAgent = resumable && handle?.providerSessionId && provider && session.agentRef && provider.canResume?.(handle)
+			? { providerId: provider.id, ref: session.agentRef, cwd: session.agentCwd, providerSessionId: handle.providerSessionId, synced: session.agentSynced ?? 0 }
+			: undefined;
 		session.agentHandle = undefined;
 		session.agentProviderId = undefined;
 		session.agentRef = undefined;
@@ -1448,6 +1502,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const cwd = this.executionRoot(session)?.fsPath;
 		if (session.agentHandle && session.agentRef === item.ref && session.agentCwd === cwd && session.agentSandboxKey === this.sandboxKey(session.sessionId) && (provider.isLive?.(session.agentHandle) ?? true)) {
+			// The chat is in use: its agent is the one kept warm (see releaseIdleAgents).
+			if (!isRunActive(session)) {
+				session.agentUsedAt = Date.now();
+			}
 			return;
 		}
 		// A new agent's first prompt says whether the project is indexed and carries the memory notes:
@@ -1456,14 +1514,16 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		void this.memory.context().catch(() => undefined);
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
 		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox, session.subagent);
-		if (this.agentPool.has(spare.key)) {
+		// A chat whose idle agent was stopped gets it back (session/resume): only a spare for this chat can.
+		const resuming = !!this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode, sandbox).resumeSessionId;
+		if (!resuming && this.agentPool.has(spare.key)) {
 			return;
 		}
 		// A spare under an alias serves whichever chat sends first, but its browser tools reach the
 		// chat only when the host tool service follows aliases. Otherwise park one for this chat in
 		// the provider (its host MCP URL names the chat), which `start` adopts.
 		const perChat = provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'prewarmSpare' | 'hasSpare'>>;
-		if (!this.aliasHost() && perChat.prewarmSpare && perChat.hasSpare) {
+		if ((resuming || !this.aliasHost()) && perChat.prewarmSpare && perChat.hasSpare) {
 			// One chat in view at a time: stop spares other providers parked for chats left behind.
 			for (const other of this.agentProviders.values()) {
 				if (other !== provider) {
@@ -1494,6 +1554,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	private agentStartRequest(sessionId: string, profile: IProviderProfile, item: IVoltCatalogItem, cwd: string | undefined, options: IVoltModelOptions | undefined, mode: VoltMode, sandbox?: IAgentSandboxStart, subagent = (this.sessions.get(sessionId) as ISessionState | undefined)?.subagent): IAgentStartRequest {
+		const resumeSessionId = resumableSessionId((this.sessions.get(sessionId) as ISessionState | undefined)?.releasedAgent, profile.providerId, item.ref, cwd);
 		return {
 			sessionId,
 			mode,
@@ -1503,6 +1564,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			options: this.resolvedOptions(item, options),
 			...(sandbox ? { sandbox } : {}),
 			...(subagent ? { subagent } : {}),
+			...(resumeSessionId ? { resumeSessionId } : {}),
 		};
 	}
 
@@ -1583,8 +1645,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.agentCwd = cwd;
 		session.agentSandboxKey = sandboxKey;
 		session.agentUsedAt = Date.now();
-		// A fresh agent process has seen nothing of this conversation yet.
-		session.agentSynced = 0;
+		// A fresh agent process has seen nothing of this conversation yet; a resumed one saw what it had seen before it stopped.
+		session.agentSynced = resumedSynced(session.releasedAgent, handle);
+		// The chat's agent is this one now: an older stopped session is never resumed over it.
+		session.releasedAgent = undefined;
 	}
 
 	/** Lets go of the chat's current agent, if any. */
@@ -1624,6 +1688,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session.agentHandle && (session.agentSynced ?? 0) > session.messages.length) {
 			this.disposeSessionAgent(session);
 			session.agentSynced = 0;
+		}
+		if (session.releasedAgent && session.releasedAgent.synced > session.messages.length) {
+			session.releasedAgent = undefined;
 		}
 		this.releaseParked(session, agent => agent.synced > session.messages.length);
 	}
@@ -5356,10 +5423,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
 		const spareRequest = this.spareRequest(provider, profile, item, cwd, request.options, sandbox, session.subagent);
 		run.spare = spareRequest;
-		// A spare's browser tools reach this chat only when the host tool service maps its alias.
-		const usePool = this.aliasHost() || !(intent.wantsPreview || intent.matchesDesign);
+		const startRequest = this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode, sandbox);
+		// A spare's browser tools reach this chat only when the host tool service maps its alias. A chat
+		// whose idle agent was stopped resumes it instead of taking a pooled stranger.
+		const usePool = !startRequest.resumeSessionId && (this.aliasHost() || !(intent.wantsPreview || intent.matchesDesign));
 		// The provider may hold a spare it parked for this chat (prewarmAgent without alias support).
-		const parked = (provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'hasSpare'>>).hasSpare?.(this.agentStartRequest(session.sessionId, profile, item, cwd, request.options, request.mode, sandbox));
+		const parked = (provider as IAgentProvider & Partial<Pick<AcpAgentProvider, 'hasSpare'>>).hasSpare?.(startRequest);
 		if (!(usePool && this.agentPool.isReady(spareRequest.key)) && !parked) {
 			// No agent is up for this chat: one starts now, and the chat says so until it has the prompt.
 			this.emitStarting(session, run);
@@ -5429,11 +5498,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		if (session.agentHandle) {
 			session.agentUsedAt = Date.now();
-			this.agentReaper.schedule();
+			// Soon: the agents of other chats whose grace is over go now that this one is the most recent.
+			this.scheduleReaper(1_000);
 		}
 		if (run.engine === 'native' && session.deepseek) {
 			session.nativeUsedAt = Date.now();
-			this.agentReaper.schedule();
+			this.scheduleReaper();
 		}
 		this.emit(session, run.runId, { type: 'lifecycle', phase: reason === 'done' ? 'completed' : reason === 'abort' ? 'cancelled' : 'failed' });
 		this.emit(session, run.runId, { type: 'run.end', runId: run.runId, reason, ...(incomplete && reason === 'done' ? { incomplete } : {}) });

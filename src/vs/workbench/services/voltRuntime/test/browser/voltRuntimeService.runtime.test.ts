@@ -73,13 +73,21 @@ class FakeAgent implements IAgentProvider {
 	readonly turns: Turn<IAgentMessage>[] = [];
 	private readonly live = new Map<string, number>();
 	maxConcurrent = 0;
+	/** Sessions continue after a stop (ACP `session/resume`): each gets an agent session id, a start with `resumeSessionId` resumes it. */
+	resumable = false;
 	async detect() { return { available: true, authenticated: true }; }
 	async listModels() { return [{ id: 'm1', label: 'M1', capabilities: DEFAULT_ACP_CAPABILITIES }, { id: 'm2', label: 'M2', capabilities: DEFAULT_ACP_CAPABILITIES }]; }
 	async start(request: IAgentStartRequest): Promise<IAgentSessionHandle> {
 		this.starts.push(request);
-		return { id: `h${this.starts.length}` };
+		if (!this.resumable) {
+			return { id: `h${this.starts.length}` };
+		}
+		return request.resumeSessionId
+			? { id: `h${this.starts.length}`, providerSessionId: request.resumeSessionId, resumed: true }
+			: { id: `h${this.starts.length}`, providerSessionId: `p${this.starts.length}` };
 	}
 	isLive() { return true; }
+	canResume() { return this.resumable; }
 	async *send(handle: IAgentSessionHandle, message: IAgentMessage, _profile: IProviderProfile, token: CancellationToken): AsyncIterable<IVoltEvent> {
 		this.prompts.push(message);
 		this.promptHandles.push(handle.id);
@@ -601,6 +609,60 @@ suite('Agent runtime orchestration', () => {
 		assert.ok(lead.includes('<conversation_handoff>') && lead.includes('User: one') && lead.includes('Assistant'), 'the fresh agent gets the conversation');
 		assert.deepStrictEqual(service.getOrCreateSession('chat').messages.map(message => message.content), ['one', 'done', 'two', 'done']);
 		assert.strictEqual(await service.restartAgent('never-used'), true, 'a chat with no agent yet has nothing to stop');
+	});
+
+	test('an idle agent of a chat not in use stops after its grace and comes back with its session, no recap', async () => {
+		const { service, internals, agent, ref, waitEnd } = await setup('agent');
+		agent.resumable = true;
+		const otherEnds: string[] = [];
+		store.add(service.onEvent('other', envelope => envelope.event.type === 'run.end' && otherEnds.push(envelope.runId)));
+		await waitEnd(await service.send('chat', { text: 'remember PELICAN', mode: 'agent', providerRef: ref }));
+		const first = agent.promptHandles[0];
+		const firstStart = agent.starts.find(start => start.sessionId === 'chat')!;
+		const otherRun = await service.send('other', { text: 'hello', mode: 'agent', providerRef: ref });
+		await waitFor(() => otherEnds.includes(otherRun), 'the other chat\'s run');
+		const sessions = internals.sessions as unknown as Map<string, { agentUsedAt?: number; releasedAgent?: unknown }>;
+		const reap = () => (service as unknown as { releaseIdleAgents(): void }).releaseIdleAgents();
+
+		reap();
+		assert.ok(!agent.disposed.includes(first), 'within its grace the agent stays');
+		sessions.get('chat')!.agentUsedAt = Date.now() - 31_000;
+		reap();
+		assert.ok(agent.disposed.includes(first), 'past its grace, an agent that can resume stops');
+		assert.ok(sessions.get('chat')!.releasedAgent, 'and the chat remembers its session');
+		const otherHandle = agent.promptHandles[1];
+		sessions.get('other')!.agentUsedAt = Date.now() - 31_000;
+		reap();
+		assert.ok(!agent.disposed.includes(otherHandle), 'the most recently used agent is kept');
+
+		const before = agent.starts.length;
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'what was the word?', mode: 'agent', providerRef: ref }))).reason, 'done');
+		const resumedStart = agent.starts.slice(before).find(start => start.sessionId === 'chat');
+		assert.ok(resumedStart, 'the chat started its agent again');
+		const firstSessionId = `p${agent.starts.indexOf(firstStart) + 1}`;
+		assert.strictEqual(resumedStart.resumeSessionId, firstSessionId, 'it resumed the session it had');
+		assert.ok(!(agent.prompts.at(-1)!.lead ?? '').includes('<conversation_handoff>'), 'a resumed session needs no recap');
+		assert.strictEqual(sessions.get('chat')!.releasedAgent, undefined);
+	});
+
+	test('an agent that cannot resume keeps the old cap and wait, and comes back with a recap', async () => {
+		const { service, internals, agent, ref, waitEnd } = await setup('agent');
+		const otherEnds: string[] = [];
+		store.add(service.onEvent('other', envelope => envelope.event.type === 'run.end' && otherEnds.push(envelope.runId)));
+		await waitEnd(await service.send('chat', { text: 'one', mode: 'agent', providerRef: ref }));
+		const first = agent.promptHandles[0];
+		const otherRun = await service.send('other', { text: 'hello', mode: 'agent', providerRef: ref });
+		await waitFor(() => otherEnds.includes(otherRun), 'the other chat\'s run');
+		const sessions = internals.sessions as unknown as Map<string, { agentUsedAt?: number }>;
+		sessions.get('chat')!.agentUsedAt = Date.now() - 5 * 60_000;
+		(service as unknown as { releaseIdleAgents(): void }).releaseIdleAgents();
+		assert.ok(!agent.disposed.includes(first), 'kept within the cap of idle agents');
+		sessions.get('chat')!.agentUsedAt = Date.now() - 16 * 60_000;
+		(service as unknown as { releaseIdleAgents(): void }).releaseIdleAgents();
+		assert.ok(agent.disposed.includes(first), 'stopped after the long wait');
+		await waitEnd(await service.send('chat', { text: 'two', mode: 'agent', providerRef: ref }));
+		assert.ok((agent.prompts.at(-1)!.lead ?? '').includes('<conversation_handoff>'), 'a fresh agent gets the recap');
+		assert.ok(agent.starts.every(start => !start.resumeSessionId));
 	});
 
 	test('switching models: the new session gets a budgeted handoff; switching back resumes the old one with only the missed turns', async () => {
