@@ -36,10 +36,13 @@ for (const r of read('a7.jsonl')) {
 	add('A7 total p95 (MiB)', r.arm, r.totalP95, r);
 }
 for (const r of read('resume.jsonl')) { add(`first word, reopened thread, ${r.openWaitS} s after open (ms)`, r.arm, r.firstWordMs, r); }
-console.log('| Metric | before | after | load (1-min) of rows |');
-console.log('|---|---|---|---|');
+for (const r of read('firstlaunch.jsonl')) { add(`first word, first prompt after launch, ${r.variant === 'new' ? 'new thread' : 'restored chat'} (ms)`, r.arm, r.firstWordMs, r); }
+const kept = (arms, arm) => (arms[arm] ?? []).filter(x => x.load <= maxLoad);
+const range = xs => xs.length ? `${Math.min(...xs)}-${Math.max(...xs)}` : '';
+console.log(`| Metric | before | after | load of rows used (1-min) | left out (load > ${maxLoad}): before / after |`);
+console.log('|---|---|---|---|---|');
 for (const [name, arms] of Object.entries(metrics)) {
-	const pick = arm => (arms[arm] ?? []).filter(x => x.load <= maxLoad).map(x => x.value);
-	const loads = [...(arms.before ?? []), ...(arms.after ?? [])].map(x => x.load);
-	console.log(`| ${name} | ${cell(pick('before'))} | ${cell(pick('after'))} | ${Math.min(...loads)}-${Math.max(...loads)} |`);
+	const used = [...kept(arms, 'before'), ...kept(arms, 'after')].map(x => x.load);
+	const out = arm => (arms[arm] ?? []).filter(x => x.load > maxLoad).map(x => `${Math.round(x.value * 10) / 10} @${x.load}`).join(', ') || '-';
+	console.log(`| ${name} | ${cell(kept(arms, 'before').map(x => x.value))} | ${cell(kept(arms, 'after').map(x => x.value))} | ${range(used)} | ${out('before')} / ${out('after')} |`);
 }
