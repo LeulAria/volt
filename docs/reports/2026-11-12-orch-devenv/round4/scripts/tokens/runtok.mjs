@@ -142,7 +142,11 @@ async function newChat(c) {
 	};
 	await ensureProject(c);
 	if (process.env.TOK_SANDBOX !== 'keep' && !await pick('Off')) { throw new Error('could not turn the sandbox off'); }
-	if (process.env.TOK_ACCESS === 'full') { await pick('Full access'); }
+	if (process.env.TOK_ACCESS === 'full' && !await pick('Full access')) { throw new Error('could not pick Full access'); }
+	if (process.env.TOK_ACCESS) {
+		const access = await c.evaluate(`(() => [...document.querySelectorAll('[aria-label^="Permissions:"], button.volt-agent-status-access')].filter(e => e.offsetParent).map(e => e.getAttribute('aria-label') || e.textContent.trim()).at(-1) ?? '')()`);
+		console.log(JSON.stringify({ access }));
+	}
 }
 
 const modelLabel = c => c.evaluate(`(() => [...document.querySelectorAll('.volt-agent-model-label')].filter(e => e.offsetParent).at(-1)?.textContent ?? '')()`);
