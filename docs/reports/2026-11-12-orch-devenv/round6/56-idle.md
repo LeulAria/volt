@@ -59,6 +59,9 @@ lived only in memory.
    answer** (under 10 minutes old); a live process always answers itself. No more 50 MB fork per agent start.
 5. **`32d5cf55e2a` perf(code-index): the status cache survives a relaunch** (`status-cache.json` in the index's data
    folder), so the first warm after a launch does not fork either.
+6. **`5863d7c1839` perf(awake): the window re-sends its unchanged agent lease once a minute, not every 30 s.** The
+   only renderer-to-main IPC at rest ([ipc-main-rest.txt](data/idle/explore/ipc-main-rest.txt): 3 `voltAwake.setLease`
+   in 90 s, each waking main's awake evaluation); main keeps a lease 2 minutes, so 60 s keeps twice the headroom.
 
 Live check on the dev build after a relaunch (spawn census of the agent server across one focus toggle,
 [explore logs](data/idle/explore/)): before, a focus started a code-index fork and two `log show`; after, no fork and
