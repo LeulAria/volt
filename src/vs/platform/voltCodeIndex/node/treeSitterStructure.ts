@@ -3,9 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import * as nodeFs from 'fs';
 import { existsSync, promises as fs, readFileSync } from 'fs';
-import { createRequire } from 'node:module';
+import * as nodeUrl from 'url';
 import { FileAccess, nodeModulesAsarPath, nodeModulesAsarUnpackedPath, nodeModulesPath } from '../../../base/common/network.js';
+import * as paths from '../../../base/common/path.js';
 import { join } from '../../../base/common/path.js';
 import type { IVoltCodeOutlineSymbol, VoltCodeSymbolKind } from '../common/voltCodeIndex.js';
 
@@ -135,6 +137,17 @@ function wasmFolder(): string | undefined {
 	return undefined;
 }
 
+/** The Node modules `tree-sitter.js` asks for (it reads its wasm files with them). */
+function requireForTreeSitter(id: string): unknown {
+	switch (id) {
+		case 'fs': return nodeFs;
+		case 'fs/promises': return nodeFs.promises;
+		case 'url': return nodeUrl;
+		case 'path': return paths;
+	}
+	throw new Error(`tree-sitter asked for ${id}`);
+}
+
 /**
  * `tree-sitter.js` is a UMD bundle whose CommonJS branch drops its exports (VS Code loads it as
  * AMD), so it is run here with an AMD `define` that keeps them.
@@ -145,7 +158,7 @@ function loadBindings(folder: string): TS {
 	const define = Object.assign((_deps: unknown, factory: () => TS) => { exports = factory(); }, { amd: true });
 	// Not `vm`: the code index also loads in Electron renderers (unit tests), where `vm` crashes.
 	const wrapper = new Function('define', 'exports', 'module', 'require', '__filename', `${readFileSync(file, 'utf8')}\n//# sourceURL=${file}`) as (define: unknown, exports: undefined, module: undefined, require: NodeJS.Require, filename: string) => void;
-	wrapper(define, undefined, undefined, createRequire(file), file);
+	wrapper(define, undefined, undefined, requireForTreeSitter as NodeJS.Require, file);
 	if (!exports) {
 		throw new Error('tree-sitter did not load');
 	}
