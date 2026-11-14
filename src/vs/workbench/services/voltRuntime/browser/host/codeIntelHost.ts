@@ -69,6 +69,23 @@ export function setCodeIntelHierarchy(hierarchy: ICodeIntelHierarchy | undefined
 }
 
 /**
+ * Asks a document's language service directly whether its current text has errors. Push-only
+ * services (TypeScript) send nothing for a file that was clean and stays clean, so without this
+ * answer a check can only wait out its cap. Set by the window's code intelligence contribution
+ * (commands live outside this layer).
+ */
+export interface ICodeIntelErrorProbe {
+	/** True: the language service checked this text and found no errors. Undefined: it cannot say. */
+	errorFree(model: ITextModel, token: CancellationToken): Promise<boolean | undefined>;
+}
+
+let codeIntelErrorProbe: ICodeIntelErrorProbe | undefined;
+
+export function setCodeIntelErrorProbe(probe: ICodeIntelErrorProbe | undefined): void {
+	codeIntelErrorProbe = probe;
+}
+
+/**
  * The agent server has no editor models or language servers: it sets a factory whose code
  * intelligence asks an open Volt window. Unset, the runtime uses this window's {@link CodeIntelHost}.
  */
@@ -477,7 +494,9 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	 * Opens the document for its language service and, when it was just written, waits for markers
 	 * on the new text: until they settle, at most {@link MARKER_WAIT_MS} after the write. A clean file
 	 * gets no marker event at all, so the wait is counted from the write (when the file was opened,
-	 * see {@link noteWrite}), not from this call. A file no language service owns is not waited for.
+	 * see {@link noteWrite}), not from this call. When the language service itself answers that the
+	 * new text has no errors ({@link ICodeIntelErrorProbe}), the wait ends {@link MARKER_SETTLE_MS}
+	 * after the write instead. A file no language service owns is not waited for.
 	 */
 	private async freshen(uri: URI): Promise<void> {
 		const wasOpen = this.open.has(uri);
@@ -500,14 +519,21 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 				return; // nothing will report on it
 			}
 		}
+		const cancel = new CancellationTokenSource();
 		await new Promise<void>(resolve => {
+			let finished = false;
 			let settle: ReturnType<typeof setTimeout> | undefined;
 			const done = () => {
+				if (finished) {
+					return;
+				}
+				finished = true;
 				clearTimeout(cap);
 				if (settle) {
 					clearTimeout(settle);
 				}
 				listener.dispose();
+				cancel.cancel();
 				resolve();
 			};
 			const settleFrom = (at: number) => {
@@ -516,7 +542,7 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 				}
 				settle = setTimeout(done, Math.max(0, at + MARKER_SETTLE_MS - Date.now()));
 			};
-			const cap = setTimeout(done, Math.max(0, since + MARKER_WAIT_MS - Date.now()));
+			let cap = setTimeout(done, Math.max(0, since + MARKER_WAIT_MS - Date.now()));
 			const listener = this.markerService.onMarkerChanged(changed => {
 				if (changed.some(resource => resource.toString() === uri.toString())) {
 					settleFrom(Date.now());
@@ -526,9 +552,42 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 			const reported = this.reported.get(uri);
 			if (reported !== undefined && reported >= since) {
 				settleFrom(reported);
+				return;
 			}
+			// A clean file gets no marker event at all: the language service's own answer that the
+			// text has no errors ends the wait. Other providers (linters) still get the settle window
+			// counted from the write, and a marker change in it is still waited for.
+			this.confirmedErrorFree(model, cancel.token).then(clean => {
+				if (clean && !finished && !settle && !this.hasErrorMarkers(uri)) {
+					clearTimeout(cap);
+					cap = setTimeout(done, Math.max(0, since + MARKER_SETTLE_MS - Date.now()));
+				}
+			});
 		});
+		cancel.dispose();
 		this.forgetWrite(uri);
+	}
+
+	/**
+	 * The language service checked the text the agent wrote (the open model matches the file on
+	 * disk) and found no errors in it. False when there is no such answer.
+	 */
+	private async confirmedErrorFree(model: ITextModel, token: CancellationToken): Promise<boolean> {
+		const probe = codeIntelErrorProbe;
+		if (!probe) {
+			return false;
+		}
+		const disk = await this.fileService.readFile(model.uri).then(file => file.value.toString(), () => undefined);
+		if (disk === undefined || model.isDisposed() || token.isCancellationRequested || (disk.charCodeAt(0) === 0xFEFF ? disk.slice(1) : disk) !== model.getValue()) {
+			return false; // the model has not caught up with the write yet: its answer would be for older text
+		}
+		const version = model.getVersionId();
+		const clean = await probe.errorFree(model, token).catch(() => undefined);
+		return clean === true && !model.isDisposed() && model.getVersionId() === version;
+	}
+
+	private hasErrorMarkers(uri: URI): boolean {
+		return this.markerService.read({ resource: uri, severities: MarkerSeverity.Error, take: 1 }).length > 0;
 	}
 
 	private forgetWrite(uri: URI): void {

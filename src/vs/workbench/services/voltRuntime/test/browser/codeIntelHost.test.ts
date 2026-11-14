@@ -5,6 +5,7 @@
 
 import assert from 'assert';
 import { timeout } from '../../../../../base/common/async.js';
+import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { runWithFakedTimers } from '../../../../../base/test/common/timeTravelScheduler.js';
@@ -17,7 +18,7 @@ import { createTextModel } from '../../../../../editor/test/common/testTextModel
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { MarkerSeverity } from '../../../../../platform/markers/common/markers.js';
 import { MarkerService } from '../../../../../platform/markers/common/markerService.js';
-import { CodeIntelHost } from '../../browser/host/codeIntelHost.js';
+import { CodeIntelHost, setCodeIntelErrorProbe } from '../../browser/host/codeIntelHost.js';
 
 const FILE = URI.file('/repo/src/a.ts');
 
@@ -25,7 +26,11 @@ suite('Volt code intelligence: the new-errors check after an agent write', () =>
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function setup(owned: boolean): { host: CodeIntelHost; markers: MarkerService; opened: () => number } {
+	const TEXT = 'export const a = 1;\n';
+
+	teardown(() => setCodeIntelErrorProbe(undefined));
+
+	function setup(owned: boolean, onDisk = TEXT): { host: CodeIntelHost; markers: MarkerService; opened: () => number } {
 		const disposables = store.add(new DisposableStore());
 		const markers = new MarkerService();
 		disposables.add({ dispose: () => markers.dispose() });
@@ -37,12 +42,20 @@ suite('Volt code intelligence: the new-errors check after an agent write', () =>
 		const textModels = {
 			createModelReference: async (uri: URI) => {
 				opened++;
-				const model: ITextModel = createTextModel('export const a = 1;\n', 'typescript', undefined, uri);
+				const model: ITextModel = createTextModel(TEXT, 'typescript', undefined, uri);
 				return { object: { textEditorModel: model }, dispose: () => model.dispose() };
 			},
 		} as unknown as ITextModelService;
-		const host = disposables.add(new CodeIntelHost(markers, textModels, features as ILanguageFeaturesService, {} as IFileService));
+		const files = { readFile: async () => ({ value: VSBuffer.fromString(onDisk) }) } as unknown as IFileService;
+		const host = disposables.add(new CodeIntelHost(markers, textModels, features as ILanguageFeaturesService, files));
 		return { host, markers, opened: () => opened };
+	}
+
+	/** A language service that answers after `ms` for the model's current text. */
+	function probe(answer: boolean | undefined, ms = 100): { asked: () => number } {
+		let asked = 0;
+		setCodeIntelErrorProbe({ errorFree: async () => { asked++; await timeout(ms); return answer; } });
+		return { asked: () => asked };
 	}
 
 	function error(message: string) {
@@ -101,5 +114,56 @@ suite('Volt code intelligence: the new-errors check after an agent write', () =>
 		await host.newErrors(FILE, new Map());
 		const waited = Date.now() - started;
 		assert.ok(waited >= 900 && waited <= 1_100, `waited ${waited} ms`);
+	}));
+
+	test('a clean edit checked right after the write ends when the language service says the text has no errors', () => runWithFakedTimers({}, async () => {
+		const { host } = setup(true);
+		const { asked } = probe(true);
+		const written = Date.now();
+		host.noteWrite(FILE);
+		await timeout(100); // the agent's turn ends right after its edit
+		assert.deepStrictEqual(await host.newErrors(FILE, new Map()), []);
+		const waited = Date.now() - written;
+		assert.strictEqual(asked(), 1);
+		assert.ok(waited <= 450, `ended ${waited} ms after the write, not at the 3 s cap`);
+	}));
+
+	test('a file reopened long after its write waits for the language service answer, not 3 s', () => runWithFakedTimers({}, async () => {
+		const { host } = setup(true);
+		probe(true, 250);
+		host.noteWrite(FILE);
+		await timeout(120_000); // the document was closed again; the turn went on
+		const started = Date.now();
+		assert.deepStrictEqual(await host.newErrors(FILE, new Map()), []);
+		const waited = Date.now() - started;
+		assert.ok(waited <= 450, `waited ${waited} ms`);
+	}));
+
+	test('errors the language service reports, an answer for other text, or no answer keep the full wait', () => runWithFakedTimers({}, async () => {
+		for (const [answer, onDisk] of [[false, TEXT], [undefined, TEXT], [true, 'export const a = "x";\n']] as const) {
+			const { host } = setup(true, onDisk);
+			probe(answer);
+			host.noteWrite(FILE);
+			await timeout(100);
+			const started = Date.now();
+			await host.newErrors(FILE, new Map());
+			const waited = Date.now() - started;
+			assert.ok(waited >= 2_800, `${answer}/${onDisk === TEXT}: waited ${waited} ms`);
+		}
+	}));
+
+	test('a clean answer does not cut the wait while error markers are still on the file', () => runWithFakedTimers({}, async () => {
+		const { host, markers } = setup(true);
+		probe(true);
+		markers.changeOne('ts', FILE, [error('old')]);
+		await timeout(0);
+		host.noteWrite(FILE);
+		await timeout(0);
+		const check = host.newErrors(FILE, new Map());
+		await timeout(1_500);
+		markers.changeOne('ts', FILE, []); // the language service clears the stale error
+		const started = Date.now();
+		assert.deepStrictEqual(await check, []);
+		assert.ok(Date.now() - started <= 450, 'ends once the markers settle');
 	}));
 });
