@@ -7,6 +7,7 @@ import { getWindow, scheduleAtNextAnimationFrame } from '../../../../../base/bro
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { findLastIdx } from '../../../../../base/common/arraysFind.js';
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
+import { yieldsToInput } from './agentInputFrame.js';
 
 /** How long a glide to a message or a page takes; reduced motion jumps instead. */
 export const THREAD_GLIDE_MS = 220;
@@ -187,6 +188,12 @@ export class ThreadFollow {
 	}
 
 	private readonly step = () => {
+		// The frame that draws a keystroke in the composer carries it alone (agentInputFrame.ts); the
+		// glide takes the elapsed time from its last step, so it catches up in the next frame.
+		if (yieldsToInput(getWindow(this.element))) {
+			this.frame = scheduleAtNextAnimationFrame(getWindow(this.element), this.step, FOLLOW_PRIORITY);
+			return;
+		}
 		this.frame = undefined;
 		const now = getWindow(this.element).performance.now();
 		const elapsed = this.last ? now - this.last : 16;
