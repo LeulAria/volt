@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { FRESH_TEXT_CLASS, FRESH_TEXT_FADE_MS, FreshTextTracker } from '../../browser/chrome/agentFreshText.js';
+import { FRESH_TEXT_CLASS, FRESH_TEXT_COALESCE_MS, FRESH_TEXT_FADE_MS, FreshTextTracker } from '../../browser/chrome/agentFreshText.js';
 
 /** A reply as the thread rebuilds it on each streamed frame. */
 function render(html: string): HTMLElement {
@@ -34,6 +34,19 @@ suite('Fresh streamed text', () => {
 		assert.deepStrictEqual(fresh(second), [{ text: 'Hello', delay: '-300ms' }, { text: ' ', delay: '0ms' }, { text: 'world', delay: '0ms' }]);
 		assert.strictEqual(second.textContent, 'Hello world', 'wrapping keeps the text');
 		assert.ok(second.querySelector('strong > .volt-agent-fresh-text'), 'markup stays around the fresh text');
+	});
+
+	test('text landing within a few frames of the last chunk joins its fade: one span, not one per chunk', () => {
+		const tracker = new FreshTextTracker();
+		const reply = {};
+		tracker.apply(reply, [render('<p>Hello</p>')], true, 1000);
+		const second = render('<p>Hello world</p>');
+		tracker.apply(reply, [second], true, 1050);
+		assert.deepStrictEqual(fresh(second), [{ text: 'Hello world', delay: '-50ms' }]);
+		// Past the coalescing window, a chunk starts its own fade.
+		const third = render('<p>Hello world again</p>');
+		tracker.apply(reply, [third], true, 1000 + FRESH_TEXT_COALESCE_MS + 100);
+		assert.deepStrictEqual(fresh(third), [{ text: 'Hello world', delay: `-${FRESH_TEXT_COALESCE_MS + 100}ms` }, { text: ' again', delay: '0ms' }]);
 	});
 
 	test('chips render as they are: only prose fades in', () => {
