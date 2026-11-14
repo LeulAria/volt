@@ -1,0 +1,530 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The workbench on a phone (voltMobileWorkbench.contribution.ts). voltViewport.ts sets the classes
+ * (`volt-mobile`, `volt-mobile-phone`, `volt-mobile-tablet`, `volt-mobile-touch`, `volt-mobile-landscape`,
+ * `volt-mobile-keyboard`) and the variables (`--volt-safe-*`, `--volt-keyboard`, `--volt-bottom-bar`,
+ * `--volt-inset-bottom`) on the workbench. Colors are the theme's; nothing here invents a palette.
+ */
+
+/* ---- Safe areas ------------------------------------------------------------------------- */
+
+/* layout.ts lays the grid out smaller by the insets; this moves it clear of the notch and the corners. */
+.monaco-workbench.volt-mobile > .monaco-grid-view {
+	margin-top: var(--volt-safe-top, 0px);
+	margin-left: var(--volt-safe-left, 0px);
+}
+
+/* What shows above the grid under the status bar is the title bar's color, edge to edge. */
+.monaco-workbench.volt-mobile::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: var(--volt-safe-top, 0px);
+	background: var(--vscode-titleBar-activeBackground, var(--vscode-editor-background));
+	pointer-events: none;
+}
+
+/* ---- Bottom navigation ------------------------------------------------------------------ */
+
+.volt-mobile-nav {
+	display: none;
+}
+
+.monaco-workbench.volt-mobile-phone > .volt-mobile-nav {
+	display: grid;
+	grid-template-columns: repeat(var(--volt-mobile-nav-count, 5), minmax(0, 1fr));
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 80;
+	height: var(--volt-mobile-nav-height, 56px);
+	padding: 0 var(--volt-safe-right, 0px) var(--volt-safe-bottom, 0px) var(--volt-safe-left, 0px);
+	box-sizing: content-box;
+	background: var(--vscode-activityBar-background, var(--vscode-sideBar-background));
+	border-top: 1px solid var(--vscode-activityBar-border, var(--vscode-sideBar-border, var(--vscode-widget-border, transparent)));
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.monaco-workbench.volt-mobile-phone > .volt-mobile-nav.hidden {
+	display: none;
+}
+
+.volt-mobile-nav-item {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 2px;
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--vscode-activityBar-inactiveForeground, var(--vscode-descriptionForeground));
+	font: inherit;
+	cursor: pointer;
+	-webkit-tap-highlight-color: transparent;
+	transition: color 160ms ease-out;
+}
+
+.volt-mobile-nav-indicator {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 56px;
+	max-width: 100%;
+	height: 30px;
+	border-radius: 15px;
+	transition: background-color 200ms ease-out;
+}
+
+.monaco-workbench .volt-mobile-nav .volt-mobile-nav-indicator .codicon[class*='codicon-'] {
+	font-size: 20px;
+}
+
+.volt-mobile-nav-label {
+	max-width: 100%;
+	font-size: 11px;
+	line-height: 14px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-mobile-nav-item.active {
+	color: var(--vscode-activityBar-foreground, var(--vscode-foreground));
+}
+
+.volt-mobile-nav-item.active .volt-mobile-nav-label {
+	font-weight: 600;
+}
+
+.volt-mobile-nav-item.active .volt-mobile-nav-indicator {
+	background: color-mix(in srgb, var(--vscode-activityBar-activeBorder, var(--vscode-focusBorder)) 22%, transparent);
+}
+
+.volt-mobile-nav-item:focus {
+	outline: none;
+}
+
+.volt-mobile-nav-item:focus-visible .volt-mobile-nav-indicator {
+	outline: 1px solid var(--vscode-focusBorder);
+}
+
+/* On its side a phone keeps the icons and gives the height back to the content. */
+.monaco-workbench.volt-mobile-landscape .volt-mobile-nav-label {
+	display: none;
+}
+
+/* ---- The side bar's views as pages (layout.ts setSideBarPageOpen) ----------------------- */
+
+.monaco-workbench.volt-sidebar-page-open .monaco-grid-view .split-view-view.volt-grid-sidebar {
+	display: block !important;
+	position: fixed !important;
+	top: var(--volt-safe-top, 0px) !important;
+	left: var(--volt-safe-left, 0px) !important;
+	right: var(--volt-safe-right, 0px) !important;
+	bottom: var(--volt-inset-bottom, 0px) !important;
+	width: auto !important;
+	height: auto !important;
+	z-index: 85 !important;
+	overflow: hidden !important;
+	background: var(--vscode-sideBar-background);
+	animation: volt-mobile-page-in 300ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.monaco-workbench.volt-sidebar-page-open .part.sidebar {
+	width: 100% !important;
+	height: 100% !important;
+}
+
+.volt-sidebar-page-back {
+	display: none;
+}
+
+.monaco-workbench.volt-sidebar-page-open .part.sidebar > .volt-sidebar-page-back {
+	display: flex;
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 2;
+	width: 44px;
+	height: 35px;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--vscode-sideBarTitle-foreground, var(--vscode-foreground));
+	cursor: pointer;
+}
+
+.monaco-workbench.volt-sidebar-page-open .part.sidebar > .volt-sidebar-page-back .codicon[class*='codicon-'] {
+	font-size: 20px;
+}
+
+.monaco-workbench.volt-sidebar-page-open .part.sidebar > .composite.title {
+	padding-left: 40px;
+}
+
+@keyframes volt-mobile-page-in {
+	from {
+		transform: translate3d(32px, 0, 0);
+		opacity: 0;
+	}
+}
+
+.monaco-workbench.volt-mobile-reduced-motion .split-view-view.volt-grid-sidebar,
+.monaco-workbench.volt-mobile-reduced-motion .split-view-view.volt-grid-auxiliarybar,
+.monaco-workbench.volt-mobile-reduced-motion .quick-input-widget.volt-compact {
+	animation: none !important;
+}
+
+/* ---- The agents drawer: under the status bar, sliding in from the edge ------------------ */
+
+.monaco-workbench.volt-mobile.volt-layout-agent.volt-agent-drawer-mode.volt-agent-drawer-open:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-view .split-view-view.volt-grid-auxiliarybar {
+	top: var(--volt-safe-top, 0px) !important;
+	left: var(--volt-safe-left, 0px) !important;
+	height: calc(100% - var(--volt-safe-top, 0px)) !important;
+	animation: volt-mobile-drawer-in 280ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes volt-mobile-drawer-in {
+	from {
+		transform: translate3d(-100%, 0, 0);
+	}
+}
+
+.monaco-workbench.volt-mobile > .volt-agent-drawer-scrim {
+	animation: volt-mobile-fade-in 200ms ease-out;
+}
+
+@keyframes volt-mobile-fade-in {
+	from {
+		opacity: 0;
+	}
+}
+
+/* ---- Pickers (quick input) as a bottom sheet (quickInputController.ts `volt-compact`) ---- */
+
+.monaco-workbench > .volt-quick-input-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 2549;
+	background: rgba(0, 0, 0, 0.42);
+	animation: volt-mobile-fade-in 200ms ease-out;
+	-webkit-tap-highlight-color: transparent;
+}
+
+.monaco-workbench .quick-input-widget.volt-compact {
+	position: fixed !important;
+	top: auto !important;
+	left: 0 !important;
+	right: 0;
+	bottom: var(--volt-keyboard, 0px);
+	width: auto !important;
+	max-width: 640px;
+	margin: 0 auto;
+	box-sizing: border-box;
+	padding: 22px var(--volt-safe-right, 0px) calc(6px + var(--volt-safe-bottom, 0px)) var(--volt-safe-left, 0px);
+	border: 0 !important;
+	border-top: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, transparent)) !important;
+	border-radius: 14px 14px 0 0;
+	box-shadow: 0 -10px 36px rgba(0, 0, 0, 0.3) !important;
+	animation: volt-mobile-sheet-rise 320ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* The grabber: the picker reads as the same sheet as every other menu. */
+.monaco-workbench .quick-input-widget.volt-compact::before {
+	content: '';
+	position: absolute;
+	top: 8px;
+	left: 50%;
+	width: 36px;
+	height: 5px;
+	margin-left: -18px;
+	border-radius: 3px;
+	background: var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.4));
+}
+
+@keyframes volt-mobile-sheet-rise {
+	from {
+		transform: translate3d(0, 48px, 0);
+		opacity: 0;
+	}
+}
+
+.monaco-workbench .quick-input-widget.volt-compact .quick-input-header {
+	padding: 4px 12px 8px;
+}
+
+.monaco-workbench .quick-input-widget.volt-compact .quick-input-box .monaco-inputbox {
+	min-height: 36px;
+	border-radius: 8px;
+}
+
+.monaco-workbench .quick-input-widget.volt-compact .quick-input-box .monaco-inputbox .input {
+	font-size: 15px;
+}
+
+.monaco-workbench .quick-input-widget.volt-compact .quick-input-list .quick-input-list-entry {
+	align-items: center;
+	padding-left: 12px;
+	padding-right: 12px;
+}
+
+.monaco-workbench .quick-input-widget.volt-compact .quick-input-list .monaco-list-row {
+	border-radius: 0;
+}
+
+/* Keybinding hints mean nothing without a keyboard. */
+.monaco-workbench.volt-mobile-touch .quick-input-widget.volt-compact .quick-input-list-entry-keybinding {
+	display: none;
+}
+
+/* ---- Dialogs: full-width card, stacked full-width buttons -------------------------------- */
+
+.monaco-workbench.volt-mobile-phone .monaco-dialog-box {
+	width: calc(100vw - 32px) !important;
+	min-width: 0 !important;
+	max-width: 420px !important;
+	border-radius: 14px;
+}
+
+.monaco-workbench.volt-mobile-phone .monaco-dialog-box > .dialog-buttons-row > .dialog-buttons {
+	flex-direction: column-reverse;
+	align-items: stretch;
+	width: 100%;
+	gap: 8px;
+}
+
+.monaco-workbench.volt-mobile-phone .monaco-dialog-box > .dialog-buttons-row > .dialog-buttons > .monaco-button,
+.monaco-workbench.volt-mobile-phone .monaco-dialog-box > .dialog-buttons-row > .dialog-buttons > .monaco-button-dropdown {
+	width: 100%;
+	max-width: none;
+	min-height: 44px;
+	margin: 0 !important;
+}
+
+/* ---- Notifications: above the navigation, across the screen ------------------------------ */
+
+.monaco-workbench.volt-mobile-phone > .notifications-toasts,
+.monaco-workbench.volt-mobile-phone > .notifications-center {
+	left: 8px;
+	right: 8px;
+	bottom: calc(var(--volt-inset-bottom, 0px) + 8px);
+	width: auto !important;
+	max-width: none;
+}
+
+.monaco-workbench.volt-mobile-phone > .notifications-toasts .notification-toast-container,
+.monaco-workbench.volt-mobile-phone > .notifications-toasts .notification-toast {
+	width: 100% !important;
+	max-width: none;
+}
+
+/* ---- No hover leftovers under a finger (voltMobileWorkbench.contribution.ts `volt-touch-input`) */
+
+.volt-touch-input .volt-agent-tooltip,
+.volt-touch-input .monaco-hover.workbench-hover:not(.locked) {
+	display: none !important;
+}
+
+/* ---- The chat on a phone ----------------------------------------------------------------- */
+
+/* The navigation sits between the composer and the home indicator; the composer keeps a plain gap. */
+.monaco-workbench.web.volt-web-phone.volt-mobile-phone .volt-agent-composer {
+	padding-bottom: 8px;
+}
+
+/* ---- Touch targets ------------------------------------------------------------------------ */
+
+/*
+ * A finger needs about 44px; dense rows keep their look and grow the target instead. Toolbar icons
+ * get a 28px box (they sit in 35px rows), the window's and the composer's controls 36px.
+ */
+@media (pointer: coarse) {
+	.monaco-workbench.volt-mobile .monaco-action-bar .action-item .action-label.codicon {
+		padding: 6px;
+	}
+
+	.monaco-workbench.volt-mobile .part.titlebar .volt-titlebar-control {
+		min-width: 36px;
+		min-height: 36px;
+	}
+
+	.monaco-workbench.volt-mobile .volt-agent-plus,
+	.monaco-workbench.volt-mobile .volt-agent-send,
+	.monaco-workbench.volt-mobile .volt-agent-mic-btn:not(.recording) {
+		min-width: 36px;
+		min-height: 36px;
+	}
+
+	.monaco-workbench.volt-mobile .volt-agent-footer-btn {
+		width: 36px;
+		height: 36px;
+	}
+
+	.monaco-workbench.volt-mobile-phone .monaco-text-button {
+		min-height: 36px;
+	}
+
+	.monaco-workbench.volt-mobile .monaco-custom-toggle {
+		min-width: 24px;
+		min-height: 24px;
+	}
+}
+
+/* ---- More page (voltMobileMore.ts) ------------------------------------------------------- */
+
+.volt-mobile-more .volt-page-body {
+	overflow: hidden;
+}
+
+.volt-mobile-more .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-mobile-more-header {
+	display: flex;
+	align-items: flex-end;
+	height: 100%;
+	box-sizing: border-box;
+	padding: 0 16px 6px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-descriptionForeground));
+}
+
+.volt-mobile-more-row {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	height: 100%;
+	box-sizing: border-box;
+	padding: 0 12px 0 16px;
+}
+
+.volt-mobile-more-row.disabled {
+	opacity: 0.5;
+}
+
+.volt-mobile-more-icon {
+	flex: none;
+	display: flex;
+	justify-content: center;
+	width: 20px;
+	color: var(--vscode-icon-foreground);
+}
+
+.monaco-workbench .volt-mobile-more .volt-mobile-more-icon .codicon[class*='codicon-'] {
+	font-size: 18px;
+}
+
+.volt-mobile-more-label {
+	flex: 1;
+	min-width: 0;
+	font-size: 14px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-mobile-more-chevron {
+	flex: none;
+	display: flex;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.7;
+}
+
+/* ---- Hover-only actions within reach of a finger (button audit) -------------------------- */
+
+/*
+ * Controls the desktop reveals under the pointer. Cards and chips show theirs at rest; list rows show
+ * theirs on the row a tap selected, so a long list does not repeat every action on every row.
+ * (voltWorkbenchWeb.css covers the chat's own: copy on code, a turn's stop and restore, and others.)
+ */
+@media (hover: none) {
+	.volt-agent-image-tile .volt-agent-image-tile-remove,
+	.volt-auto-list-row .row-hover,
+	.volt-auto-runs .volt-auto-row .row-action,
+	.volt-agent-user-read-more,
+	.volt-agent-job-wait .volt-agent-job-wait-actions,
+	.volt-device-float .volt-device-float-actions,
+	.volt-agent-tools-area.floating .volt-agent-float-bar,
+	.sx-run-chip .sx-run-close,
+	.sx-minimap .sx-minimap-toggle,
+	.volt-settings-inspect-setting .volt-settings-inspect-icon.copy {
+		opacity: 1;
+	}
+
+	.volt-file-preview.card.reviewable.expanded .volt-file-preview-expand,
+	.volt-agent-visual .volt-agent-visual-actions,
+	.volt-agent-quick-open-actions.expanded > .volt-agent-dock-tune,
+	.volt-agent-quick-open-actions.expanded .volt-agent-quick-open-toggle {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	.volt-agent-terminals-row .volt-agent-terminals-row-action,
+	.volt-agent-dock-row > .volt-agent-dock-tab-close,
+	.volt-agent-dock-row.can-suggest-branch > .volt-agent-dock-branch-suggest,
+	.volt-wf-source-chip .volt-wf-source-tools {
+		display: inline-flex;
+	}
+
+	.volt-agent-history:not(.compact) .monaco-list-row.selected .volt-agent-history-row.is-session > .pin,
+	.volt-agent-history:not(.compact) .monaco-list-row.focused .volt-agent-history-row.is-session > .pin,
+	.volt-pr-row-list .monaco-list-row.selected .volt-pr-row-actions,
+	.volt-pr-row-list .monaco-list-row.focused .volt-pr-row-actions,
+	.volt-pr-list-view:not(.shift-held) .monaco-list-row.selected .volt-pr-list-row.has-hover-action .volt-pr-hover,
+	.volt-pr-list-view:not(.shift-held) .monaco-list-row.focused .volt-pr-list-row.has-hover-action .volt-pr-hover {
+		display: flex;
+	}
+
+	.monaco-list-row.selected .volt-agent-turns-actions,
+	.monaco-list-row.focused .volt-agent-turns-actions,
+	.monaco-list-row.selected .volt-comments-actions,
+	.monaco-list-row.focused .volt-comments-actions {
+		display: block;
+	}
+
+	.monaco-list-row.selected .volt-wf-row-action,
+	.monaco-list-row.focused .volt-wf-row-action,
+	.volt-wf-json-tree .monaco-list-row.selected .volt-wf-json-actions,
+	.volt-wf-json-tree .monaco-list-row.focused .volt-wf-json-actions,
+	.volt-agent-mention-menu .monaco-list-row.focused .volt-agent-mention-file-action:not(.hidden) {
+		display: inline-flex;
+	}
+
+	.monaco-list-row.selected .volt-wfb-row-action,
+	.monaco-list-row.focused .volt-wfb-row-action,
+	.monaco-list-row.selected .volt-commit-plan-actions,
+	.monaco-list-row.focused .volt-commit-plan-actions,
+	.volt-git-graph .monaco-list-row.selected .vgg-sha-copy,
+	.volt-git-graph .monaco-list-row.focused .vgg-sha-copy {
+		opacity: 1;
+	}
+
+	/* VS Code's own: a tab's close, a view's and a tree row's inline actions. */
+	.monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container > .tab > .tab-actions .action-label,
+	.monaco-workbench .pane-header .actions,
+	.monaco-workbench .monaco-list-row.selected .monaco-icon-label .actions,
+	.monaco-workbench .monaco-list-row.focused .monaco-icon-label .actions {
+		opacity: 1;
+		visibility: visible;
+	}
+
+	.monaco-workbench .pane-header .actions {
+		display: block;
+	}
+}

@@ -43,6 +43,7 @@ import { isDark } from '../../theme/common/theme.js';
 import { IThemeService } from '../../theme/common/themeService.js';
 import { IQuickPickItem, IQuickPickItemButtonEvent, IQuickPickSeparator, IQuickPickSeparatorButtonEvent, QuickPickFocus, QuickPickItem } from '../common/quickInput.js';
 import { quickInputButtonToAction } from './quickInputUtils.js';
+import { isVoltCompact } from '../../../base/browser/ui/voltMobile/voltViewport.js';
 
 const $ = dom.$;
 
@@ -272,6 +273,12 @@ class QuickPickSeparatorElement extends BaseQuickPickItemElement {
 
 /** One line in a quick pick (Quick Open, the Command Palette, pickers). */
 export const QUICK_INPUT_ROW_HEIGHT = 26;
+/** Volt: a row's height on a phone, where the picker is a bottom sheet and a finger picks (44px with the gap). */
+const QUICK_INPUT_COMPACT_ROW_HEIGHT = 40;
+
+function quickInputRowHeight(): number {
+	return isVoltCompact() ? QUICK_INPUT_COMPACT_ROW_HEIGHT : QUICK_INPUT_ROW_HEIGHT;
+}
 
 class QuickInputItemDelegate implements IListVirtualDelegate<IQuickPickElement> {
 	getHeight(element: IQuickPickElement): number {
@@ -280,7 +287,7 @@ class QuickInputItemDelegate implements IListVirtualDelegate<IQuickPickElement> 
 			return 30;
 		}
 		// Volt: 26px rows like its other lists; a detail line adds 22.
-		return element.saneDetail ? QUICK_INPUT_ROW_HEIGHT + 22 : QUICK_INPUT_ROW_HEIGHT;
+		return element.saneDetail ? quickInputRowHeight() + 22 : quickInputRowHeight();
 	}
 
 	getTemplateId(element: IQuickPickElement): string {
@@ -1381,7 +1388,7 @@ export class QuickInputList extends Disposable {
 	layout(maxHeight?: number): void {
 		this._tree.getHTMLElement().style.maxHeight = maxHeight ? `${
 			// Make sure height aligns with list item heights
-			Math.floor(maxHeight / QUICK_INPUT_ROW_HEIGHT) * QUICK_INPUT_ROW_HEIGHT
+			Math.floor(maxHeight / quickInputRowHeight()) * quickInputRowHeight()
 			// Add some extra height so that it's clear there's more to scroll
 			+ 6
 			}px` : '';
