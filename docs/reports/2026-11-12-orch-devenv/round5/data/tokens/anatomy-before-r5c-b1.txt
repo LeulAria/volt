@@ -1,0 +1,58 @@
+{
+ "file": "/Users/leularia/.volt-r5/tokens/run/capture.jsonl.bodies/2982.json",
+ "total": "n/a (count_tokens 400: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"messa)",
+ "params": {
+  "model": "claude-opus-5-5",
+  "thinking": {
+   "type": "adaptive",
+   "display": "updates"
+  },
+  "effort": "medium",
+  "max_tokens": 128000,
+  "context_management": "yes"
+ },
+ "system": 2861,
+ "tools": 3958,
+ "toolsNamed": [
+  "Bash",
+  "Edit",
+  "Read",
+  "Skill",
+  "ToolSearch",
+  "Write"
+ ],
+ "mcpTools": 740,
+ "mcpNamed": [
+  "mcp__volt__delegate_task",
+  "mcp__volt__message_task",
+  "mcp__volt__wait_tasks"
+ ],
+ "deferred": 1,
+ "injected": 6444,
+ "lastUserText": "hi"
+}
+| Segment | Part | Tokens | Chars |
+|---|---|---|---|
+| system | billing header | 44 | 73 |
+| system | block 1: You are Claude Code, Anthropic's official CLI for  | 37 | 94 |
+| system | block 2:  You are an agent working with the user toward the | 2780 | 8613 |
+| tools | Bash | 1504 | 3406 |
+| tools | Edit | 634 | 964 |
+| tools | Read | 998 | 1919 |
+| tools | Skill | 909 | 1803 |
+| tools | ToolSearch | 821 | 1440 |
+| tools | Write | 522 | 639 |
+| mcp-tools | mcp__volt__delegate_task | 760 | 1284 |
+| mcp-tools | mcp__volt__message_task | 422 | 335 |
+| mcp-tools | mcp__volt__wait_tasks | 416 | 307 |
+| injected (user) | reminder: Codebase and user instructions are shown below. Be sure to adh | 301 | 761 |
+| injected (user) | reminder: As you answer the user's questions, you can use the following | 290 | 958 |
+| injected (user) | reminder: Attribution for git commits and pull requests you create from | 210 | 581 |
+| injected (user) | other | 3 | 2 |
+| injected (system) | environment | 295 | 834 |
+| injected (system) | deferred tool list | 1992 | 3953 |
+| injected (system) | agent types | 1163 | 3614 |
+| injected (system) | mcp instructions | 36 | 123 |
+| injected (system) | mcp instructions: volt | 697 | 1960 |
+| injected (system) | skills list | 1443 | 4132 |
+| injected (system) | date | 14 | 27 |
