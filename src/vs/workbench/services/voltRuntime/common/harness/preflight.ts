@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { requestAsksForSubagents } from '../orchestration/agentTasks.js';
 import { IIntent } from './intent.js';
 
 /**
@@ -63,7 +64,11 @@ export function preflightPlan(text: string, intent: IIntent): IPreflightPlan | u
 	return {
 		browser: !draft && BROWSER_CHECK.test(text),
 		draft,
-		files: !draft,
+		// A request that hands its work to subagents gets no project files: its subagents read what
+		// they need, and the files only sit in every request of the delegating chat. Replaying a Haiku
+		// lead's last t1 turn with and without them (round-5 bench, n 16 / 6): thinking 962 / 479
+		// tokens, 8.0 / 5.0 s.
+		files: !draft && !requestAsksForSubagents(text),
 		a11y: !draft && A11Y.test(text),
 		widths: draft ? [] : [...widths].sort((a, b) => a - b).slice(0, 4),
 		perf: !draft && PERF.test(text),

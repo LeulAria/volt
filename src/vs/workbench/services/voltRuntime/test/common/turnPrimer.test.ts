@@ -25,6 +25,11 @@ suite('Volt turn primer and one-call fixes', () => {
 		assert.strictEqual(a11y?.browser, true);
 		const draft = plan('Before we touch the real app, I want a quick throwaway prototype of a pricing section with a monthly/yearly toggle. Build it as a standalone draft page, check in a browser that the toggle works, then remove the draft.');
 		assert.deepStrictEqual(draft && { draft: draft.draft, browser: draft.browser, files: draft.files }, { draft: true, browser: false, files: false });
+		// A request that hands its work to subagents: they read the files, the delegating chat gets none.
+		const delegated = plan('Answer four questions about src/checkout.ts and src/cart.ts. Use Volt\'s delegate_task: Q1, Q2 and Q3 as three subagents in parallel.');
+		assert.deepStrictEqual(delegated && { files: delegated.files, browser: delegated.browser }, { files: false, browser: false });
+		const delegatedUi = plan('Fix the checkout page layout with two subagents in parallel and verify it in a browser.');
+		assert.deepStrictEqual(delegatedUi && { files: delegatedUi.files, browser: delegatedUi.browser }, { files: false, browser: true }, 'the app still opens in the chat\'s browser');
 		// Not UI work, or a question: nothing to prepare.
 		assert.strictEqual(plan('Rename parseConfig to loadConfig in src/config.ts'), undefined);
 		assert.strictEqual(plan('thanks'), undefined);
