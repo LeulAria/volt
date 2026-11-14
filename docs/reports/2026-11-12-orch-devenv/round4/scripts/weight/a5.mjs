@@ -5,7 +5,7 @@
 import { execFileSync, execSync } from 'child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { DATA, load, mem, sleep, UD, cdp } from './lib.mjs';
+import { DATA, load, mem, sleep, UD, cdp, waitCalm } from './lib.mjs';
 import { role } from './roles.mjs';
 
 const [arm = 'dev', settleArg = '90', windowArg = '60'] = process.argv.slice(2);
@@ -25,6 +25,8 @@ if (!pid) {
 }
 // Park the window on a finished chat and leave it alone; the window stays in front (not covered).
 await sleep(Number(settleArg) * 1000);
+// A10 samples at once (no settle): no gate there, its run script gates before seeding.
+if (Number(settleArg) > 0) { await waitCalm(); }
 const rules = join(DATA, 'raw', `a5-rules-${arm}.json`);
 // The agent server outlives a quit (until it stops itself), so a relaunch may reuse one that is no child of
 // this main process: it and its tree count too, as ADEMark's attribution (bundle path) counts them.

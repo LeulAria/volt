@@ -21,6 +21,15 @@ export function load() {
 	return execSync('uptime').toString().replace(/.*averages?:\s*/, '').trim();
 }
 
+/** Load gate for timed rows: waits (at most WEIGHT_LOAD_WAIT_S, default 900) for a 1-minute load <= WEIGHT_MAX_LOAD (14). */
+export async function waitCalm() {
+	const max = Number(process.env.WEIGHT_MAX_LOAD ?? 14);
+	const until = Date.now() + Number(process.env.WEIGHT_LOAD_WAIT_S ?? 900) * 1000;
+	const t0 = Date.now();
+	while (parseFloat(load()) > max && Date.now() < until) { await sleep(5000); }
+	return { waitedS: Math.round((Date.now() - t0) / 1000), calm: parseFloat(load()) <= max };
+}
+
 /**
  * Swap and memory pressure now. With swap nearly full, phys_footprint undercounts (pages swapped out or
  * compressed away still belong to the process), so every memory row carries this next to its numbers.

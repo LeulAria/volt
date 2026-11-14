@@ -6,7 +6,7 @@
 import { execFileSync, execSync } from 'child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { DATA, cdp, load, mem, profileProcesses, sleep } from './lib.mjs';
+import { DATA, cdp, load, mem, profileProcesses, sleep, waitCalm } from './lib.mjs';
 import { role } from './roles.mjs';
 
 const arm = process.argv[2] ?? 'after';
@@ -14,6 +14,7 @@ const WAIT_S = Number(process.env.A9_WAIT_S ?? 60);
 const NATIVE = process.env.SPEED_NATIVE ?? `${process.env.HOME}/.volt-r3/speed/native/bin/ademark-native`;
 mkdirSync(join(DATA, 'raw'), { recursive: true });
 
+await waitCalm();
 const before = profileProcesses();
 const loadAtQuit = load();
 const c = await cdp();

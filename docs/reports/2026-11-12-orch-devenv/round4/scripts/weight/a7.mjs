@@ -5,7 +5,7 @@
 import { execFileSync, spawn } from 'child_process';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { DATA, UD, cdp, focusComposer, load, mem, newChat, sleep } from './lib.mjs';
+import { DATA, UD, cdp, focusComposer, load, mem, newChat, sleep, waitCalm } from './lib.mjs';
 import { role } from './roles.mjs';
 
 const arm = process.argv[2] ?? 'after';
@@ -19,6 +19,7 @@ const rules = join(DATA, 'raw', `a7-rules-${arm}.json`);
 const serverPids = execFileSync('ps', ['-axo', 'pid=,command=']).toString().split('\n').filter(l => l.includes(`--user-data-dir ${UD}`) && l.includes('volt-agent-server-main')).map(l => Number(l.trim().split(/\s+/)[0]));
 writeFileSync(rules, JSON.stringify({ rootPids: [mainPid, ...serverPids], bundlePaths: [], vendorDirs: [], agentExecutables: ['claude', 'codex'], excludeNames: ['crashpad_handler'] }));
 const csv = join(DATA, 'raw', `a7-${arm}-${Date.now()}.csv`);
+await waitCalm();
 const loadAtStart = load();
 const memStart = mem();
 const c = await cdp();

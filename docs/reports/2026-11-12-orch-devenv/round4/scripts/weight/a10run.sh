@@ -4,5 +4,6 @@
 #   ./a10run.sh before|after
 cd ${0:A:h}
 source ./arm.sh $1
+node --input-type=module -e "await (await import('./lib.mjs')).waitCalm()"
 node seed.mjs ${2:-15}
 SPEED_VARIANT=a10-rest-20 node a5.mjs $1 0 60

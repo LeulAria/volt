@@ -13,13 +13,19 @@ const c = await cdp();
 
 const rows = () => c.evaluate(`[...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && /Replay/.test(e.getAttribute('aria-label') || '')).length`);
 async function ensureSidebar() {
+	// Under load the sidebar's rows can take seconds to appear after launch: wait before toggling it.
+	for (let i = 0; i < 30 && await rows() === 0; i++) { await sleep(500); }
 	if (await rows() === 0) {
 		await c.evaluate(`[...document.querySelectorAll('[aria-label]')].find(e => e.offsetParent && /^Toggle Primary Side Bar/.test(e.getAttribute('aria-label'))).click()`);
 		await sleep(1500);
 	}
 }
 async function clickRow(index) {
-	const pt = await c.evaluate(`(() => { const e = [...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && /Replay/.test(e.getAttribute('aria-label') || ''))[${index}]; if (!e) { return null; } const r = e.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+	let pt;
+	for (let i = 0; i < 40 && !pt; i++) {
+		pt = await c.evaluate(`(() => { const e = [...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && /Replay/.test(e.getAttribute('aria-label') || ''))[${index}]; if (!e) { return null; } const r = e.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+		if (!pt) { await sleep(500); }
+	}
 	if (!pt) { throw new Error('no row ' + index); }
 	await c.click(pt[0], pt[1]);
 }
