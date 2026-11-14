@@ -20,6 +20,7 @@ import { getUNCHost, addUNCHostToAllowlist } from './vs/base/node/unc.js';
 import { INLSConfiguration } from './vs/nls.js';
 import { NativeParsedArgs } from './vs/platform/environment/common/argv.js';
 import { openEarlyWindow, planEarlyWindow } from './bootstrap-window.js';
+import { EARLY_PAGE_WAIT_MS } from './vs/platform/windows/common/earlyWindow.js';
 
 perf.mark('code/didStartMain');
 
@@ -73,6 +74,7 @@ const earlyWindowPlan = planEarlyWindow({
 	args: args as unknown as Record<string, unknown>,
 	positional: args._.slice(process.defaultApp ? 2 : 1)
 });
+let earlyPageStarted: Promise<void> | undefined;
 
 // Resolve code cache path
 const codeCachePath = getCodeCachePath();
@@ -198,7 +200,7 @@ async function onReady() {
 
 	if (earlyWindowPlan) {
 		try {
-			openEarlyWindow(earlyWindowPlan);
+			earlyPageStarted = openEarlyWindow(earlyWindowPlan);
 			perf.mark('code/voltDidOpenLaunchWindow');
 		} catch (error) {
 			console.error(error);
@@ -226,6 +228,13 @@ async function startup(codeCachePath: string | undefined, nlsConfig: INLSConfigu
 
 	// Bootstrap ESM
 	await bootstrapESM();
+
+	// Volt: loading the main bundle holds the main thread, and the launch window's page gets its files from it. Let the
+	// page get them first (it then paints the window's last screen without waiting for the main bundle).
+	if (earlyPageStarted) {
+		await Promise.race([earlyPageStarted, new Promise(resolve => setTimeout(resolve, EARLY_PAGE_WAIT_MS))]);
+		perf.mark('code/voltDidWaitForLaunchPage');
+	}
 
 	// Load Main
 	await import('./vs/code/electron-main/main.js');

@@ -6,7 +6,8 @@
 /* eslint-disable no-restricted-globals */
 
 import { canPaintVoltWindowSnapshot, IVoltWindowSnapshot, voltWindowSnapshotKey } from '../../../platform/voltWindowSnapshot/common/windowSnapshot.js';
-import { paintWindowSnapshot } from '../../../platform/voltWindowSnapshot/browser/windowSnapshotPaint.js';
+import { paintWindowSnapshot, removeWindowSnapshot } from '../../../platform/voltWindowSnapshot/browser/windowSnapshotPaint.js';
+import { EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL } from '../../../platform/windows/common/earlyWindow.js';
 
 (async function () {
 
@@ -22,6 +23,61 @@ import { paintWindowSnapshot } from '../../../platform/voltWindowSnapshot/browse
 
 	const preloadGlobals: IMainWindowSandboxGlobals = (window as any).vscode; // defined by preload.ts
 	const safeProcess = preloadGlobals.process;
+
+	//#region Volt: launch window
+
+	// The launch window's page (src/bootstrap-window.ts) loads while the main process is still starting. In the built
+	// product (whose stylesheet is the page's own) it paints the window's last screen at once, before its configuration
+	// arrives, and fetches the workbench code meanwhile. The configuration then confirms the picture or takes it away.
+	let configurationArrived = false;
+	let launchSnapshot: { readonly snapshot: IVoltWindowSnapshot; readonly htmlClasses: readonly string[] } | undefined;
+	if (window.location.hash === `#${EARLY_PAGE_FRAGMENT}`) {
+		const doc = window.document;
+		const builtProduct = !!doc.querySelector('link[rel="stylesheet"][href$="workbench.desktop.main.css"]');
+		if (builtProduct) {
+			const preload = doc.createElement('link');
+			preload.rel = 'modulepreload';
+			preload.href = new URL('../../../workbench/workbench.desktop.main.js', window.location.href).href;
+			doc.head.appendChild(preload);
+		}
+		preloadGlobals.ipcRenderer.invoke(EARLY_SNAPSHOT_CHANNEL).then((raw: unknown) => {
+			if (!builtProduct || configurationArrived || typeof raw !== 'string') {
+				return;
+			}
+			try {
+				const snapshot = JSON.parse(raw) as IVoltWindowSnapshot;
+				const before = new Set(doc.documentElement.classList);
+				if (canPaintVoltWindowSnapshot(snapshot, snapshot.key, window, undefined) && paintWindowSnapshot(doc, snapshot)) {
+					launchSnapshot = { snapshot, htmlClasses: [...doc.documentElement.classList].filter(name => !before.has(name)) };
+					performance.mark('code/voltDidPaintWindowSnapshot');
+				}
+			} catch (error) {
+				console.error('[volt] could not paint the window snapshot', error);
+			}
+		}, () => { /* the main process no longer serves it: the configuration's picture is used */ });
+	}
+
+	/** Whether the picture the launch window painted is the one this configuration would paint; if not, it goes. */
+	function confirmLaunchSnapshot(configuration: INativeWindowConfiguration): boolean {
+		if (!launchSnapshot) {
+			return false;
+		}
+		const { snapshot, htmlClasses } = launchSnapshot;
+		launchSnapshot = undefined;
+		const layoutInfo = configuration.partsSplash?.layoutInfo;
+		const baseTheme = configuration.partsSplash?.baseTheme;
+		if (!configuration.cssModules?.length && layoutInfo && isAgentSplash(layoutInfo) && canPaintVoltWindowSnapshot(snapshot, voltWindowSnapshotKey(configuration), window, baseTheme)) {
+			return true;
+		}
+		const doc = window.document;
+		removeWindowSnapshot(doc);
+		for (const name of htmlClasses) {
+			doc.documentElement.classList.remove(name);
+		}
+		return false;
+	}
+
+	//#endregion
 
 	//#region Splash Screen Helpers
 
@@ -396,6 +452,7 @@ import { paintWindowSnapshot } from '../../../platform/voltWindowSnapshot/browse
 		performance.mark('code/willWaitForWindowConfig');
 
 		const configuration = await preloadGlobals.context.resolveConfiguration() as T;
+		configurationArrived = true;
 		performance.mark('code/didWaitForWindowConfig');
 
 		clearTimeout(timeout);
@@ -585,7 +642,8 @@ import { paintWindowSnapshot } from '../../../platform/voltWindowSnapshot/browse
 				// Volt, built product: the workbench CSS is the page's own stylesheet (loaded before this script
 				// runs), so the window's last screen is painted in the splash frame, before the workbench code loads.
 				// Dev builds get their CSS with the workbench code and paint it after the import (below).
-				if (!windowConfig.cssModules?.length && windowConfig.partsSplash?.layoutInfo && isAgentSplash(windowConfig.partsSplash.layoutInfo)) {
+				// The launch window may have painted it already (above), before this configuration arrived.
+				if (!confirmLaunchSnapshot(windowConfig) && !windowConfig.cssModules?.length && windowConfig.partsSplash?.layoutInfo && isAgentSplash(windowConfig.partsSplash.layoutInfo)) {
 					showVoltWindowSnapshot(windowConfig, windowConfig.partsSplash.baseTheme);
 				}
 

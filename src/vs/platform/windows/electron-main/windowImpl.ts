@@ -50,7 +50,7 @@ import { errorHandler } from '../../../base/common/errors.js';
 import { FocusMode } from '../../native/common/native.js';
 import { IVoltWindowScopesMainService } from '../../voltWindowScope/electron-main/voltWindowScopesMainService.js';
 import { voltWindowSnapshotKey } from '../../voltWindowSnapshot/common/windowSnapshot.js';
-import { IVoltWindowSnapshotMainService } from '../../voltWindowSnapshot/electron-main/windowSnapshotMainService.js';
+import { IVoltWindowSnapshotMainService, windowSnapshotFileName } from '../../voltWindowSnapshot/electron-main/windowSnapshotMainService.js';
 import { EARLY_WINDOW_HINT_FILE, toEarlyWindowHint } from '../common/earlyWindow.js';
 import { adoptEarlyWindow, earlyWindowChannel } from './earlyWindow.js';
 
@@ -719,6 +719,9 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	/** The workbench page the launch window's view was loading when this window adopted it. */
 	private earlyLoadedUrl: string | undefined;
 
+	/** Options of this window, while the launch hint for the next launch is still to be written. */
+	private launchHintOptions: BrowserWindowConstructorOptions | undefined;
+
 	constructor(
 		config: IWindowCreationOptions,
 		@ILogService logService: ILogService,
@@ -763,7 +766,12 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 				if (configuration) {
 					configuration.voltWindowScopes = this.voltWindowScopes.scopes;
 					// The screen this window left, painted in its first frame (read on every load: a reload shows the latest).
-					configuration.voltWindowSnapshot = await this.voltWindowSnapshots.read(voltWindowSnapshotKey(configuration));
+					const snapshotKey = voltWindowSnapshotKey(configuration);
+					if (this.launchHintOptions) {
+						this.writeLaunchWindowHint(this.launchHintOptions, windowSnapshotFileName(snapshotKey));
+						this.launchHintOptions = undefined;
+					}
+					configuration.voltWindowSnapshot = await this.voltWindowSnapshots.read(snapshotKey);
 				}
 				await this.refreshDevCssModules(configuration);
 			}, launchWindowChannel));
@@ -795,7 +803,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 				mark('code/didCreateCodeBrowserWindow');
 				if (mayAdoptLaunchWindow) {
 					CodeWindow.createdBrowserWindow = true;
-					this.writeLaunchWindowHint(options);
+					this.launchHintOptions = options; // written with the snapshot's file once the configuration is known
 				}
 			}
 
@@ -1483,9 +1491,10 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 	/**
 	 * Volt: describes this window for the next launch, which opens it before the main bundle loads (macOS, a plain
-	 * launch; see src/bootstrap-window.ts). Written for the first window of each launch.
+	 * launch; see src/bootstrap-window.ts), with the picture of its last screen. Written for the first window of each
+	 * launch, when it loads.
 	 */
-	private writeLaunchWindowHint(options: BrowserWindowConstructorOptions): void {
+	private writeLaunchWindowHint(options: BrowserWindowConstructorOptions, snapshotFile: string): void {
 		if (!isMacintosh) {
 			return;
 		}
@@ -1494,7 +1503,8 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 			appRoot: this.environmentMainService.appRoot,
 			url: this.workbenchUrl(),
 			options: options as Record<string, unknown>,
-			webPreferences: (options.webPreferences ?? {}) as Record<string, unknown>
+			webPreferences: (options.webPreferences ?? {}) as Record<string, unknown>,
+			snapshotFile
 		});
 		const resource = URI.file(join(this.environmentMainService.userDataPath, EARLY_WINDOW_HINT_FILE));
 		this.fileService.writeFile(resource, VSBuffer.fromString(JSON.stringify(hint))).catch(error => this.logService.warn('window#writeLaunchWindowHint', toErrorMessage(error)));

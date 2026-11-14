@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { EARLY_WINDOW_HINT_VERSION, isPlainLaunch, lastWindowBounds, matchEarlyWebPreferences, matchEarlyWindowOptions, parseEarlyWindowHint, toEarlyWindowHint } from '../../common/earlyWindow.js';
+import { EARLY_WINDOW_HINT_VERSION, isPlainLaunch, isSnapshotFileName, lastWindowBounds, matchEarlyWebPreferences, matchEarlyWindowOptions, parseEarlyWindowHint, toEarlyWindowHint } from '../../common/earlyWindow.js';
 
 suite('Launch window (earlyWindow)', () => {
 
@@ -38,6 +38,19 @@ suite('Launch window (earlyWindow)', () => {
 		assert.strictEqual(parseEarlyWindowHint(JSON.stringify({ ...hint, webPreferences: { preload: `${appRoot}/../evil.js` } }), { commit: 'abc', appRoot }), undefined, 'a preload that climbs out');
 		assert.strictEqual(parseEarlyWindowHint(JSON.stringify({ ...hint, url: 'https://example.com' }), { commit: 'abc', appRoot }), undefined, 'a page that is not the app');
 		assert.strictEqual(parseEarlyWindowHint(JSON.stringify({ ...hint, commit: undefined }), { commit: null, appRoot }) !== undefined, true, 'no commit (a source build) matches no commit');
+	});
+
+	test('the hint names the snapshot file of the window, and only a snapshot file', () => {
+		const file = '665f8247e3be21f083d54913.json';
+		const hint = toEarlyWindowHint({ commit: 'abc', appRoot, url, options: {}, webPreferences: { preload }, snapshotFile: file });
+		assert.strictEqual(hint.snapshotFile, file);
+		assert.strictEqual(parseEarlyWindowHint(JSON.stringify(hint), { commit: 'abc', appRoot })?.snapshotFile, file);
+		assert.strictEqual(toEarlyWindowHint({ commit: 'abc', appRoot, url, options: {}, webPreferences: { preload }, snapshotFile: '../../secrets.json' }).snapshotFile, undefined);
+		const climbing = parseEarlyWindowHint(JSON.stringify({ ...hint, snapshotFile: '../User/settings.json' }), { commit: 'abc', appRoot });
+		assert.ok(climbing, 'the window still opens');
+		assert.strictEqual(climbing.snapshotFile, undefined, 'without a picture from outside the snapshot folder');
+		assert.ok(isSnapshotFileName(file));
+		assert.ok(!isSnapshotFileName('665f8247e3be21f083d54913.json/..'));
 	});
 
 	test('the hint keeps what the window is, not where it is or its per-window channel', () => {

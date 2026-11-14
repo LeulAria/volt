@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { BrowserWindow, WebContentsView, ipcMain, session, type BrowserWindowConstructorOptions, type IpcMainInvokeEvent, type ProtocolRequest, type ProtocolResponse, type WebPreferences } from 'electron';
-import { EARLY_IPC_KEY, EARLY_WINDOW_HINT_FILE, EARLY_WINDOW_KEY, IEarlyWindowBounds, IEarlyWindowHint, isPlainLaunch, lastWindowBounds, parseEarlyWindowHint } from './vs/platform/windows/common/earlyWindow.js';
+import { EARLY_IPC_KEY, EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL, EARLY_WINDOW_HINT_FILE, EARLY_WINDOW_KEY, IEarlyWindowBounds, IEarlyWindowHint, isPlainLaunch, lastWindowBounds, parseEarlyWindowHint } from './vs/platform/windows/common/earlyWindow.js';
 
 /** The IPC channels the page calls before the window code exists: its configuration and the shell environment. */
 const SHELL_ENV_CHANNEL = 'vscode:fetchShellEnv';
@@ -24,7 +24,11 @@ export interface IEarlyWindowPlan {
 	readonly hint: IEarlyWindowHint;
 	readonly bounds: IEarlyWindowBounds;
 	readonly appRoot: string;
+	readonly userDataPath: string;
 }
+
+/** Same limit as the snapshot store's (MAX_WINDOW_SNAPSHOT_BYTES): a larger file is never painted. */
+const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 
 interface IPendingInvoke {
 	readonly event: IpcMainInvokeEvent;
@@ -77,7 +81,7 @@ export function planEarlyWindow(input: { userDataPath: string; appRoot: string; 
 		if (!bounds) {
 			return undefined;
 		}
-		return { hint, bounds, appRoot: input.appRoot };
+		return { hint, bounds, appRoot: input.appRoot, userDataPath: input.userDataPath };
 	} catch {
 		return undefined; // no hint yet, or unreadable: the normal path
 	}
@@ -102,10 +106,11 @@ function isOtherInstanceRunning(userDataPath: string): boolean {
 }
 
 /**
- * Opens the launch window at `ready`: the window, its view, and the workbench page loading in it. The page waits for
- * its configuration, which the window code serves when it adopts the window.
+ * Opens the launch window at `ready`: the window, its view, and the workbench page loading in it. The page paints the
+ * picture of the window's last screen at once and waits for its configuration, which the window code serves when it
+ * adopts the window. Resolves when the page has its files (it asked for the picture) or can no longer ask.
  */
-export function openEarlyWindow(plan: IEarlyWindowPlan): void {
+export function openEarlyWindow(plan: IEarlyWindowPlan): Promise<void> {
 	const { hint, bounds, appRoot } = plan;
 	const channel = `vscode:${randomUUID()}`;
 
@@ -155,6 +160,25 @@ export function openEarlyWindow(plan: IEarlyWindowPlan): void {
 	// The page asks for its configuration and the shell environment as soon as its preload runs.
 	const early = holdIpcChannels([channel, SHELL_ENV_CHANNEL]);
 
+	// The page's startup script asks for the picture of the window's last screen (once): by then it has its files.
+	let pageStarted!: () => void;
+	const whenPageStarted = new Promise<void>(resolve => pageStarted = resolve);
+	let snapshotHandled = false;
+	const stopServingSnapshot = () => {
+		if (!snapshotHandled) {
+			snapshotHandled = true;
+			ipcMain.removeHandler(EARLY_SNAPSHOT_CHANNEL);
+		}
+		pageStarted();
+	};
+	ipcMain.handle(EARLY_SNAPSHOT_CHANNEL, event => {
+		if (event.sender !== view.webContents) {
+			return undefined;
+		}
+		stopServingSnapshot();
+		return readSnapshot(plan);
+	});
+
 	const state: IEarlyWindowState = {
 		win,
 		view,
@@ -170,6 +194,7 @@ export function openEarlyWindow(plan: IEarlyWindowPlan): void {
 			state.taken = true;
 			win.removeListener('resize', layout);
 			early.dispose();
+			stopServingSnapshot();
 			if (!view.webContents.isDestroyed()) {
 				view.webContents.close();
 			}
@@ -178,12 +203,30 @@ export function openEarlyWindow(plan: IEarlyWindowPlan): void {
 			}
 		}
 	};
-	const fail = () => state.failed = true;
+	const fail = () => {
+		state.failed = true;
+		pageStarted();
+	};
 	view.webContents.once('did-fail-load', fail);
 	view.webContents.once('render-process-gone', fail);
 	(globalThis as Record<string, unknown>)[EARLY_WINDOW_KEY] = state;
 
-	view.webContents.loadURL(hint.url);
+	// The fragment tells the page it is the launch window's (the window code compares and reloads the URL without it).
+	view.webContents.loadURL(`${hint.url}#${EARLY_PAGE_FRAGMENT}`);
+	return whenPageStarted;
+}
+
+/** The stored picture of the window's last screen (JSON), when the hint names one. */
+function readSnapshot(plan: IEarlyWindowPlan): string | undefined {
+	if (!plan.hint.snapshotFile) {
+		return undefined;
+	}
+	try {
+		const data = fs.readFileSync(path.join(plan.userDataPath, 'VoltWindowSnapshots', plan.hint.snapshotFile), 'utf8');
+		return data.length <= MAX_SNAPSHOT_BYTES ? data : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 /**

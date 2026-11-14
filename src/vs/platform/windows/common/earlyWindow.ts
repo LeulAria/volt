@@ -36,6 +36,31 @@ export interface IEarlyWindowHint {
 	readonly options: Record<string, unknown>;
 	/** Web preferences of the window's view, without `additionalArguments` (they carry a per-window channel). */
 	readonly webPreferences: Record<string, unknown>;
+	/**
+	 * File name (in `VoltWindowSnapshots`) of the window's stored picture of its last screen, which the launch window's
+	 * page paints before the window code is up. The page checks it against its configuration when that arrives.
+	 */
+	readonly snapshotFile?: string;
+}
+
+/**
+ * Channel on which the launch window's page asks for the stored picture of its last screen, as soon as its startup
+ * script runs. The call also tells the main entry that the page has its files, so it can load the main bundle.
+ */
+export const EARLY_SNAPSHOT_CHANNEL = 'vscode:voltLaunchSnapshot';
+
+/** URL fragment the launch window's page is loaded with: only that page asks {@link EARLY_SNAPSHOT_CHANNEL}. */
+export const EARLY_PAGE_FRAGMENT = 'volt-launch';
+
+/**
+ * How long the main entry waits at most for the launch window's page to have its files before it loads the main bundle
+ * (loading it holds the main thread, and with it the page's file requests).
+ */
+export const EARLY_PAGE_WAIT_MS = 300;
+
+/** A snapshot file name as the snapshot store names them (24 hex digits). */
+export function isSnapshotFileName(name: unknown): name is string {
+	return typeof name === 'string' && /^[0-9a-f]{24}\.json$/.test(name);
 }
 
 export interface IEarlyWindowBounds {
@@ -88,6 +113,9 @@ export function parseEarlyWindowHint(raw: string, expected: { readonly commit: s
 	const preload = hint.webPreferences.preload;
 	if (typeof preload !== 'string' || !isInside(preload, expected.appRoot) || !hint.url.startsWith('vscode-file://vscode-app/')) {
 		return undefined;
+	}
+	if (hint.snapshotFile !== undefined && !isSnapshotFileName(hint.snapshotFile)) {
+		return { ...hint, snapshotFile: undefined }; // the window still opens, without its picture
 	}
 	return hint;
 }
@@ -162,7 +190,7 @@ export function matchEarlyWebPreferences(early: Record<string, unknown>, actual:
 }
 
 /** The hint to store for a window created with these options. */
-export function toEarlyWindowHint(input: { commit: string | null; appRoot: string; url: string; options: Record<string, unknown>; webPreferences: Record<string, unknown> }): IEarlyWindowHint {
+export function toEarlyWindowHint(input: { commit: string | null; appRoot: string; url: string; options: Record<string, unknown>; webPreferences: Record<string, unknown>; snapshotFile?: string }): IEarlyWindowHint {
 	const options: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(input.options)) {
 		if (!GEOMETRY_KEYS.has(key) && !IGNORED_WINDOW_OPTIONS.has(key) && isPlainValue(value)) {
@@ -175,7 +203,8 @@ export function toEarlyWindowHint(input: { commit: string | null; appRoot: strin
 			webPreferences[key] = value;
 		}
 	}
-	return { version: EARLY_WINDOW_HINT_VERSION, commit: input.commit, appRoot: input.appRoot, url: input.url, options, webPreferences };
+	const snapshotFile = isSnapshotFileName(input.snapshotFile) ? input.snapshotFile : undefined;
+	return { version: EARLY_WINDOW_HINT_VERSION, commit: input.commit, appRoot: input.appRoot, url: input.url, options, webPreferences, ...(snapshotFile ? { snapshotFile } : {}) };
 }
 
 function sameValue(a: unknown, b: unknown): boolean {
