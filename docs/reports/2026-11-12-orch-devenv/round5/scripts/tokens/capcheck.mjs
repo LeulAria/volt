@@ -13,7 +13,8 @@ const DIR = process.env.TOK_DIR ?? '/tmp/v3-tokens';
 const FOLDER = process.env.TOK_FOLDER ?? join(DIR, 'capfx');
 // CAP_PREFIX labels a round of checks (cap: the first, on the after build before AskUserQuestion went; cap2: the final build).
 const PREFIX = process.env.CAP_PREFIX ?? 'cap';
-const ARMS = { base: { ud: '/tmp/v3-tokens-ud-base', port: 9964 }, after: { ud: '/tmp/v3-tokens-ud', port: 9954 } };
+// Round 5: base = the before build (volt-e5-base), after = volt-e5-tokens (see env.sh / matrix.sh).
+const ARMS = { base: { ud: `${process.env.HOME}/.volt-r5/tokens/ud-base`, port: 9979 }, after: { ud: `${process.env.HOME}/.volt-r5/tokens/ud`, port: 9973 } };
 
 /** One request per family; `family` matches tool names (MCP names end with the volt tool's name). */
 export const TASKS = [
@@ -22,6 +23,8 @@ export const TASKS = [
 	{ id: 'debug', family: /(^|__)debug$/, prompt: 'Stop at the return line of paginate in the debugger while the tests run and tell me the values of page and pageSize there. Do not change any files.' },
 	{ id: 'db', family: /(^|__)ide$/, prompt: 'In shop.db, which sku brings in the most revenue (qty times price), and how much?' },
 	{ id: 'chart', family: /(^|__)(render_chart|html_render)$/, prompt: 'Chart how many lines each file under src has.' },
+	// Round 5: a data question that asks for no chart, for the visuals note (VISUAL_REPLIES) the lead carries.
+	{ id: 'chart-unasked', family: /(^|__)(render_chart|html_render|scratch_draw)$/, prompt: 'How are the lines of code split across the files under src, and which file is the largest? Do not change any files.' },
 	{ id: 'scratch', family: /(^|__)scratch_draw$/, prompt: 'Sketch the request flow of src/server.ts and src/api.ts on the whiteboard.' },
 	{ id: 'browser', family: /(^|__)browser_[a-z_]+$/, prompt: 'Open https://example.com in the browser and tell me the main heading on the page.' },
 	{ id: 'threads', family: /(^|__)(thread_list|thread_search)$/, prompt: 'List my other chats in Volt and their titles.' },

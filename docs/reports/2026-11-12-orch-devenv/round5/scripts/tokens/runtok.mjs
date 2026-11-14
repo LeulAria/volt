@@ -204,6 +204,27 @@ async function run(label, model, prompt, rep = '1') {
 		const ends = ev.filter(l => l.event.type === 'run.end').length;
 		if (starts > 0 && ends >= starts) { ended = true; break; }
 	}
+	// TOK_FOLLOWUP (round 5): a second prompt in the same chat once the first turn has ended, for what a
+	// later turn of the same agent session carries. The window covers both turns.
+	if (ended && process.env.TOK_FOLLOWUP) {
+		await sleep(1500);
+		const again = await c.evaluate(`(() => { const t = [...document.querySelectorAll('textarea.inputarea')].filter(e => e.offsetParent).at(-1); if (!t) { return false; } t.focus(); return true; })()`);
+		if (!again) { throw new Error('no composer for the follow-up'); }
+		await c.send('Input.insertText', { text: process.env.TOK_FOLLOWUP });
+		await sleep(300);
+		for (const type of ['keyDown', 'keyUp']) {
+			await c.send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, ...(type === 'keyDown' ? { text: '\r' } : {}) });
+		}
+		ended = false;
+		const followDeadline = Date.now() + 5 * 60_000;
+		while (Date.now() < followDeadline) {
+			await sleep(1000);
+			const ev = readTrace(chat).filter(l => l.kind === 'event');
+			const starts = ev.filter(l => l.event.type === 'run.start').length;
+			const ends = ev.filter(l => l.event.type === 'run.end').length;
+			if (starts >= 2 && ends >= starts) { ended = true; break; }
+		}
+	}
 	const answeredAt = Date.now();
 	// TESTS.md §3: wait 30 s after the answer for side calls (titles, branch names, summaries).
 	await sleep(SIDE_CALL_WAIT_MS);
@@ -213,7 +234,7 @@ async function run(label, model, prompt, rep = '1') {
 	const tools = ev.filter(l => l.event.type === 'tool.start' || l.event.type === 'host.tool').map(l => l.event.name ?? l.event.title ?? l.event.type);
 	const title = await c.evaluate(`(() => document.title)()`);
 	c.close();
-	const row = { label, rep: Number(rep), model, shownModel: shown, prompt, start, sent, answeredAt, end: Date.now(), ended, chat, load, answer: answer.slice(0, 4000), tools, title, ...(questions.length ? { questions } : {}), ...(stopped ? { stopped: true } : {}) };
+	const row = { label, rep: Number(rep), model, shownModel: shown, prompt, ...(process.env.TOK_FOLLOWUP ? { followup: process.env.TOK_FOLLOWUP } : {}), start, sent, answeredAt, end: Date.now(), ended, chat, load, answer: answer.slice(0, 4000), tools, title, ...(questions.length ? { questions } : {}), ...(stopped ? { stopped: true } : {}) };
 	appendFileSync(join(DIR, 'windows.jsonl'), JSON.stringify(row) + '\n');
 	console.log(JSON.stringify({ label, rep, chat, ms: answeredAt - sent, ended, shown, load, answer: answer.slice(0, 200), tools }));
 }

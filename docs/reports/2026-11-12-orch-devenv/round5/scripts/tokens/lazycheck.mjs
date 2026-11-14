@@ -15,10 +15,11 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const DIR = process.env.TOK_DIR ?? `${process.env.HOME}/.volt-r4/tokens/run`;
+const DIR = process.env.TOK_DIR ?? `${process.env.HOME}/.volt-r5/tokens/run`;
 const FOLDER = process.env.TOK_FOLDER ?? join(DIR, 'capfx');
 const PREFIX = process.env.CAP_PREFIX ?? 'lazy';
-const ARMS = { base: { ud: '/tmp/v4-tokens-ud-base', port: 9947 }, after: { ud: '/tmp/v4-tokens-ud', port: 9943 } };
+// Round 5: base = the before build (volt-e5-base), after = volt-e5-tokens (see env.sh / matrix.sh).
+const ARMS = { base: { ud: `${process.env.HOME}/.volt-r5/tokens/ud-base`, port: 9979 }, after: { ud: `${process.env.HOME}/.volt-r5/tokens/ud`, port: 9973 } };
 
 export const TASKS = [
 	{ id: 'agent', tool: 'Agent', prompt: 'Use Claude Code\'s Agent tool (a general-purpose subagent, not Volt\'s delegate_task) to find every function in src that parses or formats dates, and give me its report. Do not change any files.' },
