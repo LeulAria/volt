@@ -671,7 +671,7 @@ export async function main(argv: string[]): Promise<void> {
 				: hookedTriggers(automations.list()).some(({ automation }) => automation.enabled)
 					? 'an automation waits for webhooks'
 					: undefined;
-	disposables.add(stopWhenIdle({ clients: () => protocol.listClients().length, runsIdle, orchestrator, network: args.host !== '127.0.0.1' && args.host !== 'localhost', busy, stop: () => void stop(0), logService }));
+	disposables.add(stopWhenIdle({ clients: () => protocol.listClients().map(client => client.kind), onDidChangeClients: protocol.onDidChangeClients, runsIdle, orchestrator, network: args.host !== '127.0.0.1' && args.host !== 'localhost', busy, stop: () => void stop(0), logService }));
 	process.on('uncaughtException', err => logService.error('[volt agent server] uncaught exception', err));
 	process.on('unhandledRejection', err => logService.error('[volt agent server] unhandled rejection', err));
 }

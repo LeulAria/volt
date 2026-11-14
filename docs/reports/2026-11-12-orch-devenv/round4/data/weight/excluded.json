@@ -1,0 +1,11 @@
+{
+	"a5.jsonl": {
+		"2026-11-13T23:49:56.896Z": "pilot: 'after' arm before any fix was built (code = base), not part of the A/B",
+		"2026-11-13T23:55:30.733Z": "pilot: 'after' arm before any fix was built (code = base), not part of the A/B",
+		"2026-11-14T00:33:51.254Z": "invalid: the relaunch reused the agent server left from the A9 quit, which is no child of the new main process, so the sampler (rooted at main) missed it and its agents; a5.mjs/a7.mjs now root at the server too"
+	},
+	"a9.jsonl": {},
+	"resume.jsonl": {
+		"2026-11-14T00:15:16.240Z": "pilot under load 82"
+	}
+}

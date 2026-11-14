@@ -27,7 +27,7 @@ import { parseTokenUsage } from '../../common/tokenUsage.js';
 import { VoltMode } from '../../common/modes.js';
 import { IProviderProfile } from '../../common/profiles.js';
 import { IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, subagentProfile } from '../../common/providers.js';
-import { sandboxPlatformUnavailable, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
+import { isSandboxUnavailableError, sandboxPlatformUnavailable, sandboxUnavailableError } from '../../common/access/sandboxRefusal.js';
 import { DEFAULT_ACP_CAPABILITIES } from '../../common/capabilities.js';
 import { IVoltExecContext, IVoltSandboxEvent, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { voltExec } from '../../common/execContext.js';
@@ -158,6 +158,8 @@ interface IAcpSpare {
 	readonly startedAt: number;
 	readonly session: Promise<IAcpSession>;
 	expiry?: ReturnType<typeof setTimeout>;
+	/** When `expiry` stops the spare. */
+	expiresAt?: number;
 }
 
 /** Knobs for supervision; tests swap the clock and shorten the timings. */
@@ -616,9 +618,42 @@ export class AcpAgentProvider implements IAgentProvider {
 		if (adopted) {
 			return adopted.handle;
 		}
-		const live = await this.createSession(req);
+		const live = await this.createOrResume(req);
 		this.sessions.set(live.handle.id, live);
 		return live.handle;
+	}
+
+	/**
+	 * `createSession`, continuing `req.resumeSessionId` when it is set. A session the agent cannot
+	 * resume (its transcript is gone, the agent has no `session/resume`) starts new instead: the
+	 * handle then has no `resumed`, and the runtime briefs it with a recap as before.
+	 */
+	private async createOrResume(req: IAgentStartRequest): Promise<IAcpSession> {
+		if (!req.resumeSessionId) {
+			return this.createSession(req);
+		}
+		try {
+			return await this.createSession(req);
+		} catch (err) {
+			if (isSandboxUnavailableError(err)) {
+				throw err;
+			}
+			this.logService.info(`[ACP] ${this.id} could not resume ${req.resumeSessionId}; starting a new session: ${err instanceof Error ? err.message : String(err)}`);
+			return this.createSession({ ...req, resumeSessionId: undefined, resumeStateKey: undefined });
+		}
+	}
+
+	/** The agent can continue this session in a new process (`session/resume`) after it was stopped. */
+	canResume(session: IAgentSessionHandle): boolean {
+		const live = this.sessions.get(session.id);
+		if (!live || live.resumable !== true || live.textOnly || live.client.isDead) {
+			return false;
+		}
+		// Work the process still does between turns (a `run_in_background` command, a background
+		// subagent) would end with it: such a session is not stopped to be resumed.
+		const background = [...live.backgroundTasks?.values() ?? []].some(task => task.state === 'running')
+			|| [...live.children?.values() ?? []].some(child => !child.ended);
+		return !background;
 	}
 
 	/**
@@ -635,7 +670,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		let live: IAcpSession;
 		try {
-			live = await this.createSession(req, old.handle.providerSessionId ?? old.handle.id);
+			// Its transcript is in the overlay the old process ran with (a pooled spare's is the pool's).
+			live = await this.createSession(old.handle.stateKey ? { ...req, resumeStateKey: old.handle.stateKey } : req, old.handle.providerSessionId ?? old.handle.id);
 		} catch (err) {
 			this.logService.info(`[ACP] ${this.id} could not resume ${session.id} in ${req.cwd}: ${err instanceof Error ? err.message : String(err)}`);
 			return undefined;
@@ -654,7 +690,8 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * Starts a session for `req` ahead of time (spawn, `initialize`, `session/new`, model and
 	 * options) and parks it. The next {@link start} with the same setup adopts it instantly instead
 	 * of paying the cold start (about 5 s for cursor-agent's `session/new` alone). One spare per
-	 * setup; an unadopted spare is stopped after {@link SPARE_TTL_MS}.
+	 * setup; an unadopted spare is stopped after `ttlMs` ({@link SPARE_TTL_MS} by default). Asking
+	 * again with a longer `ttlMs` (a short-lived spare, then the user acts) extends its life to that.
 	 *
 	 * The setup includes the host MCP servers, whose URL names the chat. A spare made for chat A is
 	 * not handed to chat B, so pass the `sessionId` the spare is meant for. Spares parked for other
@@ -662,33 +699,42 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * adapter and MCP servers) costs several hundred MB, so clicking through old chats must not
 	 * leave one running per chat visited.
 	 */
-	prewarmSpare(req: IAgentStartRequest): Promise<void> {
+	prewarmSpare(req: IAgentStartRequest, ttlMs = SPARE_TTL_MS): Promise<void> {
 		const key = this.setupKey(req);
 		const existing = this.spares.get(key);
-		if (existing && Date.now() - existing.startedAt < SPARE_TTL_MS) {
-			return existing.session.then(() => undefined, () => undefined);
-		}
 		if (existing) {
-			this.dropSpare(key, existing);
+			this.expireSpare(key, existing, ttlMs);
+			return existing.session.then(() => undefined, () => undefined);
 		}
 		this.releaseSpares(req.sessionId);
 		while (this.spares.size >= MAX_SPARES) {
 			const [oldestKey, oldest] = [...this.spares.entries()].sort((x, y) => x[1].startedAt - y[1].startedAt)[0];
 			this.dropSpare(oldestKey, oldest);
 		}
-		const spare: IAcpSpare = { key, sessionId: req.sessionId, startedAt: Date.now(), session: this.createSession(req) };
+		const spare: IAcpSpare = { key, sessionId: req.sessionId, startedAt: Date.now(), session: this.createOrResume(req) };
 		this.spares.set(key, spare);
-		spare.expiry = setTimeout(() => {
-			if (this.spares.get(key) === spare) {
-				this.dropSpare(key, spare);
-			}
-		}, SPARE_TTL_MS);
+		this.expireSpare(key, spare, ttlMs);
 		return spare.session.then(live => {
 			live.client.whenDead(() => this.forgetSpare(key, spare));
 		}, err => {
 			this.forgetSpare(key, spare);
 			this.logService.trace('[ACP] spare session failed', err);
 		});
+	}
+
+	/** Stops the spare `ttlMs` after it started, unless it was already due later. */
+	private expireSpare(key: string, spare: IAcpSpare, ttlMs: number): void {
+		const at = spare.startedAt + ttlMs;
+		if (spare.expiresAt !== undefined && spare.expiresAt >= at) {
+			return;
+		}
+		clearTimeout(spare.expiry);
+		spare.expiresAt = at;
+		spare.expiry = setTimeout(() => {
+			if (this.spares.get(key) === spare) {
+				this.dropSpare(key, spare);
+			}
+		}, Math.max(0, at - Date.now()));
 	}
 
 	/** True when a spare for this setup is parked or starting. */
@@ -768,6 +814,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			req.textOnly ? req.textOnly.systemPrompt : this.hostTools?.getMcpServers(req.sessionId, hostToolOptions(req)) ?? [],
 			sandboxLaunchKey(req.sandbox?.settings),
 			subagentProfile(req.subagent) ?? false,
+			// A spare that continues one chat's conversation serves only that chat's start.
+			req.resumeSessionId ?? '',
 		]);
 	}
 
@@ -877,8 +925,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		return applyContextWindowSuffix(applyOptionsToParameterizedId(req.modelId, req.options), req.options);
 	}
 
-	/** Spawns the agent and opens a session; with `resume`, continues that session (in `req.cwd`) instead of a new one. */
-	private async createSession(req: IAgentStartRequest, resume?: string): Promise<IAcpSession> {
+	/** Spawns the agent and opens a session; with `resume` (or `req.resumeSessionId`), continues that session (in `req.cwd`) instead of a new one. */
+	private async createSession(req: IAgentStartRequest, resume = req.resumeSessionId): Promise<IAcpSession> {
 		// Where a cold start's time goes (launch command, spawn with the sandbox, initialize, session/new, setup), for the log line below.
 		const started = Date.now();
 		const steps: number[] = [];
@@ -976,6 +1024,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		const handle: IAgentSessionHandle = {
 			id: created.sessionId,
 			providerSessionId: created.sessionId,
+			...(resume ? { resumed: true } : {}),
+			...(sandbox?.stateKey ? { stateKey: sandbox.stateKey } : {}),
 		};
 		const live: IAcpSession = {
 			handle,
@@ -1059,7 +1109,8 @@ export class AcpAgentProvider implements IAgentProvider {
 			...(settings.listenPorts?.length ? { listenPorts: settings.listenPorts } : {}),
 			loopbackPorts: (this.hostTools?.getMcpServers(req.sessionId, hostToolOptions(req)) ?? []).map(server => loopbackPort(server.url)).filter((port): port is number => port !== undefined),
 			// The chat's own copy of the CLI's config (B-05): what the agent changes there stays in this chat.
-			stateKey: req.sessionId ?? 'default',
+			// A resumed session goes on in the copy that holds its transcript (a pooled spare's copy, then adopted by this chat).
+			stateKey: req.resumeStateKey ?? req.sessionId ?? 'default',
 		};
 	}
 

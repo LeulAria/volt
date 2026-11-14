@@ -136,6 +136,18 @@ export interface IAgentStartRequest {
 	 * tool groups the profile needs. See `claudeWorkRulesMeta` and `SUBAGENT_HOST_TOOL_GROUPS`.
 	 */
 	subagent?: boolean | VoltSubagentProfile;
+	/**
+	 * Continue this agent session (ACP `session/resume`) in a new process instead of starting a new
+	 * one: the chat's agent was stopped while idle and picks up exactly where it was. When the agent
+	 * cannot resume it, a new session starts (its handle has no `resumed`) and the caller briefs it.
+	 */
+	resumeSessionId?: string;
+	/**
+	 * With a resume: the sandbox config overlay the stopped agent ran with (its handle's `stateKey`).
+	 * The agent's transcript lives there, and an agent that began as a pooled spare ran under the
+	 * pool's key, not the chat's: resumed under the chat's key it would find no session.
+	 */
+	resumeStateKey?: string;
 }
 
 /**
@@ -160,6 +172,10 @@ export interface IAgentSandboxStart {
 export interface IAgentSessionHandle {
 	id: string;
 	providerSessionId?: string;
+	/** The session continues the one `IAgentStartRequest.resumeSessionId` named: it knows the conversation so far. */
+	resumed?: boolean;
+	/** The sandbox config overlay the agent runs with, when Volt wraps it (see `IAgentStartRequest.resumeStateKey`). */
+	stateKey?: string;
 }
 
 export interface IAgentMessage {
@@ -196,6 +212,8 @@ export interface IAgentProvider {
 	resumeIn?(session: IAgentSessionHandle, req: IAgentStartRequest): Promise<IAgentSessionHandle | undefined>;
 	/** False when the CLI process has already exited and the next send must start a new session. */
 	isLive?(session: IAgentSessionHandle): boolean;
+	/** The session can be stopped and continued later in a new process (see `IAgentStartRequest.resumeSessionId`). */
+	canResume?(session: IAgentSessionHandle): boolean;
 	send(session: IAgentSessionHandle, msg: IAgentMessage, profile: IProviderProfile, token: CancellationToken): AsyncIterable<IVoltEvent>;
 	interrupt(session: IAgentSessionHandle): Promise<void>;
 	dispose(session: IAgentSessionHandle): Promise<void>;

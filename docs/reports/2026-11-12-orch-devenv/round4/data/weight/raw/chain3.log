@@ -1,0 +1,22 @@
+== resume before round 1 2026-11-14T06:09:10Z load 9.40 12.70 14.45
+{"pid":77056,"ms":4919,"load":"8.89 12.54 14.38"}
+{"arm":"before","rep":1,"at":"2026-11-14T06:10:26.728Z","load":"13.64 12.87 14.34","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":6495,"swapTotalMiB":8192,"freePct":64,"pressure":1},"ok":true,"firstWordMs":227,"trace":{"agentSource":"live","agentReadyMs":1,"promptMs":46,"firstTextMs":131}}
+{"arm":"before","rep":2,"at":"2026-11-14T06:11:14.976Z","load":"11.91 12.57 14.15","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":6495,"swapTotalMiB":8192,"freePct":72,"pressure":1},"ok":true,"firstWordMs":299,"trace":{"agentSource":"live","agentReadyMs":1,"promptMs":42,"firstTextMs":139}}
+median firstWordMs 263
+== resume after round 1 2026-11-14T06:11:37Z load 9.81 12.00 13.90
+{"pid":98479,"ms":4130,"load":"9.42 11.89 13.85"}
+{"arm":"after","rep":1,"at":"2026-11-14T06:12:54.675Z","load":"9.61 11.45 13.53","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":6495,"swapTotalMiB":8192,"freePct":72,"pressure":1},"ok":true,"firstWordMs":279,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":53,"firstTextMs":184}}
+{"arm":"after","rep":2,"at":"2026-11-14T06:13:43.440Z","load":"10.31 11.35 13.37","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":6495,"swapTotalMiB":8192,"freePct":68,"pressure":1},"ok":true,"firstWordMs":581,"trace":{"agentSource":"pool","agentReadyMs":32,"promptMs":74,"firstTextMs":484}}
+median firstWordMs 430
+== resume before round 2 2026-11-14T06:14:06Z load 9.90 11.16 13.24
+{"pid":20082,"ms":4189,"load":"11.59 11.49 13.35"}
+{"arm":"before","rep":1,"at":"2026-11-14T06:15:06.721Z","load":"12.67 11.88 13.38","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":6495,"swapTotalMiB":8192,"freePct":68,"pressure":1},"ok":true,"firstWordMs":250,"trace":{"agentSource":"live","agentReadyMs":1,"promptMs":46,"firstTextMs":154}}
+{"arm":"before","rep":2,"at":"2026-11-14T06:15:55.425Z","load":"11.20 11.62 13.20","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":6495,"swapTotalMiB":8192,"freePct":68,"pressure":1},"ok":true,"firstWordMs":237,"trace":{"agentSource":"live","agentReadyMs":1,"promptMs":42,"firstTextMs":129}}
+median firstWordMs 243.5
+== resume after round 2 2026-11-14T06:16:17Z load 11.91 11.75 13.20
+{"pid":39206,"ms":5398,"load":"11.27 11.62 13.15"}
+{"arm":"after","rep":1,"at":"2026-11-14T06:17:20.203Z","load":"13.57 12.13 13.24","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":6495,"swapTotalMiB":8192,"freePct":68,"pressure":1},"ok":true,"firstWordMs":803,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":46,"firstTextMs":711}}
+{"arm":"after","rep":2,"at":"2026-11-14T06:18:09.290Z","load":"10.39 11.52 12.95","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":6495,"swapTotalMiB":8192,"freePct":71,"pressure":1},"ok":true,"firstWordMs":630,"trace":{"agentSource":"pool","agentReadyMs":2,"promptMs":43,"firstTextMs":538}}
+median firstWordMs 716.5
+== resumeab done 2026-11-14T06:18:18Z
+== chain3 done 2026-11-14T06:18:18Z

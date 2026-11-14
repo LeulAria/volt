@@ -17,7 +17,7 @@ import { VoltMode } from '../../voltRuntime/common/modes.js';
 import { IProviderProfile, IProviderProfileDraft } from '../../voltRuntime/common/profiles.js';
 import { IAgentDetectResult, IModelMessage, IVoltCatalogItem, IVoltProviderStatus } from '../../voltRuntime/common/providers.js';
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from '../../voltRuntime/common/questions.js';
-import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
+import { IAgentPrewarmOptions, IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
 import type { IVoltMcpApprovalRecord } from '../../voltRuntime/common/harness/mcpApprovals.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import type { VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
@@ -240,8 +240,8 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 		this.client.send('runtime.truncateSession', sessionId, userTurns);
 	}
 
-	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void {
-		this.client.send('runtime.prewarmAgent', sessionId, providerRef, mode);
+	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode, options?: IAgentPrewarmOptions): void {
+		this.client.send('runtime.prewarmAgent', sessionId, providerRef, mode, ...(options ? [options] : []));
 	}
 
 	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void {

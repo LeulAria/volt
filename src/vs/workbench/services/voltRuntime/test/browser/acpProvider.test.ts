@@ -511,6 +511,19 @@ suite('ACP provider supervision', () => {
 		assert.strictEqual(env.provider.hasSpare(request({ cwd: '/elsewhere' })), false);
 	});
 
+	test('a short-lived spare stops on its own unless a later prewarm (the user acting) keeps it', async () => {
+		const env = setup();
+		await env.provider.prewarmSpare(request({ sessionId: 'restored' }), 30);
+		await new Promise(resolve => setTimeout(resolve, 60));
+		assert.strictEqual(env.provider.hasSpare(request({ sessionId: 'restored' })), false, 'nobody touched the window: stopped');
+		await env.provider.prewarmSpare(request({ sessionId: 'restored' }), 30);
+		await env.provider.prewarmSpare(request({ sessionId: 'restored' }));
+		await new Promise(resolve => setTimeout(resolve, 60));
+		assert.strictEqual(env.provider.hasSpare(request({ sessionId: 'restored' })), true, 'the first key kept it');
+		assert.strictEqual(env.agent.spawned.length, 2, 'kept, not restarted');
+		await env.provider.disposeSpares();
+	});
+
 	test('prewarming another chat stops the spare parked for the previous one', async () => {
 		const env = setup();
 		const a = request({ sessionId: 'chat-a', cwd: '/a' });
