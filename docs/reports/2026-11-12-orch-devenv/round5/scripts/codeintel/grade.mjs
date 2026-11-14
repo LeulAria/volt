@@ -52,7 +52,8 @@ const graders = {
 		return { score: added >= 2 && left === 0 && files === 2 ? 1 : added >= 1 ? 0.5 : 0, why: `${added} new-name lines, ${files} files` };
 	},
 	't8-signature': (_a, diff) => {
-		const def = /^\+.*sanitizeAgentId\(value: string \| undefined \| null, fallback: string\)/m.test(diff) && (diff.match(/^\+.*\bfallback\b/gm) ?? []).length >= 3;
+		// The signature on one line or wrapped one parameter per line (prettier style).
+		const def = /^\+.*sanitizeAgentId\(value: string \| undefined \| null, fallback: string\)|^\+\s*fallback: string,?\s*$/m.test(diff) && (diff.match(/^\+.*\bfallback\b/gm) ?? []).length >= 3;
 		const sites = (diff.match(/^\+.*sanitizeAgentId\([^)]*(\([^)]*\))?[^)]*,\s*DEFAULT_AGENT_ID\)/gm) ?? []).length;
 		const files = (diff.match(/^diff --git/gm) ?? []).length;
 		return { score: def && sites >= 7 && files === 5 ? 1 : def && sites >= 5 ? 0.5 : 0, why: `def ${def}, ${sites}/7 sites, ${files} files` };
