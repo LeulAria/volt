@@ -135,6 +135,7 @@ import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_
 import { OPEN_CONNECTED_AGENTS_COMMAND_ID } from '../orchestration/agentExternalCaller.js';
 import { createAgentTitleActionViewItem } from './agentTitleActions.js';
 import { hasUserInput, watchForUserInput } from './agentUserInput.js';
+import { intentWantsPrewarm, openPrewarmDelay, PREWARM_ON_OPEN_MS } from './agentPrewarmIntent.js';
 import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
@@ -663,11 +664,6 @@ const REVERT_ON_EDIT_ALWAYS_KEY = 'voltAgent.checkpoint.revertOnEditAlways';
 const CHECKPOINT_RESTORE_COMMAND = 'voltAgent.checkpoint.restore';
 const CHECKPOINT_HAS_CHANGES_COMMAND = 'voltAgent.checkpoint.hasChangesSince';
 
-/**
- * A chat that stays open this long gets its agent started, so the first send skips the cold start.
- * Clicking through chats and projects faster than this starts (and stops) no agent process.
- */
-const PREWARM_ON_OPEN_MS = 300;
 /** A model picked in the composer gets its agent started this soon (stepping through models starts none). */
 const PREWARM_ON_MODEL_MS = 100;
 /** Typing asks the runtime for a warm agent at most this often (it may have been taken or stopped since). */
@@ -928,6 +924,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private prewarmTimer: IDisposable | undefined;
 	/** When this editor last asked the runtime for a warm agent (see PREWARM_ON_TYPE_MS); 0 after a short-lived warm. */
 	private prewarmedAt = 0;
+	/** When a sign of intent short of a press or key (the pointer on the composer, the window to the front) last warmed the agent. */
+	private intentWarmedAt = 0;
+	/** When the last chat this editor showed was opened by a click (see openPrewarmDelay). */
+	private lastClickedOpenAt: number | undefined;
 	/** An edited prompt is waiting on the "Revert files to this message?" dialog. */
 	private committingEdit = false;
 	private readonly _onDidChangeQueue = this._register(new Emitter<void>());
@@ -1185,6 +1185,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	protected override createEditor(parent: HTMLElement): void {
 		parent.classList.add('volt-agent-editor-instance');
 		watchForUserInput(getWindow(parent));
+		// The window coming to the front is the user coming back to the chat on screen: a short-lived warm.
+		this._register(addDisposableListener(getWindow(parent), 'focus', () => this.prewarmOnIntent()));
 		this.container = append(parent, $('.volt-agent-editor'));
 		this.container.dataset.mode = normalizeVoltMode(this.currentMode);
 		// Until the first chat's history is read the thread is empty, which lays out the
@@ -6585,6 +6587,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			}
 		}));
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
+		// The pointer reaching the composer comes before the click into it: a short-lived warm starts here.
+		this.editorDisposables.add(addDisposableListener(this.inputBox, 'pointerenter', () => this.prewarmOnIntent()));
 		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
 			// Typing is the surest sign a message is coming: make sure an agent is (still) warm. Cheap
 			// when one is: the runtime returns at once for a live or pooled agent.
@@ -9168,7 +9172,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				this.focusingForSwitch = false;
 			}
 		}
-		this.schedulePrewarm();
+		// A chat clicked open warms its agent at once (a stopped agent's resume takes about a second); a programmatic
+		// open, or clicks stepping through chats, wait out the open timer.
+		this.schedulePrewarm(openPrewarmDelay(clickedAt, this.lastClickedOpenAt));
+		this.lastClickedOpenAt = clickedAt ?? this.lastClickedOpenAt;
 		this.revealRequestedTurn(input.sessionId);
 		this.takeOverWindowSnapshot();
 		this.logSwitchTiming(input, clickedAt ?? started, clickedAt !== undefined, started, loaded, drawn);
@@ -9334,6 +9341,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				this.prewarmAgent(hasUserInput(getWindow(this.container)) ? undefined : UNTOUCHED_WARM_TTL_MS);
 			}
 		}, delay);
+	}
+
+	/**
+	 * A sign that a message may come that is not a press or a key: the pointer reaching the composer, the window
+	 * coming to the front. A chat whose agent is stopped starts it now, short-lived (UNTOUCHED_WARM_TTL_MS): the
+	 * click and the keys that follow keep it, and nothing stays up if they never come.
+	 */
+	private prewarmOnIntent(): void {
+		const now = Date.now();
+		if (!intentWantsPrewarm(now, this.intentWarmedAt, this.prewarmedAt) || !this.container || !this.isVisible() || this.isStreaming() || !this.composerCanSend()) {
+			return;
+		}
+		this.intentWarmedAt = now;
+		this.prewarmAgent(UNTOUCHED_WARM_TTL_MS);
 	}
 
 	/** With `ttlMs`, the warm agent stops after that long unless a later prewarm (the user acting) keeps it. */
