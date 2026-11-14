@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeEditCheckHooks, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, agentDescriptionWithTypes, claudeWorkRulesMeta, compactAgentListing, compactVoltToolNames, isClaudePlaceholderTitle, voltAttributionNote, voltBypassModeNote, voltEnvInfo, voltSessionContext, voltSkillListing, voltToolSearchDescription, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
+import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeEditCheckHooks, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, agentDescriptionWithTypes, claudeWorkRulesMeta, compactAgentListing, compactVoltToolNames, isClaudePlaceholderTitle, voltAttributionNote, voltBypassModeNote, voltEnvInfo, voltSessionContext, voltSkillListing, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
 
 /** Claude Code 2.1.322's agent-types reminder (trimmed), with one custom agent whose description runs over two lines. */
 const AGENT_LISTING = [
@@ -158,22 +158,19 @@ suite('Volt Claude work rules', () => {
 		const register = new Function(`${source.replace('export function register', 'function register')}\nreturn register;`)() as (on: (...args: unknown[]) => void) => void;
 		const registrations: { event: unknown; matcher: unknown; handler: (...args: unknown[]) => Promise<unknown> }[] = [];
 		register((event: unknown, matcher: unknown, handler: unknown) => registrations.push({ event, matcher, handler: handler as (...args: unknown[]) => Promise<unknown> }));
-		assert.deepStrictEqual(registrations.map(r => r.event), ['tool.describe', 'tool.describe', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.section']);
+		assert.deepStrictEqual(registrations.map(r => r.event), ['tool.describe', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.attachment', 'prompt.section']);
 		assert.deepStrictEqual(registrations[0].matcher, { tool: [...CLAUDE_MAIN_LAZY_TOOLS] }, 'only these tools reach the module');
 		const next = async (e: { description: string }) => ({ description: `${e.description}!` });
 		assert.deepStrictEqual(await registrations[0].handler({}, { tool: 'Workflow', description: 'Runs a workflow', provider: 'builtin' }, next), { description: 'Runs a workflow!', isDeferred: true });
-		// ToolSearch stays loaded; its description loses the result-format paragraph.
-		assert.deepStrictEqual(registrations[1].matcher, { tool: ['ToolSearch'] });
-		const toolSearch = 'Fetches full schema definitions for deferred tools so they can be called.\n\nDeferred tools appear by name.\n\nResult format: each matched tool appears as one <function> line.\n\nQuery forms:\n- "select:Read,Edit,Grep"';
-		assert.deepStrictEqual(await registrations[1].handler({}, { tool: 'ToolSearch', description: toolSearch, provider: 'builtin' }, async (e: { description: string }) => ({ description: e.description })), { description: voltToolSearchDescription(toolSearch) });
-		assert.strictEqual(voltToolSearchDescription(toolSearch), 'Fetches full schema definitions for deferred tools so they can be called.\n\nDeferred tools appear by name.\n\nQuery forms:\n- "select:Read,Edit,Grep"');
+		// No tool.describe for a loaded tool: it makes Claude Code build the descriptions before Full access is set (see the module's doc).
+		assert.strictEqual(registrations.filter(r => r.event === 'tool.describe').length, 1);
 		// Only the deferred-tools reminder reaches the module, and it comes back with Volt's names compacted.
-		assert.deepStrictEqual(registrations[2].matcher, { type: ['deferred_tools_delta'] });
+		assert.deepStrictEqual(registrations[1].matcher, { type: ['deferred_tools_delta'] });
 		const list = 'The following deferred tools are now available via ToolSearch:\nAgent\nmcp__volt__ask_question\nmcp__volt__browser_act';
 		const passOn = async (e: { text: string }) => ({ text: e.text });
-		assert.deepStrictEqual(await registrations[2].handler({}, { type: 'deferred_tools_delta', text: list, origin: {} }, passOn), { text: compactVoltToolNames(list) });
+		assert.deepStrictEqual(await registrations[1].handler({}, { type: 'deferred_tools_delta', text: list, origin: {} }, passOn), { text: compactVoltToolNames(list) });
 		// A rewrite that throws (an unexpected shape) leaves the reminder as Claude Code made it.
-		assert.deepStrictEqual(await registrations[2].handler({}, { type: 'deferred_tools_delta', text: list }, async () => ({ text: 42 })), { text: 42 });
+		assert.deepStrictEqual(await registrations[1].handler({}, { type: 'deferred_tools_delta', text: list }, async () => ({ text: 42 })), { text: 42 });
 		// Each of Claude Code's other texts reaches its own handler by type or section name.
 		const matchers = registrations.map(r => JSON.stringify(r.matcher));
 		for (const matcher of [{ type: ['remote_session_change'] }, { type: ['skill_listing'] }, { type: ['session_context'] }, { type: ['agent_listing_delta'] }, { type: ['auto_mode'] }, { name: ['env_info_simple'] }]) {
@@ -234,6 +231,9 @@ suite('Volt Claude work rules', () => {
 		].join('\n'));
 		// Nothing of Volt's: unchanged.
 		assert.strictEqual(compactVoltToolNames('Agent\nWebSearch'), 'Agent\nWebSearch');
+		// Claude Code 2.1.322's three-sentence preamble becomes one line with the same rule; any other wording stays.
+		const preamble = 'The following deferred tools are now available via ToolSearch. Their schemas are NOT loaded — calling them directly will fail with InputValidationError. Use ToolSearch with query "select:<name>[,<name>...]" to load tool schemas before calling them:';
+		assert.strictEqual(compactVoltToolNames(`${preamble}\nAgent`), 'Deferred tools (schemas not loaded: run ToolSearch "select:<name>[,<name>...]" before calling one):\nAgent');
 	});
 
 	test('Claude Code\'s attribution reminder, environment lines, terminal-only skills and session context are rewritten in fewer words, nothing else', () => {

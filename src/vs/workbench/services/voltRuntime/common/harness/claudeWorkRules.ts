@@ -23,8 +23,8 @@ export const CLAUDE_MAIN_RULES = [
 	'- Batch: every independent tool call of a step goes in one message (reads, searches, edits to different files). One call per message is the slowest way to work.',
 	'- Read and change files with Read, Edit, Write, Grep and Glob; Bash is for commands (tests, builds, git). Volt shows changes made with Edit and Write; sed or script rewrites are invisible to it.',
 	'- Wait for a long command by running it in the background and reading its output later, not with sleep or until loops.',
-	'- Subagents: give each one the files and what to change in each (paths, symbols, facts you found) so it edits at once instead of exploring again; start independent ones together.',
-	'- Tasks (TaskCreate/TaskUpdate) show in the user\'s Tasks card: mark one in_progress when you start it and completed as soon as it is done. Before you end a turn every task is completed, deleted (status "deleted") if it no longer applies, or open only because it waits on the user. When the user moves on to other work, delete leftover tasks first.',
+	'- Subagents: brief each one with the files and what to change in them (paths, symbols, facts you found) so it edits at once instead of exploring again; start independent ones together.',
+	'- Tasks (TaskCreate/TaskUpdate) show in the user\'s Tasks card: in_progress when you start one, completed as soon as it is done. End a turn with every task completed, deleted (status "deleted") if it no longer applies, or open only because it waits on the user; when the user moves on to other work, delete leftovers first.',
 ].join('\n');
 
 /** Why the Stop hook keeps a turn going: sent to Claude as the reason. No single quotes (see {@link stopHookCommand}). */
@@ -126,7 +126,7 @@ export const CLAUDE_MAIN_DISALLOWED_TOOLS: readonly string[] = ['AskUserQuestion
  * wrote the options into its reply instead of loading the deferred ask_question (0 of 3 runs asked
  * through the tray where AskUserQuestion did 3 of 3, capability check 2026-11-13).
  */
-export const CLAUDE_MAIN_ASK_RULE = '- To ask the user to choose (requirements, preferences, trade-offs), load Volt\'s ask_question (ToolSearch "select:mcp__volt__ask_question") and ask with it instead of writing the options into your reply.';
+export const CLAUDE_MAIN_ASK_RULE = '- To ask the user to choose (requirements, preferences, trade-offs), load Volt\'s ask_question (ToolSearch "select:mcp__volt__ask_question") and ask with it, not by writing the options into your reply.';
 
 /**
  * Claude Code's own tools the main chat loads on demand instead of in every request: their schemas
@@ -144,7 +144,7 @@ export const CLAUDE_MAIN_LAZY_TOOLS: readonly string[] = ['Agent', 'Workflow', '
  * model would not know they exist; with their exact names one ToolSearch call loads them, and in the
  * same message as the step's other calls it costs no extra round trip.
  */
-export const CLAUDE_MAIN_LAZY_RULE = `- Load on demand: Agent (subagents), Workflow (multi-agent scripts, only when asked for one), ScheduleWakeup (resume later), ReportFindings (code-review findings), ListAgents (running agents). Before the first use, call ToolSearch "select:<exact names, comma-separated>" in the same message as your other first calls.`;
+export const CLAUDE_MAIN_LAZY_RULE = `- Loaded on demand: Agent (subagents), Workflow (multi-agent scripts, only when asked for one), ScheduleWakeup (resume later), ReportFindings (code-review findings), ListAgents (running agents). Before the first use, ToolSearch "select:<exact names, comma-separated>" in the same message as your other first calls.`;
 
 /**
  * Claude Code's deferred-tools reminder lists one tool per line, Volt's 135 tools as
@@ -184,6 +184,10 @@ export function compactVoltToolNames(text: string): string {
 		const match = /^mcp__volt__([A-Za-z0-9_-]+)$/.exec(line.trim());
 		if (match) {
 			run.push(match[1]);
+		} else if (/^The following deferred tools are now available via ToolSearch\. Their schemas are NOT loaded .* Use ToolSearch with query "select:<name>\[,<name>\.\.\.\]" to load tool schemas before calling them:$/.test(line)) {
+			// Claude Code's three-sentence preamble (84 tokens) as one line with the same rule (42).
+			flush();
+			out.push('Deferred tools (schemas not loaded: run ToolSearch "select:<name>[,<name>...]" before calling one):');
 		} else {
 			flush();
 			out.push(line);
@@ -265,14 +269,6 @@ export function voltSessionContext(text: string): string {
 		.replace(/^Claude Code attached this context automatically; it isn't part of the user's message\. It describes the user's own account and workspace, so they don't need it reported back\.$/m, 'Attached automatically, not part of the user\'s message; no need to report it back.');
 }
 
-/**
- * ToolSearch's description without its "Result format" paragraph (the `<functions>` encoding of what
- * comes back, about 110 tokens): the model reads a result when it has one. The query forms and the
- * rule that a deferred tool must be fetched first stay. Self-contained (hooks worker).
- */
-export function voltToolSearchDescription(text: string): string {
-	return text.split('\n\n').filter(paragraph => !/^Result format:/.test(paragraph)).join('\n\n');
-}
 
 /**
  * The Agent tool's description with the full agent-types reminder in place of its pointer to it
@@ -323,6 +319,12 @@ function attachmentRewrite(fn: string): string {
  * `mcp_instructions_delta`, `environment`, `model`, `date`, `instructions`, `session_context`,
  * `remote_session_change` for the attribution reminder, `auto_mode`); `tool.describe` `{ tool }`;
  * `attribution.text` `{ kind, text }`. A matcher names what reaches the module.
+ *
+ * `tool.describe` is used only for the deferred tools: a handler for a loaded built-in (ToolSearch,
+ * tried 2026-11-15 to cut its result-format paragraph, 84 tokens) made Claude Code build every tool's
+ * description at session start, before Volt had set Full access, and Claude Code picks its shorter
+ * Bash description (116 tokens fewer: no "avoid cat, sed..." line) only when bypass mode is on at that
+ * moment. Measured on "hi": 11,460 tokens with the handler, 11,390 without.
  */
 const CLAUDE_LAZY_TOOLS_MODULE = [
 	'// Volt: Claude Code tools the main chat loads with ToolSearch when a task needs them, not in every request,',
@@ -336,12 +338,10 @@ const CLAUDE_LAZY_TOOLS_MODULE = [
 	`const voltEnvInfo = ${voltEnvInfo.toString()};`,
 	`const voltSkillListing = ${voltSkillListing.toString()};`,
 	`const voltSessionContext = ${voltSessionContext.toString()};`,
-	`const voltToolSearchDescription = ${voltToolSearchDescription.toString()};`,
 	'// The agent-types reminder as Claude Code wrote it (the last one), for the Agent tool\'s description.',
 	'let agentListing;',
 	'export function register(on) {',
 	'\ton(\'tool.describe\', { tool: LAZY }, async ($, e, next) => { const r = await next(e); try { return e.tool === \'Agent\' && typeof r?.description === \'string\' ? { ...r, isDeferred: true, description: agentDescriptionWithTypes(r.description, agentListing) } : { ...r, isDeferred: true }; } catch { return { ...r, isDeferred: true }; } });',
-	'\ton(\'tool.describe\', { tool: [\'ToolSearch\'] }, async ($, e, next) => { const r = await next(e); try { return typeof r?.description === \'string\' ? { ...r, description: voltToolSearchDescription(r.description) } : r; } catch { return r; } });',
 	`\ton('prompt.attachment', { type: ['deferred_tools_delta'] }, ${attachmentRewrite('compactVoltToolNames')});`,
 	`\ton('prompt.attachment', { type: ['auto_mode'] }, ${attachmentRewrite('voltBypassModeNote')});`,
 	`\ton('prompt.attachment', { type: ['remote_session_change'] }, ${attachmentRewrite('voltAttributionNote')});`,
