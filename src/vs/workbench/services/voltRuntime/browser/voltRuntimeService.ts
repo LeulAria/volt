@@ -127,6 +127,7 @@ import { IProofReview, IReceiptLine, IRunReceipt, isReceiptWorthShowing, NO_CODE
 import { PROOF_REVIEW_SYSTEM, parseProofReview, proofReviewRequest, reviewDiff } from '../common/harness/proofReview.js';
 import { decideContinuation, detectProjectChecks, ICheckReport, IProjectChecks, isSameCommand, ITodoEntry, mayMutateWorkspace, parseCheckOutput, regressionVerdict } from '../common/harness/verification.js';
 import { AgentPool, ISpareRequest } from './agentPool.js';
+import { IWorktreeSpare, WorktreeSpares } from '../common/orchestration/worktreeSpares.js';
 import { RunTraceJournal } from './history/runTraceJournal.js';
 import { ProofCaseJournal } from './history/proofCases.js';
 import { isAcpTurnRestartable } from '../common/harness/sessionRetry.js';
@@ -202,6 +203,8 @@ const SPARE_AGENT_TTL_MS = 10 * 60_000;
 const SUBAGENT_SPARES = 3;
 /** Unused subagent spares stop sooner: they were started for one delegate_task call. */
 const SUBAGENT_SPARE_TTL_MS = 90_000;
+/** A request that names worktrees gets its work spares in worktrees made ahead (see WorktreeSpares). */
+const WANTS_WORKTREES = /\bworktrees?\b/i;
 /** Claude Code's name for Volt's delegate_task (`mcp__<server>__delegate_task`), or the bare name. */
 const DELEGATE_TOOL_NAME = /(^|__)delegate_task$/;
 /** How long a new run waits for a cancelled one to let go of its agent session. */
@@ -677,6 +680,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	private readonly toolSearches = new Set<string>();
 	/** When each chat last warmed spares for its subagents (prewarmSubagents). */
 	private readonly subagentsWarmedAt = new Map<string, number>();
+	/** Worktrees made ahead, with a warm agent in each, for the worktree subagents a chat is about to start. */
+	private readonly worktreeSpares: WorktreeSpares;
 
 	private readonly _onDidChangeCatalog = this._register(new Emitter<void>());
 	readonly onDidChangeCatalog: Event<void> = this._onDidChangeCatalog.event;
@@ -758,6 +763,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			newAlias: () => `volt-pool-${generateUuid()}`,
 			onError: err => this.logService.trace('[volt] spare agent failed', err),
 		}));
+		this.worktreeSpares = new WorktreeSpares({
+			create: repoRoot => this.worktrees.create(repoRoot),
+			head: async repoRoot => {
+				const result = await this.worktrees.git(repoRoot, ['rev-parse', 'HEAD']);
+				return result.exitCode === 0 ? result.stdout.trim() || undefined : undefined;
+			},
+			moveTo: async (spare, commit) => (await this.worktrees.git(spare.path, ['reset', '--hard', '-q', commit])).exitCode === 0,
+			remove: async (repoRoot, spare) => {
+				await this.worktrees.remove(repoRoot, spare.path, spare.branch, { deleteBranch: true, force: true, ownsBranch: true });
+			},
+		}, SUBAGENT_SPARE_TTL_MS, err => this.logService.trace('[volt] worktree spare failed', err));
+		this._register({ dispose: () => this.worktreeSpares.clear() });
 		this.editBaselines = new EditBaselineTracker(fileService, (sessionId, path) => this.editableUri(sessionId, path));
 		this.registerProviders();
 		this.hostTools.setApprover({
@@ -5535,12 +5552,35 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			}
 		}
 		const kinds = subagentSpareKinds(modePolicy(session.mode).allowWrites, request, SUBAGENT_SPARES);
-		for (const kind of ['work', 'readonly'] as const) {
-			if (kinds[kind]) {
-				const spare = this.spareRequest(provider, profile, item, cwd, this.getModelOptions(item.ref), sandbox, kind);
-				this.agentPool.ensure(spare, { count: kinds[kind], ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
-			}
+		const options = this.getModelOptions(item.ref);
+		// Work in worktrees of their own ("each in its own git worktree"): a spare in the project folder
+		// would never fit them (an agent's folder is fixed), so their worktrees are made now, an agent in each.
+		const repoRoot = this.sessionContext.rootFor(session.sessionId)?.fsPath;
+		if (kinds.work && repoRoot && !session.worktreePath && request && WANTS_WORKTREES.test(request)) {
+			this.worktreeSpares.fill(repoRoot, kinds.work, spare => this.warmWorktreeSpare(provider, profile, item, options, settings, repoRoot, spare));
+		} else if (kinds.work) {
+			this.agentPool.ensure(this.spareRequest(provider, profile, item, cwd, options, sandbox, 'work'), { count: kinds.work, ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
 		}
+		if (kinds.readonly) {
+			this.agentPool.ensure(this.spareRequest(provider, profile, item, cwd, options, sandbox, 'readonly'), { count: kinds.readonly, ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
+		}
+	}
+
+	/** A work subagent's spare agent in a worktree made ahead for it; returns what stops it. */
+	private warmWorktreeSpare(provider: IAgentProvider, profile: IProviderProfile, item: IVoltCatalogItem, options: IVoltModelOptions | undefined, settings: IVoltSandboxSettings, repoRoot: string, spare: IWorktreeSpare): () => void {
+		// As `sandboxStart` gives the subagent once it works there.
+		const sandbox: IAgentSandboxStart | undefined = settings.level === 'off' ? undefined : { settings, workspaceRoots: sandboxWorkspaceRoots(spare.path, repoRoot, true) };
+		const request = this.spareRequest(provider, profile, item, spare.path, options, sandbox, 'work');
+		this.agentPool.ensure(request, { count: 1, ttlMs: SUBAGENT_SPARE_TTL_MS, burst: true });
+		return () => this.agentPool.discard(request.key);
+	}
+
+	/**
+	 * A worktree made ahead for a worktree subagent of `repoRoot` (see WorktreeSpares), at the
+	 * repository's HEAD, with a warm agent in it; undefined when there is none, and the caller makes one.
+	 */
+	takeWorktreeSpare(repoRoot: string): Promise<IWorktreeSpare | undefined> {
+		return this.worktreeSpares.take(repoRoot);
 	}
 
 	private emit(session: ISessionState, runId: string, event: IVoltEvent): void {

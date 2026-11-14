@@ -66,6 +66,22 @@ suite('Agent pool', () => {
 		assert.strictEqual(await p.take('k'), undefined);
 	});
 
+	test('discard stops the spares of one key, ready or still starting', async () => {
+		const agents = new FakeAgents();
+		const p = pool(3);
+		p.ensure(agents.request('k'));
+		p.ensure(agents.request('other'));
+		await flush();
+		agents.manual = true;
+		p.ensure(agents.request('k'), { count: 2 });
+		p.discard('k');
+		agents.pending.get('a3')!.complete({ id: 'h-a3' });
+		await flush();
+		assert.deepStrictEqual(agents.disposed.sort(), ['h-a1', 'h-a3']);
+		assert.strictEqual(p.has('k'), false);
+		assert.strictEqual(p.has('other'), true);
+	});
+
 	test('a spare still starting is awaited rather than starting another', async () => {
 		const agents = new FakeAgents();
 		agents.manual = true;
