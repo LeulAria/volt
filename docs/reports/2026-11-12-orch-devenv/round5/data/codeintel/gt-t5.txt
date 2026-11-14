@@ -1,6 +1,8 @@
 src/acp/client.ts:170-173 30_000
+src/agents/pi-embedded-runner/run/attempt.ts:872-881 10_000
 src/agents/sandbox/browser.ts:34-34 1000
 src/auto-reply/reply/export-html/template.js:1269-1272 1500
+src/auto-reply/reply/export-html/template.js:1671-1671 2000
 src/browser/extension-relay.ts:270-273 30_000
 src/commands/doctor-config-flow.ts:331-331 4000
 src/hooks/gmail-ops.ts:345-350 2000

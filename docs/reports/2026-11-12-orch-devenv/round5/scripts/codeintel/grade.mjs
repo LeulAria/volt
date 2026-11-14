@@ -30,9 +30,16 @@ const graders = {
 		return { score: order && cases === 4 ? 1 : (order && cases >= 3) || cases === 4 ? 0.5 : 0, why: `order ${order}, ${cases}/4 null cases` };
 	},
 	't5-structural': a => {
-		const gt = [['acp/client.ts', /30[_,]?000/], ['sandbox/browser.ts', /1[_,]?000/], ['export-html/template.js', /1[_,]?500/], ['extension-relay.ts', /30[_,]?000/], ['doctor-config-flow.ts', /4[_,]?000/], ['gmail-ops.ts', /2[_,]?000/], ['gmail-watcher.ts:112', /5[_,]?000/], ['gmail-watcher.ts:221', /3[_,]?000/], ['ssh-tunnel.ts', /1[_,]?500/], ['tailscale.ts', /3[_,]?000/]];
-		const found = gt.filter(([path]) => a.includes(path) || (path.includes(':') && a.includes(path.split(':')[0]) && new RegExp(path.split(':')[1].slice(0, 2)).test(a))).length;
-		return { score: found >= 9 ? 1 : found >= 6 ? 0.5 : 0, why: `${found}/10 calls` };
+		// [file, first line, last line] of each call (gt-t5.txt). A call is found when its file is named with one of
+		// its lines within the next 200 characters. Test helpers (test-helpers.*.ts) and .html are neither required nor wrong.
+		const gt = readFileSync(H + '/gt-t5.txt', 'utf8').trim().split('\n').map(l => /^src\/(\S+):(\d+)-(\d+) /.exec(l)).filter(Boolean).map(m => [m[1], +m[2], +m[3]]);
+		const found = gt.filter(([file, from, to]) => {
+			for (let i = a.indexOf(file); i >= 0; i = a.indexOf(file, i + 1)) {
+				if ((a.slice(i + file.length, i + file.length + 200).match(/\d+/g) ?? []).some(n => +n >= from && +n <= to)) { return true; }
+			}
+			return false;
+		}).length;
+		return { score: found >= gt.length - 1 ? 1 : found >= Math.ceil(gt.length * 0.6) ? 0.5 : 0, why: `${found}/${gt.length} calls` };
 	},
 	't6-implementations': a => {
 		const found = has(a, ['MemoryIndexManager', 'QmdMemoryManager', 'FallbackMemoryManager']).length;
