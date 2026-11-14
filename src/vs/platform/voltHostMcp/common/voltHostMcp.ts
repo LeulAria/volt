@@ -83,19 +83,21 @@ export interface IVoltHostMcpService {
  * The volt server's `initialize` instructions, one part per tool group: an agent handed a subset
  * (`?groups=`) reads only about the tools it has. Claude Code puts them in every request of every
  * chat, so each part names the tool for a job and the one rule that matters, and the tool's own
- * description carries the rest (all parts: 5.3k characters, 1,342 tokens in a request until 2026-11-13; now about 2k).
+ * description carries the rest (all parts: 5.3k characters, 1,342 tokens in a request until 2026-11-13;
+ * 1,950 characters, 693 tokens until 2026-11-14; now 1,731, 608). The deferred-tools reminder names
+ * every tool, so a part says what a tool is for and its one rule rather than listing its family.
  */
 const HOST_MCP_INSTRUCTIONS: readonly { readonly groups: readonly string[]; readonly text: string; readonly onlyWithout?: string }[] = [
 	{ groups: ['core'], text: 'Volt tools (deferred: load with ToolSearch). Code: find_symbol (declarations), code_nav (references, callers, implementations), instant_grep (indexed rg), find_files: one call for several Grep/Read rounds. workspace_status: what the user has open (tabs, simulator, browser, terminals, git). ask_question: multiple-choice questions to the user.' },
 	{ groups: ['ide'], text: 'tests runs tests with structured failures; debug sets breakpoints and reads variables; ide does http, db, docker, profiling and more.' },
-	{ groups: ['browser'], text: 'browser_* drive the in-app browser: browser_act runs a multi-step check in one call, browser_run edits files then checks, browser_status lists pages and dev servers; mock, emulate, audit. playground_create serves throwaway pages. Not Playwright, headless Chrome or `python -m http.server`.' },
+	{ groups: ['browser'], text: 'In-app browser: browser_act runs a multi-step check in one call, browser_run edits files then checks; playground_create serves throwaway pages. Not Playwright, headless Chrome or `python -m http.server`.' },
 	{ groups: ['devices'], text: 'device_snapshot/device_act drive iOS simulators and Android emulators.' },
 	{ groups: ['desktop'], text: 'desktop_snapshot/desktop_act drive Mac apps (the user approves once per chat).' },
 	{ groups: ['browser'], text: 'Design image: image_inspect reads it, browser_compare_image diffs the page against it.' },
 	{ groups: ['image'], onlyWithout: 'browser', text: 'image_inspect reads colours, blocks and text from an image file (no image-decoding scripts).' },
-	{ groups: ['pullRequests'], text: 'Pull requests: link_pull_request each one you open or work on; stack_branch/stack_status/restack_stack for stacks; to monitor one, watch_pull_request and end your turn. Commit with git (Conventional Commits); propose_commits only if the user asks to review commits first. Before pushing a placeholder branch (volt/ + 8 hex), ask_question for a name, then rename_branch.' },
+	{ groups: ['pullRequests'], text: 'Pull requests: link_pull_request each one you open or work on; to monitor one, watch_pull_request and end your turn. Commit with git (Conventional Commits); propose_commits only if the user asks to review commits first. Before pushing a placeholder branch (volt/ + 8 hex), ask_question for a name, then rename_branch.' },
 	{ groups: ['visuals'], text: 'Data charts: render_chart (or a ```volt-chart fence with its JSON), never mermaid xychart/pie or ASCII bars; mermaid only for diagrams. Pages and dashboards: self-contained HTML, html_preview, then html_render. Show visuals before your final text; do not restate them.' },
-	{ groups: ['threads'], text: 'Other chats: thread_list/thread_search/thread_read; thread_send (wait=true returns the reply); thread_wait; thread_launch (any model, own worktree, several models); thread_fork; queue_*; delegate_task runs a subagent that reports back; orchestrator_capabilities. Link chats as [title](volt://session/<id>).' },
+	{ groups: ['threads'], text: 'Other chats: thread_* (thread_send wait=true returns the reply; thread_launch: any model, own worktree, several models) and queue_*; delegate_task runs a subagent that reports back. Link chats as [title](volt://session/<id>).' },
 	{ groups: ['tasks'], onlyWithout: 'threads', text: 'delegate_task runs a subagent (one level down) whose report comes back to you; wait_tasks and task_status follow it. In a team, team_board claims and completes board items and team_send messages a teammate.' },
 ];
 
