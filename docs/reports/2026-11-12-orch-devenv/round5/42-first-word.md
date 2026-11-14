@@ -1,6 +1,6 @@
 # Round 5: Enter to first word, and the first message to a stopped chat
 
-Status: draft (chains 4-5 pending). Branch `e5/firstword`, worktree `volt-e5-firstword`, from `9bbb8818c60`.
+Status: final (2026-11-14). Branch `e5/firstword`, worktree `volt-e5-firstword`, from `9bbb8818c60`.
 ADEMark method, unofficial.
 
 ## Summary
@@ -21,6 +21,10 @@ restored or just-reopened chat at 0.4 s or less without bringing back resident a
   after (n 4 each, ranges overlap: no measured gain). Pointer first: 704 before, 788 after (n 4 each): the earlier
   warm got the agent ready before Enter (50 ms vs 464 ms after it), but the turn's request then left Claude Code
   0.45-0.6 s after the prompt instead of 0.1-0.2 s. Why is in "What a stopped chat's first prompt waits for".
+- **Found: Claude Code is busy for about 1.1 s after its session is ready.** A prompt sent at once goes out in 70 ms;
+  one sent 0.4 or 0.8 s after ready waits until about 1.1 s after ready (730 and 310 ms, n 5 each); from 1.2 s on it
+  is fast again. A warm that starts 0.4-1.1 s before the send is worse than none. What in the window holds the turn
+  was not isolated (the run was stopped when the round closed).
 - **No agent at rest:** every restored-chat run found 0 agent processes before the click (n 16); the intent warm is
   short-lived (stops after 30 s unless a click or key follows).
 - **Cold start of the adapter:** Node's compile cache cut spawn to `initialize` from 521 to 331 ms (n 10 each, load
@@ -114,7 +118,36 @@ requests: 27 of 30 matched within 5 ms) and the agent server's `[volt timing]` a
 | after, click (4) | 206, 924, 27, 798 | -2 to 60 ms |
 | after, pointer first (4) | 610, 486, 455, 511 | 709-802 ms |
 
-PENDING chain 4/5 analysis.
+**Why: Claude Code is busy for about 1.1 s after its session is ready, and a prompt that lands in that window waits
+for the end of it** (chain 4, adapter alone, 2026-11-14 22:05-22:19 +04, load 4.7-9.1, `session/new` with Volt's
+params, the prompt sent a set time after ready, offsets interleaved per round):
+
+| prompt sent after ready | prompt to the turn's request | ready to the turn's request |
+|---|---|---|
+| 0 ms (at once) | 70 (5, 59-781) | 70 (5, 59-781) |
+| 400 ms | **730 (5, 634-1,156)** | 1,130 (5, 1,034-1,556) |
+| 800 ms | **310 (5, 275-814)** | 1,110 (5, 1,075-1,614) |
+| 1,200 ms | 81 (5, 71-83) | 1,281 (5, 1,271-1,283) |
+| 2,500 ms | 85 (5, 75-98) | 2,585 (5, 2,575-2,598) |
+
+A prompt sent at once goes out in 70 ms (Claude Code has not started its background start-up yet); one sent 0.4 or
+0.8 s after ready goes out about 1.1 s after ready, whatever the offset; from 1.2 s on it is fast again. With the
+CLI's debug log on (one run, warm 800, 341 ms): the startup work gate opens at ready and runs its held tasks
+(`tengu_init`, `plugin_init`, `idle_startup_work`, ...), the MCP registry list loads, a bootstrap fetch and the
+claude.ai connector list come back over the network, the four claude.ai connectors connect (the last 0.7 s after
+ready), and the log is then silent until the turn starts 0.28 s after the prompt arrived. Which of these holds the
+turn was not isolated: the run that would split it (claude.ai connectors off, no MCP server, both, at warm 400:
+`chain6.sh`) was stopped before it started, when the round was closed. Chain 3's "no claude.ai connectors" and "no
+MCP server" variants sent the prompt at once, so they never hit the window and say nothing about it.
+
+This explains the restored-chat rows: the after build's earlier warm (pointer on the composer) makes the agent ready
+0.7-0.8 s before Enter, which puts the prompt inside the window (gaps 455-610 ms); the before build starts the agent at
+the click and prompts the moment it is ready, mostly before the window (median 172 ms), sometimes inside it (704, 800).
+The reopened chat's click case after `2db7ce0d91e` (379 ms) is the same window ending sooner. **So warming earlier
+helps only when it is early enough (1.2 s or more before the send); a warm 0.4-1.1 s before the send is worse than
+none.** That is the open lever for the restored chat: the earliest intent signal the app sees after launch (the
+window coming to the front, the pointer on the chat) has to start the agent at least 1.2 s before Enter, or the agent
+should not start before the send.
 
 ## Method
 
@@ -184,4 +217,26 @@ The adapter costs about 290 ms on a cold start (its own Node start and module lo
 
 ## Not done, and why
 
-PENDING
+- **Restored chat at 0.4 s or less: not reached** (1,023 ms click, 788 ms pointer first, after). The cause is the
+  start-up window above. A fix that fits it (start the agent on the first intent after launch only when the send is
+  likely 1.2 s or more away, otherwise at the send; or find and avoid what holds the turn in the window) was not made:
+  the round was closed before the run that isolates the cause (`chain6.sh`) could start. Not measured.
+- **ADEMark's own A4 runner** could not run (no Screen Recording grant, no Ghostty; see Method). A4 here is in-app
+  timing and terminal bytes, lower bounds of pixel times, not ranking numbers.
+- **The direct path (Agent SDK, no adapter) was not built.** It wins clearly on a cold start (about 310 ms) and by
+  20-30 ms per prompt, with one process less per chat. But the adapter is what gives Volt permissions, tool cards,
+  plans, compaction notices, `session/resume`, and the JetBrains-AIR extensions (session-failure notices, native
+  subagent sessions, async tasks); rebuilding those over the SDK is a new provider of the adapter's size, not a
+  round-sized change. On A4 (a warm new chat) the gain would be 20-30 ms on a number already about 100 ms below the
+  Bare CLI here. A decision for the user: worth it mainly for cold starts of stopped chats.
+- **`releasedAgent` kept on disk (a relaunched chat resumes its session instead of `session/new` + a recap): not
+  made.** The kept "synced" count is a count of the chat's messages, and the history a relaunched chat is seeded with
+  is filtered (empty messages dropped), so the count would not reliably match after a relaunch; a wrong count either
+  repeats or drops turns from the agent's view. Making that safe is more than a small change. Whether resume is even
+  faster than new on a quiet machine was not measured (the run, `chain5.sh`, was stopped before it started; chain 1's
+  comparison at load 6-13 had resume ready in 789 ms vs 1,312 ms for new, n 6 each, ranges overlapping). It would
+  not remove the start-up window either.
+- **A5/A10 at rest** were not measured by this area; the intent warm is short-lived and every restored-chat run found
+  0 agent processes at rest (n 16). Weight's report 45 has the memory numbers.
+
+Scripts `chain5.sh` and `chain6.sh` are committed as written but never ran; no rows exist for them.

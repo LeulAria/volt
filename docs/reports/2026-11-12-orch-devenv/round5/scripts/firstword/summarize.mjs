@@ -77,3 +77,7 @@ table('Direct path: the ACP adapter vs Claude Code through the Agent SDK with no
 	{ name: 'adapter, prompt at once', rows: direct.filter(r => (r.warmMs ?? 0) === 0) },
 	{ name: 'SDK, prompt at once', rows: sdk.filter(r => r.warmMs === 0) },
 ], [['start -> ready, ms', r => r.readyMs], ['prompt -> model request, ms', r => r.mainReqMs], ['prompt -> first text, ms', r => r.firstTextMs], ['start -> first text, ms', r => r.spawnToFirstTextMs]]);
+
+const gap = rows('resumebench.jsonl').filter(r => r.label === 'r5-gap');
+table('Prompt sent a set time after the session is ready (chain 4, adapter alone)', [0, 400, 800, 1200, 2500].map(w => ({ name: `${w} ms`, rows: gap.filter(r => r.warmMs === w) })),
+	[['prompt -> model request', r => r.mainReqMs], ['ready -> model request', r => r.warmMs + r.mainReqMs], ['spawn -> ready', r => r.readyMs]]);

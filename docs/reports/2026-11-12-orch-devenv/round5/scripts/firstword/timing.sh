@@ -17,7 +17,7 @@ take_timing() {
 			echo "[timing] removing a stale lock: $(cat $LOCK/owner 2>/dev/null)" | tee -a $HOME/.volt-r5/firstword/NEXT.md
 			rm -rf $LOCK
 		fi
-		sleep 20
+		sleep 3
 	done
 }
 drop_timing() { [[ -f $LOCK/owner ]] && grep -q "pid $$ " $LOCK/owner && rm -rf $LOCK && echo "[timing] dropped at $(date +%T)"; }
