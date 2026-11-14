@@ -16,15 +16,27 @@ const line = (label, values, loads) => {
 	return `${label}: median ${fmt(median(ok))}, n=${ok.length}, range ${fmt(Math.min(...ok))}-${fmt(Math.max(...ok))}, load ${fmt(Math.min(...loads.filter(l => l <= MAX)))}-${fmt(Math.max(...loads.filter(l => l <= MAX)))}${out ? ` (${out} over load ${MAX} left out)` : ''}`;
 };
 
+console.log('## A5 (app group median RAM over the front A6 sample, MiB) and process count');
+for (const arm of ['minbase', 'minafter', 'before', 'after']) {
+	const r = rows('a6.jsonl').filter(x => x.arm === arm && x.variant === 'front');
+	if (r.length) {
+		console.log(line(`${arm} app MiB`, r.map(x => x.appMedianMiB), r.map(x => x.loadStart)));
+		console.log(line(`${arm} processes`, r.map(x => x.processes), r.map(x => x.loadStart)));
+	}
+}
+
 console.log('## A6');
 for (const variant of ['front', 'covered']) {
-	for (const arm of ['minbase', 'before', 'after']) {
+	for (const arm of ['minbase', 'minafter', 'before', 'after']) {
 		// A covered row counts only when ADEMark's cover panel stayed up for the whole sample.
 		const r = rows('a6.jsonl').filter(x => x.arm === arm && x.variant === variant && (variant !== 'covered' || (x.cover && !x.cover.error)));
+		if (!r.length) {
+			continue;
+		}
 		const loads = r.map(x => x.loadStart);
 		console.log(line(`${variant} ${arm} cpu % (app)`, r.map(x => x.cpuAppPct), loads));
 		console.log(line(`${variant} ${arm} wakeups/s (app)`, r.map(x => x.wakeupsApp), loads));
-		for (const role of ['gpu', 'renderer', 'main', 'agent server', 'node utility', 'sandbox helper', 'plugin host', 'log stream', 'claude CLI']) {
+		for (const role of ['gpu', 'renderer', 'main', 'agent server', 'node utility', 'extension host', 'code index', 'sandbox helper', 'plugin host', 'log stream', 'claude CLI', 'ACP adapter']) {
 			console.log('   ' + line(`${role} cpu %`, r.map(x => x.byRole?.[role]?.cpuPct ?? 0), loads) + ' | ' + line('wakeups', r.map(x => x.byRole?.[role]?.wakeups ?? 0), loads).replace(/^.*?: /, ''));
 		}
 	}

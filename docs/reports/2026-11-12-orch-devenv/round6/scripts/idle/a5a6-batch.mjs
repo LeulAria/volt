@@ -1,0 +1,82 @@
+// A5 Weigh-in + A6 Idle Burn (ADEMark method, unofficial) on built or dev arms, interleaved (ABBA): each rep seeds
+// the arm's profile once (5 new chats answered `replay:seed` by ADEMark's replay server), quits, relaunches it with
+// the composer focused (ADEMark's "ready" state), then a6.mjs samples front (settle 90 s, 60 s) and covered (60 s).
+// A5 is the `app` group's median RAM over the front sample (appMedianMiB in the a6.jsonl row; ADEMark settles on the
+// RAM slope first, here a fixed 90 s). Gated on the 1-minute load (<= 14) before each rep; the load is in every row.
+//   node a5a6-batch.mjs [reps=3] [arms=minbase,minafter] [--no-seed]
+import { execFileSync } from 'child_process';
+import { existsSync, rmSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+import { ARMS, cdp, focusComposer, launch, load1, newChat, send, sleep, stop, ud, waitQuiet, waitWorkbench, writeSettings } from './lib.mjs';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2).filter(a => !a.startsWith('--'));
+const reps = Number(args[0] ?? 3);
+const arms = (args[1] ?? 'minbase,minafter').split(',');
+const seed = !process.argv.includes('--no-seed');
+for (const arm of arms) {
+	if (!ARMS[arm] || (ARMS[arm].endsWith('.app') && !existsSync(ARMS[arm]))) {
+		throw new Error(`arm ${arm} has no build at ${ARMS[arm]}`);
+	}
+}
+const order = [];
+for (let i = 0; i < reps; i++) {
+	order.push(...(i % 2 ? [...arms].reverse() : arms));
+}
+const a6 = (...a) => process.stdout.write(execFileSync('node', [join(here, 'a6.mjs'), ...a], { encoding: 'utf8' }));
+const SEEDED = new Set();
+
+async function seedArm(arm) {
+	// A fresh profile per arm, seeded once per batch (ADEMark seeds once per run too).
+	rmSync(ud(arm), { recursive: true, force: true });
+	writeSettings(arm);
+	launch(arm);
+	await waitWorkbench();
+	await sleep(8000);
+	const c = await cdp();
+	await c.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+	const marker = `[...document.querySelectorAll('.volt-agent-editor-main')].filter(e => e.offsetParent).some(m => m.textContent.includes('unchanged'))`;
+	for (let i = 0; i < 5; i++) {
+		await newChat(c);
+		await sleep(1500);
+		await send(c, 'replay:seed');
+		let ok = false;
+		for (let t = 0; t < 150 && !ok; t++) {
+			await sleep(200);
+			ok = await c.evaluate(marker);
+		}
+		console.log(`${arm} seed ${i + 1}: ${ok ? 'answered' : 'no reply in 30 s'}`);
+		await sleep(1500);
+	}
+	await c.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+	c.close();
+	await stop(arm);
+	await sleep(5000);
+	SEEDED.add(arm);
+}
+
+for (const arm of order) {
+	if (seed && !SEEDED.has(arm)) {
+		console.log(`== seeding ${arm} ${new Date().toISOString()}`);
+		await seedArm(arm);
+	}
+	const load = await waitQuiet(14);
+	console.log(`== ${arm} load ${load} ${new Date().toISOString()}`);
+	writeSettings(arm);
+	launch(arm);
+	await waitWorkbench();
+	await sleep(5000);
+	const c = await cdp();
+	console.log(`composer focused: ${await focusComposer(c)}`);
+	c.close();
+	try {
+		a6(arm, 'front', '90', '60');
+		a6(arm, 'covered', '2', '60');
+	} catch (e) {
+		console.log(`run failed: ${e}`);
+	}
+	await stop(arm);
+	console.log(`stopped ${arm} load ${load1()}`);
+	await sleep(10_000);
+}

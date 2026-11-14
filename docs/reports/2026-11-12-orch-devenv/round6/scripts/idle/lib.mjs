@@ -304,9 +304,12 @@ export function role(cmd) {
 	if (/--type=gpu-process/.test(cmd)) { return 'gpu'; }
 	if (/network\.mojom/.test(cmd)) { return 'network service'; }
 	if (/--utility-sub-type=node\.mojom\.NodeService/.test(cmd)) {
-		if (/extensionHost/.test(cmd)) { return 'extension host'; }
+		// The extension host runs in the "(Plugin)" helper; the shared process (and a pty host) in the plain one.
+		if (/extensionHost|Helper \(Plugin\)/.test(cmd)) { return 'extension host'; }
 		return 'node utility';
 	}
+	if (/^\/usr\/bin\/log show|(^| )log show /.test(cmd)) { return 'log show'; }
+	if (/\/du -sk|^du /.test(cmd)) { return 'du'; }
 	if (/--type=utility/.test(cmd)) { return 'utility (other)'; }
 	if (/claude-agent-acp/.test(cmd) && /node/.test(cmd)) { return 'ACP adapter'; }
 	if (/\/claude( |$)/.test(cmd)) { return 'claude CLI'; }
