@@ -365,6 +365,21 @@ export function subagentSpareKinds(allowWrites: boolean, request: string | undef
 	return { work: total, readonly: 0 };
 }
 
+const COUNT_WORDS: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6 };
+/** "four work items", "up to 4 agents", "3 subagents", "two parallel tasks". */
+const NAMED_COUNT = /\b(two|three|four|five|six|[2-6])\s+(?:[a-z-]+\s+){0,2}?(?:sub-?agents?|agents|work\s+items|items|tasks|parts)\b/i;
+
+/**
+ * How many spares a chat about to delegate warms (`prewarmSubagents`): as many as the request
+ * names parts or agents, within `max`, else `fallback`. With three, the fourth worker of a
+ * four-part request started its agent cold, on the critical path (ADEMark C1).
+ */
+export function subagentSpareCount(request: string | undefined, fallback: number, max: number): number {
+	const named = request ? NAMED_COUNT.exec(request)?.[1].toLowerCase() : undefined;
+	const count = named ? COUNT_WORDS[named] ?? Number(named) : fallback;
+	return Math.max(1, Math.min(max, count));
+}
+
 /** Words of a request that asks for subagents outright (`requestAsksForSubagents`). */
 const ASKS_FOR_SUBAGENTS = /\b(?:sub-?agents?|delegate_task|delegate\s+(?:it|them|this|these|each(?:\s+\w+)?|the\s+\w+)\s+to|(?:parallel|separate)\s+agents?|agents?\s+in\s+parallel)\b/i;
 

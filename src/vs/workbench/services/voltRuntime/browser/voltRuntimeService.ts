@@ -41,7 +41,7 @@ import { IVoltEvent, IVoltEventEnvelope } from '../common/events.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, pickGenerationParams, resolveModelOptions, VOLT_MODEL_OPTIONS_STORAGE_KEY } from '../common/models/modelOptions.js';
 import { modePolicy, VoltMode } from '../common/modes.js';
 import { ORCH_WARM_SUBAGENTS_SETTING } from '../common/orchestration/orchestrator.js';
-import { requestAsksForSubagents, subagentReport, subagentSpareKinds } from '../common/orchestration/agentTasks.js';
+import { requestAsksForSubagents, subagentReport, subagentSpareCount, subagentSpareKinds } from '../common/orchestration/agentTasks.js';
 import { isCatalogModelEnabled, setCatalogModelEnabled } from '../common/models/modelVisibility.js';
 import { displayProviderLabel, IProviderProfile, IProviderProfileDraft, secretKeyForProfile, VOLT_ACTIVE_CATALOG_REF_STORAGE_KEY, VOLT_CATALOG_REVISION, VOLT_CATALOG_REVISION_STORAGE_KEY, VOLT_CATALOG_STORAGE_KEY, VOLT_DEFAULT_HEALTH_INTERVAL, VOLT_DISABLED_MODELS_STORAGE_KEY, VOLT_ENABLED_MODELS_STORAGE_KEY, VOLT_HEALTH_INTERVAL_STORAGE_KEY, VOLT_MODE_PROFILES_STORAGE_KEY, VOLT_PROFILES_STORAGE_KEY, VOLT_SANDBOX_STORAGE_KEY, VOLT_SEED_VERSION_STORAGE_KEY, VOLT_TASK_MODELS_STORAGE_KEY } from '../common/profiles.js';
 import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, IAgentSessionHandle, IAgentStartRequest, IDetectResult, IModelImage, IModelInfo, IModelMessage, IModelProvider, IModelRequest, IVoltCatalogItem, IVoltProviderStatus, subagentProfile, VoltProviderState, VoltSubagentProfile } from '../common/providers.js';
@@ -201,6 +201,8 @@ const SPARE_AGENT_TTL_MS = 10 * 60_000;
  * first request (harness bench, 2026-11-12), all of it on the run's critical path.
  */
 const SUBAGENT_SPARES = 3;
+/** At most this many, when the request names more parts or agents (see subagentSpareCount). */
+const MAX_SUBAGENT_SPARES = 4;
 /** Unused subagent spares stop sooner: they were started for one delegate_task call. */
 const SUBAGENT_SPARE_TTL_MS = 90_000;
 /** A request that names worktrees gets its work spares in worktrees made ahead (see WorktreeSpares). */
@@ -758,7 +760,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		this.appState = new AgentAppStateStore(joinPath(environmentService.userRoamingDataHome, 'voltState'), fileService, logService);
 		this.agentPool = this._register(new AgentPool({
 			maxSpares: MAX_SPARE_AGENTS,
-			maxBurst: SUBAGENT_SPARES,
+			maxBurst: MAX_SUBAGENT_SPARES,
 			ttlMs: SPARE_AGENT_TTL_MS,
 			newAlias: () => `volt-pool-${generateUuid()}`,
 			onError: err => this.logService.trace('[volt] spare agent failed', err),
@@ -5551,7 +5553,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				request = message.content;
 			}
 		}
-		const kinds = subagentSpareKinds(modePolicy(session.mode).allowWrites, request, SUBAGENT_SPARES);
+		const kinds = subagentSpareKinds(modePolicy(session.mode).allowWrites, request, subagentSpareCount(request, SUBAGENT_SPARES, MAX_SUBAGENT_SPARES));
 		const options = this.getModelOptions(item.ref);
 		// Work in worktrees of their own ("each in its own git worktree"): a spare in the project folder
 		// would never fit them (an agent's folder is fixed), so their worktrees are made now, an agent in each.

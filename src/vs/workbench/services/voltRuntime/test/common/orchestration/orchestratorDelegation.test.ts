@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, requestAsksForSubagents, resolveChatTaskRefs, subagentReport, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, requestAsksForSubagents, resolveChatTaskRefs, subagentReport, subagentSpareCount, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
 import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
@@ -77,6 +77,17 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.deepStrictEqual(subagentSpareKinds(true, 'This is a read-only audit.', 3), { work: 0, readonly: 3 });
 		assert.deepStrictEqual(subagentSpareKinds(true, '1. Writer: add formatReceipt to src/money.ts.\n2. Reviewer (never edits files): review all of src/money.ts.\nDo not edit files yourself.', 3), { work: 2, readonly: 1 }, 'one read-only part is not a read-only request');
 		assert.deepStrictEqual(subagentSpareKinds(true, 'Each subagent fixes only its own file and must not edit the tests or any other file.', 3), { work: 3, readonly: 0 });
+	});
+
+	test('as many spares as the request names parts or agents, within the cap', () => {
+		assert.strictEqual(subagentSpareCount('Use Volt\'s delegate_task to run the four work items in parallel, one subagent per item.', 3, 4), 4);
+		assert.strictEqual(subagentSpareCount('Work on them in parallel with up to 4 agents, one agent per item.', 3, 4), 4);
+		assert.strictEqual(subagentSpareCount('Fix the three bugs with three subagents.', 3, 4), 3);
+		assert.strictEqual(subagentSpareCount('Run two agents in parallel on it.', 3, 4), 2);
+		assert.strictEqual(subagentSpareCount('Split it into six parallel tasks.', 3, 4), 4, 'capped');
+		assert.strictEqual(subagentSpareCount('Answer four questions about src.', 3, 4), 3, 'questions are not parts');
+		assert.strictEqual(subagentSpareCount('Delegate each file to its own agent.', 3, 4), 3);
+		assert.strictEqual(subagentSpareCount(undefined, 3, 4), 3);
 	});
 
 	test('a request that asks for subagents outright warms their agents with the run', () => {
