@@ -50,9 +50,11 @@ for (const r of rows.filter(isCompletion)) {
 	entry.cacheWrite += r.usage?.cache_write ?? 0;
 	entry.prompt.push((r.usage?.input ?? 0) + (r.usage?.cache_write ?? 0) + (r.usage?.cache_read ?? 0));
 }
+// The lead is the session of the first request that carries the C1 task; a worker's brief can quote the task too.
+const leadSession = rows.filter(isCompletion).sort((a, b) => a.t - b.t).find(r => r.meta?.task)?.meta?.session;
 const median = a => { const b = [...a].sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : 0; };
 const sessionRows = [...sessions.values()].map(e => ({
-	role: e.task ? 'lead' : e.coding && e.answers ? 'worker' : 'other',
+	role: e.session === leadSession ? 'lead' : e.coding && e.answers ? 'worker' : 'other', quotesTask: e.task,
 	session: e.session.slice(0, 8), start: s(e.first - t0), end: s(e.last - t0), requests: e.requests, toolAnswers: e.answers,
 	tokens: e.tokens, output: e.output, cacheWrite: e.cacheWrite, promptMedian: median(e.prompt), promptMax: Math.max(0, ...e.prompt),
 	sideCalls: e.sideCalls, sideTokens: e.sideTokens, firstUser: (e.firstUser ?? '').replace(/\s+/g, ' ').slice(0, 70),
