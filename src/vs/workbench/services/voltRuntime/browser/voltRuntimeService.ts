@@ -54,7 +54,7 @@ import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService, runGitThrough, VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
 import { chatExec, IChatExec, voltExec } from '../common/execContext.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
-import { codeIndexEnabled, INSTANT_GREP_TOOL_NAME, isVoltWorktreePath, lspAllowedFor, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
+import { codeIndexEnabled, editCheckPhase, INSTANT_GREP_TOOL_NAME, isVoltWorktreePath, lspAllowedFor, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
 import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
 import { ISearchIndex, VoltSearch } from './search/voltSearch.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
@@ -2690,7 +2690,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 
 	private onHostToolResult(call: IVoltHostToolInvocation): void {
 		const session = this.sessions.get(this.chatFor(call.sessionId));
-		if (!session || call.name === ASK_QUESTION_TOOL_NAME || call.name === AWAIT_ANSWERS_TOOL_NAME) {
+		// An edit check from Claude Code's hooks is not a call the agent made.
+		if (!session || call.name === ASK_QUESTION_TOOL_NAME || call.name === AWAIT_ANSWERS_TOOL_NAME || editCheckPhase(call.name, call.args)) {
 			return;
 		}
 		// A page or chart spec can be hundreds of KB; the visual's stored copy is what the transcript keeps.

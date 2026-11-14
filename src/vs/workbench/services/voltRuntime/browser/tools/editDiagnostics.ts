@@ -47,3 +47,22 @@ export function formatEditDiagnostics(found: readonly IDiagnostic[], shown: stri
 	const more = errors.length - lines.length;
 	return [`${errors.length} error${errors.length === 1 ? '' : 's'} in ${shown} now (some may predate this edit):`, ...lines, ...(more > 0 ? [`  ...and ${more} more (diagnostics lists them)`] : [])].join('\n');
 }
+
+/** A hook's answer that adds nothing (Claude Code reads hook output as JSON). */
+export const NO_HOOK_OUTPUT = '{}';
+
+/**
+ * The answer to Claude Code's PostToolUse hook after an edit added errors: the errors as context
+ * for the model, right after the edit's own result, so it fixes them in its next step instead of
+ * finding them at the end of the turn.
+ */
+export function editCheckHookOutput(added: readonly IDiagnostic[], shown: string): string {
+	const errors = added.filter(diagnostic => diagnostic.severity === 'error');
+	if (!errors.length) {
+		return NO_HOOK_OUTPUT;
+	}
+	const lines = errors.slice(0, MAX_LISTED).map(diagnostic => `  ${diagnostic.line}:${diagnostic.column} ${diagnostic.message.split('\n')[0]}${diagnostic.source ? ` [${diagnostic.source}${diagnostic.code ? ` ${diagnostic.code}` : ''}]` : ''}`);
+	const more = errors.length - lines.length;
+	const context = [`[Volt] This edit added ${errors.length} error${errors.length === 1 ? '' : 's'} in ${shown} (language server):`, ...lines, ...(more > 0 ? [`  ...and ${more} more`] : [])].join('\n');
+	return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: context } });
+}

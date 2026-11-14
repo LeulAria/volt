@@ -3,7 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { raceTimeout } from '../../../../../base/common/async.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { ResourceMap } from '../../../../../base/common/map.js';
+import { isAbsolute } from '../../../../../base/common/path.js';
 import { isWeb } from '../../../../../base/common/platform.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ILanguageFeaturesService } from '../../../../../editor/common/services/languageFeatures.js';
@@ -15,11 +18,13 @@ import { IVoltCodeIndexService } from '../../../../../platform/voltCodeIndex/com
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { ITextFileService } from '../../../../services/textfile/common/textfiles.js';
-import { CodeIntelHost } from '../../../../services/voltRuntime/browser/host/codeIntelHost.js';
+import { CodeIntelHost, DIAGNOSED_EXTENSIONS } from '../../../../services/voltRuntime/browser/host/codeIntelHost.js';
 import { createCodeIndexNav } from '../../../../services/voltRuntime/browser/tools/codeIndexNav.js';
 import { CODE_ACTION_DESCRIPTION, CODE_ACTION_SCHEMA, CODE_NAV_DESCRIPTION, CODE_NAV_SCHEMA, createCodeTools, DIAGNOSTICS_DESCRIPTION, DIAGNOSTICS_SCHEMA } from '../../../../services/voltRuntime/browser/tools/codeTools.js';
+import { editCheckHookOutput, NO_HOOK_OUTPUT } from '../../../../services/voltRuntime/browser/tools/editDiagnostics.js';
 import { IFileToolHost, writeComputedEdit } from '../../../../services/voltRuntime/browser/tools/fileTools.js';
-import { codeIndexEnabled, isVoltWorktreePath, lspAllowedFor, readCodeIndexOptions } from '../../../../services/voltRuntime/common/codeIntelligence.js';
+import { displayPath, resolveWorkspaceUri } from '../../../../services/voltRuntime/browser/tools/workspacePath.js';
+import { codeIndexEnabled, EditCheckPhase, editCheckPhase, isVoltWorktreePath, lspAllowedFor, readCodeIndexOptions } from '../../../../services/voltRuntime/common/codeIntelligence.js';
 import { IVoltHostFileChange, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 
 /**
@@ -36,6 +41,14 @@ const LANGUAGE_SERVER_TOOLS: readonly IVoltHostToolInfo[] = [
 	{ name: 'code_action', title: 'Refactored code', group: 'core', description: CODE_ACTION_DESCRIPTION, inputSchema: CODE_ACTION_SCHEMA, approvalInReadOnlyModes: 'changes files' },
 ];
 
+/** The edit's start waits this long for the file's errors as they were (it holds up the edit). */
+const BASELINE_WAIT_MS = 1_500;
+/** A read's check runs in the background and may take this long (a language server still loading the project). */
+const READ_BASELINE_WAIT_MS = 30_000;
+/** The edit's end waits this long for the language server to report on the new text. */
+const AFTER_EDIT_WAIT_MS = 4_000;
+const BASELINE_TTL_MS = 10 * 60_000;
+
 /**
  * Serves {@link LANGUAGE_SERVER_TOOLS} on the volt MCP server. The desktop window serves those
  * calls (its language servers have the user's buffers); in a browser the agent server does.
@@ -45,6 +58,8 @@ export class LanguageServerHostTools extends Disposable implements IWorkbenchCon
 	static readonly ID = 'workbench.contrib.voltLanguageServerHostTools';
 
 	private readonly codeIntel: CodeIntelHost;
+	/** Each file's errors before an edit (see {@link editCheck}). */
+	private readonly baselines = new ResourceMap<{ readonly counts: Map<string, number>; readonly at: number }>();
 
 	constructor(
 		@IVoltHostToolService hostTools: IVoltHostToolService,
@@ -68,6 +83,10 @@ export class LanguageServerHostTools extends Disposable implements IWorkbenchCon
 
 	private async invoke(name: string, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
 		const root = call?.cwd ? URI.file(call.cwd) : this.workspace.getWorkspace().folders[0]?.uri;
+		const phase = editCheckPhase(name, args);
+		if (phase) {
+			return { text: await this.editCheck(phase, root, args).catch(() => NO_HOOK_OUTPUT) };
+		}
 		const tool = this.tools(root).find(candidate => candidate.name === name);
 		if (!tool) {
 			return { error: `Unknown tool ${name}.` };
@@ -89,6 +108,61 @@ export class LanguageServerHostTools extends Disposable implements IWorkbenchCon
 			return result.isError ? { error: result.text } : { text: result.text, ...(changes.length ? { changes } : {}) };
 		} finally {
 			cancel?.dispose();
+		}
+	}
+
+	/**
+	 * Claude Code's hooks around its file tools (see `EDIT_CHECK_TOOL_NAME`): a read opens the file
+	 * for its language server, the edit's start notes the file's errors, its end answers the errors
+	 * it added, as the hook's context for the model. Silent (`{}`) when there is nothing new or the
+	 * errors before the edit are not known (the end-of-turn check still covers the file).
+	 */
+	private async editCheck(phase: EditCheckPhase, root: URI | undefined, args: Record<string, unknown>): Promise<string> {
+		const path = typeof args.path === 'string' ? args.path : undefined;
+		const uri = path ? resolveWorkspaceUri(root, path) ?? (isAbsolute(path) ? URI.file(path) : undefined) : undefined;
+		if (!uri || !DIAGNOSED_EXTENSIONS.test(uri.path) || !this.codeIntel.lspAllowed(uri)) {
+			return NO_HOOK_OUTPUT;
+		}
+		this.forgetOldBaselines();
+		switch (phase) {
+			case 'read': {
+				// The file's errors are read now, while the model thinks, so the edit's start need not wait.
+				const at = Date.now();
+				void this.codeIntel.settledErrorCounts(uri, READ_BASELINE_WAIT_MS).then(counts => {
+					if (counts && (this.baselines.get(uri)?.at ?? 0) < at) {
+						this.baselines.set(uri, { counts, at });
+					}
+				});
+				return NO_HOOK_OUTPUT;
+			}
+			case 'before': {
+				const counts = await this.codeIntel.settledErrorCounts(uri, BASELINE_WAIT_MS);
+				if (counts) {
+					this.baselines.set(uri, { counts, at: Date.now() });
+				}
+				// Else the baseline the read (or the last edit) left stays, if any.
+				return NO_HOOK_OUTPUT;
+			}
+			case 'after': {
+				const baseline = this.baselines.get(uri);
+				this.codeIntel.noteWrite(uri);
+				if (!baseline) {
+					return NO_HOOK_OUTPUT;
+				}
+				const added = await raceTimeout(this.codeIntel.newErrors(uri, baseline.counts), AFTER_EDIT_WAIT_MS);
+				// The next edit of this file is compared with the file as this one left it.
+				this.baselines.set(uri, { counts: this.codeIntel.errorCounts(uri), at: Date.now() });
+				return added?.length ? editCheckHookOutput(added, root ? displayPath(root, uri) : uri.fsPath) : NO_HOOK_OUTPUT;
+			}
+		}
+	}
+
+	private forgetOldBaselines(): void {
+		const now = Date.now();
+		for (const [uri, baseline] of this.baselines) {
+			if (now - baseline.at > BASELINE_TTL_MS) {
+				this.baselines.delete(uri);
+			}
 		}
 	}
 
