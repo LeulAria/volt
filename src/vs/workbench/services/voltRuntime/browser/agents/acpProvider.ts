@@ -3,7 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { CLAUDE_SESSION_OPTIONS, CLAUDE_SESSION_TITLE, claudeWorkRulesMeta, isClaudePlaceholderTitle } from '../../common/harness/claudeWorkRules.js';
+import { CLAUDE_SESSION_OPTIONS, CLAUDE_SESSION_TITLE, claudeLazyToolsPlugin, claudeWorkRulesMeta, isClaudePlaceholderTitle } from '../../common/harness/claudeWorkRules.js';
+import { joinPath } from '../../../../../base/common/resources.js';
 import { bareTaskToolName } from '../../common/orchestration/agentTasks.js';
 import { raceTimeout, timeout } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
@@ -417,6 +418,8 @@ export class AcpAgentProvider implements IAgentProvider {
 	private readonly unconfinedProcesses = new Set<string>();
 	/** Spawns in flight: only while one is, an unknown spawn id may be one of ours. */
 	private spawning = 0;
+	private claudePluginsRoot: (() => Promise<URI | undefined>) | undefined;
+	private lazyToolsPlugin: Promise<string | undefined> | undefined;
 	private readonly _onDidChangeBackgroundTasks = new Emitter<IAcpBackgroundTask>();
 	/**
 	 * A background task of one of this provider's sessions started, reported progress or ended,
@@ -807,11 +810,56 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * the main agent and, through a SubagentStart hook, for each subagent it starts. `voltAsks`: the
 	 * session has Volt's ask_question.
 	 */
-	private sessionMeta(req: IAgentStartRequest, voltAsks: boolean): Record<string, unknown> | undefined {
+	private sessionMeta(req: IAgentStartRequest, voltAsks: boolean, lazyToolsPlugin: string | undefined): Record<string, unknown> | undefined {
 		if (req.textOnly) {
 			return this.textOnlyMeta(req);
 		}
-		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req), { subagent: subagentProfile(req.subagent), voltAsks }) : undefined;
+		return this.takesSystemPrompt() ? claudeWorkRulesMeta(this.claudeModel(req), { subagent: subagentProfile(req.subagent), voltAsks, lazyToolsPlugin }) : undefined;
+	}
+
+	/**
+	 * Where Volt writes the Claude Code plugins it passes to its sessions (`~/.volt/claude-plugins`).
+	 * Set by the runtime; without it, or off the local disk, sessions start without them.
+	 */
+	setClaudePluginsRoot(root: () => Promise<URI | undefined>): void {
+		this.claudePluginsRoot = root;
+		if (this.takesSystemPrompt()) {
+			// Written before the first chat needs it.
+			void this.lazyToolsPluginPath();
+		}
+	}
+
+	/**
+	 * The folder of {@link claudeLazyToolsPlugin} for a main chat's session, written once per
+	 * content (the folder is named after it). Undefined, and the tools stay loaded, when it cannot be written.
+	 */
+	private lazyToolsPluginPath(): Promise<string | undefined> {
+		const rootOf = this.claudePluginsRoot;
+		if (!this.takesSystemPrompt() || !rootOf) {
+			return Promise.resolve(undefined);
+		}
+		this.lazyToolsPlugin ??= (async () => {
+			try {
+				const root = await rootOf();
+				if (root?.scheme !== Schemas.file) {
+					return undefined;
+				}
+				const plugin = claudeLazyToolsPlugin();
+				const dir = joinPath(root, plugin.name);
+				const [last] = plugin.files.at(-1)!;
+				if (!await this.fileService.exists(joinPath(dir, ...last.split('/')))) {
+					for (const [path, text] of plugin.files) {
+						await this.fileService.writeFile(joinPath(dir, ...path.split('/')), VSBuffer.fromString(text));
+					}
+				}
+				return dir.fsPath;
+			} catch (err) {
+				this.logService.warn(`[volt] could not write Claude Code's lazy-tools plugin; its tools stay loaded: ${err instanceof Error ? err.message : String(err)}`);
+				this.lazyToolsPlugin = undefined;
+				return undefined;
+			}
+		})();
+		return this.lazyToolsPlugin;
 	}
 
 	/**
@@ -903,15 +951,16 @@ export class AcpAgentProvider implements IAgentProvider {
 			hostMcp = req.textOnly ? undefined : { sessionId: req.sessionId, capabilities, servers: JSON.stringify(mcpServers), ...(groups ? { groups } : {}) };
 			// Volt's ask_question reaches the same question tray as Claude's AskUserQuestion: with it, the built-in goes.
 			const voltAsks = mcpServers.length > 0 && (!groups || groups.includes('core'));
+			const lazyToolsPlugin = req.textOnly || subagentProfile(req.subagent) ? undefined : await this.lazyToolsPluginPath();
 			if (resume) {
 				if (!initialized.agentCapabilities?.sessionCapabilities?.resume) {
 					throw new Error('the agent cannot resume sessions');
 				}
-				const meta = this.sessionMeta(req, voltAsks);
+				const meta = this.sessionMeta(req, voltAsks, lazyToolsPlugin);
 				const resumed = await client.request<Partial<ISessionNewResponse>>('session/resume', { sessionId: resume, cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 				created = { ...resumed, sessionId: resumed?.sessionId ?? resume };
 			} else {
-				const meta = this.sessionMeta(req, voltAsks);
+				const meta = this.sessionMeta(req, voltAsks, lazyToolsPlugin);
 				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 			}
 			step();

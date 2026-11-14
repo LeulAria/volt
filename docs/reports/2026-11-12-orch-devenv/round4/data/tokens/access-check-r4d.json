@@ -1,0 +1,19 @@
+{
+ "label": "acc-r4d-b1",
+ "uiAccess": "Permissions: Full access",
+ "model": "claude-opus-5-5",
+ "usage": {
+  "input": 2,
+  "cache_write": 0,
+  "cache_write_1h": 0,
+  "cache_read": 15556,
+  "output": 43
+ },
+ "output_config": {
+  "effort": "medium"
+ },
+ "safeguardsType": "dangerous_tool_use",
+ "permission_mode": "auto",
+ "safeguardsChars": 1900,
+ "countTokensCallsAtStart": 42
+}

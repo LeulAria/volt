@@ -6003,6 +6003,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			provider.setFileWriteObserver(write => this.onAcpFileWrite(write));
 			provider.setQuestionAsker((sessionId, runId, draft) => this.askQuestions(sessionId, runId, draft));
 			provider.setSupervisionOptions(ACP_SUPERVISION);
+			// Claude Code plugins Volt passes to its sessions (claudeLazyToolsPlugin); read-only in the sandbox (AGENT_FOOTPRINTS).
+			provider.setClaudePluginsRoot(async () => {
+				const home = await this.pathService.userHome().catch(() => undefined);
+				return home && joinPath(home, '.volt', 'claude-plugins');
+			});
 			this._register(provider.onDidChangeBackgroundTasks(task => this.onAgentBackgroundTask(provider, task)));
 			this.agentProviders.set(provider.id, provider);
 		}

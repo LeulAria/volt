@@ -411,6 +411,9 @@ suite('Volt sandbox agent profile', () => {
 		assert.ok(!policy.filesystem.write.includes('/Users/me/.claude') && !policy.filesystem.write.includes('/Users/me/.claude.json'));
 		assert.ok(!policy.filesystem.write.some(path => path.endsWith('/.npm') || path.endsWith('/Library/Caches') || path.endsWith('/.cache')), 'shared caches are not writable');
 		assert.ok(!policy.filesystem.write.some(path => path.startsWith('/Users/me/.local/share/claude')), 'the CLI binaries');
+		// The plugins Volt passes to Claude Code sessions: read, never written (no chat plants code for another).
+		assert.ok(policy.filesystem.read.includes('/Users/me/.volt/claude-plugins'));
+		assert.ok(!policy.filesystem.write.some(path => '/Users/me/.volt/claude-plugins/x'.startsWith(`${path}/`) || path.startsWith('/Users/me/.volt/claude-plugins')), 'Volt\'s Claude plugins');
 		assert.ok(policy.filesystem.deny.includes('/Users/me/.ssh'), 'network off: no ssh at all');
 		assert.ok(policy.filesystem.deny.includes('/Users/me/Library/Application Support/Volt'), 'agent-server token');
 		assert.ok(policy.filesystem.deny.includes('/Users/me/.codex/auth.json'), 'other agents\' credentials');

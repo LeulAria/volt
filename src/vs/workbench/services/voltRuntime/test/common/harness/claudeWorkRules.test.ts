@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_RULES, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, claudeWorkRulesMeta, isClaudePlaceholderTitle, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
+import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, claudeWorkRulesMeta, isClaudePlaceholderTitle, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
 
 /** What a POSIX shell passes to printf for `printf '%s' '<quoted>'`: single quotes, with `'\''` for a quote inside. */
 function shellArgument(command: string): string {
@@ -100,6 +100,56 @@ suite('Volt Claude work rules', () => {
 			assert.ok(options.title && isClaudePlaceholderTitle(options.title), String(subagent));
 		}
 		assert.ok(!isClaudePlaceholderTitle('Fix sidebar list jumping to top'));
+	});
+
+	test('with the lazy-tools plugin, a main session defers Agent, Workflow, ScheduleWakeup, ReportFindings and ListAgents and names them in its rules', () => {
+		type Meta = { systemPrompt: { append?: string } | string; claudeCode: { options: { plugins?: unknown; disallowedTools?: string[] } } };
+		const lazy = claudeWorkRulesMeta('claude-opus-5-5', { voltAsks: true, lazyToolsPlugin: '/Users/me/.volt/claude-plugins/volt-lazy-tools-1' }) as Meta;
+		assert.deepStrictEqual(lazy.claudeCode.options.plugins, [{ type: 'local', path: '/Users/me/.volt/claude-plugins/volt-lazy-tools-1', skipMcpDiscovery: true }]);
+		assert.deepStrictEqual(lazy.systemPrompt, { type: 'preset', preset: 'claude_code', append: `${CLAUDE_MAIN_RULES}\n${CLAUDE_MAIN_ASK_RULE}\n${CLAUDE_MAIN_LAZY_RULE}` });
+		// Loaded on demand, never taken away.
+		assert.deepStrictEqual(lazy.claudeCode.options.disallowedTools, [...CLAUDE_MAIN_DISALLOWED_TOOLS]);
+		for (const tool of CLAUDE_MAIN_LAZY_TOOLS) {
+			assert.ok(CLAUDE_MAIN_LAZY_RULE.includes(tool), tool);
+		}
+		assert.deepStrictEqual([...CLAUDE_MAIN_LAZY_TOOLS].sort(), ['Agent', 'ListAgents', 'ReportFindings', 'ScheduleWakeup', 'Workflow']);
+		assert.ok(CLAUDE_MAIN_LAZY_RULE.includes('ToolSearch "select:'), 'one exact-name select, no keyword search');
+		// Without the plugin (it could not be written) nothing changes; a subagent goes without these tools anyway.
+		const plain = claudeWorkRulesMeta('claude-opus-5-5', { voltAsks: true }) as Meta;
+		assert.strictEqual(plain.claudeCode.options.plugins, undefined);
+		assert.ok(!(plain.systemPrompt as { append: string }).append.includes(CLAUDE_MAIN_LAZY_RULE));
+		const sub = claudeWorkRulesMeta('claude-haiku-5-5', { subagent: 'work', lazyToolsPlugin: '/p' }) as Meta;
+		assert.strictEqual(sub.claudeCode.options.plugins, undefined);
+		assert.strictEqual(JSON.stringify(sub), JSON.stringify(claudeWorkRulesMeta('claude-haiku-5-5', { subagent: 'work' })));
+	});
+
+	test('a main session lists every skill with descriptions cut at 400 characters; a subagent keeps its shorter cut', () => {
+		type Meta = { claudeCode: { options: { settings: Record<string, unknown> } } };
+		assert.strictEqual((claudeWorkRulesMeta('claude-opus-5-5') as Meta).claudeCode.options.settings.skillListingMaxDescChars, 400);
+		assert.strictEqual((claudeWorkRulesMeta('claude-opus-5-5', { voltAsks: true, lazyToolsPlugin: '/p' }) as Meta).claudeCode.options.settings.skillListingMaxDescChars, 400);
+		assert.strictEqual((claudeWorkRulesMeta('claude-haiku-5-5', { subagent: 'work' }) as Meta).claudeCode.options.settings.skillListingMaxDescChars, 160);
+		assert.strictEqual((claudeWorkRulesMeta('claude-haiku-5-5', { subagent: 'work' }) as Meta).claudeCode.options.settings.skillOverrides, undefined, 'no skill is hidden');
+	});
+
+	test('the lazy-tools plugin\'s hooks module defers exactly those tools and passes their descriptions on; its folder is named after its content', async () => {
+		const plugin = claudeLazyToolsPlugin();
+		assert.deepStrictEqual(plugin, claudeLazyToolsPlugin(), 'the same folder every session: a resumed session is not rebuilt');
+		assert.match(plugin.name, /^volt-lazy-tools-[0-9a-f]{8}$/);
+		const files = new Map(plugin.files);
+		assert.strictEqual(plugin.files.at(-1)?.[0], 'hooks/register.js', 'written last: a folder that has it is whole');
+		assert.deepStrictEqual(JSON.parse(files.get('hooks/hooks.json')!), { modules: ['./register.js'] });
+		assert.strictEqual(JSON.parse(files.get('.claude-plugin/plugin.json')!).name, 'volt-lazy-tools');
+		// Run the module as Claude Code's hooks worker would: register(on), then raise tool.describe.
+		const source = files.get('hooks/register.js')!;
+		assert.ok(source.includes('export function register(on)'));
+		const register = new Function(`${source.replace('export function register', 'function register')}\nreturn register;`)() as (on: (...args: unknown[]) => void) => void;
+		const registrations: { event: unknown; matcher: unknown; handler: (...args: unknown[]) => Promise<unknown> }[] = [];
+		register((event: unknown, matcher: unknown, handler: unknown) => registrations.push({ event, matcher, handler: handler as (...args: unknown[]) => Promise<unknown> }));
+		assert.strictEqual(registrations.length, 1);
+		assert.strictEqual(registrations[0].event, 'tool.describe');
+		assert.deepStrictEqual(registrations[0].matcher, { tool: [...CLAUDE_MAIN_LAZY_TOOLS] }, 'only these tools reach the module');
+		const next = async (e: { description: string }) => ({ description: `${e.description}!` });
+		assert.deepStrictEqual(await registrations[0].handler({}, { tool: 'Workflow', description: 'Runs a workflow', provider: 'builtin' }, next), { description: 'Runs a workflow!', isDeferred: true });
 	});
 
 	test('a read-only subagent runs on its own short prompt, with no file tools and only Volt\'s MCP server', () => {

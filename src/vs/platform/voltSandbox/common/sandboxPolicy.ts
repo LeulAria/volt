@@ -246,7 +246,8 @@ export const AGENT_FOOTPRINTS: Readonly<Record<string, IAgentFootprint>> = {
 	'claude-code': {
 		writable: ['Library/Caches/claude-cli-nodejs', '.cache/claude-cli-nodejs'],
 		// The install (`.local/share/claude`, `.claude/local`). Its config folder comes in through the overlay.
-		readable: ['.local/share/claude'],
+		// `.volt/claude-plugins`: the plugins Volt passes to its sessions (claudeLazyToolsPlugin), read-only so no chat can change another's.
+		readable: ['.local/share/claude', '.volt/claude-plugins'],
 		credentials: ['.claude/.credentials.json'],
 		tmpDirs: uid => [`/private/tmp/claude-${uid ?? 0}`, `/tmp/claude-${uid ?? 0}`, '/private/tmp/cc-socks', '/tmp/cc-socks'],
 		domains: ['api.anthropic.com', '*.anthropic.com', 'claude.ai', '*.claude.ai', 'claude.com', '*.claude.com', 'sentry.io', '*.sentry.io'],
