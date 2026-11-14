@@ -955,7 +955,25 @@ export function attachCodePaths(blocks: AgentBlock[]): void {
 
 /** The path a paragraph's last line ends on, followed by a colon: "…created src/array.js:". */
 function introducedPath(markdown: string): string | undefined {
-	const last = markdown.trimEnd().split('\n').at(-1) ?? '';
+	// Only the last line matters, and a streaming reply asks about the same paragraphs on every frame.
+	const trimmed = markdown.trimEnd();
+	const last = trimmed.slice(trimmed.lastIndexOf('\n') + 1);
+	const known = introducedPaths.get(last);
+	if (known !== undefined) {
+		return known || undefined;
+	}
+	const path = introducedPathOfLine(last);
+	if (introducedPaths.size >= INTRODUCED_PATHS_MAX) {
+		introducedPaths.clear();
+	}
+	introducedPaths.set(last, path ?? '');
+	return path;
+}
+
+const introducedPaths = new Map<string, string>();
+const INTRODUCED_PATHS_MAX = 4096;
+
+function introducedPathOfLine(last: string): string | undefined {
 	const match = /(`?)([^\s`*_]+)\1[*_]*:[*_]*$/.exec(last.trim());
 	if (!match) {
 		return undefined;

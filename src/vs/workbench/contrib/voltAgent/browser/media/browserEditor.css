@@ -1189,11 +1189,6 @@ the background paints a solid square) and keep the glyph in the accent. */
 	display: inline-flex;
 }
 
-/* The activity pill fades out but stays laid out: its dots rest while it is not shown. */
-.volt-browser-dock:not(.mode-activity) .volt-browser-dock-activity .volt-browser-dock-dot {
-	animation-play-state: paused;
-}
-
 .volt-browser-dock-activity-text {
 	min-width: 0;
 	overflow: hidden;
@@ -1319,129 +1314,29 @@ the background paints a solid square) and keep the glyph in the accent. */
 	display: inline-flex;
 }
 
-.volt-browser-dock-dots svg {
+/*
+ * One strip carries the eight frames (createThinkingDots draws them as its mask, 10 px a frame) and
+ * is moved sideways under the 10 px window by createThinkingDots's timer while it is on screen. No
+ * CSS animation: per-dot opacity animations cost the main thread a style recalc per dot on every
+ * frame, and a transform animation on the strip still ticked style once a frame.
+ */
+.volt-browser-dock-dots {
+	position: relative;
+	overflow: hidden;
+}
+
+.volt-browser-dock-dot-strip {
+	position: absolute;
+	top: 0;
+	left: 0;
 	display: block;
-	width: 100%;
-	height: 100%;
-	overflow: visible;
-}
-
-.volt-browser-dock-dot {
-	fill: currentColor;
-	animation-duration: 1.4s;
-	animation-timing-function: steps(1, end);
-	animation-iteration-count: infinite;
-}
-
-.volt-browser-dock-dot.d1 { animation-name: volt-dot-grid-1; opacity: 0; }
-.volt-browser-dock-dot.d2 { animation-name: volt-dot-grid-2; opacity: 1; }
-.volt-browser-dock-dot.d3 { animation-name: volt-dot-grid-3; opacity: 0; }
-.volt-browser-dock-dot.d4 { animation-name: volt-dot-grid-4; opacity: 1; }
-.volt-browser-dock-dot.d5 { animation-name: volt-dot-grid-5; opacity: 1; }
-.volt-browser-dock-dot.d6 { animation-name: volt-dot-grid-6; opacity: 1; }
-.volt-browser-dock-dot.d7 { animation-name: volt-dot-grid-7; opacity: 1; }
-.volt-browser-dock-dot.d8 { animation-name: volt-dot-grid-8; opacity: 0; }
-.volt-browser-dock-dot.d9 { animation-name: volt-dot-grid-9; opacity: 1; }
-
-@keyframes volt-dot-grid-1 {
-	0%, 12.4999% { opacity: 0; }
-	12.5%, 24.9999% { opacity: 0; }
-	25%, 37.4999% { opacity: 0; }
-	37.5%, 49.9999% { opacity: 0; }
-	50%, 62.4999% { opacity: 0; }
-	62.5%, 74.9999% { opacity: 1; }
-	75%, 87.4999% { opacity: 1; }
-	87.5%, 100% { opacity: 1; }
-}
-@keyframes volt-dot-grid-2 {
-	0%, 12.4999% { opacity: 1; }
-	12.5%, 24.9999% { opacity: 1; }
-	25%, 37.4999% { opacity: 0; }
-	37.5%, 49.9999% { opacity: 0; }
-	50%, 62.4999% { opacity: 0; }
-	62.5%, 74.9999% { opacity: 0; }
-	75%, 87.4999% { opacity: 0; }
-	87.5%, 100% { opacity: 1; }
-}
-@keyframes volt-dot-grid-3 {
-	0%, 12.4999% { opacity: 0; }
-	12.5%, 24.9999% { opacity: 1; }
-	25%, 37.4999% { opacity: 1; }
-	37.5%, 49.9999% { opacity: 1; }
-	50%, 62.4999% { opacity: 0; }
-	62.5%, 74.9999% { opacity: 0; }
-	75%, 87.4999% { opacity: 0; }
-	87.5%, 100% { opacity: 0; }
-}
-@keyframes volt-dot-grid-4 {
-	0%, 12.4999% { opacity: 1; }
-	12.5%, 24.9999% { opacity: 0; }
-	25%, 37.4999% { opacity: 0; }
-	37.5%, 49.9999% { opacity: 0; }
-	50%, 62.4999% { opacity: 1; }
-	62.5%, 74.9999% { opacity: 1; }
-	75%, 87.4999% { opacity: 1; }
-	87.5%, 100% { opacity: 1; }
-}
-@keyframes volt-dot-grid-5 {
-	0%, 12.4999% { opacity: 1; }
-	12.5%, 24.9999% { opacity: 1; }
-	25%, 37.4999% { opacity: 1; }
-	37.5%, 49.9999% { opacity: 0; }
-	50%, 62.4999% { opacity: 0; }
-	62.5%, 74.9999% { opacity: 0; }
-	75%, 87.4999% { opacity: 1; }
-	87.5%, 100% { opacity: 1; }
-}
-@keyframes volt-dot-grid-6 {
-	0%, 12.4999% { opacity: 1; }
-	12.5%, 24.9999% { opacity: 1; }
-	25%, 37.4999% { opacity: 1; }
-	37.5%, 49.9999% { opacity: 1; }
-	50%, 62.4999% { opacity: 1; }
-	62.5%, 74.9999% { opacity: 0; }
-	75%, 87.4999% { opacity: 0; }
-	87.5%, 100% { opacity: 0; }
-}
-@keyframes volt-dot-grid-7 {
-	0%, 12.4999% { opacity: 1; }
-	12.5%, 24.9999% { opacity: 1; }
-	25%, 37.4999% { opacity: 0; }
-	37.5%, 49.9999% { opacity: 1; }
-	50%, 62.4999% { opacity: 1; }
-	62.5%, 74.9999% { opacity: 0; }
-	75%, 87.4999% { opacity: 0; }
-	87.5%, 100% { opacity: 0; }
-}
-@keyframes volt-dot-grid-8 {
-	0%, 12.4999% { opacity: 0; }
-	12.5%, 24.9999% { opacity: 0; }
-	25%, 37.4999% { opacity: 1; }
-	37.5%, 49.9999% { opacity: 1; }
-	50%, 62.4999% { opacity: 0; }
-	62.5%, 74.9999% { opacity: 1; }
-	75%, 87.4999% { opacity: 1; }
-	87.5%, 100% { opacity: 0; }
-}
-@keyframes volt-dot-grid-9 {
-	0%, 12.4999% { opacity: 1; }
-	12.5%, 24.9999% { opacity: 0; }
-	25%, 37.4999% { opacity: 0; }
-	37.5%, 49.9999% { opacity: 0; }
-	50%, 62.4999% { opacity: 1; }
-	62.5%, 74.9999% { opacity: 1; }
-	75%, 87.4999% { opacity: 0; }
-	87.5%, 100% { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.volt-browser-dock-dot {
-		animation: none;
-	}
-}
-
-.monaco-workbench.reduce-motion .volt-browser-dock-dot {
-	animation: none;
+	width: 80px;
+	height: 10px;
+	background: currentColor;
+	-webkit-mask-repeat: no-repeat;
+	mask-repeat: no-repeat;
+	-webkit-mask-size: 80px 10px;
+	mask-size: 80px 10px;
 }
 
 .volt-browser-dock-composer {

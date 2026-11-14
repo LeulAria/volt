@@ -18,12 +18,12 @@ import { localize } from '../../../../../nls.js';
 import { AgentBlock, IAgentActivityItem, IToolBlock } from '../blocks/agentBlocks.js';
 import { formatContextTokens } from '../context/agentContextUsage.js';
 import { createCompactIcon } from '../context/agentContextUsageView.js';
-import { appendHighlightedShell, IBlockRenderContext, isDiagramBlock, LiveMarkdown, lockAnimationPhase, mermaidOptions, renderMarkdownInto, StreamingMarkdownView } from '../blocks/agentBlockRenderers.js';
+import { appendHighlightedShell, IBlockRenderContext, isDiagramBlock, isLiveCodeBlock, LiveMarkdown, lockAnimationPhase, mermaidOptions, newLiveCodeCard, renderMarkdownInto, StreamingMarkdownView, updateLiveCodeCard } from '../blocks/agentBlockRenderers.js';
 import { MermaidDiagramView } from '../blocks/agentMermaid.js';
 import { fenceChartSpec } from '../blocks/agentMarkdown.js';
 import { adoptVisualFrames } from '../visuals/agentVisuals.js';
 import type { IFreshTextPart } from './agentFreshText.js';
-import { highlightCodeLines, runnableShellCommand } from '../blocks/agentCodeBlock.js';
+import { highlightCodeLines, LiveCodeCard, runnableShellCommand } from '../blocks/agentCodeBlock.js';
 import { computeFileChangePreview, IFileChangePreviewLine } from '../review/fileChangePreviewModel.js';
 import { fileChangeSource, formatElapsed, ITodoChecklist } from './agentTimeline.js';
 import { ITranscriptStep, splitWorkedRows, stepsGroupTitle, subagentStatus, TranscriptRow } from './agentTranscript.js';
@@ -236,6 +236,8 @@ interface ILiveRow {
 	readonly store: DisposableStore;
 	/** A reply row, drawn block by block. */
 	readonly markdown?: LiveMarkdown;
+	/** A code fence still streaming, grown in place. */
+	readonly code?: LiveCodeCard;
 }
 
 /**
@@ -280,10 +282,13 @@ export class LiveTranscript extends Disposable {
 			seen.add(item.key);
 			let entry = this.rows.get(item.key);
 			const markdown = item.kind === 'row' && item.row.kind === 'markdown' ? item.row.content : undefined;
+			const code = item.kind === 'row' && item.row.kind === 'block' && isLiveCodeBlock(item.row.block, probe.ctx) ? item.row.block : undefined;
 			if (markdown !== undefined && entry?.markdown) {
 				entry.markdown.update(markdown, probe.ctx);
+			} else if (code && entry?.code) {
+				updateLiveCodeCard(entry.code, code, probe.ctx);
 			} else {
-				const signature = markdown !== undefined ? '' : itemSignature(item, probe, options);
+				const signature = markdown !== undefined || code ? '' : itemSignature(item, probe, options);
 				if (!entry || entry.signature !== signature) {
 					const next = this.draw(item, signature, hostFor, probe, options);
 					if (entry) {
@@ -339,6 +344,11 @@ export class LiveTranscript extends Disposable {
 			reply.appendChild(markdown.element);
 			markdown.update(item.row.content, probe.ctx);
 			return { signature, nodes: [reply], store, markdown };
+		}
+		if (item.kind === 'row' && item.row.kind === 'block' && isLiveCodeBlock(item.row.block, probe.ctx)) {
+			const code = store.add(newLiveCodeCard(probe.ctx, store));
+			updateLiveCodeCard(code, item.row.block, probe.ctx);
+			return { signature, nodes: [code.element], store, code };
 		}
 		const host = hostFor(store);
 		const holder = $('div');

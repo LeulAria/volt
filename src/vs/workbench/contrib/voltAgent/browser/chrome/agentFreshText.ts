@@ -11,6 +11,9 @@ export const FRESH_TEXT_FADE_MS = 1100;
 
 export const FRESH_TEXT_CLASS = 'volt-agent-fresh-text';
 
+/** Text arriving this soon after the last chunk joins its fade (one span for both). */
+export const FRESH_TEXT_COALESCE_MS = 120;
+
 const FRESH_TEXT_SKIP = 'code, a, blockquote, .katex, .volt-agent-path-pill';
 
 interface IChunk {
@@ -66,7 +69,15 @@ export class FreshTextTracker {
 		// Growth counts only while the reply streams: the redraw once it ends lays its text out whole
 		// (a live reply is drawn block by block), which is no new text.
 		if (streaming && text.length > reply.text.length) {
-			reply.chunks.push({ start: commonPrefixLength(reply.text, text), end: text.length, at: now });
+			const start = commonPrefixLength(reply.text, text);
+			const last = reply.chunks.at(-1);
+			if (last && last.end === start && now - last.at < FRESH_TEXT_COALESCE_MS) {
+				// Text that lands within a few frames of the last chunk fades with it: one span, not one
+				// per 50 ms chunk. Every animating span costs a style recalc on every frame for 1.1 s.
+				reply.chunks[reply.chunks.length - 1] = { start: last.start, end: text.length, at: last.at };
+			} else {
+				reply.chunks.push({ start, end: text.length, at: now });
+			}
 		}
 		reply.text = text;
 		reply.chunks = reply.chunks.filter(chunk => now - chunk.at < FRESH_TEXT_FADE_MS && chunk.start < text.length);

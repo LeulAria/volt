@@ -49,7 +49,7 @@ import {
 } from './agentBlocks.js';
 import { IMermaidOptions, isMermaidXyChart, renderMermaidDiagram } from './agentMermaid.js';
 import { mountChart, renderVisualBlock } from '../visuals/agentVisuals.js';
-import { highlight, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
+import { highlight, ICodeCardOptions, isLiveCodeFence, LiveCodeCard, renderCodeCard } from './agentCodeBlock.js';
 import { agentMarkdownRenderOptions, agentMarkedExtensions, decorateAgentMarkdown, fenceChartSpec, normalizeMathDelimiters, renderFenceChart } from './agentMarkdown.js';
 import type { IFreshTextPart } from '../chrome/agentFreshText.js';
 import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
@@ -757,6 +757,23 @@ export class StreamingMarkdownView implements IDisposable {
 		}
 		this.chunks = [];
 	}
+}
+
+/**
+ * A code fence still streaming that a {@link LiveCodeCard} grows in place: plain code or a diff,
+ * not a file card, a cited snippet or a chart fence (those are drawn whole, as the reply ends).
+ */
+export function isLiveCodeBlock(block: AgentBlock, ctx: IBlockRenderContext): block is ICodeBlock {
+	return block.type === 'code' && block.status === 'streaming' && ctx.streaming !== false && isLiveCodeFence(block.language, block.path)
+		&& !fenceChartSpec(block.language, block.code, true);
+}
+
+export function newLiveCodeCard(ctx: IBlockRenderContext, store: DisposableStore): LiveCodeCard {
+	return new LiveCodeCard({ ...codeCardOptions(ctx), store, streaming: true });
+}
+
+export function updateLiveCodeCard(card: LiveCodeCard, block: ICodeBlock, ctx: IBlockRenderContext): void {
+	card.update(block.language, block.code, { ...codeCardOptions(ctx), streaming: true });
 }
 
 /** A ```mermaid block drawn as a diagram (an xychart draws as a Volt chart instead). */

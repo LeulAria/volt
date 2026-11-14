@@ -66,4 +66,32 @@ suite('Agent thread view', () => {
 			thread.element.remove();
 		}
 	});
+
+	test('the scrollbar slider is drawn once at the end of the frame, not in each scroll write', async () => {
+		const thread = store.add(new AgentThreadView());
+		thread.element.style.height = '100px';
+		thread.inner.style.height = '100px';
+		thread.inner.style.overflow = 'hidden';
+		mainWindow.document.body.appendChild(thread.element);
+		try {
+			const content = thread.inner.appendChild($('div'));
+			content.style.height = '1000px';
+			content.style.flexShrink = '0';
+			thread.scroll.scanDomNode();
+			await new Promise(resolve => mainWindow.requestAnimationFrame(() => setTimeout(resolve, 0)));
+			const slider = thread.scroll.getDomNode().querySelector<HTMLElement>('.scrollbar.vertical > .slider')!;
+			assert.ok(slider, 'the thread has a vertical slider');
+			const before = slider.style.top;
+			// A follow step and a scroll sync write the position several times in one frame: the slider's
+			// style stays untouched until the frame's end, so no later layout read in the frame is forced.
+			thread.scroll.setScrollPosition({ scrollTop: 300 });
+			thread.scroll.setScrollPosition({ scrollTop: 450 });
+			assert.strictEqual(slider.style.top, before, 'the slider is not drawn in the scroll write');
+			await new Promise(resolve => mainWindow.requestAnimationFrame(() => setTimeout(resolve, 0)));
+			assert.notStrictEqual(slider.style.top, before, 'the slider is drawn by the end of the frame');
+			assert.strictEqual(thread.inner.scrollTop, 450, 'the element itself scrolled at once');
+		} finally {
+			thread.element.remove();
+		}
+	});
 });
