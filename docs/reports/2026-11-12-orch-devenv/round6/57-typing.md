@@ -109,20 +109,23 @@ Each is one commit on `e6/typing`.
    stream): `partitionAssistantText` classified every paragraph again (preview-URL, answer-form and narration scans,
    1.3 s) and `introducedPath` re-ran per markdown block (0.5 s). Change: bounded memo maps keyed by the paragraph / the
    last line. Left: `presentOutput` and `splitTextWithShell` still scan the whole text per frame (see below).
-5. **`6ad0274fee0` and `4c53ec201a1` perf(agent): the working dots are one masked strip.** Cause: the composer chip's
-   nine SVG circles animated opacity for as long as the chat worked; an SVG animation costs the main thread a style recalc
-   and a repaint per element per frame (5,211 recalcs over the window in `after-3`). HTML boxes with opacity animations
-   still recalculated per element (`after-4`: 2,901), so the dots are now one strip whose mask carries the eight sine_3x3
-   frames (drawn by `createThinkingDots`) and which steps sideways with a `transform` animation (`after-5`: 700, one
-   element). The trace still shows that one element recalculating per frame, so the compositor is not running it either
-   (`animcheck.mjs` on `after-6` gave no reason for it); the next step would be a 175 ms timer that moves it, or no
-   animation while the chat streams. Test: `agentComposerChips.test.ts`.
+5. **`6ad0274fee0`, `4c53ec201a1`, and the timer commit after them: perf(agent): the working dots are one masked strip
+   stepped by a timer.** Cause: the composer chip's nine SVG circles animated opacity for as long as the chat worked; an
+   SVG animation costs the main thread a style recalc and a repaint per element per frame (5,211 recalcs over the window
+   in `after-3`). HTML boxes with opacity animations still recalculated per element (`after-4`: 2,901); one strip whose
+   mask carries the eight sine_3x3 frames with a `transform` animation still ticked style once a frame (`after-5`: 700;
+   `after-7`, with an explicit first keyframe: 307 over 24 keys), so Chromium was not compositing it either. The strip is
+   now moved by a 175 ms timer, only while an IntersectionObserver sees the dots on screen and motion is not reduced:
+   `after-8` shows 47 style writes over the 8 s window (6 a second) and no per-frame animation recalc. Test:
+   `agentComposerChips.test.ts`.
 6. **`3416b02f600` perf(agent): streamed text landing within 120 ms of the last chunk shares its fade span.** Cause:
    one `<span class="volt-agent-fresh-text">` per 50 ms chunk animates `color` for 1.1 s, so about 22 spans animate at a
    time, each a style recalc per frame (the largest remaining invalidation source: 6,730 recalcs over the window in
    `after-5`). Change: text landing within 120 ms of the previous chunk joins that chunk's span and fade (a start at most
-   120 ms earlier on a 1.1 s ease-out), so about 9 spans animate instead of 22. Test: `agentFreshText.test.ts`. Not yet
-   traced after the change.
+   120 ms earlier on a 1.1 s ease-out), so about 9 spans animate instead of 22. Test: `agentFreshText.test.ts`. Counts:
+   fresh-text animation recalcs before forced reads per frame 8.2 (`after-5`, before the change) -> 2.9 and 3.3
+   (`after-7`, `after-8`; fresh launches with the change; 2 streams instead of 5, which does not change the shown chat's
+   spans).
 7. **`2315b27ce2c` test(typing)** and this report's scripts: the rig (`typeprof.mjs --inval`, `keyprof.mjs`,
    `tracesum.mjs`, `animcheck.mjs`, `restream.mjs`).
 
@@ -160,4 +163,5 @@ Each is one commit on `e6/typing`.
   `lib.mjs` has `minbase` / `minafter` arms for it.
 - **A3 long thread**: not measured this round; nothing in these fixes touches the long-thread path except the sticky
   pass, which does less work than before.
-- **The dots strip is not composited** (above); a timer-driven step is the fallback.
+- **Processes left on purpose**: `session.sh - 3` (waiting for the load gate and the timing lock) and the replay server on
+  18975 it needs (`bun bench/replay/server.ts`, pid in `~/.volt-r6/typing/NEXT.md`). Kill both if the rows are not wanted.
