@@ -105,10 +105,12 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		// The options that are not typed in the schema are still named, so a task that needs one finds it.
 		const delegate = byName.get('delegate_task')!;
 		const typed = Object.keys((delegate.inputSchema as { properties: object }).properties);
-		for (const option of ['task', 'tasks', 'title', 'role', 'after', 'model', 'models', 'previous_task_id', 'isolation', 'wait', 'goal', 'scope', 'files', 'constraints', 'done_when', 'verify', 'context', 'budget_usd', 'fallback_models']) {
+		for (const option of ['task', 'title', 'role', 'after', 'model', 'models', 'previous_task_id', 'isolation', 'wait', 'goal', 'scope', 'files', 'constraints', 'done_when', 'verify', 'context', 'budget_usd', 'fallback_models']) {
 			assert.ok(typed.includes(option) || delegate.description.includes(option), option);
 		}
 		assert.match(delegate.description, /one call each, in one message/);
+		// One subagent per call: a `tasks` list held every part back until the whole list was written.
+		assert.ok(!typed.includes('tasks') && !/in one call/.test(delegate.description));
 	});
 
 	test('a subagent\'s report is its final message, unless that message is not the report', () => {
