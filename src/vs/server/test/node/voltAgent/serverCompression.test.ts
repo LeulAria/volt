@@ -83,7 +83,8 @@ suite('Agent server compression', () => {
 		const after = new CompressedCopies(cache, third.compressor);
 		await after.copy(file, changed, 'br', true).data;
 		await after.whenUpgraded();
-		assert.deepStrictEqual(third.levels, [4, 11]);
+		// The quick copy and the upgrade start together for a new file: either may reach the compressor first.
+		assert.deepStrictEqual([...third.levels].sort((a, b) => a - b), [4, 11]);
 		assert.strictEqual((await fs.readdir(cache)).length, 1);
 	});
 
