@@ -595,6 +595,8 @@ export class SandboxManager {
 		const stdout = new CappedText(cap);
 		const stderr = new CappedText(cap);
 		let child: ChildProcess;
+		// The run's refusals are all logged after this: its denial read at exit starts here.
+		const spawnedAt = Date.now();
 		try {
 			child = spawn(prepared.command, [...prepared.args], {
 				cwd: prepared.cwd,
@@ -660,8 +662,12 @@ export class SandboxManager {
 		for (const stream of child.stdio) {
 			stream?.destroy();
 		}
-		// Its last refusals can still be on their way through the kernel log (under load, hundreds of ms).
-		await prepared.flushDenials(DENIAL_FLUSH_MS);
+		// Its last refusals can still be on their way through the kernel log (under load, hundreds of ms):
+		// one on-demand read from the run's own start (not from the oldest unread moment of every other
+		// listening sandbox, a window that can reach minutes back and outlast the wait), awaited before
+		// the result is reported. The read writes a marker and waits for it, so a workload that swallowed
+		// its error and exited at once still has its refusal in the answer (DENIAL-FLUSH-1).
+		await prepared.flushDenials(DENIAL_FLUSH_MS, spawnedAt);
 		listener.dispose();
 		await prepared.dispose();
 		// Disposing reads the last accounting (a cgroup's OOM kill), so the listener goes after it.
