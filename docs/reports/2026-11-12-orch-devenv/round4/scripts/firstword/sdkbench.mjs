@@ -41,7 +41,7 @@ async function once(rep) {
 	}
 	await sleep(800);
 	const main = tapRows(t - 20).find(r => r.path?.startsWith('/v1/messages?') && r.tools > 0);
-	const row = { label, flags, rep, load: execSync('uptime').toString().replace(/.*averages?:\s*/, '').trim(), mainReqMs: main ? main.t - t : null, firstTextMs: firstText ?? null, before: tapRows(t - 20).filter(r => !main || r.t <= main.t).length };
+	const row = { label, flags, rep, at: new Date(t).toISOString(), load: execSync('uptime').toString().replace(/.*averages?:\s*/, '').trim(), mainReqMs: main ? main.t - t : null, firstTextMs: firstText ?? null, before: tapRows(t - 20).filter(r => !main || r.t <= main.t).length };
 	appendFileSync(OUT, JSON.stringify(row) + '\n');
 	console.log(JSON.stringify(row));
 	q.close?.();

@@ -1,6 +1,6 @@
 // Prints the round-4 first-word tables: in-app A4 (a4.jsonl, arms before/after) and the adapter alone
 // (acpbench.jsonl, labels r4-base/r4-volt). Only rows whose recorded 1-minute load is at most MAXLOAD count.
-//   node summary.mjs [maxload=14] [since=<ISO time>]
+//   node summary.mjs [maxload=14] [since=<ISO time>] [until=<ISO time>]
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,8 @@ const DATA = join(here, '../../data/firstword');
 const arg = name => process.argv.slice(2).find(a => a.startsWith(`${name}=`))?.slice(name.length + 1);
 const maxLoad = Number(arg('maxload') ?? 14);
 const since = arg('since') ?? '2026-11-14T02:20:00Z';
-const rows = file => existsSync(join(DATA, file)) ? readFileSync(join(DATA, file), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(r => r.at >= since) : [];
+const until = arg('until') ?? '9999';
+const rows = file => existsSync(join(DATA, file)) ? readFileSync(join(DATA, file), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(r => r.at >= since && r.at < until) : [];
 const load1 = r => Number(String(r.load).split(/\s+/)[0]);
 const median = values => {
 	const s = values.filter(v => typeof v === 'number').sort((a, b) => a - b);
@@ -52,4 +53,17 @@ table('The adapter alone: session/prompt to the model request', [['r4-base', 'un
 	['session/prompt to first text, ms', r => r.firstTextMs],
 	['count_tokens before the model request', r => r.before?.filter(b => b.path?.includes('count_tokens')).length],
 	['CLI CPU, prompt to request, ms', r => r.cpuCliMs],
+], true);
+
+const a3 = rows('a3.jsonl');
+table('A3 in-app, New Agent to typing in the new chat', ['before', 'after'].map(name => ({ name, rows: a3.filter(r => r.arm === name) })), [
+	['click to two probe letters painted, ms', r => r.readyMs],
+	['click to two probe letters in the DOM, ms', r => r.domMs],
+], true);
+
+// The floor: Claude Code driven straight through the Agent SDK (no ACP adapter), same settings and MCP server,
+// interleaved with the adapter runs of the same pass (labels fl-*).
+table('Floor: the CLI without the adapter vs with it (same pass)', [['fl-sdk', 'CLI via SDK, no adapter'], ['fl-base', 'adapter, unpatched'], ['fl-volt', 'adapter, Volt preload']].map(([label, name]) => ({ name, rows: [...acp, ...rows('sdkbench.jsonl')].filter(r => r.label === label) })), [
+	['user message to model request, ms', r => r.mainReqMs],
+	['user message to first text, ms', r => r.firstTextMs],
 ], true);
