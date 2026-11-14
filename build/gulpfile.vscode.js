@@ -161,8 +161,17 @@ const bundleVSCodeTask = task.define('bundle-vscode', task.series(
 				resources: vscodeResources,
 				skipTSBoilerplateRemoval: entryPoint => entryPoint === 'vs/code/electron-browser/workbench/workbench',
 				// Volt: the main entry stays small and opens the launch window before the main process bundle loads
-				// (src/bootstrap-window.ts), so `vs/code/electron-main/main` is an entry point of its own.
-				keepSeparate: entryPoint => entryPoint === 'main' ? /^\.\/vs\/code\/electron-main\/main\.js$/ : undefined
+				// (src/bootstrap-window.ts), so `vs/code/electron-main/main` is an entry point of its own. The desktop
+				// workbench loads its vendored diagram and device viewer libraries on first use (buildfile.workbenchDesktop).
+				keepSeparate: entryPoint => {
+					if (entryPoint === 'main') {
+						return /^\.\/vs\/code\/electron-main\/main\.js$/;
+					}
+					if (entryPoint === 'vs/workbench/workbench.desktop.main') {
+						return /\/vendor\/(beautifulMermaid|voltDeviceViewer)\.js$/;
+					}
+					return undefined;
+				}
 			}
 		}
 	)

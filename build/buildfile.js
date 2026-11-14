@@ -29,7 +29,12 @@ exports.workbenchDesktop = [
 	createModuleDescription('vs/platform/terminal/node/ptyHostMain'),
 	createModuleDescription('vs/platform/voltCodeIndex/node/codeIndexWorkerMain'),
 	createModuleDescription('vs/workbench/api/node/extensionHostProcess'),
-	createModuleDescription('vs/workbench/workbench.desktop.main')
+	createModuleDescription('vs/workbench/workbench.desktop.main'),
+	// Volt: vendored libraries the workbench imports on first use (agentMermaid.ts, deviceLiveStream.ts) are bundles of
+	// their own, so they are not in the workbench bundle and their start-up code runs only when a diagram or a device
+	// stream needs them (gulpfile.vscode.js keepSeparate).
+	createModuleDescription('vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid'),
+	createModuleDescription('vs/workbench/contrib/voltAgent/browser/devices/vendor/voltDeviceViewer')
 ];
 
 exports.workbenchWeb = createModuleDescription('vs/workbench/workbench.web.main');
