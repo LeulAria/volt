@@ -1346,7 +1346,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		const command = profile.command || this.defaultCommand;
 		const def = cliAgentDefinition(this.id);
 		const adapter = def?.acpAdapter;
-		const adapterOnPath = !!adapter && def.commands.includes(command) && !!await cachedWhich(this.stdio, adapter.command);
+		// The path `which` found (a global install) runs through Volt's preload like npx's copy (see acpLaunchFor).
+		const adapterOnPath: string | false = (!!adapter && def.commands.includes(command) && await cachedWhich(this.stdio, adapter.command)) || false;
 		let adapterBin: string | undefined;
 		if (adapter && def.commands.includes(command) && !adapterOnPath) {
 			// The copy npx installed, run directly instead of through npx on every spawn.
