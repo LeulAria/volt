@@ -417,6 +417,8 @@ interface ISessionState extends IVoltSession {
 	continuedFrom?: IVoltSeedOptions['continuedFrom'];
 	/** What the agent last heard about the window around the chat (see workspaceLead). */
 	workspaceSent?: { readonly handle: IAgentSessionHandle; readonly key: string };
+	/** The lead's standing notes this agent session has heard (see buildAcpLead); forgotten when it compacts. */
+	leadHeard?: { readonly handle: IAgentSessionHandle; readonly ids: Set<string> };
 }
 
 /** Native-model conversation state that outlives a single run. */
@@ -5140,7 +5142,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					if (Date.now() - leadStarted >= SLOW_LEAD_MS) {
 						this.logService.info(`[volt] lead for run ${run.runId} took ${Date.now() - leadStarted}ms (${leadParts.join(', ')})`);
 					}
-					const lead = [handoff?.text, moved, buildAcpLead(pack), retrieved?.text, primer, workspaceText].filter(Boolean).join('\n\n') || undefined;
+					// Standing notes go to an agent session once (a new or restarted agent hears them again).
+					if (session.leadHeard?.handle !== handle) {
+						session.leadHeard = { handle, ids: new Set() };
+					}
+					const lead = [handoff?.text, moved, buildAcpLead(pack, session.leadHeard.ids), retrieved?.text, primer, workspaceText].filter(Boolean).join('\n\n') || undefined;
 					if (moved && session.moved?.model === moved) {
 						session.moved = undefined;
 					}
@@ -5292,6 +5298,10 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				}
 				if (event.type === 'tool.start') {
 					finalFrom = undefined;
+				}
+				if (event.type === 'context.compaction' && event.status === 'completed' && session.leadHeard?.handle === handle) {
+					// The summary may have dropped the standing notes: the next turn sends them again.
+					session.leadHeard = undefined;
 				}
 				if (event.type === 'title' && session.agentJoinedLate === handle) {
 					// Codex titled a handed-off chat "<conversation_so_far> This conversation started...".

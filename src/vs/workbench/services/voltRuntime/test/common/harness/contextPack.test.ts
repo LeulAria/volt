@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, CODE_QUESTIONS, IDE_TOOLS_GUIDE, IDE_TOOLS_GUIDE_SANDBOXED, IDE_WORK_HINTS, LOAD_DEFERRED, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
+import { buildAcpLead, buildSystemPrompt, CALLER_VISIBLE_CHANGES, CODE_QUESTIONS, IDE_TOOLS_GUIDE, IDE_TOOLS_GUIDE_SANDBOXED, IDE_WORK_HINTS, LOAD_DEFERRED, DESIGN_LOOP, DEVICE_REPLIES, MOCKUP_REPLIES, SCRATCH_REPLIES, SCREENS_REPLIES, STANDING_NOTES, SURFACES, TEST_INTEGRITY, VISUAL_REPLIES, WORKSPACE_SCOPE } from '../../../common/harness/contextPack.js';
 import { classifyIntent } from '../../../common/harness/intent.js';
 
 suite('Volt context pack', () => {
@@ -245,6 +245,28 @@ suite('Volt context pack', () => {
 		const plain = classifyIntent('how much is nissan kicks in UAE', 'agent');
 		const plainLead = buildAcpLead({ mode: 'agent', intent: plain, codeIndexed: true, ideTools: true }) ?? '';
 		assert.ok(!plainLead.includes(CODE_QUESTIONS) && !plainLead.includes(LOAD_DEFERRED));
+	});
+	test('an agent session hears each standing note once; request-specific notes go with every request that calls for them', () => {
+		const heard = new Set<string>();
+		const code = classifyIntent('Read src/paginate.ts and src/dates.ts. Explain what each function does and list every bug you find with the line number.', 'agent');
+		const first = buildAcpLead({ mode: 'agent', intent: code, visuals: true, ideTools: true }, heard) ?? '';
+		assert.ok(first.includes(VISUAL_REPLIES) && first.includes(IDE_TOOLS_GUIDE) && first.includes(WORKSPACE_SCOPE), first);
+		assert.deepStrictEqual([...heard].sort(), ['ide', 'scope', 'visuals']);
+		assert.ok([...heard].every(id => STANDING_NOTES.includes(id)));
+		// The next turn of the same agent session: none of them again.
+		const second = buildAcpLead({ mode: 'agent', intent: code, visuals: true, ideTools: true }, heard) ?? '';
+		assert.ok(!second.includes(VISUAL_REPLIES) && !second.includes(IDE_TOOLS_GUIDE) && !second.includes(WORKSPACE_SCOPE), second);
+		// Switching to a sandboxed chat is news; a test request still gets its own note every time.
+		const tests = classifyIntent("npm test is failing. Make every test pass. Don't edit anything under test/.", 'agent');
+		const third = buildAcpLead({ mode: 'agent', intent: tests, visuals: true, ideTools: true, sandboxed: true }, heard) ?? '';
+		assert.ok(third.includes(IDE_TOOLS_GUIDE_SANDBOXED) && third.includes(TEST_INTEGRITY), third);
+		assert.ok((buildAcpLead({ mode: 'agent', intent: tests, ideTools: true, sandboxed: true }, heard) ?? '').includes(TEST_INTEGRITY));
+		// "hi" first marks nothing heard, so the first real request still carries them.
+		const fresh = new Set<string>();
+		assert.strictEqual(buildAcpLead({ mode: 'agent', intent: classifyIntent('hi', 'agent'), visuals: true, ideTools: true }, fresh), undefined);
+		assert.strictEqual(fresh.size, 0);
+		// Without a set (other callers) every note goes out each time, as before.
+		assert.strictEqual(buildAcpLead({ mode: 'agent', intent: code, visuals: true, ideTools: true }), first);
 	});
 	test('a sandboxed chat is told what of the IDE runs inside its sandbox and what asks first', () => {
 		const intent = classifyIntent('add a retry to the payment webhook handler and run its tests', 'agent');
