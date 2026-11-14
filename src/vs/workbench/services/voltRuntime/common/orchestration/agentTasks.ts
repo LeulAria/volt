@@ -425,6 +425,24 @@ export function subagentReport(whole: string, final: string): string | undefined
 	return from < 0 ? last : from === 0 ? undefined : text.slice(from);
 }
 
+const DO_IT_YOURSELF = 'If you meant another Volt tool (browser_*, render_chart and the rest), do not delegate: load it with ToolSearch "select:mcp__volt__<name>" and call it yourself.';
+
+/** Briefs that are a placeholder, not work: a stray call, never a task (a short real brief still starts). */
+const PLACEHOLDER_BRIEF = /^(?:no-?op|test|ping|probe|placeholder|dummy|none|null|empty|todo|tbd)[.!]?$/i;
+
+/**
+ * A brief no subagent could work from ("noop"). Haiku main chats sent one on a one-tool request
+ * before loading that tool (round 5, a chart request: a subagent started on "noop" and was
+ * cancelled), so it starts nothing and says what to do instead.
+ */
+export function placeholderBriefRefusal(brief: string): string | undefined {
+	const text = brief.trim();
+	if (!PLACEHOLDER_BRIEF.test(text)) {
+		return undefined;
+	}
+	return `"${text}" is not a brief, so no subagent started: delegate_task runs a whole subagent in its own chat. ${DO_IT_YOURSELF} To delegate, call it again with the complete brief in \`task\`.`;
+}
+
 /**
  * The refusal of a `delegate_task` call without a brief. Claude Code defers MCP tools behind Tool
  * Search, so its first call may come before it loaded the schema, with no arguments at all (5.9 s
@@ -436,7 +454,10 @@ export function delegateTaskMissingBrief(args: Record<string, unknown>): string 
 		return 'delegate_task needs a `task`: the complete brief for the subagent (or `tasks`, one entry per part).';
 	}
 	return [
-		'delegate_task was called without arguments: its parameters were probably not loaded yet. Call it again now with them (no ToolSearch needed):',
+		// Haiku main chats also sent `{}` as their first call for a one-tool request (open a page, draw a
+		// chart), before loading that tool: the way out comes first.
+		`delegate_task was called without arguments. ${DO_IT_YOURSELF}`,
+		'To delegate, call it again now with its arguments (no ToolSearch needed):',
 		'- one subagent: {"task": "<the complete brief>", "title": "<3-6 words>"}',
 		'- several at once: {"tasks": [{"task": "...", "title": "..."}, {"task": "...", "after": ["1"]}]} (`after`: 1-based positions of parts that must finish first; their reports join the brief)',
 		'Optional on the call or on each part: `model` (a name from list_models, e.g. "claude-code:claude-haiku-5-5"), `role` (research and review are read-only; implementation, test, design, general), `context` ("brief" | "full" | "none"), `done_when` (checks), `files`, `scope`, `fallback_models`, `isolation` ("shared" | "worktree"), and on the call `client_request_id` and `wait`.',
@@ -492,7 +513,7 @@ export function buildTaskPrompt(brief: string, context: ITaskBriefContext): stri
 		lines.push(`[Volt subagent] Budget: ${caps.join('; ')}. Volt stops the work at the limit, so work efficiently and report early if the task needs much more.`);
 	}
 	if (context.after?.length) {
-		lines.push(`[Volt subagent] This task waited for ${context.after.join(', ')}; their reports are at the end. Treat their claims as leads to check, not as facts.`);
+		lines.push(`[Volt subagent] This task waited for ${context.after.join(', ')}; their reports are at the end. Use them as your brief says; where it says nothing, treat their claims as leads to check, not as facts.`);
 	}
 	if (context.isolation === 'worktree') {
 		lines.push(`[Volt subagent] You work in your own git worktree${context.worktreeBranch ? ` on branch ${context.worktreeBranch}` : ' (a separate checkout on its own branch)'}. Commit your changes there when done and name the branch in your report, so the other agent can merge it.`);
@@ -552,8 +573,10 @@ function reportFormat(role: AgentTaskRole, checks: boolean): string {
 		: '"## Findings" (what you found, with file paths and line numbers)';
 	// Short on purpose: the parent reads every report in each of its later requests, and a report is
 	// output the subagent writes on the critical path (round-3 bench: reports of 1.3-3.4 KB that
-	// restated the brief and every check took 2-5 s to write).
-	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Keep it as short as the facts allow: no restating the brief, no narration. Use these headings: "## Outcome" (done, partly done or blocked, in one sentence), ${middle}, ${verification}, and "## Open issues" only when something is left or uncertain.`;
+	// restated the brief and every check took 2-5 s to write). A brief that sets the answer's form ("at
+	// most 3 lines") gets that form: with the headings on top, t1's Q4 subagent (round-4 bench) wrote
+	// 0.6-2.1K output tokens in 4.9-11.5 s (median 8.4 s), against 3.9 s for Claude Code's.
+	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Keep it as short as the facts allow: no restating the brief, no narration. If the brief says what to report or in what form (a format, a length, "only X"), report exactly that, with no headings. Otherwise use these headings: "## Outcome" (done, partly done or blocked, in one sentence), ${middle}, ${verification}, and "## Open issues" only when something is left or uncertain.`;
 }
 
 /**

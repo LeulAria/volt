@@ -297,9 +297,17 @@ suite('Agent orchestrator service', () => {
 		assert.match(refused, /no ToolSearch needed/);
 		assert.match(refused, /"task": "<the complete brief>"/);
 		assert.match(refused, /"tasks": \[/);
+		// A chat that meant another Volt tool (a stray first call on a one-tool request) is told to load it.
+		assert.match(refused, /another Volt tool .*ToolSearch "select:mcp__volt__<name>"/);
 		assert.strictEqual(service.tasksOf('parent').length, 0);
 		// A call with other arguments but no brief gets the short refusal.
 		assert.match(await tool('parent', 'delegate_task', { title: 'x' }), /^delegate_task needs a `task`/);
+		// A one-word brief ("noop") starts no subagent either.
+		const stray = await tool('parent', 'delegate_task', { task: 'noop' });
+		assert.match(stray, /"noop" is not a brief, so no subagent started/);
+		assert.match(stray, /select:mcp__volt__<name>/);
+		assert.match(await tool('parent', 'delegate_task', { tasks: [{ task: 'test' }] }), /not a brief/);
+		assert.strictEqual(service.tasksOf('parent').length, 0);
 		// The retry the refusal describes starts the task at once.
 		assert.match(await tool('parent', 'delegate_task', { task: 'Read a.ts and report', title: 'Read a' }), /Started task t-/);
 		await settle();
