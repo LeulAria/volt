@@ -39,6 +39,8 @@ suite('Agent thread view', () => {
 		try {
 			const content = thread.inner.appendChild($('div'));
 			content.style.height = '1000px';
+			// The thread's stylesheet (loaded once another suite imports it) makes the inner element a flex column.
+			content.style.flexShrink = '0';
 			thread.scroll.scanDomNode();
 			let reads = 0;
 			const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')!;
