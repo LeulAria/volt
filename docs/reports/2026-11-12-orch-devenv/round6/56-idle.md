@@ -93,5 +93,8 @@ one `log show`. Main's code index, held 20 minutes before, was gone 3 minutes af
 - **The Chromium and Node floor per process** (mojo notifications, the memory-pressure evaluator, PartitionAlloc's
   reclaimer, V8's GC timers) is not Volt's code; the only lever is fewer processes at rest. The shared process, the
   extension host (the branch chip needs the git extension, round 5) and the network service stay.
+- **The plugin host a focus warm starts lives 90 s after its last message** (round 5's idle stop), the warm agent 30 s:
+  a focus right before ADEMark's 90 s settle leaves the host alive into the sample's first seconds. Stopping it with
+  the warm agent it served is process lifetime (weight's area); noted, not changed.
 - **The agent server's 20 s WebSocket pings** (both directions) stay: longer pings would delay dead-peer detection for
   web and phone clients by minutes for about 0.1 wakeups/s.
