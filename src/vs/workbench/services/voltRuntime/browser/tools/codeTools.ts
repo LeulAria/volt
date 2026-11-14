@@ -164,13 +164,13 @@ export const CODE_NAV_DESCRIPTION = [
 	'Type-checked answers from the language servers the editor runs (live buffers), with Volt\'s code index as fallback.',
 	'Use it for meaning, where grep returns look-alikes: who calls X (through other functions too), what implements interface Y, every use of method M of type T (not other methods with the same name), what type Z is.',
 	'Name the symbol with symbol, plus path and line where it is written; symbol alone finds its declaration (path narrows it; path#symbol works too).',
-	'Ops: impact (what changing symbol, or path alone, reaches: callers 3 levels up, every file using or importing it, the tests to run, current errors; one call before a refactor instead of several searches),',
-	'body (just symbol\'s source with line numbers instead of reading the whole file; several symbols comma-separated),',
+	'Ops: impact (before a change, one call: callers 3 levels up, files using or importing symbol or path, the tests to run, current errors),',
+	'body (symbol\'s source with line numbers, not the whole file; comma-separate several),',
 	'references, implementations, definition, type_definition, hover (type, signature, docs),',
 	'inspect (hover + definition with body + references + implementations in one call),',
 	'callers / callees (call hierarchy; depth 2-4 follows callers of callers to the entry points and names the route handlers or procedures the calls are in), supertypes / subtypes,',
 	'symbols (outline of path), workspace_symbols (query: find declarations by name),',
-	'structural (pattern: code with $X for one node and $$$ for any, e.g. fetchUser($ID, $$$): finds code by its shape across lines, not its text; where filters by a $X\'s code; path and glob narrow).',
+	'structural (pattern: $X one node, $$$ any, e.g. fetchUser($ID, $$$): code by its syntax across lines, not text; where filters a $X by regex; path, glob narrow).',
 	'Use grep for text, strings, SQL and config.',
 ].join(' ');
 
