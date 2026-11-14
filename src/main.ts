@@ -19,6 +19,7 @@ import { resolveNLSConfiguration } from './vs/base/node/nls.js';
 import { getUNCHost, addUNCHostToAllowlist } from './vs/base/node/unc.js';
 import { INLSConfiguration } from './vs/nls.js';
 import { NativeParsedArgs } from './vs/platform/environment/common/argv.js';
+import { openEarlyWindow, planEarlyWindow } from './bootstrap-window.js';
 
 perf.mark('code/didStartMain');
 
@@ -62,6 +63,16 @@ if (process.platform === 'win32') {
 	}
 }
 app.setPath('userData', userDataPath);
+
+// Volt: a plain launch opens the window the last session left as soon as Electron is ready, before the main bundle
+// loads; the first code window adopts it (src/bootstrap-window.ts).
+const earlyWindowPlan = planEarlyWindow({
+	userDataPath,
+	appRoot: path.dirname(import.meta.dirname),
+	commit: product.commit ?? null,
+	args: args as unknown as Record<string, unknown>,
+	positional: args._.slice(process.defaultApp ? 2 : 1)
+});
 
 // Resolve code cache path
 const codeCachePath = getCodeCachePath();
@@ -184,6 +195,15 @@ app.once('ready', function () {
 
 async function onReady() {
 	perf.mark('code/mainAppReady');
+
+	if (earlyWindowPlan) {
+		try {
+			openEarlyWindow(earlyWindowPlan);
+			perf.mark('code/voltDidOpenLaunchWindow');
+		} catch (error) {
+			console.error(error);
+		}
+	}
 
 	try {
 		const [, nlsConfig] = await Promise.all([

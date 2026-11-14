@@ -13,6 +13,7 @@ import { FileAccess, Schemas } from '../../../base/common/network.js';
 import { getMarks, mark } from '../../../base/common/performance.js';
 import { isBigSurOrNewer, isLinux, isMacintosh, isWindows } from '../../../base/common/platform.js';
 import { URI } from '../../../base/common/uri.js';
+import { join } from '../../../base/common/path.js';
 import { localize } from '../../../nls.js';
 import { release } from 'os';
 import { ISerializableCommandAction } from '../../action/common/action.js';
@@ -50,6 +51,8 @@ import { FocusMode } from '../../native/common/native.js';
 import { IVoltWindowScopesMainService } from '../../voltWindowScope/electron-main/voltWindowScopesMainService.js';
 import { voltWindowSnapshotKey } from '../../voltWindowSnapshot/common/windowSnapshot.js';
 import { IVoltWindowSnapshotMainService } from '../../voltWindowSnapshot/electron-main/windowSnapshotMainService.js';
+import { EARLY_WINDOW_HINT_FILE, toEarlyWindowHint } from '../common/earlyWindow.js';
+import { adoptEarlyWindow, earlyWindowChannel } from './earlyWindow.js';
 
 export interface IWindowCreationOptions {
 	readonly state: IWindowState;
@@ -710,6 +713,12 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 	/** When this window was last reloaded for a crashed renderer (see `onWindowError`). */
 	private crashReloadTimes: number[] = [];
 
+	/** Whether this process created (or adopted) a browser window for a code window yet. */
+	private static createdBrowserWindow = false;
+
+	/** The workbench page the launch window's view was loading when this window adopted it. */
+	private earlyLoadedUrl: string | undefined;
+
 	constructor(
 		config: IWindowCreationOptions,
 		@ILogService logService: ILogService,
@@ -744,6 +753,11 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 		//#region create browser window
 		{
+			// Volt: the first window of a launch may adopt the launch window the main entry opened (src/bootstrap-window.ts),
+			// whose page is already loading and asks for its configuration on this channel.
+			const mayAdoptLaunchWindow = !host && !this.hidden && !CodeWindow.createdBrowserWindow;
+			const launchWindowChannel = mayAdoptLaunchWindow ? earlyWindowChannel() : undefined;
+
 			this.configObjectUrl = this._register(protocolMainService.createIPCObjectUrl<INativeWindowConfiguration>(async configuration => {
 				// Every load (first, reload, crash reload) starts from the scopes as they are now.
 				if (configuration) {
@@ -752,7 +766,7 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 					configuration.voltWindowSnapshot = await this.voltWindowSnapshots.read(voltWindowSnapshotKey(configuration));
 				}
 				await this.refreshDevCssModules(configuration);
-			}));
+			}, launchWindowChannel));
 
 			// Load window state
 			const [state, hasMultipleDisplays] = this.restoreWindowState(config.state);
@@ -766,19 +780,30 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 			});
 
 			// Create the browser window unless we join an existing one
+			let launchView: electron.WebContentsView | undefined;
 			if (host) {
 				this._win = host;
 			} else {
 				mark('code/willCreateCodeBrowserWindow');
-				this._win = new electron.BrowserWindow(this.hidden ? { ...options, show: false } : options);
+				const launchWindow = mayAdoptLaunchWindow ? adoptEarlyWindow(options, this.workbenchUrl(), message => this.logService.trace(message)) : undefined;
+				if (launchWindow) {
+					mark('code/voltDidAdoptLaunchWindow');
+				}
+				this._win = launchWindow?.win ?? new electron.BrowserWindow(this.hidden ? { ...options, show: false } : options);
+				launchView = launchWindow?.view;
+				this.earlyLoadedUrl = launchWindow?.loadedUrl;
 				mark('code/didCreateCodeBrowserWindow');
+				if (mayAdoptLaunchWindow) {
+					CodeWindow.createdBrowserWindow = true;
+					this.writeLaunchWindowHint(options);
+				}
 			}
 
 			// Create the view that renders this session. A session joining a
 			// window starts hidden under the session on screen so it can boot
 			// without being seen; the sole session of a fresh window simply
 			// owns the surface.
-			this.view = new electron.WebContentsView({ webPreferences: options.webPreferences });
+			this.view = launchView ?? new electron.WebContentsView({ webPreferences: options.webPreferences });
 			if (options.backgroundColor) {
 				this.view.setBackgroundColor(options.backgroundColor);
 			}
@@ -1421,11 +1446,16 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		}
 
 		// Indicate we are navigting now
+		const firstLoad = this.readyState === ReadyState.NONE;
 		this.readyState = ReadyState.NAVIGATING;
 		this.restored = false;
 
-		// Load URL
-		this.webContents.loadURL(FileAccess.asBrowserUri(`vs/code/electron-browser/workbench/workbench${this.environmentMainService.isBuilt ? '' : '-dev'}.html`).toString(true));
+		// Load URL (the launch window's page has been loading it since launch, waiting for this configuration)
+		const url = this.workbenchUrl();
+		if (!(firstLoad && this.earlyLoadedUrl === url)) {
+			this.webContents.loadURL(url);
+		}
+		this.earlyLoadedUrl = undefined;
 
 		// Remember that we did load
 		const wasLoaded = this.wasLoaded;
@@ -1445,6 +1475,29 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 
 		// Event
 		this._onWillLoad.fire({ workspace: configuration.workspace, reason: options.isReload ? LoadReason.RELOAD : wasLoaded ? LoadReason.LOAD : LoadReason.INITIAL });
+	}
+
+	private workbenchUrl(): string {
+		return FileAccess.asBrowserUri(`vs/code/electron-browser/workbench/workbench${this.environmentMainService.isBuilt ? '' : '-dev'}.html`).toString(true);
+	}
+
+	/**
+	 * Volt: describes this window for the next launch, which opens it before the main bundle loads (macOS, a plain
+	 * launch; see src/bootstrap-window.ts). Written for the first window of each launch.
+	 */
+	private writeLaunchWindowHint(options: BrowserWindowConstructorOptions): void {
+		if (!isMacintosh) {
+			return;
+		}
+		const hint = toEarlyWindowHint({
+			commit: this.productService.commit ?? null,
+			appRoot: this.environmentMainService.appRoot,
+			url: this.workbenchUrl(),
+			options: options as Record<string, unknown>,
+			webPreferences: (options.webPreferences ?? {}) as Record<string, unknown>
+		});
+		const resource = URI.file(join(this.environmentMainService.userDataPath, EARLY_WINDOW_HINT_FILE));
+		this.fileService.writeFile(resource, VSBuffer.fromString(JSON.stringify(hint))).catch(error => this.logService.warn('window#writeLaunchWindowHint', toErrorMessage(error)));
 	}
 
 	private updateConfiguration(configuration: INativeWindowConfiguration, options: ILoadOptions): void {

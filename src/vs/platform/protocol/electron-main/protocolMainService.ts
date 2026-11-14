@@ -16,6 +16,7 @@ import { INativeEnvironmentService } from '../../environment/common/environment.
 import { ILogService } from '../../log/common/log.js';
 import { IIPCObjectUrl, IProtocolMainService } from './protocol.js';
 import { IUserDataProfilesService } from '../../userDataProfile/common/userDataProfile.js';
+import { releaseEarlyProtocols } from '../../windows/electron-main/earlyWindow.js';
 
 type ProtocolCallback = { (result: string | Electron.FilePathWithHeaders | { error: number }): void };
 
@@ -49,11 +50,21 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 	private handleProtocols(): void {
 		const { defaultSession } = session;
 
+		// Volt: the launch window served its page's own files until now; requests it held are answered below
+		const early = releaseEarlyProtocols();
+
 		// Register vscode-file:// handler
 		defaultSession.protocol.registerFileProtocol(Schemas.vscodeFileResource, (request, callback) => this.handleResourceRequest(request, callback));
 
 		// Block any file:// access
 		defaultSession.protocol.interceptFileProtocol(Schemas.file, (request, callback) => this.handleFileRequest(request, callback));
+
+		for (const { request, callback } of early?.resources ?? []) {
+			this.handleResourceRequest(request, callback);
+		}
+		for (const { request, callback } of early?.files ?? []) {
+			this.handleFileRequest(request, callback);
+		}
 
 		// Cleanup
 		this._register(toDisposable(() => {
@@ -158,18 +169,25 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 
 	//#region IPC Object URLs
 
-	createIPCObjectUrl<T>(onWillRead?: (obj: T | undefined) => Promise<void>): IIPCObjectUrl<T> {
+	createIPCObjectUrl<T>(onWillRead?: (obj: T | undefined) => Promise<void>, existingChannel?: string): IIPCObjectUrl<T> {
 		let obj: T | undefined = undefined;
 
-		// Create unique URI
-		const resource = URI.from({
+		// Create unique URI (or take the channel a page already calls: Volt's launch window)
+		const resource = existingChannel ? URI.parse(existingChannel) : URI.from({
 			scheme: 'vscode', // used for all our IPC communication (vscode:<channel>)
 			path: generateUuid()
 		});
 
+		// A page that was loaded before the object existed waits for its first value
+		let firstValue: (() => void) | undefined;
+		const hasValue = existingChannel ? new Promise<void>(resolve => firstValue = resolve) : undefined;
+
 		// Install IPC handler
 		const channel = resource.toString();
 		const handler = async (): Promise<T | undefined> => {
+			if (obj === undefined) {
+				await hasValue;
+			}
 			await onWillRead?.(obj);
 			return obj;
 		};
@@ -179,7 +197,10 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 
 		return {
 			resource,
-			update: updatedObj => obj = updatedObj,
+			update: updatedObj => {
+				obj = updatedObj;
+				firstValue?.();
+			},
 			dispose: () => {
 				this.logService.trace(`IPC Object URL: Removed channel ${channel}.`);
 

@@ -69,13 +69,28 @@ class ValidatedIpcMain implements Event.NodeEventEmitter {
 	 * provided to the renderer process. Please refer to #24427 for details.
 	 */
 	handle(channel: string, listener: (event: electron.IpcMainInvokeEvent, ...args: any[]) => Promise<unknown>): this {
-		electron.ipcMain.handle(channel, (event: electron.IpcMainInvokeEvent, ...args: any[]) => {
+		const handler = (event: electron.IpcMainInvokeEvent, ...args: any[]) => {
 			if (this.validateEvent(channel, event)) {
 				return listener(event, ...args);
 			}
 
 			return Promise.reject(`Invalid channel '${channel}' or sender for ipcMain.handle() usage.`);
-		});
+		};
+
+		// Volt: the launch window's page (src/bootstrap-window.ts) may have called this channel before this handler
+		// existed; those calls were held and are answered by it now, through the same validation.
+		const held = (globalThis as { __voltEarlyIpc?: Map<string, { event: electron.IpcMainInvokeEvent; args: any[]; resolve(value: unknown): void; reject(error: unknown): void }[]> }).__voltEarlyIpc;
+		const pending = held?.get(channel);
+		if (pending) {
+			held!.delete(channel);
+			electron.ipcMain.removeHandler(channel);
+		}
+
+		electron.ipcMain.handle(channel, handler);
+
+		for (const call of pending ?? []) {
+			Promise.resolve().then(() => handler(call.event, ...call.args)).then(call.resolve, call.reject);
+		}
 
 		return this;
 	}

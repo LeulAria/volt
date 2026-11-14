@@ -116,6 +116,11 @@ function bundleESMTask(opts) {
                     build.onResolve({ filter: /^minimist$/ }, () => {
                         return { path: path_1.default.join(REPO_ROOT_PATH, 'node_modules', 'minimist', 'index.js'), external: false };
                     });
+                    // Imports that load another entry point at runtime keep their path.
+                    const separate = opts.keepSeparate?.(entryPoint.name);
+                    if (separate) {
+                        build.onResolve({ filter: separate }, args => ({ path: args.path, external: true }));
+                    }
                 },
             };
             const task = esbuild_1.default.build({
