@@ -658,12 +658,14 @@ import { EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL } from '../../../platform/w
 				// locations, we try to help the browser to
 				// initialize canvas when it is idle, right
 				// before we wait for the scripts to be loaded.
+				// Volt: when idle, not forced after 50 ms: the workbench bundle comes from the code cache and starts at
+				// once, so the forced callback (a 2D context costs tens of ms) landed in the middle of the start-up.
 				window.requestIdleCallback(() => {
 					const canvas = document.createElement('canvas');
 					const context = canvas.getContext('2d');
 					context?.clearRect(0, 0, canvas.width, canvas.height);
 					canvas.remove();
-				}, { timeout: 50 });
+				}, { timeout: 5000 });
 
 				// Track import() perf
 				performance.mark('code/willLoadWorkbenchMain');
