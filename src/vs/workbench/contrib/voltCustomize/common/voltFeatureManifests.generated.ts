@@ -971,6 +971,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 					},
 					env: {
 						CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
+						MCP_TOOL_TIMEOUT: '300000',
 					},
 					authProbe: 'claude',
 					login: ['claude', 'auth', 'login'],

@@ -35,7 +35,9 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		acpAdapter: { command: 'claude-agent-acp', package: '@agentclientprotocol/claude-agent-acp@0.106.0' },
 		// Claude Code turns its to-do tools (TodoWrite / TaskCreate) on only for older models, so Opus 5.5
 		// and newer had no list to show in the Tasks card. This switch turns them on for every model.
-		acpEnv: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' },
+		// MCP_TOOL_TIMEOUT: Claude Code gives up on an MCP tool after 60 s, below Volt's long-polls
+		// (TASK_WAIT_LONG_MS): a lead waiting for its subagents got "The operation timed out." every minute.
+		acpEnv: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1', MCP_TOOL_TIMEOUT: '300000' },
 		probeAuth: probeClaudeAuth,
 	},
 	{

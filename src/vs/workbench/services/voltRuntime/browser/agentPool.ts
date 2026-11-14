@@ -191,6 +191,13 @@ export class AgentPool extends Disposable {
 		return { key, alias: entry.alias, providerId: entry.request.providerId, handle, waitedMs: wasReady ? 0 : Math.max(0, this.now() - started) };
 	}
 
+	/** Stops the spares of `key`, ready or still starting. */
+	discard(key: string): void {
+		for (const entry of [...this.list(key)]) {
+			this.drop(entry);
+		}
+	}
+
 	/** Ready spares, e.g. to push a new access policy onto them. */
 	readySpares(): readonly { readonly providerId: string; readonly handle: IAgentSessionHandle }[] {
 		return [...this.entries.values()].flat().flatMap(entry => entry.handle ? [{ providerId: entry.request.providerId, handle: entry.handle }] : []);
