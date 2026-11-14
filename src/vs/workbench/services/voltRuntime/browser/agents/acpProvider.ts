@@ -1662,6 +1662,16 @@ export class AcpAgentProvider implements IAgentProvider {
 		for (const event of this.mapUpdate(params)) {
 			if (event.type === 'notice') {
 				this.pushNotice(live, turn, event);
+				if (event.failure?.category === 'connection') {
+					// The agent process behind the adapter died (killed, crashed): claude-agent-acp reports
+					// `transport_lost`, then answers the prompt as if the turn had ended, and the chat sat idle on
+					// a half-done task (ADEMark C4, round 6). It is the process death it is: the turn fails as a
+					// dead process does, and the runtime restarts the agent and sends the prompt again
+					// (`isAcpTurnRestartable`).
+					this.logService.info(`[ACP] ${this.id} lost its agent process mid-turn: ${event.title}`);
+					this.endTurn(live, turn, 'fail', { message: `ACP session is not running: ${event.title}`, retryable: true });
+					return;
+				}
 				continue;
 			}
 			if (event.type === 'tool.start') {
@@ -2369,6 +2379,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				...(notice.description ? { description: notice.description } : {}),
 				...(notice.resetAt !== undefined ? { resetAt: notice.resetAt } : {}),
 				...(notice.rateLimit ? { rateLimit: notice.rateLimit } : {}),
+				...(notice.failure ? { failure: notice.failure } : {}),
 			});
 		}
 		return events;
