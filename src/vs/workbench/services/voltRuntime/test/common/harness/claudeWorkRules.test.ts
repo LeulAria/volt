@@ -180,10 +180,10 @@ suite('Volt Claude work rules', () => {
 		assert.ok(described.description.includes('Specify search breadth') && described.description.endsWith('When to use'));
 	});
 
-	test('bypass mode\'s "edit through Bash" paragraph becomes one line that keeps the file tools; other mode reminders stay', async () => {
+	test('bypass mode\'s "edit through Bash" paragraph is left out; other mode reminders stay', async () => {
 		const bypass = 'While bypass permissions mode is active:\n\nYou can do much of your work through the Bash tool when it is the simpler route: read files with cat, head, or sed -n, search with grep and find, and make small, mechanical file changes with sed, heredocs, or short scripts instead of the dedicated Read, Edit, or Write tools. The choice is yours: prefer Edit or Write when a shell edit would be fragile.';
 		const note = voltBypassModeNote(bypass);
-		assert.ok(note.startsWith('While bypass permissions mode is active:') && note.includes('Read, Edit and Write') && !note.includes('sed'), note);
+		assert.strictEqual(note, '', 'an empty reminder is left out of the request');
 		const auto = 'While auto mode is active:\n\nA classifier reviews each action.';
 		assert.strictEqual(voltBypassModeNote(auto), auto);
 		const files = new Map(claudeLazyToolsPlugin().files);

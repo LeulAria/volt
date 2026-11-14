@@ -224,12 +224,15 @@ export function agentDescriptionWithTypes(description: string, listing: string |
  * Claude Code's reminder for bypass-permissions mode (Volt's Full access) tells the model it may read,
  * search and edit files through Bash with cat, sed and heredocs (about 130 tokens in every request).
  * Volt asks for the opposite ({@link CLAUDE_MAIN_RULES}: it shows the changes made with Edit and
- * Write, not shell rewrites), so that paragraph is replaced by one line that keeps the mode's news.
- * Any other text of this reminder (auto mode's) is left as it is. Self-contained (hooks worker).
+ * Write, not shell rewrites), so that paragraph is dropped: an empty text leaves the reminder out.
+ * Claude Code sends it only when the mode changed after the session started (Full access picked
+ * then), so dropping it also keeps the same chat's prompt, and its cache, the same either way (it
+ * came with 1 of 6 runs and rewrote 3.8k cached tokens there, 2026-11-14). Any other text of this
+ * reminder (auto mode's) is left as it is. Self-contained (hooks worker).
  */
 export function voltBypassModeNote(text: string): string {
 	return /^\s*While bypass permissions mode is active:/.test(text) && /through the Bash tool/.test(text) && /\bsed\b/.test(text)
-		? 'While bypass permissions mode is active: tools run without asking. Keep reading and changing files with Read, Edit and Write.'
+		? ''
 		: text;
 }
 
