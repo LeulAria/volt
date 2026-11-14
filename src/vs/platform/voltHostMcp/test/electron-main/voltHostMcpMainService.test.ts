@@ -289,6 +289,9 @@ suite('Volt host MCP server', () => {
 			assert.ok(lean.includes('find_symbol') && lean.includes('delegate_task') && lean.includes('image_inspect'));
 			assert.ok(!/browser_|render_chart|thread_launch|link_pull_request|desktop_|device_/.test(lean), lean);
 			assert.ok(lean.length < all.length / 3);
+			// A top-level chat has the task tools always loaded and is told so; a subagent (groups) has them behind the tool search.
+			assert.ok(all.includes('delegate_task, wait_tasks and message_task are loaded already: call them directly.'));
+			assert.ok(!lean.includes('loaded already'), lean);
 			// Claude Code sends them in every request of every chat: keep the whole set short.
 			assert.ok(all.length < 2200, `${all.length} chars`);
 			assert.deepStrictEqual((await list('')).map(tool => tool._meta?.['anthropic/alwaysLoad']), [true, undefined, true], 'a tool\'s _meta is listed, so Claude Code keeps it out of its tool search');

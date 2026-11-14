@@ -87,6 +87,9 @@ export interface IVoltHostMcpService {
  */
 const HOST_MCP_INSTRUCTIONS: readonly { readonly groups: readonly string[]; readonly text: string; readonly onlyWithout?: string }[] = [
 	{ groups: ['core'], text: 'Volt tools (deferred: load with ToolSearch). Code: find_symbol (declarations), code_nav (references, callers, implementations), instant_grep (indexed rg), find_files: one call for several Grep/Read rounds. workspace_status: what the user has open (tabs, simulator, browser, terminals, git). ask_question: multiple-choice questions to the user.' },
+	// The full list only (a top-level chat: no groups), where these three are always loaded. After "deferred:
+	// load with ToolSearch" above, Haiku leads searched for them first in 4 of 18 runs (round-4 bench), 2.5 s each.
+	{ groups: [], text: 'delegate_task, wait_tasks and message_task are loaded already: call them directly.' },
 	{ groups: ['ide'], text: 'tests runs tests with structured failures; debug sets breakpoints and reads variables; ide does http, db, docker, profiling and more.' },
 	{ groups: ['browser'], text: 'browser_* drive the in-app browser: browser_act runs a multi-step check in one call, browser_run edits files then checks, browser_status lists pages and dev servers; mock, emulate, audit. playground_create serves throwaway pages. Not Playwright, headless Chrome or `python -m http.server`.' },
 	{ groups: ['devices'], text: 'device_snapshot/device_act drive iOS simulators and Android emulators.' },
