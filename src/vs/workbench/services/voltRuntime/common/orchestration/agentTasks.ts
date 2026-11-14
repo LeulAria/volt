@@ -244,7 +244,7 @@ function delegateTaskTool(): IAgentTaskToolInfo {
 			'after: task_ids, or 1-based positions of this chat\'s tasks, that must finish first (their reports join the brief).',
 			'Reports arrive as a message: end your turn or call wait_tasks (wait=true: wait here).',
 			'role: research or review (read-only), implementation, test, design, general. previous_task_id: next review round.',
-			'Also: models (2-4, same brief), isolation:"worktree" (Volt makes its own git worktree and branch), goal, scope (only files it may change), files, constraints, done_when, verify (commands run on its report), context (brief/full/none), budget_usd, fallback_models.',
+			'Also: models (2-4, same brief), isolation:"worktree", goal, scope (only files it may change), files, constraints, done_when, verify (commands run on its report), context (brief/full/none), budget_usd, fallback_models.',
 		].join(' '),
 		inputSchema: { type: 'object', properties: DELEGATE_ARGS },
 	};
