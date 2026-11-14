@@ -10,7 +10,10 @@ const [capFile, winFile, filter] = process.argv.slice(2).filter(a => !a.startsWi
 const showRows = process.argv.includes('--rows');
 const prices = JSON.parse(readFileSync(process.env.ADEMARK_PRICES ?? '/tmp/ademark/prices/2026-10.json', 'utf8')).models;
 const read = f => readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
-const captured = read(capFile).filter(r => typeof r.path === 'string' && /\/v1\/messages(\?|$)/.test(r.path) && r.usage);
+// TOK_EXCLUDE_RE (round 6): requests to leave out, matched against "<user agent> tools=<n> model=<id>": the rig's own
+// `claude -p` checks (modcheck.mjs: 2.1.322 sdk-cli, Haiku, 7 tools) that ran while a window was open are not the chat's.
+const exclude = process.env.TOK_EXCLUDE_RE ? new RegExp(process.env.TOK_EXCLUDE_RE) : undefined;
+const captured = read(capFile).filter(r => typeof r.path === 'string' && /\/v1\/messages(\?|$)/.test(r.path) && r.usage && !(exclude && exclude.test(`${r.ua} tools=${r.tools} model=${r.model}`)));
 const windows = read(winFile).filter(w => !w.invalid && (!filter || new RegExp(filter).test(w.label)));
 
 function body(n) {
