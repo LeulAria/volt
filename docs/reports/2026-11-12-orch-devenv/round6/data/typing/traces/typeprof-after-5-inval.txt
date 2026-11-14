@@ -1,0 +1,131 @@
+typing window 24732 ms, 60 keys; renderer main thread pid 10540 tid 2062919; 557254 trace events
+
+== main thread timeline events (count, total ms, per s, max ms)
+  8515   21793.6   344.3/s  6209.3 RunTask
+  8267   14793.1   334.3/s  6205.7 FunctionCall
+   818   12938.7    33.1/s   210.3 ProxyMain::BeginMainFrame
+   819    8012.8    33.1/s   201.7 WebFrameWidgetImpl::BeginMainFrame
+  4285    7765.4   173.3/s   200.5 AsyncTask Run
+   819    7486.0    33.1/s   201.5 Blink.Animate.UpdateTime
+   819    7474.2    33.1/s   201.5 PageAnimator::serviceScriptedAnimations
+   815    7036.1    33.0/s   201.4 FrameRequestCallbackCollection::ExecuteFrameCallbacks
+   820    7034.6    33.2/s   200.5 FireAnimationFrame
+   402    6261.0    16.3/s  6181.8 V8.HandleInterrupts
+   389    6258.0    15.7/s  6181.8 V8.StackGuard
+     2    6181.8     0.1/s  6181.8 V8.InvokeApiInterruptCallbacks
+ 13400    6078.7   541.8/s   188.0 LocalFrameView::UpdateStyleAndLayout
+ 16025    4649.6   647.9/s   188.0 Document::UpdateStyleAndLayout
+  1826    4632.2    73.8/s   184.9 Blink.Style.UpdateTime
+ 15404    4620.8   622.8/s   188.0 Blink.ForcedStyleAndLayout.UpdateTime
+  1826    4619.1    73.8/s   184.9 UpdateLayoutTree
+  1826    4341.4    73.8/s   184.9 Document::updateStyle
+   819    4265.8    33.1/s   135.2 WebFrameWidgetImpl::UpdateLifecycle
+  1826    4150.6    73.8/s   181.2 Document::recalcStyle
+  2998    3406.3   121.2/s   225.9 EventDispatch
+   819    2219.5    33.1/s   134.0 LocalFrameView::RunPaintLifecyclePhase
+  1678    1585.7    67.8/s    78.2 LocalFrameView::RunStyleAndLayoutLifecyclePhases
+   240    1338.3     9.7/s   229.4 LatencyInfo.Flow
+   120    1336.4     4.9/s   229.4 WidgetBaseInputHandler::OnHandleInputEvent
+
+== forced Layout: 594 of 1194, 707.4 ms; top stacks
+  279    420.5 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629
+   99     91.7 adoptNativeScroll@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:98
+   65     70.2 _readClientRects@vs/editor/browser/viewParts/viewLines/rangeUtil.js:24
+   67     38.7 readClientRect@vs/editor/browser/view/domLineBreaksComputer.js:291
+    5     35.6 (anon)@vs/base/browser/ui/scrollbar/scrollableElement.js:546
+    2     28.1 getDomNodePagePosition@vs/base/browser/dom.js:526
+   60     14.1 _render@vs/editor/browser/controller/editContext/textArea/textAreaEditContext.js:629
+    9      5.1 setValue@vs/editor/browser/controller/editContext/textArea/textAreaEditContextInput.js:528
+    1      1.7 measure@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:8732
+    2      0.7 (anon)@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:1682
+    2      0.5 layoutToolbar@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:1588
+    1      0.4 overflows@vs/workbench/contrib/voltAgent/browser/chrome/agentTitlebarHeader.js:530
+
+== forced UpdateLayoutTree: 1029 of 1826, 3429.6 ms; top stacks
+  282   2478.8 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629
+  483    748.1 adoptNativeScroll@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:98
+   65    105.8 _readClientRects@vs/editor/browser/viewParts/viewLines/rangeUtil.js:24
+   61     27.1 _render@vs/editor/browser/controller/editContext/textArea/textAreaEditContext.js:629
+   43     23.9 (anon)@vs/base/browser/ui/scrollbar/scrollableElement.js:546
+   67     23.2 readClientRect@vs/editor/browser/view/domLineBreaksComputer.js:291
+    1      6.8 overflows@vs/workbench/contrib/voltAgent/browser/chrome/agentTitlebarHeader.js:530
+    5      4.6 setAttribute@vs/base/browser/fastDomNode.js:263
+    9      2.9 setValue@vs/editor/browser/controller/editContext/textArea/textAreaEditContextInput.js:528
+    1      2.4 measure@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:8731
+    2      2.0 layoutToolbar@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:1588
+    2      0.9 (anon)@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:1676
+
+== style invalidations before forced recalcs (count, forcing function <= invalidation reason/selector/node/stack)
+  3327 adoptNativeScroll@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:98 <= StyleRecalc Animation SPAN class='volt-agent-fresh-text' 
+  2437 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= StyleRecalc Animation SPAN class='volt-agent-fresh-text' 
+  1454 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= Layout Removed from layout #text @update@vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.js:537
+  1414 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= Layout Removed from layout SPAN class='volt-agent-fresh-text' @update@vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.js:537
+   655 (frame) <= StyleRecalc Inline CSS style declaration was mutated DIV class='volt-agent-turn agent' @syncStuckTurns@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:341
+   655 (frame) <= ScheduleStyle DIV class='volt-agent-turn agent' @syncStuckTurns@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:341
+   655 (frame) <= StyleInvalidator Invalidation set invalidates self DIV class='volt-agent-turn agent' 
+   655 (frame) <= StyleRecalc Related style rule DIV class='volt-agent-turn agent' @syncStuckTurns@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:341
+   573 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= Layout Removed from layout #text @update@vs/workbench/contrib/voltAgent/browser/blocks/agentCodeBlock.js:225
+   565 _readClientRects@vs/editor/browser/viewParts/viewLines/rangeUtil.js:24 <= StyleRecalc Animation SPAN class='volt-agent-fresh-text' 
+   535 (frame) <= StyleInvalidator Invalidation set invalidates self DIV class='slider' 
+   488 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= Layout Removed from layout #text @discard@vs/workbench/contrib/voltAgent/browser/chrome/agentTranscriptView.js:301
+   451 (frame) <= StyleRecalc Inline CSS style declaration was mutated DIV class='slider' @setTop@vs/base/browser/fastDomNode.js:71
+   451 (frame) <= ScheduleStyle DIV class='slider' @setTop@vs/base/browser/fastDomNode.js:71
+   451 (frame) <= StyleRecalc Related style rule DIV class='slider' @setTop@vs/base/browser/fastDomNode.js:71
+   433 adoptNativeScroll@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:98 <= StyleRecalc Animation SPAN class='volt-browser-dock-dot-strip' 
+   401 (anon)@vs/base/browser/ui/scrollbar/scrollableElement.js:546 <= StyleRecalc Animation SPAN class='volt-agent-fresh-text' 
+   267 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= StyleRecalc Animation SPAN class='volt-browser-dock-dot-strip' 
+   211 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= Layout Removed from layout SPAN class='mtk1' @update@vs/workbench/contrib/voltAgent/browser/blocks/agentCodeBlock.js:225
+   197 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= Layout Removed from layout SPAN class='mtk1' @discard@vs/workbench/contrib/voltAgent/browser/chrome/agentTranscriptView.js:301
+   192 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= ScheduleStyle P @update@vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.js:558
+   190 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= ScheduleStyle P @update@vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.js:537
+   168 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= StyleRecalc Node was inserted into tree P @update@vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.js:558
+   161 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= Layout Removed from layout P @update@vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.js:537
+   119 adoptNativeScroll@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:98 <= StyleRecalc Animation circle class='fill' 
+   110 (frame) <= Layout Removed from layout DIV @createLineBreaks@vs/editor/browser/view/domLineBreaksComputer.js:153
+    97 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= Layout Removed from layout SPAN class='mtk5' @update@vs/workbench/contrib/voltAgent/browser/blocks/agentCodeBlock.js:225
+    96 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= StyleInvalidator Invalidation set invalidates subtree P 
+    95 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= StyleRecalc Related style rule P @update@vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.js:537
+    94 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629 <= ScheduleStyle SPAN class='volt-agent-fresh-text' @(anon)@vs/workbench/contrib/voltAgent/browser/chrome/agentFreshText.js:90
+
+== tasks: 8515, over 16 ms: 238, over 50 ms: 69, longest 6209.3, 239.4, 210.3, 197.6, 181.4 ms
+== inside tasks over 16 ms (count, ms)
+    6   6353.9 FunctionCall socket.onmessage@vs/platform/voltAgentServer/common/connection.js:192
+  207   5436.5 FireAnimationFrame @:
+  203   5191.8 FunctionCall @vs/base/browser/dom.js:291
+  522   3543.8 UpdateLayoutTree
+   23    833.7 EventDispatch keypress
+   23    808.9 EventDispatch textInput
+  455    754.1 Layout
+   71    722.6 FunctionCall fn@vs/base/browser/event.js:7
+   23    689.6 EventDispatch input
+  594    418.8 Paint
+  318    252.5 RunMicrotasks
+   23    206.2 EventDispatch keydown
+  224    132.1 HitTest
+   23     81.5 FunctionCall @vs/workbench/services/keybinding/browser/keybindingService.js:224
+   66     72.4 EventDispatch animationend
+
+== callbacks (count, inclusive ms)
+  820   7034.6 FireAnimationFrame @:
+  815   6756.7 FunctionCall @vs/base/browser/dom.js:291
+ 2386   6543.8 FunctionCall socket.onmessage@vs/platform/voltAgentServer/common/connection.js:192
+  240    891.3 FunctionCall fn@vs/base/browser/event.js:7
+  560    358.3 TimerFire @:
+   60     90.9 FunctionCall @vs/workbench/services/keybinding/browser/keybindingService.js:224
+   75     85.1 FunctionCall @vs/base/common/async.js:457
+  582     83.5 FunctionCall @vs/workbench/contrib/voltAgent/browser/chrome/agentViewSidebars.js:580
+  158     79.6 FunctionCall @vs/workbench/contrib/voltAgent/browser/chrome/agentFreshText.js:87
+  106     32.4 FunctionCall onTimeout@vs/base/common/async.js:923
+   60     19.0 FunctionCall AgentChatBackdrop._register.addDisposableListener.capture@vs/workbench/contrib/voltAgent/browser/chat/agentChatBackground.js:424
+  737     18.6 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:73
+   59     15.7 FunctionCall @vs/editor/browser/controller/editContext/textArea/textAreaEditContextInput.js:330
+   60     13.3 FunctionCall markRenderEnd@vs/base/browser/performance.js:89
+  737     12.2 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentThreadSelectionActions.js:67
+    3     11.4 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:1557
+   60     11.0 FunctionCall @vs/workbench/services/keybinding/browser/keybindingService.js:239
+  118      9.1 FunctionCall doFire@vs/base/common/event.js:142
+   84      8.9 FunctionCall @vs/workbench/contrib/voltDiagnostics/electron-browser/voltDiagnostics.contribution.js:183
+   85      8.8 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:944
+
+== key to presented frame: n 60, p50 62.65, p95 196.2, max 6092.8
+main thread busy 21793.6 ms of 24732 ms (88 %)
