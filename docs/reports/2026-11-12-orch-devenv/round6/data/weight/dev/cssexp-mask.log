@@ -1,0 +1,15 @@
+-- before
+GPU pid 10370: shared images 212 MiB
+     62 MiB  n=  3  VizBufferQueue 3024x1792
+     44 MiB  n=  3  RenderPassOverlay 2432x1600
+     15 MiB  n=  1  RenderPassBacking 2432x1600
+     11 MiB  n=  3  RenderPassOverlay 640x1536
+      4 MiB  n=  1  RenderPassBacking 640x1536
+  raster tiles: 22 (75 MiB)
+applied: ok
+-- after
+GPU pid 10370: shared images 114 MiB
+     62 MiB  n=  3  VizBufferQueue 3024x1792
+      4 MiB  n=  1  RenderPassBacking 640x1536
+      4 MiB  n=  1  RenderPassOverlay 640x1536
+  raster tiles: 13 (44 MiB)
