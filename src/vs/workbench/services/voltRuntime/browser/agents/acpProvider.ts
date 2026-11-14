@@ -157,6 +157,8 @@ interface IAcpSpare {
 	readonly startedAt: number;
 	readonly session: Promise<IAcpSession>;
 	expiry?: ReturnType<typeof setTimeout>;
+	/** When `expiry` stops the spare. */
+	expiresAt?: number;
 }
 
 /** Knobs for supervision; tests swap the clock and shorten the timings. */
@@ -683,7 +685,8 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * Starts a session for `req` ahead of time (spawn, `initialize`, `session/new`, model and
 	 * options) and parks it. The next {@link start} with the same setup adopts it instantly instead
 	 * of paying the cold start (about 5 s for cursor-agent's `session/new` alone). One spare per
-	 * setup; an unadopted spare is stopped after {@link SPARE_TTL_MS}.
+	 * setup; an unadopted spare is stopped after `ttlMs` ({@link SPARE_TTL_MS} by default). Asking
+	 * again with a longer `ttlMs` (a short-lived spare, then the user acts) extends its life to that.
 	 *
 	 * The setup includes the host MCP servers, whose URL names the chat. A spare made for chat A is
 	 * not handed to chat B, so pass the `sessionId` the spare is meant for. Spares parked for other
@@ -691,14 +694,12 @@ export class AcpAgentProvider implements IAgentProvider {
 	 * adapter and MCP servers) costs several hundred MB, so clicking through old chats must not
 	 * leave one running per chat visited.
 	 */
-	prewarmSpare(req: IAgentStartRequest): Promise<void> {
+	prewarmSpare(req: IAgentStartRequest, ttlMs = SPARE_TTL_MS): Promise<void> {
 		const key = this.setupKey(req);
 		const existing = this.spares.get(key);
-		if (existing && Date.now() - existing.startedAt < SPARE_TTL_MS) {
-			return existing.session.then(() => undefined, () => undefined);
-		}
 		if (existing) {
-			this.dropSpare(key, existing);
+			this.expireSpare(key, existing, ttlMs);
+			return existing.session.then(() => undefined, () => undefined);
 		}
 		this.releaseSpares(req.sessionId);
 		while (this.spares.size >= MAX_SPARES) {
@@ -707,17 +708,28 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		const spare: IAcpSpare = { key, sessionId: req.sessionId, startedAt: Date.now(), session: this.createOrResume(req) };
 		this.spares.set(key, spare);
-		spare.expiry = setTimeout(() => {
-			if (this.spares.get(key) === spare) {
-				this.dropSpare(key, spare);
-			}
-		}, SPARE_TTL_MS);
+		this.expireSpare(key, spare, ttlMs);
 		return spare.session.then(live => {
 			live.client.whenDead(() => this.forgetSpare(key, spare));
 		}, err => {
 			this.forgetSpare(key, spare);
 			this.logService.trace('[ACP] spare session failed', err);
 		});
+	}
+
+	/** Stops the spare `ttlMs` after it started, unless it was already due later. */
+	private expireSpare(key: string, spare: IAcpSpare, ttlMs: number): void {
+		const at = spare.startedAt + ttlMs;
+		if (spare.expiresAt !== undefined && spare.expiresAt >= at) {
+			return;
+		}
+		clearTimeout(spare.expiry);
+		spare.expiresAt = at;
+		spare.expiry = setTimeout(() => {
+			if (this.spares.get(key) === spare) {
+				this.dropSpare(key, spare);
+			}
+		}, Math.max(0, at - Date.now()));
 	}
 
 	/** True when a spare for this setup is parked or starting. */

@@ -110,6 +110,26 @@ suite('Agent pool', () => {
 		assert.deepStrictEqual(agents.disposed, ['h-a1', 'h-a2']);
 	});
 
+	test('a short-lived spare stops after its own time to live unless asked for again with a longer one', async () => {
+		const agents = new FakeAgents();
+		const p = pool(2, 1_000);
+		p.ensure(agents.request('restored'), { ttlMs: 100 });
+		await flush();
+		now = 150;
+		p.sweep();
+		assert.deepStrictEqual([p.has('restored'), agents.disposed], [false, ['h-a1']], 'nobody touched the window');
+		p.ensure(agents.request('restored'), { ttlMs: 100 });
+		await flush();
+		now = 200;
+		p.ensure(agents.request('restored'));
+		now = 900;
+		p.sweep();
+		assert.deepStrictEqual([p.has('restored'), agents.started], [true, ['a1', 'a2']], 'the first key kept it, no second start');
+		now = 1_200;
+		p.sweep();
+		assert.strictEqual(p.has('restored'), false, 'then the pool\'s own time to live from its start');
+	});
+
 	test('a spare dropped while starting is disposed once it arrives; dispose clears everything', async () => {
 		const agents = new FakeAgents();
 		agents.manual = true;

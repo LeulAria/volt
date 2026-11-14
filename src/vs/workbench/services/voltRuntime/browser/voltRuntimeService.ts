@@ -48,7 +48,7 @@ import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, 
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, newChatSandboxDefaults, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isSandboxUnavailableError, sandboxRefusedMessage } from '../common/access/sandboxRefusal.js';
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
-import { IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
+import { IAgentPrewarmOptions, IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService, runGitThrough, VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
@@ -1490,7 +1490,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * bound to this chat until a send adopts it. For a native model it fills the caches a send
 	 * reads before its request instead (see prewarmNative).
 	 */
-	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void {
+	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode, options?: IAgentPrewarmOptions): void {
+		const ttlMs = options?.ttlMs;
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
 		if (session.run && !session.run.ended) {
 			return;
@@ -1523,6 +1524,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// A chat whose idle agent was stopped gets it back (session/resume): only a spare for this chat can.
 		const resuming = !!this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode, sandbox).resumeSessionId;
 		if (!resuming && this.agentPool.has(spare.key)) {
+			// Asked again: a short-lived spare (see IAgentPrewarmOptions.ttlMs) gets this ask's time to live.
+			this.agentPool.ensure(spare, ttlMs ? { ttlMs } : undefined);
 			return;
 		}
 		// A spare under an alias serves whichever chat sends first, but its browser tools reach the
@@ -1536,13 +1539,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					(other as Partial<Pick<AcpAgentProvider, 'releaseSpares'>>).releaseSpares?.(session.sessionId);
 				}
 			}
-			const request = this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode, sandbox);
-			if (!perChat.hasSpare(request)) {
-				void perChat.prewarmSpare(request);
-			}
+			// Parks a spare, or gives the one parked this ask's time to live.
+			void perChat.prewarmSpare(this.agentStartRequest(session.sessionId, profile, item, cwd, undefined, mode, sandbox), ttlMs);
 			return;
 		}
-		this.agentPool.ensure(spare);
+		this.agentPool.ensure(spare, ttlMs ? { ttlMs } : undefined);
 	}
 
 	/**

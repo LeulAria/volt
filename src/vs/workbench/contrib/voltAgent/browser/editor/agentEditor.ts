@@ -662,6 +662,12 @@ const PREWARM_ON_OPEN_MS = 300;
 const PREWARM_ON_MODEL_MS = 100;
 /** Typing asks the runtime for a warm agent at most this often (it may have been taken or stopped since). */
 const PREWARM_ON_TYPE_MS = 5000;
+/**
+ * The chat a window restores at launch warms its agent, so a message sent right away gets its first word
+ * as fast as in any warm chat; nobody has picked that chat yet, so the agent stops again if no keystroke
+ * comes within this long (the composer's first keystroke keeps it).
+ */
+const UNTOUCHED_WARM_TTL_MS = 30_000;
 
 export type IAgentMessage = IAgentUserMessage | IAgentAssistantMessage;
 
@@ -910,7 +916,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** Arrow Up/Down through earlier prompts. */
 	private readonly promptHistory = new AgentPromptHistoryNavigator();
 	private prewarmTimer: IDisposable | undefined;
-	/** When this editor last asked the runtime for a warm agent (see PREWARM_ON_TYPE_MS). */
+	/** When this editor last asked the runtime for a warm agent (see PREWARM_ON_TYPE_MS); 0 after a short-lived warm. */
 	private prewarmedAt = 0;
 	/** An edited prompt is waiting on the "Revert files to this message?" dialog. */
 	private committingEdit = false;
@@ -9169,18 +9175,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.prewarmTimer = disposableTimeout(() => {
 			this.prewarmTimer?.dispose();
 			this.prewarmTimer = undefined;
-			// A chat only restored with the window (no key or click yet) starts no agent: a launch costs no agent process.
-			if (this.isVisible() && !this.isStreaming() && this.composerCanSend() && this.container && hasUserInput(getWindow(this.container))) {
-				this.prewarmAgent();
+			if (this.isVisible() && !this.isStreaming() && this.composerCanSend() && this.container) {
+				// A chat only restored with the window (no key or click yet) warms for a short while only (see UNTOUCHED_WARM_TTL_MS).
+				this.prewarmAgent(hasUserInput(getWindow(this.container)) ? undefined : UNTOUCHED_WARM_TTL_MS);
 			}
 		}, delay);
 	}
 
-	private prewarmAgent(): void {
-		this.prewarmedAt = Date.now();
+	/** With `ttlMs`, the warm agent stops after that long unless a later prewarm (the user acting) keeps it. */
+	private prewarmAgent(ttlMs?: number): void {
+		// A short-lived warm is followed by a full one on the first keystroke.
+		this.prewarmedAt = ttlMs === undefined ? Date.now() : 0;
 		// The turn's workspace summary (its git status) is read now too, so the send finds it ready.
 		void this.commandService.executeCommand(WORKSPACE_SNAPSHOT_COMMAND_ID, this.sessionKey).catch(() => undefined);
-		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
+		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode, ttlMs === undefined ? undefined : { ttlMs });
 		this.refreshMcpApprovals();
 	}
 

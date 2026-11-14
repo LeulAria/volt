@@ -54,7 +54,7 @@ export interface IAgentPoolOptions {
 export interface IAgentPoolEnsureOptions {
 	/** Spares wanted for this key (ready or starting); more than one is a burst. Default 1. */
 	readonly count?: number;
-	/** Time to live of the spares this call starts; default the pool's. */
+	/** Time to live of the spares this call starts (and the least the key's spares get); default the pool's. */
 	readonly ttlMs?: number;
 	/** Part of a burst that spans keys (spares of one kind, and one of another): uses the burst room even for one spare. */
 	readonly burst?: boolean;
@@ -64,7 +64,8 @@ interface IPoolEntry {
 	readonly request: ISpareRequest;
 	readonly alias: string;
 	readonly createdAt: number;
-	readonly ttlMs: number;
+	/** From `createdAt`; a later ensure of the key with a longer time to live extends it. */
+	ttlMs: number;
 	readonly ready: Promise<IAgentSessionHandle | undefined>;
 	handle?: IAgentSessionHandle;
 	settled: boolean;
@@ -116,9 +117,13 @@ export class AgentPool extends Disposable {
 		}
 		const count = Math.max(1, options?.count ?? 1);
 		const cap = this.options.maxSpares + (count > 1 || options?.burst ? this.options.maxBurst ?? 0 : 0);
+		const ttlMs = options?.ttlMs ?? this.options.ttlMs;
 		for (const entry of this.list(request.key)) {
 			if (entry.settled && !(entry.handle && request.isLive(entry.handle))) {
 				this.drop(entry);
+			} else {
+				// Asked for again with a longer time to live (the user is about to send): a short-lived spare gets it.
+				entry.ttlMs = Math.max(entry.ttlMs, ttlMs);
 			}
 		}
 		for (let missing = count - this.list(request.key).length; missing > 0; missing--) {
@@ -133,7 +138,7 @@ export class AgentPool extends Disposable {
 			if (this.size >= cap) {
 				break;
 			}
-			this.start(request, options?.ttlMs ?? this.options.ttlMs);
+			this.start(request, ttlMs);
 		}
 		this.scheduleSweep();
 	}
