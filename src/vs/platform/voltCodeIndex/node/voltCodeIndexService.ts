@@ -21,6 +21,8 @@ const KEEP_ALIVE_MS = 20 * 60_000;
  * the process again and it catches up from file sizes and mtimes.
  */
 const WARM_KEEP_ALIVE_MS = 90_000;
+/** How long a status answer serves questions asked while no index process runs (see {@link VoltCodeIndexService.status}). */
+const STATUS_CACHE_MS = 10 * 60_000;
 /** Then it exits once no call is in flight for this long. */
 const IDLE_EXIT_MS = 30_000;
 /** A workbench that has not reported for this long is forgotten (it crashed or closed). */
@@ -81,6 +83,7 @@ export class VoltCodeIndexService extends Disposable implements IVoltCodeIndexSe
 			this._register(client.onDidProcessExit(({ code, signal }) => {
 				// The client forks a fresh process on the next call; hold it open again then.
 				this.keepAlive = undefined;
+				this.live = false;
 				if (code && signal !== 'SIGTERM') {
 					this.logService.warn(`[code index] process exited with ${code} ${signal ?? ''}`);
 				}
@@ -88,6 +91,8 @@ export class VoltCodeIndexService extends Disposable implements IVoltCodeIndexSe
 			this.client = client;
 			this.worker = ProxyChannel.toService<ICodeIndexWorker>(getNextTickChannel(client.getChannel('codeIndex')));
 		}
+		// Every call through the client forks the process when none runs.
+		this.live = true;
 		return this.worker!;
 	}
 
@@ -159,8 +164,31 @@ export class VoltCodeIndexService extends Disposable implements IVoltCodeIndexSe
 		return this.use().installFff();
 	}
 
+	/**
+	 * The last answer per root, for a question asked while no index process runs. Every agent start asked whether
+	 * its project is large and indexed, which forked a 50-60 MB process for one number, 30 s each time (round 6).
+	 * A live process answers itself; a stopped one is asked again only once the answer is older than
+	 * STATUS_CACHE_MS, or for a root never asked about.
+	 */
+	private readonly statusCache = new Map<string, { at: number; status: IVoltCodeIndexStatus }>();
+	/** Whether the process has been forked and has not exited since. */
+	private live = false;
+
 	status(roots?: readonly string[]): Promise<readonly IVoltCodeIndexStatus[]> {
-		return this.connect().status(roots).catch(() => []);
+		if (!this.live && roots?.length) {
+			const now = Date.now();
+			const cached = roots.map(root => this.statusCache.get(root));
+			if (cached.every(entry => entry && now - entry.at < STATUS_CACHE_MS)) {
+				return Promise.resolve(cached.map(entry => entry!.status));
+			}
+		}
+		return this.connect().status(roots).then(list => {
+			const at = Date.now();
+			for (const status of list) {
+				this.statusCache.set(status.root, { at, status });
+			}
+			return list;
+		}).catch(() => []);
 	}
 
 	async rebuild(root: string, options?: IVoltCodeIndexOptions): Promise<void> {
