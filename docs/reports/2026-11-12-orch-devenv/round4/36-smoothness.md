@@ -1,4 +1,5 @@
-Status: draft (numbers being filled in)
+Status: not finished (the agent was stopped before writing it). The numbers from its committed data are in
+[README.md](README.md), section "Memory and smoothness".
 
 # Round 4, area "smooth": idle CPU, typing lag and chat open
 
