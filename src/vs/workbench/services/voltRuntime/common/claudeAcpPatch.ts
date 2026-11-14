@@ -13,6 +13,8 @@ import { encodeBase64, VSBuffer } from '../../../../base/common/buffer.js';
  *   The Claude Code CLI answers it with about 37 `count_tokens` requests, 19 of them, and the work
  *   of building them, before the turn's own request. Volt reads only the command names, never the
  *   skill paths this read refines.
+ * - re-reads the sign-in with `claude auth status --json` on every prompt: a second Claude Code
+ *   process (about 0.2-0.4 s of CPU) started while the turn's CLI builds its request.
  *
  * Volt cannot switch this off with a flag or an environment variable, so it starts the adapter
  * with a module hook (`node --import <preload>`) that edits the adapter's `v1/acp-agent.js` as it
@@ -32,12 +34,23 @@ export const CLAUDE_ACP_AGENT_MODULE = '/@agentclientprotocol/claude-agent-acp/d
 /** The npm package the patches are written against (any version: a patch that does not match leaves the file alone). */
 export const CLAUDE_ACP_PACKAGE = '@agentclientprotocol/claude-agent-acp';
 
+/** A turn with no result yet runs its queued sign-in check after this long. */
+export const CLAUDE_ACP_AUTH_PROBE_FALLBACK_MS = 3_000;
+
 export const CLAUDE_ACP_PATCHES: readonly IAcpSourcePatch[] = [
 	{
 		// The first init's skill-file read (`getContextUsage`): queued until the turn's result.
 		id: 'skill-files-after-turn',
 		from: 'session.skillFilesRequested = true; void this.refreshSkillFiles(params.sessionId);',
 		to: 'session.skillFilesRequested = true; voltAfterTurn(session, () => void this.refreshSkillFiles(params.sessionId));',
+	},
+	{
+		// The per-prompt `claude auth status --json` run: queued until the turn's result, or 3 s into a
+		// long turn. Its answer only sets a flag the NEXT prompt reads, so it may land after this turn's
+		// request; it still runs for every prompt, a refused one included (the fallback timer).
+		id: 'auth-probe-after-turn',
+		from: 'void this.authStatus.probe(); const signOutRespawn = this.respawnSignedOutSession(params.sessionId, session);',
+		to: `voltAfterTurn(session, () => void this.authStatus.probe(), ${CLAUDE_ACP_AUTH_PROBE_FALLBACK_MS}); const signOutRespawn = this.respawnSignedOutSession(params.sessionId, session);`,
 	},
 	{
 		// The turn's result runs what was queued for it.
