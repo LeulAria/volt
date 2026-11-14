@@ -366,6 +366,23 @@ suite('Volt sandbox supervisor (C5, real processes)', function () {
 		assert.strictEqual(h.state, 'broken');
 	});
 
+	test('RES-IDLE-1: an idle host is sampled ten times less often than a running one, and at the running rate once it wakes', async () => {
+		const at: number[] = [];
+		const counting = { id: 'count', sample: async (roots: readonly number[]) => { at.push(Date.now()); return new Map(roots.map(root => [root, { cpuMs: 0, memoryBytes: 1, processes: 1 }])); } };
+		const supervisor = supervisorWith({ resourceSources: [counting] });
+		const h = await started(await supervisor.start(nodeHost({ idle: { afterMs: 300, stopAfterMs: 60_000 } })));
+		assert.ok(await waitFor(() => h.state === 'idle', 4_000), `state ${h.state}`);
+		const idleFrom = Date.now();
+		await new Promise(resolve => setTimeout(resolve, 2_500));
+		const whileIdle = at.filter(t => t > idleFrom).length;
+		// sampleMs 100: a running host gets about 25 samples in 2.5 s, an idle one 2 or 3 (every 1 s).
+		assert.ok(whileIdle >= 1 && whileIdle <= 4, `samples while idle: ${whileIdle}`);
+		await request(h, { op: 'ping', n: 1 }, 'pong');
+		const wokeAt = Date.now();
+		assert.ok(await waitFor(() => at.filter(t => t > wokeAt).length >= 2, 1_000), 'running again: sampled at the running rate');
+		await h.terminate('stopped');
+	});
+
 	// --- idle, budget -------------------------------------------------------------------------
 
 	test('LIFE-IDLE-1: no activity for the idle budget makes a host idle, then stops it; activity keeps it running', async () => {

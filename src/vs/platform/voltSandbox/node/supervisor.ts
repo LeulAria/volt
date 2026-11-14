@@ -195,6 +195,8 @@ export interface ISandboxSupervisorOptions {
 }
 
 const DEFAULT_MAX_HOSTS = 24;
+/** An idle host is sampled this many times less often than a running one (10 s at the default 1 s). */
+export const IDLE_SAMPLE_FACTOR = 10;
 const DEFAULT_RESTARTS_PER_MINUTE = 3;
 const STDERR_TAIL_BYTES = 64 * 1024;
 /** Where a `stream` host finds its channel. */
@@ -223,8 +225,12 @@ export class SandboxSupervisor extends Disposable {
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	/** A host started, changed state or went away. */
 	readonly onDidChange: Event<void> = this._onDidChange.event;
-	private sampler: ReturnType<typeof setInterval> | undefined;
+	private sampler: ReturnType<typeof setTimeout> | undefined;
+	/** When the pending sampler tick is due (ms since epoch). */
+	private samplerDue = 0;
 	private sampling = false;
+	/** The last time each idle host was sampled: idle hosts are sampled {@link IDLE_SAMPLE_FACTOR} times less often. */
+	private readonly sampledAt = new WeakMap<SandboxHost, number>();
 	private readonly sources: readonly ISandboxResourceSource[];
 	private disposing = false;
 
@@ -384,7 +390,8 @@ export class SandboxSupervisor extends Disposable {
 	/** Called by a host whose state changed. */
 	changed(host: SandboxHost): void {
 		if (host.state === 'running') {
-			this.ensureSampler();
+			// A host that wakes up is sampled at the running rate again, not at the end of an idle wait.
+			this.ensureSampler(this.options.sampleMs ?? 1_000);
 		}
 		this._onDidChange.fire();
 	}
@@ -404,32 +411,57 @@ export class SandboxSupervisor extends Disposable {
 		return true;
 	}
 
-	private ensureSampler(): void {
+	private ensureSampler(delayMs = this.options.sampleMs ?? 1_000): void {
 		const ms = this.options.sampleMs ?? 1_000;
-		if (this.sampler || ms <= 0) {
+		if (ms <= 0 || this.disposing) {
 			return;
 		}
-		this.sampler = setInterval(() => void this.tick(), ms);
+		const due = Date.now() + delayMs;
+		if (this.sampler !== undefined) {
+			if (this.samplerDue <= due) {
+				return;
+			}
+			clearTimeout(this.sampler);
+		}
+		this.samplerDue = due;
+		this.sampler = setTimeout(() => {
+			this.sampler = undefined;
+			void this.tick().finally(() => this.scheduleNextTick());
+		}, delayMs);
 		// Accounting must not keep Volt (or a test run) alive.
 		(this.sampler as { unref?(): void }).unref?.();
+	}
+
+	/** Running hosts every `sampleMs`; when every live host is idle, every {@link IDLE_SAMPLE_FACTOR} x `sampleMs`; none: no timer. */
+	private scheduleNextTick(): void {
+		const ms = this.options.sampleMs ?? 1_000;
+		const live = [...this.hosts.values()].filter(host => (host.state === 'running' || host.state === 'idle') && host.pid);
+		if (!live.length || this.disposing) {
+			return;
+		}
+		this.ensureSampler(live.some(host => host.state === 'running') ? ms : ms * IDLE_SAMPLE_FACTOR);
 	}
 
 	private async tick(): Promise<void> {
 		if (this.sampling) {
 			return;
 		}
-		const running = [...this.hosts.values()].filter(host => (host.state === 'running' || host.state === 'idle') && host.pid);
-		if (!running.length) {
-			// No timers while nothing runs.
-			clearInterval(this.sampler);
-			this.sampler = undefined;
+		const ms = this.options.sampleMs ?? 1_000;
+		const now = Date.now();
+		// An idle host has no calls in flight and the memory cap applies to running hosts only (recordSample), so it
+		// needs no sample a second: a `ps` spawn per second for a host nobody uses was most of the agent server's
+		// CPU at rest (round 4, A6). Its CPU budget window (10 s) still gets a sample at least every window.
+		const due = [...this.hosts.values()].filter(host => host.pid && (host.state === 'running'
+			|| host.state === 'idle' && now - (this.sampledAt.get(host) ?? 0) >= ms * IDLE_SAMPLE_FACTOR - ms / 2));
+		if (!due.length) {
 			return;
 		}
 		this.sampling = true;
 		try {
-			const samples = await this.sample(running.map(host => host.pid!));
-			for (const host of running) {
+			const samples = await this.sample(due.map(host => host.pid!));
+			for (const host of due) {
 				const sample = host.pid ? samples.get(host.pid) : undefined;
+				this.sampledAt.set(host, now);
 				if (sample) {
 					host.recordSample(sample);
 				}
@@ -470,7 +502,7 @@ export class SandboxSupervisor extends Disposable {
 		// Once: `dispose` (synchronous, for the owner's disposables) and an owner awaiting it share the same kills.
 		this.shutdownDone ??= (async () => {
 			this.disposing = true;
-			clearInterval(this.sampler);
+			clearTimeout(this.sampler);
 			this.sampler = undefined;
 			await Promise.all([...this.hosts.values()].map(host => host.terminate('quit').catch(() => undefined)));
 		})();
