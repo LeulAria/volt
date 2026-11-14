@@ -612,6 +612,9 @@ class CodeMain {
 	//#endregion
 }
 
-// Main Startup
-const code = new CodeMain();
-code.main();
+// Main Startup. Volt: the main entry (src/main.ts) imports this bundle while Electron starts and calls `main` at `ready`
+// (importing only defines the code); nothing here runs at import time.
+export function main(): void {
+	const code = new CodeMain();
+	code.main();
+}

@@ -123,6 +123,7 @@ import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/
 import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME, VOLT_AGENT_SERVER_ENABLED_SETTING } from '../../platform/voltAgentServer/common/agentServerService.js';
 import { VoltAgentServerMainService } from '../../platform/voltAgentServer/electron-main/agentServerMainService.js';
 import { disposeUnusedEarlyWindow } from '../../platform/windows/electron-main/earlyWindow.js';
+import { CODE_CACHE_PATH_APPLIED_KEY } from '../../platform/windows/common/earlyWindow.js';
 import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
 import { IVoltExternalMcpService, VOLT_EXTERNAL_MCP_CHANNEL_NAME } from '../../platform/voltExternalMcp/common/voltExternalMcp.js';
 import { VoltExternalMcpMainService } from '../../platform/voltExternalMcp/electron-main/voltExternalMcpMainService.js';
@@ -463,7 +464,10 @@ export class CodeApplication extends Disposable {
 		};
 
 		const defaultSession = session.defaultSession as unknown as SessionWithCodeCachePathSupport;
-		if (typeof defaultSession.setCodeCachePath === 'function' && this.environmentMainService.codeCachePath) {
+		// Volt: the main entry sets the path at `ready`, before the launch window's renderer starts (src/main.ts); setting
+		// it again here would recreate the cache under that renderer.
+		const codeCachePathApplied = (globalThis as Record<string, unknown>)[CODE_CACHE_PATH_APPLIED_KEY] === true;
+		if (!codeCachePathApplied && typeof defaultSession.setCodeCachePath === 'function' && this.environmentMainService.codeCachePath) {
 			// Make sure to partition Chrome's code cache folder
 			// in the same way as our code cache path to help
 			// invalidate caches that we know are invalid
