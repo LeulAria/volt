@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { decodeBase64 } from '../../../../../base/common/buffer.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { acpAdapterPreload, CLAUDE_ACP_AGENT_MODULE, CLAUDE_ACP_AUTH_PROBE_FALLBACK_MS, claudeAcpTransformSource } from '../../common/claudeAcpPatch.js';
+import { acpAdapterPreload, CLAUDE_ACP_AGENT_MODULE, CLAUDE_ACP_AUTH_PROBE_FALLBACK_MS, CLAUDE_ACP_COMPILE_CACHE_FLUSH_MS, claudeAcpCompileCacheSource, claudeAcpTransformSource } from '../../common/claudeAcpPatch.js';
 
 type Transform = (source: string) => { text?: string; failed?: string };
 
@@ -149,5 +149,54 @@ suite('Claude ACP adapter patch', () => {
 		assert.ok(source.includes(JSON.stringify(CLAUDE_ACP_AGENT_MODULE)));
 		// Plain base64: safe as one argv entry, through any shell quoting.
 		assert.match(preload, /^[A-Za-z0-9:;,/+=.-]+$/);
+		// The compile cache comes on before anything of the adapter loads.
+		assert.ok(source.indexOf('enableCompileCache') < source.indexOf('registerHooks'));
+	});
+
+	suite('compile cache', () => {
+		type Enable = (nodeModule: object, env: Record<string, string | undefined>, home: string | undefined, setTimer: (run: () => void, ms: number) => unknown) => string | undefined;
+		const enable = () => new Function(`return ${claudeAcpCompileCacheSource()}`)() as Enable;
+		function fakeNode(options: { throws?: boolean } = {}) {
+			const calls: string[] = [];
+			return {
+				calls,
+				nodeModule: {
+					enableCompileCache: (dir: string) => { if (options.throws) { throw new Error('read-only'); } calls.push('enable ' + dir); },
+					flushCompileCache: () => calls.push('flush'),
+				},
+			};
+		}
+		const timers = () => {
+			const all: { run: () => void; ms: number; unref: boolean }[] = [];
+			return { all, set: (run: () => void, ms: number) => { const t = { run, ms, unref: false }; all.push(t); return { unref: () => { t.unref = true; } }; } };
+		};
+
+		test('an unconfined adapter caches in ~/.volt, which no sandboxed process may write, and writes the cache itself', () => {
+			const node = fakeNode();
+			const t = timers();
+			// A temp-folder XDG_CACHE_HOME (anyone may write there) is not the sandbox's.
+			assert.strictEqual(enable()(node.nodeModule, { XDG_CACHE_HOME: '/tmp/xdg' }, '/Users/me', t.set), '/Users/me/.volt/acp-node-cache');
+			assert.deepStrictEqual(node.calls, ['enable /Users/me/.volt/acp-node-cache']);
+			// Volt stops adapters with a signal, which skips Node's write at exit.
+			assert.deepStrictEqual(t.all.map(x => [x.ms, x.unref]), CLAUDE_ACP_COMPILE_CACHE_FLUSH_MS.map(ms => [ms, true]));
+			t.all.forEach(x => x.run());
+			assert.deepStrictEqual(node.calls.slice(1), ['flush', 'flush']);
+		});
+
+		test('a sandboxed adapter caches in its project\'s own sandbox cache', () => {
+			const node = fakeNode();
+			const dir = enable()(node.nodeModule, { XDG_CACHE_HOME: '/Users/me/.volt/sandbox-cache/0123456789abcdef/xdg' }, '/Users/me', timers().set);
+			assert.strictEqual(dir, '/Users/me/.volt/sandbox-cache/0123456789abcdef/xdg/volt-acp-node');
+			assert.deepStrictEqual(node.calls, [`enable ${dir}`]);
+		});
+
+		test('a node without the cache, or a folder it cannot use, starts the adapter as before', () => {
+			assert.strictEqual(enable()({}, {}, '/Users/me', timers().set), undefined);
+			const failing = fakeNode({ throws: true });
+			const t = timers();
+			assert.strictEqual(enable()(failing.nodeModule, {}, '/Users/me', t.set), undefined);
+			assert.strictEqual(t.all.length, 0);
+			assert.strictEqual(enable()(fakeNode().nodeModule, {}, undefined, timers().set), undefined);
+		});
 	});
 });

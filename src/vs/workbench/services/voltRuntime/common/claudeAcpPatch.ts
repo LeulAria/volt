@@ -19,7 +19,8 @@ import { encodeBase64, VSBuffer } from '../../../../base/common/buffer.js';
  * Volt cannot switch this off with a flag or an environment variable, so it starts the adapter
  * with a module hook (`node --import <preload>`) that edits the adapter's `v1/acp-agent.js` as it
  * loads: the work runs once the turn's result is in. Every edit names text that must occur exactly
- * once; when any does not (another adapter version), the file loads untouched.
+ * once; when any does not (another adapter version), the file loads untouched. The same preload turns on
+ * Node's compile cache for the adapter (see {@link claudeAcpCompileCacheSource}).
  */
 export interface IAcpSourcePatch {
 	readonly id: string;
@@ -95,6 +96,34 @@ export function claudeAcpTransformSource(patches: readonly IAcpSourcePatch[] = C
 })(${JSON.stringify(patches)}, ${JSON.stringify(HELPERS)})`;
 }
 
+/** Node writes its compile cache at a normal exit only; Volt stops adapters with a signal, so the preload writes it itself after these. */
+export const CLAUDE_ACP_COMPILE_CACHE_FLUSH_MS: readonly number[] = [5_000, 60_000];
+
+/**
+ * JavaScript source of `(nodeModule, env, home, setTimer) => dir | undefined`: turns on Node's compile cache for the
+ * adapter's node, so a stopped chat's agent that comes back (or any new one) skips compiling the adapter and the
+ * Agent SDK again (`compileSourceTextModule` was 210-520 ms of a cold start's 0.5-1.1 s to `initialize` under load).
+ *
+ * The folder follows the process's trust: a sandboxed adapter (Volt's sandbox points `XDG_CACHE_HOME` at the
+ * project's own sandbox cache, `~/.volt/sandbox-cache/<key>/xdg`) caches there, where only that project's
+ * sandboxed processes write; an unconfined one caches in `~/.volt/acp-node-cache`, which no sandboxed process may
+ * write. Never the temp folder: every sandboxed agent may write there, and an unconfined adapter would load its code.
+ * The cache is only a cache: Node checks each entry against the module's source and compiles afresh on any mismatch.
+ */
+export function claudeAcpCompileCacheSource(): string {
+	return `((nodeModule, env, home, setTimer) => {
+	if (typeof nodeModule.enableCompileCache !== 'function') { return undefined; }
+	const xdg = env.XDG_CACHE_HOME;
+	const dir = xdg && xdg.includes('/.volt/sandbox-cache/') ? xdg + '/volt-acp-node' : home ? home + '/.volt/acp-node-cache' : undefined;
+	if (!dir) { return undefined; }
+	try { nodeModule.enableCompileCache(dir); } catch { return undefined; }
+	for (const ms of ${JSON.stringify(CLAUDE_ACP_COMPILE_CACHE_FLUSH_MS)}) {
+		setTimer(() => { try { nodeModule.flushCompileCache?.(); } catch { } }, ms)?.unref?.();
+	}
+	return dir;
+})`;
+}
+
 /** The hook body both module-hook APIs share: `patched(url, loadResult)`. */
 function hookCore(patches: readonly IAcpSourcePatch[]): string {
 	return `const target = ${JSON.stringify(CLAUDE_ACP_AGENT_MODULE)};
@@ -120,6 +149,8 @@ export function claudeAcpPreloadSource(patches: readonly IAcpSourcePatch[] = CLA
 	const core = hookCore(patches);
 	const asyncHooks = `${core}export async function load(url, context, nextLoad) { return patched(url, await nextLoad(url, context)); }\n`;
 	return `import * as nodeModule from 'node:module';
+import { homedir } from 'node:os';
+${claudeAcpCompileCacheSource()}(nodeModule, process.env, homedir(), setTimeout);
 ${core}if (typeof nodeModule.registerHooks === 'function') {
 	nodeModule.registerHooks({ load: (url, context, nextLoad) => patched(url, nextLoad(url, context)) });
 } else if (typeof nodeModule.register === 'function') {
