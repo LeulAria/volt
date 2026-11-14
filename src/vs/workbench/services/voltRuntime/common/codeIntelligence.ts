@@ -167,6 +167,7 @@ export const CODE_INTELLIGENCE_TOOLS: readonly IVoltHostToolInfo[] = [
 			'Regex or literal search over the project\'s files, answered from Volt\'s local trigram index: milliseconds even in very large repos, where ripgrep re-reads every file.',
 			'Same semantics as ripgrep (honors .gitignore, case-insensitive unless case_sensitive). Results are grouped by file with line numbers.',
 			'Prefer it over Grep, rg or find for searching code. Run several in parallel when exploring.',
+			'Code by its shape across lines (a call with a literal argument after a callback, nested calls) is code_nav op structural, not a multiline regex.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',

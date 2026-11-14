@@ -6,7 +6,8 @@
 import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { ICallEdge, ICodeIntelHost, ICodeLocation, ICodeNavIndex, ICodeSymbol, isTestPath, runCodeNav, splitPathSymbol } from '../../browser/tools/codeTools.js';
+import { CODE_NAV_SCHEMA, ICallEdge, ICodeIntelHost, ICodeLocation, ICodeNavIndex, ICodeSymbol, isTestPath, runCodeNav, splitPathSymbol } from '../../browser/tools/codeTools.js';
+import { CODE_INTELLIGENCE_TOOLS, INSTANT_GREP_TOOL_NAME } from '../../common/codeIntelligence.js';
 
 /**
  * code_nav's impact, body and structural ops: one call for what a change reaches, one symbol's
@@ -199,5 +200,12 @@ suite('code_nav impact, body, structural', () => {
 		await runCodeNav(host(), root, { op: 'structural', pattern: 'setTimeout($F, $MS)', glob: '**/*.ts, !**/*.test.*', where: { MS: '^\\d', bad: 3 } }, nav);
 		const request = seen as { includes?: string[]; excludes?: string[]; where?: Record<string, string> };
 		assert.deepStrictEqual([request.includes, request.excludes, request.where], [['**/*.ts'], ['**/*.test.*'], { MS: '^\\d' }]);
+		const properties = (CODE_NAV_SCHEMA as { properties: Record<string, unknown> }).properties;
+		assert.ok(properties.where && properties.glob, 'the schema (additionalProperties false) lets where and glob through');
+	});
+
+	test('instant_grep points a multi-line code shape search to op structural', () => {
+		const grep = CODE_INTELLIGENCE_TOOLS.find(tool => tool.name === INSTANT_GREP_TOOL_NAME)!;
+		assert.ok(grep.description.includes('code_nav op structural'), grep.description);
 	});
 });
