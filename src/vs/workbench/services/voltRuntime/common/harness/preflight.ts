@@ -35,7 +35,8 @@ const A11Y = /\b(?:accessib\w*|a11y|screen ?readers?|contrast|aria|wcag|keyboard
 const LAYOUT = /\b(?:overflow\w*|responsive|layout|scroll(?:s|ing)? sideways|horizontal(?:ly)? scroll\w*|phones?|mobile|tablet|narrow|small screens?|viewport|breakpoints?)\b/i;
 const PERF = /\b(?:slow|performance|perf|lcp|cls|load(?:ing)? time|speed (?:it )?up|janky|jank)\b/i;
 
-export function preflightPlan(text: string, intent: IIntent): IPreflightPlan | undefined {
+/** `delegating`: the chat can hand work to subagents (a top-level chat, not a subagent). */
+export function preflightPlan(text: string, intent: IIntent, options?: { readonly delegating?: boolean }): IPreflightPlan | undefined {
 	if (!intent.uiWork || intent.lane === 'chat' || intent.lane === 'fast') {
 		return undefined;
 	}
@@ -64,11 +65,11 @@ export function preflightPlan(text: string, intent: IIntent): IPreflightPlan | u
 	return {
 		browser: !draft && BROWSER_CHECK.test(text),
 		draft,
-		// A request that hands its work to subagents gets no project files: its subagents read what
-		// they need, and the files only sit in every request of the delegating chat. Replaying a Haiku
-		// lead's last t1 turn with and without them (round-5 bench, n 16 / 6): thinking 962 / 479
-		// tokens, 8.0 / 5.0 s.
-		files: !draft && !requestAsksForSubagents(text),
+		// A chat whose request hands the work to subagents gets no project files: its subagents read
+		// what they need, and the files only sit in every request of the delegating chat. Replaying a
+		// Haiku lead's last t1 turn with and without them (round-5 bench, n 16 / 6): thinking 962 / 479
+		// tokens, 8.0 / 5.0 s. A subagent's own prompt names delegate_task too: it keeps its files.
+		files: !draft && !(options?.delegating && requestAsksForSubagents(text)),
 		a11y: !draft && A11Y.test(text),
 		widths: draft ? [] : [...widths].sort((a, b) => a - b).slice(0, 4),
 		perf: !draft && PERF.test(text),

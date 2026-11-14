@@ -4827,7 +4827,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (session.messages.some(message => message.role === 'assistant')) {
 			return undefined;
 		}
-		const plan = preflightPlan(request.text, intent);
+		const plan = preflightPlan(request.text, intent, { delegating: !session.subagent });
 		const root = this.executionRoot(session);
 		if (!plan || !root || root.scheme !== Schemas.file) {
 			return undefined;
