@@ -660,7 +660,7 @@ export function findMatches(pattern: SyntaxNode, root: SyntaxNode, max: number, 
 		const node = cursor.currentNode;
 		if (anyType || node.type === target || node.type === pattern.type) {
 			const vars = new Map<string, string>();
-			const range = `${node.startIndex}:${node.endIndex}`;
+			const range = `${node.startPosition.row}.${node.startPosition.column}:${node.endPosition.row}.${node.endPosition.column}`;
 			if (range !== lastRange && matchNode(pattern, node, vars) && where.every(([name, test]) => test.test(vars.get(name) ?? ''))) {
 				lastRange = range;
 				const named = [...vars].filter(([name]) => name && name !== '_');
