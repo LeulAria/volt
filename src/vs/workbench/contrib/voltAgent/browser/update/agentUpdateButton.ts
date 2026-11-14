@@ -32,6 +32,7 @@ import { summarizeReleaseNotes } from '../../common/agentUpdateNotes.js';
 import { createRefreshSpinner, setRefreshSpinnerRunning } from '../usage/agentUsageIcons.js';
 import { createVoltButton } from '../chrome/voltButton.js';
 import { createHomeRefreshIcon } from '../home/agentHomeIcons.js';
+import { agentHomeFooterIn, onDidChangeAgentHomeFooters } from '../home/agentHomeFooter.js';
 
 /** States worth a button in the agent sidebar footer. */
 function isActionable(state: State): boolean {
@@ -254,8 +255,9 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 	}
 
 	/**
-	 * The footer belongs to the agent list (agentHomePane), which can be rebuilt. While an update is
-	 * pending, look for it every couple of seconds and re-attach when it was replaced.
+	 * The footer belongs to the agent list (agentHomePane), which can be rebuilt: the button moves to the
+	 * new footer when one is announced (agentHomeFooter.ts). It used to search the window for it every
+	 * 2 s for good, about 3 ms of a big window's DOM each time while no footer was shown (round 4, A6).
 	 */
 	private attach(): void {
 		const store = new DisposableStore();
@@ -264,7 +266,7 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 			if (this.button?.isConnected) {
 				return;
 			}
-			const footer = this.layoutService.mainContainer.querySelector<HTMLElement>('.volt-agent-home-footer');
+			const footer = agentHomeFooterIn(this.layoutService.mainContainer);
 			if (!footer) {
 				return;
 			}
@@ -273,10 +275,8 @@ export class AgentUpdateButtonContribution extends Disposable implements IWorkbe
 			this.renderButton();
 		};
 		tryAttach();
-		const window = getWindow(this.layoutService.mainContainer);
-		const handle = window.setInterval(tryAttach, 2000);
+		store.add(onDidChangeAgentHomeFooters(tryAttach));
 		store.add(toDisposable(() => {
-			window.clearInterval(handle);
 			this.button?.remove();
 			this.button = undefined;
 			this.glyph = undefined;

@@ -450,7 +450,8 @@ suite('Agent transcript run controls', () => {
 		// Same second: the node stays (a write, even of the same text, would lay the thread out again).
 		tickElapsed(root, 6400);
 		assert.strictEqual(label.firstChild, text);
-		tickElapsed(root, 8000);
+		assert.strictEqual(tickElapsed(root, 8000), 1, 'a live counter keeps the chat clock at one second');
 		assert.notStrictEqual(label.firstChild, text);
+		assert.strictEqual(tickElapsed(document.createElement('div'), 8000), 0, 'none: the clock may slow down');
 	});
 });

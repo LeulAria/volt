@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IntervalTimer, RunOnceScheduler } from '../../../../base/common/async.js';
+import { disposableTimeout, IntervalTimer, RunOnceScheduler } from '../../../../base/common/async.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
@@ -18,10 +18,15 @@ import { readWorktreeLimits, WORKTREE_MAX_COUNT_SETTING, WORKTREE_MAX_SIZE_GB_SE
 const PERIOD_MS = 2 * 60 * 60_000;
 /** A stepper sends a value per click; the cleanup waits for the last one. */
 const SETTLE_MS = 3_000;
+/**
+ * The first look after launch waits this long: it sizes every checkout for the size limit, which ran 3 s after the
+ * chat list loaded, while the window was still starting and the user opening chats (16 GB of checkouts: 13 s of CPU).
+ */
+const FIRST_PASS_DELAY_MS = 10 * 60_000;
 
 /**
  * Settings > Worktrees > Cleanup: keeps `~/.volt/worktrees` within its count and size limits,
- * oldest checkouts first, on startup, every couple of hours and when a limit changes. The main
+ * oldest checkouts first, a while after startup, every couple of hours and when a limit changes. The main
  * process does the removing, one window at a time, and never touches a dirty checkout.
  */
 export class VoltWorktreeCleanupContribution extends Disposable implements IWorkbenchContribution {
@@ -44,7 +49,7 @@ export class VoltWorktreeCleanupContribution extends Disposable implements IWork
 			}
 		}));
 		this._register(new IntervalTimer()).cancelAndSet(() => this.scheduler.schedule(), PERIOD_MS);
-		void history.whenReady.then(() => this.scheduler.schedule());
+		void history.whenReady.then(() => this._register(disposableTimeout(() => this.scheduler.schedule(), FIRST_PASS_DELAY_MS)));
 	}
 
 	private async run(): Promise<void> {

@@ -494,19 +494,22 @@ function appendElapsed(parent: HTMLElement, since: number): void {
 	elapsed.setAttribute('aria-label', localize('voltAgent.elapsedAria', "Running for {0}", elapsed.textContent));
 }
 
-/** Refreshes the live elapsed labels under `root`; called once a second while a turn runs. */
-export function tickElapsed(root: HTMLElement, now = Date.now()): void {
+/** Updates the live "elapsed" counters under `root`; how many there are (each one wants the clock every second). */
+export function tickElapsed(root: HTMLElement, now = Date.now()): number {
 	// A live collection: cached between ticks while the nodes under `root` stay the same, where a
 	// query walked a long chat's whole tree every second.
+	let live = 0;
 	for (const el of root.getElementsByClassName(ELAPSED_CLASS)) {
 		const started = Number((el as HTMLElement).dataset?.startedAt);
 		if (Number.isFinite(started)) {
+			live++;
 			const text = formatElapsed(now - started);
 			if (el.textContent !== text) {
 				el.textContent = text;
 			}
 		}
 	}
+	return live;
 }
 
 /**

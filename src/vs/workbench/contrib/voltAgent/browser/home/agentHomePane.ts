@@ -56,6 +56,7 @@ import { IAgentRuntimeService, VOLT_PROJECT_SETTINGS_COMMAND_ID } from '../../..
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../../../../platform/workspaces/common/workspaces.js';
+import { registerAgentHomeFooter } from './agentHomeFooter.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID, OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
@@ -147,6 +148,8 @@ const CLOCK_TICK_MS = 30_000;
 const REFRESH_IDLE_TIMEOUT_MS = 120;
 /** How long after a press-open the completing click is still the same open. */
 const PRESS_OPEN_WINDOW_MS = 1_500;
+/** A row that reaches a still pointer by a scroll is not read ahead until the list has been still this long. */
+const READ_AHEAD_AFTER_SCROLL_MS = 150;
 /** How long the pointer rests on an agent tab before its details card opens. */
 const SESSION_HOVER_DELAY_MS = 500;
 /** Tallest the last message in a chat's hover card gets before it scrolls. */
@@ -1227,6 +1230,9 @@ export class AgentHomePane extends Disposable {
 	private readonly savingTitles = new Map<string, string>();
 	/** Related Chats: one project's chats only. */
 	private readonly scoped: boolean;
+	/** The list's footer (Settings, Usage, ...); none in a scoped list. */
+	private footer: HTMLElement | undefined;
+	private footerRegistered = false;
 	/** The project Related Chats lists, and its name. */
 	private scope: { readonly root: URI; readonly name: string } | undefined;
 	/** What the Related Chats search field holds, trimmed. */
@@ -1408,12 +1414,23 @@ export class AgentHomePane extends Disposable {
 		AgentHomeListFocusContext.bindTo(tree.contextKeyService).set(true);
 
 		// Rows still below the fold dissolve into the footer; the fade lifts at the end of the list.
+		let scrolledAt = 0;
 		store.add(tree.onDidScroll(e => {
 			container.classList.toggle('more-below', e.scrollTop + e.height < e.scrollHeight - ROW_HEIGHT);
+			if (e.scrollTopChanged) {
+				scrolledAt = Date.now();
+				AgentEditorInput.cancelReadAhead();
+			}
 		}));
 
-		// A chat is read ahead of its open: the row under the pointer, and the one keyboard focus lands on.
-		store.add(tree.onMouseOver(e => this.prefetch(e.element)));
+		// A chat is read ahead of its open: the row under the pointer, and the one keyboard focus lands on. Rows a
+		// scroll moves under a still pointer are not pointed at.
+		store.add(tree.onMouseOver(e => {
+			if (Date.now() - scrolledAt > READ_AHEAD_AFTER_SCROLL_MS) {
+				this.prefetch(e.element);
+			}
+		}));
+		store.add(addDisposableListener(container, 'mouseleave', () => AgentEditorInput.cancelReadAhead()));
 		store.add(tree.onDidChangeFocus(e => this.prefetch(e.elements[0])));
 		// The arrows walk the chats: each one they land on shows, and the keyboard stays in the list.
 		store.add(tree.onDidChangeFocus(e => {
@@ -1671,7 +1688,7 @@ export class AgentHomePane extends Disposable {
 	 * turns into a Back button that closes it and returns to the chat underneath.
 	 */
 	private installSettingsButton(keybindingService: IKeybindingService): void {
-		const footer = append(this.element, $('.volt-agent-home-footer'));
+		const footer = this.footer = append(this.element, $('.volt-agent-home-footer'));
 
 		const back = append(footer, $('button.volt-agent-home-back')) as HTMLButtonElement;
 		back.type = 'button';
@@ -2628,6 +2645,8 @@ export class AgentHomePane extends Disposable {
 	private prefetch(element: AgentHomeElement | null | undefined): void {
 		if (element?.type === 'session' && !this.isActiveChat(element.session.id)) {
 			this.history.prefetch(element.session.id);
+			// With the agent server the chat itself is read ahead (opened on the server, its transcript here).
+			AgentEditorInput.readAhead(element.session.id, this.instantiationService);
 		}
 	}
 
@@ -3439,6 +3458,11 @@ export class AgentHomePane extends Disposable {
 	}
 
 	layout(): void {
+		// The footer is announced once it is on the page (the update button lives in it).
+		if (this.footer && !this.footerRegistered && this.footer.isConnected) {
+			this.footerRegistered = true;
+			this._register(registerAgentHomeFooter(this.footer));
+		}
 		const height = this.treeContainer.clientHeight;
 		const width = this.treeContainer.clientWidth;
 		if (height <= 0 || width <= 0) {

@@ -5961,6 +5961,11 @@ pre.volt-agent-searchable {
 	display: none !important;
 }
 
+/* A just-opened chat is counted after its first frame: until then the meter keeps its place, empty. */
+.volt-agent-context-meter.counting {
+	visibility: hidden;
+}
+
 .volt-agent-context-meter svg {
 	display: block;
 	flex: none;

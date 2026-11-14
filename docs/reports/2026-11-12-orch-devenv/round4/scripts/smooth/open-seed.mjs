@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+// Round 4 copy of round3/scripts/thread/seed.mjs with the chat-open sizes (small/medium/large + cold copies).
+// Seeds a Volt test profile with long chats written in Volt's own history format
+// (<ud>/User/agentSessions/index.json + sessions/<id>.jsonl), the format the agent server and the
+// window read. Re-runnable: replaces the chats it made before, keeps nothing else.
+//
+//   node seed.mjs <user-data-dir> <repo-folder> [--chats long41k,long45k,long75k,short,a11]
+//
+// An "item" is one row a reader sees: a user prompt, a reply text, or a tool call. A turn here is
+// 1 prompt + 20 texts + 20 file reads = 41 items (one text in five holds a code block, like
+// ADEMark's long-2000). The last text of every chat ends with `LONGTHREAD-END <chat>` so a probe
+// can tell the end is on screen.
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+
+const [ud, repo, ...rest] = process.argv.slice(2);
+if (!ud || !repo) {
+	console.error('usage: seed.mjs <user-data-dir> <repo-folder> [--chats a,b]');
+	process.exit(2);
+}
+const chatsArg = rest.includes('--chats') ? rest[rest.indexOf('--chats') + 1] : 'from,small,medium,large';
+const wanted = new Set(chatsArg.split(','));
+
+const ITEMS_PER_TURN = 41;
+const base = path.join(ud, 'User', 'agentSessions');
+const sessions = path.join(base, 'sessions');
+fs.mkdirSync(sessions, { recursive: true });
+fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+for (let i = 0; i < 20; i++) {
+	const file = path.join(repo, 'src', `mod${i}.ts`);
+	if (!fs.existsSync(file)) {
+		fs.writeFileSync(file, `export const value${i} = ${i};\n`);
+	}
+}
+
+const now = Date.now();
+const workspace = { id: repo, label: path.basename(repo), folders: [repo] };
+const model = { ref: 'agent:seed-grok:grok-4.7', label: 'Grok 4.7' };
+
+function text(n, total, chat) {
+	const body = `Step ${n} of ${total}. Reading the next module to check its exports.`;
+	if (n === total) {
+		return `${body}\n\nLONGTHREAD-END ${chat}`;
+	}
+	return n % 5 === 0 ? `${body}\n\n\`\`\`ts\nexport const value${n} = ${n};\n\`\`\`\n` : `${body}\n`;
+}
+
+function read(n) {
+	const file = path.join(repo, 'src', `mod${n % 20}.ts`);
+	return { kind: 'activity', item: { kind: 'read', label: 'Read', detail: `mod${n % 20}.ts`, path: file, files: [file], callId: `call-${n}`, toolName: 'Read' } };
+}
+
+/** One reply of `steps` text + read pairs, numbered from `first`. */
+function reply(turn, first, steps, total, chat, at) {
+	const segments = [];
+	let plain = '';
+	for (let i = 0; i < steps; i++) {
+		const n = first + i;
+		const t = text(n, total, chat);
+		segments.push({ kind: 'text', text: t });
+		plain += t;
+		if (n !== total) {
+			segments.push(read(n));
+		}
+	}
+	return {
+		plain,
+		message: { kind: 'agent', id: turn, title: '', steps: [], segments, blockState: {}, startedAt: at, endedAt: at + 9000, durationMs: 9000, model, outcome: 'done' },
+	};
+}
+
+/** `turns` exchanges; `stepsPerTurn` text + read pairs each (one turn = 1 + 2 * steps items). */
+/** `rank`: hours since the chat's last turn, which orders the sidebar (newest first). */
+function writeChat(chat, title, turns, stepsPerTurn, firstPrompt, rank = 1) {
+	const id = `agent-bench-${chat}`;
+	const createdAt = now - turns * 60_000 - (rank + 1) * 3_600_000;
+	const total = turns * stepsPerTurn;
+	const lines = [JSON.stringify({ type: 'header', version: 1, id, createdAt, workspace })];
+	let at = createdAt;
+	for (let t = 0; t < turns; t++) {
+		const turn = crypto.randomUUID();
+		const prompt = t === 0 && firstPrompt ? firstPrompt : `Turn ${t + 1}: keep reading the modules (${chat}).`;
+		lines.push(JSON.stringify({ type: 'user', turn, at, text: prompt, message: { kind: 'user', id: turn, text: prompt, mode: 'agent' } }));
+		const { plain, message } = reply(turn, t * stepsPerTurn + 1, stepsPerTurn, total, chat, at + 1000);
+		lines.push(JSON.stringify({ type: 'agent', turn, at: at + 10_000, final: true, status: 'done', text: plain, summary: 'Read modules', message }));
+		at += 60_000;
+	}
+	const file = path.join(sessions, `${id}.jsonl`);
+	fs.writeFileSync(file, lines.join('\n') + '\n');
+	const items = turns * (1 + stepsPerTurn * 2) - 1;
+	const meta = {
+		id, title, customTitle: true, createdAt, updatedAt: at, workspaceId: workspace.id, workspaceLabel: workspace.label, workspaceFolder: repo,
+		turnCount: turns, preview: firstPrompt ?? title, summary: 'Read modules', status: 'done', lastPromptAt: at - 60_000, lastUserPromptAt: at - 60_000, mode: 'agent', model: model.label,
+	};
+	console.log(`${id}\t${items} items\t${turns} turns\t${(fs.statSync(file).size / 1e6).toFixed(1)} MB`);
+	return meta;
+}
+
+/**
+ * T3's long reasoning preview: one reply that thought for `lines` lines (prose, lists and code, about
+ * 80 characters a line) before a short answer.
+ */
+function writeReasoningChat(chat, title, lines, rank) {
+	const id = `agent-bench-${chat}`;
+	const createdAt = now - (rank + 1) * 3_600_000;
+	let thought = '';
+	for (let i = 1; i <= lines; i++) {
+		thought += i % 40 === 0
+			? `\n\`\`\`ts\nconst step${i} = check(modules[${i % 20}]);\n\`\`\`\n\n`
+			: i % 7 === 0 ? `- Step ${i}: the export of mod${i % 20}.ts still needs its test, so it goes on the list.\n`
+				: `Line ${i} of the plan: read mod${i % 20}.ts, compare its exports with the index, note what differs.\n`;
+	}
+	const turn = crypto.randomUUID();
+	const prompt = 'Think it through at length, then answer.';
+	const answer = `Done thinking.\n\nLONGTHREAD-END ${chat}`;
+	const message = { kind: 'agent', id: turn, title: '', steps: [], segments: [{ kind: 'thought', text: thought, startedAt: createdAt + 1000, updatedAt: createdAt + 61_000 }, { kind: 'text', text: answer }], blockState: {}, startedAt: createdAt + 1000, endedAt: createdAt + 62_000, durationMs: 61_000, model, outcome: 'done' };
+	const recs = [
+		JSON.stringify({ type: 'header', version: 1, id, createdAt, workspace }),
+		JSON.stringify({ type: 'user', turn, at: createdAt, text: prompt, message: { kind: 'user', id: turn, text: prompt, mode: 'agent' } }),
+		JSON.stringify({ type: 'agent', turn, at: createdAt + 62_000, final: true, status: 'done', text: answer, summary: 'Thought at length', message }),
+	];
+	const file = path.join(sessions, `${id}.jsonl`);
+	fs.writeFileSync(file, recs.join('\n') + '\n');
+	console.log(`${id}\tthought ${thought.length} chars, ${lines} lines\t${(fs.statSync(file).size / 1e6).toFixed(1)} MB`);
+	return {
+		id, title, customTitle: true, createdAt, updatedAt: createdAt + 62_000, workspaceId: workspace.id, workspaceLabel: workspace.label, workspaceFolder: repo,
+		turnCount: 1, preview: prompt, summary: 'Thought at length', status: 'done', lastPromptAt: createdAt, lastUserPromptAt: createdAt, mode: 'agent', model: model.label,
+	};
+}
+
+// Round 4 (smooth), chat open: three sizes plus the chat a switch starts from. Titles are distinct prefixes, so the
+// sidebar row a bench clicks is found by its first words.
+const SIZES = {
+	small: { title: 'Open small', turns: 2, steps: 2 },        // 9 items: fits on one screen
+	medium: { title: 'Open medium', turns: 30, steps: 10 },    // 629 items
+	large: { title: 'Open large', turns: 1000, steps: 20 },    // 41k items (round 3's long41k shape)
+};
+const specs = {
+	from: () => writeChat('from', 'From thread', 1, 2, undefined, 0),
+};
+for (const [size, s] of Object.entries(SIZES)) {
+	specs[size] = () => writeChat(size, s.title, s.turns, s.steps, undefined, 1);
+}
+// `--cold N`: N copies of each size, each opened once by a first-open run (neither window nor server loaded them).
+const coldCopies = rest.includes('--cold') ? Number(rest[rest.indexOf('--cold') + 1]) : 0;
+for (const [size, s] of Object.entries(SIZES)) {
+	for (let i = 1; i <= coldCopies; i++) {
+		specs[`${size}-c${i}`] = () => writeChat(`${size}-c${i}`, `Cold ${size} ${i}`, s.turns, s.steps, undefined, 2 + i);
+		wanted.add(`${size}-c${i}`);
+	}
+}
+
+const indexFile = path.join(base, 'index.json');
+let index = { version: 1, sessions: [] };
+try {
+	index = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
+} catch { }
+const made = [];
+for (const [name, make] of Object.entries(specs)) {
+	if (wanted.has(name)) {
+		made.push(make());
+	}
+}
+const ids = new Set(made.map(m => m.id));
+index.sessions = [...index.sessions.filter(s => !ids.has(s.id)), ...made];
+fs.writeFileSync(indexFile, JSON.stringify(index));
+console.log(`index: ${index.sessions.length} chats (items per turn ${ITEMS_PER_TURN})`);
