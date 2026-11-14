@@ -357,6 +357,17 @@ function cachedWhich(stdio: IVoltStdioService, command: string): Promise<string 
 }
 
 /** The CLI's link to its backend failed, not the model: `RetriableError: Connection stalled`, `[unavailable] PING timed out`, `ECONNRESET`. */
+/**
+ * A session failure that says the agent process behind the adapter is gone: claude-agent-acp's
+ * `transport_lost` / `worker_shutdown`, category `connection` at severity `error`. The same category
+ * at severity `warning` is a retry in progress ("Reconnecting to Claude, attempt 1 of 10.": the CLI
+ * retrying a dropped API connection itself, ADEMark C5), which must stay a notice: failing the turn
+ * on it threw the retry away and restarted the agent into the same outage (round 6, C5 run 1).
+ */
+export function isLostAgentProcess(notice: { readonly severity: string; readonly failure?: { readonly category: string } }): boolean {
+	return notice.failure?.category === 'connection' && notice.severity === 'error';
+}
+
 export function isAgentTransportError(message: string): boolean {
 	return /RetriableError|Connection stalled|PING timed out|ECONNRESET|ETIMEDOUT|socket hang up|\[(unavailable|aborted|deadline_exceeded)\]/i.test(message);
 }
@@ -1662,7 +1673,7 @@ export class AcpAgentProvider implements IAgentProvider {
 		for (const event of this.mapUpdate(params)) {
 			if (event.type === 'notice') {
 				this.pushNotice(live, turn, event);
-				if (event.failure?.category === 'connection') {
+				if (isLostAgentProcess(event)) {
 					// The agent process behind the adapter died (killed, crashed): claude-agent-acp reports
 					// `transport_lost`, then answers the prompt as if the turn had ended, and the chat sat idle on
 					// a half-done task (ADEMark C4, round 6). It is the process death it is: the turn fails as a
@@ -2042,7 +2053,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				for (const notice of notices) {
 					this.pushNotice(live, turn, notice);
 				}
-				const lost = notices.find(notice => notice.failure?.category === 'connection');
+				const lost = notices.find(isLostAgentProcess);
 				if (lost && result?.stopReason !== 'cancelled' && !turn.userCancelled) {
 					// claude-agent-acp attaches a `transport_lost` session failure to the prompt response when its
 					// Claude process died mid-turn (killed, crashed), and the response reads as a normal end of turn.

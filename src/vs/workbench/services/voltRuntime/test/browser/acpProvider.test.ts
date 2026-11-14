@@ -459,6 +459,18 @@ suite('ACP provider supervision', () => {
 		await finish(env, handle);
 	});
 
+	test('a connection retry in progress (an api_retry warning) is a notice only: the CLI is retrying itself', async () => {
+		const env = setup();
+		const { handle, turn } = await startTurn(env);
+		// claude-agent-acp's `api_retry` with no status: kind transport_lost, severity warning, the CLI retrying a dropped connection.
+		env.agent.update('p1', { sessionUpdate: 'session_info_update', _meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: 'warning', title: 'Reconnecting to Claude, attempt 1 of 10.', category: 'connection', actions: ['new_session'] } } } } });
+		env.agent.update('p1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Back, done.' } });
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		assert.deepStrictEqual(kinds(turn.events), ['notice:Reconnecting to Claude, attempt 1 of 10.', 'text.delta', 'run.end:done']);
+		await finish(env, handle);
+	});
+
 	test('a service session failure (overloaded) is a notice only; the turn ends as the agent says', async () => {
 		const env = setup();
 		const { handle, turn } = await startTurn(env);
