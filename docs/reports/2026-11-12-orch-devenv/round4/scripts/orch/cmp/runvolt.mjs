@@ -237,8 +237,12 @@ async function pickProject(c, folder) {
 		throw new Error(`no item for ${folder} in the project menu: ${JSON.stringify(items)}`);
 	}
 	await c.click(...open);
-	await sleep(800);
-	const shown = await c.evaluate(`(() => document.querySelector('.volt-agent-primary-header-project')?.textContent ?? '')()`);
+	// Before the clock starts: under heavy load the chip can take seconds to show the new project.
+	let shown = '';
+	for (let i = 0; i < 50 && shown !== name; i++) {
+		await sleep(i ? 200 : 800);
+		shown = await c.evaluate(`(() => document.querySelector('.volt-agent-primary-header-project')?.textContent ?? '')()`);
+	}
 	if (shown !== name) {
 		throw new Error(`project chip says "${shown}", not ${name}`);
 	}
