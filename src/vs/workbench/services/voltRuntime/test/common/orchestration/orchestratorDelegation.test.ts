@@ -41,6 +41,8 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.ok(text.trimEnd().endsWith('and "## Open issues" only when something is left or uncertain.'), 'the report format is the last thing it reads');
 		assert.ok(text.includes('"## Changes"') && text.includes('each done_when check: met or not met'));
 		assert.ok(text.includes('Keep it as short as the facts allow'), 'reports are short: the parent rereads each in every later request');
+		assert.ok(text.includes('If the brief says what to report or in what form (a format, a length, "only X"), report exactly that, with no headings. Otherwise use these headings'), 'a brief that sets the answer\'s form gets that form, not the headings');
+		assert.ok(text.includes('Use them as your brief says; where it says nothing, treat their claims as leads to check'), 'upstream reports are used as the brief says (a "using only these answers" brief is not told to re-check them)');
 
 		const review = buildTaskPrompt('Review it.', { role: 'review', depth: 1, isolation: 'shared', scope: ['src/header/'] });
 		assert.ok(review.includes('"## Findings"'));

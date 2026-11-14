@@ -492,7 +492,7 @@ export function buildTaskPrompt(brief: string, context: ITaskBriefContext): stri
 		lines.push(`[Volt subagent] Budget: ${caps.join('; ')}. Volt stops the work at the limit, so work efficiently and report early if the task needs much more.`);
 	}
 	if (context.after?.length) {
-		lines.push(`[Volt subagent] This task waited for ${context.after.join(', ')}; their reports are at the end. Treat their claims as leads to check, not as facts.`);
+		lines.push(`[Volt subagent] This task waited for ${context.after.join(', ')}; their reports are at the end. Use them as your brief says; where it says nothing, treat their claims as leads to check, not as facts.`);
 	}
 	if (context.isolation === 'worktree') {
 		lines.push(`[Volt subagent] You work in your own git worktree${context.worktreeBranch ? ` on branch ${context.worktreeBranch}` : ' (a separate checkout on its own branch)'}. Commit your changes there when done and name the branch in your report, so the other agent can merge it.`);
@@ -552,8 +552,10 @@ function reportFormat(role: AgentTaskRole, checks: boolean): string {
 		: '"## Findings" (what you found, with file paths and line numbers)';
 	// Short on purpose: the parent reads every report in each of its later requests, and a report is
 	// output the subagent writes on the critical path (round-3 bench: reports of 1.3-3.4 KB that
-	// restated the brief and every check took 2-5 s to write).
-	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Keep it as short as the facts allow: no restating the brief, no narration. Use these headings: "## Outcome" (done, partly done or blocked, in one sentence), ${middle}, ${verification}, and "## Open issues" only when something is left or uncertain.`;
+	// restated the brief and every check took 2-5 s to write). A brief that sets the answer's form ("at
+	// most 3 lines") gets that form: with the headings on top, t1's Q4 subagent (round-4 bench) wrote
+	// 0.6-2.1K output tokens in 4.9-11.5 s (median 8.4 s), against 3.9 s for Claude Code's.
+	return `[Volt subagent] Your final message is your report to the agent that delegated this task; nothing else you wrote reaches it. Keep it as short as the facts allow: no restating the brief, no narration. If the brief says what to report or in what form (a format, a length, "only X"), report exactly that, with no headings. Otherwise use these headings: "## Outcome" (done, partly done or blocked, in one sentence), ${middle}, ${verification}, and "## Open issues" only when something is left or uncertain.`;
 }
 
 /**
