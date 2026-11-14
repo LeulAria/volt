@@ -12,6 +12,8 @@ import { IWorkbenchLayoutService } from '../../../services/layout/browser/layout
 import { VOLT_WINDOW_TRANSPARENCY_SETTING } from '../common/agentAppearanceSettings.js';
 // Desktop-only: the app icon badge for chats that finished in the background.
 import './voltBadge.contribution.js';
+// Desktop-only: the window's last screen, painted in the next start's first frame.
+import './agentWindowSnapshot.contribution.js';
 // Desktop-only: Lid-Closed Mode (stay awake while agents work, also with the lid shut).
 import './voltAwake.contribution.js';
 // Desktop-only Volt diagnostics (tracing, stall log, heap snapshots).

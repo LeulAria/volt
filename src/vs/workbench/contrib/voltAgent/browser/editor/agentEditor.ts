@@ -42,6 +42,9 @@ import { IAgentChatForkService } from '../orchestration/agentChatFork.js';
 import { buildTranscriptRows, hasSignInNotice, ITranscriptSteer, TranscriptRow, withoutFailureNotice } from '../chrome/agentTranscript.js';
 import { fallbackSubagentView, ITranscriptHost, LiveTranscript, renderTranscript, tickElapsed } from '../chrome/agentTranscriptView.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
+import { mark } from '../../../../../base/common/performance.js';
+import { Range } from '../../../../../editor/common/core/range.js';
+import { isWindowSnapshotShown, readSnapshotInput, removeWindowSnapshot } from '../../../../../platform/voltWindowSnapshot/browser/windowSnapshotPaint.js';
 import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { DropIntoEditorController } from '../../../../../editor/contrib/dropOrPasteInto/browser/dropIntoEditorController.js';
 import { InlineCompletionsController } from '../../../../../editor/contrib/inlineCompletions/browser/controller/inlineCompletionsController.js';
@@ -9093,7 +9096,57 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		this.schedulePrewarm();
 		this.revealRequestedTurn(input.sessionId);
+		this.takeOverWindowSnapshot();
 		this.logSwitchTiming(input, clickedAt ?? started, clickedAt !== undefined, started, loaded, drawn);
+	}
+
+	/**
+	 * The window started with a picture of the screen it left (see IVoltWindowSnapshot): the chat is
+	 * drawn now, so it takes over. What was typed into the picture's composer moves into this one,
+	 * with its selection, and an Enter pressed there sends.
+	 */
+	private takeOverWindowSnapshot(): void {
+		const window = getWindow(this.container);
+		if (window !== mainWindow || !isWindowSnapshotShown(window.document) || this.shownSessionId === undefined) {
+			return;
+		}
+		const typed = readSnapshotInput(window.document);
+		const model = this.inputModel;
+		if (typed && model && this.inputEditor) {
+			if (typed.changed) {
+				model.setValue(typed.text);
+				const start = model.getPositionAt(typed.selectionStart);
+				const end = model.getPositionAt(typed.selectionEnd);
+				this.inputEditor.setSelection(Range.fromPositions(start, end));
+			}
+			if (typed.focused) {
+				this.inputEditor.focus();
+			}
+		}
+		// Removed in the frame that paints this chat, after the editors' own frame work.
+		scheduleAtNextAnimationFrame(window, () => {
+			if (removeWindowSnapshot(window.document)) {
+				mark('code/voltDidHandOffWindowSnapshot');
+			}
+			if (typed?.send && this.input) {
+				this.send();
+			}
+		});
+	}
+
+	/** The composer as the window's snapshot keeps it: its box, its text lines and its draft. */
+	windowSnapshotComposer(): { readonly editor: HTMLElement; readonly linesElement: HTMLElement | undefined; readonly text: string; readonly placeholder: string; readonly placeholderElement?: HTMLElement } | undefined {
+		const editor = this.inputEditor?.getDomNode();
+		if (!editor || !this.inputModel || !this.monacoHost.isConnected) {
+			return undefined;
+		}
+		return {
+			editor: this.monacoHost,
+			linesElement: editor.querySelector<HTMLElement>('.view-lines') ?? undefined,
+			text: this.inputModel.getValue(),
+			placeholder: this.inputPlaceholderText(),
+			placeholderElement: this.placeholderEl,
+		};
 	}
 
 	/**
