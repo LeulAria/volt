@@ -16,6 +16,7 @@ import { agentServerPaths, IAgentServerPaths, isProcessAlive, readAgentServerRun
 import { installLaunchdJob, restartLaunchdJob, uninstallLaunchdJob } from './launchd.js';
 
 const START_TIMEOUT_MS = 30_000;
+const START_POLL_MS = 20;
 const STOP_TIMEOUT_MS = 5_000;
 /** How long a server that is alive but does not answer gets before it counts as stuck. */
 const UNRESPONSIVE_GRACE_MS = 20_000;
@@ -296,7 +297,8 @@ export class AgentServerLauncher {
 			if (info && info.pid !== previousPid && info.appRoot === this.appRoot && (info.commit ?? undefined) === (this.options.commit ?? undefined)) {
 				return info;
 			}
-			await new Promise(resolve => setTimeout(resolve, 150));
+			// A start takes a few hundred ms; a coarse poll added up to its own period to every cold start.
+			await new Promise(resolve => setTimeout(resolve, START_POLL_MS));
 		}
 		throw new Error(`The Volt agent server did not start. See ${this.paths.logFile}.`);
 	}
