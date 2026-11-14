@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, getWindow, runAtThisOrScheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow, isHTMLElement, runAtThisOrScheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
@@ -297,7 +297,24 @@ export class AgentThreadView extends Disposable {
 		const viewportTop = this.inner.getBoundingClientRect().top;
 		const exchange = this.exchangeAt(viewportTop);
 		// Only prompts the user sent pin; a subagent report scrolls with the replies under them.
-		const turn = exchange?.querySelector<HTMLElement>(':scope > .volt-agent-turn.user:not(.notification):not(.compact-command)') ?? undefined;
+		// The exchange's own children are walked, not queried: a `:scope >` query with `:not()`
+		// walked the whole reply's subtree on every scrolled frame (over 1 s in 67 s of streaming).
+		let turn: HTMLElement | undefined;
+		const turns: HTMLElement[] = [];
+		if (exchange) {
+			for (const child of exchange.children) {
+				if (!isHTMLElement(child) || !child.classList.contains('volt-agent-turn')) {
+					continue;
+				}
+				const user = child.classList.contains('user');
+				if (user && !turn && !child.classList.contains('notification') && !child.classList.contains('compact-command')) {
+					turn = child;
+				}
+				if (!user || child.classList.contains('notification')) {
+					turns.push(child);
+				}
+			}
+		}
 		let stuck = false;
 		let bottom = 0;
 		let replies: { reply: HTMLElement; top: number }[] = [];
@@ -313,7 +330,7 @@ export class AgentThreadView extends Disposable {
 			stuck = rect.top > naturalTop + 0.5 && exchangeRect.bottom > viewportTop;
 			bottom = rect.bottom;
 			if (stuck) {
-				replies = Array.from(exchange.querySelectorAll<HTMLElement>(':scope > .volt-agent-turn:not(.user), :scope > .volt-agent-turn.notification'), reply => ({ reply, top: reply.getBoundingClientRect().top }));
+				replies = turns.map(reply => ({ reply, top: reply.getBoundingClientRect().top }));
 			}
 		}
 
@@ -327,9 +344,13 @@ export class AgentThreadView extends Disposable {
 			turn.classList.add('stuck');
 			// Stands in for `:has(> .volt-agent-turn.user.stuck)` on the exchange (see agentEditor.css).
 			exchange.classList.add('has-stuck-turn');
-			// Fade replies under the pinned card without painting a second window background.
+			// Fade replies under the pinned card without painting a second window background. Written
+			// only when the value moved: the write restyles and repaints the reply (its mask).
 			for (const { reply, top } of replies) {
-				reply.style.setProperty('--volt-sticky-fade-end', `${bottom - top}px`);
+				const end = `${Math.round(bottom - top)}px`;
+				if (reply.style.getPropertyValue('--volt-sticky-fade-end') !== end) {
+					reply.style.setProperty('--volt-sticky-fade-end', end);
+				}
 			}
 			this.stuckExchange = exchange;
 		} else {
