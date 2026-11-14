@@ -71,7 +71,7 @@ No quit-confirmation dialog. The chat was reopened by the restored window itself
 | Run | Cut at | Load | What happened during the cut | Resumed alone | Survival (own W3 tests) | Note |
 |---|---|---|---|---|---|---|
 | crel-c5-1 | 30 s, 30 s long | 27 | Claude Code's own retry ("Reconnecting to Claude, attempt 1 of 10.") was taken for a lost process by fix 1: the turn failed at 37.8 s, Volt's keep-working rescue restarted the chat at 49 s into the same cut; it resumed 28.7 s after the API came back | yes | pass (2.33 min) | invalid for the method: the regression (fixed, `cfd99bbe1fc`) did the recovering, not the CLI's retry |
-| crel-c5-2 | 30 s, 30 s long | (fill) | (fill) | (fill) | (fill) | fix 1b in |
+| crel-c5-2 | 30 s, 30 s long | 21 | Claude Code retried on its own ("Reconnecting to Claude, attempt 1-6 of 10", shown as notices; the turn stayed open) | **yes, 7.2 s after the API came back** | **pass** (1.8 min) | fix 1b in: no restart, the CLI's own retry carried the turn |
 
 The proxy's cut: 91 requests refused in the 30 s, 88 of them in one burst at +7-9 s (the composer predictor's
 Haiku calls and Claude Code's `/api/hello` connectivity checks and retries), one in-flight Opus stream cut.
