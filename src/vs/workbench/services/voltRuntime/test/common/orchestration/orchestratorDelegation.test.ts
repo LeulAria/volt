@@ -99,12 +99,14 @@ suite('Volt orchestrator: handoff contract and context', () => {
 			assert.strictEqual(byName.get(name)?.alwaysLoad, 'top', name);
 		}
 		assert.strictEqual(byName.get('task_status')?.alwaysLoad, undefined);
-		// In every request of a top-level chat: 5.7 KB, 2,078 tokens in round 3; 1.8 KB, 685 tokens now (count_tokens, Haiku 5.5).
+		// In every request of a top-level chat: 5.7 KB, 2,078 tokens in round 3; 1.9 KB now (count_tokens, Haiku 5.5: see the round-4 report).
 		const size = ['delegate_task', 'wait_tasks', 'message_task'].reduce((sum, name) => sum + JSON.stringify({ name: `mcp__volt__${name}`, description: byName.get(name)!.description, input_schema: byName.get(name)!.inputSchema }).length, 0);
-		assert.ok(size < 1_900, `${size} characters`);
+		assert.ok(size < 2_000, `${size} characters`);
 		// The options that are not typed in the schema are still named, so a task that needs one finds it.
 		const delegate = byName.get('delegate_task')!;
 		const typed = Object.keys((delegate.inputSchema as { properties: object }).properties);
+		// isolation stays typed: named only in the description, leads made their own git worktrees instead.
+		assert.deepStrictEqual((delegate.inputSchema as { properties: Record<string, { enum?: string[] }> }).properties.isolation?.enum, ['shared', 'worktree']);
 		for (const option of ['task', 'title', 'role', 'after', 'model', 'models', 'previous_task_id', 'isolation', 'wait', 'goal', 'scope', 'files', 'constraints', 'done_when', 'verify', 'context', 'budget_usd', 'fallback_models']) {
 			assert.ok(typed.includes(option) || delegate.description.includes(option), option);
 		}
