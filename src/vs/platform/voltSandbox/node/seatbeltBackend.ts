@@ -42,6 +42,24 @@ export const FOOTPRINT_POLL_MS = 1_000;
 
 export const SANDBOX_HELPER_ID = 'volt-sandbox-helper';
 
+export interface ISeatbeltTreeStats {
+	readonly members: number;
+	readonly footprint: number;
+	readonly exceeded: boolean;
+	readonly peak: number;
+	/** CPU ms of the live members; absent from a helper built before round 5. */
+	readonly cpuMs?: number;
+}
+
+/** The helper's `stats` answer: `<members> <footprint> <exceeded> <peak> [<cpu ms>]`. */
+export function parseStatsAnswer(answer: string): ISeatbeltTreeStats {
+	const fields = answer.split(' ').map(Number);
+	if ((fields.length !== 4 && fields.length !== 5) || !fields.every(Number.isFinite)) {
+		throw new Error('bad stats answer');
+	}
+	return { members: fields[0], footprint: fields[1], exceeded: fields[2] === 1, peak: fields[3], ...(fields.length === 5 ? { cpuMs: fields[4] } : {}) };
+}
+
 /**
  * TCC-protected folders. A disclaimed process is its own responsible process and has no access
  * there (verified on macOS 26.6: `ls ~/Desktop` fails with EPERM), so a run whose workspace is
@@ -306,6 +324,11 @@ export class SeatbeltBackend implements ISandboxBackend {
 					version: `macOS ${await this.version()} sandbox-exec, ${helper}`,
 				});
 				return result.ok ? result : { ok: false, error: redactSandboxText(result.error, policy.home) };
+			},
+			// The helper's kqueue-tracked tree: CPU, footprint and members in one request, no `ps` spawn.
+			usage: async () => {
+				const stats = tracked !== undefined ? await attestor.stats(tracked).catch(() => undefined) : undefined;
+				return stats?.cpuMs !== undefined ? { cpuMs: stats.cpuMs, memoryBytes: stats.footprint, processes: stats.members } : undefined;
 			},
 			terminate: async child => {
 				stopPolling();
@@ -736,13 +759,9 @@ class SeatbeltAttestor {
 		await this.answer(`track\t${pid}\t${cap === undefined ? '-' : Math.max(1, Math.floor(cap))}`);
 	}
 
-	/** Live members, their summed physical footprint in bytes, and whether the fork watchdog fired. */
-	async stats(pid: number): Promise<{ readonly members: number; readonly footprint: number; readonly exceeded: boolean; readonly peak: number }> {
-		const fields = (await this.answer(`stats\t${pid}\t-`)).split(' ').map(Number);
-		if (fields.length !== 4 || !fields.every(Number.isFinite)) {
-			throw new Error('bad stats answer');
-		}
-		return { members: fields[0], footprint: fields[1], exceeded: fields[2] === 1, peak: fields[3] };
+	/** Live members, their summed physical footprint in bytes, whether the fork watchdog fired, and their CPU time. */
+	async stats(pid: number): Promise<ISeatbeltTreeStats> {
+		return parseStatsAnswer(await this.answer(`stats\t${pid}\t-`));
 	}
 
 	/** SIGKILLs every member of the run until none is left; resolves with how many there were. */

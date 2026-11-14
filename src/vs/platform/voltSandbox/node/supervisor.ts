@@ -19,6 +19,7 @@ import { IVoltSandboxPolicy, parseSandboxPolicyLayer, SandboxDimension } from '.
 import { isLiveWorkloadState, ISandboxResourceSample, ISandboxWorkloadDenial, ISandboxWorkloadInfo, isUserFacingDenial, MAX_WORKLOAD_DENIALS, SandboxExitReason, SandboxWorkloadState, summarizeSandboxPolicy } from '../common/sandboxWorkloads.js';
 import type { INetworkPrincipalView, NetworkRoute } from './networkBroker.js';
 import { PrincipalRegistry } from './principalRegistry.js';
+import type { ISandboxTreeUsage } from './sandboxBackends.js';
 import { IPreparedSandbox, ISandboxLogger, processAlive, RUN_LEDGER_NAME, SandboxManager } from './sandboxManager.js';
 import { ISandboxRunContext } from './sandboxResolver.js';
 
@@ -468,9 +469,16 @@ export class SandboxSupervisor extends Disposable {
 		}
 		this.sampling = true;
 		try {
-			const samples = await this.sample(due.map(host => host.pid!));
-			for (const host of due) {
-				const sample = host.pid ? samples.get(host.pid) : undefined;
+			// The backend's own tracking first (Seatbelt: one request to the helper, a few syscalls), so a host at rest
+			// costs no `ps` spawn (about 20 ms of CPU each, every 10 s); the process table only for the hosts it cannot
+			// measure. Configured sources (a kernel layer) keep the merged path.
+			const at = Date.now();
+			const tracked = this.options.resourceSources ? [] : await Promise.all(due.map(host => host.trackedUsage().catch(() => undefined)));
+			const rest = due.filter((_, i) => !tracked[i]);
+			const samples = rest.length ? await this.sample(rest.map(host => host.pid!)) : new Map<number, ISandboxResourceSample>();
+			for (const [i, host] of due.entries()) {
+				const usage = tracked[i];
+				const sample = usage ? { at, ...usage, sources: ['tracking'] } : host.pid ? samples.get(host.pid) : undefined;
 				this.sampledAt.set(host, now);
 				if (sample) {
 					host.recordSample(sample);
@@ -611,6 +619,11 @@ class SandboxHost implements ISandboxedHost {
 	get channel(): Duplex | undefined { return this._state === 'running' || this._state === 'idle' ? this._channel : undefined; }
 	get channelId(): string | undefined { return this._channelId; }
 	get lastResources(): ISandboxResourceSample | undefined { return this._lastResources; }
+
+	/** The tree's numbers from the sandbox backend's own tracking; undefined when it has none (then `ps`). */
+	async trackedUsage(): Promise<ISandboxTreeUsage | undefined> {
+		return this._state === 'running' || this._state === 'idle' ? this.prepared?.usage?.() : undefined;
+	}
 
 	stderrTail(): string {
 		return this.stderr;

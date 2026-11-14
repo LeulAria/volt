@@ -169,6 +169,17 @@ suite('Volt sandbox second layers (C4, real processes)', function () {
 		assert.ok(result.stdout.includes('kept'), result.stderr);
 	});
 
+	macTest('RES-MAC-1: an orphan that left the tree (double fork, setsid, no environment) still counts against the memory limit', async () => {
+		// The helper reads the tracked members between forks and sweeps by responsible process after one:
+		// the orphan is found by that sweep, and its footprint kills the run.
+		const started = Date.now();
+		const orphan = `${PERL} -e 'use POSIX; exit 0 if fork(); POSIX::setsid(); exit 0 if fork(); %ENV = (); $0 = "${MARKER}-" . "fat"; my $x = "x" x (256 * 1024 * 1024); sleep 60'`;
+		const result = await run(limited({ memoryMB: 64, wallClockSeconds: 60 }, ['limits.memory']), `${orphan}; sleep 30`);
+		assert.strictEqual(result.resourceViolation?.dimension, 'limits.memory', JSON.stringify(result.resourceViolation));
+		assert.ok(Date.now() - started < 8_000, `killed after ${Date.now() - started} ms`);
+		assert.ok(await waitFor(() => strayProcesses('fat').length === 0, 5_000), strayProcesses('fat').join(' | '));
+	});
+
 	macTest('RES-MAC-2: a fork bomb is killed at the process limit, the whole tree with it', async () => {
 		const started = Date.now();
 		const result = await run(limited({ processes: 16, cpuSeconds: 20, wallClockSeconds: 30 }), `${PERL} -e '$0 = "${MARKER}-bomb"; fork() while 1'; echo survived`);
