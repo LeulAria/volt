@@ -425,6 +425,24 @@ export function subagentReport(whole: string, final: string): string | undefined
 	return from < 0 ? last : from === 0 ? undefined : text.slice(from);
 }
 
+const DO_IT_YOURSELF = 'If you meant another Volt tool (browser_*, render_chart and the rest), do not delegate: load it with ToolSearch "select:mcp__volt__<name>" and call it yourself.';
+
+/** Briefs that are a placeholder, not work: a stray call, never a task (a short real brief still starts). */
+const PLACEHOLDER_BRIEF = /^(?:no-?op|test|ping|probe|placeholder|dummy|none|null|empty|todo|tbd)[.!]?$/i;
+
+/**
+ * A brief no subagent could work from ("noop"). Haiku main chats sent one on a one-tool request
+ * before loading that tool (round 5, a chart request: a subagent started on "noop" and was
+ * cancelled), so it starts nothing and says what to do instead.
+ */
+export function placeholderBriefRefusal(brief: string): string | undefined {
+	const text = brief.trim();
+	if (!PLACEHOLDER_BRIEF.test(text)) {
+		return undefined;
+	}
+	return `"${text}" is not a brief, so no subagent started: delegate_task runs a whole subagent in its own chat. ${DO_IT_YOURSELF} To delegate, call it again with the complete brief in \`task\`.`;
+}
+
 /**
  * The refusal of a `delegate_task` call without a brief. Claude Code defers MCP tools behind Tool
  * Search, so its first call may come before it loaded the schema, with no arguments at all (5.9 s
@@ -436,7 +454,10 @@ export function delegateTaskMissingBrief(args: Record<string, unknown>): string 
 		return 'delegate_task needs a `task`: the complete brief for the subagent (or `tasks`, one entry per part).';
 	}
 	return [
-		'delegate_task was called without arguments: its parameters were probably not loaded yet. Call it again now with them (no ToolSearch needed):',
+		// Haiku main chats also sent `{}` as their first call for a one-tool request (open a page, draw a
+		// chart), before loading that tool: the way out comes first.
+		`delegate_task was called without arguments. ${DO_IT_YOURSELF}`,
+		'To delegate, call it again now with its arguments (no ToolSearch needed):',
 		'- one subagent: {"task": "<the complete brief>", "title": "<3-6 words>"}',
 		'- several at once: {"tasks": [{"task": "...", "title": "..."}, {"task": "...", "after": ["1"]}]} (`after`: 1-based positions of parts that must finish first; their reports join the brief)',
 		'Optional on the call or on each part: `model` (a name from list_models, e.g. "claude-code:claude-haiku-5-5"), `role` (research and review are read-only; implementation, test, design, general), `context` ("brief" | "full" | "none"), `done_when` (checks), `files`, `scope`, `fallback_models`, `isolation` ("shared" | "worktree"), and on the call `client_request_id` and `wait`.',

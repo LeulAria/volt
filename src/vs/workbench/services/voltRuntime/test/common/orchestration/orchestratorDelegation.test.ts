@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, namedSubagentCount, requestAsksForSubagents, resolveChatTaskRefs, subagentReport, subagentSpareCount, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
+import { AGENT_TASK_TOOLS, buildTaskPrompt, contractFromArgs, delegateArgsWithAliases, describeSpend, describeTask, lintTaskBrief, matchTaskModel, namedSubagentCount, placeholderBriefRefusal, requestAsksForSubagents, resolveChatTaskRefs, subagentReport, subagentSpareCount, subagentSpareKinds, taskWaitMs, titleFromBrief, withUpstreamReports } from '../../../common/orchestration/agentTasks.js';
 import { DEFAULT_ORCH_LIMITS, IOrchLimits, IOrchTask, IOrchTaskUsage, readOrchLimits } from '../../../common/orchestration/orchestrator.js';
 import { compactEnvelope, extractRoot, ORCH_EVENT_PROMPT_CHARS, parseRootSnapshot } from '../../../common/orchestration/orchestratorCodec.js';
 import { isDeliverable } from '../../../common/orchestration/orchestratorDecider.js';
@@ -58,6 +58,15 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.ok(lintTaskBrief('Check it.', 'research', undefined, undefined, 'none')[0].includes('context is none'));
 		// A brief that names its file is specific enough: no push for done_when (it only made the next payload longer).
 		assert.deepStrictEqual(lintTaskBrief('Add formatReceipt to src/money.ts as SPEC.md says.', 'implementation', undefined, undefined, 'brief'), []);
+	});
+
+	test('a placeholder brief (a stray call) is refused with the way to the tool the chat meant; short real briefs start', () => {
+		for (const stray of ['noop', 'No-op', ' test ', 'placeholder.', 'TODO']) {
+			assert.match(placeholderBriefRefusal(stray) ?? '', /is not a brief, so no subagent started.*select:mcp__volt__<name>/, stray);
+		}
+		for (const real of ['Q1', 'Fix a.ts', 'Test the login flow', 'Run the tests', 'x']) {
+			assert.strictEqual(placeholderBriefRefusal(real), undefined, real);
+		}
 	});
 
 	test('a single-task call names this chat\'s earlier tasks by position, as a `tasks` call does', () => {
