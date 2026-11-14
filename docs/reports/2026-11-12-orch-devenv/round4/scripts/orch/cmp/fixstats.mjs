@@ -31,10 +31,14 @@ function stats(r) {
 	const args = P.filter(l => l.event.type === 'host.tool' && l.event.name === 'delegate_task').reduce((n, l) => n + JSON.stringify(l.event.args ?? {}).length, 0);
 	const refused = P.filter(l => l.event.type === 'tool.end' && /not a task of this chat/.test(JSON.stringify(l.event.result ?? ''))).length;
 	const testsTool = traces.flatMap(t => ev(t.lines)).filter(l => l.event.type === 'tool.start' && /(^|__)tests$/.test(l.event.name)).length;
+	const delegateCalls = P.filter(l => l.event.type === 'host.tool' && l.event.name === 'delegate_task').length;
 	const childStarts = [];
 	const endGaps = [];
 	let warm = 0;
 	let runs = 0;
+	// Editing subagent runs that changed a file with an Edit/Write call, and how many of those have a file.change.
+	let edited = 0;
+	let captured = 0;
 	for (const t of traces.slice(1)) {
 		const E = ev(t.lines);
 		for (const runId of new Set(E.map(l => l.runId))) {
@@ -47,16 +51,21 @@ function stats(r) {
 				const last = R.slice(0, endIdx).filter(l => l.event.type === 'usage' && l.event.used === undefined).at(-1);
 				if (last) { endGaps.push((R[endIdx].ts - last.ts) / 1000); }
 			}
+			const edits = R.filter(l => l.event.type === 'tool.end' && !l.event.error && R.some(x => x.event.type === 'tool.start' && x.event.callId === l.event.callId && x.event.kind === 'edit'));
+			if (edits.length) {
+				edited++;
+				if (R.some(l => l.event.type === 'file.change')) { captured++; }
+			}
 			const m = t.lines.find(l => l.kind === 'metrics' && l.runId === runId);
 			if (m) { runs++; if (m.metrics?.agentSource === 'pool') { warm++; } }
 		}
 	}
 	const reports = (tree?.tasks ?? []).map(t => t.result?.length).filter(Boolean);
-	return { pre, args, first: childStarts.length && start ? (Math.min(...childStarts) - start) / 1000 : undefined, endGap: med(endGaps), maxEndGap: endGaps.length ? Math.max(...endGaps) : undefined, warm, runs, report: med(reports), refused, testsTool };
+	return { pre, args, first: childStarts.length && start ? (Math.min(...childStarts) - start) / 1000 : undefined, endGap: med(endGaps), maxEndGap: endGaps.length ? Math.max(...endGaps) : undefined, warm, runs, report: med(reports), refused, testsTool, delegateCalls, edited, captured, gaps3: endGaps.filter(g => g >= 2.9).length, gapRuns: endGaps.length };
 }
 
-console.log('| Arm | Task | n | Tool calls before delegating | delegate_task args, bytes | Enter → first subagent, s | Subagent run.end gap, s (max) | Warm subagent starts | Report chars | `after` refusals | tests-tool calls |');
-console.log('|---|---|---|---|---|---|---|---|---|---|---|');
+console.log('| Arm | Task | n | Tool calls before delegating | delegate_task calls | delegate_task args, bytes | Enter → first subagent, s | Subagent run.end gap, s (max) | Editing runs ending ≥ 2.9 s late | Edits captured (file.change) | Warm subagent starts | Report chars | `after` refusals | tests-tool calls |');
+console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
 const groups = new Map();
 for (const r of rows) {
 	const s = stats(r);
@@ -68,5 +77,6 @@ for (const [k, ss] of [...groups].sort()) {
 	const [arm, task] = k.split('|');
 	const pre = [...new Set(ss.flatMap(s => s.pre))];
 	const preCount = ss.map(s => s.pre.length);
-	console.log(`| ${arm} | ${task} | ${ss.length} | ${med(preCount)}${pre.length ? ` (${pre.join(', ')})` : ''} | ${med(ss.map(s => s.args))} | ${f1(med(ss.map(s => s.first)))} | ${f1(med(ss.map(s => s.endGap)))} (${f1(Math.max(...ss.map(s => s.maxEndGap ?? 0)))}) | ${ss.reduce((n, s) => n + s.warm, 0)}/${ss.reduce((n, s) => n + s.runs, 0)} | ${med(ss.map(s => s.report))} | ${ss.reduce((n, s) => n + s.refused, 0)} | ${ss.reduce((n, s) => n + s.testsTool, 0)} |`);
+	const sum = key => ss.reduce((n, s) => n + s[key], 0);
+	console.log(`| ${arm} | ${task} | ${ss.length} | ${med(preCount)}${pre.length ? ` (${pre.join(', ')})` : ''} | ${med(ss.map(s => s.delegateCalls))} | ${med(ss.map(s => s.args))} | ${f1(med(ss.map(s => s.first)))} | ${f1(med(ss.map(s => s.endGap)))} (${f1(Math.max(...ss.map(s => s.maxEndGap ?? 0)))}) | ${sum('gaps3')}/${sum('gapRuns')} | ${sum('captured')}/${sum('edited')} | ${ss.reduce((n, s) => n + s.warm, 0)}/${ss.reduce((n, s) => n + s.runs, 0)} | ${med(ss.map(s => s.report))} | ${ss.reduce((n, s) => n + s.refused, 0)} | ${ss.reduce((n, s) => n + s.testsTool, 0)} |`);
 }

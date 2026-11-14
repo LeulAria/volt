@@ -1,9 +1,9 @@
-// Headline table for 24-orchestration.md: per task, cc / before / after, timed runs (load <= 14).
+// Headline table for 31-orchestration.md: per task, cc / before / after, timed runs (load <= 14).
 //   node headline.mjs <runs.jsonl>
 import { readFileSync } from 'fs';
 const file = process.argv[2];
 const rows = readFileSync(file, 'utf8').trim().split('\n').map(l => JSON.parse(l)).filter(r => Number(String(r.load).split(' ')[0]) <= 14);
-const ARMS = [['cc', 'Claude Code'], ['volt-r3p-base', 'Volt before'], ['volt-r3q', 'Volt after']];
+const ARMS = [['cc', 'Claude Code'], ['volt-r4-base', 'Volt before'], ['volt-r4', 'Volt after']];
 const med = xs => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 const tok = u => (u.input ?? 0) + (u.output ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
 const list = u => ((u.input ?? 0) * 0.10 + (u.output ?? 0) * 0.50 + (u.cacheRead ?? 0) * 0.01 + (u.cacheWrite ?? 0) * 0.20) / 1e6;
