@@ -76,9 +76,26 @@ No quit-confirmation dialog. The chat was reopened by the restored window itself
 The proxy's cut: 91 requests refused in the 30 s, 88 of them in one burst at +7-9 s (the composer predictor's
 Haiku calls and Claude Code's `/api/hello` connectivity checks and retries), one in-flight Opus stream cut.
 
-### C2 Message Delivery, C3 Chat Lock
+### C2 Message Delivery
 
-(pending)
+One run (crel-c2-1, load 15, 1.92 min to the end of the last queued turn).
+
+| Follow-up | Sent at | Accepted (on screen within 5 s) | Queued state shown | Delivered (in a later model request) | Applied (own test) |
+|---|---|---|---|---|---|
+| F1 (RATE_LIMIT_RPS) | 30.2 s (+0.5 s) | yes | yes ("1 Queued Message" card) | yes | yes |
+| F2 (x-request-id) | 90.2 s (+1.1 s) | yes | no card: the agent was idle, it was sent at once | yes | yes (after an own-test fix: the 405 check ran on an empty 1-token bucket) |
+| F3 (dueOn) | 150.1 s (+0.5 s) | yes | no card (idle) | yes | yes |
+
+**Dropped 0/3, applied 3/3.** The base task ended at 53 s; F1 was queued behind it and started at 53.5 s; F2 and F3
+each landed on an idle chat and ran at once (89.6-113.9 s, 149.3-157.7 s). Enter queues behind a running agent in
+Volt (Cmd-Enter steers it); ADEMark sends with Enter. The C1 W1 tests also run on this clone: they fail on two
+checks the C2 prompt never asks for (`x-ratelimit-remaining`, `RangeError` on a bad cost); W1 is not a C2 value.
+
+### C3 Chat Lock
+
+The probe ran through every C2 and C4-C6 run above (one key every 2 s, 47-398 probes per run, 7 runs): **0 lost
+probes, 0 locks**, echo median 0 ms, p95 1-3 ms (DOM echo on a dev build at load 15-66). The composer never
+refused a key, not during streaming, the kills, the API cut, nor right after the relaunch.
 
 ### C1 Orchestrated Build
 
