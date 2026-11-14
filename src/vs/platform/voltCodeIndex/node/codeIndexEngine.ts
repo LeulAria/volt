@@ -7,7 +7,7 @@ import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { dirname, join, normalize, relative, sep } from '../../../base/common/path.js';
-import { IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltFffStatus, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult } from '../common/voltCodeIndex.js';
+import { IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltFffStatus, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeImportersRequest, IVoltCodeImportersResult, IVoltCodeStructuralRequest, IVoltCodeStructuralResult, IVoltCodeStructureRequest, IVoltCodeStructureResult } from '../common/voltCodeIndex.js';
 import { FffEngine } from './fffEngine.js';
 import { optionsKey, RootIndex } from './rootIndex.js';
 
@@ -25,6 +25,9 @@ export interface ICodeIndexWorker {
 	files(request: IVoltCodeIndexFilesRequest): Promise<IVoltCodeIndexFilesResult>;
 	findFiles(request: IVoltCodeIndexFindFilesRequest): Promise<IVoltCodeIndexFindFilesResult>;
 	symbols(request: IVoltCodeIndexSymbolsRequest): Promise<IVoltCodeIndexSymbolsResult>;
+	structure(request: IVoltCodeStructureRequest): Promise<IVoltCodeStructureResult>;
+	importers(request: IVoltCodeImportersRequest): Promise<IVoltCodeImportersResult>;
+	structural(request: IVoltCodeStructuralRequest): Promise<IVoltCodeStructuralResult>;
 	fffStatus(fffPath?: string): Promise<IVoltFffStatus>;
 	installFff(): Promise<IVoltFffStatus>;
 	status(roots?: readonly string[]): Promise<readonly IVoltCodeIndexStatus[]>;
@@ -111,6 +114,18 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 
 	symbols(request: IVoltCodeIndexSymbolsRequest): Promise<IVoltCodeIndexSymbolsResult> {
 		return this.index(request.root, request.options).symbols(request);
+	}
+
+	structure(request: IVoltCodeStructureRequest): Promise<IVoltCodeStructureResult> {
+		return this.index(request.root, request.options).structure(request);
+	}
+
+	importers(request: IVoltCodeImportersRequest): Promise<IVoltCodeImportersResult> {
+		return this.index(request.root, request.options).importers(request);
+	}
+
+	structural(request: IVoltCodeStructuralRequest): Promise<IVoltCodeStructuralResult> {
+		return this.index(request.root, request.options).structural(request);
 	}
 
 	/**
