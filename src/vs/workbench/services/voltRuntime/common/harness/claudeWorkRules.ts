@@ -146,12 +146,54 @@ export const CLAUDE_MAIN_LAZY_TOOLS: readonly string[] = ['Agent', 'Workflow', '
  */
 export const CLAUDE_MAIN_LAZY_RULE = `- Load on demand: Agent (subagents), Workflow (multi-agent scripts, only when asked for one), ScheduleWakeup (resume later), ReportFindings (code-review findings), ListAgents (running agents). Before the first use, call ToolSearch "select:<exact names, comma-separated>" in the same message as your other first calls.`;
 
+/**
+ * Claude Code's deferred-tools reminder lists one tool per line, Volt's 135 tools as
+ * `mcp__volt__browser_click` and so on: 1,992 tokens in every request of a main chat, 1,748 of them
+ * Volt's names (Opus 5.5, 2026-11-14). This keeps Claude Code's own lines and turns each run of Volt
+ * lines into one line that says the prefix once and lists the short names (about 900 tokens fewer).
+ * Every tool stays listed by name; `select:mcp__volt__<name>` loads it as before. Runs inside Claude
+ * Code's hooks worker as source text (see {@link claudeLazyToolsPlugin}), so it uses nothing from outside.
+ */
+export function compactVoltToolNames(text: string): string {
+	const out: string[] = [];
+	let run: string[] = [];
+	const flush = () => {
+		if (run.length) {
+			out.push(`Volt tools, each named mcp__volt__<name> (select:mcp__volt__${run[0]}): ${run.join(', ')}`);
+			run = [];
+		}
+	};
+	for (const line of text.split('\n')) {
+		const match = /^mcp__volt__([A-Za-z0-9_-]+)$/.exec(line.trim());
+		if (match) {
+			run.push(match[1]);
+		} else {
+			flush();
+			out.push(line);
+		}
+	}
+	flush();
+	return out.join('\n');
+}
+
+/**
+ * A `prompt.attachment` handler that rewrites the reminder's text with `fn` and leaves it as Claude Code
+ * made it when the rewrite throws. Written out in each `on(...)` call: Claude Code 2.1.322 drops the
+ * whole module, silently, when a handler comes from a factory (`rewrite(fn)`), so none is shared.
+ */
+function attachmentRewrite(fn: string): string {
+	return `async ($, e, next) => { const r = await next(e); try { return typeof r?.text === 'string' ? { ...r, text: ${fn}(r.text) } : r; } catch { return r; } }`;
+}
+
 /** The hooks module of {@link claudeLazyToolsPlugin}: Claude Code (2.1.322 and later) imports it in its hooks worker. */
 const CLAUDE_LAZY_TOOLS_MODULE = [
-	'// Volt: Claude Code tools the main chat loads with ToolSearch when a task needs them, not in every request.',
+	'// Volt: Claude Code tools the main chat loads with ToolSearch when a task needs them, not in every request,',
+	'// and Volt\'s tool names said once in its deferred-tools reminder. A rewrite that fails leaves the text as it was.',
 	`const LAZY = ${JSON.stringify(CLAUDE_MAIN_LAZY_TOOLS)};`,
+	`const compactVoltToolNames = ${compactVoltToolNames.toString()};`,
 	'export function register(on) {',
 	'\ton(\'tool.describe\', { tool: LAZY }, async ($, e, next) => ({ ...(await next(e)), isDeferred: true }));',
+	`\ton('prompt.attachment', { type: ['deferred_tools_delta'] }, ${attachmentRewrite('compactVoltToolNames')});`,
 	'}',
 	'',
 ].join('\n');

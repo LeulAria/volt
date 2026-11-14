@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, claudeWorkRulesMeta, isClaudePlaceholderTitle, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
+import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, claudeWorkRulesMeta, compactVoltToolNames, isClaudePlaceholderTitle, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
 
 /** What a POSIX shell passes to printf for `printf '%s' '<quoted>'`: single quotes, with `'\''` for a quote inside. */
 function shellArgument(command: string): string {
@@ -145,11 +145,31 @@ suite('Volt Claude work rules', () => {
 		const register = new Function(`${source.replace('export function register', 'function register')}\nreturn register;`)() as (on: (...args: unknown[]) => void) => void;
 		const registrations: { event: unknown; matcher: unknown; handler: (...args: unknown[]) => Promise<unknown> }[] = [];
 		register((event: unknown, matcher: unknown, handler: unknown) => registrations.push({ event, matcher, handler: handler as (...args: unknown[]) => Promise<unknown> }));
-		assert.strictEqual(registrations.length, 1);
-		assert.strictEqual(registrations[0].event, 'tool.describe');
+		assert.deepStrictEqual(registrations.map(r => r.event), ['tool.describe', 'prompt.attachment']);
 		assert.deepStrictEqual(registrations[0].matcher, { tool: [...CLAUDE_MAIN_LAZY_TOOLS] }, 'only these tools reach the module');
 		const next = async (e: { description: string }) => ({ description: `${e.description}!` });
 		assert.deepStrictEqual(await registrations[0].handler({}, { tool: 'Workflow', description: 'Runs a workflow', provider: 'builtin' }, next), { description: 'Runs a workflow!', isDeferred: true });
+		// Only the deferred-tools reminder reaches the module, and it comes back with Volt's names compacted.
+		assert.deepStrictEqual(registrations[1].matcher, { type: ['deferred_tools_delta'] });
+		const list = 'The following deferred tools are now available via ToolSearch:\nAgent\nmcp__volt__ask_question\nmcp__volt__browser_act';
+		const passOn = async (e: { text: string }) => ({ text: e.text });
+		assert.deepStrictEqual(await registrations[1].handler({}, { type: 'deferred_tools_delta', text: list, origin: {} }, passOn), { text: compactVoltToolNames(list) });
+		// A rewrite that throws (an unexpected shape) leaves the reminder as Claude Code made it.
+		assert.deepStrictEqual(await registrations[1].handler({}, { type: 'deferred_tools_delta', text: list }, async () => ({ text: 42 })), { text: 42 });
+	});
+
+	test('the deferred-tools reminder names every Volt tool once, after one prefix, and keeps Claude Code\'s own lines', () => {
+		const head = 'The following deferred tools are now available via ToolSearch. Use ToolSearch with query "select:<name>[,<name>...]" to load tool schemas before calling them:';
+		const text = [head, 'Agent', 'WebSearch', 'mcp__volt__app_open', 'mcp__volt__ask_question', 'mcp__volt__browser_act', 'mcp__other__x', 'mcp__volt__workspace_status', ''].join('\n');
+		assert.strictEqual(compactVoltToolNames(text), [
+			head, 'Agent', 'WebSearch',
+			'Volt tools, each named mcp__volt__<name> (select:mcp__volt__app_open): app_open, ask_question, browser_act',
+			'mcp__other__x',
+			'Volt tools, each named mcp__volt__<name> (select:mcp__volt__workspace_status): workspace_status',
+			'',
+		].join('\n'));
+		// Nothing of Volt's: unchanged.
+		assert.strictEqual(compactVoltToolNames('Agent\nWebSearch'), 'Agent\nWebSearch');
 	});
 
 	test('a read-only subagent runs on its own short prompt, with no file tools and only Volt\'s MCP server', () => {
