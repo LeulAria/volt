@@ -26,6 +26,10 @@ Censuses over the inspector of each process ([scripts/idle/timers.mjs](scripts/i
 | extension host | 0 | nothing |
 | agent server | 1.18/s | **0.5/s dev-only hot-reload poll** (`restartWhenStale`, gated on `VSCODE_DEV && !product.commit`, not in a release build), 2 x 20 s WebSocket pings, a 30 s native timer, the 60 s lonely check |
 
+The window itself is quiet too: with the composer focused and the focus burst over, a 20 s Chromium trace
+([trace-front-rest.txt](data/idle/explore/trace-front-rest.txt)) shows the renderer's main thread at 0.7 tasks/s,
+no display-link callbacks and no frames drawn (the caret rests after 10 s, round 4), the browser process at 5 tasks/s.
+
 So the JS side is near silent; what the sampler sees (round 5: main 0.31 %, two node utilities 0.22 %, agent server
 0.09 %) is Chromium's and Node's own floor per process (mojo notifications ~3/s in main, the macOS memory-pressure
 evaluator every 5 s, PartitionAlloc's memory reclaimer, V8 GC timers), plus the processes Volt keeps alive at rest.

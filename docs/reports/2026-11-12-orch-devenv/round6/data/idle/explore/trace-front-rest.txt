@@ -1,0 +1,30 @@
+{"secs":20,"load":26.67,"state":"{\"vis\":\"visible\",\"focus\":true}","spanMs":20030,"events":701}
+
+== busy threads (tasks/s, ms/s)
+Browser / CrBrowserMain                                          5.0 /s    4.57 ms/s
+Renderer / CrRendererMain                                        0.7 /s    4.31 ms/s
+GPU Process / CrGpuMain                                          0.3 /s    0.57 ms/s
+Browser / ThreadPoolForegroundWorker                             3.6 /s    0.38 ms/s
+Renderer / ThreadPoolForegroundWorker                            3.0 /s    0.31 ms/s
+GPU Process / PerfettoTrace                                      2.9 /s    0.28 ms/s
+Renderer / ThreadPoolServiceThread                               0.7 /s    0.04 ms/s
+Browser / ThreadPoolServiceThread                                0.9 /s    0.03 ms/s
+Browser / Chrome_DevToolsHandlerThread                           0.1 /s    0.01 ms/s
+Renderer / Compositor                                            0.1 /s    0.01 ms/s
+GPU Process / GpuWatchdog                                        0.1 /s    0.00 ms/s
+Browser / CacheThread_BlockFile                                  0.1 /s    0.00 ms/s
+
+== renderer main: callbacks (count, ms) over the window
+    3     15.8 ms  TimerFire  :: 
+    1      0.6 ms  FunctionCall  vs/base/common/async.js:862:38 
+    1      8.8 ms  FunctionCall  vs/workbench/contrib/voltAgent/browser/home/agentHomePane.js:1194:53 
+    1      0.7 ms  FunctionCall onTimeout vs/base/common/async.js:923:11 
+    1     55.6 ms  FireIdleCallback  :: 
+    1     55.4 ms  FunctionCall  vs/platform/storage/common/storage.js:83:51 
+    1      2.0 ms  FunctionCall  vs/workbench/contrib/voltDiagnostics/electron-browser/voltDiagnostics.contribution.js:183:44 
+    1      3.1 ms  FunctionCall  vs/workbench/contrib/performance/electron-browser/rendererAutoProfiler.js:37:40 
+
+== renderer main: rendering passes
+display link callbacks: 0 (0.0/s)
+
+viz DrawAndSwap: 0 (0.0/s)
