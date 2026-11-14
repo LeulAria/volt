@@ -15,6 +15,11 @@ import { IVoltWindowSnapshotService } from '../common/windowSnapshotService.js';
 /** A snapshot larger than this is not kept: it would slow the next start more than it helps. */
 export const MAX_WINDOW_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 
+/** The file (in `<user data>/VoltWindowSnapshots`) that holds a window's snapshot. */
+export function windowSnapshotFileName(key: string): string {
+	return `${createHash('sha256').update(key).digest('hex').slice(0, 24)}.json`;
+}
+
 export const IVoltWindowSnapshotMainService = createDecorator<IVoltWindowSnapshotMainService>('voltWindowSnapshotMainService');
 
 export interface IVoltWindowSnapshotMainService extends IVoltWindowSnapshotService {
@@ -43,7 +48,7 @@ export class VoltWindowSnapshotMainService extends Disposable implements IVoltWi
 	}
 
 	private file(key: string): string {
-		return join(this.dir, `${createHash('sha256').update(key).digest('hex').slice(0, 24)}.json`);
+		return join(this.dir, windowSnapshotFileName(key));
 	}
 
 	async save(key: string, snapshot: string | undefined): Promise<void> {

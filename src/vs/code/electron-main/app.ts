@@ -122,6 +122,7 @@ import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/vol
 import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
 import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME, VOLT_AGENT_SERVER_ENABLED_SETTING } from '../../platform/voltAgentServer/common/agentServerService.js';
 import { VoltAgentServerMainService } from '../../platform/voltAgentServer/electron-main/agentServerMainService.js';
+import { disposeUnusedEarlyWindow } from '../../platform/windows/electron-main/earlyWindow.js';
 import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
 import { IVoltExternalMcpService, VOLT_EXTERNAL_MCP_CHANNEL_NAME } from '../../platform/voltExternalMcp/common/voltExternalMcp.js';
 import { VoltExternalMcpMainService } from '../../platform/voltExternalMcp/electron-main/voltExternalMcpMainService.js';
@@ -740,6 +741,9 @@ export class CodeApplication extends Disposable {
 
 		// Open Windows
 		await appInstantiationService.invokeFunction(accessor => this.openFirstWindow(accessor, initialProtocolUrls));
+
+		// Volt: the launch window is closed if no window took it
+		disposeUnusedEarlyWindow();
 
 		// Signal phase: after window open
 		this.lifecycleMainService.phase = LifecycleMainPhase.AfterWindowOpen;
