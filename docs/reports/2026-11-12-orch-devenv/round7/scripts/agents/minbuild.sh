@@ -9,10 +9,11 @@ OUT=/Users/leularia/Desktop/VOLT/volt-e5-min-agents/VSCode-darwin-arm64
 DEST=$HOME/.volt-r7/agents/min
 LOCK=$HOME/.volt-r7/heavy.lock
 cd "$REPO" || exit 1
-git checkout -q --detach e7/agents || exit 1
 until mkdir $LOCK 2>/dev/null; do echo "waiting for heavy lock ($(cat $LOCK/owner 2>/dev/null)) $(date +%T)"; sleep 30; done
 echo "agents minbuild $REPO pid $$ start $(date)" > $LOCK/owner
 trap 'rm -rf $LOCK' EXIT
+# What e7/agents holds once the lock is ours.
+git checkout -q --detach e7/agents || exit 1
 export PATH="$HOME/.nvm/versions/node/v22.19.0/bin:$PATH"
 unset ELECTRON_RUN_AS_NODE
 export VOLT_BUILD_IGNORE_TYPE_ERRORS=1

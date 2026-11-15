@@ -9,6 +9,9 @@
 //   mcp1    + the same server with one tool (~/.volt-r7/agents/mcp1-snapshot.json: workspace_status)
 //   volt    + Volt's plugin dir (volt-lazy-tools), Volt's --settings (hooks, skill listing), Volt's env, as `ps` shows
 //           a Volt chat's CLI (~/.volt-r7/agents/probe/volt-cli-cmd.txt)
+//   volt-noplugin, volt-nosettings, volt-noenv, volt-noreplay: Volt's CLI less one part
+//   volt-samethread: Volt's CLI with CLAUDE_CODE_HOOKS_SAME_THREAD=1 (the plugin's hook module on the CLI's thread)
+// SPEED_REPLAY=<port> points the CLI at another endpoint (a logging tap in front of the replay server).
 // Rows -> ../../data/agents/cliweight.jsonl
 import { spawn, execFileSync, execSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -58,7 +61,9 @@ async function run(variant, rep) {
 	const cfg = mkdtempSync(join(tmpdir(), 'r7-cliweight-cfg-'));
 	const env = { PATH: process.env.PATH, HOME: homedir(), USER: process.env.USER, LANG: 'en_US.UTF-8', SHELL: '/bin/zsh', TMPDIR: tmpdir(),
 		ANTHROPIC_BASE_URL: `http://127.0.0.1:${REPLAY}`, ANTHROPIC_API_KEY: 'sk-ant-replay-0000', CLAUDE_CONFIG_DIR: cfg, DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1',
-		...(variant.startsWith('volt') && !variant.includes('noenv') ? voltEnv : {}) };
+		...(variant.startsWith('volt') && !variant.includes('noenv') ? voltEnv : {}),
+		// volt-samethread: Claude Code runs the plugin's hook module on its own thread, not in a Worker isolate.
+		...(variant.includes('samethread') ? { CLAUDE_CODE_HOOKS_SAME_THREAD: '1' } : {}) };
 	const t0 = Date.now();
 	const child = spawn(CLI, args(variant), { cwd: ARENA, env, stdio: ['pipe', 'pipe', 'ignore'] });
 	const rules = join(cfg, 'rules.json');
@@ -99,7 +104,9 @@ async function run(variant, rep) {
 	const restN = Math.min(series.length, 80);
 	const rest = [...series.slice(-restN)].sort((a, b) => a - b)[restN >> 1];
 	const row = { variant, rep, at: new Date(t0).toISOString(), load: loadAvg, resultS: resultAt ? (resultAt - t0) / 1000 : null, textChars, error, peakMiB: Math.round(Math.max(...series)), restMiB: Math.round(rest), samples: series.length };
-	appendFileSync(OUT, JSON.stringify(row) + '\n');
+	if (process.env.CLIWEIGHT_NO_ROWS !== '1') {
+		appendFileSync(OUT, JSON.stringify(row) + '\n');
+	}
 	console.log(JSON.stringify(row));
 	rmSync(cfg, { recursive: true, force: true });
 }
