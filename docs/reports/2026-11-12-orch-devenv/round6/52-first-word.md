@@ -1,6 +1,6 @@
 # Round 6: the first message to a relaunched chat, and why it waited
 
-Status: draft (2026-11-15). Branch `e6/firstword`, worktree `volt-e5-firstword`, from `7f07f73d677`.
+Status: final (2026-11-15). Branch `e6/firstword`, worktree `volt-e5-firstword`, from `7f07f73d677`.
 ADEMark method, unofficial. Live bench turns: none needed (the replay server answers every model request); the
 Bare CLI and adapter numbers quote Claude Code 2.1.322, the version Volt's adapter (`claude-agent-acp` 0.106.0) runs.
 
@@ -23,7 +23,9 @@ chat's first message worse (0.8-1.0 s) unless the warm came 1.2 s or more ahead.
   makes Volt's server a required one (waited for up to 2 s, as before in effect; it connected in 11 ms quiet, 223 ms at
   load 60). The connectors' tools join the session when they connect, exactly as they do today for a message sent the
   moment the agent is ready. Volt already answers every permission prompt for its own tools itself
-  (`isVoltHostToolPermission`), so the allow rule changes no permission. Numbers: see the tables.
+  (`isVoltHostToolPermission`), so the allow rule changes no permission. Adapter alone, prompt 400 ms after ready:
+  395 to 98 ms from prompt to the model request (n=5 each); restored chat, pointer first: 650 to 218 ms Enter to
+  first word (n=6 each); A4 109 to 92 ms (n=9 each).
 - **Found and fixed: the global adapter skipped Volt's preload.** `claude-agent-acp` 0.106.0 is now on PATH
   (`/opt/homebrew/bin`), and `acpLaunchFor` ran a PATH adapter by name, without the `node --import` preload that gives
   Claude's adapter Node's compile cache (round 5: spawn to `initialize` 521 to 331 ms) and the after-turn patches
@@ -40,24 +42,71 @@ Tables from `node scripts/firstword/summarize.mjs` (round6 data).
 
 ### Adapter alone: prompt sent 400 ms after the session is ready (the window) and at once (A4's case)
 
-PENDING (chain 7: `resumebench.mjs`, default vs `CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0` + `allow=mcp__volt`).
+`resumebench.mjs`, default vs `CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0` + `allow=mcp__volt`, arms alternating (chain 9,
+2026-11-15 04:28-06:36Z). Chain 7's first pass (2026-11-14 22:43-22:48Z, 10 rows) ran the fix arm alone, because zsh
+dropped the empty default variant; those rows have no paired default and are in the data but in no table.
 
-| prompt sent after ready | default: prompt to the turn's request | fix: prompt to the turn's request |
+| prompt 400 ms after ready | default | fix |
 |---|---|---|
-| 400 ms | | |
-| 0 ms | | |
+| spawn -> initialize | 149 (5, 124-323) | 128 (5, 123-827) |
+| initialize -> session ready | 224 (5, 175-876) | 197 (5, 175-1163) |
+| prompt -> the turn's request | 395 (5, 91-787) | **98 (5, 69-327)** |
+| prompt -> first text | 402 (5, 96-792) | **103 (5, 74-393)** |
+| load (kept) | 2.0-7.5 | 3.1-13.6 |
+
+| prompt at once | default | fix |
+|---|---|---|
+| prompt -> the turn's request | 62 (5, 60-915) | 61 (4, 56-71) |
+| prompt -> first text | 70 (5, 68-937) | 67 (4, 64-81) |
+| load (kept) | 2.7-13.6 | 2.5-4.9 |
+
+The window is gone: a prompt 400 ms after ready reaches the model 98 ms after Enter instead of 395 ms. A prompt sent
+at once was never held and is unchanged.
 
 ### Restored chat: launch, rest 45 s, click the restored chat's composer, paste, 0.5 s, Enter
 
-PENDING (chain 8 A).
+`firstlaunch.mjs restored 45`, 6 rounds per arm (chain 8 A, 3 rounds, and chain 9, 3 rounds). "Click" = CDP click and
+Enter, no pointer move first; "pointer first" = the pointer moves over the composer before the click, as a hand does
+(Volt warms the agent on that intent).
+
+| metric | before, click | after, click | before, pointer first | after, pointer first |
+|---|---|---|---|---|
+| Enter -> first word painted, ms | 257 (6, 212-1740) | 318 (6, 208-390) | 650 (6, 610-1590) | **218 (6, 205-235)** |
+| agent ready (from the send), ms | 18 (6, 17-26) | 18 (6, 16-208) | 18 (6, 17-19) | 19 (6, 18-22) |
+| first text (from the send), ms | 152 (6, 94-1639) | 217 (6, 83-281) | 560 (6, 515-1500) | **100 (6, 90-101)** |
+| agents at rest before the click | 0 | 0 | 0 | 0 |
+| load (kept) | 1.9-4.2 | 2.4-4.5 | 2.2-3.9 | 1.6-3.8 |
+
+Pointer first (the real case: a hand reaches the composer before it clicks): 650 to 218 ms, every after row under
+0.24 s. Strict click is bimodal in both arms (about 210 ms or about 300 ms, depending on where the click-time warm
+lands relative to the send): the medians (257 vs 318) are within each other's range and say nothing; the worst row
+falls from 1,740 to 390 ms.
 
 ### Reopened chat (A's agent stopped after 40 s idle, open A, 1 s, click, type, Enter)
 
-PENDING (chain 8 B).
+`resume.mjs 2 1 40`, 4 rounds per arm (chain 8 B).
+
+| metric | before, click | after, click | before, pointer first | after, pointer first |
+|---|---|---|---|---|
+| Enter -> first word painted, ms | 202 (4, 200-202) | 201 (4, 197-206) | 208 (4, 203-222) | 203 (4, 198-208) |
+| first text (from the send), ms | 88 (4, 87-92) | 81 (4, 70-95) | 102 (4, 89-121) | 86 (4, 72-101) |
+| load (kept) | 2.4-3.7 | 1.9-4.0 | 3.2-4.9 | 2.5-3.6 |
+
+Unchanged (the reopen warms 1 s ahead, past the window, in both arms).
 
 ### A4 First Word (ADEMark sequence, Opus 5.5, replay)
 
-PENDING (chain 8 C).
+`a4.mjs 3`, 9 runs per arm (chain 8 C).
+
+| metric | Volt before | Volt after |
+|---|---|---|
+| total: DOM poll (round 3 runner), ms | 109 (9, 85-148) | **92 (9, 81-143)** |
+| total: two frames after the DOM insert, ms | 121 (9, 99-159) | 106 (9, 95-155) |
+| before the request, ms | 87 (9, 75-107) | 72 (9, 60-85) |
+| on screen (poll - before), ms | 22 (9, 10-47) | 24 (9, 15-60) |
+| load (kept) | 4.2-6.2 | 3.1-5.0 |
+
+A4 kept (slightly better: the preload's compile cache shortens the spawn, 15 ms off the time before the request).
 
 ## What held the turn: Claude Code 2.1.322's first-command MCP wait
 
@@ -104,4 +153,10 @@ holds the extracted functions). In the headless (SDK) entry:
 
 ## Not done, and why
 
-PENDING.
+- **Strict-click restored chat** stays bimodal (about 210 or 300 ms, worst 390 ms after): the click-time warm and the
+  send race. Not chased: a hand moves the pointer first, and that case is 218 ms in every row.
+- **Release-build numbers**: all rows here are dev builds; the fixes are config and spawn-path changes that a release
+  build runs the same way, so no release pass was taken in round 6.
+- **`ENABLE_CLAUDEAI_MCP_SERVERS=false`** would also remove the wait; not taken, it drops the account's connectors.
+- Round 6's agent died before the write-up; chain 9 (`chain9.log`, ended 10:49 local) finished on its own and its rows
+  are the interleaved ones above. The write-up was finished by round 7's agents agent from the committed data.

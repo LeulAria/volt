@@ -34,12 +34,15 @@ function table(title, groups, metrics) {
 const rb = rows('resumebench.jsonl');
 const fix = r => r.flags.some(f => f.startsWith('env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0'));
 const phases = [['spawn -> initialize', r => r.initMs], ['initialize -> session ready', r => r.sessionMs], ['prompt -> the turn\'s request', r => r.mainReqMs], ['prompt -> first text', r => r.firstTextMs], ['ready -> the turn\'s request', r => typeof r.mainReqMs === 'number' ? r.mainReqMs + (r.warmMs ?? 0) : undefined]];
-const c7w = rb.filter(r => r.label === 'r6-c7-window');
+// Interleaved rows only (chain 9, from 04:00Z on 2026-11-15): chain 7's first pass (2026-11-14 22:43-22:48Z) ran
+// the fix arm alone (zsh dropped the empty default variant), at load 7-11, so it has no paired default row.
+const C7_SINCE = '2026-11-15T04:00:00Z';
+const c7w = rb.filter(r => r.label === 'r6-c7-window' && r.at >= C7_SINCE);
 table('Adapter alone, prompt 400 ms after ready (chain 7)', [
 	{ name: 'default (as 7f07f73d677)', rows: c7w.filter(r => !fix(r)) },
 	{ name: 'fix (wait 0 + volt required)', rows: c7w.filter(fix) },
 ], phases);
-const c7a = rb.filter(r => r.label === 'r6-c7-atonce');
+const c7a = rb.filter(r => r.label === 'r6-c7-atonce' && r.at >= C7_SINCE);
 table('Adapter alone, prompt at once (chain 7)', [
 	{ name: 'default', rows: c7a.filter(r => !fix(r)) },
 	{ name: 'fix', rows: c7a.filter(fix) },
