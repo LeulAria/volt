@@ -3,12 +3,14 @@
 // data/typing/a3.jsonl, a4.jsonl). Each launch waits for the 1-minute load gate (14).
 //   node ab.mjs <arms=minbase,minafter> [reps=2] [n3=6] [n4=6]
 import { execFileSync } from 'child_process';
+import { freshProfile } from './a8.mjs';
 import { cdp, launch, load1, newChat, send, sleep, stop, waitQuiet, waitWorkbench, writeSettings } from './lib.mjs';
 
 const [armsArg = 'minbase,minafter', reps = '2', n3 = '6', n4 = '6'] = process.argv.slice(2);
 for (let r = 0; r < Number(reps); r++) {
 	const arms = armsArg.split(',');
 	for (const arm of r % 2 ? arms.reverse() : arms) {
+		await freshProfile(arm);
 		const l = await waitQuiet(14);
 		console.log(`== ${arm} rep ${r} load ${l} ${new Date().toISOString()}`);
 		writeSettings(arm);

@@ -10,10 +10,10 @@
 // composer took the character; and Event Timing (entries of 16 ms and more).
 // A key with no input event within 2 s is missed.
 //   node a8.mjs [reps=3] [arms=before,after]     rows appended to data/idle/a8.jsonl
-import { appendFileSync, mkdirSync } from 'fs';
+import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
-import { cdp, DATA, FOLDER, focusComposer, launch, load1, newChat, pct, profileProcesses, role, send, sleep, stop, waitQuiet, waitWorkbench, writeSettings, median } from './lib.mjs';
+import { cdp, DATA, FOLDER, focusComposer, launch, load1, newChat, pct, profileProcesses, role, send, sleep, stop, storeWindowSize, ud, waitQuiet, waitWorkbench, writeSettings, median } from './lib.mjs';
 
 /** CPU seconds used so far per process role of the arm (ps cputime), to split the typing window's CPU by role. */
 function cpuByRole(arm) {
@@ -79,7 +79,31 @@ if (process.argv[1]?.endsWith('a8.mjs')) {
 	}
 }
 
+/**
+ * Round 7: every row starts from a copy of the arm's template profile (launched and quit once: V8 code cache and
+ * window size stored, no chats). A row quits about 40 s into the 3-minute streams, and Volt resumes a chat's turn on
+ * the next launch, so a reused profile would type over 10 streams instead of ADEMark's 5.
+ */
+export async function freshProfile(arm) {
+	const template = `${ud(arm)}.template`;
+	if (!existsSync(template)) {
+		rmSync(ud(arm), { recursive: true, force: true });
+		writeSettings(arm);
+		launch(arm, { keepRendering: true });
+		await waitWorkbench();
+		await sleep(10_000);
+		await stop(arm);
+		storeWindowSize(arm);
+		renameSync(ud(arm), template);
+	}
+	rmSync(ud(arm), { recursive: true, force: true });
+	execSync(`cp -cR '${template}' '${ud(arm)}'`);
+}
+
 async function rep(arm, delayS) {
+	if (process.env.A8_REUSE_PROFILE !== '1') {
+		await freshProfile(arm);
+	}
 	const loadStart = await waitQuiet(14);
 	console.log(`== ${arm} load ${loadStart} ${new Date().toISOString()}`);
 	try { execSync(`git -C ${FOLDER} checkout -q -- . && git -C ${FOLDER} clean -qfd`); } catch { }
