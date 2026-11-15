@@ -112,7 +112,8 @@ function voltAllows(policy, path, access) {
 	if ((policy.protect || []).some(insideFolded) || (policy.protectPatterns || []).some(matches)) {
 		return false;
 	}
-	if (fp.split('/').some(part => part === '.git') || (policy.gitDirs || []).some(dir => insideFolded(dir.root))) {
+	// Nothing in a git folder: one named .git at any depth, or a folder the policy names as one.
+	if (fp.split('/').some(part => part === '.git') || (policy.gitDirs || []).some(dir => !dir.anyDepth && insideFolded(dir.root))) {
 		return false;
 	}
 	return (policy.write || []).some(root => inside(root)) || (policy.writeFiles || []).some(file => p === file);
