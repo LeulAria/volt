@@ -194,11 +194,13 @@ const IDLE_AGENT_TTL_MS = 15 * 60_000;
 const IDLE_AGENT_CHECK_MS = 60_000;
 /**
  * An idle agent that can resume its session later (Claude Code, Codex: ACP `session/resume`) and is
- * not the most recently used one stops this long after its last turn or prewarm. Its process (the
- * ACP adapter and the CLI, a few hundred MB and some CPU at rest) comes back with the conversation
- * intact when the chat is opened, focused or sent to (see `releasedAgent`).
+ * has no background work stops this long after its last turn or prewarm, the chat in use's too. Its
+ * process (the ACP adapter and the CLI, a few hundred MB and some CPU at rest) comes back with the
+ * conversation intact when the chat is opened, pointed at, focused, typed in or sent to (see
+ * `releasedAgent`), so a follow-up's first word does not wait for it: the chat in use kept its agent
+ * 15 minutes and every other chat 30 s, which filled ADEMark's A10 window (round 7).
  */
-const IDLE_AGENT_GRACE_MS = 30_000;
+const IDLE_AGENT_GRACE_MS = 20_000;
 /** Appended to a native fast-lane request: a small change is edited, checked and answered without a test run or browser. */
 const FAST_LANE_NOTE = '[Volt] Small, well-scoped change: make the edit, check the files you changed for errors, and answer in a line or two. No test runs, builds, servers or browser unless the user asked for them.';
 /** The second opinion's wait: past it the run finishes with its items claimed, not reviewed. */
@@ -947,11 +949,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			.sort((a, b) => (b.agentUsedAt ?? 0) - (a.agentUsedAt ?? 0));
 		let kept = 0;
 		let next = Infinity;
-		idle.forEach((session, index) => {
+		idle.forEach(session => {
 			const age = now - (session.agentUsedAt ?? 0);
 			const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
-			if (index > 0 && session.agentHandle && provider?.canResume?.(session.agentHandle)) {
-				// Not the chat in use, and it comes back intact: stop it after a short grace.
+			if (session.agentHandle && provider?.canResume?.(session.agentHandle)) {
+				// It comes back intact (the chat in use's on the first sign of a message): stop it after a short grace.
 				if (age >= IDLE_AGENT_GRACE_MS) {
 					this.releaseAgent(session, true);
 				} else {
