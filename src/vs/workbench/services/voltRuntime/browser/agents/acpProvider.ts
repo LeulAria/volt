@@ -45,7 +45,7 @@ import { turnWriteGate } from '../../common/turnWriteGate.js';
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient, AcpRequestAbandonedError, IAcpIncomingRequest } from './acpJsonRpc.js';
 import { listClaudeModels } from './claudeCatalog.js';
-import { acpLaunchFor, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listFxModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
+import { acpLaunchFor, acpSharedHostEntry, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listFxModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
 import { listCodexModels } from './codexAppServer.js';
 import { sandboxRefusalLikely } from '../../common/sandboxDenialCheck.js';
 import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
@@ -974,7 +974,9 @@ export class AcpAgentProvider implements IAgentProvider {
 			// Rejects with a SandboxUnavailableError when the sandbox cannot be enforced; the runtime shows it.
 			// `sandboxed` follows the wrap: an agent whose strategy is its own sandbox gets no Volt wrap here (sandboxStrategy).
 			const context: IVoltExecContext = { principal: req.sessionId ? `chat:${req.sessionId}` : 'volt', reason: 'agent', sandboxed: !!sandbox };
-			processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}), context });
+			// Claude's adapter is served from one process for every chat; this chat's CLI still starts in its own sandbox.
+			const sharedEntry = acpSharedHostEntry(cliAgentDefinition(this.id), { command, args });
+			processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}), context, ...(sharedEntry ? { acpHost: { entry: sharedEntry } } : {}) });
 		} finally {
 			this.spawning--;
 		}

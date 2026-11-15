@@ -1,0 +1,301 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+import assert from 'assert';
+import { ChildProcess, ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { promises as fs } from 'fs';
+import { tmpdir } from 'os';
+import { join } from '../../../../base/common/path.js';
+import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+import { IResolvedSandboxPolicy, resolvedPolicyAllows } from '../../../voltSandbox/common/sandboxResolved.js';
+import { ACP_HOST_POLICY_CHECK_SOURCE } from '../../common/acpSharedHostSource.js';
+import { IVoltStdioSpawnOptions } from '../../common/voltStdio.js';
+import { AcpSharedHosts, IAcpSharedHostDelegate } from '../../node/acpSharedHosts.js';
+
+/**
+ * A stand-in for `claude-agent-acp`'s `dist`: `serve.js`'s router opens one "agent" per connection that
+ * answers one JSON line per request, doing in the host what the real adapter does there (reads its
+ * environment, starts its CLI, reads files).
+ */
+const FAKE_SERVE = `
+import { spawn, execFile, spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
+const execFileAsync = promisify(execFile);
+export function acpProtocolsFromEnv() { return 'auto'; }
+export function acpProtocolRouter(logger, onAgent) {
+	return {
+		connect(stream) {
+			let closed;
+			const done = new Promise(resolve => closed = resolve);
+			let child;
+			onAgent({ dispose: async () => { child?.kill('SIGTERM'); } });
+			const writer = stream.writable.getWriter();
+			const reply = value => writer.write(new TextEncoder().encode(JSON.stringify(value) + '\\n'));
+			const handle = async request => {
+				if (request.do === 'env') { return { value: process.env[request.name], keys: Object.keys({ ...process.env }).includes(request.name) }; }
+				if (request.do === 'read') { return readFile(request.path, 'utf8').then(text => ({ text }), error => ({ error: error.code })); }
+				if (request.do === 'readSync') { try { return { text: fs.readFileSync(request.path, 'utf8') }; } catch (error) { return { error: error.code }; } }
+				if (request.do === 'write') { try { fs.writeFileSync(request.path, 'x'); return { ok: true }; } catch (error) { return { error: error.code }; } }
+				if (request.do === 'spawnSync') { try { spawnSync('true'); return { ok: true }; } catch (error) { return { error: error.code }; } }
+				if (request.do === 'execFile') { return execFileAsync(request.command, request.args, { env: { ...process.env, EXTRA: 'e' } }).then(out => ({ stdout: out.stdout }), error => ({ error: String(error.message) })); }
+				if (request.do === 'start') {
+					child = spawn(request.command, request.args, { env: { ...process.env, ADDED: 'by-adapter' }, stdio: ['pipe', 'pipe', 'pipe'] });
+					child.stdout.setEncoding('utf8').on('data', data => reply({ event: 'out', data }));
+					child.on('exit', (code, signal) => reply({ event: 'exit', code, signal }));
+					child.on('error', error => reply({ event: 'error', message: error.message }));
+					return { started: true };
+				}
+				if (request.do === 'say') { child.stdin.write(request.text); return { said: true }; }
+				return { error: 'unknown' };
+			};
+			(async () => {
+				let pending = '';
+				const reader = stream.readable.getReader();
+				for (;;) {
+					const { value, done: end } = await reader.read();
+					if (end) { break; }
+					const lines = (pending + new TextDecoder().decode(value)).split('\\n');
+					pending = lines.pop();
+					for (const line of lines) {
+						if (!line) { continue; }
+						const request = JSON.parse(line);
+						reply({ id: request.id, ...(await handle(request)) });
+					}
+				}
+				closed();
+			})();
+			return { closed: done };
+		},
+	};
+}
+`;
+const FAKE_UTILS = `
+import { Readable, Writable } from 'node:stream';
+export const nodeToWebWritable = stream => Writable.toWeb(stream);
+export const nodeToWebReadable = stream => Readable.toWeb(stream);
+`;
+const FAKE_SDK = `export const ndJsonStream = (writable, readable) => ({ writable, readable });\n`;
+
+/** A CLI stand-in: says its marked environment once, then echoes its stdin in upper case. */
+const FAKE_CLI = `process.stdout.write('env ' + (process.env.ADDED || '-') + ' ' + (process.env.GONE || '-') + ' ' + (process.env.FROM_LAUNCH || '-') + '\\n'); process.stdin.on('data', data => { const text = String(data); if (text.includes('die')) { process.exit(7); } process.stdout.write(text.toUpperCase()); });`;
+
+const policy = (over: Partial<IResolvedSandboxPolicy>): IResolvedSandboxPolicy => ({
+	name: 't', platform: 'darwin', readAll: false, read: [], write: [], writeFiles: [], deny: [], protect: [], denyPatterns: [], protectPatterns: [],
+	newRepositoryGuard: [], gitDirs: [], network: { mode: 'host', allow: [], loopbackPorts: [], listen: false }, unixSockets: [], systemServices: false,
+	limits: {} as IResolvedSandboxPolicy['limits'], env: {}, cwd: '/', tmp: '/tmp', home: '/home/u', ...over,
+});
+
+suite('Shared ACP adapter host', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	let dir: string;
+	let entry: string;
+	let hosts: AcpSharedHosts;
+	let output: Map<string, string[]>;
+	let exits: Map<string, number | null>;
+	let started: { id: string; options: IVoltStdioSpawnOptions; unset: readonly string[] }[];
+	let views: Map<string, { env: Record<string, string>; policy: IResolvedSandboxPolicy }>;
+	let waiters: (() => void)[];
+	const children = new Set<ChildProcess>();
+
+	const stop = (child: ChildProcess) => {
+		if (child.exitCode === null && child.signalCode === null) {
+			child.kill('SIGKILL');
+		}
+	};
+	const delegate = (): IAcpSharedHostDelegate => ({
+		hostEnv: async () => ({ PATH: process.env['PATH'], HOME: process.env['HOME'], SHARED: 'host' }),
+		sandboxView: async options => options.sandbox ? views.get(options.cwd ?? '') : undefined,
+		startChild: async (id, options, unset) => {
+			started.push({ id, options, unset });
+			const env: NodeJS.ProcessEnv = { PATH: process.env['PATH'], ...options.env, ...(options.sandbox ? { FROM_LAUNCH: 'sandbox' } : {}) };
+			for (const key of unset) {
+				delete env[key];
+			}
+			const child = spawn(options.command, options.args ?? [], { env, stdio: ['pipe', 'pipe', 'pipe'] }) as ChildProcessWithoutNullStreams;
+			children.add(child);
+			return { child, ...(options.sandbox ? { policy: views.get(options.cwd ?? '')!.policy } : {}) };
+		},
+		stopChild: (_id, child) => stop(child),
+		data: (id, text) => {
+			output.set(id, [...output.get(id) ?? [], ...text.split('\n').filter(Boolean)]);
+			waiters.splice(0).forEach(wake => wake());
+		},
+		exited: (id, code) => {
+			exits.set(id, code);
+			waiters.splice(0).forEach(wake => wake());
+		},
+		track: (child) => children.add(child),
+		stopTree: stop,
+		log: () => undefined,
+	});
+
+	/** Waits until `test` holds for what arrived. */
+	const until = async <T>(test: () => T | undefined | false, what: string): Promise<T> => {
+		const deadline = Date.now() + 15_000;
+		for (; ;) {
+			const value = test();
+			if (value) {
+				return value;
+			}
+			if (Date.now() > deadline) {
+				throw new Error(`timed out waiting for ${what}`);
+			}
+			await new Promise<void>(resolve => {
+				waiters.push(resolve);
+				setTimeout(resolve, 50);
+			});
+		}
+	};
+	let nextRequest = 0;
+	const ask = async (id: string, request: Record<string, unknown>): Promise<Record<string, unknown>> => {
+		const n = ++nextRequest;
+		hosts.write(id, `${JSON.stringify({ id: n, ...request })}\n`);
+		return until(() => (output.get(id) ?? []).map(line => JSON.parse(line)).find(reply => reply.id === n), `reply ${n} (${String(request.do)})`);
+	};
+	const events = (id: string) => (output.get(id) ?? []).map(line => JSON.parse(line)).filter(line => line.event);
+	const options = (over: Partial<IVoltStdioSpawnOptions> = {}): IVoltStdioSpawnOptions => ({ command: process.execPath, args: [entry], context: { principal: 'volt', reason: 'agent', sandboxed: false }, ...over });
+
+	setup(async () => {
+		dir = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'volt-acp-host-')));
+		const dist = join(dir, 'node_modules', 'adapter', 'dist');
+		const sdk = join(dir, 'node_modules', '@agentclientprotocol', 'sdk');
+		await fs.mkdir(dist, { recursive: true });
+		await fs.mkdir(sdk, { recursive: true });
+		await fs.writeFile(join(dir, 'node_modules', 'adapter', 'package.json'), '{"type":"module"}');
+		await fs.writeFile(join(dist, 'serve.js'), FAKE_SERVE);
+		await fs.writeFile(join(dist, 'utils.js'), FAKE_UTILS);
+		await fs.writeFile(join(dist, 'index.js'), '');
+		await fs.writeFile(join(sdk, 'package.json'), '{"name":"@agentclientprotocol/sdk","type":"module","exports":{"./experimental/v2":{"default":"./v2.js"}}}');
+		await fs.writeFile(join(sdk, 'v2.js'), FAKE_SDK);
+		await fs.writeFile(join(dir, 'cli.js'), FAKE_CLI);
+		entry = join(dist, 'index.js');
+		output = new Map();
+		exits = new Map();
+		started = [];
+		views = new Map();
+		waiters = [];
+		hosts = new AcpSharedHosts(delegate());
+	});
+
+	teardown(async () => {
+		hosts.dispose();
+		children.forEach(stop);
+		children.clear();
+		await fs.rm(dir, { recursive: true, force: true });
+	});
+
+	test('two chats share one host; each has its own environment, CLI and file rules', async function () {
+		if (process.platform === 'win32') {
+			this.skip();
+		}
+		this.timeout(60_000);
+		const secret = join(dir, 'secret.txt');
+		const open = join(dir, 'open.txt');
+		await fs.writeFile(secret, 'secret');
+		await fs.writeFile(open, 'open');
+		views.set('/chat-a', { env: { PATH: process.env['PATH']!, CLAUDE_CONFIG_DIR: '/overlay/a', GONE: 'in-launch' }, policy: policy({ readAll: true, deny: [secret], write: [join(dir, 'w')] }) });
+		const a = await hosts.open(options({ cwd: '/chat-a', sandbox: { level: 'workspace-write', network: true, providerId: 'claude-code', workspaceRoots: [dir] }, context: { principal: 'chat:a', reason: 'agent', sandboxed: true } }), entry);
+		const b = await hosts.open(options({ cwd: '/chat-b' }), entry);
+		assert.ok(a && b && a !== b);
+		assert.strictEqual(hosts.hostCount, 1, 'one host for both chats');
+		assert.strictEqual(hosts.isUnconfined(a), false);
+		assert.strictEqual(hosts.isUnconfined(b), true);
+
+		// Environment: the sandboxed chat sees its launch's, the other the host's.
+		assert.deepStrictEqual(await ask(a, { do: 'env', name: 'CLAUDE_CONFIG_DIR' }), { id: nextRequest, value: '/overlay/a', keys: true });
+		assert.strictEqual((await ask(b, { do: 'env', name: 'CLAUDE_CONFIG_DIR' })).value, undefined);
+		assert.strictEqual((await ask(a, { do: 'env', name: 'SHARED' })).value, undefined, 'a sandboxed chat does not see the host\'s environment');
+		assert.strictEqual((await ask(b, { do: 'env', name: 'SHARED' })).value, 'host');
+
+		// Files: the sandboxed chat's policy holds the host's own reads and writes; the other chat is unconfined.
+		assert.deepStrictEqual([(await ask(a, { do: 'read', path: secret })).error, (await ask(a, { do: 'readSync', path: secret })).error], ['EACCES', 'EACCES']);
+		assert.strictEqual((await ask(a, { do: 'read', path: open })).text, 'open');
+		assert.strictEqual((await ask(b, { do: 'read', path: secret })).text, 'secret');
+		assert.strictEqual((await ask(a, { do: 'write', path: join(dir, 'planted.txt') })).error, 'EACCES');
+		assert.strictEqual((await ask(b, { do: 'write', path: join(dir, 'b.txt') })).ok, true);
+
+		// Processes: never started in the host; each chat's goes to the service with the chat's own launch.
+		assert.strictEqual((await ask(a, { do: 'spawnSync' })).error, 'EPERM');
+		await ask(a, { do: 'start', command: process.execPath, args: [join(dir, 'cli.js')] });
+		await ask(b, { do: 'start', command: process.execPath, args: [join(dir, 'cli.js')] });
+		await until(() => events(a).some(e => e.event === 'out') && events(b).some(e => e.event === 'out'), 'both CLIs');
+		assert.strictEqual(started.length, 2);
+		const [forA, forB] = [started.find(s => s.id === a)!, started.find(s => s.id === b)!];
+		assert.ok(forA.options.sandbox && !forB.options.sandbox, 'each CLI starts with its own chat\'s sandbox request');
+		assert.strictEqual(forA.options.context.principal, 'chat:a');
+		assert.deepStrictEqual(forA.options.env, { ADDED: 'by-adapter' }, 'only what the adapter added: the launch\'s environment is not sent back');
+		assert.strictEqual(events(a).find(e => e.event === 'out').data, 'env by-adapter - sandbox\n');
+		assert.strictEqual(events(b).find(e => e.event === 'out').data, 'env by-adapter - -\n');
+
+		// Each chat talks to its own CLI.
+		await ask(a, { do: 'say', text: 'from a\n' });
+		await ask(b, { do: 'say', text: 'from b\n' });
+		await until(() => events(a).some(e => e.data === 'FROM A\n') && events(b).some(e => e.data === 'FROM B\n'), 'echoes');
+		assert.ok(!events(a).some(e => e.data === 'FROM B\n') && !events(b).some(e => e.data === 'FROM A\n'));
+
+		// One chat's CLI dies: its chat hears it, the other chat and its CLI carry on.
+		await ask(a, { do: 'say', text: 'die\n' });
+		await until(() => events(a).find(e => e.event === 'exit'), 'exit of a\'s CLI');
+		assert.strictEqual(events(a).find(e => e.event === 'exit').code, 7);
+		await ask(b, { do: 'say', text: 'still here\n' });
+		await until(() => events(b).some(e => e.data === 'STILL HERE\n'), 'b after a\'s CLI died');
+
+		// A stopped chat ends alone, with its CLI.
+		hosts.kill(b);
+		await until(() => exits.has(b), 'exit of b');
+		assert.strictEqual(exits.has(a), false);
+		assert.strictEqual(hosts.has(b), false);
+		assert.strictEqual((await ask(a, { do: 'env', name: 'CLAUDE_CONFIG_DIR' })).value, '/overlay/a');
+	});
+
+	test('execFile is relayed; another environment is another host; an adapter that cannot be shared is not', async function () {
+		if (process.platform === 'win32') {
+			this.skip();
+		}
+		this.timeout(60_000);
+		const a = (await hosts.open(options(), entry))!;
+		const out = await ask(a, { do: 'execFile', command: process.execPath, args: ['-e', 'process.stdout.write("hi " + process.env.EXTRA)'] });
+		assert.strictEqual(out.stdout, 'hi e');
+		assert.deepStrictEqual(started[0].options.env, { EXTRA: 'e' });
+
+		const other = (await hosts.open(options({ env: { CLAUDE_CONFIG_DIR: '/accounts/two' } }), entry))!;
+		assert.strictEqual(hosts.hostCount, 2, 'a chat with another config folder never shares a process');
+		assert.strictEqual((await ask(other, { do: 'env', name: 'CLAUDE_CONFIG_DIR' })).value, '/accounts/two');
+		assert.strictEqual((await ask(a, { do: 'env', name: 'CLAUDE_CONFIG_DIR' })).value, undefined);
+
+		const broken = join(dir, 'broken', 'index.js');
+		await fs.mkdir(join(dir, 'broken'));
+		await fs.writeFile(broken, '');
+		assert.strictEqual(await hosts.open(options({ args: [broken] }), broken), undefined);
+		assert.strictEqual(await hosts.open(options({ args: [broken] }), broken), undefined);
+	});
+
+	test('the host\'s file check allows nothing the sandbox policy refuses', () => {
+		const voltAllows = new Function(`${ACP_HOST_POLICY_CHECK_SOURCE}; return voltAllows;`)() as (policy: IResolvedSandboxPolicy, path: string, access: 'read' | 'write') => boolean;
+		const policies = [
+			policy({ readAll: true, write: ['/w', '/Users/u/proj'], deny: ['/Users/u/.ssh', '/w/Denied'], denyPatterns: [{ root: '/Users/u/proj', names: ['.env'] }], protect: ['/Users/u/proj/.volt'], protectPatterns: [{ root: '/', names: ['.claude', 'settings.json'] }], gitDirs: [{ root: '/Users/u/proj', anyDepth: true }, { root: '/Users/u/bare.git', anyDepth: false }], newRepositoryGuard: ['/w'], writeFiles: ['/Users/u/.claude.json'], isolated: [{ root: '/cache', keep: '/cache/one' }] }),
+			policy({ platform: 'linux', read: ['/usr', '/Users/u/proj'], write: ['/tmp/x'], deny: ['/usr/Secret'], writeFiles: ['/etc/one'] }),
+			policy({}),
+		];
+		const paths = ['/', '/w', '/w/a', '/w/a/../b', 'relative', '/w/denied/x', '/w/Denied', '/Users/u/.ssh/id', '/users/U/.SSH/id', '/Users/u/proj/src/a.ts', '/Users/u/proj/.env', '/Users/u/proj/sub/.ENV',
+			'/Users/u/proj/.git/config', '/Users/u/proj/.git/index.lock', '/Users/u/proj/sub/.git/objects/ab', '/Users/u/bare.git/HEAD', '/Users/u/bare.git/objects/x', '/w/.git', '/w/new/.git/HEAD',
+			'/Users/u/proj/.volt/sandbox.json', '/Users/u/proj/.claude/settings.json', '/Users/u/.claude.json', '/Users/u/.claude.json.lock', '/cache/one/a', '/cache/two/a', '/usr/bin/env', '/usr/Secret/a', '/usr/secret/a', '/tmp/x/y', '/etc/one', '/etc/two', '/w/'];
+		let allowed = 0;
+		for (const p of policies) {
+			for (const path of paths) {
+				assert.strictEqual(voltAllows(p, path, 'read'), resolvedPolicyAllows(p, path, 'read'), `read ${path} (${p.platform})`);
+				if (voltAllows(p, path, 'write')) {
+					allowed++;
+					assert.ok(resolvedPolicyAllows(p, path, 'write'), `write ${path} (${p.platform})`);
+				}
+			}
+		}
+		assert.ok(allowed > 5, 'the write check is not empty');
+	});
+});

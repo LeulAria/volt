@@ -28,6 +28,7 @@ import { resolvedPolicyAllows } from '../../voltSandbox/common/sandboxResolved.j
 import { SandboxUnavailableError } from '../../voltSandbox/common/sandboxBackend.js';
 import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
 import { ISandboxLaunch, VoltSandboxLauncher } from '../../voltSandbox/node/sandboxLauncher.js';
+import { AcpSharedHosts, IAcpSharedHostDelegate } from './acpSharedHosts.js';
 import type { SandboxedExtensionHosts } from '../../voltSandbox/node/extensionHostSandbox.js';
 import { ISandboxWorkloadInfo, SANDBOX_SUPERVISOR_SETTING } from '../../voltSandbox/common/sandboxWorkloads.js';
 import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
@@ -41,7 +42,7 @@ import { BUILTIN_T2_PLUGINS, IVoltPluginAvailability, IVoltPluginFolders, IVoltP
 import { builtinT2Descriptor, VoltPluginHostService } from '../../voltPlugins/node/pluginHost.js';
 import { SandboxedPtySession } from '../../voltSandbox/node/sandboxPty.js';
 import { ISandboxedHost } from '../../voltSandbox/node/supervisor.js';
-import { describeExecContext, execRefusal, IVoltChatFileRequest, IVoltChatFileResult, IVoltExecContext, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltPromptBudget, IVoltSandboxApproval, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError } from '../common/voltStdio.js';
+import { describeExecContext, execRefusal, IVoltChatFileRequest, IVoltChatFileResult, IVoltExecContext, IVoltExecFileRequest, IVoltExecFileResult, IVoltExecRefusal, IVoltExecRequest, IVoltExecResult, IVoltJobOutput, IVoltPromptBudget, IVoltSandboxApproval, IVoltSandboxedMcpRequest, IVoltSandboxedTerminalLaunch, IVoltSandboxedTerminalRequest, IVoltSandboxEvent, IVoltSandboxFileResult, IVoltSandboxStateSync, IVoltSandboxSupportInfo, IVoltStdioService, IVoltStdioSpawnOptions, VoltExecRefusedError, ACP_SHARED_HOST_SETTING } from '../common/voltStdio.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -93,6 +94,10 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	/** The sandbox of each sandboxed spawn, and the spawn of each sandbox tag. */
 	private readonly sandboxes = new Map<string, ISandboxLaunch>();
 	private readonly sandboxTags = new Map<string, string>();
+	/** Shared ACP adapter hosts and their chats (virtual process ids); see `acpSharedHosts.ts`. */
+	private readonly acpHosts = new AcpSharedHosts(this.acpHostDelegate());
+	/** The sandbox launch of each CLI a shared host's chat runs. */
+	private readonly acpChildLaunches = new WeakMap<ChildProcess, ISandboxLaunch>();
 	/** Sandboxed commands by sandbox tag: their denials go into their result (native models' Volt Guard cards). */
 	private readonly execTags = new Map<string, ExecRun>();
 	/** Sandboxes of ended processes, kept a moment for the kernel log's last denials: disposed at once when the service goes. */
@@ -409,8 +414,67 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			this.logService.warn(`[volt-exec] refused spawn of ${basename(options.command)}: ${refusal.reason}`);
 			throw new VoltExecRefusedError(refusal);
 		}
+		if (options.acpHost && this.configurationService.getValue<boolean>(ACP_SHARED_HOST_SETTING) !== false) {
+			// One adapter process for every chat of this launch; the chat's CLI still starts through
+			// `startChild` below, in the chat's own sandbox. Undefined: this adapter cannot be shared.
+			const shared = await this.acpHosts.open(options, options.acpHost.entry);
+			if (shared) {
+				this.logService.trace(`[volt-exec] spawn ${shared} ${basename(options.command)} on the shared host (${describeExecContext(options.context)})`);
+				if (owner) {
+					this.owners.set(shared, owner);
+				}
+				return shared;
+			}
+		}
 		const id = generateUuid();
 		this.logService.trace(`[volt-exec] spawn ${id} ${basename(options.command)} (${describeExecContext(options.context)})`);
+		const { child, command } = await this.startChild(id, options);
+		this.processes.set(id, child);
+		this.track(child, command);
+		if (owner) {
+			this.owners.set(id, owner);
+		}
+		child.stdout.setEncoding('utf8');
+		child.stderr.setEncoding('utf8');
+		child.stdout.on('data', (data: string) => this.queueData(id, data));
+		child.stderr.on('data', (data: string) => {
+			this.stderr.set(id, tailText(`${this.stderr.get(id) ?? ''}${data}`, 4_000));
+			this.logService.trace(`[volt-stdio:${id}] ${data}`);
+		});
+		// 'close' waits for stdout to drain; 'exit' can fire while output is still buffered.
+		child.on('close', code => {
+			// Output always reaches the window before the exit does.
+			this.flushData(id);
+			const stderr = this.stderr.get(id);
+			this.disposeSandbox(id);
+			this.processes.delete(id);
+			this.stderr.delete(id);
+			this.fireExit(id, code, stderr);
+		});
+		child.on('error', err => this.logService.error('[volt-stdio]', err));
+		return id;
+	}
+
+	/** The exit of `id`, to the window that owns it. */
+	private fireExit(id: string, code: number | null, stderr?: string): void {
+		const owner = this.owners.get(id);
+		this.owners.delete(id);
+		if (owner) {
+			this.exitOwners.set(id, owner);
+		}
+		try {
+			this._onExit.fire({ id, code, ...(stderr ? { stderr } : {}) });
+		} finally {
+			this.exitOwners.delete(id);
+		}
+	}
+
+	/**
+	 * Starts the process of `id`: through the sandbox launch when `options.sandbox` is set (prepared,
+	 * attested and confirmed before it may run; registered under `id` for the sandbox calls by id), else
+	 * with the login shell's environment. `unset`: variables to leave out of either environment.
+	 */
+	private async startChild(id: string, options: IVoltStdioSpawnOptions, unset?: readonly string[]): Promise<{ child: ChildProcessWithoutNullStreams; command: string; launch?: ISandboxLaunch }> {
 		let command = options.command;
 		let args = options.args ?? [];
 		let cwd = options.cwd;
@@ -433,6 +497,12 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			this.logService.info(`[volt-sandbox-spawn] ${id} env=${Object.keys(env).sort().join(',')}`);
 		} else {
 			env = { ...await this.env(), ...options.env };
+		}
+		if (unset?.length) {
+			env = { ...env };
+			for (const key of unset) {
+				delete env[key];
+			}
 		}
 		let child: ChildProcessWithoutNullStreams;
 		try {
@@ -470,39 +540,68 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			launch.warnings.forEach(warning => this._onSandboxEvent.fire({ id, warning }));
 			launch.notes.forEach(note => this._onSandboxEvent.fire({ id, note }));
 		}
-		this.processes.set(id, child);
-		this.track(child, command);
-		if (owner) {
-			this.owners.set(id, owner);
-		}
-		child.stdout.setEncoding('utf8');
-		child.stderr.setEncoding('utf8');
-		child.stdout.on('data', (data: string) => this.queueData(id, data));
-		child.stderr.on('data', (data: string) => {
-			this.stderr.set(id, tailText(`${this.stderr.get(id) ?? ''}${data}`, 4_000));
-			this.logService.trace(`[volt-stdio:${id}] ${data}`);
-		});
-		// 'close' waits for stdout to drain; 'exit' can fire while output is still buffered.
-		child.on('close', code => {
-			// Output always reaches the window before the exit does.
-			this.flushData(id);
-			const stderr = this.stderr.get(id);
-			const owner = this.owners.get(id);
-			this.disposeSandbox(id);
-			this.processes.delete(id);
-			this.owners.delete(id);
-			this.stderr.delete(id);
-			if (owner) {
-				this.exitOwners.set(id, owner);
-			}
-			try {
-				this._onExit.fire({ id, code, ...(stderr ? { stderr } : {}) });
-			} finally {
-				this.exitOwners.delete(id);
-			}
-		});
-		child.on('error', err => this.logService.error('[volt-stdio]', err));
-		return id;
+		return { child, command, ...(launch ? { launch } : {}) };
+	}
+
+	/** What the shared adapter hosts need from this service (see `acpSharedHosts.ts`). */
+	private acpHostDelegate(): IAcpSharedHostDelegate {
+		return {
+			hostEnv: () => this.env(),
+			sandboxView: async options => {
+				if (!options.sandbox) {
+					return undefined;
+				}
+				await this.snapshotBuildEntries(options.sandbox);
+				// The chat's launch as its adapter process had it: resolved for the view only, nothing is started on it.
+				const launch = await this.sandbox.prepare(options.command, options.args ?? [], options.sandbox, { cwd: options.cwd, hostEnv: await this.env(), env: options.env });
+				try {
+					return { env: { ...launch.env }, policy: launch.policy };
+				} finally {
+					launch.dispose();
+				}
+			},
+			startChild: async (id, options, unset) => {
+				// A chat's CLI after an earlier one (a respawn): the earlier launch goes first.
+				const earlier = this.sandboxes.get(id);
+				if (earlier) {
+					this.sandboxes.delete(id);
+					this.retire(earlier, 3_000);
+				}
+				const { child, command, launch } = await this.startChild(id, options, unset);
+				this.track(child, command);
+				if (launch) {
+					this.acpChildLaunches.set(child, launch);
+				}
+				return { child, ...(launch ? { policy: launch.policy } : {}) };
+			},
+			stopChild: (id, child) => {
+				const launch = this.acpChildLaunches.get(child);
+				if (!launch) {
+					killTree(child);
+					return;
+				}
+				// The backend's kill: the whole sandbox, including processes that left the group.
+				void launch.terminate(child);
+				if (child.exitCode !== null || child.signalCode !== null) {
+					this.acpChildLaunches.delete(child);
+					if (this.sandboxes.get(id) === launch) {
+						this.sandboxes.delete(id);
+					}
+					// A moment for the kernel log to deliver the last denials of a process that just ended.
+					if (!this.retiring.has(launch)) {
+						this.retire(launch, 3_000);
+					}
+				}
+			},
+			data: (id, text) => this.queueData(id, text),
+			exited: (id, code, stderr) => {
+				this.flushData(id);
+				this.fireExit(id, code, stderr);
+			},
+			track: (child, command) => this.track(child, command),
+			stopTree: child => killTree(child),
+			log: (level, message) => level === 'warn' ? this.logService.warn(message) : this.logService.info(message),
+		};
 	}
 
 	/**
@@ -615,8 +714,9 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		const launch = this.sandboxes.get(id);
 		if (!launch) {
 			// A running spawn without a sandbox is unconfined. An id this service does not know (never
-			// spawned here, or already gone) is refused: it may have been sandboxed (INV-13).
-			return this.processes.has(id);
+			// spawned here, or already gone) is refused: it may have been sandboxed (INV-13). So is a
+			// sandboxed chat of a shared adapter host while its CLI is not running.
+			return this.processes.has(id) || this.acpHosts.isUnconfined(id);
 		}
 		const resolved = await realpathOfNearest(path);
 		// Both spellings must pass, as the OS checks the resolved path and Volt writes the given one.
@@ -753,6 +853,10 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	async write(id: string, data: string): Promise<void> {
+		if (this.acpHosts.has(id)) {
+			this.acpHosts.write(id, data);
+			return;
+		}
 		const host = this.hosts.get(id)?.host;
 		if (host) {
 			if (!host.write(data)) {
@@ -774,6 +878,11 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		if (host) {
 			// Its whole tree; resolves (and the exit reaches the caller) when it is gone.
 			await host.terminate('stopped');
+			return;
+		}
+		if (this.acpHosts.has(id)) {
+			// A chat of a shared adapter host: its connection and its own processes, not the host.
+			this.acpHosts.kill(id);
 			return;
 		}
 		const child = this.processes.get(id);
@@ -816,7 +925,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	killAll(): void {
-		for (const id of [...this.processes.keys()]) {
+		for (const id of [...this.processes.keys(), ...this.acpHosts.ids()]) {
 			void this.kill(id);
 		}
 		for (const id of [...this.terminals.keys()]) {
@@ -1160,6 +1269,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	}
 
 	override dispose(): void {
+		this.acpHosts.dispose();
 		for (const [id, child] of this.processes) {
 			killTree(child);
 			this.processes.delete(id);
