@@ -254,8 +254,9 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 		const dirs = [this.userDir, ...(folders.workspace ? [joinPath(URI.file(folders.workspace), '.volt', 'memory')] : [])];
 		const parts = await Promise.all(dirs.map(async dir => {
 			const stat = await this.fileService.resolve(dir, { resolveMetadata: true }).catch(() => undefined);
-			const files = stat?.children?.filter(child => child.isFile && /\.md$/i.test(child.name)).map(child => `${child.name}:${child.size}:${child.mtime}`).sort();
-			return `${dir.toString()}=${files ? files.join('/') : '-'}`;
+			// A missing folder holds no notes, as an empty one (the host's first start creates the user folder).
+			const files = (stat?.children ?? []).filter(child => child.isFile && /\.md$/i.test(child.name)).map(child => `${child.name}:${child.size}:${child.mtime}`).sort();
+			return `${dir.toString()}=${files.join('/')}`;
 		}));
 		return parts.join('\n');
 	}

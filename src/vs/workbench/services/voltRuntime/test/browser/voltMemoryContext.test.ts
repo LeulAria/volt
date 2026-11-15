@@ -79,6 +79,24 @@ suite('Volt memory context (sandboxed host)', () => {
 		}
 	});
 
+	test('a notes folder created empty (the host\'s first start makes the user folder) is no change', async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000_000, toFake: ['Date'] });
+		try {
+			const { service, reads, answer, files } = setup();
+			files.delete('/u/User/voltMemory');
+			const first = service.context();
+			await answer();
+			await first;
+			files.set('/u/User/voltMemory', []);
+			clock.tick(31_000);
+			await service.context();
+			await settle();
+			assert.strictEqual(reads.length, 0);
+		} finally {
+			clock.restore();
+		}
+	});
+
 	test('a stale block is read again (behind the turn) once a note file changed', async () => {
 		const clock = sinon.useFakeTimers({ now: 1_000_000, toFake: ['Date'] });
 		try {
