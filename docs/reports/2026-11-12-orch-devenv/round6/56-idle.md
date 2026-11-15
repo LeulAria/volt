@@ -1,39 +1,86 @@
-Status: in progress
+Status: final
 
 # Round 6, area "idle": idle CPU and the at-rest footprint
 
 Branch `e6/idle` (worktree `volt-e5-idle`), from `7f07f73d677`. Before = `volt-e5-base` (dev) and the shared minified
-before build (`~/.volt-r6/min/base`), after = this branch (dev) and its minified build (`~/.volt-r6/min/idle`). One
-instance at a time on CDP 9977, profiles `~/.volt-r6/idle/ud/<arm>`. ADEMark method, unofficial.
+before build (`~/.volt-r6/min/base`), after = this branch (dev) and its minified build (`~/.volt-r6/min/idle`, commit
+`314da58e1ad`). One instance at a time on CDP 9977, profiles `~/.volt-r6/idle/ud/<arm>`. ADEMark method, unofficial.
+The previous agent died after the timed sessions finished; this write-up was made from the rows by round 7's idle agent.
 
 ## Summary
 
-(to be written from the measured rows)
+Six fixes cut what Volt starts and re-reads at rest: the worktree size pass no longer re-measures 68 checkouts with
+`du` after every launch, the code index process is held 90 s after a warm-up (not 20 minutes) and no longer forked for
+a status question, the sandbox reads the kernel log once per host start (not twice), and the awake lease is re-sent
+once a minute. On the release builds that bought **A5 at rest 869 -> 742 MiB** (median, n 5 each: the agent server
+77 -> 56 MiB, the code index gone in 2 of 5 rows, no warm ACP adapter left in the sample) and **wakeups 19.8 -> 16.0
+per s** in front (main 8.9 -> 7.2). **A6 CPU in front did not move beyond the noise** (0.70 % vs 0.71 %, ranges
+0.46-1.16 and 0.49-0.88): what is left is Chromium's and Node's own floor per process plus the rest of main's
+wakeups. Covered rows on the release builds are too few to compare: 6 of 10 covered samples lost ADEMark's cover panel
+(the window was on another Space while the user had a full-screen app in front), and both valid minafter covered rows
+had a warm ACP adapter running through the sample (see caveats). On dev builds (load 2-3, ABBA) the two arms match
+within noise: front 0.62 vs 0.65 %, covered 0.45 vs 0.50 %, with fewer wakeups after (14.5 -> 13.4 front, 11.9 -> 9.8
+covered).
 
 ## Before / after
 
-Rows so far: dev builds, session 1 (2026-11-14 22:00-22:12 UTC, order before, after, timing lock held, seeded profiles,
-load at each sample's start). Data: [data/idle/a6.jsonl](data/idle/a6.jsonl), raw 4 Hz samples in
-[data/idle/raw/](data/idle/raw/). `node summarize.mjs` prints the medians.
+Data: [data/idle/a6.jsonl](data/idle/a6.jsonl) (33 rows), raw 4 Hz samples in [data/idle/raw/](data/idle/raw/).
+`node scripts/idle/summarize.mjs` prints the A6 medians, `node scripts/idle/a5-roles.mjs` A5 by process role (median
+phys_footprint per pid over the sample, summed per role). Rows over load 14 and rows marked invalid are left out.
+Release sessions A2, B and C ran 2026-11-15 05:25-06:28 UTC (09:25-10:28 local) under the timing lock, arms
+interleaved; dev sessions 2026-11-14 22:00-00:06 UTC.
 
-| Test (dev builds) | Before | After | Load at start |
-|---|---|---|---|
-| A6 idle, in front: app CPU | 0.52 % (n 1) | 1.03 % (n 1) | 9.0 / 12.9 |
-| A6 idle, in front: app wakeups/s | 15.2 | 14.4 | 9.0 / 12.9 |
-| A6 idle, covered (cover held): app CPU | 0.36 % (n 1) | 0.90 % (n 1) | 6.3 / 12.6 |
-| A6 covered: wakeups/s | 12.7 | 11.4 | 6.3 / 12.6 |
-| main CPU / wakeups (front) | 0.19 % / 5.6 per s | 0.37 % / 4.8 per s | |
-| agent server (front) | 0.09 % / 3.5 per s | 0.19 % / 3.5 per s | |
-| extension host (front) | 0.08 % / 0.8 per s | 0.16 % / 0.9 per s | |
-| shared process (front) | 0.06 % / 1.6 per s | 0.11 % / 1.3 per s | |
-| A5 app RAM, median over the front sample | 1,440 MB | 1,385 MB | 9.0 / 12.9 |
-| processes in the app group | 10 | 10 | |
+**Release (minified) builds**
 
-The after row is not a regression reading: weight's minified build was compiling on the same Mac during both after
-samples (load 12.6-12.9 against 6-9 for before), and every process, Volt's and Chromium's alike, shows about twice the
-CPU per wakeup at equal or fewer wakeups (main 4.8 vs 5.6 per s, the shared process 1.3 vs 1.6 per s), which is cache
-and scheduler contention, not code. Wakeups, the number the code controls, are lower in both variants. Session 2 (ABBA,
-2 more reps per arm) and the minified arms are queued on the timing lock; the medians replace this table when they land.
+| Test | Before (minbase) | After (minafter) |
+|---|---|---|
+| A6 in front, app CPU | **0.70 %** (n 5, 0.46-1.16, load 6.3-13.8) | **0.71 %** (n 5, 0.49-0.88, load 4.3-13.3) |
+| A6 in front, app wakeups/s | 19.8 (16.5-20.4) | **16.0** (13.9-17.4) |
+| front, window on screen / on another Space / not recorded | 1 / 3 / 1 | 2 / 3 / 0 |
+| main CPU / wakeups (front) | 0.35 % / 8.9 per s | 0.24 % / 7.2 per s |
+| agent server (front) | 0.12 % / 2.6 per s | 0.12 % / 2.6 per s |
+| extension host (front) | 0.13 % / 0.9 per s | 0.12 % / 1.0 per s |
+| shared process (node utility, front) | 0.07 % / 1.6 per s | 0.08 % / 1.6 per s |
+| GPU / renderer (front) | 0.06 % / 0.04 % | 0.08 % / 0.06 % |
+| A6 covered (cover held all 60 s), app CPU | 0.56 % (n 2, 0.43-0.69, load 13.5-13.8) | 1.13 % (n 2, 0.57-1.69, load 4.5-4.8), **ACP adapter alive in both** |
+| A6 covered, app wakeups/s | 15.6 (14.4-16.7) | 15.8 (13.6-18.0) |
+| **A5 at rest** (sampler's app median, front) | **869 MiB** (n 5, 778-937) | **742 MiB** (n 5, 700-888) |
+| A5 by role (sum of per-pid medians): GPU | 233 | 235 |
+| renderer | 197 | 189 |
+| main | 107 | 106 |
+| agent server | 77 (55-89) | **56** (55-88) |
+| extension host | 65 | 65 |
+| shared process (node utility) | 43 | 44 |
+| code index | 33 (in 5 of 5 rows) | 33 (in 3 of 5 rows) |
+| warm ACP adapter in the front sample | 69 MiB in 2 of 5 rows | none |
+| processes in the app group (median) | 11 (11-19) | 11 (10-12) |
+
+**Dev builds** (session 1 at load 9-13 plus ABBA session 2 at load 2-3)
+
+| Test | Before | After |
+|---|---|---|
+| A6 in front, app CPU | 0.62 % (n 3, 0.52-0.71) | 0.65 % (n 3, 0.65-1.03) |
+| A6 in front, wakeups/s | 14.5 (14.5-15.2) | **13.4** (12.9-14.4) |
+| A6 covered, app CPU | 0.45 % (n 3, 0.36-0.53) | 0.50 % (n 3, 0.45-0.90) |
+| A6 covered, wakeups/s | 11.9 (11.8-12.7) | **9.8** (9.0-11.4) |
+| main wakeups/s, front / covered | 5.7 / 4.0 | 4.3 / 2.5 |
+| A5 at rest (app median) | 1,209 MiB (1,200-1,440) | 1,159 MiB (1,157-1,385) |
+
+Caveats:
+- **Covered on the release builds.** ADEMark's cover panel needs the window on screen at layer 0. From 09:00 local the
+  user had a full-screen app in front, so the test window sat on another Space: 5 of 9 recorded covered samples got
+  `window_not_found` and are left out (the rig then sampled the window minimized, which is not ADEMark's method), and
+  one more (session B, minafter) was lost to a hung CDP call. Of the 4 that held, both minbase rows ran at load 13.5-13.8 and both minafter rows had a warm ACP adapter (the focus
+  warm's agent, 18-22 wakeups/s, 0.8-2.3 % of a core) alive through the sample: they measure the warm agent, not the
+  idle window. No covered comparison is claimed for the release builds.
+- **Front on another Space.** 6 of 10 front rows were taken with the window on another Space (`onScreen: false`), which
+  macOS treats like an occluded window; those rows read lower (minbase 0.46-0.70 % off screen vs 1.07-1.16 % on screen).
+  The arms had the same split (3 off screen each), so the comparison holds, but the absolute front number is optimistic.
+- Session 1's dev after rows ran while weight's minified build compiled (load 12.6-12.9): about twice the CPU per
+  wakeup in every process, Volt's and Chromium's alike. They are inside the gate and in the medians above; session 2
+  (load 2-3) alone gives front 0.62/0.71 % before vs 0.65/0.65 % after.
+- The first minbase session (rows 5-6) is invalid: its seed turns failed (the built app's launchd agent server had no
+  `ANTHROPIC_BASE_URL`), and the failed chats kept the GPU at 285 wakeups/s. Fixed in the rig (`8faa2cb70a1`).
 
 ## What wakes Volt at rest (dev build, exploration, load 22-89, not timings)
 
@@ -117,5 +164,8 @@ one `log show`. Main's code index, held 20 minutes before, was gone 3 minutes af
 - **The plugin host a focus warm starts lives 90 s after its last message** (round 5's idle stop), the warm agent 30 s:
   a focus right before ADEMark's 90 s settle leaves the host alive into the sample's first seconds. Stopping it with
   the warm agent it served is process lifetime (weight's area); noted, not changed.
+- **A warm ACP adapter alive during a covered sample** (both valid minafter covered rows, 2 of 5 minbase front rows):
+  the focus warm's agent outlives the 90 s settle often enough to dominate a 60 s idle sample (18-22 wakeups/s, up to
+  2.3 % of a core). Left for round 7 (it is the largest single idle cost these rows show).
 - **The agent server's 20 s WebSocket pings** (both directions) stay: longer pings would delay dead-peer detection for
   web and phone clients by minutes for about 0.1 wakeups/s.
