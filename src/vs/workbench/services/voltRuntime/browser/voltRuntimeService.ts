@@ -204,6 +204,14 @@ const NATIVE_IDLE_TTL_MS = 15 * 60_000;
 const MAX_SPARE_AGENTS = 2;
 const SPARE_AGENT_TTL_MS = 10 * 60_000;
 /**
+ * The spare started when a run ends (the next new chat should not pay a cold start either) lives
+ * this long. A new chat warms its own agent when it opens (300 ms after the open, at once on a
+ * click), about a second before anyone can send, so this spare only helps a new chat started
+ * right after the reply; one that lived 10 minutes was an adapter and a CLI (about 170 MB) at
+ * rest after every chat.
+ */
+const SPARE_AFTER_RUN_TTL_MS = 20_000;
+/**
  * Subagent spares started when a chat is about to call delegate_task (see prewarmSubagents), on
  * top of MAX_SPARE_AGENTS. Three Claude subagents starting together cold took 8-21 s before their
  * first request (harness bench, 2026-11-12), all of it on the run's critical path.
@@ -5599,8 +5607,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const metrics = run.metrics.snapshot();
 		if (run.spare && metrics.outcome === 'done' && (metrics.agentSource === 'pool' || metrics.agentSource === 'cold')) {
 			// This chat keeps its agent; the next new chat should not pay a cold start either. Not after
-			// a failure: a provider that is out of quota or signed out would only fail again.
-			this.agentPool.ensure(run.spare);
+			// a failure: a provider that is out of quota or signed out would only fail again. Short-lived
+			// (SPARE_AFTER_RUN_TTL_MS): a new chat opened later warms its own, and the ask then keeps this one.
+			this.agentPool.ensure(run.spare, { ttlMs: SPARE_AFTER_RUN_TTL_MS });
 		}
 		if (this.healthDeferred && !this.anyRunLive() && this.healthAfterRun === undefined) {
 			this.healthAfterRun = setTimeout(() => {

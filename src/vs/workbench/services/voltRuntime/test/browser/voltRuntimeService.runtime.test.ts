@@ -476,6 +476,11 @@ suite('Agent runtime orchestration', () => {
 		assert.strictEqual((await waitEnd(runId)).reason, 'done');
 		assert.strictEqual(service.getRunMetrics('chat')[0].agentSource, 'pool');
 		await waitFor(() => agent.starts.length === 2, 'a replacement spare');
+		// The replacement is short-lived (a new chat warms its own agent when it opens); the asked-for spare was not.
+		const pool = (service as unknown as { agentPool: { entries: Map<string, { ttlMs: number }[]>; options: { ttlMs: number } } }).agentPool;
+		const replacement = [...pool.entries.values()].flat();
+		assert.strictEqual(replacement.length, 1);
+		assert.ok(replacement[0].ttlMs <= 30_000 && replacement[0].ttlMs < pool.options.ttlMs, `replacement spare lives ${replacement[0].ttlMs} ms`);
 		const followUp = await service.send('chat', { text: 'again', mode: 'agent', providerRef: ref });
 		await waitEnd(followUp);
 		assert.strictEqual(agent.starts.length, 2, 'a follow-up reuses the chat\'s own agent');

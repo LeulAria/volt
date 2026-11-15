@@ -355,9 +355,7 @@ const RESTORE_REVEAL_TIMEOUT_MS = 1500;
 /** An "ago" label older than this reads in hours or days, so the clock redoes it only every {@link AGO_OLD_SWEEP_MS}. */
 const AGO_OLD_MS = 60 * 60_000;
 const AGO_OLD_SWEEP_MS = 60_000;
-/** An "ago" label younger than this changes within the second's pace ("a few seconds ago", "a minute ago"). */
-const AGO_SECONDS_MS = 90_000;
-/** The chat clock's pace while something on screen changes by the second, and otherwise (labels in minutes). */
+/** The chat clock's pace while something on screen changes by the second (live counters), and otherwise ("ago" labels, in minutes). */
 const CLOCK_FAST_MS = 1_000;
 const CLOCK_SLOW_MS = 10_000;
 /** How long the background picture's fade on a new chat's first send may run (420ms in agentChatBackground.css). */
@@ -6106,7 +6104,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (!Number.isFinite(when) || (!sweepOld && now - when > AGO_OLD_MS)) {
 				continue;
 			}
-			fast ||= now - when < AGO_SECONDS_MS;
+			// An "ago" label reads "just now" for its first minute and changes by the minute after (dayjs.ts), so no
+			// label needs the second's pace: only live counters do.
 			const text = el.querySelector('.volt-agent-searchable') ?? el;
 			const label = dayjs(when).fromNow();
 			if (text.textContent !== label) {

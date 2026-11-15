@@ -1,0 +1,14 @@
+  13  attributes style @ div.monaco-scrollable-element.editor-scrollable.vs-dark > div.lines-content.monaco-editor-background > div.cursors-layer.cursor-line-style.cursor-solid > div.cursor.monaco-mouse-cursor-text
+        height: 22px; top: 0px; left: 0px; font-family: -apple-syste -> height: 22px; top: 0px; left: 0px; font-family: -apple-syste
+        height: 22px; top: 0px; left: 0px; font-family: -apple-syste -> height: 22px; top: 0px; left: 0px; font-family: -apple-syste
+   8  childList  @ div.volt-agent-turn.agent > div.volt-agent-footer > span.volt-agent-ago > span.volt-agent-searchable
+         -> added 1 removed 1 "12m ago"
+         -> added 1 removed 1 "12m ago"
+   1  attributes wrap @ div.volt-agent-monaco.show-file-icons > div.monaco-editor.no-user-select.mac > div.overflow-guard > textarea.inputarea.monaco-mouse-cursor-text
+        off -> off
+   1  attributes aria-label @ div.volt-agent-monaco.show-file-icons > div.monaco-editor.no-user-select.mac > div.overflow-guard > textarea.inputarea.monaco-mouse-cursor-text
+        The editor is not accessible at this time. To enable screen  -> The editor is not accessible at this time. To enable screen 
+   1  attributes aria-required @ div.volt-agent-monaco.show-file-icons > div.monaco-editor.no-user-select.mac > div.overflow-guard > textarea.inputarea.monaco-mouse-cursor-text
+        false -> false
+   1  attributes tabindex @ div.volt-agent-monaco.show-file-icons > div.monaco-editor.no-user-select.mac > div.overflow-guard > textarea.inputarea.monaco-mouse-cursor-text
+        0 -> 0

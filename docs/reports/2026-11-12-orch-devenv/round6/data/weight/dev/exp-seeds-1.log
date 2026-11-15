@@ -1,0 +1,23 @@
+-- before
+app 1697 agents 431 total 2128 MiB (20 processes, 2 s)
+  renderer [app]                                       n=1   608 MiB
+  gpu [app]                                            n=1   171 MiB
+-- after
+app 2201 agents 312 total 2509 MiB (22 processes, 2 s)
+  gpu [app]                                            n=1   681 MiB
+  renderer [app]                                       n=1   636 MiB
+01:21:48  renderer [app] n=1 636 MiB  gpu [app] n=1 633 MiB 
+01:22:00  gpu [app] n=1 649 MiB  renderer [app] n=1 635 MiB 
+01:22:12  gpu [app] n=1 760 MiB  renderer [app] n=1 636 MiB 
+01:22:24  gpu [app] n=1 640 MiB  renderer [app] n=1 637 MiB 
+01:22:35  renderer [app] n=1 620 MiB  gpu [app] n=1 268 MiB 
+01:22:48  renderer [app] n=1 620 MiB  gpu [app] n=1 250 MiB 
+01:23:01  renderer [app] n=1 621 MiB  gpu [app] n=1 250 MiB 
+01:23:12  renderer [app] n=1 610 MiB  gpu [app] n=1 250 MiB 
+01:23:24  renderer [app] n=1 611 MiB  gpu [app] n=1 250 MiB 
+01:23:36  renderer [app] n=1 611 MiB  gpu [app] n=1 275 MiB 
+01:23:49  renderer [app] n=1 612 MiB  gpu [app] n=1 247 MiB 
+01:24:00  renderer [app] n=1 612 MiB  gpu [app] n=1 247 MiB 
+01:24:12  renderer [app] n=1 610 MiB  gpu [app] n=1 247 MiB 
+01:24:24  renderer [app] n=1 610 MiB  gpu [app] n=1 272 MiB 
+01:24:37  renderer [app] n=1 610 MiB  gpu [app] n=1 269 MiB 

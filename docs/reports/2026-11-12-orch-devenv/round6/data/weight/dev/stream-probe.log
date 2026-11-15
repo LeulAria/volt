@@ -1,0 +1,40 @@
+== during stream
+app 2120 agents 293 total 2413 MiB (19 processes, 2 s)
+  gpu [app]                                            n=1   619 MiB
+  renderer [app]                                       n=1   578 MiB
+VOLT Helper (GPU) [63567]: 64-bit    Footprint: 661 MB (16384 bytes per page)
+ 362 MB        0 B          0 B         66    Owned physical footprint (unmapped) (graphics)
+ 199 MB        0 B          0 B         43    IOSurface
+  50 MB        0 B          0 B        408    IOAccelerator (graphics)
+layers drawing: 19, total CSS px area 1125899560.9 M (window 1512x896)
+33554427x33554426 div.lines-content.monaco-editor-background                             
+ 3024x1792                                                                         
+ 3024x1792  body.aria-label                                                        
+ 2428x1582  div.monaco-scrollable-element.volt-agent-thread-scroll.mac             RootScroller,OverflowScrolling
+ 2424x1578  div.monaco-scrollable-element.volt-agent-thread-scroll.mac             RootScroller,OverflowScrolling
+  600x1792  div.split-view-view.visible.volt-grid-auxiliarybar                     Overlap
+  602x1508  div.monaco-scrollable-element..mac                                     
+  598x1504  div.monaco-scrollable-element..mac                                     RootScroller,OverflowScrolling
+ 1938x119   div.volt-agent-turn.user.editable                                      StickyPosition
+ 1938x119   div.volt-agent-turn.user.editable                                      StickyPosition
+ 1938x119   div.volt-agent-turn.user.editable                                      StickyPosition
+ 1456x156   div.volt-agent-input-box.follow-up.focused                             Overlap
+  916x228   div.notifications-toasts.visible                                       Overlap
+ 1938x103   div.volt-agent-turn.user.editable                                      StickyPosition
+  900x212   div.monaco-list-rows                                                   
+ 2424x70    div.split-view-view.visible.volt-grid-titlebar                         Overlap
+ 1230x44    div.monaco-scrollable-element.editor-scrollable.vs-dark                Overlap
+== GPU Process 63567 resident undefined MiB footprint undefined MiB
+     308.2  iosurface
+     139.1  gpu/shared_images
+      76.3  cc/resource_memory
+      15.6  skia
+      15.3  skia/gpu_resources
+       3.1  gpu/transfer_memory
+== Renderer 64029 resident undefined MiB footprint undefined MiB
+     187.4  cc/tile_memory
+     174.6  v8
+      38.3  blink_gc
+      38.3  blink_gc/main
+      28.1  v8
+      43.7  v8
