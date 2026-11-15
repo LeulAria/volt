@@ -3,6 +3,7 @@
 // Enter -> the new answer painted (two frames after its text lands), plus the runtime's trace (where the agent came
 // from: live / resumed / pool). With the chat in use's agent kept (before: 15 min), idle < keep-alive is a warm
 // follow-up; past it the agent was stopped and the click/typing warms it again (session/resume).
+// FOLLOWUP_READER=1: during the idle the pointer moves over the transcript every 4 s (someone reading the reply).
 // FOLLOWUP_GAP_MS (default 400) is the time from the click to Enter: 0 leaves the click/focus warm-up no head start.
 //   node followup.mjs <arm> [reps=3] [idle s=40]      rows -> ../../data/agents/followup.jsonl
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'fs';
@@ -65,7 +66,16 @@ for (let rep = 1; rep <= Number(repsArg); rep++) {
 	await newChat(c);
 	await sleep(1500);
 	if (!await sendAndWait('replay:seed')) { throw new Error('A did not answer'); }
-	await sleep(Number(idleArg) * 1000);
+	if (process.env.FOLLOWUP_READER) {
+		// Reading: the pointer drifts over the transcript, never to the composer.
+		const box = await c.evaluate(`(() => { const m = [...document.querySelectorAll('.volt-agent-editor-main')].filter(e => e.offsetParent).at(-1); const r = m.getBoundingClientRect(); return [r.x, r.y, r.width, Math.min(r.height, 300)]; })()`);
+		for (let t = 0; t < Number(idleArg); t += 4) {
+			await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box[0] + box[2] * (0.3 + 0.1 * (t % 3)), y: box[1] + 40 + (t * 7) % box[3], button: 'none' });
+			await sleep(Math.min(4, Number(idleArg) - t) * 1000);
+		}
+	} else {
+		await sleep(Number(idleArg) * 1000);
+	}
 	const gateUntil = Date.now() + Number(process.env.FOLLOWUP_LOAD_WAIT_S ?? 300) * 1000;
 	while (parseFloat(load()) > MAX_LOAD && Date.now() < gateUntil) { await sleep(5000); }
 	await c.evaluate(PROBE);
@@ -75,7 +85,7 @@ for (let rep = 1; rep <= Number(repsArg); rep++) {
 	let s;
 	for (let i = 0; i < 50; i++) { s = await c.evaluate('window.__fu'); if (s?.raf2) { break; } await sleep(50); }
 	await sleep(1500);
-	const row = { arm, rep, at: new Date(t0).toISOString(), load: loadAvg, underLoad: parseFloat(loadAvg) > MAX_LOAD, idleS: Number(idleArg), gapMs: GAP_MS, ok, firstWordMs: s?.raf2 && s.enter ? s.raf2 - s.enter : null, trace: lastTrace(t0) };
+	const row = { arm, rep, at: new Date(t0).toISOString(), load: loadAvg, underLoad: parseFloat(loadAvg) > MAX_LOAD, idleS: Number(idleArg), gapMs: GAP_MS, reader: !!process.env.FOLLOWUP_READER, ok, firstWordMs: s?.raf2 && s.enter ? s.raf2 - s.enter : null, trace: lastTrace(t0) };
 	out.push(row);
 	appendFileSync(join(DATA, 'followup.jsonl'), JSON.stringify(row) + '\n');
 	console.log(JSON.stringify(row));

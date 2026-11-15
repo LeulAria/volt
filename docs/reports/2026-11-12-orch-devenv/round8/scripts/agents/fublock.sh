@@ -1,7 +1,8 @@
 #!/bin/zsh
 # The follow-up cost of the 20 s agent stop, in one hold of ~/.volt-r8/timing.lock (about 4 min per arm and round):
 # per arm, a fresh 5-thread profile, then `followup.mjs` with a 30 s idle (past the 20 s stop) at gap 400 ms (click,
-# type, Enter: the warm-up's head start) and gap 0 (no head start); arms interleaved `rounds` times.
+# type, Enter: the warm-up's head start) and gap 0 (no head start); FUBLOCK_READER=1 adds gap 0 with the pointer
+# moving over the reply during the idle (reading); arms interleaved `rounds` times.
 #   ./fublock.sh "<arm> <arm> ..." [rounds=2] [reps=2]      rows -> ../../data/agents/followup.jsonl
 cd ${0:A:h}
 ARMS=(${=1}); ROUNDS=${2:-2}; REPS=${3:-2}
@@ -18,6 +19,7 @@ for round in $(seq $ROUNDS); do
 		node launch.mjs >/dev/null && sleep 20
 		FOLLOWUP_GAP_MS=400 node followup.mjs $arm $REPS 30
 		FOLLOWUP_GAP_MS=0 node followup.mjs $arm $REPS 30
+		[[ -n $FUBLOCK_READER ]] && FOLLOWUP_READER=1 FOLLOWUP_GAP_MS=0 node followup.mjs $arm $REPS 30
 		node launch.mjs stop >/dev/null
 	done
 done
