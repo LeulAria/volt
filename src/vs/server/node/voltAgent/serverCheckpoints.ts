@@ -3,7 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { watch as fsWatch } from 'fs';
 import { IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
+import { isMacintosh, isWindows } from '../../../base/common/platform.js';
 import { URI } from '../../../base/common/uri.js';
 import { AgentCheckpointService } from '../../../workbench/contrib/voltAgent/browser/review/agentCheckpointService.js';
 
@@ -17,6 +19,34 @@ const WATCH_ERROR_BACKOFF_MS = 60_000;
 interface IWatch {
 	readonly disposable: IDisposable;
 	readonly readyAt: number;
+}
+
+/** Whether a path the watcher reported (relative to the work tree) is inside a git folder (snapshots write there). */
+export function isGitPath(relative: string): boolean {
+	return relative.split(/[\\/]/).includes('.git');
+}
+
+/**
+ * Watches a work tree in this process (FSEvents on macOS, ReadDirectoryChangesW on Windows, both recursive
+ * natively in Node), calling `onChange` for anything outside its git folders. It only has to say whether the
+ * tree changed, so it needs no watcher process: the universal watcher's was a 35-55 MB process kept for as long
+ * as the server ran, from the end of the first turn on (ADEMark A7/A10, round 7). Undefined where Node's
+ * recursive watch walks the tree itself (Linux): the file service's watcher is used there.
+ */
+export function watchWorkTree(workTree: string, onChange: () => void, onError: (err: unknown) => void): IDisposable | undefined {
+	if (!isMacintosh && !isWindows) {
+		return undefined;
+	}
+	const watcher = fsWatch(workTree, { recursive: true, persistent: false }, (_event, file) => {
+		if (!file || !isGitPath(String(file))) {
+			onChange();
+		}
+	});
+	watcher.on('error', err => {
+		watcher.close();
+		onError(err);
+	});
+	return toDisposable(() => watcher.close());
 }
 
 /**
@@ -51,8 +81,13 @@ export class ServerAgentCheckpointService extends AgentCheckpointService {
 			this.watches.delete(oldest);
 		}
 		try {
+			const own = watchWorkTree(workTree, () => this.bumpGenerations(tree => tree === workTree), () => {
+				// Unwatched from now on: its turns take fresh snapshots.
+				this.failedAt = Date.now();
+				this.watches.delete(workTree);
+			});
 			// Git's own folders are skipped (snapshots write there; the base ignores them anyway).
-			const disposable = this.fileService.watch(URI.file(workTree), { recursive: true, excludes: ['**/.git/**'] });
+			const disposable = own ?? this.fileService.watch(URI.file(workTree), { recursive: true, excludes: ['**/.git/**'] });
 			this.watches.set(workTree, { disposable, readyAt: Date.now() + WATCH_READY_MS });
 		} catch {
 			// Unwatched: every turn takes a fresh snapshot, as before.

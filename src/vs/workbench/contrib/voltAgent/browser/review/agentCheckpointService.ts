@@ -319,7 +319,8 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 	/** A snapshot work tree is tracked from now on (the agent server starts watching it). */
 	protected onDidTrackWorkTree(_workTree: string): void { }
 
-	private bumpGenerations(affects: (workTree: string) => boolean = () => true): void {
+	/** Something changed in the work trees `affects` picks: their last after-snapshots no longer stand for them. */
+	protected bumpGenerations(affects: (workTree: string) => boolean = () => true): void {
 		for (const [workTree, generation] of this.generations) {
 			if (affects(workTree)) {
 				this.generations.set(workTree, generation + 1);
