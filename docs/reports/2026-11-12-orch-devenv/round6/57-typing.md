@@ -1,4 +1,4 @@
-Status: final for the code and the trace evidence; the A8 timed row is open (no load <= 14 during the session, see "Not done")
+Status: **final** (A8 timed rows added 2026-11-15 by the coordinating session from `data/typing/a8.jsonl`)
 
 # Round 6, area "typing": A8 typing lag while 5 agents stream
 
@@ -33,7 +33,9 @@ after = this branch. Both dev builds (transpiled `out/`), one at a time on CDP 9
 
 | Test | Before | After | Load at start |
 |---|---|---|---|
-| A8 key to pixels p95, 5 streams, 60 keys | not taken at load <= 14 | not taken at load <= 14 | - |
+| A8 key to pixels p95, 5 streams, 60 keys (dev builds) | 105.9 ms (71.9-118.3, n=3) | 97.6 ms (81.0-111.1, n=3) | 12.6-13.9 (13.7-20.7 while typing) |
+| A8 key to pixels p50 | 39.6 ms (36.5-60.2) | 41.0 ms (36.0-48.4) | |
+| A8 event-loop delay p95 | 90.6 ms (62.4-100.2) | 78.5 ms (61.2-111.2) | |
 | A3 long thread | not measured | not measured | - |
 
 Trace counts over the 60-key window (one run per column; load 40-92; `node scripts/typing/tracesum.mjs` over
@@ -153,15 +155,19 @@ Each is one commit on `e6/typing`.
 - Live: five streaming chats plus typing on the `after` build in every trace run (the live code card, sticky pass, memo,
   dots and fade changes ran under the stream for 20-50 s each with no console errors in the test window's log).
 
+A8 rows: `session.sh - 3` took the timing lock at 02:12 and ran ABBA (before, after, after, before, before, after) on the
+dev builds, 60 keys each into the streaming chat's composer, 5 replay streams, every key landed. Each run started at a
+load of 12.6-13.9, but the load rose to 13.7-20.7 while it typed. **The ranges overlap: no measurable change in A8 on
+dev builds** (the median p95 is 8 ms lower after, inside the spread). The trace counts above are the evidence that
+the per-frame work fell. ADEMark's leader is 48 ms p95; Volt is about twice that on a dev build here. A release-build
+A8 run on a quiet machine is the next step.
+
 ## Not done, and why
 
-- **A8 timed rows at load <= 14** (the brief's target, under 48 ms p95): the load never fell under 40 during this session.
-  `session.sh - 3` is left running in the background: it takes the timing lock when the load allows and runs A8
-  before/after ABBA (dev builds) into `data/typing/a8.jsonl`; `summarize.mjs` prints the medians. Whoever finds rows there
-  should add them to the table above and commit the file.
+- **A8 under 48 ms p95** (the brief's target): not reached. The rows above are dev builds and the load rose past 14
+  while typing; no release-build A8 row was taken.
 - **Minified builds**: the shared minified before build (`~/.volt-r6/min/base/READY`) was not ready during the session;
   `lib.mjs` has `minbase` / `minafter` arms for it.
 - **A3 long thread**: not measured this round; nothing in these fixes touches the long-thread path except the sticky
   pass, which does less work than before.
-- **Processes left on purpose**: `session.sh - 3` (waiting for the load gate and the timing lock) and the replay server on
-  18975 it needs (`bun bench/replay/server.ts`, pid in `~/.volt-r6/typing/NEXT.md`). Kill both if the rows are not wanted.
+- **Processes**: `session.sh - 3` finished at 02:26; its replay server on 18975 was stopped afterwards.
