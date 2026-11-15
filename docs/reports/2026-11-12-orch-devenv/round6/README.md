@@ -105,6 +105,13 @@ Dev builds, ABBA n=3, 60 keys into the streaming chat's composer while 5 replay 
   colour instead of red text on grey, compact buttons on the watched-task card and the sandbox confirm line, the
   Volt Guard card's 5px top margin, one split line beside an empty tools area (`1ec691d32a0`); the workflow template
   service registers at startup (`bd4ce7048ac`).
+- The mobile-workbench follow-up that PR #98 merged without (uncommitted in its checkout, 34 files): on a phone the
+  sidebar toolbar and filter menus open as bottom sheets, an Editor button in the chat's title bar, the model picker,
+  Settings pages, a key bar and drag scrolling (`9d56dac17e5`, merged in `f689f03294f`; conflicts were import lists
+  of files moved since, and one line in Settings).
+- Volt Guard no longer shows a card for Claude Code's own plugin sync in a chat's config overlay
+  (`.../agent-state/<chat>/claude-code/config/plugins`): still denied and logged, like the same writes in
+  `~/.claude/plugins` (`72e120404cc`).
 - `origin/main` had nothing new (its only new commit is PR #99, this branch). The one open PR, #81, is a draft and is
   not merged.
 
