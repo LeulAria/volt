@@ -3,6 +3,7 @@
 // Enter -> the new answer painted (two frames after its text lands), plus the runtime's trace (where the agent came
 // from: live / resumed / pool). With the chat in use's agent kept (before: 15 min), idle < keep-alive is a warm
 // follow-up; past it the agent was stopped and the click/typing warms it again (session/resume).
+// FOLLOWUP_GAP_MS (default 400) is the time from the click to Enter: 0 leaves the click/focus warm-up no head start.
 //   node followup.mjs <arm> [reps=3] [idle s=40]      rows -> ../../data/agents/followup.jsonl
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
@@ -18,11 +19,12 @@ async function clickComposer() {
 	await c.click(pt[0], pt[1]);
 }
 const answers = () => c.evaluate(`[...document.querySelectorAll('.volt-agent-editor-main')].filter(e => e.offsetParent).map(m => (m.textContent.match(/Seeded\\. This thread is open/g) || []).length).reduce((a, b) => a + b, 0)`);
-async function sendAndWait(text) {
+const GAP_MS = Number(process.env.FOLLOWUP_GAP_MS ?? 400);
+async function sendAndWait(text, gapMs = 400) {
 	const n = await answers();
 	await clickComposer();
 	await c.send('Input.insertText', { text });
-	await sleep(400);
+	await sleep(gapMs);
 	await c.key('Enter', 'Enter', 13, 0, '\r');
 	for (let i = 0; i < 300; i++) {
 		await sleep(100);
@@ -69,11 +71,11 @@ for (let rep = 1; rep <= Number(repsArg); rep++) {
 	await c.evaluate(PROBE);
 	const loadAvg = load();
 	const t0 = Date.now();
-	const ok = await sendAndWait('replay:seed');
+	const ok = await sendAndWait('replay:seed', GAP_MS);
 	let s;
 	for (let i = 0; i < 50; i++) { s = await c.evaluate('window.__fu'); if (s?.raf2) { break; } await sleep(50); }
 	await sleep(1500);
-	const row = { arm, rep, at: new Date(t0).toISOString(), load: loadAvg, underLoad: parseFloat(loadAvg) > MAX_LOAD, idleS: Number(idleArg), ok, firstWordMs: s?.raf2 && s.enter ? s.raf2 - s.enter : null, trace: lastTrace(t0) };
+	const row = { arm, rep, at: new Date(t0).toISOString(), load: loadAvg, underLoad: parseFloat(loadAvg) > MAX_LOAD, idleS: Number(idleArg), gapMs: GAP_MS, ok, firstWordMs: s?.raf2 && s.enter ? s.raf2 - s.enter : null, trace: lastTrace(t0) };
 	out.push(row);
 	appendFileSync(join(DATA, 'followup.jsonl'), JSON.stringify(row) + '\n');
 	console.log(JSON.stringify(row));
