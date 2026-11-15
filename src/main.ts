@@ -6,6 +6,7 @@
 import * as path from 'node:path';
 import * as fs from 'original-fs';
 import * as os from 'node:os';
+import { enableCompileCache, flushCompileCache } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { configurePortable } from './bootstrap-node.js';
 import { bootstrapESM } from './bootstrap-esm.js';
@@ -79,6 +80,18 @@ let earlyPageStarted: Promise<void> | undefined;
 // Resolve code cache path
 const codeCachePath = getCodeCachePath();
 process.env['VSCODE_CODE_CACHE_PATH'] = codeCachePath || '';
+
+// Volt: Node's on-disk code cache for this process's modules (the 1.8 MB main bundle compiles in about 25 ms without
+// it, 3 with it). In this process only: child processes do not inherit it. Entries are written at exit, and once a
+// few seconds after start (a killed process would not write them).
+if (codeCachePath) {
+	try {
+		enableCompileCache(path.join(codeCachePath, 'node'));
+		setTimeout(() => { try { flushCompileCache(); } catch { /* best effort */ } }, 10_000);
+	} catch (error) {
+		console.error(error);
+	}
+}
 
 // Disable default menu (https://github.com/electron/electron/issues/35512)
 Menu.setApplicationMenu(null);
@@ -156,10 +169,11 @@ if (userLocale) {
 
 /**
  * Volt: the main bundle, imported while Electron finishes starting instead of after `ready`. Importing it only defines
- * the code (its entry exports `main`, which runs at ready); the ~80 ms it takes would otherwise sit between the launch
- * window and the first window's configuration. Needs the NLS configuration, so other locales keep the order at ready.
+ * the code (its entry exports `main`, which runs at ready). Needs the NLS configuration, so other locales keep the
+ * order at ready. Not when the launch window opens: its page gets its files and its picture from this thread, and an
+ * import running then delayed the page by about 60 ms (round 6); `startup` imports the bundle once the page has them.
  */
-const mainBundlePromise = nlsConfigurationPromise ? importMainBundle(nlsConfigurationPromise) : undefined;
+const mainBundlePromise = nlsConfigurationPromise && !earlyWindowPlan ? importMainBundle(nlsConfigurationPromise) : undefined;
 
 async function importMainBundle(nlsConfiguration: Promise<INLSConfiguration>): Promise<typeof import('./vs/code/electron-main/main.js')> {
 	const nlsConfig = await nlsConfiguration;
@@ -288,7 +302,9 @@ async function startup(codeCachePath: string | undefined, nlsConfig: INLSConfigu
 		await waitForLaunchPage();
 
 		// Load Main
+		perf.mark('code/voltWillImportMainBundle');
 		bundle = await import('./vs/code/electron-main/main.js');
+		perf.mark('code/voltDidImportMainBundle');
 	}
 	perf.mark('code/didRunMainBundle');
 	bundle.main();

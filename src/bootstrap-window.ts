@@ -166,14 +166,22 @@ export function openEarlyWindow(plan: IEarlyWindowPlan): Promise<void> {
 		return readSnapshot(plan);
 	});
 
-	// The window, and the view whose page loads the workbench
-	mark('code/voltWillCreateLaunchWindow');
-	const win = new BrowserWindow(windowOptions);
-	mark('code/voltDidCreateLaunchWindow');
+	// The view whose page loads the workbench, loading before its window exists: its renderer process starts while the
+	// window is built (about 45 ms on the main thread), instead of after. Sized as the window's content will be (the
+	// window's own size; corrected below once the window exists, long before the page's script runs).
 	const view = new WebContentsView({ webPreferences });
 	if (typeof hint.options.backgroundColor === 'string') {
 		view.setBackgroundColor(hint.options.backgroundColor);
 	}
+	view.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height });
+	// The fragment tells the page it is the launch window's (the window code compares and reloads the URL without it).
+	// Its load events come on later tasks, after the listeners below are attached.
+	view.webContents.loadURL(`${hint.url}#${EARLY_PAGE_FRAGMENT}`);
+
+	// The window
+	mark('code/voltWillCreateLaunchWindow');
+	const win = new BrowserWindow(windowOptions);
+	mark('code/voltDidCreateLaunchWindow');
 	win.contentView.addChildView(view);
 	const layout = () => {
 		if (!win.isDestroyed()) {
@@ -215,9 +223,6 @@ export function openEarlyWindow(plan: IEarlyWindowPlan): Promise<void> {
 	view.webContents.once('did-fail-load', fail);
 	view.webContents.once('render-process-gone', fail);
 	(globalThis as Record<string, unknown>)[EARLY_WINDOW_KEY] = state;
-
-	// The fragment tells the page it is the launch window's (the window code compares and reloads the URL without it)
-	view.webContents.loadURL(`${hint.url}#${EARLY_PAGE_FRAGMENT}`);
 	return whenPageStarted;
 }
 
