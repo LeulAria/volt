@@ -202,6 +202,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { IAgentTurnReveal, onDidRequestAgentTurnReveal, takeAgentTurnReveal } from '../search/agentTurnReveal.js';
 import { AgentThreadView } from './agentThreadView.js';
+import { InputFirstGate } from './agentInputFirst.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip, setIconButtonTooltip } from '../chrome/agentTooltip.js';
 import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
@@ -955,6 +956,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private eventDisposable: IDisposable | undefined;
 	/** A redraw waiting for the next animation frame. */
 	private renderHandle: IDisposable | undefined;
+	/** A streamed redraw in the frame of a composer key waits one frame (see InputFirstGate). */
+	private readonly inputFirst = this._register(new InputFirstGate((callback, priority) => scheduleAtNextAnimationFrame(getWindow(this.container), callback, priority)));
 	/** The pane width at the last layout; a prompt's clamp is measured once per width. */
 	private layoutWidth = 0;
 	private readonly promptClamps = new WeakMap<IAgentUserMessage, { readonly width: number; readonly text: string; readonly multiline: boolean; readonly clamped: boolean }>();
@@ -6604,6 +6607,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// The pointer reaching the composer comes before the click into it: a short-lived warm starts here.
 		this.editorDisposables.add(addDisposableListener(this.inputBox, 'pointerenter', () => this.prewarmOnIntent()));
 		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
+			this.inputFirst.noteKey();
 			// Typing is the surest sign a message is coming: make sure an agent is (still) warm. Cheap
 			// when one is: the runtime returns at once for a live or pooled agent.
 			if (Date.now() - this.prewarmedAt > PREWARM_ON_TYPE_MS && !this.isStreaming() && this.inputEditor?.getModel()?.getValueLength()) {
@@ -8894,7 +8898,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (this.renderHandle !== undefined) {
 			return;
 		}
-		this.renderHandle = scheduleAtNextAnimationFrame(getWindow(this.threadInner), () => {
+		const win = getWindow(this.threadInner);
+		const paint = () => {
+			// The frame that draws a key typed in the composer does not also patch the streaming reply:
+			// the reply is drawn one frame later, so the key's echo waits for the composer's work only.
+			if (this.inputFirst.shouldYield() && this.isStreaming()) {
+				this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
+				return;
+			}
 			this.renderHandle = undefined;
 			// Tool arguments streamed since the last frame are parsed once, here.
 			if (this.input instanceof AgentEditorInput) {
@@ -8912,7 +8923,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (syncDock) {
 				this._onDidChangeDock.fire();
 			}
-		});
+		};
+		this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
 	}
 
 	/**
