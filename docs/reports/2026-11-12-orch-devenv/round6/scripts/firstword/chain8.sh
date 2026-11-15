@@ -19,7 +19,7 @@ for r in $(seq 1 $rounds); do
 	for arm in $arms; do (source ./arm.sh $arm; HUMAN=1 node firstlaunch.mjs $arm restored 45); done
 	drop_timing
 done
-./ab.sh "resume.mjs ARM 2 1 40" 3
-HUMAN=1 ./ab.sh "resume.mjs ARM 2 1 40" 3
-FW_MODEL=agent:seed-claude-code:claude-opus-5-5 ./ab.sh "a4.mjs ARM 3" 4
+./ab.sh "resume.mjs ARM 2 1 40" ${RESUME_ROUNDS:-2}
+HUMAN=1 ./ab.sh "resume.mjs ARM 2 1 40" ${RESUME_ROUNDS:-2}
+FW_MODEL=agent:seed-claude-code:claude-opus-5-5 ./ab.sh "a4.mjs ARM 3" ${A4_ROUNDS:-3}
 echo "chain8 done $(date)"

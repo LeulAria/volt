@@ -1,0 +1,31 @@
+[timing] took the lock at 02:43:50, load 11.04
+{"label":"r6-c7-window","flags":["warm=400","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T22:43:51.137Z","load":"11.04 11.83 13.44","initMs":1084,"sessionMs":2384,"readyMs":3601,"warmMs":400,"mainReqMs":394,"firstTextMs":485,"resultMs":637,"spawnToFirstTextMs":4489,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":1084,"sessionMs":2384,"mainReqMs":394,"firstTextMs":485,"spawnToFirstTextMs":4489}
+{"label":"r6-c7-atonce","flags":["warm=0","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T22:44:25.269Z","load":"10.45 11.62 13.30","initMs":554,"sessionMs":969,"readyMs":1657,"warmMs":0,"mainReqMs":371,"firstTextMs":389,"resultMs":534,"spawnToFirstTextMs":2050,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":554,"sessionMs":969,"mainReqMs":371,"firstTextMs":389,"spawnToFirstTextMs":2050}
+[timing] dropped at 02:44:56
+[timing] took the lock at 02:44:56, load 9.55
+{"label":"r6-c7-window","flags":["warm=400","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T22:44:57.167Z","load":"9.59 11.24 13.09","initMs":761,"sessionMs":1095,"readyMs":1928,"warmMs":400,"mainReqMs":133,"firstTextMs":148,"resultMs":279,"spawnToFirstTextMs":2478,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":761,"sessionMs":1095,"mainReqMs":133,"firstTextMs":148,"spawnToFirstTextMs":2478}
+{"label":"r6-c7-atonce","flags":["warm=0","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T22:45:29.822Z","load":"11.05 11.44 13.10","initMs":703,"sessionMs":783,"readyMs":1568,"warmMs":0,"mainReqMs":320,"firstTextMs":335,"resultMs":470,"spawnToFirstTextMs":1906,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":703,"sessionMs":783,"mainReqMs":320,"firstTextMs":335,"spawnToFirstTextMs":1906}
+[timing] dropped at 02:46:01
+[timing] took the lock at 02:46:01, load 10.27
+{"label":"r6-c7-window","flags":["warm=400","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T22:46:01.620Z","load":"10.27 11.18 12.94","initMs":374,"sessionMs":919,"readyMs":1365,"warmMs":400,"mainReqMs":96,"firstTextMs":107,"resultMs":256,"spawnToFirstTextMs":1875,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":374,"sessionMs":919,"mainReqMs":96,"firstTextMs":107,"spawnToFirstTextMs":1875}
+{"label":"r6-c7-atonce","flags":["warm=0","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T22:46:33.648Z","load":"9.02 10.74 12.71","initMs":757,"sessionMs":880,"readyMs":1718,"warmMs":0,"mainReqMs":421,"firstTextMs":436,"resultMs":578,"spawnToFirstTextMs":2156,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":757,"sessionMs":880,"mainReqMs":421,"firstTextMs":436,"spawnToFirstTextMs":2156}
+[timing] dropped at 02:47:05
+[timing] took the lock at 02:47:05, load 8.66
+{"label":"r6-c7-window","flags":["warm=400","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T22:47:05.502Z","load":"8.66 10.48 12.54","initMs":340,"sessionMs":867,"readyMs":1281,"warmMs":400,"mainReqMs":124,"firstTextMs":136,"resultMs":284,"spawnToFirstTextMs":1821,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":340,"sessionMs":867,"mainReqMs":124,"firstTextMs":136,"spawnToFirstTextMs":1821}
+{"label":"r6-c7-atonce","flags":["warm=0","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T22:47:37.292Z","load":"8.30 10.23 12.38","initMs":356,"sessionMs":692,"readyMs":1095,"warmMs":0,"mainReqMs":303,"firstTextMs":320,"resultMs":450,"spawnToFirstTextMs":1418,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":356,"sessionMs":692,"mainReqMs":303,"firstTextMs":320,"spawnToFirstTextMs":1418}
+[timing] dropped at 02:48:08
+[timing] took the lock at 02:48:08, load 7.17
+{"label":"r6-c7-window","flags":["warm=400","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T22:48:08.795Z","load":"7.17 9.75 12.12","initMs":611,"sessionMs":1083,"readyMs":1759,"warmMs":400,"mainReqMs":118,"firstTextMs":132,"resultMs":281,"spawnToFirstTextMs":2294,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":611,"sessionMs":1083,"mainReqMs":118,"firstTextMs":132,"spawnToFirstTextMs":2294}
+{"label":"r6-c7-atonce","flags":["warm=0","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T22:48:41.060Z","load":"7.54 9.61 11.99","initMs":392,"sessionMs":724,"readyMs":1245,"warmMs":0,"mainReqMs":362,"firstTextMs":379,"resultMs":516,"spawnToFirstTextMs":1627,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":392,"sessionMs":724,"mainReqMs":362,"firstTextMs":379,"spawnToFirstTextMs":1627}
+[timing] dropped at 02:49:12
+chain7 done Sun Nov 15 02:49:12 +04 2026

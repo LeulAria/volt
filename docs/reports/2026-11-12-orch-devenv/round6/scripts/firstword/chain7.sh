@@ -5,6 +5,8 @@
 # CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0 plus `mcp__volt` in the session's allow rules (Volt's server stays required).
 # Prompt 400 ms after ready (inside the window) and at once (A4's case), default vs fix, interleaved per round, under
 # the timing lock at load <= 14. Rows -> ../../data/firstword/resumebench.jsonl, labels r6-c7-*.
+# (Its first run, 02:43, looped `for v in $variants`: zsh drops the empty element, so only the fix arm ran; the
+# loops now quote the array. chain9.sh re-runs it.)
 #   ./chain7.sh [rounds=5]
 cd ${0:A:h}
 source ./timing.sh
@@ -17,10 +19,10 @@ for r in $(seq 1 $rounds); do
 	take_timing
 	variants=("" "env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0 allow=mcp__volt")
 	(( r % 2 == 0 )) && variants=("env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0 allow=mcp__volt" "")
-	for v in $variants; do
+	for v in "${variants[@]}"; do
 		node resumebench.mjs r6-c7-window 1 warm=400 ${=v}
 	done
-	for v in $variants; do
+	for v in "${variants[@]}"; do
 		node resumebench.mjs r6-c7-atonce 1 warm=0 ${=v}
 	done
 	drop_timing
