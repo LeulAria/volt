@@ -27,13 +27,11 @@ for (const arm of ['minbase', 'minafter', 'before', 'after']) {
 }
 
 console.log('## A6');
-// `covered` rows count only when ADEMark's cover panel stayed up for the whole sample; `covered (minimized)` rows are
-// the fallback a6.mjs takes when the window was on another Space (no cover possible). Each front row says whether the
-// window was on the screen (`onScreen`, from 09:00 on).
+// `covered` rows count only when ADEMark's cover panel stayed up for the whole sample. Each row from 09:20 on says
+// whether the window was on the screen (`onScreen`; off screen = on another Space while the user is in a full-screen app).
 const VARIANTS = {
 	front: x => x.variant === 'front',
 	covered: x => x.variant === 'covered' && x.cover && !x.cover.error,
-	'covered (minimized)': x => x.variant === 'covered' && x.coverFallback?.kind === 'minimized',
 };
 for (const [variant, keep] of Object.entries(VARIANTS)) {
 	for (const arm of ['minbase', 'minafter', 'before', 'after']) {
