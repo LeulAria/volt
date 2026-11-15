@@ -123,7 +123,7 @@ import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/vol
 import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
 import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME, VOLT_AGENT_SERVER_ENABLED_SETTING } from '../../platform/voltAgentServer/common/agentServerService.js';
 import { VoltAgentServerMainService } from '../../platform/voltAgentServer/electron-main/agentServerMainService.js';
-import { disposeUnusedEarlyWindow } from '../../platform/windows/electron-main/earlyWindow.js';
+import { disposeUnusedEarlyWindow, isEarlyWindowProcess } from '../../platform/windows/electron-main/earlyWindow.js';
 import { CODE_CACHE_PATH_APPLIED_KEY } from '../../platform/windows/common/earlyWindow.js';
 import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
 import { IVoltExternalMcpService, VOLT_EXTERNAL_MCP_CHANNEL_NAME } from '../../platform/voltExternalMcp/common/voltExternalMcp.js';
@@ -328,7 +328,16 @@ export class CodeApplication extends Disposable {
 
 		const isAllowedVsCodeFileRequest = (details: Electron.OnBeforeRequestListenerDetails) => {
 			const frame = details.frame;
-			if (!frame || !this.windowsMainService) {
+			if (!frame) {
+				return false;
+			}
+
+			// Volt: the launch window's page preloads the workbench code before the windows service exists
+			if (isEarlyWindowProcess(frame.processId)) {
+				return true;
+			}
+
+			if (!this.windowsMainService) {
 				return false;
 			}
 
