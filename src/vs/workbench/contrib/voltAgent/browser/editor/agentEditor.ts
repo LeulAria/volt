@@ -135,7 +135,7 @@ import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_
 import { OPEN_CONNECTED_AGENTS_COMMAND_ID } from '../orchestration/agentExternalCaller.js';
 import { createAgentTitleActionViewItem } from './agentTitleActions.js';
 import { hasUserInput, watchForUserInput } from './agentUserInput.js';
-import { intentWantsPrewarm, openPrewarmDelay, PREWARM_ON_OPEN_MS } from './agentPrewarmIntent.js';
+import { intentWantsPrewarm, openPrewarmDelay, PREWARM_INTENT_GAP_MS, PREWARM_ON_OPEN_MS } from './agentPrewarmIntent.js';
 import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
@@ -930,6 +930,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private prewarmedAt = 0;
 	/** When a sign of intent short of a press or key (the pointer on the composer, the window to the front) last warmed the agent. */
 	private intentWarmedAt = 0;
+	/** When the pointer or the wheel in the chat last kept its live agent (see keepAgentForReader). */
+	private readerKeptAt = 0;
 	/** When the last chat this editor showed was opened by a click (see openPrewarmDelay). */
 	private lastClickedOpenAt: number | undefined;
 	/** An edited prompt is waiting on the "Revert files to this message?" dialog. */
@@ -1194,6 +1196,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// The window coming to the front is the user coming back to the chat on screen: a short-lived warm.
 		this._register(addDisposableListener(getWindow(parent), 'focus', () => this.prewarmOnIntent()));
 		this.container = append(parent, $('.volt-agent-editor'));
+		// The pointer moving or the wheel turning in the chat is the user reading it: its live agent stays for the follow-up.
+		this._register(addDisposableListener(this.container, 'pointermove', () => this.keepAgentForReader(), { passive: true }));
+		this._register(addDisposableListener(this.container, 'wheel', () => this.keepAgentForReader(), { passive: true }));
 		this.container.dataset.mode = normalizeVoltMode(this.currentMode);
 		// Until the first chat's history is read the thread is empty, which lays out the
 		// new-chat landing for a few frames before the conversation replaces it.
@@ -9394,6 +9399,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		this.intentWarmedAt = now;
 		this.prewarmAgent(UNTOUCHED_WARM_TTL_MS);
+	}
+
+	/**
+	 * The user reading the chat (the pointer moving, the wheel turning in it) keeps its live agent: its 20 s idle
+	 * stop counts from now, so a follow-up typed after reading the reply finds it up. Starts nothing for a chat
+	 * whose agent is stopped (reading an old chat costs no agent); asks at most every PREWARM_INTENT_GAP_MS.
+	 */
+	private keepAgentForReader(): void {
+		const now = Date.now();
+		if (now - this.readerKeptAt < PREWARM_INTENT_GAP_MS || !this.isVisible() || this.isStreaming()) {
+			return;
+		}
+		this.readerKeptAt = now;
+		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode, { keepOnly: true });
 	}
 
 	/** With `ttlMs`, the warm agent stops after that long unless a later prewarm (the user acting) keeps it. */
