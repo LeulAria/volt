@@ -141,4 +141,62 @@ suite('Agent thread view', () => {
 			thread.element.remove();
 		}
 	});
+
+	test('under a pinned sent card a tall reply is masked row by row, only in the card\'s band; a short one whole', () => {
+		const thread = store.add(new AgentThreadView());
+		thread.element.style.cssText = 'position: fixed; top: 0; left: 0; width: 300px; height: 300px;';
+		thread.inner.style.height = '300px';
+		thread.inner.style.overflow = 'hidden';
+		mainWindow.document.body.appendChild(thread.element);
+		try {
+			const exchange = thread.inner.appendChild($('.volt-agent-exchange'));
+			const card = exchange.appendChild($('.volt-agent-turn.user'));
+			card.style.cssText = 'position: sticky; top: 0; height: 40px;';
+			const reply = exchange.appendChild($('.volt-agent-turn.agent'));
+			const body = reply.appendChild($('.volt-agent-thread-body'));
+			const rows: HTMLElement[] = [];
+			for (let i = 0; i < 40; i++) {
+				const row = body.appendChild($('.volt-agent-reply'));
+				// Row 12 is hidden (no box): the search steps over it.
+				row.style.cssText = i === 12 ? 'display: none;' : 'height: 50px;';
+				rows.push(row);
+			}
+			const footer = reply.appendChild($('.volt-agent-footer'));
+			footer.style.height = '20px';
+			thread.scroll.scanDomNode();
+			const masked = () => rows.map((row, i) => row.classList.contains('volt-under-stuck') ? i : -1).filter(i => i >= 0);
+			const at = (scrollTop: number) => {
+				thread.scroll.setScrollPosition({ scrollTop });
+				thread.syncStuckTurns();
+				return masked();
+			};
+
+			assert.deepStrictEqual(at(0), [], 'the card is not pinned at rest');
+			assert.strictEqual(reply.classList.contains('volt-under-stuck'), false);
+			// Scrolled 500px: rows 0-8 are above the viewport (the card's 40px + 9 rows = 490px), row 9 is cut by its
+			// top edge, the card covers down to 40px and the fade to 74px: rows 9 and 10 (10px to 110px) are in the band.
+			assert.deepStrictEqual(at(500), [9, 10]);
+			assert.strictEqual(reply.classList.contains('volt-under-stuck'), false, 'the tall reply itself is not masked');
+			assert.strictEqual(body.classList.contains('volt-under-stuck'), false);
+			assert.strictEqual(rows[9].style.getPropertyValue('--volt-sticky-fade-end'), '50px', 'the card\'s bottom, from the row\'s own top (-10px)');
+			assert.strictEqual(rows[10].style.getPropertyValue('--volt-sticky-fade-end'), '0px');
+			// The band moves on: rows that left it are unmasked. Row 12 has no box.
+			assert.deepStrictEqual(at(650), [13, 14], 'row 12 is hidden; row 13 spans -10px to 40px, row 14 starts at 40px, above the fade\'s end at 74px');
+			assert.strictEqual(rows[9].classList.contains('volt-under-stuck'), false);
+			assert.strictEqual(rows[9].style.getPropertyValue('--volt-sticky-fade-end'), '');
+			assert.deepStrictEqual(at(0), []);
+
+			// A short reply is masked whole, as before.
+			for (const row of rows.slice(4)) {
+				row.remove();
+			}
+			thread.inner.appendChild($('div')).style.height = '600px';
+			thread.scroll.scanDomNode();
+			assert.deepStrictEqual(at(100), []);
+			assert.strictEqual(reply.classList.contains('volt-under-stuck'), true);
+			assert.strictEqual(reply.style.getPropertyValue('--volt-sticky-fade-end'), '100px');
+		} finally {
+			thread.element.remove();
+		}
+	});
 });
