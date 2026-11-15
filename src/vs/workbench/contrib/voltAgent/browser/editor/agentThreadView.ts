@@ -324,7 +324,19 @@ export class AgentThreadView extends Disposable {
 		// The space under the last exchange (`.volt-agent-thread-inner::after`) is empty: while that is all the
 		// bottom fade covers, the fade changes no pixel and its mask only costs the GPU a surface of its own.
 		const last = this.inner.lastElementChild;
-		const bottomClear = isBottomFadeClear(last ? last.getBoundingClientRect().bottom : viewportTop, viewportTop + dims.height);
+		let contentBottom = last ? last.getBoundingClientRect().bottom : viewportTop;
+		// The mask also covers what else the scroller holds: the side toolbar, and the card its rows open over the
+		// transcript when the chat has no room for its column (a child of the toolbar, outside its box).
+		for (const child of viewport.children) {
+			if (child === this.inner || child.classList.contains('scrollbar')) {
+				continue;
+			}
+			contentBottom = Math.max(contentBottom, child.getBoundingClientRect().bottom);
+			for (const part of child.children) {
+				contentBottom = Math.max(contentBottom, part.getBoundingClientRect().bottom);
+			}
+		}
+		const bottomClear = isBottomFadeClear(contentBottom, viewportTop + dims.height);
 		let stuck = false;
 		let bottom = 0;
 		let replies: { reply: HTMLElement; top: number }[] = [];

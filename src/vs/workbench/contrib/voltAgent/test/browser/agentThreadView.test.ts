@@ -123,6 +123,16 @@ suite('Agent thread view', () => {
 			assert.strictEqual(at(700), false, 'content in the fade keeps the mask');
 			assert.strictEqual(at(0), false);
 			assert.strictEqual(at(900), true);
+
+			// The side toolbar's rows opened as a card over the transcript (outside the toolbar's own box) count too.
+			scroller.style.position = 'relative';
+			const toolbar = scroller.appendChild($('.volt-agent-quick-open-actions'));
+			toolbar.style.cssText = 'position: absolute; top: 0; right: 0; width: 28px; height: 28px;';
+			const card = toolbar.appendChild($('.volt-agent-quick-open-body'));
+			card.style.cssText = 'position: absolute; top: 0; right: 0; width: 200px; height: 260px;';
+			assert.strictEqual(at(900), false, 'a toolbar card reaching the fade keeps the mask');
+			card.style.height = '200px';
+			assert.strictEqual(at(900), true);
 		} finally {
 			thread.element.remove();
 		}
