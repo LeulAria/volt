@@ -131,6 +131,10 @@ suite('Agent thread view', () => {
 			const card = toolbar.appendChild($('.volt-agent-quick-open-body'));
 			card.style.cssText = 'position: absolute; top: 0; right: 0; width: 200px; height: 260px;';
 			assert.strictEqual(at(900), false, 'a toolbar card reaching the fade keeps the mask');
+			toolbar.classList.add('expanded');
+			assert.strictEqual(at(900), true, 'a toolbar shown as its own column is outside the fade');
+			toolbar.classList.add('overlay');
+			assert.strictEqual(at(900), false, 'an expanded toolbar laid over the transcript is inside it');
 			card.style.height = '200px';
 			assert.strictEqual(at(900), true);
 		} finally {

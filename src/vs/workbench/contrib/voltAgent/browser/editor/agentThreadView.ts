@@ -326,9 +326,10 @@ export class AgentThreadView extends Disposable {
 		const last = this.inner.lastElementChild;
 		let contentBottom = last ? last.getBoundingClientRect().bottom : viewportTop;
 		// The mask also covers what else the scroller holds: the side toolbar, and the card its rows open over the
-		// transcript when the chat has no room for its column (a child of the toolbar, outside its box).
+		// transcript when the chat has no room for its column (a child of the toolbar, outside its box). As a column
+		// (expanded, not an overlay: the editor's `quick-open-expanded`) the toolbar sits outside the fade.
 		for (const child of viewport.children) {
-			if (child === this.inner || child.classList.contains('scrollbar')) {
+			if (child === this.inner || child.classList.contains('scrollbar') || (child.classList.contains('expanded') && !child.classList.contains('overlay'))) {
 				continue;
 			}
 			contentBottom = Math.max(contentBottom, child.getBoundingClientRect().bottom);
