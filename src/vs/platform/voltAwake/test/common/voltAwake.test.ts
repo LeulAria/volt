@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { AWAKE_BATTERY_FLOOR_SETTING, AWAKE_LID_CLOSED_MODE_SETTING, decideAwake, DEFAULT_AWAKE_PREFS, formatKeyValues, IAwakePolicyInput, parseActiveSchemeGuid, parseClamshellState, parseKeyValues, parseLidAction, parsePmsetSleepDisabled, readAwakePrefs } from '../../common/voltAwake.js';
+import { AWAKE_BATTERY_FLOOR_SETTING, AWAKE_LID_CLOSED_MODE_SETTING, decideAwake, DEFAULT_AWAKE_PREFS, formatKeyValues, IAwakePolicyInput, leaseNeedsRefresh, parseActiveSchemeGuid, parseClamshellState, parseKeyValues, parseLidAction, parsePmsetSleepDisabled, readAwakePrefs } from '../../common/voltAwake.js';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -125,5 +125,13 @@ suite('Volt awake parsers', () => {
 		const map = new Map([['pid', '42'], ['started', 'Fri Oct 10 12:40:01 2026'], ['lid', '1']]);
 		assert.deepStrictEqual(parseKeyValues(formatKeyValues(map)), map);
 		assert.deepStrictEqual(parseKeyValues('a=1\r\nbroken\nb = x=y\n'), new Map([['a', '1'], ['b', 'x=y']]));
+	});
+
+	test('only a lease that holds work is re-sent unchanged; an idle window sends nothing at rest', () => {
+		assert.strictEqual(leaseNeedsRefresh({ working: 2, waitingOnUser: 0 }), true);
+		assert.strictEqual(leaseNeedsRefresh({ working: 1, waitingOnUser: 1, batteryPercent: 40 }), true);
+		assert.strictEqual(leaseNeedsRefresh({ working: 0, waitingOnUser: 0 }), false);
+		// A chat waiting on the user does not keep the computer awake, so it needs no refresh either.
+		assert.strictEqual(leaseNeedsRefresh({ working: 0, waitingOnUser: 3, batteryPercent: 15 }), false);
 	});
 });

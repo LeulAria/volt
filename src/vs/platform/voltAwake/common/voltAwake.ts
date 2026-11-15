@@ -47,6 +47,16 @@ export interface IAwakeLease {
 	readonly batteryPercent?: number;
 }
 
+/**
+ * Whether a window re-sends its lease unchanged so the main process's copy (kept a while, then dropped as stale) stays
+ * fresh. Only a lease that holds the computer awake needs that: an idle one holds nothing, and a dropped one reads as
+ * idle. Any change is sent at once either way. At rest the re-send was the only renderer-to-main call, and each call
+ * woke main's loop for seconds (its stall monitor watches the loop after every IPC call).
+ */
+export function leaseNeedsRefresh(lease: IAwakeLease): boolean {
+	return lease.working > 0;
+}
+
 export type AwakeThermalState = 'unknown' | 'nominal' | 'fair' | 'serious' | 'critical';
 
 /** Whether this computer can keep working with the lid closed, and what it needs first. */
