@@ -122,10 +122,19 @@ function bundleESMTask(opts: IBundleESMTaskOpts): NodeJS.ReadWriteStream {
 						return { path: path.join(REPO_ROOT_PATH, 'node_modules', 'minimist', 'index.js'), external: false };
 					});
 
-					// Imports that load another entry point at runtime keep their path.
+					// Imports that load another entry point at runtime stay imports of that entry point's own output
+					// file, written relative to this bundle's location (both keep their place under `opts.src`).
 					const separate = opts.keepSeparate?.(entryPoint.name);
 					if (separate) {
-						build.onResolve({ filter: separate }, args => ({ path: args.path, external: true }));
+						build.onResolve({ filter: separate }, args => {
+							const absolute = path.resolve(args.resolveDir, args.path);
+							const fromSrc = path.relative(path.join(REPO_ROOT_PATH, opts.src), absolute);
+							let relative = path.relative(path.dirname(dest), fromSrc).replace(/\\/g, '/');
+							if (!relative.startsWith('.')) {
+								relative = `./${relative}`;
+							}
+							return { path: relative, external: true };
+						});
 					}
 				},
 			};

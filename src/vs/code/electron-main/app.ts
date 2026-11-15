@@ -12,6 +12,7 @@ import { toErrorMessage } from '../../base/common/errorMessage.js';
 import { Event } from '../../base/common/event.js';
 import { parse } from '../../base/common/jsonc.js';
 import { getPathLabel } from '../../base/common/labels.js';
+import { mark } from '../../base/common/performance.js';
 import { Disposable, DisposableStore } from '../../base/common/lifecycle.js';
 import { Schemas, VSCODE_AUTHORITY } from '../../base/common/network.js';
 import { join, posix } from '../../base/common/path.js';
@@ -122,7 +123,8 @@ import { createVoltStdioChannel, VoltStdioMainService } from '../../platform/vol
 import { IVoltHostMcpService, VOLT_HOST_MCP_CHANNEL_NAME } from '../../platform/voltHostMcp/common/voltHostMcp.js';
 import { IVoltAgentServerMainService, VOLT_AGENT_SERVER_CHANNEL_NAME, VOLT_AGENT_SERVER_ENABLED_SETTING } from '../../platform/voltAgentServer/common/agentServerService.js';
 import { VoltAgentServerMainService } from '../../platform/voltAgentServer/electron-main/agentServerMainService.js';
-import { disposeUnusedEarlyWindow } from '../../platform/windows/electron-main/earlyWindow.js';
+import { disposeUnusedEarlyWindow, isEarlyWindowProcess } from '../../platform/windows/electron-main/earlyWindow.js';
+import { CODE_CACHE_PATH_APPLIED_KEY } from '../../platform/windows/common/earlyWindow.js';
 import { VoltHostMcpMainService } from '../../platform/voltHostMcp/electron-main/voltHostMcpMainService.js';
 import { IVoltExternalMcpService, VOLT_EXTERNAL_MCP_CHANNEL_NAME } from '../../platform/voltExternalMcp/common/voltExternalMcp.js';
 import { VoltExternalMcpMainService } from '../../platform/voltExternalMcp/electron-main/voltExternalMcpMainService.js';
@@ -326,7 +328,16 @@ export class CodeApplication extends Disposable {
 
 		const isAllowedVsCodeFileRequest = (details: Electron.OnBeforeRequestListenerDetails) => {
 			const frame = details.frame;
-			if (!frame || !this.windowsMainService) {
+			if (!frame) {
+				return false;
+			}
+
+			// Volt: the launch window's page preloads the workbench code before the windows service exists
+			if (isEarlyWindowProcess(frame.processId)) {
+				return true;
+			}
+
+			if (!this.windowsMainService) {
 				return false;
 			}
 
@@ -463,7 +474,10 @@ export class CodeApplication extends Disposable {
 		};
 
 		const defaultSession = session.defaultSession as unknown as SessionWithCodeCachePathSupport;
-		if (typeof defaultSession.setCodeCachePath === 'function' && this.environmentMainService.codeCachePath) {
+		// Volt: the main entry sets the path at `ready`, before the launch window's renderer starts (src/main.ts); setting
+		// it again here would recreate the cache under that renderer.
+		const codeCachePathApplied = (globalThis as Record<string, unknown>)[CODE_CACHE_PATH_APPLIED_KEY] === true;
+		if (!codeCachePathApplied && typeof defaultSession.setCodeCachePath === 'function' && this.environmentMainService.codeCachePath) {
 			// Make sure to partition Chrome's code cache folder
 			// in the same way as our code cache path to help
 			// invalidate caches that we know are invalid
@@ -711,10 +725,12 @@ export class CodeApplication extends Disposable {
 		]);
 
 		// Shared process
+		mark('code/voltWillStartApp');
 		const { sharedProcessReady, sharedProcessClient } = this.setupSharedProcess(machineId, sqmId, devDeviceId);
 
 		// Services
 		const appInstantiationService = await this.initServices(machineId, sqmId, devDeviceId, sharedProcessReady);
+		mark('code/voltDidInitAppServices');
 
 		// Error telemetry
 		appInstantiationService.invokeFunction(accessor => this._register(new ErrorTelemetry(accessor.get(ILogService), accessor.get(ITelemetryService))));
@@ -739,6 +755,7 @@ export class CodeApplication extends Disposable {
 
 		// Signal phase: ready - before opening first window
 		this.lifecycleMainService.phase = LifecycleMainPhase.Ready;
+		mark('code/voltWillOpenFirstWindow');
 
 		// Open Windows
 		await appInstantiationService.invokeFunction(accessor => this.openFirstWindow(accessor, initialProtocolUrls));

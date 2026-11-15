@@ -9,7 +9,7 @@ import * as os from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { configurePortable } from './bootstrap-node.js';
 import { bootstrapESM } from './bootstrap-esm.js';
-import { app, protocol, crashReporter, Menu, contentTracing } from 'electron';
+import { app, protocol, crashReporter, Menu, contentTracing, session } from 'electron';
 import minimist from 'minimist';
 import { product } from './bootstrap-meta.js';
 import { parse } from './vs/base/common/jsonc.js';
@@ -20,7 +20,7 @@ import { getUNCHost, addUNCHostToAllowlist } from './vs/base/node/unc.js';
 import { INLSConfiguration } from './vs/nls.js';
 import { NativeParsedArgs } from './vs/platform/environment/common/argv.js';
 import { openEarlyWindow, planEarlyWindow } from './bootstrap-window.js';
-import { EARLY_PAGE_WAIT_MS } from './vs/platform/windows/common/earlyWindow.js';
+import { CODE_CACHE_PATH_APPLIED_KEY, EARLY_PAGE_WAIT_MS } from './vs/platform/windows/common/earlyWindow.js';
 
 perf.mark('code/didStartMain');
 
@@ -78,6 +78,7 @@ let earlyPageStarted: Promise<void> | undefined;
 
 // Resolve code cache path
 const codeCachePath = getCodeCachePath();
+process.env['VSCODE_CODE_CACHE_PATH'] = codeCachePath || '';
 
 // Disable default menu (https://github.com/electron/electron/issues/35512)
 Menu.setApplicationMenu(null);
@@ -141,6 +142,33 @@ if (userLocale) {
 		userDataPath,
 		nlsMetadataPath: import.meta.dirname
 	});
+} else if (osLocale.startsWith('en')) {
+	// Volt: English needs no language pack, so the configuration is known before `ready` (the same one `app.getLocale()`
+	// would give then), and the main bundle can be imported now (below).
+	nlsConfigurationPromise = resolveNLSConfiguration({
+		userLocale: osLocale,
+		osLocale,
+		commit: product.commit,
+		userDataPath,
+		nlsMetadataPath: import.meta.dirname
+	});
+}
+
+/**
+ * Volt: the main bundle, imported while Electron finishes starting instead of after `ready`. Importing it only defines
+ * the code (its entry exports `main`, which runs at ready); the ~80 ms it takes would otherwise sit between the launch
+ * window and the first window's configuration. Needs the NLS configuration, so other locales keep the order at ready.
+ */
+const mainBundlePromise = nlsConfigurationPromise ? importMainBundle(nlsConfigurationPromise) : undefined;
+
+async function importMainBundle(nlsConfiguration: Promise<INLSConfiguration>): Promise<typeof import('./vs/code/electron-main/main.js')> {
+	const nlsConfig = await nlsConfiguration;
+	process.env['VSCODE_NLS_CONFIG'] = JSON.stringify(nlsConfig);
+	await bootstrapESM();
+	perf.mark('code/voltWillImportMainBundle');
+	const bundle = await import('./vs/code/electron-main/main.js');
+	perf.mark('code/voltDidImportMainBundle');
+	return bundle;
 }
 
 // Pass in the locale to Electron so that the
@@ -198,6 +226,18 @@ app.once('ready', function () {
 async function onReady() {
 	perf.mark('code/mainAppReady');
 
+	// Volt: Chromium's code cache lives under our per-commit folder (CodeApplication does the same). Set before the
+	// launch window's renderer starts: switching the path once it is fetching and producing cache entries leaves every
+	// launch compiling the 20 MB workbench bundle and writing a cache entry no later launch finds.
+	if (codeCachePath) {
+		try {
+			session.defaultSession.setCodeCachePath(path.join(codeCachePath, 'chrome'));
+			(globalThis as Record<string, unknown>)[CODE_CACHE_PATH_APPLIED_KEY] = true;
+		} catch (error) {
+			console.error(error);
+		}
+	}
+
 	if (earlyWindowPlan) {
 		try {
 			earlyPageStarted = openEarlyWindow(earlyWindowPlan);
@@ -223,22 +263,35 @@ async function onReady() {
  * Main startup routine
  */
 async function startup(codeCachePath: string | undefined, nlsConfig: INLSConfiguration): Promise<void> {
-	process.env['VSCODE_NLS_CONFIG'] = JSON.stringify(nlsConfig);
 	process.env['VSCODE_CODE_CACHE_PATH'] = codeCachePath || '';
 
-	// Bootstrap ESM
-	await bootstrapESM();
+	// Volt: loading the main bundle and starting the application hold the main thread, and the launch window's page gets
+	// its files (and the picture of the last screen) from it. Let the page get them first: it then paints the window's
+	// last screen while the application starts, instead of after the first window's configuration.
+	const waitForLaunchPage = async () => {
+		if (earlyPageStarted) {
+			await Promise.race([earlyPageStarted, new Promise(resolve => setTimeout(resolve, EARLY_PAGE_WAIT_MS))]);
+			perf.mark('code/voltDidWaitForLaunchPage');
+		}
+	};
 
-	// Volt: loading the main bundle holds the main thread, and the launch window's page gets its files from it. Let the
-	// page get them first (it then paints the window's last screen without waiting for the main bundle).
-	if (earlyPageStarted) {
-		await Promise.race([earlyPageStarted, new Promise(resolve => setTimeout(resolve, EARLY_PAGE_WAIT_MS))]);
-		perf.mark('code/voltDidWaitForLaunchPage');
+	// Volt: the main bundle was imported before `ready` when the locale allowed it (see importMainBundle)
+	let bundle = await mainBundlePromise;
+	if (bundle) {
+		await waitForLaunchPage();
+	} else {
+		process.env['VSCODE_NLS_CONFIG'] = JSON.stringify(nlsConfig);
+
+		// Bootstrap ESM
+		await bootstrapESM();
+
+		await waitForLaunchPage();
+
+		// Load Main
+		bundle = await import('./vs/code/electron-main/main.js');
 	}
-
-	// Load Main
-	await import('./vs/code/electron-main/main.js');
 	perf.mark('code/didRunMainBundle');
+	bundle.main();
 }
 
 function configureCommandlineSwitchesSync(cliArgs: NativeParsedArgs) {

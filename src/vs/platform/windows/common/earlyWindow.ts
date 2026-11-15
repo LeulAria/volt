@@ -24,6 +24,13 @@ export const EARLY_WINDOW_KEY = '__voltEarlyWindow';
 /** Well-known global that holds the IPC channels the launch window's page may call before their real handlers exist. */
 export const EARLY_IPC_KEY = '__voltEarlyIpc';
 
+/**
+ * Well-known global the main entry sets once it gave Chromium's code cache its per-commit path at `ready` (before the
+ * launch window's renderer starts); the application then leaves the path alone, since setting it again recreates the
+ * cache while that renderer may be reading from it.
+ */
+export const CODE_CACHE_PATH_APPLIED_KEY = '__voltCodeCachePathApplied';
+
 export interface IEarlyWindowHint {
 	readonly version: number;
 	/** Product commit of the build that wrote it; a different build never uses it. */

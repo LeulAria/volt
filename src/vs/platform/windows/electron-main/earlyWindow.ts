@@ -29,6 +29,9 @@ export interface IEarlyProtocolRequest {
 	readonly callback: (response: string | electron.ProtocolResponse) => void;
 }
 
+/** The launch window's page once a code window adopted it (until that window is in the windows service's list). */
+let adoptedPage: electron.WebContents | undefined;
+
 function earlyWindow(): IEarlyWindowState | undefined {
 	return (globalThis as Record<string, unknown>)[EARLY_WINDOW_KEY] as IEarlyWindowState | undefined;
 }
@@ -109,9 +112,25 @@ export function adoptEarlyWindow(options: electron.BrowserWindowConstructorOptio
 		}
 	}
 	state.view = undefined;
+	adoptedPage = view?.webContents;
 
 	trace(`window#ctor: using the launch window${view ? ' and its page' : ''}`);
 	return { win, view, loadedUrl: view ? state.url : undefined };
+}
+
+/**
+ * Whether a renderer process is the launch window's workbench page. The page fetches the workbench code while the
+ * application still starts (before the windows service exists, then while its first window is being registered), so
+ * the request filter that only trusts registered windows would block it and the window would never start.
+ */
+export function isEarlyWindowProcess(processId: number): boolean {
+	const view = earlyWindow()?.view;
+	for (const page of [view?.webContents, adoptedPage]) {
+		if (page && !page.isDestroyed() && page.mainFrame.processId === processId) {
+			return true;
+		}
+	}
+	return false;
 }
 
 /** The protocol service calls this before registering its handlers: the launch window's handlers go away. */
