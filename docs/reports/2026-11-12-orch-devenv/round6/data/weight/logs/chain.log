@@ -1,0 +1,397 @@
+at f0bc50afe7e test(weight): animprobe.mjs, mutprobe.mjs (what draws after a turn), afterturn cputime parse
+build start Sun Nov 15 02:04:25 +04 2026 load 22.55 17.39 25.52
+[02:04:26] Using gulpfile ~/Desktop/VOLT/volt-e5-weight-min/volt/gulpfile.js
+[02:04:26] Starting 'compile-build-with-mangling'...
+[02:04:27] Starting clean-out-build ...
+[02:04:28] Finished clean-out-build after 1110 ms
+[02:04:28] Starting build-date-file ...
+[02:04:28] Finished build-date-file after 0 ms
+[02:04:28] Starting compile-api-proposal-names ...
+[02:04:28] Starting compilation api-proposal-names...
+(node:81579) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[02:04:28] Finished compilation api-proposal-names with 0 errors after 38 ms
+[02:04:28] Finished compile-api-proposal-names after 41 ms
+[02:04:28] Starting compile-src ...
+[02:05:02] [mangler] Done collecting. Classes: 9575. Exported symbols: 16847
+[02:05:04] [mangler] Done creating class replacements
+[02:05:04] [mangler] Starting prepare rename edits
+[02:05:05] Starting compilation...
+[02:31:58] [mangler] Done preparing edits: 5930 files
+[02:32:05] [mangler] Done: 6757.383kb saved, memory-usage: {"total_heap_size":3518791680,"total_heap_size_executable":11059200,"total_physical_size":3517448192,"total_available_size":13785764072,"used_heap_size":3379781368,"heap_size_limit":17230200832,"malloced_memory":2146408,"peak_malloced_memory":20000768,"does_zap_garbage":0,"number_of_native_contexts":1,"number_of_detached_contexts":0,"total_global_handles_size":7200768,"used_global_handles_size":2804448,"external_memory":139816148}
+[02:34:21] Error: /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/src/vs/workbench/contrib/voltAgent/browser/ide/voltTestController.ts(80,14): Property 'c' of exported anonymous class type may not be private or protected.
+[02:34:21] Error: /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/src/vs/workbench/contrib/voltAgent/browser/ide/voltTestController.ts(80,14): Property 'd' of exported anonymous class type may not be private or protected.
+[02:34:21] Error: CYCLIC dependency: /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/contrib/voltAgent/browser/pullRequests/agentPullRequestUi.js -> /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/contrib/voltAgent/browser/workspace/agentSurfaceHost.js -> /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/contrib/voltAgent/browser/review/agentChangesEditor.js -> /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/contrib/voltAgent/browser/review/agentChangesHeader.js -> /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/contrib/voltAgent/browser/pullRequests/agentGitActionsControl.js -> /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/contrib/voltAgent/browser/pullRequests/agentGitActionsService.js -> /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/contrib/voltAgent/browser/pullRequests/agentPullRequestUi.js
+[02:34:21] Error: CYCLIC dependency: /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/services/voltRuntime/common/workflows/workflowExpressions.js -> /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/services/voltRuntime/common/workflows/workflowNodes.js -> /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/services/voltRuntime/common/workflows/workflowNodeCatalog.js -> /Users/leularia/Desktop/VOLT/volt-e5-weight-min/volt/out/vs/vs/workbench/services/voltRuntime/common/workflows/workflowExpressions.js
+[02:34:21] Finished compilation with 4 errors after 1756096 ms
+[02:34:21] Finished compile-src after 1793790 ms
+[02:34:21] Starting compile-build-with-mangling ...
+[02:34:21] Finished compile-build-with-mangling after 0 ms
+[02:34:21] Finished 'compile-build-with-mangling' after 30 min
+[02:34:23] Using gulpfile ~/Desktop/VOLT/volt-e5-weight-min/volt/gulpfile.js
+[02:34:23] Starting 'minify-vscode'...
+[02:34:23] Starting clean-out-vscode ...
+[02:34:23] Finished clean-out-vscode after 124 ms
+[02:34:23] Starting bundle-vscode ...
+[02:34:23] Bundled entry point: vs/editor/common/services/editorWebWorkerMain...
+[02:34:23] Bundled entry point: vs/workbench/api/worker/extensionHostWorkerMain...
+[02:34:23] Bundled entry point: vs/workbench/contrib/notebook/common/services/notebookWebWorkerMain...
+[02:34:23] Bundled entry point: vs/workbench/services/languageDetection/browser/languageDetectionWebWorkerMain...
+[02:34:23] Bundled entry point: vs/workbench/services/search/worker/localFileSearchMain...
+[02:34:23] Bundled entry point: vs/platform/profiling/electron-browser/profileAnalysisWorkerMain...
+[02:34:23] Bundled entry point: vs/workbench/contrib/output/common/outputLinkComputerMain...
+[02:34:23] Bundled entry point: vs/workbench/services/textMate/browser/backgroundTokenization/worker/textMateTokenizationWorker.workerMain...
+[02:34:23] Bundled entry point: vs/workbench/contrib/debug/node/telemetryApp...
+[02:34:23] Bundled entry point: vs/platform/files/node/watcher/watcherMain...
+[02:34:23] Bundled entry point: vs/platform/terminal/node/ptyHostMain...
+[02:34:23] Bundled entry point: vs/platform/voltCodeIndex/node/codeIndexWorkerMain...
+[02:34:23] Bundled entry point: vs/workbench/api/node/extensionHostProcess...
+[02:34:23] Bundled entry point: vs/workbench/workbench.desktop.main...
+[02:34:23] Bundled entry point: vs/code/electron-main/main...
+[02:34:23] Bundled entry point: vs/code/node/cliProcessMain...
+[02:34:23] Bundled entry point: vs/code/electron-utility/sharedProcess/sharedProcessMain...
+[02:34:23] Bundled entry point: vs/code/electron-browser/workbench/workbench...
+[02:34:23] Bundled entry point: vs/workbench/services/keybinding/browser/keyboardLayouts/layout.contribution.linux...
+[02:34:23] Bundled entry point: vs/workbench/services/keybinding/browser/keyboardLayouts/layout.contribution.darwin...
+[02:34:23] Bundled entry point: vs/workbench/services/keybinding/browser/keyboardLayouts/layout.contribution.win...
+[02:34:23] Bundled entry point: vs/code/browser/workbench/workbench...
+[02:34:23] Bundled entry point: main...
+[02:34:23] Bundled entry point: cli...
+[02:34:23] Bundled entry point: bootstrap-fork...
+[02:34:23] Bundled entry point: volt-agent-server-main...
+▲ [WARNING] Comparison with -0 using the "==" operator will also match 0 [equals-negative-zero]
+
+    out-build/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.js:12:117742:
+      12 │ ...(e){var n;return oc(e)?(n=e,n==-0?0:n):A3n(e)}function ZDe(e,n)...
+         ╵                                   ~~
+
+  Floating-point equality is defined such that 0 and -0 are equal, so "x === -0" returns true for both 0 and -0. You need to use "Object.is(x, -0)" instead to test for -0.
+
+▲ [WARNING] Comparison with -0 using the "==" operator will also match 0 [equals-negative-zero]
+
+    out-build/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.js:12:117742:
+      12 │ ...(e){var n;return oc(e)?(n=e,n==-0?0:n):A3n(e)}function ZDe(e,n)...
+         ╵                                   ~~
+
+  Floating-point equality is defined such that 0 and -0 are equal, so "x === -0" returns true for both 0 and -0. You need to use "Object.is(x, -0)" instead to test for -0.
+
+▲ [WARNING] Comparison with -0 using the "==" operator will also match 0 [equals-negative-zero]
+
+    out-build/vs/workbench/contrib/voltAgent/browser/blocks/vendor/beautifulMermaid.js:12:117742:
+      12 │ ...(e){var n;return oc(e)?(n=e,n==-0?0:n):A3n(e)}function ZDe(e,n)...
+         ╵                                   ~~
+
+  Floating-point equality is defined such that 0 and -0 are equal, so "x === -0" returns true for both 0 and -0. You need to use "Object.is(x, -0)" instead to test for -0.
+
+(node:14117) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[02:34:31] Finished bundle-vscode after 8536 ms
+[02:34:31] Starting clean-out-vscode-min ...
+[02:34:32] Finished clean-out-vscode-min after 129 ms
+[02:34:32] Starting minify-vscode ...
+▲ [WARNING] Comparison with -0 using the "==" operator will also match 0 [equals-negative-zero]
+
+    out-vscode/volt-agent-server-main.js:203459:44:
+      203459 │                 return oc(e) ? (n = e, n == -0 ? 0 : n) : A3n(e);
+             ╵                                             ~~
+
+  Floating-point equality is defined such that 0 and -0 are equal, so "x === -0" returns true for both 0 and -0. You need to use "Object.is(x, -0)" instead to test for -0.
+
+▲ [WARNING] Comparison with -0 using the "==" operator will also match 0 [equals-negative-zero]
+
+    out-vscode/vs/workbench/workbench.desktop.main.js:304045:49:
+      304045 │ ...      return oc2(e) ? (n24 = e, n24 == -0 ? 0 : n24) : A3n(e);
+             ╵                                           ~~
+
+  Floating-point equality is defined such that 0 and -0 are equal, so "x === -0" returns true for both 0 and -0. You need to use "Object.is(x, -0)" instead to test for -0.
+
+▲ [WARNING] Comparison with -0 using the "==" operator will also match 0 [equals-negative-zero]
+
+    out-vscode/vs/code/browser/workbench/workbench.js:304019:48:
+      304019 │ ...       return oc(e) ? (n10 = e, n10 == -0 ? 0 : n10) : A3n(e);
+             ╵                                           ~~
+
+  Floating-point equality is defined such that 0 and -0 are equal, so "x === -0" returns true for both 0 and -0. You need to use "Object.is(x, -0)" instead to test for -0.
+
+[02:34:38] Finished minify-vscode after 6490 ms
+[02:34:38] Finished 'minify-vscode' after 15 s
+[02:34:39] Using gulpfile ~/Desktop/VOLT/volt-e5-weight-min/volt/gulpfile.js
+[02:34:39] Starting 'vscode-darwin-arm64-min-ci'...
+[02:34:39] Starting compile-native-extensions-build ...
+Building Microsoft Authentication Extension for darwin (arm64)
+[02:34:44] Bundled extension: microsoft-authentication/extension.webpack.config.js...
+[02:34:44] Finished compile-native-extensions-build after 5382 ms
+[02:34:44] Starting clean-vscode-darwin-arm64 ...
+[02:34:44] Finished clean-vscode-darwin-arm64 after 220 ms
+[02:34:44] Starting build-volt-helpers-darwin-arm64 ...
+[volt helpers] darwin-arm64: speech, desktop, volt-sandbox-helper -> .build/volt-helpers/darwin-arm64
+[02:34:49] Finished build-volt-helpers-darwin-arm64 after 4914 ms
+[02:34:49] Starting package-darwin-arm64 ...
+
+
+(node:15801) [DEP0180] DeprecationWarning: fs.Stats constructor is deprecated.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[02:34:55] Finished package-darwin-arm64 after 5934 ms
+[02:34:55] Starting vscode-darwin-arm64-min-ci ...
+[02:34:55] Finished vscode-darwin-arm64-min-ci after 0 ms
+[02:34:55] Finished 'vscode-darwin-arm64-min-ci' after 16 s
+build exit 0 Sun Nov 15 02:34:55 +04 2026 load 18.38 12.46 15.15
+minafter ready Sun Nov 15 02:34:56 +04 2026
+minbefore ready: /Users/leularia/.volt-r6/min/base/VOLT.app Sun Nov 15 02:34:56 +04 2026
+== block minbefore 2026-11-14T22:57:35Z load 15.38 11.67 11.75
+{"pid":97625,"ms":3496,"load":"14.94 11.70 11.76"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":6422,"ms":3318,"load":"17.36 12.76 12.14"}
+{"arm":"minbefore","variant":"launch","app":778,"agents":0,"total":778,"processes":9,"cpuApp":0.66,"cpuAgents":0,"load":"10.64 11.48 11.70"}
+renderer                                         n=1   219 MiB cpu 0.06%
+gpu                                              n=1   204 MiB cpu 0.08%
+main                                             n=1   114 MiB cpu 0.25%
+agent server                                     n=1    82 MiB cpu 0.09%
+node utility (shared process/file watcher/pty)   n=1    74 MiB cpu 0.08%
+extension host                                   n=1    69 MiB cpu 0.1%
+network service                                  n=1    14 MiB cpu 0%
+sandbox helper                                   n=2     2 MiB cpu 0%
+{"pid":14069,"ms":1736,"load":"7.92 10.50 11.31"}
+{"arm":"minbefore","ghostMiB":0,"left":0,"before":12,"load":"9.08 10.54 11.30"}
+{"pid":20583,"ms":2740,"load":"11.61 11.05 11.43"}
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+thread 6: seeded
+thread 7: seeded
+thread 8: seeded
+thread 9: seeded
+thread 10: seeded
+thread 11: seeded
+thread 12: seeded
+thread 13: seeded
+thread 14: seeded
+thread 15: seeded
+{"arm":"minbefore","variant":"a10-rest-20","app":1495,"agents":474,"total":1969,"processes":40,"cpuApp":5.05,"cpuAgents":9.7,"load":"15.80 12.52 11.96"}
+claude CLI                                       n=9  1550 MiB cpu 9.7%
+gpu                                              n=1   604 MiB cpu 1.09%
+ACP adapter (node)                               n=9   528 MiB cpu 1.95%
+renderer                                         n=1   244 MiB cpu 1.16%
+agent server                                     n=1   124 MiB cpu 0.26%
+main                                             n=1   114 MiB cpu 0.29%
+node utility (shared process/file watcher/pty)   n=1    79 MiB cpu 0.1%
+extension host                                   n=1    71 MiB cpu 0.13%
+code index                                       n=1    33 MiB cpu 0.01%
+other: Electron                                  n=1    33 MiB cpu 0.01%
+network service                                  n=1    14 MiB cpu 0.01%
+sandbox watchdog sh                              n=9    11 MiB cpu 0%
+sandbox helper                                   n=2     2 MiB cpu 0.03%
+other: caffeinate                                n=1     2 MiB cpu 0%
+other: git                                       n=1     0 MiB cpu 0%
+stopped
+== end minbefore 2026-11-14T23:05:02Z
+== block minafter 2026-11-14T23:05:36Z load 10.01 11.70 11.72
+{"pid":39366,"ms":7365,"load":"11.09 11.85 11.77"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":47653,"ms":2761,"load":"16.77 13.20 12.27"}
+{"arm":"minafter","variant":"launch","app":787,"agents":0,"total":787,"processes":9,"cpuApp":0.72,"cpuAgents":0,"load":"9.26 11.69 11.78"}
+renderer                                         n=1   222 MiB cpu 0.06%
+gpu                                              n=1   206 MiB cpu 0.08%
+main                                             n=1   109 MiB cpu 0.29%
+agent server                                     n=1    82 MiB cpu 0.12%
+node utility (shared process/file watcher/pty)   n=1    73 MiB cpu 0.06%
+extension host                                   n=1    69 MiB cpu 0.11%
+network service                                  n=1    14 MiB cpu 0%
+sandbox helper                                   n=2     2 MiB cpu 0%
+{"pid":56505,"ms":1928,"load":"8.34 10.92 11.49"}
+{"arm":"minafter","ghostMiB":0,"left":0,"before":12,"load":"9.59 10.92 11.46"}
+{"pid":62137,"ms":2979,"load":"9.26 10.57 11.29"}
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+thread 6: seeded
+thread 7: seeded
+thread 8: seeded
+thread 9: seeded
+thread 10: seeded
+thread 11: seeded
+thread 12: seeded
+thread 13: seeded
+thread 14: seeded
+thread 15: seeded
+{"arm":"minafter","variant":"a10-rest-20","app":1032,"agents":320,"total":1352,"processes":41,"cpuApp":2.96,"cpuAgents":7.85,"load":"8.83 10.16 11.07"}
+claude CLI                                       n=10  1754 MiB cpu 7.86%
+ACP adapter (node)                               n=10   613 MiB cpu 1.25%
+renderer                                         n=1   230 MiB cpu 0.75%
+gpu                                              n=1   204 MiB cpu 0.17%
+agent server                                     n=1   133 MiB cpu 0.25%
+main                                             n=1   112 MiB cpu 0.26%
+node utility (shared process/file watcher/pty)   n=1    83 MiB cpu 0.09%
+extension host                                   n=1    70 MiB cpu 0.14%
+code index                                       n=1    34 MiB cpu 0.01%
+other: Electron                                  n=1    33 MiB cpu 0.01%
+network service                                  n=1    14 MiB cpu 0%
+sandbox watchdog sh                              n=9    11 MiB cpu 0%
+sandbox helper                                   n=2     2 MiB cpu 0.03%
+other: caffeinate                                n=1     2 MiB cpu 0%
+stopped
+== end minafter 2026-11-14T23:13:07Z
+== block minafter 2026-11-14T23:13:41Z load 9.13 9.82 10.83
+{"pid":81737,"ms":4391,"load":"8.80 9.73 10.79"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":89957,"ms":2208,"load":"15.26 11.28 11.31"}
+{"arm":"minafter","variant":"launch","app":781,"agents":0,"total":781,"processes":9,"cpuApp":0.81,"cpuAgents":0,"load":"11.24 11.03 11.21"}
+renderer                                         n=1   219 MiB cpu 0.07%
+gpu                                              n=1   206 MiB cpu 0.09%
+main                                             n=1   106 MiB cpu 0.31%
+agent server                                     n=1    83 MiB cpu 0.12%
+node utility (shared process/file watcher/pty)   n=1    72 MiB cpu 0.08%
+extension host                                   n=1    68 MiB cpu 0.13%
+network service                                  n=1    14 MiB cpu 0.01%
+sandbox helper                                   n=2     2 MiB cpu 0%
+{"pid":97769,"ms":1848,"load":"9.12 10.46 10.98"}
+{"arm":"minafter","ghostMiB":0,"left":0,"before":12,"load":"8.85 10.28 10.90"}
+{"pid":4190,"ms":553,"load":"5.43 9.09 10.41"}
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+thread 6: seeded
+thread 7: seeded
+thread 8: seeded
+thread 9: seeded
+thread 10: seeded
+thread 11: seeded
+thread 12: seeded
+thread 13: seeded
+thread 14: seeded
+thread 15: seeded
+{"arm":"minafter","variant":"a10-rest-20","app":1006,"agents":306,"total":1311,"processes":41,"cpuApp":1.95,"cpuAgents":5.25,"load":"8.88 9.23 10.35"}
+claude CLI                                       n=10  1689 MiB cpu 5.26%
+ACP adapter (node)                               n=10   732 MiB cpu 0.89%
+gpu                                              n=1   201 MiB cpu 0.1%
+renderer                                         n=1   177 MiB cpu 0.46%
+agent server                                     n=1   145 MiB cpu 0.13%
+main                                             n=1   112 MiB cpu 0.18%
+node utility (shared process/file watcher/pty)   n=1    77 MiB cpu 0.05%
+extension host                                   n=1    70 MiB cpu 0.11%
+code index                                       n=1    33 MiB cpu 0%
+other: Electron                                  n=1    33 MiB cpu 0%
+network service                                  n=1    14 MiB cpu 0%
+sandbox watchdog sh                              n=9    11 MiB cpu 0%
+sandbox helper                                   n=2     2 MiB cpu 0.03%
+other: caffeinate                                n=1     2 MiB cpu 0%
+stopped
+== end minafter 2026-11-14T23:21:00Z
+== block minbefore 2026-11-14T23:21:33Z load 14.25 12.12 11.43
+{"pid":23708,"ms":1651,"load":"12.97 11.92 11.36"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":31802,"ms":760,"load":"10.29 11.42 11.21"}
+{"arm":"minbefore","variant":"launch","app":620,"agents":0,"total":620,"processes":9,"cpuApp":0.66,"cpuAgents":0,"load":"5.06 9.36 10.43"}
+gpu                                              n=1   206 MiB cpu 0.07%
+renderer                                         n=1   163 MiB cpu 0.05%
+main                                             n=1    80 MiB cpu 0.26%
+extension host                                   n=1    56 MiB cpu 0.09%
+agent server                                     n=1    55 MiB cpu 0.1%
+node utility (shared process/file watcher/pty)   n=1    43 MiB cpu 0.09%
+network service                                  n=1    14 MiB cpu 0%
+sandbox helper                                   n=2     2 MiB cpu 0%
+{"pid":40771,"ms":533,"load":"5.75 8.47 10.00"}
+{"arm":"minbefore","ghostMiB":0,"left":0,"before":12,"load":"4.79 7.95 9.75"}
+{"pid":46003,"ms":563,"load":"2.94 6.85 9.22"}
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+thread 6: seeded
+thread 7: seeded
+thread 8: seeded
+thread 9: seeded
+thread 10: seeded
+thread 11: seeded
+thread 12: seeded
+thread 13: seeded
+thread 14: seeded
+thread 15: seeded
+{"arm":"minbefore","variant":"a10-rest-20","app":1486,"agents":503,"total":1989,"processes":41,"cpuApp":3.28,"cpuAgents":8.61,"load":"4.11 6.23 8.79"}
+claude CLI                                       n=10  1711 MiB cpu 8.62%
+ACP adapter (node)                               n=10   701 MiB cpu 0.33%
+gpu                                              n=1   604 MiB cpu 1.14%
+renderer                                         n=1   177 MiB cpu 1.12%
+agent server                                     n=1   153 MiB cpu 0.21%
+main                                             n=1   113 MiB cpu 0.26%
+node utility (shared process/file watcher/pty)   n=1    73 MiB cpu 0.08%
+extension host                                   n=1    70 MiB cpu 0.07%
+code index                                       n=1    34 MiB cpu 0.01%
+other: Electron                                  n=1    33 MiB cpu 0.01%
+network service                                  n=1    14 MiB cpu 0.01%
+sandbox watchdog sh                              n=9    11 MiB cpu 0%
+sandbox helper                                   n=2     2 MiB cpu 0.04%
+other: caffeinate                                n=1     2 MiB cpu 0%
+stopped
+== end minbefore 2026-11-14T23:28:48Z
+== blocks done 2026-11-14T23:28:48Z
+== a7 minbefore round 1 2026-11-14T23:29:21Z load 4.64 5.78 8.32
+{"pid":65469,"ms":1272,"load":"4.43 5.72 8.29"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":73454,"ms":1108,"load":"5.33 5.91 8.24"}
+{"arm":"minbefore","test":"A7","at":"2026-11-14T23:33:39.399Z","load":"4.31 5.61 8.06","loadEnd":"3.27 4.60 7.17","ticks":720,"appP95":2212,"agentsP95":1052,"totalP95":3242,"agentCountMedian":6,"mem":{"swapUsedMiB":5707,"swapTotalMiB":7168,"freePct":81,"pressure":1},"memEnd":{"swapUsedMiB":5691,"swapTotalMiB":7168,"freePct":81,"pressure":1},"csv":"/Users/leularia/Desktop/VOLT/volt-e5-weight/docs/reports/2026-11-12-orch-devenv/round6/data/weight/raw/a7-minbefore-1794699037140.csv","roles":[["main",4],["gpu",1],["network service",1],["renderer",1],["agent server",1],["node utility (shared process/file watcher/pty)",1],["extension host",1],["sandbox helper",2],["other: bash",1],["code index",1],["ACP adapter (node)",6],["sandbox watchdog sh",5],["claude CLI",8],["other: security",2],["other: rg",1],["other: caffeinate",1]]}
+== a7 minafter round 1 2026-11-14T23:34:19Z load 4.24 4.59 7.04
+{"pid":87520,"ms":1671,"load":"3.91 4.51 6.98"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":95865,"ms":1051,"load":"4.89 4.66 6.93"}
+{"arm":"minafter","test":"A7","at":"2026-11-14T23:38:37.193Z","load":"4.03 4.47 6.79","loadEnd":"4.46 4.82 6.50","ticks":720,"appP95":2196,"agentsP95":1056,"totalP95":3215,"agentCountMedian":6,"mem":{"swapUsedMiB":5683,"swapTotalMiB":7168,"freePct":84,"pressure":1},"memEnd":{"swapUsedMiB":5659,"swapTotalMiB":7168,"freePct":81,"pressure":1},"csv":"/Users/leularia/Desktop/VOLT/volt-e5-weight/docs/reports/2026-11-12-orch-devenv/round6/data/weight/raw/a7-minafter-1794699334924.csv","roles":[["main",4],["gpu",1],["network service",1],["renderer",1],["agent server",1],["node utility (shared process/file watcher/pty)",1],["sandbox helper",2],["extension host",1],["other: bash",1],["code index",1],["ACP adapter (node)",6],["sandbox watchdog sh",5],["claude CLI",8],["other: caffeinate",1],["other: git",1]]}
+== a7block done 2026-11-14T23:38:44Z
+== a7 minafter round 1 2026-11-14T23:39:17Z load 3.77 4.59 6.34
+{"pid":10409,"ms":1248,"load":"3.71 4.56 6.32"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":17744,"ms":1165,"load":"6.13 5.21 6.48"}
+{"arm":"minafter","test":"A7","at":"2026-11-14T23:43:34.823Z","load":"4.59 4.93 6.34","loadEnd":"5.31 5.40 6.27","ticks":720,"appP95":2219,"agentsP95":1058,"totalP95":3228,"agentCountMedian":6,"mem":{"swapUsedMiB":5651,"swapTotalMiB":7168,"freePct":84,"pressure":1},"memEnd":{"swapUsedMiB":5643,"swapTotalMiB":7168,"freePct":81,"pressure":1},"csv":"/Users/leularia/Desktop/VOLT/volt-e5-weight/docs/reports/2026-11-12-orch-devenv/round6/data/weight/raw/a7-minafter-1794699632582.csv","roles":[["main",4],["gpu",1],["network service",1],["renderer",1],["agent server",1],["node utility (shared process/file watcher/pty)",1],["extension host",1],["sandbox helper",2],["other: bash",1],["code index",1],["ACP adapter (node)",6],["sandbox watchdog sh",5],["claude CLI",9],["other: git",1],["other: rg",1],["other: caffeinate",1]]}
+== a7 minbefore round 1 2026-11-14T23:44:14Z load 4.21 5.13 6.13
+{"pid":32938,"ms":1182,"load":"3.64 4.97 6.06"}
+arena|main|This Mac
+thread 1: seeded
+thread 2: seeded
+thread 3: seeded
+thread 4: seeded
+thread 5: seeded
+{"pid":40234,"ms":1152,"load":"5.48 5.30 6.14"}
+{"arm":"minbefore","test":"A7","at":"2026-11-14T23:48:32.215Z","load":"3.91 4.95 5.98","loadEnd":"3.65 4.27 5.49","ticks":720,"appP95":2210,"agentsP95":1055,"totalP95":3249,"agentCountMedian":6,"mem":{"swapUsedMiB":5643,"swapTotalMiB":7168,"freePct":82,"pressure":1},"memEnd":{"swapUsedMiB":5627,"swapTotalMiB":7168,"freePct":82,"pressure":1},"csv":"/Users/leularia/Desktop/VOLT/volt-e5-weight/docs/reports/2026-11-12-orch-devenv/round6/data/weight/raw/a7-minbefore-1794699929961.csv","roles":[["main",4],["gpu",1],["network service",1],["renderer",1],["agent server",1],["node utility (shared process/file watcher/pty)",1],["extension host",1],["sandbox helper",2],["other: bash",1],["code index",1],["ACP adapter (node)",6],["sandbox watchdog sh",5],["claude CLI",8],["other: git",4],["other: caffeinate",1],["other: ioreg",1]]}
+== a7block done 2026-11-14T23:48:39Z
+chain done Sun Nov 15 03:48:39 +04 2026
