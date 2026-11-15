@@ -1,0 +1,17 @@
+Perf 12   [11:27:03.104] 0::configure: async elapsed time (in milliseconds) 0.3449
+Perf 14   [11:27:03.104] 1::compilerOptionsForInferredProjects: elapsed time (in milliseconds) 0.1201
+Perf 91   [11:27:05.681] 2::updateOpen: elapsed time (in milliseconds) 2576.9383
+Perf 95   [11:27:05.687] 3::syntacticDiagnosticsSync: elapsed time (in milliseconds) 0.5504
+Perf 98   [11:27:05.814] 4::semanticDiagnosticsSync: elapsed time (in milliseconds) 127.2000
+Perf 104  [11:27:06.996] 5::updateOpen: elapsed time (in milliseconds) 4.8121
+Perf 107  [11:27:07.003] 6::syntacticDiagnosticsSync: elapsed time (in milliseconds) 1.9089
+Perf 110  [11:27:07.090] 7::semanticDiagnosticsSync: elapsed time (in milliseconds) 84.2321
+Perf 116  [11:27:09.871] 8::updateOpen: elapsed time (in milliseconds) 8.8633
+Perf 119  [11:27:09.873] 9::syntacticDiagnosticsSync: elapsed time (in milliseconds) 0.7113
+Perf 122  [11:27:09.995] 10::semanticDiagnosticsSync: elapsed time (in milliseconds) 119.6860
+Perf 128  [11:27:13.717] 11::updateOpen: elapsed time (in milliseconds) 29.0363
+Perf 131  [11:27:13.724] 12::syntacticDiagnosticsSync: elapsed time (in milliseconds) 0.3832
+Perf 134  [11:27:13.810] 13::semanticDiagnosticsSync: elapsed time (in milliseconds) 84.4624
+Perf 140  [11:27:17.305] 14::updateOpen: elapsed time (in milliseconds) 1.2725
+Perf 143  [11:27:17.306] 15::syntacticDiagnosticsSync: elapsed time (in milliseconds) 0.1259
+Perf 146  [11:27:17.366] 16::semanticDiagnosticsSync: elapsed time (in milliseconds) 59.1492

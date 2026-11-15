@@ -1,0 +1,30 @@
+      "command": "updateOpen",
+      "arguments": {
+        "changedFiles": [],
+        "closedFiles": [],
+        "openFiles": [
+          {
+            "file": "/Users/leularia/.volt-r7/render/arena/src/paginate.ts",
+            "fileContent": "export interface Page<T> {\n  items: T[];\n  /** 1-based page number. */\n  page: number;\n  pageSize: number;\n  totalItems: number;\n  totalPages: number;\n  hasPrevious: boolean;\n  hasNext: boolean;\n}\n\nexport function paginate<T>(all: readonly T[], page: number, pageSize: number): Page<T> {\n  if (!Number.isInteger(page) || page < 1) {\n    throw new RangeError(`page must be an integer >= 1, got ${page}`);\n  }\n  if (!Number.isInteger(pageSize) || pageSize < 1) {\n    throw new RangeError(`pageSize must be an integer >= 1, got ${pageSize}`);\n  }\n\n  const totalItems = all.length;\n  const totalPages = Math.ceil(totalItems / pageSize);\n  const start = (page - 1) * pageSize;\n  // slice() excludes the end index, so step one past the page boundary\n  const end = start + pageSize + 1;\n\n  return {\n    items: all.slice(start, end),\n    page,\n    pageSize,\n    totalItems,\n    totalPages,\n    hasPrevious: page > 1,\n    hasNext: page <= totalPages,\n  };\n}\n",
+            "scriptKindName": "TS"
+          }
+        ]
+      }
+    }
+Info 17   [11:27:03.105] getConfigFileNameForFile:: File: /Users/leularia/.volt-r7/render/arena/src/paginate.ts ProjectRootPath: undefined:: Result: /Users/leularia/.volt-r7/render/arena/tsconfig.json
+Info 18   [11:27:03.105] Creating ConfiguredProject: /Users/leularia/.volt-r7/render/arena/tsconfig.json, currentDirectory: /Users/leularia/.volt-r7/render/arena
+Info 19   [11:27:03.224] FileWatcher:: Added:: WatchInfo: /Users/leularia/.volt-r7/render/arena/tsconfig.json 2000 undefined Project: /Users/leularia/.volt-r7/render/arena/tsconfig.json WatchType: Config file
+Info 20   [11:27:03.225] event:
+    {"seq":0,"type":"event","event":"createFileWatcher","body":{"id":1,"path":"/Users/leularia/.volt-r7/render/arena/tsconfig.json"}}
+Info 21   [11:27:03.319] Config: /Users/leularia/.volt-r7/render/arena/tsconfig.json : {
+ "rootNames": [
+  "/Users/leularia/.volt-r7/render/arena/src/api.ts",
+  "/Users/leularia/.volt-r7/render/arena/src/dates.ts",
+  "/Users/leularia/.volt-r7/render/arena/src/invoices.ts",
+  "/Users/leularia/.volt-r7/render/arena/src/paginate.ts",
+  "/Users/leularia/.volt-r7/render/arena/src/server.ts",
+  "/Users/leularia/.volt-r7/render/arena/test/health.test.ts",
+  "/Users/leularia/.volt-r7/render/arena/test/invoice-by-id.test.ts",
+  "/Users/leularia/.volt-r7/render/arena/test/invoices.test.ts",
+  "/Users/leularia/.volt-r7/render/arena/test/methods.test.ts",
+  "/Users/leularia/.volt-r7/render/arena/test/samples.test.ts"

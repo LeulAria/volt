@@ -1,0 +1,40 @@
+heap used 175 MiB of 180 MiB; snapshot self total 399 MiB
+  222.5 MiB   203173 native
+  113.9 MiB   217743 string
+   31.6 MiB   452040 code
+    7.4 MiB   143887 object shape
+    7.2 MiB   105822 array
+    5.3 MiB   190221 hidden
+    2.7 MiB   115076 object:Object
+    1.0 MiB    41401 object:system / Context
+    1.0 MiB    36300 closure:
+    0.7 MiB    47687 object:Array
+    0.6 MiB    30249 concatenated string
+    0.4 MiB     8217 object:Generator
+    0.2 MiB    11340 object:FunctionDisposable
+    0.2 MiB     7403 object:Node
+    0.1 MiB     2905 object:Emitter
+    0.1 MiB     4786 sliced string
+    0.1 MiB     5768 object:Set
+    0.1 MiB     2840 object:LeakageMonitor
+    0.1 MiB     3962 object:UniqueContainer
+    0.1 MiB     3756 object:DisposableStore
+    0.1 MiB     2601 closure:handler
+    0.1 MiB     3014 object:LinkedList
+    0.1 MiB     5984 number
+    0.1 MiB     2257 object:DomListener
+    0.1 MiB     1112 object:ResolvedKeybindingItem
+    0.1 MiB     2046 closure:run
+    0.1 MiB     2002 object:ContextKeyEqualsExpr
+    0.1 MiB     1978 closure:dispose
+    0.0 MiB     2139 object:ContextKeyAndExpr
+    0.0 MiB     1892 object:Action2
+-- large strings
+   3.09 MiB .show-file-icons .folder-icon::before { content: '\2001'; background-image: url('vscode-file\:\/\/vs
+   0.87 MiB data:application/json;base64,eyJtYXBwaW5ncyI6Ijs7OztBQUtBLE9BQU87QUFDUCxPQUFPO0FBQ1AsU0FBUyxVQUFVLG1
+   0.73 MiB data:application/json;base64,eyJtYXBwaW5ncyI6IjtBQTRZQSxPQUFPLFNBQVMsa0JBQWtCLEtBQXFEOztDQUl0RixNQUF
+   0.65 MiB data:application/json;base64,eyJtYXBwaW5ncyI6Ijs7OztBQUtBLFNBQVMsNkJBQTZCO0FBQ3RDLFNBQVMsVUFBVSxtQkF
+   0.43 MiB data:application/json;base64,eyJtYXBwaW5ncyI6Ijs7OztBQUtBLFlBQVksWUFBWTtBQUd4QixZQUFZLGFBQWE7QUFDekI
+   0.34 MiB data:application/json;base64,eyJtYXBwaW5ncyI6Ijs7OztBQUtBLE9BQU87QUFDUCxTQUFTLEdBQUcsdUJBQXVCLFFBQVE
+   0.34 MiB data:application/json;base64,eyJtYXBwaW5ncyI6Ijs7OztBQUtBLFNBQVMsdUJBQXVCLHFCQUFxQix3QkFBd0IsaUJBQWl
+   0.34 MiB data:application/json;base64,eyJtYXBwaW5ncyI6Ijs7OztBQUtBLE9BQU87QUFDUCxTQUFTLEdBQUcsdUJBQXVCLFFBQW1

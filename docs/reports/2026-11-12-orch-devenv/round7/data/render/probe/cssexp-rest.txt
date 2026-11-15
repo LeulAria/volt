@@ -1,0 +1,17 @@
+cssexp.mjs / gputiles.mjs at rest, dev build, one window, styles applied in place (shared images of the GPU process, MiB)
+
+1) 11:33, window 1175x705 (before the rig's window size fix), base code, chat pinned at its end after an A7 run:
+-- before
+GPU shared images 126 MiB: VizBufferQueue 2350x1410 n=3 38; RenderPassOverlay 2368x1216 n=2 22; RenderPassBacking 2368x1216 11; RenderPassBacking 1472x1216 7; raster tiles 19 (48 MiB)
+applied: thread scroller mask-image none
+-- after
+GPU shared images 101 MiB: VizBufferQueue 38; RenderPassOverlay 2368x1216 n=1 11; RenderPassBacking 1472x1216 7; RenderPassOverlay 1472x832 5; raster tiles 17 (40 MiB)
+then also the stuck-turn reply mask none:
+GPU shared images 57 MiB: VizBufferQueue 38; raster tiles 9 (19 MiB)
+
+2) same window, scroller mask none + isolation: isolate + the scrollbar's own mask, scrollbar shown:
+before 60 MiB (raster tiles 10, 22 MiB) -> after 58 MiB (RenderPassBacking 64x1216 + overlay, 0.3 MiB each; raster tiles 11, 19 MiB)
+
+3) ~11:52, window 1500x896, after build, after an A7 run (stuck state): stuck-turn reply mask replaced by a solid no-op mask
+before 162 MiB (raster tiles 26, 79 MiB) -> after 138 MiB (raster tiles 18, 56 MiB); render passes unchanged
+4) fresh window, at rest: two-layer reply mask: 126 -> 126 MiB (tiles 15 -> 15)

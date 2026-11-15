@@ -196,6 +196,25 @@
 	mask-image: none;
 }
 
+/* While only the empty space under the last exchange is in the fade's band (`bottom-clear`, set by
+ * AgentThreadView.syncStuckTurns before the frame paints), the mask changes no pixel: it comes off, since a
+ * masked scroller is a GPU surface of its own with its own tiles. `isolation` keeps the stacking context the
+ * mask made (the side toolbar's z-index stays inside the scroller); the vertical scrollbar, which sat under
+ * the mask, takes the same fade itself. */
+.volt-agent-editor.has-turns .volt-agent-thread > .monaco-scrollable-element.volt-agent-thread-scroll {
+	isolation: isolate;
+}
+
+.volt-agent-editor.has-turns .volt-agent-thread > .monaco-scrollable-element.volt-agent-thread-scroll.bottom-clear {
+	-webkit-mask-image: none;
+	mask-image: none;
+}
+
+.volt-agent-editor.has-turns:not(.quick-open-expanded):not(.has-context-panel) .volt-agent-thread > .monaco-scrollable-element.volt-agent-thread-scroll.bottom-clear > .scrollbar.vertical {
+	-webkit-mask-image: linear-gradient(to top, rgb(0 0 0 / 0.1) 0px, rgb(0 0 0 / 0.1) 12px, rgb(0 0 0 / 0.415) 35px, #000 64px);
+	mask-image: linear-gradient(to top, rgb(0 0 0 / 0.1) 0px, rgb(0 0 0 / 0.1) 12px, rgb(0 0 0 / 0.415) 35px, #000 64px);
+}
+
 .volt-agent-thread-fade.bottom {
 	display: none;
 }

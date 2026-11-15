@@ -11,6 +11,12 @@ import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
 /** Runs after the frame's redraw and scroll sync, so the sticky pass reads a settled layout once. */
 const STUCK_SYNC_PRIORITY = -2000;
 /**
+ * The transcript's bottom fade (agentEditor.css): content within this many pixels of the viewport's
+ * bottom edge is faded, so the mask only changes pixels while content reaches that band. 64px of fade
+ * plus room for a last card's shadow.
+ */
+export const THREAD_BOTTOM_FADE_REACH = 64 + 16;
+/**
  * After the frame's redraw and scroll sync (-1000), whose size read already laid the thread out, so
  * reading the native scroll position costs nothing; before the follow (-1500), so a native scroll
  * (find, a footnote) is adopted before the follow could write over it.
@@ -315,6 +321,23 @@ export class AgentThreadView extends Disposable {
 				}
 			}
 		}
+		// The space under the last exchange (`.volt-agent-thread-inner::after`) is empty: while that is all the
+		// bottom fade covers, the fade changes no pixel and its mask only costs the GPU a surface of its own.
+		const last = this.inner.lastElementChild;
+		let contentBottom = last ? last.getBoundingClientRect().bottom : viewportTop;
+		// The mask also covers what else the scroller holds: the side toolbar, and the card its rows open over the
+		// transcript when the chat has no room for its column (a child of the toolbar, outside its box). As a column
+		// (expanded, not an overlay: the editor's `quick-open-expanded`) the toolbar sits outside the fade.
+		for (const child of viewport.children) {
+			if (child === this.inner || child.classList.contains('scrollbar') || (child.classList.contains('expanded') && !child.classList.contains('overlay'))) {
+				continue;
+			}
+			contentBottom = Math.max(contentBottom, child.getBoundingClientRect().bottom);
+			for (const part of child.children) {
+				contentBottom = Math.max(contentBottom, part.getBoundingClientRect().bottom);
+			}
+		}
+		const bottomClear = isBottomFadeClear(contentBottom, viewportTop + dims.height);
 		let stuck = false;
 		let bottom = 0;
 		let replies: { reply: HTMLElement; top: number }[] = [];
@@ -334,6 +357,8 @@ export class AgentThreadView extends Disposable {
 			}
 		}
 
+		// On the scroller itself (monaco never rewrites its classes here): only that element restyles.
+		viewport.classList.toggle('bottom-clear', bottomClear);
 		this.element.classList.toggle('scrolled', pos.scrollTop > 1);
 		this.element.classList.toggle('at-end', pos.scrollTop + dims.height >= Math.max(dims.height, dims.scrollHeight) - 2);
 		const previous = this.stuckExchange;
@@ -434,4 +459,13 @@ export class AgentThreadView extends Disposable {
 			this.syncStuckTurns();
 		});
 	}
+}
+
+/**
+ * Whether the transcript's bottom fade covers only the empty space under the last exchange: the last
+ * content ends at least {@link THREAD_BOTTOM_FADE_REACH} above the viewport's bottom edge (both in
+ * client pixels). Then the fade's mask can come off with no visible change.
+ */
+export function isBottomFadeClear(contentBottom: number, viewportBottom: number): boolean {
+	return contentBottom <= viewportBottom - THREAD_BOTTOM_FADE_REACH;
 }
