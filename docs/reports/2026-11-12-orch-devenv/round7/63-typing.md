@@ -10,7 +10,7 @@ that is not ours and was left alone. CDP 9975, profiles `~/.volt-r7/typing/ud/<a
 
 ## Summary
 
-PENDING
+Round 7 was stopped by the user before its timed runs (see [README.md](README.md)): the fixes are merged, with no before/after rows.
 
 ## Before / after
 

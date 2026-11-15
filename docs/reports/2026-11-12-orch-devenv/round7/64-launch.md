@@ -6,7 +6,7 @@ builds, `--use-mock-keychain`, no `purge`).
 
 ## Summary
 
-PENDING
+Round 7 was stopped by the user before its timed runs (see [README.md](README.md)): the fixes are merged, with no before/after rows.
 
 ## Before / after
 

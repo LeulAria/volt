@@ -48,7 +48,20 @@ and retries, and Claude Code's own connection retry stays a notice.
 
 ## First word (report 52)
 
-PENDING.
+Dev builds, medians, load 14 or less, arms alternating.
+
+| Test | Before | After |
+|---|---|---|
+| A4 new chat, Enter to first word | 109 ms (n 9) | **92 ms** (n 9) |
+| Restored chat, pointer first, Enter to first word | 650 ms (n 6) | **218 ms** (n 6) |
+| Adapter alone, prompt 400 ms after ready, to the model request | 395 ms (n 5) | **98 ms** (n 5) |
+
+- Cause of round 5's slow relaunched chat: Claude Code's first command waited for every MCP server still connecting,
+  including the account's four claude.ai connectors, which arrive about 0.4-1.1 s after the session is ready.
+- Fix: `CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0` plus `mcp__volt` in each session's allow rules, so the first command waits
+  only for Volt's own server (connected in 11 ms). The connectors' tools still join when they connect.
+- Also fixed: the global `claude-agent-acp` on PATH skipped Volt's preload (compile cache, after-turn patches).
+- No agent stays alive at rest because of this.
 
 ## Tokens (report 53)
 
@@ -71,7 +84,23 @@ version Volt's adapter runs.
 
 ## Launch (report 54)
 
-PENDING.
+Release builds, three arms interleaved, n 6 each, load 4.0-7.5, ms.
+
+| Test | Before | After (`52965cababa`) | Leader |
+|---|---|---|---|
+| A2 relaunch, Ready | 852 | **701** | Diri 670 |
+| A2 real composer on screen | 1186 | **877** | |
+| A2 composer controls visible | 573 | 576 | |
+| A1 cold start, Ready (no `purge`) | 758 | **669** | super.engineering 1,760 |
+| A1 real composer | 1011 | **843** | |
+
+- Found: round 5's launch window broke the renderer's V8 code cache, so every launch compiled the 20 MB workbench
+  bundle and wrote a new 13 MB cache entry. The cache path is now set before the launch window (`a4481680b6d`).
+- The main bundle is imported while Electron starts, mermaid and the device viewer load on first use, and the canvas
+  warm-up waits for idle time.
+- An intermediate build (`f037d0a63cb`) made the composer controls appear later (573 -> 750 ms); `52965cababa`
+  fixed that by making `main()` wait for the launch page.
+- A2 is 31 ms above Diri's 0.67 s.
 
 ## Memory (report 55)
 
@@ -141,12 +170,23 @@ Dev builds, ABBA n=3, 60 keys into the streaming chat's composer while 5 replay 
 
 ## Merge notes
 
-PENDING.
+- Every round-6 branch merged into this tree without conflicts: tokens and typing (round 6 itself), memory, then
+  idle, launch, first word and orchestration with their code (11:10), then their final reports (12:35).
+- The orchestration, first-word, launch and idle reports were finished after their agents had stopped: orchestration
+  by the coordinator from the agent's committed rows, the other three by round 7's agents before they stopped.
 
 ## Verification
 
-PENDING.
+- Type check (`npm run compile-check-ts-native`) clean after every merge.
+- Each area's unit tests passed in its own branch; the touched suites were run again on the merged tree with round 7
+  (see `../round7/README.md`).
 
 ## Open after round 6
 
-PENDING.
+- A2 relaunch 701 ms against Diri's 670.
+- A6 idle CPU about 0.70 % in front against 0.18 %: wakeups fell (19.8 -> 16.0 per s) but CPU did not move beyond noise.
+- A7 under load (3,222 MB, 10th of 11) and A10 per thread (15.7 MB, 7th of 13).
+- A8 typing lag (97.6 ms on dev builds, no release-build row) against T3 Code's 48.
+- C1 has n 1 per arm; Volt uses 21 % more tokens than Claude Code alone.
+- The user's calls: the thread's fade mask, and the three task tools kept loaded.
+- Round 7 (`../round7/`) started on these and was stopped before its timed runs.

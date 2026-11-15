@@ -26,7 +26,7 @@ weight rig with CDP 9973, replay 18983, `~/.volt-r7/render`), data `round7/data/
   20-35 MiB of render passes. Chromium's per-renderer tile budget (512 MB on desktop) is what lets the
   prepainted tiles pile up: a 128 MB budget cut the GPU at the peak 748 -> 653 MB (n 1 pair), but it is one
   process-wide cap with a blank-tile risk on large displays; not shipped (open item).
-- RESULTS_PLACEHOLDER
+- Round 7 was stopped by the user before its timed runs (see [README.md](README.md)): the fixes are merged, with no before/after rows.
 
 ## Before / after (release builds)
 
