@@ -56,6 +56,7 @@ import { chatExec, IChatExec, voltExec } from '../common/execContext.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { codeIndexEnabled, editCheckPhase, INSTANT_GREP_TOOL_NAME, lspPolicy, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
 import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
+import { gitTrackedFileCount } from './search/projectSize.js';
 import { retrievalAddsToMessage } from '../common/search/contextRetrieval.js';
 import { ISearchIndex, VoltSearch } from './search/voltSearch.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
@@ -162,6 +163,14 @@ const INDEX_STATUS_WAIT_MS = 250;
 const INDEX_STATUS_TTL_MS = 60_000;
 /** The files a message names (see retrieveContext). CLI agents search for themselves; this is a head start. */
 const AGENT_RETRIEVAL_DEADLINE_MS = 50;
+/**
+ * A project git tracks fewer files in is searched for a send's context with ripgrep, without the code index:
+ * ripgrep answers it inside the deadline, and the index process (35-55 MB, then held 20 minutes) is not started
+ * for it (ADEMark A7/A10, round 7). An agent's own index searches (instant_grep, find_symbol) still use the index.
+ */
+const RETRIEVAL_WITHOUT_INDEX_FILES = 1_000;
+/** A folder's tracked-file count is read again after this long. */
+const PROJECT_SIZE_TTL_MS = 5 * 60_000;
 /** The first turn's primer: the project's likely files, and the app in the chat's browser. */
 const PRIMER_WAIT_MS = 600;
 /** What the user has open beside the chat (see workspaceLead). */
@@ -687,6 +696,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	/** Every search Volt runs: the agent's tools and the context retriever (index, FFF, ripgrep). */
 	private readonly search: VoltSearch;
 	private readonly retriever: ContextRetriever;
+	/** Whether a folder is small enough for a send's context search without the index (see RETRIEVAL_WITHOUT_INDEX_FILES). */
+	private readonly smallProjects = new Map<string, { readonly at: number; readonly value: Promise<boolean> }>();
 	/** `git status` per root, briefly cached: the retriever ranks changed files up. */
 	private readonly workingTreeChangesByRoot = new Map<string, { readonly at: number; readonly value: Promise<ReadonlySet<string>> }>();
 	/** Whether a folder is a large indexed project, last answer (see largeIndexedProject); and the reads in flight. */
@@ -798,7 +809,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			fff: () => readFffSettings(this.configurationService),
 		};
 		this.search = this._register(new VoltSearch(searchService, this.searchIndex, fileService.onDidFilesChange));
-		this.retriever = new ContextRetriever(this.search, fileService);
+		this.retriever = new ContextRetriever(this.search, fileService, this._register(new VoltSearch(searchService, undefined, fileService.onDidFilesChange)));
 		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService, {
 			approvals: new VoltMcpApprovalStore(joinPath(environmentService.userRoamingDataHome, 'voltMcpApprovals.json'), fileService, logService),
 			trusted: root => this.mcpFolderTrusted(root),
@@ -4976,6 +4987,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return undefined;
 		}
 		try {
+			const small = await this.smallProject(root);
 			const result = await this.retriever.retrieve(root, text, {
 				budgetTokens: forAgent ? 400 : 1_500,
 				// A warm agent is ready within milliseconds and the prompt waits for this: keep it short.
@@ -4984,6 +4996,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				...(session.retrievalSeen ? { seen: session.retrievalSeen } : {}),
 				changed: () => this.workingTreeChanges(root),
 				indexOnly: this.otherRunsActive(session),
+				...(small ? { noIndex: true } : {}),
 				token: run.cancel.token,
 			});
 			if (result && this.isCurrent(session, run)) {
@@ -4999,6 +5012,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.logService.trace('[volt] retrieval failed', err);
 			return undefined;
 		}
+	}
+
+	/** Whether git tracks fewer than RETRIEVAL_WITHOUT_INDEX_FILES files in `root`'s repository (no: not a repository). */
+	private smallProject(root: URI): Promise<boolean> {
+		const key = root.toString();
+		const cached = this.smallProjects.get(key);
+		if (cached && Date.now() - cached.at < PROJECT_SIZE_TTL_MS) {
+			return cached.value;
+		}
+		const value = gitTrackedFileCount(this.fileService, root).then(count => count !== undefined && count < RETRIEVAL_WITHOUT_INDEX_FILES, () => false);
+		this.smallProjects.set(key, { at: Date.now(), value });
+		return value;
 	}
 
 	/** Another chat's run is going: background work for this one should not compete with it for every core. */
