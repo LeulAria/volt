@@ -5,6 +5,7 @@
 #   session8.sh t3 [reps]            the same measure on T3 Code (t3a8.mjs)
 #   session8.sh ab <arm,arm> [reps] [n3] [n4]   A3 and A4 per launch, interleaved (ab.mjs)
 #   session8.sh exp <arm> <keys> <variants>      the switch-off experiment (exp.mjs)
+#   session8.sh cast <arm,arm,...>   a screencast of one streaming reply per arm (cast.mjs)
 # Steps chain: session8.sh a8 base,r7 t3 1 a8 r7,base
 # The rerun for a given app: session8.sh a8 base,new=/path/VOLT.app,new=/path/VOLT.app,base
 cd "$(dirname "$0")"
@@ -27,6 +28,7 @@ while [ $# -gt 0 ]; do
 		t3) node t3a8.mjs "${2:-1}"; shift; [ $# -gt 0 ] && shift ;;
 		ab) node ab.mjs "$2" "${3:-2}" "${4:-6}" "${5:-6}"; shift $# ;;
 		exp) node exp.mjs "$2" "$3" "$4"; shift 4 ;;
+		cast) node cast.mjs "$2"; shift 2 ;;
 		*) echo "unknown step $1"; exit 2 ;;
 	esac
 done
