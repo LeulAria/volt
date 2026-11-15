@@ -110,8 +110,10 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 	/** Notes per scope, read once per change instead of on every turn. */
 	private readonly cache = new Map<VoltMemoryScope, { readonly dir: URI; readonly at: number; readonly value: Promise<INote[]> }>();
 	/** The sandboxed host's last context block (see {@link sandboxedContext}). */
-	private lastContext: { readonly key: string; readonly text: string | undefined; readonly at: number } | undefined;
+	private lastContext: { readonly key: string; readonly text: string | undefined; readonly at: number; readonly signature?: string } | undefined;
 	private pendingContext: { readonly key: string; readonly read: Promise<string | undefined> } | undefined;
+	/** A stale block's check of the notes' files, running (see {@link refreshContext}). */
+	private checkingContext: Promise<void> | undefined;
 	private contextGeneration = 0;
 
 	constructor(
@@ -216,20 +218,46 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 
 	/**
 	 * The sandboxed host's context block is on every new agent's first prompt, and a cold host takes
-	 * about half a second to start. The last block read is used at once and read again behind the
-	 * turn once it is {@link CONTEXT_FRESH_MS} old; any change to the notes drops it.
+	 * about half a second to start. The last block read is used at once and checked behind the turn
+	 * once it is {@link CONTEXT_FRESH_MS} old; any change to the notes drops it.
 	 */
 	private sandboxedContext(): Promise<string | undefined> {
 		const folders = this.folders(undefined);
 		const key = JSON.stringify(folders);
 		const last = this.lastContext?.key === key ? this.lastContext : undefined;
-		if (!last || Date.now() - last.at >= CONTEXT_FRESH_MS) {
-			const read = this.readContext(key, folders);
-			if (!last) {
-				return read;
-			}
+		if (!last) {
+			return this.readContext(key, folders);
+		}
+		if (Date.now() - last.at >= CONTEXT_FRESH_MS) {
+			this.checkingContext ??= this.refreshContext(last, folders).finally(() => this.checkingContext = undefined);
 		}
 		return Promise.resolve(last.text);
+	}
+
+	/**
+	 * A stale block is read again only when a note file changed: the block is made from the notes' files
+	 * alone, so with every file as it was the host would answer the same. A new chat every few seconds
+	 * re-read it through the sandboxed host every 30 s, which kept that 50 MB process up (ADEMark A10, round 7).
+	 */
+	private async refreshContext(last: NonNullable<VoltMemoryService['lastContext']>, folders: IVoltPluginFolders): Promise<void> {
+		const generation = this.contextGeneration;
+		const signature = await this.notesSignature(folders).catch(() => undefined);
+		if (signature !== undefined && signature === last.signature && generation === this.contextGeneration && this.lastContext === last) {
+			this.lastContext = { ...last, at: Date.now() };
+			return;
+		}
+		await this.readContext(last.key, folders).catch(() => undefined);
+	}
+
+	/** The notes' files the plugin reads (user notes, the workspace's `.volt/memory`): names, sizes, mtimes. */
+	private async notesSignature(folders: IVoltPluginFolders): Promise<string> {
+		const dirs = [this.userDir, ...(folders.workspace ? [joinPath(URI.file(folders.workspace), '.volt', 'memory')] : [])];
+		const parts = await Promise.all(dirs.map(async dir => {
+			const stat = await this.fileService.resolve(dir, { resolveMetadata: true }).catch(() => undefined);
+			const files = stat?.children?.filter(child => child.isFile && /\.md$/i.test(child.name)).map(child => `${child.name}:${child.size}:${child.mtime}`).sort();
+			return `${dir.toString()}=${files ? files.join('/') : '-'}`;
+		}));
+		return parts.join('\n');
 	}
 
 	private readContext(key: string, folders: IVoltPluginFolders): Promise<string | undefined> {
@@ -237,10 +265,13 @@ export class VoltMemoryService extends Disposable implements IVoltMemoryService 
 			return this.pendingContext.read;
 		}
 		const generation = this.contextGeneration;
-		const read = this.stdio.pluginContext!(MEMORY_PLUGIN_ID, folders).then(text => {
+		// Taken before the read: a file changed during it makes the next check read again.
+		const signature = this.notesSignature(folders).catch(() => undefined);
+		const read = this.stdio.pluginContext!(MEMORY_PLUGIN_ID, folders).then(async text => {
+			const taken = await signature;
 			// Notes changed while this read ran: it may hold the old ones.
 			if (generation === this.contextGeneration) {
-				this.lastContext = { key, text, at: Date.now() };
+				this.lastContext = { key, text, at: Date.now(), signature: taken };
 			}
 			return text;
 		}).finally(() => {
