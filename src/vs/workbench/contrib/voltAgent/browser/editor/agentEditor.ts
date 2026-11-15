@@ -149,7 +149,7 @@ import { nativeScrollerTakesWheel, prefersReducedMotion, ThreadFollow } from './
 import { openAgentPanel } from '../workspace/agentPanels.js';
 import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
 import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/agentPendingChanges.js';
-import { FRESH_TEXT_CLASS, FreshTextTracker, settleFreshText } from '../chrome/agentFreshText.js';
+import { FRESH_TEXT_CLASS, FRESH_TEXT_FADE_MS, FRESH_TEXT_STEP_MS, FreshTextTracker, settleFreshText } from '../chrome/agentFreshText.js';
 import { reconcileChildren, TranscriptReuse } from '../chrome/agentTranscriptReuse.js';
 import { IAgentPendingFile } from '../review/agentEditsService.js';
 import { AgentCaretRest } from '../composer/agentCaretRest.js';
@@ -202,7 +202,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { IAgentTurnReveal, onDidRequestAgentTurnReveal, takeAgentTurnReveal } from '../search/agentTurnReveal.js';
 import { AgentThreadView } from './agentThreadView.js';
-import { InputFirstGate } from './agentInputFirst.js';
+import { InputFirstGate, TextFrameClock } from './agentInputFirst.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip, setIconButtonTooltip } from '../chrome/agentTooltip.js';
 import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
@@ -965,6 +965,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private renderHandle: IDisposable | undefined;
 	/** A streamed redraw in the frame of a composer key waits one frame (see InputFirstGate). */
 	private readonly inputFirst = this._register(new InputFirstGate((callback, priority) => scheduleAtNextAnimationFrame(getWindow(this.container), callback, priority)));
+	/** When a streaming reply was last drawn: its text fades for FRESH_TEXT_FADE_MS after that. */
+	private streamPaintAt = 0;
+	/** A streamed redraw waits for a frame the fade paints text in anyway (see TextFrameClock). */
+	private readonly textFrames = this._register(new TextFrameClock(
+		callback => scheduleAtNextAnimationFrame(getWindow(this.container), callback),
+		() => {
+			const time = this.container.ownerDocument.timeline?.currentTime;
+			return typeof time === 'number' ? time : undefined;
+		},
+		FRESH_TEXT_STEP_MS,
+	));
 	/** The pane width at the last layout; a prompt's clamp is measured once per width. */
 	private layoutWidth = 0;
 	private readonly promptClamps = new WeakMap<IAgentUserMessage, { readonly width: number; readonly text: string; readonly multiline: boolean; readonly clamped: boolean }>();
@@ -8914,9 +8925,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const paint = () => {
 			// The frame that draws a key typed in the composer does not also patch the streaming reply:
 			// the reply is drawn one frame later, so the key's echo waits for the composer's work only.
-			if (this.inputFirst.shouldYield() && this.isStreaming()) {
-				this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
-				return;
+			// Nor does a frame between two of the fade's colour steps, while a fade runs: text is painted in
+			// the step frames only. A reply's first words (nothing fading yet) are drawn at once.
+			if (this.isStreaming()) {
+				const fading = Date.now() - this.streamPaintAt < FRESH_TEXT_FADE_MS;
+				if (this.inputFirst.shouldYield() || (fading && this.textFrames.shouldWait())) {
+					this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
+					return;
+				}
+				this.streamPaintAt = Date.now();
 			}
 			this.renderHandle = undefined;
 			// Tool arguments streamed since the last frame are parsed once, here.

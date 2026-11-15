@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { InputFirstGate } from '../../browser/editor/agentInputFirst.js';
+import { InputFirstGate, isTextFrame, TextFrameClock } from '../../browser/editor/agentInputFirst.js';
 
 /** A frame runner: callbacks queued for the next frame run by priority, highest first. */
 class FakeFrames {
@@ -89,5 +89,38 @@ suite('Agent input first', () => {
 		gate.dispose();
 		assert.strictEqual(gate.shouldYield(), false);
 		frames.frame();
+	});
+
+	test('streamed text is painted in the frames its fade steps in', () => {
+		const step = 1000 / 60;
+		// 120 Hz: every other frame, the first one after each step.
+		const at120 = Array.from({ length: 8 }, (_, i) => isTextFrame(3 + i * step / 2, step / 2, step));
+		assert.deepStrictEqual(at120, [true, false, true, false, true, false, true, false]);
+		// 60 Hz and slower, and a screen not measured yet: every frame.
+		assert.ok(Array.from({ length: 8 }, (_, i) => isTextFrame(11 + i * step, step, step)).every(Boolean));
+		assert.ok(isTextFrame(11, 33.3, step) && isTextFrame(11, undefined, step));
+		// 144 Hz: one frame per step, the first after it.
+		const at144 = Array.from({ length: 24 }, (_, i) => isTextFrame(i * 1000 / 144, 1000 / 144, step));
+		assert.strictEqual(at144.filter(Boolean).length, 10);
+	});
+
+	test('a stream paint between two text frames waits for the next one, on a fast screen only', () => {
+		for (const [hz, expectWaits] of [[120, true], [60, false]] as const) {
+			const frames = new FakeFrames();
+			let now = 0;
+			const clock = store.add(new TextFrameClock(callback => frames.schedule(callback, 0), () => now, 1000 / 60));
+			const waits: boolean[] = [];
+			for (let i = 0; i < 12; i++) {
+				now = 2 + i * 1000 / hz;
+				frames.frame();
+				waits.push(clock.shouldWait());
+			}
+			// The first frames run unmeasured (no wait); once the frame interval is known, every other frame waits at 120 Hz.
+			assert.deepStrictEqual(waits.slice(0, 2), [false, false]);
+			assert.strictEqual(waits.slice(4).some(Boolean), expectWaits, `${hz} Hz: ${waits.join(',')}`);
+			if (expectWaits) {
+				assert.deepStrictEqual(waits.slice(4), [false, true, false, true, false, true, false, true]);
+			}
+		}
 	});
 });
