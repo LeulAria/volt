@@ -265,20 +265,27 @@ async function onReady() {
 async function startup(codeCachePath: string | undefined, nlsConfig: INLSConfiguration): Promise<void> {
 	process.env['VSCODE_CODE_CACHE_PATH'] = codeCachePath || '';
 
+	// Volt: loading the main bundle and starting the application hold the main thread, and the launch window's page gets
+	// its files (and the picture of the last screen) from it. Let the page get them first: it then paints the window's
+	// last screen while the application starts, instead of after the first window's configuration.
+	const waitForLaunchPage = async () => {
+		if (earlyPageStarted) {
+			await Promise.race([earlyPageStarted, new Promise(resolve => setTimeout(resolve, EARLY_PAGE_WAIT_MS))]);
+			perf.mark('code/voltDidWaitForLaunchPage');
+		}
+	};
+
 	// Volt: the main bundle was imported before `ready` when the locale allowed it (see importMainBundle)
 	let bundle = await mainBundlePromise;
-	if (!bundle) {
+	if (bundle) {
+		await waitForLaunchPage();
+	} else {
 		process.env['VSCODE_NLS_CONFIG'] = JSON.stringify(nlsConfig);
 
 		// Bootstrap ESM
 		await bootstrapESM();
 
-		// Volt: loading the main bundle holds the main thread, and the launch window's page gets its files from it. Let the
-		// page get them first (it then paints the window's last screen without waiting for the main bundle).
-		if (earlyPageStarted) {
-			await Promise.race([earlyPageStarted, new Promise(resolve => setTimeout(resolve, EARLY_PAGE_WAIT_MS))]);
-			perf.mark('code/voltDidWaitForLaunchPage');
-		}
+		await waitForLaunchPage();
 
 		// Load Main
 		bundle = await import('./vs/code/electron-main/main.js');
