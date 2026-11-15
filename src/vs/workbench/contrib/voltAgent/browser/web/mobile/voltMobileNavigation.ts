@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// The phone's bottom navigation: a row of destinations (Chat, Projects, Editor, Terminal, More)
+// The phone's bottom navigation: a row of destinations (Chat, Projects, Pull Requests, Terminal, More)
 // under the workbench, above the home indicator. Features add destinations through
 // `VoltMobileDestinations.register`; each says how to open itself and when it is the one on screen,
 // so the bar never needs to know about a feature to show it.
@@ -20,9 +20,17 @@ import { ContextKeyExpression, IContextKeyService } from '../../../../../../plat
 import { IInstantiationService, ServicesAccessor } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../../platform/log/common/log.js';
 
+/** Shows the chat's editor on a phone: its open tabs, or the Explorer when it has none (the title bar's Editor button). */
+export const SHOW_MOBILE_EDITOR_COMMAND_ID = 'volt.mobile.showEditor';
+
+/** An outline icon on a 24px grid: each shape is an SVG element name and its attributes (Lucide's paths). */
+export type VoltMobileStrokeIcon = readonly (readonly [tag: 'path' | 'rect' | 'circle', attributes: Readonly<Record<string, string>>])[];
+
 export interface IVoltMobileDestination {
 	readonly id: string;
 	readonly label: string;
+	/** Drawn with a 1px stroke; `icon` where there is none. */
+	readonly strokeIcon?: VoltMobileStrokeIcon;
 	readonly icon: ThemeIcon;
 	/** Left to right. */
 	readonly order: number;
@@ -141,7 +149,10 @@ export class VoltMobileNavigationBar extends Disposable {
 			button.type = 'button';
 			button.dataset.destination = destination.id;
 			button.setAttribute('aria-label', destination.label);
-			append(button, $('span.volt-mobile-nav-indicator.volt-ripple-host')).appendChild(renderIcon(destination.icon));
+			// The ripple swells from the icon, round and wider than it (YouTube's bottom bar).
+			const indicator = append(button, $('span.volt-mobile-nav-indicator.volt-ripple-host.volt-ripple-round'));
+			indicator.dataset.rippleSize = '56';
+			indicator.appendChild(destination.strokeIcon ? renderStrokeIcon(button.ownerDocument, destination.strokeIcon) : renderIcon(destination.icon));
 			append(button, $('span.volt-mobile-nav-label')).textContent = destination.label;
 			this.rendered.add(addDisposableListener(button, 'click', () => this.open(destination)));
 			this.buttons.set(destination.id, button);
@@ -204,4 +215,21 @@ export class VoltMobileNavigationBar extends Disposable {
 		this.root.style.setProperty('--volt-mobile-nav-height', `${bar}px`);
 		this.viewport.setBottomBar(visible ? bar + s.safe.bottom : 0);
 	}
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function renderStrokeIcon(doc: Document, shapes: VoltMobileStrokeIcon): SVGSVGElement {
+	const svg = doc.createElementNS(SVG_NS, 'svg');
+	svg.classList.add('volt-mobile-nav-icon');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('aria-hidden', 'true');
+	for (const [tag, attributes] of shapes) {
+		const shape = doc.createElementNS(SVG_NS, tag);
+		for (const [name, value] of Object.entries(attributes)) {
+			shape.setAttribute(name, value);
+		}
+		svg.appendChild(shape);
+	}
+	return svg;
 }

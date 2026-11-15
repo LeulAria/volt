@@ -9,6 +9,8 @@ import { mainWindow } from '../../../../../base/browser/window.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { VoltSheet } from '../../../../../base/browser/ui/voltMobile/voltSheet.js';
+import { isVoltCompact } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { disposableTimeout } from '../../../../../base/common/async.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
@@ -31,6 +33,7 @@ import { createAiSparkleIcon, showBranchNameSuggestions } from '../pullRequests/
 import { OPEN_BROWSER_COMMAND_ID, VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput, OPEN_AGENT_CHANGES_COMMAND_ID } from '../review/agentChangesEditor.js';
 import { SHOW_PULL_REQUESTS_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
+import { SHOW_MOBILE_EDITOR_COMMAND_ID } from '../web/mobile/voltMobileNavigation.js';
 import { AgentPullRequestDockControl } from '../pullRequests/agentPullRequestDockControl.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
 import { setAgentTooltip } from './agentTooltip.js';
@@ -75,6 +78,13 @@ const PANEL_BOTTOM_ICON_SHAPES: SvgIconShapes = [
 ];
 const FOLDER_ICON_SHAPES: SvgIconShapes = [
 	['path', { d: 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z' }],
+];
+/** Lucide file-code. */
+const FILE_CODE_ICON_SHAPES: SvgIconShapes = [
+	['path', { d: 'M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z' }],
+	['path', { d: 'M14 2v5a1 1 0 0 0 1 1h5' }],
+	['path', { d: 'M10 12.5 8 15l2 2.5' }],
+	['path', { d: 'm14 12.5 2 2.5-2 2.5' }],
 ];
 const PANEL_RIGHT_ICON_SHAPES: SvgIconShapes = [
 	['rect', { x: '3', y: '3', width: '18', height: '18', rx: '2' }],
@@ -224,6 +234,8 @@ class AgentViewSidebarsContribution extends Disposable {
 	/** Without room for the toolbar beside the chat, the title bar button opens it here instead. */
 	private readonly popup: HTMLElement;
 	private readonly popupListeners = this._register(new DisposableStore());
+	/** On a phone the popup is a bottom sheet; it stays filled while it slides away. */
+	private popupSheet: VoltSheet | undefined;
 	private readonly tabList: HTMLElement;
 	/** "On <project>" over Files, Terminal and Browser; clicking it folds them. */
 	private readonly workspaceHeading: HTMLButtonElement;
@@ -358,6 +370,14 @@ class AgentViewSidebarsContribution extends Disposable {
 		}));
 		this._register(layoutService.onDidChangePartVisibility(() => this.syncPanelToggle()));
 		this.syncPanelToggle();
+
+		// A phone's Editor (agentViewSidebars.css shows it only there): the chat's open tabs, or the Explorer.
+		const editorButton = append(this.titlebarToggles, $('button.volt-agent-titlebar-toggle.volt-agent-mobile-editor-toggle.volt-titlebar-control')) as HTMLButtonElement;
+		editorButton.type = 'button';
+		editorButton.appendChild(createSurfaceStrokeIcon(editorButton.ownerDocument, FILE_CODE_ICON_SHAPES));
+		const editorLabel = localize('voltAgent.mobileEditor', "Editor");
+		editorButton.setAttribute('aria-label', editorLabel);
+		this._register(addDisposableListener(editorButton, 'click', () => void this.commandService.executeCommand(SHOW_MOBILE_EDITOR_COMMAND_ID)));
 
 		// The explorer sidebar's own toggle, beside the right panel's: each opens on its own.
 		this.filesToggle = append(this.titlebarToggles, $('button.volt-agent-titlebar-toggle.volt-agent-files-panel-toggle.volt-titlebar-control')) as HTMLButtonElement;
@@ -1037,6 +1057,10 @@ class AgentViewSidebarsContribution extends Disposable {
 	 * Tools open beside the chat always leave the rail: they shrink the toolbar, never hide it.
 	 */
 	private usesPopup(): boolean {
+		// A phone never shows the toolbar beside the chat, at any width or with tools open: it is a sheet.
+		if (isVoltCompact()) {
+			return true;
+		}
 		if (this.hasSurfaces()) {
 			return false;
 		}
@@ -1057,11 +1081,56 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.quickOpenToggle.setAttribute('aria-expanded', String(open));
 		this.quickOpenToggle.classList.toggle('popup-open', open);
 		if (!open) {
+			const sheet = this.popupSheet;
+			this.popupSheet = undefined;
 			this.popup.classList.add('hidden');
+			if (sheet) {
+				// The rows go back to the toolbar once the sheet is down.
+				this.popup.classList.add('closing');
+				const gone = sheet.onDidHide(() => {
+					gone.dispose();
+					sheet.dispose();
+					if (this.popupSheet === undefined && this.popup.classList.contains('hidden')) {
+						this.popup.classList.remove('closing');
+						this.popup.remove();
+						this.quickOpen.appendChild(this.body);
+					}
+				});
+				sheet.hide();
+				return;
+			}
 			this.quickOpen.appendChild(this.body);
 			return;
 		}
 		const container = this.layoutService.mainContainer;
+		if (isVoltCompact()) {
+			const sheet = this.popupSheet = new VoltSheet({
+				container,
+				ariaLabel: localize('voltAgent.chatSideToolbar', "Chat Side Toolbar"),
+				className: 'volt-agent-quick-open-sheet',
+				detents: ['content', 'large'],
+			});
+			this.popup.classList.remove('hidden', 'closing');
+			this.popup.style.removeProperty('top');
+			this.popup.style.removeProperty('right');
+			sheet.body.appendChild(this.popup);
+			this.popup.appendChild(this.body);
+			// Back, a drag down or a tap on the dimmed page.
+			this.popupListeners.add(sheet.onDidHide(() => {
+				if (this.popupSheet === sheet) {
+					this.popupSheet = undefined;
+					this.popupListeners.clear();
+					this.quickOpenToggle.setAttribute('aria-expanded', 'false');
+					this.quickOpenToggle.classList.remove('popup-open');
+					this.popup.classList.add('hidden');
+					this.popup.remove();
+					this.quickOpen.appendChild(this.body);
+					sheet.dispose();
+				}
+			}));
+			sheet.show();
+			return;
+		}
 		container.appendChild(this.popup);
 		this.popup.appendChild(this.body);
 		const anchor = this.quickOpenToggle.getBoundingClientRect();

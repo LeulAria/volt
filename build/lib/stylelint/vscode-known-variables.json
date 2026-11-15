@@ -1424,6 +1424,7 @@
 		"--volt-http-delete",
 		"--volt-http-muted",
 		"--volt-http-line",
+		"--volt-accessory",
 		"--volt-bottom-bar",
 		"--volt-exit",
 		"--volt-inset-bottom",

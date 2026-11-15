@@ -70,7 +70,7 @@ import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
 import { IAgentChatView, IAgentSurface, IAgentWorkspaceService } from './agentWorkspace.js';
 import { SHOW_AGENT_SCM_COMMAND_ID } from '../../common/agentGitActions.js';
 import { AGENT_RUN_SHOW_IN_VOLT_SETTING, isLocalPageUrl } from '../../common/agentRunSettings.js';
-import { getVoltLayoutInsets } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
+import { getVoltLayoutInsets, isVoltCompact } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 
 export { chooseAgentBrowserSurfaceMount, type AgentBrowserSurfaceMount } from './agentBrowserMount.js';
 export { shouldHideAgentQuickOpenRail, surfaceKindForMenuAction, agentSurfaceMenuItems } from './agentSurfaceMenu.js';
@@ -882,6 +882,13 @@ export class AgentSurfaceHost extends Disposable {
 		this.showFilesSidebar(view);
 	}
 
+	/** Closes the sidebar, whatever view it shows. */
+	closeFilesSidebar(): void {
+		if (this.filesSidebarOpen()) {
+			AgentFilesSidebar.setOpen(this.storageService, false);
+		}
+	}
+
 	/**
 	 * A tab's shortcut: opens the sidebar on `view` with the keyboard in it. Pressed again while the
 	 * keyboard is already there, it closes the sidebar.
@@ -1508,7 +1515,8 @@ export class AgentSurfaceHost extends Disposable {
 		// The tabs' first row only, not the breadcrumbs under it, so the icons center on the editor actions.
 		const title = entry.element.querySelector<HTMLElement>('.editor-group-container > .title');
 		const row = title?.querySelector<HTMLElement>(':scope > .tabs-and-actions-container') ?? title;
-		this.filesSidebar.layout(entry.sessionId, width, height, row?.offsetHeight || 35, fills);
+		// With no tabs on screen the row is the sidebar's own: a phone's is finger-sized (voltMobileWorkbench.css).
+		this.filesSidebar.layout(entry.sessionId, width, height, row?.offsetHeight || (isVoltCompact() ? 48 : 35), fills);
 		return width;
 	}
 
@@ -1781,6 +1789,11 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	private floatBounds(box: DOMRect): { left: number; top: number; width: number; height: number } {
+		// A phone: a sheet across the bottom of the chat (voltMobileWorkbench.css rounds its top), not a corner card.
+		if (isVoltCompact()) {
+			const height = Math.round(Math.max(FLOAT_MIN_HEIGHT, Math.min(box.height * 0.5, box.width * 0.9)));
+			return { left: box.left, top: box.bottom - height, width: box.width, height };
+		}
 		const maxWidth = Math.max(FLOAT_MIN_WIDTH, box.width - FLOAT_MARGIN * 2);
 		const maxHeight = Math.max(FLOAT_MIN_HEIGHT, box.height - FLOAT_MARGIN * 2);
 		const rect = floatRect ?? this.defaultFloatRect(box);
@@ -2647,6 +2660,11 @@ export function showAgentFilesSidebar(view: AgentFilesSidebarView): boolean {
 	const host = [...hosts].find(candidate => candidate.canOpenTools());
 	host?.showFilesSidebar(view);
 	return !!host;
+}
+
+/** Closes the Explorer/Source Control sidebar beside the chat on screen (the phone's navigation leaving the tools). */
+export function closeAgentFilesSidebar(): void {
+	[...hosts].find(candidate => candidate.canOpenTools())?.closeFilesSidebar();
 }
 
 /** The activity bar's click: the sidebar on `view`, or closed when it already shows it. False in the IDE layout. */

@@ -149,8 +149,12 @@ export class VoltPage extends Disposable {
 			}
 			done = true;
 			this.state = 'closed';
+			// Focus goes back only if it is still on the page: what a row opened while the page slid away
+			// (a picker, which closes when it loses focus) keeps it.
+			const active = this.layer.ownerDocument.activeElement;
+			const focusOnPage = !active || active === this.layer.ownerDocument.body || this.layer.contains(active);
 			this.layer.remove();
-			if (this.previousFocus?.isConnected) {
+			if (focusOnPage && this.previousFocus?.isConnected) {
 				this.previousFocus.focus({ preventScroll: true });
 			}
 			this._onDidHide.fire();

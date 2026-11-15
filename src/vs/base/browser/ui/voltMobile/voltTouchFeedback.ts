@@ -28,8 +28,11 @@ export const VOLT_TOUCH_EXCLUDED = [
 	'.xterm-screen', '.monaco-sash', '.volt-no-ripple',
 ].join(', ');
 
-/** Areas whose widgets already turn a long press into a context menu (VS Code's Gesture: lists, tabs, view headers). */
-const GESTURE_CONTEXT_MENU_AREAS = '.monaco-list, .tabs-container, .composite-bar, .part.statusbar, .monaco-pane-view, .monaco-editor';
+/**
+ * Areas whose widgets already turn a long press into a context menu (VS Code's Gesture: lists, tabs, view
+ * headers), and controls where holding means something else (`.volt-no-long-press`: keys that repeat).
+ */
+const GESTURE_CONTEXT_MENU_AREAS = '.monaco-list, .tabs-container, .composite-bar, .part.statusbar, .monaco-pane-view, .monaco-editor, .volt-no-long-press';
 
 const PRESS_DELAY_MS = 50;
 const LONG_PRESS_MS = 480;
@@ -57,12 +60,19 @@ export interface IVoltTouchFeedbackOptions {
 	readonly longPressContextMenu?: boolean;
 	/** Reduced motion: a flat tint instead of a spreading ripple, and no scaling. */
 	readonly reducedMotion?: () => boolean;
+	/** A mouse gets the press and ripple too (a phone-sized window on a desktop). Touch always does. */
+	readonly acceptMouse?: () => boolean;
 }
 
 /** A short tick where the platform has one (Android); nothing elsewhere. */
 export function voltHaptic(kind: 'tick' | 'press' = 'tick'): void {
+	const nav = navigator as Navigator & { vibrate?: (pattern: number) => boolean; userActivation?: { readonly hasBeenActive: boolean } };
+	// Before the first tap the browser refuses and logs an error.
+	if (nav.userActivation && !nav.userActivation.hasBeenActive) {
+		return;
+	}
 	try {
-		(navigator as Navigator & { vibrate?: (pattern: number) => boolean }).vibrate?.(kind === 'press' ? 12 : 6);
+		nav.vibrate?.(kind === 'press' ? 12 : 6);
 	} catch {
 		// Not allowed before a user gesture; feedback is optional.
 	}
@@ -100,7 +110,7 @@ export class VoltTouchFeedback extends Disposable {
 	}
 
 	private onDown(e: PointerEvent): void {
-		if (e.pointerType === 'mouse' || !e.isPrimary) {
+		if (!e.isPrimary || (e.pointerType === 'mouse' && (e.button !== 0 || !this.options.acceptMouse?.()))) {
 			return;
 		}
 		this.cancel();
@@ -117,7 +127,7 @@ export class VoltTouchFeedback extends Disposable {
 		// A beat before showing, so a finger that starts a scroll does not light up what it passed over.
 		press.timer = setTimeout(() => this.show(press), PRESS_DELAY_MS);
 		const longPress = this.options.longPressContextMenu ?? isIOS;
-		if (longPress && !origin.closest(GESTURE_CONTEXT_MENU_AREAS)) {
+		if (longPress && e.pointerType !== 'mouse' && !origin.closest(GESTURE_CONTEXT_MENU_AREAS)) {
 			press.longPress = setTimeout(() => this.onLongPress(press), LONG_PRESS_MS);
 		}
 	}
@@ -166,16 +176,21 @@ export class VoltTouchFeedback extends Disposable {
 		}
 		press.shown = true;
 		const target = press.target;
-		// A control can confine its ripple to a part of itself (the navigation bar's pill).
+		// A control can confine its ripple to a part of itself (the navigation bar's icon).
 		const host = target.querySelector<HTMLElement>('.volt-ripple-host') ?? target;
 		const rect = host.getBoundingClientRect();
-		const icon = host === target && isIconButton(target, rect);
+		const icon = host === target ? isIconButton(target, rect) : host.classList.contains('volt-ripple-round');
 		target.classList.add('volt-pressed');
 		target.classList.toggle('volt-pressed-icon', icon);
 		if (rect.width <= 0 || rect.height <= 0) {
 			return;
 		}
-		press.ripple = this.drawRipple(host, rect, icon, press.x, press.y);
+		// A round ripple centers on the glyph, not the box: padding or an oversized icon can leave the two apart.
+		const glyph = icon ? host.querySelector<Element>('svg, .codicon')?.getBoundingClientRect() : undefined;
+		const center = glyph && glyph.width > 0 && glyph.height > 0
+			? { x: glyph.left + glyph.width / 2, y: glyph.top + glyph.height / 2 }
+			: { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+		press.ripple = this.drawRipple(host, rect, icon, press.x, press.y, center);
 	}
 
 	private release(press: IPress, cancelled: boolean): void {
@@ -186,14 +201,15 @@ export class VoltTouchFeedback extends Disposable {
 			return;
 		}
 		ripple.classList.add(cancelled ? 'cancelled' : 'fading');
-		setTimeout(() => ripple.remove(), cancelled ? 120 : 320);
+		setTimeout(() => ripple.remove(), cancelled ? 120 : 520);
 	}
 
-	private drawRipple(target: HTMLElement, rect: DOMRect, icon: boolean, x: number, y: number): HTMLElement {
+	private drawRipple(target: HTMLElement, rect: DOMRect, icon: boolean, x: number, y: number, center: { readonly x: number; readonly y: number }): HTMLElement {
 		const win = getWindow(target);
 		const style = win.getComputedStyle(target);
 		const host = $('.volt-ripple');
 		host.style.color = style.color;
+		host.classList.toggle('round', icon);
 		const reduced = this.options.reducedMotion?.() ?? false;
 		host.classList.toggle('reduced', reduced);
 		let left = rect.left;
@@ -201,10 +217,10 @@ export class VoltTouchFeedback extends Disposable {
 		let width = rect.width;
 		let height = rect.height;
 		if (icon) {
-			// Round, a little larger than the glyph, centered on it.
-			const size = Math.max(36, Math.max(rect.width, rect.height) + 8);
-			left = rect.left + rect.width / 2 - size / 2;
-			top = rect.top + rect.height / 2 - size / 2;
+			// Round, a little larger than the glyph, centered on it; a host can ask for more (`data-ripple-size`).
+			const size = Number(target.dataset.rippleSize) || Math.max(36, Math.max(rect.width, rect.height) + 8);
+			left = center.x - size / 2;
+			top = center.y - size / 2;
 			width = height = size;
 			host.style.borderRadius = '50%';
 		} else {

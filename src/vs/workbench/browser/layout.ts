@@ -1812,6 +1812,9 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			);
 			this.stampAgentGridWrappers();
 			this.layoutSideBarPage();
+			if (isVoltCompact()) {
+				this.layoutAgentDrawer();
+			}
 			if (this.agentColumnRestore !== undefined) {
 				const width = this.agentColumnRestore;
 				this.agentColumnRestore = undefined;
@@ -2526,13 +2529,31 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			}));
 			// Picking a chat, or a folder, is the way out.
 			this.agentDrawerOpenStore.add(this.mainPartEditorService.onDidActiveEditorChange(close));
-			const height = this._mainContainerDimension.height - Math.max(0, this.getSize(Parts.TITLEBAR_PART).height);
-			this.auxiliaryBarPartView.layout(AuxiliaryBarPart.AGENT_DEFAULT_WIDTH, Math.max(0, height), 0, 0);
+			this.layoutAgentDrawer();
 		} else {
 			this.agentDrawerScrim?.remove();
 			this.agentDrawerScrim = undefined;
 		}
 		this._onDidChangePartVisibility.fire();
+	}
+
+	/**
+	 * Sizes the open drawer. Volt: on a phone it is the Projects screen, the whole width between the
+	 * safe areas and above the bottom navigation (voltMobileWorkbench.css), so it follows every layout.
+	 */
+	private layoutAgentDrawer(): void {
+		if (!this.mainContainer.classList.contains('volt-agent-drawer-open')) {
+			return;
+		}
+		if (isVoltCompact()) {
+			const insets = getVoltLayoutInsets();
+			this.auxiliaryBarPartView.layout(
+				Math.max(0, this._mainContainerDimension.width - insets.left - insets.right),
+				Math.max(0, this._mainContainerDimension.height - insets.top - insets.bottom), 0, 0);
+			return;
+		}
+		const height = this._mainContainerDimension.height - Math.max(0, this.getSize(Parts.TITLEBAR_PART).height);
+		this.auxiliaryBarPartView.layout(AuxiliaryBarPart.AGENT_DEFAULT_WIDTH, Math.max(0, height), 0, 0);
 	}
 
 	//#endregion
