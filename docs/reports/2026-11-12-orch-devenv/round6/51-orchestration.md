@@ -2,11 +2,32 @@
 
 Branch `e6/orch` (worktree `volt-e5-orch`, base `7f07f73d677`), 2026-11-15. Round 5: [`../round5/41-orchestration.md`](../round5/41-orchestration.md).
 
-Status: draft (C1 runs pending the machine's load; C2, C5, C6 pending).
+Status: **final** (2026-11-15). C1 has n 1 per arm: the queue stopped at 97 % of the account's 7-day limit.
 
 ## Summary
 
-(filled in at the end)
+- **C1 (n 1 per arm, Opus 5.5 medium):** every arm shipped 5/5.
+
+  | Arm | Time | Tokens | Cost |
+  |---|---|---|---|
+  | Volt after | **2.58 min** | 842K | $1.56 |
+  | Volt before | 2.69 min | 1,106K | $1.83 |
+  | Claude Code alone | 3.72 min | 695K | $1.11 |
+
+  The fix that gives subagents the user's request whole cut the subagents' tokens by 34 %. Against Claude Code
+  alone, Volt is 31 % faster and uses 21 % more tokens. ADEMark's published leader, Synara, took 5.18 min and 2.03M
+  tokens (high effort, other machine).
+- **Reliability tests C2-C6 (our rigs, pass/fail):**
+  - C2 message delivery: 0 of 3 follow-ups dropped, 3 of 3 applied.
+  - C3 chat lock: 0 locks over 7 runs.
+  - C4 agent killed: pass after fix 1 (resumed alone 11.1 s after the kill).
+  - C5 network cut: pass after fix 1b (Claude Code's own retry carried the turn, resumed 7.2 s after the API came
+    back).
+  - C6 app restart: pass (resumed alone 16 s after the quit).
+- **Fixes:**
+  - An agent process lost mid-turn now restarts and retries instead of ending the turn as done.
+  - Claude Code's own connection retry stays a notice.
+  - A subagent gets the user's request whole.
 
 ## Method
 
@@ -99,7 +120,40 @@ refused a key, not during streaming, the kills, the API cut, nor right after the
 
 ### C1 Orchestrated Build
 
-(pending: 3 Volt after runs, 1 Volt before run, 1 Claude Code solo, all at Opus 5.5 medium, load 14 or less)
+Opus 5.5 at medium effort, every request through the capture proxy, graded on our own copies of the hidden tests
+(ADEMark's are private). The queue was planned as 3 Volt after runs, 1 before run and 1 Claude Code solo; it got
+1 valid run per arm (n 1 each):
+
+| Run | Build | Load | Shipped | Time | Tokens | Cost |
+|---|---|---|---|---|---|---|
+| volt-r6-4 | after (this branch, dev) | 11.2 | 5/5 | **2.58 min** | **842K** | $1.56 |
+| volt-r6-base-2 | before (`7f07f73d677`, dev) | 4.3 | 5/5 | 2.69 min | 1,106K | $1.83 |
+| cli-solo-2 | Claude Code 2.1.322 alone (`claude -p --effort medium`) | 6.2 | 5/5 | 3.72 min | 695K | $1.11 |
+| ADEMark v1: Synara (leader) | other machine, Opus 5.5 high | | 5/5 | 5.18 min | 2.03M | |
+| ADEMark v1: Claude Code solo | other machine, Opus 5.5 high | | | 7.3 min | 1.65M | |
+
+Where the after run saved against the before run (`node scripts/orch/c1/analyze.mjs <id>`):
+- **Subagents used 34 % fewer tokens:** 473K for the four together, against 722K. They made fewer requests
+  (5, 5, 6 and 8, against 9, 7, 7 and 8), and their prompts were smaller (median 17.8-21.4K, against 22.0-22.8K).
+  The lead's own tokens hardly moved (362K, against 378K).
+- **Delegation was 6 s shorter:** from the first `delegate_task` to the last brief took 30 s, against 37 s. The
+  briefs were 1.9-2.7K characters, against 1.9-3.6K. The last worker started at 39.5 s, against 45.3 s.
+- **The tail grew:** after the last worker ended, the lead worked 38.8 s, against 32.2 s. Its `wait_tasks` returned
+  when the last worker ended (116 s; 129 s before), so the lead merged nothing while the others ran.
+
+**Against Claude Code alone, Volt was 31 % faster (2.58 against 3.72 min), but used 21 % more tokens and cost 41 %
+more.** Four subagents each re-read the code their part needs, and a cached prompt costs every subagent its own
+cache write (105K of cache writes in Volt, against 57K solo).
+
+Runs that do not count:
+- **Invalid, refused by the API:** volt-r6-1 to -3, volt-r6-base-1 and cli-solo-1. All five ran overnight on an
+  expired copy of the access token. They are kept in `data/orch/c1/invalid-401/`.
+- **Never started:** volt-r6-5. The after instance's window was gone when the queue reached it after 93 minutes of
+  waiting for the timing lock (`ECONNREFUSED` on CDP 9971). It used no tokens.
+- **Not run:** volt-r6-6. The queue stopped itself before it because the account reached 97 % of its 7-day limit
+  (overage is off).
+
+Raw: `data/orch/c1/c1-runs.jsonl`, `<id>.grade.json`, `<id>.capture.jsonl.gz`, `<id>.traces.json.gz`.
 
 ## Fixes
 
@@ -135,8 +189,18 @@ spells out, name it and add only what you found"). `wait_tasks`'s description sa
 check each report while the rest run): round 5's lead waited for all four and merged nothing for the 50-70 s between
 the first report and the last. Cost: +42 tokens on every top-level request (the three always-loaded tool texts are
 2.1 KB, cap raised from 2.0 to 2.1 KB in the test), and up to +1.1K cached tokens per subagent request when the
-user's request is that long. Numbers: (C1 runs pending).
+user's request is that long. Numbers (C1, n 1 per arm): subagents' tokens 722K -> 473K, first to last brief
+37 -> 30 s, run 1,106K -> 842K tokens and 2.69 -> 2.58 min.
 
 ## Not done, and why
 
-(filled in at the end)
+- **C1 is n 1 per arm, not 3.** The overnight runs were refused (an expired token copy), one run found its test
+  window gone, and the queue stopped itself at 97 % of the account's 7-day limit, as designed: at 100 %, every
+  Claude client of the account stops until the reset (Wed Nov 18 17:00). The remaining runs wait for the reset.
+- **Volt's token cost against Claude Code alone** (+21 %) is not fixed. The levers are: subagents that inherit
+  the lead's file reads instead of re-reading them, fewer subagents for a 4-part task of this size, and an earlier
+  merge (`any=true`). Each one trades against C1 time, which is where Volt leads.
+- **C2-C6 ran at load 21-66.** They are pass/fail rows, not timings. ADEMark has not run them on its own machine
+  yet.
+- Written by the coordinator from the agent's committed rows after the agent stopped (2026-11-15 11:30). The rig's
+  leftovers are gone: the proxy on 19972 is stopped, and the 24 worktrees of the test repos are removed.
