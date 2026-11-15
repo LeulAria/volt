@@ -183,7 +183,7 @@ import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentLandingRecents } from '../home/agentLandingRecents.js';
 import { IAgentThreadLifecycleService, needsBringBack } from '../home/agentThreadLifecycle.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
-import { composerDraftShape } from './agentComposerDraft.js';
+import { clipForPrediction, clipPiecesForPrediction, composerDraftShape, lastLines } from './agentComposerDraft.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
@@ -698,9 +698,12 @@ const DRAFT_USAGE_MS = 150;
 /** How long the composer's ghost text reuses the prompts it read; a send refreshes them at once. */
 const PREDICTION_PROMPTS_TTL_MS = 10_000;
 
-function clipForPrediction(text: string, max: number): string {
-	const flat = text.replace(/\s+/g, ' ').trim();
-	return flat.length <= max ? flat : `${flat.slice(0, max)}...`;
+function* predictionTextPieces(segments: readonly AgentSegment[]): Iterable<string> {
+	for (const segment of segments) {
+		if (segment.kind === 'text') {
+			yield segment.text;
+		}
+	}
 }
 
 /**
@@ -723,7 +726,7 @@ function predictionActivity(segments: readonly AgentSegment[]): string[] {
 		const block = segment.block;
 		if (block.type === 'terminal') {
 			const status = block.exitCode === undefined ? (block.status === 'streaming' ? ' (running)' : '') : ` (exit ${block.exitCode})`;
-			const tail = block.exitCode ? `: ${clipForPrediction(block.output.trimEnd().split('\n').slice(-2).join(' '), 160)}` : '';
+			const tail = block.exitCode ? `: ${clipForPrediction(lastLines(block.output, 2), 160)}` : '';
 			out.push(`$ ${clipForPrediction(block.command, 100)}${status}${tail}`);
 		} else if (block.type === 'tool' && block.status === 'streaming') {
 			out.push(`Running ${clipForPrediction(block.title || block.name, 80)}`);
@@ -6798,9 +6801,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				}
 				continue;
 			}
-			const text = message.text || message.segments.map(segment => segment.kind === 'text' ? segment.text : '').join('');
-			if (text.trim()) {
-				transcript.push(`Agent: ${clipForPrediction(text, 600)}`);
+			// A streaming reply has no text yet: its segments are read only as far as the cut needs.
+			const text = message.text ? clipForPrediction(message.text, 600) : clipPiecesForPrediction(predictionTextPieces(message.segments), 600);
+			if (text) {
+				transcript.push(`Agent: ${text}`);
 			}
 			for (const path of message.changes ?? []) {
 				names.add(basename(path));
