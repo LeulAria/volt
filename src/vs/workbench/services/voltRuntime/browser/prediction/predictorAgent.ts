@@ -74,7 +74,9 @@ interface ITurn {
  * The predictor: one agent session over ACP that answers every prediction (Tab, the composer's
  * ghost text, next edits, dictation cleanup) for the agent that serves Tab. It starts on the first
  * keystroke or dictation (not with Volt) and stops after {@link IDLE_STOP_MS} without a request,
- * and it learns its skill once, so a request is only
+ * and a request alone never starts it: a paste or a cursor move asks for a suggestion too, and a
+ * window nobody types in (a prompt pasted and sent) should not pay for an agent process tree. It
+ * learns its skill once, so a request is only
  * the task and its context. One request runs at a time: a newer one of the same or a higher rank
  * replaces the running one, a lower one waits for it.
  */
@@ -89,6 +91,8 @@ export class PredictorAgent extends Disposable {
 	/** The newest request: a waiting older one of no higher rank gives way to it. */
 	private newest: { readonly ticket: number; readonly priority: number } | undefined;
 	private disposed = false;
+	/** Warmed by intent (a keystroke, a dictation, an explicit ask) and not stopped since: requests may start it. */
+	private wanted = false;
 	private readonly idleStop = this._register(new RunOnceScheduler(() => this.stopIfIdle(), IDLE_STOP_MS));
 
 	constructor(
@@ -108,6 +112,7 @@ export class PredictorAgent extends Disposable {
 			this.ref = ref;
 			this.failedAt = 0;
 		}
+		this.wanted = !!ref;
 		if (ref && !this.active && Date.now() - this.failedAt >= RETRY_BOOT_MS) {
 			this.active = this.boot(ref);
 		}
@@ -123,6 +128,8 @@ export class PredictorAgent extends Disposable {
 			this.idleStop.schedule();
 			return;
 		}
+		// The next keystroke or dictation starts it again; a request alone does not.
+		this.wanted = false;
 		if (this.active || this.standby) {
 			this.logService.info(`[volt predictor] ${this.ref} stopped after ${IDLE_STOP_MS / 60_000} idle minutes`);
 			this.stop();
@@ -134,6 +141,10 @@ export class PredictorAgent extends Disposable {
 	 * the session, so a cut-off reply is never mistaken for the whole answer.
 	 */
 	async *ask(ref: string, task: PredictorTask, text: string, token: CancellationToken): AsyncIterable<IVoltEvent> {
+		if (!this.wanted) {
+			// Not started by a keystroke or dictation (a paste asks too): no suggestion, and no agent started for it.
+			return;
+		}
 		this.warm(ref);
 		const ticket = ++this.tickets;
 		const priority = TASK_PRIORITY[task];

@@ -164,6 +164,10 @@ export class VoltInlineCompletionsProvider extends Disposable implements InlineC
 		if (!settings.inComments && !explicit && inComment(model, position)) {
 			return undefined;
 		}
+		if (explicit) {
+			// Asked for by hand: start the predictor if it is not running (a request alone does not start it).
+			this.predictionService.warmUp();
+		}
 
 		this.clipboard.refresh();
 		const modelRef = this.predictionService.resolveTabModelRef();
