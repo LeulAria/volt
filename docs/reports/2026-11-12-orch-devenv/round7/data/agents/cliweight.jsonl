@@ -14,3 +14,6 @@
 {"variant":"volt-nosettings","rep":2,"at":"2026-11-15T08:16:11.972Z","load":"56.90 51.73 48.07","resultS":null,"textChars":28759,"peakMiB":167,"restMiB":159,"samples":400}
 {"variant":"volt-noenv","rep":2,"at":"2026-11-15T08:17:52.417Z","load":"37.41 47.19 46.77","resultS":null,"textChars":29751,"peakMiB":190,"restMiB":174,"samples":400}
 {"variant":"volt","rep":1,"at":"2026-11-15T08:20:30.053Z","load":"31.67 42.29 44.90","resultS":null,"textChars":29479,"peakMiB":172,"restMiB":167,"samples":400}
+{"variant":"volt-samethread","rep":1,"at":"2026-11-15T08:22:10.627Z","load":"37.49 41.07 44.12","resultS":null,"textChars":29447,"peakMiB":147,"restMiB":143,"samples":400}
+{"variant":"volt","rep":2,"at":"2026-11-15T08:23:51.122Z","load":"51.50 42.79 44.32","resultS":null,"textChars":29271,"peakMiB":178,"restMiB":168,"samples":400}
+{"variant":"volt-samethread","rep":2,"at":"2026-11-15T08:25:31.455Z","load":"46.45 47.25 46.15","resultS":null,"textChars":29719,"peakMiB":166,"restMiB":154,"samples":400}
