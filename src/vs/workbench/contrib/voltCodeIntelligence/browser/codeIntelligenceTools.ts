@@ -3,9 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { raceTimeout } from '../../../../base/common/async.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
-import { ResourceMap } from '../../../../base/common/map.js';
 import { isAbsolute } from '../../../../base/common/path.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -14,6 +12,7 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { ISearchService } from '../../../services/search/common/search.js';
+import { IModelService } from '../../../../editor/common/services/model.js';
 import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
 import { ILanguageFeaturesService } from '../../../../editor/common/services/languageFeatures.js';
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
@@ -26,19 +25,12 @@ import { CodeIntelHost, DIAGNOSED_EXTENSIONS } from '../../../services/voltRunti
 import { VoltSearch } from '../../../services/voltRuntime/browser/search/voltSearch.js';
 import { createCodeIndexNav } from '../../../services/voltRuntime/browser/tools/codeIndexNav.js';
 import { createCodeTools, ITextFileChange } from '../../../services/voltRuntime/browser/tools/codeTools.js';
-import { editCheckHookOutput, NO_HOOK_OUTPUT } from '../../../services/voltRuntime/browser/tools/editDiagnostics.js';
+import { NO_HOOK_OUTPUT } from '../../../services/voltRuntime/browser/tools/editDiagnostics.js';
 import { IFileToolHost, writeComputedEdit } from '../../../services/voltRuntime/browser/tools/fileTools.js';
 import { displayPath, resolveWorkspaceUri } from '../../../services/voltRuntime/browser/tools/workspacePath.js';
 import { confineCodeIntel, ICodeIntelRules } from './codeIntelConfinement.js';
+import { EditChecks } from './editChecks.js';
 import { createSearchTools } from '../../../services/voltRuntime/browser/tools/searchTools.js';
-
-/** The edit's start waits this long for the file's errors as they were (it holds up the edit). */
-const BASELINE_WAIT_MS = 1_500;
-/** A read's check runs in the background and may take this long (a language server still loading the project). */
-const READ_BASELINE_WAIT_MS = 30_000;
-/** The edit's end waits this long for the language server to report on the new text. */
-const AFTER_EDIT_WAIT_MS = 4_000;
-const BASELINE_TTL_MS = 10 * 60_000;
 
 /** Indexes the open project's folders in the background, so the first agent search is already fast. */
 export class CodeIndexWarmup extends Disposable {
@@ -87,8 +79,8 @@ export class CodeIntelligenceHostTools extends Disposable {
 	private readonly search: VoltSearch;
 	/** The window's language servers, for code_nav / diagnostics / code_action over MCP. */
 	private readonly codeIntel: CodeIntelHost;
-	/** Each file's errors before an edit (see {@link editCheck}). */
-	private readonly baselines = new ResourceMap<{ readonly counts: Map<string, number>; readonly at: number }>();
+	/** Claude Code's edit-check hooks (see {@link editCheck}). */
+	private readonly editChecks: EditChecks;
 
 	constructor(
 		@IVoltHostToolService hostTools: IVoltHostToolService,
@@ -101,6 +93,7 @@ export class CodeIntelligenceHostTools extends Disposable {
 		@ITextModelService textModelService: ITextModelService,
 		@ILanguageFeaturesService languageFeatures: ILanguageFeaturesService,
 		@ITextFileService private readonly textFileService: ITextFileService,
+		@IModelService modelService: IModelService,
 	) {
 		super();
 		this.search = this._register(new VoltSearch(searchService, {
@@ -111,6 +104,10 @@ export class CodeIntelligenceHostTools extends Disposable {
 		}, fileService.onDidFilesChange));
 		this.codeIntel = this._register(new CodeIntelHost(markerService, textModelService, languageFeatures, fileService));
 		this.codeIntel.setLspPolicy(lspPolicy(configurationService, uri => workspace.isInsideWorkspace(uri)));
+		// Editor tabs' documents tell whether a language service is already up; a document checked by one
+		// that is still starting keeps its text meanwhile (see EditChecks).
+		this.codeIntel.setDocuments({ open: () => modelService.getModels(), holdReload: uri => textFileService.files.holdReload(uri) });
+		this.editChecks = new EditChecks(this.codeIntel);
 		this._register(hostTools.registerToolProvider({
 			tools: CODE_INTELLIGENCE_TOOLS,
 			invoke: (name, args, call) => this.invoke(name, args, call).catch((err): IVoltHostToolResult => ({ error: err instanceof Error ? err.message : String(err) })),
@@ -160,62 +157,20 @@ export class CodeIntelligenceHostTools extends Disposable {
 	}
 
 	/**
-	 * Claude Code's hooks around its file tools (see `EDIT_CHECK_TOOL_NAME`): a read opens the file
-	 * for its language server, the edit's start notes the file's errors, its end answers the errors
-	 * it added, as the hook's context for the model. Silent (`{}`) when there is nothing new or the
-	 * errors before the edit are not known (the end-of-turn check still covers the file), and for a
-	 * sandboxed chat when its sandbox may not read the file (or Volt cannot tell).
+	 * Claude Code's hooks around its file tools (see {@link EditChecks}). Silent (`{}`) when there is
+	 * nothing new or the errors before the edit are not known (the end-of-turn check still covers the
+	 * file), and for a sandboxed chat when its sandbox may not read the file (or Volt cannot tell).
 	 */
 	private async editCheck(phase: EditCheckPhase, root: URI | undefined, args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<string> {
 		const path = typeof args.path === 'string' ? args.path : undefined;
-		const uri = path ? resolveWorkspaceUri(root, path) ?? (isAbsolute(path) ? URI.file(path) : undefined) : undefined;
-		if (!uri || !DIAGNOSED_EXTENSIONS.test(uri.path) || !this.codeIntel.lspAllowed(uri)) {
-			return NO_HOOK_OUTPUT;
+		let uri = path ? resolveWorkspaceUri(root, path) ?? (isAbsolute(path) ? URI.file(path) : undefined) : undefined;
+		if (uri && (!DIAGNOSED_EXTENSIONS.test(uri.path) || !this.codeIntel.lspAllowed(uri))) {
+			uri = undefined;
 		}
-		if (call && isSandboxed(call.sandbox) && (!call.readRefusal || await call.readRefusal(uri.fsPath))) {
-			return NO_HOOK_OUTPUT;
+		if (uri && call && isSandboxed(call.sandbox) && (!call.readRefusal || await call.readRefusal(uri.fsPath))) {
+			uri = undefined;
 		}
-		this.forgetOldBaselines();
-		switch (phase) {
-			case 'read': {
-				// The file's errors are read now, while the model thinks, so the edit's start need not wait.
-				const at = Date.now();
-				void this.codeIntel.settledErrorCounts(uri, READ_BASELINE_WAIT_MS).then(counts => {
-					if (counts && (this.baselines.get(uri)?.at ?? 0) < at) {
-						this.baselines.set(uri, { counts, at });
-					}
-				});
-				return NO_HOOK_OUTPUT;
-			}
-			case 'before': {
-				const counts = await this.codeIntel.settledErrorCounts(uri, BASELINE_WAIT_MS);
-				if (counts) {
-					this.baselines.set(uri, { counts, at: Date.now() });
-				}
-				// Else the baseline the read (or the last edit) left stays, if any.
-				return NO_HOOK_OUTPUT;
-			}
-			case 'after': {
-				const baseline = this.baselines.get(uri);
-				this.codeIntel.noteWrite(uri);
-				if (!baseline) {
-					return NO_HOOK_OUTPUT;
-				}
-				const added = await raceTimeout(this.codeIntel.newErrors(uri, baseline.counts), AFTER_EDIT_WAIT_MS);
-				// The next edit of this file is compared with the file as this one left it.
-				this.baselines.set(uri, { counts: this.codeIntel.errorCounts(uri), at: Date.now() });
-				return added?.length ? editCheckHookOutput(added, root ? displayPath(root, uri) : uri.fsPath) : NO_HOOK_OUTPUT;
-			}
-		}
-	}
-
-	private forgetOldBaselines(): void {
-		const now = Date.now();
-		for (const [uri, baseline] of this.baselines) {
-			if (now - baseline.at > BASELINE_TTL_MS) {
-				this.baselines.delete(uri);
-			}
-		}
+		return this.editChecks.run(phase, uri, uri ? (root ? displayPath(root, uri) : uri.fsPath) : '', call?.sessionId);
 	}
 
 	private toolFor(name: string, root: URI | undefined, confine: ICodeIntelRules | undefined): IVoltTool | undefined {

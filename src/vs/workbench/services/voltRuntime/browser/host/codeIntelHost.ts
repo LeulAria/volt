@@ -7,6 +7,7 @@ import { raceTimeout } from '../../../../../base/common/async.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Disposable, IDisposable, IReference } from '../../../../../base/common/lifecycle.js';
 import { ResourceMap } from '../../../../../base/common/map.js';
+import { extname } from '../../../../../base/common/path.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { Position } from '../../../../../editor/common/core/position.js';
 import { Range } from '../../../../../editor/common/core/range.js';
@@ -55,6 +56,14 @@ export interface IRuntimeCodeIntel extends ICodeIntelHost, IDisposable {
 	newErrors(uri: URI, baseline: ReadonlyMap<string, number>): Promise<IDiagnostic[]>;
 }
 
+/** The window's documents beyond those a {@link CodeIntelHost} opened itself. */
+export interface ICodeIntelDocuments {
+	/** Every open document (editor tabs included). */
+	open(): readonly ITextModel[];
+	/** Keeps a file's document from being reloaded when the file changes on disk, until disposed. */
+	holdReload(uri: URI): IDisposable;
+}
+
 let runtimeCodeIntelFactory: (() => IRuntimeCodeIntel) | undefined;
 
 /**
@@ -94,6 +103,17 @@ export interface ICodeIntelErrorProbe {
  */
 const probedErrors = new ResourceMap<{ readonly version: number; readonly errors: readonly IDiagnostic[] }>();
 
+/**
+ * Documents held at the text they have while a language service that is still starting is asked about
+ * it (see {@link CodeIntelHost.pinnedErrorCounts}), counted per holder. Shared by every host in the
+ * window: none of them reloads a held document from disk.
+ */
+const pinnedDocuments = new ResourceMap<number>();
+/** A check of a written file waits this long for a held document to be let go. */
+const PINNED_WAIT_MS = 10_000;
+/** A language service that is still starting is asked again this often. */
+const COLD_RETRY_MS = 250;
+
 let codeIntelErrorProbe: ICodeIntelErrorProbe | undefined;
 
 export function setCodeIntelErrorProbe(probe: ICodeIntelErrorProbe | undefined): void {
@@ -127,6 +147,10 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	private readonly open = new ResourceMap<{ ref: IReference<IResolvedTextEditorModel>; timer: ReturnType<typeof setTimeout>; openedAt: number; checkedAt: number }>();
 	/** Settings > Code Intelligence: which files language servers may be asked about. */
 	private policy: (uri: URI) => boolean = () => true;
+	/** File extensions a language service was seen answering for (it stays up once started). */
+	private readonly served = new Set<string>();
+	/** The window's documents, when the owner can reach them (see {@link setDocuments}). */
+	private documents: ICodeIntelDocuments | undefined;
 
 	constructor(
 		private readonly markerService: IMarkerService,
@@ -193,6 +217,87 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	warm(uri: URI): void {
 		if (DIAGNOSED_EXTENSIONS.test(uri.path) && this.policy(uri)) {
 			this.model(uri).catch(() => { /* deleted, or not a text file */ });
+		}
+	}
+
+	setDocuments(documents: ICodeIntelDocuments | undefined): void {
+		this.documents = documents;
+	}
+
+	/**
+	 * Whether a language service is already up for files like `uri`, judged without opening anything:
+	 * opening a document is what starts one (tsserver: three processes), and a file an agent only
+	 * read is no reason to. True once a document with the same file extension, open here or in an
+	 * editor tab, has language providers; it stays true (a started service keeps running).
+	 */
+	languageServiceRunning(uri: URI): boolean {
+		const extension = extname(uri.path).toLowerCase();
+		if (this.served.has(extension)) {
+			return true;
+		}
+		const models = [...[...this.open.values()].map(entry => entry.ref.object.textEditorModel), ...(this.documents?.open() ?? [])];
+		if (models.some(model => !model.isDisposed() && model.uri.scheme === uri.scheme && extname(model.uri.path).toLowerCase() === extension && this.hasLanguageProviders(model))) {
+			this.served.add(extension);
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * The error counts of the text the file has now, once its language service has answered for
+	 * exactly that text, however long it takes to start (at most `waitMs`). Until then the document
+	 * is held: no host reloads it from disk, so an edit written meanwhile does not replace the text
+	 * being checked, and the edit's own check can still tell which errors it added. Undefined when no
+	 * answer came for that text (timed out, or the document changed anyway: a dirty editor, a watched
+	 * folder's reload).
+	 */
+	async pinnedErrorCounts(uri: URI, waitMs: number): Promise<Map<string, number> | undefined> {
+		if (!this.policy(uri) || !DIAGNOSED_EXTENSIONS.test(uri.path)) {
+			return undefined;
+		}
+		const until = Date.now() + waitMs;
+		const model = await this.model(uri).catch(() => undefined);
+		if (!model) {
+			return undefined;
+		}
+		if (!codeIntelErrorProbe?.errors || !PROBED_LANGUAGES.has(model.getLanguageId())) {
+			// A service that publishes markers: nothing says which text they are for, so as before.
+			return this.settledErrorCounts(uri, Math.max(0, until - Date.now()));
+		}
+		if (this.writes.has(uri)) {
+			await this.catchUpWithDisk(uri, model);
+		}
+		const version = model.getVersionId();
+		pinnedDocuments.set(uri, (pinnedDocuments.get(uri) ?? 0) + 1);
+		const hold = this.documents?.holdReload(uri);
+		try {
+			while (!this._store.isDisposed && !model.isDisposed() && model.getVersionId() === version) {
+				if (this.markerService.read({ resource: uri, take: 1 }).length) {
+					return this.errorCounts(uri); // open in an editor tab: its markers are for this text
+				}
+				await this.probe(uri, model);
+				if (probedErrors.get(uri)?.version === version) {
+					this.served.add(extname(uri.path).toLowerCase());
+					return this.errorCounts(uri);
+				}
+				if (Date.now() + COLD_RETRY_MS >= until) {
+					break;
+				}
+				await new Promise(resolve => setTimeout(resolve, COLD_RETRY_MS));
+			}
+			return undefined;
+		} finally {
+			hold?.dispose();
+			const holders = (pinnedDocuments.get(uri) ?? 1) - 1;
+			if (holders > 0) {
+				pinnedDocuments.set(uri, holders);
+			} else {
+				pinnedDocuments.delete(uri);
+			}
+			const entry = this.open.get(uri);
+			if (entry) {
+				entry.checkedAt = 0; // the next use reads the file again
+			}
 		}
 	}
 
@@ -595,6 +700,10 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 
 	/** After a write on disk: the model holds the written text before anyone is asked about it. */
 	private async catchUpWithDisk(uri: URI, model: ITextModel): Promise<void> {
+		// Held for a check of the text before the write: that check comes first.
+		for (const until = Date.now() + PINNED_WAIT_MS; pinnedDocuments.has(uri) && Date.now() < until;) {
+			await new Promise(resolve => setTimeout(resolve, 50));
+		}
 		const entry = this.open.get(uri);
 		for (let attempt = 0; entry && attempt < 5 && !model.isDisposed(); attempt++) {
 			const disk = await this.fileService.readFile(uri).then(file => file.value.toString(), () => undefined);
@@ -706,10 +815,15 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	/** Some language service reports on or answers for this document (markers, symbols, hovers, fixes). */
 	private hasLanguageService(model: ITextModel): boolean {
 		return this.markerService.read({ resource: model.uri, take: 1 }).length > 0
-			|| this.languageFeatures.documentSymbolProvider.has(model)
-			|| this.languageFeatures.hoverProvider.has(model)
-			|| this.languageFeatures.definitionProvider.has(model)
+			|| this.hasLanguageProviders(model)
 			|| this.languageFeatures.codeActionProvider.has(model);
+	}
+
+	/** Providers only a language's own service registers (code actions also come from generic sources). */
+	private hasLanguageProviders(model: ITextModel): boolean {
+		return this.languageFeatures.documentSymbolProvider.has(model)
+			|| this.languageFeatures.hoverProvider.has(model)
+			|| this.languageFeatures.definitionProvider.has(model);
 	}
 
 	private readonly opening = new ResourceMap<Promise<ITextModel>>();
@@ -719,7 +833,7 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 		if (existing) {
 			clearTimeout(existing.timer);
 			existing.timer = setTimeout(() => this.close(uri), KEEP_OPEN_MS);
-			if (Date.now() - existing.checkedAt > RECHECK_DISK_MS) {
+			if (!pinnedDocuments.has(uri) && Date.now() - existing.checkedAt > RECHECK_DISK_MS) {
 				existing.checkedAt = Date.now();
 				await reloadFromDisk(existing.ref.object);
 			}
