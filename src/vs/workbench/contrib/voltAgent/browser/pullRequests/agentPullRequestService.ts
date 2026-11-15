@@ -378,9 +378,11 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 				for (const folder of this.origins.keys()) {
 					void this.readOrigin(folder);
 				}
-				// The user may have checked out a branch elsewhere: the next discovery reads those checkouts again.
+				// The user may have checked out a branch elsewhere: the next discovery reads those checkouts again
+				// (not one read a moment ago, as the launch's first focus would have it).
+				const now = Date.now();
 				for (const [folder, entry] of [...this.repos]) {
-					if (entry.searchable === false) {
+					if (entry.searchable === false && now - entry.at > REPO_TTL_MS) {
 						this.repos.delete(folder);
 					}
 				}
