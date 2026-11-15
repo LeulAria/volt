@@ -2,6 +2,9 @@
 export function role(cmd) {
 	if (/volt-agent-server-main/.test(cmd)) { return 'agent server'; }
 	if (/voltPlugins\/node/.test(cmd)) { return 'plugin host (Memory)'; }
+	// tsserver's syntax and semantic servers and its typings installer: forked by the extension host as plain
+	// `VOLT Helper (Plugin)` node processes (no --type), which the `main` rule below would otherwise claim.
+	if (/tsserver\.js|typingsInstaller\.js/.test(cmd)) { return 'language helper (tsserver)'; }
 	if (/--type=renderer/.test(cmd)) { return 'renderer'; }
 	if (/--type=gpu-process/.test(cmd)) { return 'gpu'; }
 	if (/network\.mojom/.test(cmd)) { return 'network service'; }

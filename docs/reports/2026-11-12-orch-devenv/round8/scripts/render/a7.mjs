@@ -77,12 +77,12 @@ const byRoleAtP95 = Object.fromEntries(roleNames.map(r => [r, { mib: mib(p95Tick
 const byRoleP95 = Object.fromEntries(roleNames.map(r => [r, mib(p(all.map(t => t.roles[r] ?? 0), 0.95))]));
 const byRoleMedian = Object.fromEntries(roleNames.map(r => [r, mib(p(all.map(t => t.roles[r] ?? 0), 0.5))]));
 // Extension-host helpers beyond the extension host itself (tsserver's three).
-const languageHelpersMax = Math.max(...all.map(t => (t.counts['extension host'] ?? 0)));
+const languageHelpersMax = Math.max(...all.map(t => (t.counts['language helper (tsserver)'] ?? 0)));
 const row = {
 	arm, test: 'A7', at: new Date().toISOString(), load: loadAtStart, loadEnd: load(), ticks: all.length,
 	appP95: mib(p(all.map(t => t.app), 0.95)), agentsP95: mib(p(all.map(t => t.agents), 0.95)), totalP95: mib(p(all.map(t => t.app + t.agents), 0.95)),
 	agentCountMedian: p(all.map(t => t.agentRoots), 0.5), mem: memStart, memEnd: mem(), csv,
-	byRoleAtP95, byRoleP95, byRoleMedian, extensionHostProcessesMax: languageHelpersMax,
+	byRoleAtP95, byRoleP95, byRoleMedian, languageHelpersMax,
 	roles: Object.entries([...pidRole.entries()].reduce((acc, [, r]) => (acc[r] = (acc[r] ?? 0) + 1, acc), {})),
 };
 appendFileSync(join(DATA, 'a7.jsonl'), JSON.stringify(row) + '\n');

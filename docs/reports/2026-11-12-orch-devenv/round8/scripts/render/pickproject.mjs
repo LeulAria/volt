@@ -37,8 +37,13 @@ await c.evaluate(`(() => { const i=[...document.querySelectorAll("input")].find(
 await c.send('Input.insertText', { text: folder });
 await sleep(1200);
 await c.key('Enter', 'Enter', 13, 0, '\r');
-await sleep(1500);
-const picked = await c.evaluate('[...document.querySelectorAll(".volt-agent-landing-pick")].filter(e=>e.offsetParent).map(e=>e.innerText).join("|")');
+const want = folder.replace(/\/$/, '').split('/').pop();
+let picked = '';
+// The picker shows the folder a moment after the dialog closes (longer on a loaded machine).
+for (let i = 0; i < 24 && !picked.startsWith(want); i++) {
+	await sleep(500);
+	picked = await c.evaluate('[...document.querySelectorAll(".volt-agent-landing-pick")].filter(e=>e.offsetParent).map(e=>e.innerText).join("|")');
+}
 console.log(picked);
 c.close();
 if (!picked.startsWith(folder.replace(/\/$/, '').split('/').pop())) { throw new Error('the project is not ' + folder); }
