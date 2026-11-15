@@ -35,7 +35,7 @@ TABLE_PLACEHOLDER
 ## Method
 
 - Release builds: `minbefore` is the shared before build (`~/.volt-r7/min/base`, `039a70b7208`); `minafter` is
-  this branch at `58b588a456d` built by `scripts/render/minbuild.sh` (core mode, `.build/extensions` reused,
+  this branch at `9ee03e1113b` built by `scripts/render/minbuild.sh` (core mode, `.build/extensions` reused,
   `VOLT_BUILD_IGNORE_TYPE_ERRORS=1`, product.json commit stamped).
 - Rig: round 6's weight rig. A5 and A10 by `block.sh` (fresh profile, 5 seeded threads, relaunch, 90 s settle,
   60 s at 4 Hz; then 15 more seeded threads, 60 s at once); A7 by `a7block.sh` (5 seeded threads, relaunch,
@@ -104,11 +104,25 @@ Trace (dev, test profile, `typescript.tsserver.log: verbose`; `data/render/tsser
   apply. Code cards in the transcript are highlighted HTML (`highlight()`); only a mermaid card's source view is a
   Monaco editor.
 
-Why it stays. Deferring the warm-up to the edit would trade a memory cost paid in read-only sessions for a lost
-check on the first edit of each TS file in a cold window: cold start to first diagnostics was 5.7 s here (load 44)
-against the 1.5 s the edit waits. Within a coding session the server would start at the first edit anyway. This
-is the edit check's design (codeintel's feature); a cheaper baseline (for example, comparing only the edited
-lines' errors after the edit) would be that feature's change, not render's.
+The trade: about 175 MB in A7 (the three Plugin helpers: 243-313 MB with the extension host at A7's p95 tick
+against 69 MB for the extension host at rest, round 6) against the first edit's error check in a cold window.
+Within a coding session the server starts at the first edit anyway; only read-only sessions (A7's shape) pay
+the memory for nothing.
+
+The coordinator's variant, evaluated on paper and not built: start the server at the first edit, and when no
+baseline is ready, report the post-edit errors in or next to the edited lines instead of nothing.
+- Time. A server started at the edit's start has the edit's 1.5 s wait (`BASELINE_WAIT_MS`) plus the 4 s the
+  edit's end waits for fresh diagnostics (`AFTER_EDIT_WAIT_MS`), about 5.5 s plus the edit itself. Cold start to
+  first diagnostics measured 5.7 s (load 44; extension activation 11:27:00.06 to the first semantic diagnostics
+  11:27:05.81, `data/render/tsserver/`). At that load the fallback would mostly time out and report nothing,
+  while holding the first edit for up to 5.5 s that today's read-time warm-up spends during the model's thinking.
+  Not timed on an idle machine (load stayed 36-72 all day).
+- Coverage when it does report. An edit that breaks its own lines (a typo, a wrong type in the new text): caught
+  by both. An edit that breaks a caller elsewhere in the same file (a changed signature, a renamed export used
+  below): caught by today's before/after comparison, **missed by the range fallback**. A caller in another file:
+  missed by both (the check is per file; the end-of-turn check covers it).
+- So it fails the bar (the agent must still be told about the errors it introduced): kept as it is. A real
+  change here belongs to the edit check's owner (codeintel), for example a cheaper baseline.
 
 ## A7's GPU and renderer at the peak (dev, exploratory)
 
