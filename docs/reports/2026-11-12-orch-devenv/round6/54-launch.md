@@ -1,6 +1,6 @@
 # Round 6: launch (A1 cold start, A2 relaunch, the composer on screen)
 
-Status: **draft** (2026-11-15). Branch `e6/launch`, worktree `volt-e5-launch`, from `7f07f73d677`. ADEMark method,
+Status: **final** (2026-11-15). Branch `e6/launch`, worktree `volt-e5-launch`, from `7f07f73d677`. ADEMark method,
 unofficial (shared M4 Max laptop, CDP timing, release builds, `--use-mock-keychain`, no `purge`).
 
 ## Summary
@@ -15,18 +15,39 @@ unofficial (shared M4 Max laptop, CDP timing, release builds, `--use-mock-keycha
 - The main bundle is imported while Electron finishes starting (English or a configured locale), its entry exporting
   `main()` for the `ready` handler to call; the two vendored libraries (mermaid, device viewer, 2.3 MB) leave the workbench
   bundle and load on first use; the forced canvas warm-up waits for an idle period.
-- Before/after timings: pending (minified before build in progress; see below).
+- Measured (r6b, three release builds interleaved, n 6 each, loads 4.0-7.5): the final build (`52965cababa`) takes A2
+  Ready from 852 to 701 ms, the real composer from 1186 to 877 ms, and keeps the composer controls on screen where they
+  were (573 -> 576 ms). A1 Ready 758 -> 669 ms, real composer 1011 -> 843 ms, controls 548 -> 518 ms.
+- The intermediate build (`f037d0a63cb`) had made the controls appear later (A2 573 -> 750 ms in r6b, 467 -> 606 in r6a):
+  the early main-bundle import let `main()` run at once after `ready` and starve the launch page. `52965cababa` (main()
+  waits for the launch page first) **fixed that regression**: controls back to the before level, Ready and real composer
+  gains kept.
+- A2 Ready (701 ms) is still just above Diri's 0.67 s: round 7's job.
 
 ## Before / after
 
-Pending.
+r6b (10:04-10:12, three arms interleaved per rep, 6 A2 then 6 A1, every row at load 4.0-7.5): median ms (n, range).
 
 | Arm | Test | First window | Composer controls on screen | Ready | Real composer |
 |---|---|---|---|---|---|
-| before (7f07f73d677) | A2 | | | | |
-| after | A2 | | | | |
-| before | A1 | | | | |
-| after | A1 | | | | |
+| before (`7f07f73d677`) | A2 | 368 (6, 337-682) | 573 (6, 442-991) | 852 (6, 716-1343) | 1186 (6, 992-1611) |
+| after (`f037d0a63cb`) | A2 | 376 (6, 328-697) | 750 (6, 652-1032) | 940 (6, 744-1320) | 1009 (6, 930-1320) |
+| **after2 (`52965cababa`, final)** | A2 | 361 (6, 330-551) | **576** (6, 527-861) | **701** (6, 670-1027) | **877** (6, 824-1175) |
+| before | A1 | 364 (6, 341-649) | 548 (6, 398-854) | 758 (6, 726-1189) | 1011 (6, 967-1458) |
+| after | A1 | 359 (6, 346-416) | 643 (6, 522-839) | 790 (6, 700-1103) | 904 (6, 780-1103) |
+| **after2 (final)** | A1 | 356 (6, 346-706) | **518** (6, 489-1174) | **669** (6, 615-1295) | **843** (6, 788-1492) |
+
+r6a (09:16-09:22, before vs `f037d0a63cb` only, loads 4.8-13.7, one after-A1 row over 14 left out): A2 before 348 / 467 /
+766 / 1045, after 352 / 606 / 700 / 888; A1 before 356 / 469 / 842 / 1075, after 354 / 624 / 726 / 903 (same columns).
+Pooling r6a and r6b, before A2 Ready is 812 ms (n 12, 568-1343): run-to-run spread on this machine is about 50-90 ms
+between sessions, which is why only interleaved arms are compared.
+
+Marks (A2 medians, ms from process start): the final build imports the main bundle by 419, the launch page's renderer
+starts at 553 (before: 494; `f037d0a63cb`: 728) and paints its snapshot at 576, `main()` runs at 553 (after the page),
+the first window's configuration reaches the renderer at 664 (before: 782), workbench started at 984 (before: 1294).
+
+Controls are first drawn by the snapshot picture in every row (text box and send; the snapshot has no attach control, and
+no poll saw the real composer's attach control before the real composer itself).
 
 ## Method
 
@@ -90,13 +111,34 @@ code cache it fired in the middle of the workbench start (90 ms inclusive in the
 
 A dev window covered at start waited 43 s for an animation frame after painting the snapshot; a 50 ms fallback ends it.
 
-### 6. Marks (`3a912ebb52a`)
+### 6. The launch page's preload is not blocked while the app starts (`f037d0a63cb`)
+
+Cause: with the main bundle imported before `ready`, the session's request filter (`app.ts`, `onBeforeRequest`) was
+installed while `windowsMainService` did not exist yet; it cancelled the launch page's `modulepreload` of
+`workbench.desktop.main.js` (`main.log`: "Blocked vscode-file request"), and the window stayed on its snapshot: two of three
+launches of the first after build (`966261e6ba7`) hung. Change: the filter trusts the launch page's renderer
+(`isEarlyWindowProcess` in `electron-main/earlyWindow.ts`), before and after a code window adopts it. Unit test
+`earlyWindow.test.ts` (10 pass). Check: four warm-ups of the rebuilt app, all started, no "Blocked" line.
+
+### 7. The launch page gets its files before the application starts (`52965cababa`)
+
+Cause: with the import done early, `startup()` called `main()` right after `ready`: the bundle's evaluation and the
+application's start held the main thread, so the launch page's files and its picture request waited (renderer start 410 ->
+580 ms in r6a; the snapshot came only with the first window's configuration; controls on screen 467 -> 606 ms). Change:
+`main()` waits for the launch page (at most `EARLY_PAGE_WAIT_MS`), as the import did in round 5. Result: the table above
+(controls 750 -> 576 ms vs `f037d0a63cb`, equal to before; Ready and real composer kept their gains).
+
+### 8. Marks (`3a912ebb52a`)
 
 `code/voltWillStartApp`, `code/voltDidInitAppServices`, `code/voltWillOpenFirstWindow` in `CodeApplication.startup`;
 `code/voltWillImportMainBundle` / `code/voltDidImportMainBundle` in the main entry.
 
 ## Not done
 
-Pending.
+- A2 Ready is 701 ms, not under Diri's 0.67 s; the first window (~360 ms) did not move. Carried to round 7.
+- The controls on screen are the snapshot's picture; the real composer (with the attach control) is at ~880 ms.
+- No V8 startup snapshot was tried; main-process services were not deferred past the first window.
+- The mermaid/device-viewer split was checked on the after build (separate `vendor/beautifulMermaid.js`, 1.57 MB; bundle
+  20.16 -> 17.77 MB; CDP import and `renderMermaidSVG` OK) but its start-up effect was not timed on its own.
 
-Data: `data/launch/`. Scripts: `scripts/launch/`.
+Data: `data/launch/` (`r6a-*.jsonl`, `r6b-*.jsonl`, `r6a-summary.txt`, `r6b-summary.txt`). Scripts: `scripts/launch/`.

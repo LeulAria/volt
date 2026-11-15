@@ -1,0 +1,48 @@
+after A1: valid 6, under load 0, loads 4.0-7.5
+  first window: 359 (n 6, 346-416)
+  composer controls on screen: 643 (n 6, 522-839)
+  Ready: 790 (n 6, 700-1103)
+  real composer: 904 (n 6, 780-1103)
+  marks: main didStartMain 221, main mainAppReady 273, main voltDidOpenLaunchWindow 325, main voltDidImportMainBundle 418, main didRunMainBundle 418, main voltDidInitAppServices 447, main voltWillOpenFirstWindow 453, main willOpenNewWindow 464, didStartRenderer 617, voltDidPaintWindowSnapshot 637, didWaitForWindowConfig 618, didLoadWorkbenchMain 754, willStartWorkbench 786, didStartWorkbench 1011, voltDidHandOffWindowSnapshot 1019
+  Ready from the snapshot's text area in 3 of 6
+  controls first drawn by the snapshot in 6 of 6; attach control seen in 0
+after A2: valid 6, under load 0, loads 5.2-6.5
+  first window: 376 (n 6, 328-697)
+  composer controls on screen: 750 (n 6, 652-1032)
+  Ready: 940 (n 6, 744-1320)
+  real composer: 1009 (n 6, 930-1320)
+  marks: main didStartMain 228, main mainAppReady 285, main voltDidOpenLaunchWindow 340, main voltDidImportMainBundle 430, main didRunMainBundle 430, main voltDidInitAppServices 474, main voltWillOpenFirstWindow 480, main willOpenNewWindow 486, didStartRenderer 728, voltDidPaintWindowSnapshot 748, didWaitForWindowConfig 729, didLoadWorkbenchMain 865, willStartWorkbench 893, didStartWorkbench 1111, voltDidHandOffWindowSnapshot 1120
+  Ready from the snapshot's text area in 3 of 6
+  controls first drawn by the snapshot in 6 of 6; attach control seen in 0
+after2 A1: valid 6, under load 0, loads 4.0-6.7
+  first window: 356 (n 6, 346-706)
+  composer controls on screen: 518 (n 6, 489-1174)
+  Ready: 669 (n 6, 615-1295)
+  real composer: 843 (n 6, 788-1492)
+  marks: main didStartMain 216, main mainAppReady 264, main voltDidOpenLaunchWindow 320, main voltDidImportMainBundle 422, main didRunMainBundle 491, main voltDidInitAppServices 529, main voltWillOpenFirstWindow 536, main willOpenNewWindow 552, didStartRenderer 490, voltDidPaintWindowSnapshot 513, didWaitForWindowConfig 623, didLoadWorkbenchMain 689, willStartWorkbench 724, didStartWorkbench 951, voltDidHandOffWindowSnapshot 960
+  Ready from the snapshot's text area in 6 of 6
+  controls first drawn by the snapshot in 6 of 6; attach control seen in 0
+after2 A2: valid 6, under load 0, loads 4.9-6.6
+  first window: 361 (n 6, 330-551)
+  composer controls on screen: 576 (n 6, 527-861)
+  Ready: 701 (n 6, 670-1027)
+  real composer: 877 (n 6, 824-1175)
+  marks: main didStartMain 217, main mainAppReady 271, main voltDidOpenLaunchWindow 324, main voltDidImportMainBundle 419, main didRunMainBundle 553, main voltDidInitAppServices 594, main voltWillOpenFirstWindow 601, main willOpenNewWindow 615, didStartRenderer 553, voltDidPaintWindowSnapshot 576, didWaitForWindowConfig 664, didLoadWorkbenchMain 728, willStartWorkbench 762, didStartWorkbench 984, voltDidHandOffWindowSnapshot 992
+  Ready from the snapshot's text area in 6 of 6
+  controls first drawn by the snapshot in 6 of 6; attach control seen in 0
+before A1: valid 6, under load 0, loads 4.7-7.3
+  first window: 364 (n 6, 341-649)
+  composer controls on screen: 548 (n 6, 398-854)
+  Ready: 758 (n 6, 726-1189)
+  real composer: 1011 (n 6, 967-1458)
+  marks: main didStartMain 215, main mainAppReady 262, main voltDidOpenLaunchWindow 319, main didRunMainBundle 457, main willOpenNewWindow 510, didStartRenderer 402, voltDidPaintWindowSnapshot 425, didWaitForWindowConfig 694, didLoadWorkbenchMain 804, willStartWorkbench 894, didStartWorkbench 1112, voltDidHandOffWindowSnapshot 1120
+  Ready from the snapshot's text area in 6 of 6
+  controls first drawn by the snapshot in 6 of 6; attach control seen in 0
+before A2: valid 6, under load 0, loads 5.1-6.7
+  first window: 368 (n 6, 337-682)
+  composer controls on screen: 573 (n 6, 442-991)
+  Ready: 852 (n 6, 716-1343)
+  real composer: 1186 (n 6, 992-1611)
+  marks: main didStartMain 228, main mainAppReady 283, main voltDidOpenLaunchWindow 335, main didRunMainBundle 557, main willOpenNewWindow 608, didStartRenderer 494, voltDidPaintWindowSnapshot 516, didWaitForWindowConfig 782, didLoadWorkbenchMain 905, willStartWorkbench 1064, didStartWorkbench 1294, voltDidHandOffWindowSnapshot 1303
+  Ready from the snapshot's text area in 6 of 6
+  controls first drawn by the snapshot in 6 of 6; attach control seen in 0
