@@ -44,3 +44,89 @@ export class InputFirstGate implements IDisposable {
 		this.keyFrame = undefined;
 	}
 }
+
+/** How long a measured frame interval is trusted (the window can move to a screen with another rate). */
+const FRAME_INTERVAL_MAX_AGE_MS = 2000;
+
+/**
+ * Whether a frame at `timelineMs` is one in which streamed text is painted, on a screen that draws a
+ * frame every `frameMs`: the first frame after each multiple of `stepMs`, which is the frame the
+ * text's fade changes colour in (agentFreshText's step clock). A screen at or under the step rate,
+ * or one not measured yet, paints text in every frame.
+ */
+export function isTextFrame(timelineMs: number, frameMs: number | undefined, stepMs: number): boolean {
+	if (frameMs === undefined || frameMs > stepMs * 0.75) {
+		return true;
+	}
+	return ((timelineMs % stepMs) + stepMs) % stepMs < frameMs;
+}
+
+/**
+ * Keeps a streaming reply's paints in the frames its fade repaints text in anyway. On a 120 Hz
+ * screen the fade changes colour in every other frame; a reply patched in a frame between two of
+ * those made that frame paint text too, and with text painted in consecutive frames the
+ * compositor holds each next frame back behind the one in flight (a typed key's frame included).
+ * A paint that falls in a frame between waits for the next text frame: 8 ms at 120 Hz, never on a
+ * 60 Hz screen.
+ */
+export class TextFrameClock implements IDisposable {
+
+	private frameMs: number | undefined;
+	private measuredAt = -Infinity;
+	private probe: IDisposable | undefined;
+	private waited = 0;
+
+	/**
+	 * `schedule` runs a callback at the next animation frame; `timelineNow` is the document
+	 * timeline's time of the frame being drawn (undefined when the document has none).
+	 */
+	constructor(
+		private readonly schedule: (callback: () => void) => IDisposable,
+		private readonly timelineNow: () => number | undefined,
+		private readonly stepMs: number,
+	) { }
+
+	/** Called by a stream paint in its frame callback: true to move the paint to the next frame. */
+	shouldWait(): boolean {
+		const now = this.timelineNow();
+		if (now === undefined) {
+			return false;
+		}
+		this.measure(now);
+		// At most two frames in a row (a 180 Hz screen has two frames between text frames).
+		if (this.waited < 2 && !isTextFrame(now, this.frameMs, this.stepMs)) {
+			this.waited++;
+			return true;
+		}
+		this.waited = 0;
+		return false;
+	}
+
+	/** The screen's frame interval: the time between two frames in a row, taken again every 2 s of use. */
+	private measure(now: number): void {
+		if (this.probe || now - this.measuredAt < FRAME_INTERVAL_MAX_AGE_MS) {
+			return;
+		}
+		this.probe = this.schedule(() => {
+			const first = this.timelineNow();
+			this.probe = this.schedule(() => {
+				this.probe = undefined;
+				const second = this.timelineNow();
+				if (first === undefined || second === undefined) {
+					return;
+				}
+				this.measuredAt = second;
+				const interval = second - first;
+				// A frame the window skipped (hidden, busy) is no measure of the screen.
+				if (interval > 1 && interval < 50) {
+					this.frameMs = interval;
+				}
+			});
+		});
+	}
+
+	dispose(): void {
+		this.probe?.dispose();
+		this.probe = undefined;
+	}
+}
