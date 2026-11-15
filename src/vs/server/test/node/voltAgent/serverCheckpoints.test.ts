@@ -32,8 +32,11 @@ suite('Volt agent server: checkpoint work-tree watch without a watcher process (
 		let changes = 0;
 		const watch = watchWorkTree(dir, () => changes++, () => { /* none expected */ })!;
 		try {
-			// FSEvents starts delivering a moment after the stream is scheduled.
+			// FSEvents starts delivering a moment after the stream is scheduled, and its first delivery can replay
+			// what happened just before: the `.git` folder made above, and the work tree's own entry (named by its
+			// basename). Count from after that settle.
 			await timeout(500);
+			changes = 0;
 			await fs.writeFile(join(dir, '.git', 'index'), 'x');
 			await timeout(1_500);
 			assert.strictEqual(changes, 0, 'a write under .git is not a change');
