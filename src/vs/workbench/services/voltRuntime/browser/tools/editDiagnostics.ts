@@ -52,17 +52,28 @@ export function formatEditDiagnostics(found: readonly IDiagnostic[], shown: stri
 export const NO_HOOK_OUTPUT = '{}';
 
 /**
- * The answer to Claude Code's PostToolUse hook after an edit added errors: the errors as context
- * for the model, right after the edit's own result, so it fixes them in its next step instead of
- * finding them at the end of the turn.
+ * The errors an edit added, as context for the model right after the edit's own result, so it fixes
+ * them in its next step instead of finding them at the end of the turn. Undefined when it added none.
+ * `late`: the check finished after the edit's hook had answered (a language server that was still
+ * starting), so the text goes out with a later hook answer and names the edit as an earlier one.
  */
-export function editCheckHookOutput(added: readonly IDiagnostic[], shown: string): string {
+export function editCheckContext(added: readonly IDiagnostic[], shown: string, late?: boolean): string | undefined {
 	const errors = added.filter(diagnostic => diagnostic.severity === 'error');
 	if (!errors.length) {
-		return NO_HOOK_OUTPUT;
+		return undefined;
 	}
 	const lines = errors.slice(0, MAX_LISTED).map(diagnostic => `  ${diagnostic.line}:${diagnostic.column} ${diagnostic.message.split('\n')[0]}${diagnostic.source ? ` [${diagnostic.source}${diagnostic.code ? ` ${diagnostic.code}` : ''}]` : ''}`);
 	const more = errors.length - lines.length;
-	const context = [`[Volt] This edit added ${errors.length} error${errors.length === 1 ? '' : 's'} in ${shown} (language server):`, ...lines, ...(more > 0 ? [`  ...and ${more} more`] : [])].join('\n');
-	return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: context } });
+	return [`[Volt] ${late ? 'An earlier edit' : 'This edit'} added ${errors.length} error${errors.length === 1 ? '' : 's'} in ${shown} (language server${late ? ', which was still starting when the edit was made' : ''}):`, ...lines, ...(more > 0 ? [`  ...and ${more} more`] : [])].join('\n');
+}
+
+/** The answer to Claude Code's PostToolUse hook: `contexts` for the model, or nothing. */
+export function postToolUseHookOutput(contexts: readonly string[]): string {
+	return contexts.length ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: contexts.join('\n') } }) : NO_HOOK_OUTPUT;
+}
+
+/** The answer to Claude Code's PostToolUse hook after an edit: the errors it added, or nothing. */
+export function editCheckHookOutput(added: readonly IDiagnostic[], shown: string): string {
+	const context = editCheckContext(added, shown);
+	return postToolUseHookOutput(context ? [context] : []);
 }

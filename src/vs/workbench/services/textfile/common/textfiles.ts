@@ -377,6 +377,14 @@ export interface ITextFileSaveParticipant {
 
 export interface ITextFileEditorModelManager {
 
+	/**
+	 * Volt: until the returned hold is disposed, a change of the file on disk does not reload its
+	 * model (a dirty model is never reloaded anyway). A reload skipped meanwhile runs when the last
+	 * hold ends. For a check of the text a file had just before an agent's edit, by a language
+	 * service that is still starting (see `CodeIntelHost.pinnedErrorCounts`).
+	 */
+	holdReload(resource: URI): IDisposable;
+
 	readonly onDidCreate: Event<ITextFileEditorModel>;
 	readonly onDidResolve: Event<ITextFileResolveEvent>;
 	readonly onDidChangeDirty: Event<ITextFileEditorModel>;
