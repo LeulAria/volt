@@ -1,5 +1,6 @@
 // Medians, n and ranges of the round-4 smoothness data (a6.jsonl, a8.jsonl, open/*.json), before and after.
-// Rows whose 1-minute load was over 14 when the sample started (the brief's gate) are left out of the medians.
+// Rows whose 1-minute load was over 14 when the sample started (the brief's gate) are left out of the medians, and so
+// are rows marked `invalid` (with the reason in the row).
 //   node summarize.mjs [--since ISO]   (markdown to stdout)
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
@@ -8,7 +9,7 @@ import { DATA, median } from './lib.mjs';
 const args = process.argv.slice(2);
 const since = args.includes('--since') ? args[args.indexOf('--since') + 1] : '';
 const MAX = 14;
-const rows = file => existsSync(join(DATA, file)) ? readFileSync(join(DATA, file), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(r => r.at >= since) : [];
+const rows = file => existsSync(join(DATA, file)) ? readFileSync(join(DATA, file), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)).filter(r => r.at >= since && !r.invalid) : [];
 const fmt = v => v === null || v === undefined ? '-' : Math.round(v * 100) / 100;
 const line = (label, values, loads) => {
 	const ok = values.filter((v, i) => loads[i] <= MAX && v !== null && v !== undefined);

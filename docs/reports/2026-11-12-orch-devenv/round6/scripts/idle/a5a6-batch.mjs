@@ -31,12 +31,16 @@ async function seedArm(arm) {
 	// A fresh profile per arm, seeded once per batch (ADEMark seeds once per run too).
 	rmSync(ud(arm), { recursive: true, force: true });
 	writeSettings(arm);
-	launch(arm);
+	// A built app runs its agent server as a launchd job whose environment has no ANTHROPIC_BASE_URL: its seed turns
+	// went to the real API and failed (session-minbase-1, 02:49, every seed "no reply"). Seeding alone spawns the server
+	// from the app (weight's rig does the same); the measured relaunches below keep the shipped launchd job.
+	launch(arm, { env: ARMS[arm].endsWith('.app') ? { VOLT_AGENT_SERVER_LAUNCHD: '0' } : {} });
 	await waitWorkbench();
 	await sleep(8000);
 	const c = await cdp();
 	await c.send('Emulation.setFocusEmulationEnabled', { enabled: true });
 	const marker = `[...document.querySelectorAll('.volt-agent-editor-main')].filter(e => e.offsetParent).some(m => m.textContent.includes('unchanged'))`;
+	let answered = 0;
 	for (let i = 0; i < 5; i++) {
 		await newChat(c);
 		await sleep(1500);
@@ -45,14 +49,23 @@ async function seedArm(arm) {
 		for (let t = 0; t < 150 && !ok; t++) {
 			await sleep(200);
 			ok = await c.evaluate(marker);
+			// A built app may ask before the seed's command runs (Supervised): approve it, as a user seeding would.
+			if (!ok && t % 5 === 4) {
+				await c.evaluate(`[...document.querySelectorAll('.volt-agent-editor-main button, .volt-agent-editor-main .monaco-button, .volt-agent-editor-main [role=button]')].find(b => b.offsetParent && /^Run\\b/.test((b.textContent || '').trim()))?.click()`);
+			}
 		}
 		console.log(`${arm} seed ${i + 1}: ${ok ? 'answered' : 'no reply in 30 s'}`);
+		answered += ok ? 1 : 0;
 		await sleep(1500);
 	}
 	await c.send('Emulation.setFocusEmulationEnabled', { enabled: false });
 	c.close();
 	await stop(arm);
 	await sleep(5000);
+	if (answered < 5) {
+		// A failed seed leaves error rows (and agents the window counts as working): its A5/A6 rows would be invalid.
+		throw new Error(`${arm}: ${5 - answered} seed turn(s) not answered; no rows taken`);
+	}
 	SEEDED.add(arm);
 }
 

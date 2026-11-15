@@ -131,7 +131,7 @@ export function cleanEnv() {
  * timing tests (A3, A8, A11), because the user works at this Mac and can cover the test window at any moment. Never for
  * A6 (idle CPU), which must see the app as it ships.
  */
-export function launch(arm, { keepRendering = false, args = [] } = {}) {
+export function launch(arm, { keepRendering = false, args = [], env = {} } = {}) {
 	mkdirSync(ud(arm), { recursive: true });
 	mkdirSync(ext(arm), { recursive: true });
 	if (arm === 'after' || arm === 'nogate') {
@@ -143,7 +143,7 @@ export function launch(arm, { keepRendering = false, args = [] } = {}) {
 	// A built app (the shared minified "before" build) runs its own binary, always with --use-mock-keychain (its notes).
 	const app = ARMS[arm].endsWith('.app');
 	const child = spawn(app ? `${ARMS[arm]}/Contents/MacOS/Electron` : './scripts/code.sh', [...(app ? ['--use-mock-keychain'] : []), '--user-data-dir', ud(arm), '--extensions-dir', ext(arm), `--remote-debugging-port=${PORT}`, ...inspect, ...keep, ...args, FOLDER],
-		{ cwd: app ? HOME : ARMS[arm], env: cleanEnv(), detached: true, stdio: ['ignore', log, log] });
+		{ cwd: app ? HOME : ARMS[arm], env: { ...cleanEnv(), ...env }, detached: true, stdio: ['ignore', log, log] });
 	child.unref();
 	return child.pid;
 }
