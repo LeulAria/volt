@@ -11,6 +11,15 @@ import { join } from 'path';
 import { cdp, DATA, load1, mainPid, NATIVE, profileProcesses, role, sleep, ud, waitQuiet } from './lib.mjs';
 
 const [arm = 'after', variant = 'front', settleArg = '60', windowArg = '60'] = process.argv.slice(2);
+const WINLIST = process.env.SMOOTH_WINLIST ?? `${process.env.HOME}/.volt-r6/idle/explore/winlist/winlist`;
+/** True when `pid` has an on-screen layer-0 window (winlist.swift); undefined when the lister is missing. */
+function winOnScreen(p) {
+	try {
+		return execFileSync(WINLIST, { encoding: 'utf8' }).split('\n').some(l => l.startsWith(`${p} `));
+	} catch {
+		return undefined;
+	}
+}
 mkdirSync(join(DATA, 'raw'), { recursive: true });
 const pid = mainPid(arm);
 if (!pid) {
@@ -48,10 +57,26 @@ if (variant === 'covered') {
 		cover = Promise.resolve({ error: coverTries.at(-1) });
 	}
 }
+// Whether the window is on the screen: while the user works in a full-screen app the test window opens on the desktop
+// Space and `cover` cannot find it (round 6, 09:00). Then the covered variant minimizes the window instead (macOS
+// reports it occluded either way); such rows carry coverFallback and are summarized apart from cover-panel rows.
+const onScreen = winOnScreen(pid);
+let coverFallback;
+if (variant === 'covered' && coverTries.length >= 3 && !onScreen) {
+	const { windowId } = (await c.send('Browser.getWindowForTarget', {})).result ?? {};
+	if (windowId !== undefined) {
+		await c.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
+		await sleep(2000);
+		coverFallback = { kind: 'minimized', windowId };
+	}
+}
 const stateDuring = await c.evaluate('JSON.stringify({vis: document.visibilityState, focus: document.hasFocus()})');
 const cmds = new Map(execSync('ps -axo pid=,command=', { maxBuffer: 64 << 20 }).toString().split('\n').filter(Boolean).map(l => { const m = /^\s*(\d+)\s+(.*)$/.exec(l); return [Number(m[1]), m[2]]; }));
 const summary = JSON.parse(execFileSync(NATIVE, ['sample', '--rules', rules, '--hz', '4', '--duration-s', windowArg, '--csv', csv], { encoding: 'utf8' }));
 const coverResult = cover ? await cover : undefined;
+if (coverFallback) {
+	await c.send('Browser.setWindowBounds', { windowId: coverFallback.windowId, bounds: { windowState: 'normal' } });
+}
 await c.send('Emulation.setFocusEmulationEnabled', { enabled: false });
 c.close();
 const loadEnd = load1();
@@ -88,10 +113,10 @@ for (const e of perPid.values()) {
 for (const b of Object.values(byRole)) { b.cpuPct = Math.round(b.cpuPct * 1000) / 1000; b.wakeups = Math.round(b.wakeups * 10) / 10; }
 const sum = (g, k) => Math.round(procs.filter(p => p.group === g).reduce((s, p) => s + p[k], 0) * 1000) / 1000;
 const row = {
-	arm, variant, emulateFocus, at: new Date().toISOString(), loadStart, loadEnd, settleS: Number(settleArg), windowS: Number(windowArg), stateDuring, cover: coverResult, coverTries,
+	arm, variant, emulateFocus, at: new Date().toISOString(), loadStart, loadEnd, settleS: Number(settleArg), windowS: Number(windowArg), stateDuring, cover: coverResult, coverTries, onScreen, coverFallback,
 	cpuAppPct: sum('app', 'cpuPct'), wakeupsApp: sum('app', 'wakeups'), cpuAgentsPct: sum('agents', 'cpuPct'),
 	appMedianMiB: Math.round(summary.app_median_b / 1048576), processes: procs.length, byRole, procs, csv: csv.replace(/^.*\/data\//, 'data/'),
 };
 appendFileSync(join(DATA, 'a6.jsonl'), JSON.stringify(row) + '\n');
-console.log(JSON.stringify({ arm, variant, cpuApp: row.cpuAppPct, wakeups: row.wakeupsApp, cpuAgents: row.cpuAgentsPct, loadStart, loadEnd, stateDuring }));
+console.log(JSON.stringify({ arm, variant, cpuApp: row.cpuAppPct, wakeups: row.wakeupsApp, cpuAgents: row.cpuAgentsPct, loadStart, loadEnd, stateDuring, onScreen, coverFallback: coverFallback?.kind }));
 console.log(Object.entries(byRole).sort((a, b) => b[1].cpuPct - a[1].cpuPct).map(([k, v]) => `${k.padEnd(40)} n=${v.n} cpu ${v.cpuPct.toFixed(3)}% wakeups ${v.wakeups}/s`).join('\n'));

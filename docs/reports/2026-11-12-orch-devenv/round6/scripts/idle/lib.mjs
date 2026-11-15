@@ -11,7 +11,8 @@ import { fileURLToPath } from 'url';
 const here = dirname(fileURLToPath(import.meta.url));
 export const HOME = process.env.HOME;
 function readyPath(file, fallback) {
-	try { return readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).at(-1) || fallback; } catch { return fallback; }
+	// READY holds the app path, then maybe a `commit <sha>` line.
+	try { return readFileSync(file, 'utf8').trim().split('\n').find(l => l.trim().endsWith('.app'))?.trim() || fallback; } catch { return fallback; }
 }
 export const ARMS = {
 	before: '/Users/leularia/Desktop/VOLT/volt-e5-base',

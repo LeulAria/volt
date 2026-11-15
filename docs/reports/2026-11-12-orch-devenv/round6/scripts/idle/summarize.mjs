@@ -27,16 +27,24 @@ for (const arm of ['minbase', 'minafter', 'before', 'after']) {
 }
 
 console.log('## A6');
-for (const variant of ['front', 'covered']) {
+// `covered` rows count only when ADEMark's cover panel stayed up for the whole sample; `covered (minimized)` rows are
+// the fallback a6.mjs takes when the window was on another Space (no cover possible). Each front row says whether the
+// window was on the screen (`onScreen`, from 09:00 on).
+const VARIANTS = {
+	front: x => x.variant === 'front',
+	covered: x => x.variant === 'covered' && x.cover && !x.cover.error,
+	'covered (minimized)': x => x.variant === 'covered' && x.coverFallback?.kind === 'minimized',
+};
+for (const [variant, keep] of Object.entries(VARIANTS)) {
 	for (const arm of ['minbase', 'minafter', 'before', 'after']) {
-		// A covered row counts only when ADEMark's cover panel stayed up for the whole sample.
-		const r = rows('a6.jsonl').filter(x => x.arm === arm && x.variant === variant && (variant !== 'covered' || (x.cover && !x.cover.error)));
+		const r = rows('a6.jsonl').filter(x => x.arm === arm && keep(x));
 		if (!r.length) {
 			continue;
 		}
 		const loads = r.map(x => x.loadStart);
 		console.log(line(`${variant} ${arm} cpu % (app)`, r.map(x => x.cpuAppPct), loads));
 		console.log(line(`${variant} ${arm} wakeups/s (app)`, r.map(x => x.wakeupsApp), loads));
+		console.log(`   window on screen: ${r.filter(x => x.onScreen === true).length}, off screen: ${r.filter(x => x.onScreen === false).length}, not recorded: ${r.filter(x => x.onScreen === undefined).length}`);
 		for (const role of ['gpu', 'renderer', 'main', 'agent server', 'node utility', 'extension host', 'code index', 'sandbox helper', 'plugin host', 'log stream', 'claude CLI', 'ACP adapter']) {
 			console.log('   ' + line(`${role} cpu %`, r.map(x => x.byRole?.[role]?.cpuPct ?? 0), loads) + ' | ' + line('wakeups', r.map(x => x.byRole?.[role]?.wakeups ?? 0), loads).replace(/^.*?: /, ''));
 		}
