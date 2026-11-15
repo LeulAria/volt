@@ -1,0 +1,211 @@
+span 60394 ms; (idle) 26405 ms, (program) 18406 ms, GC 945 ms
+
+== total (inclusive) ms
+ 14277.9 (root) :0
+ 13146.6 (anon) vs/workbench/workbench.desktop.main.js:33
+ 13041.1 n vs/workbench/workbench.desktop.main.js:33
+  5064.6 Rh vs/workbench/workbench.desktop.main.js:7080
+  5064.2 (anon) vs/workbench/workbench.desktop.main.js:7080
+  4893.2 get clientHeight :0
+  4005.6 (anon) vs/workbench/workbench.desktop.main.js:7092
+  3793.1 eh vs/workbench/workbench.desktop.main.js:7077
+  3686.3 Wh vs/workbench/workbench.desktop.main.js:7080
+  3654.1 Vh vs/workbench/workbench.desktop.main.js:7080
+  2243.5 render vs/workbench/workbench.desktop.main.js:6889
+  2139.5 fire vs/workbench/workbench.desktop.main.js:29
+  2119.8 C vs/workbench/workbench.desktop.main.js:29
+  2049.0 (anon) vs/workbench/workbench.desktop.main.js:7067
+  1928.0 h vs/workbench/workbench.desktop.main.js:6892
+  1855.1 (anon) vs/workbench/workbench.desktop.main.js:72
+  1793.0 setScrollPositionNow vs/workbench/workbench.desktop.main.js:72
+  1738.3 D vs/workbench/workbench.desktop.main.js:29
+  1423.1 set scrollTop :0
+  1381.5 n vs/workbench/workbench.desktop.main.js:72
+  1366.7 get scrollTop :0
+  1364.6 adoptNativeScroll vs/workbench/workbench.desktop.main.js:7067
+  1162.9 P2i vs/workbench/workbench.desktop.main.js:6868
+   948.1 update vs/workbench/workbench.desktop.main.js:6883
+   711.0 T6n vs/workbench/workbench.desktop.main.js:6883
+   708.1 update vs/workbench/workbench.desktop.main.js:6763
+   688.6 J0e vs/workbench/workbench.desktop.main.js:6883
+   662.1 r vs/workbench/workbench.desktop.main.js:6765
+   618.4 render vs/workbench/workbench.desktop.main.js:423
+   593.6 kN vs/workbench/workbench.desktop.main.js:395
+   586.7 tokenizeEncoded vs/workbench/workbench.desktop.main.js:5387
+   579.9 x vs/workbench/workbench.desktop.main.js:6868
+   565.1 tokenizeLine2 vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-textmate/release/main.js:1
+   552.3 _tokenize vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-textmate/release/main.js:1
+   551.6 syncStuckTurns vs/workbench/workbench.desktop.main.js:7067
+   546.3 c vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-textmate/release/main.js:1
+   535.1 y vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-textmate/release/main.js:1
+   506.3 t_ vs/workbench/workbench.desktop.main.js:395
+   489.4 aGr vs/workbench/workbench.desktop.main.js:6870
+   484.8 UKe vs/workbench/workbench.desktop.main.js:982
+
+== self ms
+  4893.2 get clientHeight :0
+  1423.1 set scrollTop :0
+  1366.7 get scrollTop :0
+   409.2 j3o vs/workbench/workbench.desktop.main.js:1015
+   253.3 I.t.onmessage vs/workbench/workbench.desktop.main.js:1076
+   244.5 wasm-function[198] vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-oniguruma/release/onig.wasm:1
+   232.3 render vs/workbench/workbench.desktop.main.js:6889
+   223.0 setTimeout :0
+   182.7 getBoundingClientRect :0
+   149.7 syncStuckTurns vs/workbench/workbench.desktop.main.js:7067
+   142.8 parseFromString :0
+   136.8 PKr vs/workbench/workbench.desktop.main.js:6889
+   121.5 remove :0
+   103.7 n vs/workbench/workbench.desktop.main.js:33
+    97.3 W6o vs/workbench/workbench.desktop.main.js:962
+    97.1 P2i vs/workbench/workbench.desktop.main.js:6868
+    95.7 x vs/workbench/workbench.desktop.main.js:6868
+    85.7 h vs/workbench/workbench.desktop.main.js:6892
+    75.8 VM vs/workbench/workbench.desktop.main.js:6889
+    75.5 C vs/workbench/workbench.desktop.main.js:29
+    69.9 wasm-function[104] vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-oniguruma/release/onig.wasm:1
+    68.7 update vs/workbench/workbench.desktop.main.js:6883
+    61.6 IAt vs/workbench/workbench.desktop.main.js:987
+    59.6 rc vs/workbench/workbench.desktop.main.js:6854
+    57.4 contains :0
+    56.3 add :0
+    55.4 T7s vs/workbench/workbench.desktop.main.js:966
+    55.0 applyParts vs/workbench/workbench.desktop.main.js:7066
+    50.1 UKe vs/workbench/workbench.desktop.main.js:982
+    49.5 getPropertyValue :0
+    49.5 Rh vs/workbench/workbench.desktop.main.js:7080
+    48.4 Qk vs/workbench/workbench.desktop.main.js:7092
+    48.0 Vf vs/workbench/workbench.desktop.main.js:7070
+    46.5 wasm-function[107] vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-oniguruma/release/onig.wasm:1
+    43.4 append :0
+    42.6 setProperty :0
+    42.1 P8o vs/workbench/workbench.desktop.main.js:983
+    41.2 match vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-textmate/release/main.js:1
+    39.5 a vs/workbench/workbench.desktop.main.js:984
+    38.4 replaceWith :0
+60 keys over 17695 ms
+span 18675 ms; (idle) 8014 ms, (program) 5306 ms, GC 123 ms
+
+== total (inclusive) ms
+  4188.4 (root) :0
+  3514.3 (anon) vs/workbench/workbench.desktop.main.js:33
+  3510.4 n vs/workbench/workbench.desktop.main.js:33
+  1680.2 execute vs/workbench/workbench.desktop.main.js:33
+  1246.0 Rh vs/workbench/workbench.desktop.main.js:7080
+  1245.1 (anon) vs/workbench/workbench.desktop.main.js:7080
+  1228.3 get clientHeight :0
+   896.0 fire vs/workbench/workbench.desktop.main.js:29
+   893.0 C vs/workbench/workbench.desktop.main.js:29
+   811.3 (anon) vs/workbench/workbench.desktop.main.js:7092
+   783.1 eh vs/workbench/workbench.desktop.main.js:7077
+   779.0 Wh vs/workbench/workbench.desktop.main.js:7080
+   767.5 Vh vs/workbench/workbench.desktop.main.js:7080
+   756.4 D vs/workbench/workbench.desktop.main.js:29
+   694.0 (anon) vs/workbench/workbench.desktop.main.js:7067
+   563.3 h vs/workbench/workbench.desktop.main.js:6892
+   550.0 setScrollPositionNow vs/workbench/workbench.desktop.main.js:72
+   541.4 n vs/workbench/workbench.desktop.main.js:72
+   538.1 (anon) vs/workbench/workbench.desktop.main.js:72
+   504.8 adoptNativeScroll vs/workbench/workbench.desktop.main.js:7067
+   503.9 get scrollTop :0
+   439.6 set scrollTop :0
+   414.1 render vs/workbench/workbench.desktop.main.js:6889
+   304.3 P2i vs/workbench/workbench.desktop.main.js:6868
+   250.9 s vs/workbench/workbench.desktop.main.js:72
+   202.4 (anon) vs/workbench/workbench.desktop.main.js:246
+   202.4 gz vs/workbench/workbench.desktop.main.js:246
+   191.2 e vs/workbench/workbench.desktop.main.js:246
+   190.9 g vs/workbench/workbench.desktop.main.js:246
+   182.8 update vs/workbench/workbench.desktop.main.js:6883
+   181.5 (anon) vs/workbench/workbench.desktop.main.js:74
+   171.3 (anon) vs/workbench/workbench.desktop.main.js:222
+   171.1 batchChanges vs/workbench/workbench.desktop.main.js:287
+   171.1 X vs/workbench/workbench.desktop.main.js:285
+   169.0 Yb vs/workbench/workbench.desktop.main.js:287
+   169.0 type vs/workbench/workbench.desktop.main.js:287
+   169.0 type vs/workbench/workbench.desktop.main.js:75
+   168.5 x vs/workbench/workbench.desktop.main.js:6868
+   166.7 W vs/workbench/workbench.desktop.main.js:285
+   166.7 type vs/workbench/workbench.desktop.main.js:285
+   157.8 syncStuckTurns vs/workbench/workbench.desktop.main.js:7067
+   142.8 UKe vs/workbench/workbench.desktop.main.js:982
+   140.0 (anon) vs/workbench/workbench.desktop.main.js:285
+   137.4 getClientRects :0
+   137.1 aGr vs/workbench/workbench.desktop.main.js:6870
+   122.5 renderText vs/workbench/workbench.desktop.main.js:246
+   119.5 (anon) vs/workbench/workbench.desktop.main.js:455
+   118.8 renderText vs/workbench/workbench.desktop.main.js:75
+   108.8 (anon) vs/workbench/workbench.desktop.main.js:284
+   106.0 T6n vs/workbench/workbench.desktop.main.js:6883
+   102.3 update vs/workbench/workbench.desktop.main.js:6763
+   102.2 J0e vs/workbench/workbench.desktop.main.js:6883
+   102.0 (anon) vs/workbench/workbench.desktop.main.js:7070
+    99.8 j3o vs/workbench/workbench.desktop.main.js:1015
+    98.9 r vs/workbench/workbench.desktop.main.js:6765
+    95.5 O vs/workbench/workbench.desktop.main.js:75
+    95.4 render vs/workbench/workbench.desktop.main.js:423
+    94.5 I.t.onmessage vs/workbench/workbench.desktop.main.js:1076
+    91.3 d vs/workbench/workbench.desktop.main.js:70
+    91.3 readHorizontalRanges vs/workbench/workbench.desktop.main.js:70
+
+== self ms
+  1228.3 get clientHeight :0
+   503.9 get scrollTop :0
+   439.6 set scrollTop :0
+   137.4 getClientRects :0
+    95.3 j3o vs/workbench/workbench.desktop.main.js:1015
+    65.3 getBoundingClientRect :0
+    64.0 getEntriesByName :0
+    52.6 render vs/workbench/workbench.desktop.main.js:6889
+    49.9 I.t.onmessage vs/workbench/workbench.desktop.main.js:1076
+    47.7 syncStuckTurns vs/workbench/workbench.desktop.main.js:7067
+    45.3 set scrollLeft :0
+    38.8 IAt vs/workbench/workbench.desktop.main.js:987
+    37.2 call vs/workbench/workbench.desktop.main.js:4748
+    36.5 remove :0
+    35.9 setTimeout :0
+    31.0 wasm-function[198] vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-oniguruma/release/onig.wasm:1
+    26.5 update vs/workbench/workbench.desktop.main.js:6883
+    25.6 VM vs/workbench/workbench.desktop.main.js:6889
+    23.2 n vs/workbench/workbench.desktop.main.js:33
+    22.8 x vs/workbench/workbench.desktop.main.js:6868
+    20.6 r vs/workbench/workbench.desktop.main.js:964
+    18.9 $rt vs/workbench/workbench.desktop.main.js:7069
+    18.8 wasm-function[104] vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-oniguruma/release/onig.wasm:1
+    18.4 applyParts vs/workbench/workbench.desktop.main.js:7066
+    17.6 W6o vs/workbench/workbench.desktop.main.js:962
+    17.3 N8o vs/workbench/workbench.desktop.main.js:983
+    16.9 oie vs/workbench/workbench.desktop.main.js:1019
+    16.3 add :0
+    15.4 createElement :0
+    15.4 clearTimeout :0
+    14.7 contains :0
+    14.5 wasm-function[107] vscode-file://vscode-app/Users/leularia/.volt-r7/min/base/VOLT.app/Contents/Resources/app/node_modules/vscode-oniguruma/release/onig.wasm:1
+    14.5 Vf vs/workbench/workbench.desktop.main.js:7070
+    14.0 r vs/workbench/workbench.desktop.main.js:6892
+    14.0 h vs/workbench/workbench.desktop.main.js:6892
+    13.4 get yl vs/workbench/workbench.desktop.main.js:7094
+    13.3 o9s vs/workbench/workbench.desktop.main.js:987
+    13.2 get clientWidth :0
+    13.1 rc vs/workbench/workbench.desktop.main.js:6854
+    12.3 set innerHTML :0
+    11.7 getValueInRange vs/workbench/workbench.desktop.main.js:256
+    11.5 setProperty :0
+    11.2 S_s vs/workbench/workbench.desktop.main.js:1024
+    11.1 Rh vs/workbench/workbench.desktop.main.js:7080
+    10.9 setScrollPositionNow vs/workbench/workbench.desktop.main.js:72
+    10.9 PKr vs/workbench/workbench.desktop.main.js:6889
+    10.8 uZ vs/workbench/workbench.desktop.main.js:394
+    10.7 parseFromString :0
+    10.2 wg vs/workbench/workbench.desktop.main.js:7071
+     9.9 get isDisposed vs/workbench/workbench.desktop.main.js:6889
+     9.8 splitText :0
+     9.6 m vs/workbench/workbench.desktop.main.js:31
+     9.6 A8o vs/workbench/workbench.desktop.main.js:982
+     9.5 yd vs/workbench/workbench.desktop.main.js:394
+     9.3 UKe vs/workbench/workbench.desktop.main.js:982
+     9.0 setAttribute :0
+     9.0 P2i vs/workbench/workbench.desktop.main.js:6868
+     8.8 closest :0
+     8.7 C vs/workbench/workbench.desktop.main.js:6868
+     8.0 toggle :0

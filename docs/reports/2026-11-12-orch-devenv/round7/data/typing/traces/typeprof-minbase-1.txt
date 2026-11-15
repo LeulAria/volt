@@ -1,0 +1,160 @@
+typing window 26214 ms, 60 keys; renderer main thread pid 20522 tid 5897239; 487196 trace events
+
+== main thread timeline events (count, total ms, per s, max ms)
+  9177   21477.8   350.1/s  5098.9 RunTask
+   899   12120.6    34.3/s   184.7 ProxyMain::BeginMainFrame
+  8626   11911.3   329.1/s  5098.4 FunctionCall
+  4465    6515.1   170.3/s   163.7 AsyncTask Run
+   900    6054.0    34.3/s   138.8 WebFrameWidgetImpl::BeginMainFrame
+   900    6045.4    34.3/s   138.8 Blink.Animate.UpdateTime
+   900    6036.0    34.3/s   138.8 PageAnimator::serviceScriptedAnimations
+   411    5678.1    15.7/s  5096.2 V8.StackGuard
+   534    5675.5    20.4/s  5096.2 V8.HandleInterrupts
+   897    5506.2    34.2/s   133.1 FrameRequestCallbackCollection::ExecuteFrameCallbacks
+   902    5501.8    34.4/s   133.1 FireAnimationFrame
+     2    5096.2     0.1/s  5096.2 V8.InvokeApiInterruptCallbacks
+   900    4926.0    34.3/s   123.3 WebFrameWidgetImpl::UpdateLifecycle
+ 12361    4413.3   471.5/s   120.4 LocalFrameView::UpdateStyleAndLayout
+ 16441    3080.4   627.2/s   108.7 Document::UpdateStyleAndLayout
+ 15245    2944.7   581.6/s   108.7 Blink.ForcedStyleAndLayout.UpdateTime
+  2045    2766.2    78.0/s   101.9 Blink.Style.UpdateTime
+  2045    2759.6    78.0/s   101.9 UpdateLayoutTree
+   900    2631.4    34.3/s   117.4 LocalFrameView::RunPaintLifecyclePhase
+  3172    2573.0   121.0/s    98.6 EventDispatch
+  2045    2471.4    78.0/s   101.9 Document::updateStyle
+  2045    2402.9    78.0/s   101.8 Document::recalcStyle
+   880    1618.4    33.6/s  1022.3 RunMicrotasks
+   995    1554.2    38.0/s   120.5 LocalFrameView::RunStyleAndLayoutLifecyclePhases
+   900    1372.8    34.3/s   101.6 LocalFrameView::pushPaintArtifactToCompositor
+
+== layout size: 1198 passes, dirty objects p50 34 p95 63 max 674, total objects p50 1571, full (not partial) 141, ms p50 0.25 p95 2.45
+== style size: 2045 recalcs, elements p50 9 p95 33 max 972, ms p50 0.35 p95 4.43
+== paint+prepaint: 3414, ms total 1471
+
+== forced Layout: 608 of 1198, 676.1 ms; top stacks
+  301    475.8 Rh@vs/workbench/workbench.desktop.main.js:7080
+   83     77.5 adoptNativeScroll@vs/workbench/workbench.desktop.main.js:7067
+   67     44.0 d@vs/workbench/workbench.desktop.main.js:70
+    2     29.8 Vl@vs/workbench/workbench.desktop.main.js:33
+   61     23.4 U@vs/workbench/workbench.desktop.main.js:224
+   72     19.8 O4e@vs/workbench/workbench.desktop.main.js:246
+    9      2.5 setValue@vs/workbench/workbench.desktop.main.js:75
+    6      1.3 (anon)@vs/workbench/workbench.desktop.main.js:72
+    1      1.1 o@vs/workbench/workbench.desktop.main.js:7093
+    2      0.4 (anon)@vs/workbench/workbench.desktop.main.js:7070
+    2      0.2 Hf@vs/workbench/workbench.desktop.main.js:7070
+    1      0.2 nb@vs/workbench/workbench.desktop.main.js:6783
+
+== forced UpdateLayoutTree: 1093 of 2045, 1646.1 ms; top stacks
+  302   1033.8 Rh@vs/workbench/workbench.desktop.main.js:7080
+  492    271.2 adoptNativeScroll@vs/workbench/workbench.desktop.main.js:7067
+   70    151.9 (anon)@vs/workbench/workbench.desktop.main.js:72
+   67     54.8 d@vs/workbench/workbench.desktop.main.js:70
+    2     53.0 (anon)@vs/workbench/workbench.desktop.main.js:6892
+   72     41.7 O4e@vs/workbench/workbench.desktop.main.js:246
+   62     29.5 U@vs/workbench/workbench.desktop.main.js:224
+    1      2.7 o@vs/workbench/workbench.desktop.main.js:7093
+    5      2.1 setAttribute@vs/workbench/workbench.desktop.main.js:67
+    9      1.6 setValue@vs/workbench/workbench.desktop.main.js:75
+    2      1.3 Hf@vs/workbench/workbench.desktop.main.js:7070
+    1      0.6 r@vs/workbench/workbench.desktop.main.js:7093
+
+== tasks: 9177, over 16 ms: 222, over 50 ms: 68, longest 5098.9, 1022.7, 188.5, 184.7, 164.2 ms
+== inside tasks over 16 ms (count, ms)
+    6   5162.7 FunctionCall I.t.onmessage@vs/workbench/workbench.desktop.main.js:1076
+  189   3770.1 FireAnimationFrame @:
+  232   3605.6 FunctionCall @vs/workbench/workbench.desktop.main.js:33
+  479   1847.4 UpdateLayoutTree
+  202   1439.2 RunMicrotasks
+  367    937.4 Layout
+  555    720.6 Paint
+   14    490.1 EventDispatch keypress
+   14    482.0 EventDispatch textInput
+   46    345.1 FunctionCall s@vs/workbench/workbench.desktop.main.js:72
+   14    340.5 EventDispatch input
+    5    298.9 TimerFire @:
+  189    223.5 EventDispatch scroll
+    6    184.6 FunctionCall @vs/workbench/workbench.desktop.main.js:30
+  165    108.5 FunctionCall @vs/workbench/workbench.desktop.main.js:6854
+
+== callbacks (count, inclusive ms)
+  902   5501.8 FireAnimationFrame @:
+ 2530   5378.0 FunctionCall I.t.onmessage@vs/workbench/workbench.desktop.main.js:1076
+ 1137   5274.4 FunctionCall @vs/workbench/workbench.desktop.main.js:33
+  736    549.6 TimerFire @:
+  240    547.1 FunctionCall s@vs/workbench/workbench.desktop.main.js:72
+  225    247.9 FunctionCall @vs/workbench/workbench.desktop.main.js:30
+  537    130.9 FunctionCall @vs/workbench/workbench.desktop.main.js:6854
+   62     57.6 FunctionCall @vs/workbench/workbench.desktop.main.js:6892
+ 1179     51.7 FunctionCall @vs/workbench/workbench.desktop.main.js:7067
+   21     42.1 FunctionCall @vs/workbench/workbench.desktop.main.js:7081
+ 1051     32.7 FunctionCall @vs/workbench/workbench.desktop.main.js:7066
+  280     24.7 FunctionCall @vs/workbench/workbench.desktop.main.js:7070
+  120     14.2 FunctionCall @vs/workbench/workbench.desktop.main.js:5348
+   55     12.4 FunctionCall @vs/workbench/workbench.desktop.main.js:9972
+   45     12.3 FunctionCall @:
+   60     11.6 FunctionCall Aie.D.$.capture@vs/workbench/workbench.desktop.main.js:1041
+  129     11.1 FunctionCall g@vs/workbench/workbench.desktop.main.js:30
+  121     10.6 FunctionCall r@vs/workbench/workbench.desktop.main.js:6892
+  123      9.7 FunctionCall ge@vs/workbench/workbench.desktop.main.js:27
+    1      6.3 FunctionCall @vs/workbench/workbench.desktop.main.js:420
+
+== key to presented frame: n 60, p50 63.400000000000006, p95 208.6, max 4987.8
+main thread busy 21477.8 ms of 26214 ms (82 %)
+
+== key latency stages (60 keys): name, keys with it, p50, p95, max ms
+  SendBeginMainFrameToCommit                                   9     6.6   130.4   130.4
+  RendererCompositorToMain                                    60     4.2    99.0  4538.8
+  RendererMainFinishedToCommit                                51     6.7    76.8   184.0
+  RendererMainProcessing                                      60     7.2    74.1    95.0
+  SubmitCompositorFrameToPresentationCompositorFrame          60    18.9    48.2   316.5
+  StartDrawToSwapStart                                        60     2.8    33.7   291.6
+  EndActivateToSubmitCompositorFrame                          60     1.2    26.5    86.0
+  SwapEndToPresentationCompositorFrame                        58    14.3    17.5    18.0
+  RendererMainFinishedToBeginImplFrame                         9     3.5    17.3    17.3
+  LatchToPresentation                                          2    10.9    14.8    14.8
+  BrowserMainToRendererCompositor                             60     0.9    11.9    18.4
+  EndCommitToActivation                                       60     1.2     9.0    27.5
+  ReceiveCompositorFrameToStartDraw                           60     0.1     5.0    14.1
+  SubmitToReceiveCompositorFrame                              60     0.5     4.5    16.3
+  LatchToSwapEnd                                              58     0.2     0.8     2.8
+  BufferReadyToLatch                                          60     0.1     0.6     8.2
+  GenerationToBrowserMain                                     60     0.1     0.3     0.6
+  Activation                                                  60     0.1     0.2     0.2
+== slowest keys: total ms, stages over 4 ms, main-thread tasks over 4 ms inside the key span
+  4987.8 ms: BrowserMainToRendererCompositor 11.9, RendererCompositorToMain 4538.8, RendererMainProcessing 95.0, RendererMainFinishedToCommit 19.3, ReceiveCompositorFrameToStartDraw 5.2, StartDrawToSwapStart 291.6, SwapEndToPresentationCompositorFrame 16.5, SubmitCompositorFrameToPresentationCompositorFrame 316.5
+      task 5098.9 at +-637: FunctionCall I.t.onmessage@vs/workbench/workbench.desktop.main.js:1076 5098.4 | V8.HandleInterrupts 5096.2 | V8.GC_TIME_TO_SAFEPOINT 0.0
+      task 188.5 at +4461: EventDispatch keypress 93.5 | EventDispatch textInput 93.4 | UpdateLayoutTree 89.4
+      task 18.6 at +4650: ProxyMain::BeginMainFrame 17.2 | FireAnimationFrame 5.7 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 5.7
+      task 54.1 at +4675: ProxyMain::BeginMainFrame 54.0 | FireAnimationFrame 30.2 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 30.1
+      task 21.4 at +4729: FunctionCall I.t.onmessage@vs/workbench/workbench.desktop.main.js:1076 21.3
+  1026.9 ms: RendererCompositorToMain 986.3, RendererMainProcessing 7.9, RendererMainFinishedToCommit 5.7, StartDrawToSwapStart 13.8, SwapEndToPresentationCompositorFrame 9.8, SubmitCompositorFrameToPresentationCompositorFrame 24.3
+      task 1022.7 at +-58: V8.HandleInterrupts 114.5 | MajorGC 114.5 | V8.GC_MARK_COMPACTOR 114.5
+      task 30.0 at +965: UpdateLayoutTree 13.9 | Layout 8.0 | EventDispatch keypress 7.5
+      task 6.0 at +995: ProxyMain::BeginMainFrame 5.9 | FireAnimationFrame 2.8 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 2.7
+      task 5.5 at +1006: TimerFire 5.5 | FunctionCall@vs/workbench/workbench.desktop.main.js:30 5.4 | FunctionCall@vs/workbench/workbench.desktop.main.js:6854 0.0
+      task 5.6 at +1023: ProxyMain::BeginMainFrame 5.6 | FireAnimationFrame 4.4 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 4.4
+  341.7 ms: BrowserMainToRendererCompositor 4.6, RendererCompositorToMain 58.5, RendererMainProcessing 74.1, RendererMainFinishedToCommit 184.0, SwapEndToPresentationCompositorFrame 15.7, SubmitCompositorFrameToPresentationCompositorFrame 17.5
+      task 74.6 at +-11: ProxyMain::BeginMainFrame 74.5 | FireAnimationFrame 46.7 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 46.2
+      task 74.2 at +63: EventDispatch keypress 73.4 | EventDispatch textInput 73.3 | EventDispatch input 62.4
+      task 184.7 at +137: ProxyMain::BeginMainFrame 184.7 | FireAnimationFrame 83.0 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 82.9
+      task 11.9 at +322: EventDispatch keyup 11.8 | FunctionCall s@vs/workbench/workbench.desktop.main.js:72 11.6 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 0.1
+      task 6.4 at +334: ProxyMain::BeginMainFrame 6.3 | Layout 4.3 | FireAnimationFrame 0.4
+  208.6 ms: RendererCompositorToMain 99.0, RendererMainProcessing 10.7, RendererMainFinishedToCommit 76.8, SwapEndToPresentationCompositorFrame 15.5, SubmitCompositorFrameToPresentationCompositorFrame 19.9
+      task 124.8 at +-24: ProxyMain::BeginMainFrame 124.7 | Paint 58.9 | FireAnimationFrame 15.0
+      task 11.0 at +100: EventDispatch keypress 7.8 | EventDispatch textInput 7.1 | EventDispatch input 6.1
+      task 77.2 at +111: ProxyMain::BeginMainFrame 77.2 | FireAnimationFrame 31.4 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 31.3
+      task 4.2 at +196: TimerFire 4.2 | FunctionCall@vs/workbench/workbench.desktop.main.js:30 4.1 | V8.HandleInterrupts 0.1
+      task 6.8 at +207: ProxyMain::BeginMainFrame 6.8 | FireAnimationFrame 4.7 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 4.6
+  206.1 ms: BrowserMainToRendererCompositor 6.6, RendererMainProcessing 6.8, RendererMainFinishedToBeginImplFrame 13.4, SendBeginMainFrameToCommit 130.4, EndActivateToSubmitCompositorFrame 4.0, StartDrawToSwapStart 26.0, SwapEndToPresentationCompositorFrame 15.0, SubmitCompositorFrameToPresentationCompositorFrame 42.2
+      task 7.9 at +-8: ProxyMain::BeginMainFrame 7.9 | FireAnimationFrame 6.6 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 6.5
+      task 6.9 at +8: EventDispatch keypress 6.2 | EventDispatch textInput 6.1 | EventDispatch input 3.5
+      task 28.4 at +131: ProxyMain::BeginMainFrame 28.4 | FireAnimationFrame 22.1 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 22.0
+      task 4.6 at +160: ProxyMain::BeginMainFrame 4.6 | FireAnimationFrame 1.4 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 1.4
+      task 8.0 at +166: ProxyMain::BeginMainFrame 8.0 | FireAnimationFrame 4.2 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 4.1
+  178.7 ms: RendererCompositorToMain 130.5, RendererMainProcessing 14.3, RendererMainFinishedToCommit 10.3, SwapEndToPresentationCompositorFrame 14.9, SubmitCompositorFrameToPresentationCompositorFrame 17.8
+      task 136.5 at +-6: ProxyMain::BeginMainFrame 136.4 | FireAnimationFrame 132.7 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 132.6
+      task 14.6 at +131: EventDispatch keypress 11.5 | EventDispatch textInput 11.4 | EventDispatch input 6.8
+      task 11.3 at +145: ProxyMain::BeginMainFrame 11.3 | FireAnimationFrame 3.9 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 3.8
+      task 4.4 at +158: ProxyMain::BeginMainFrame 4.4 | FireAnimationFrame 3.1 | FunctionCall@vs/workbench/workbench.desktop.main.js:33 3.1
+      task 9.9 at +163: MinorGC 9.8 | V8.GC_SCAVENGER 9.8 | V8.GC_SCAVENGER_SCAVENGE 9.8

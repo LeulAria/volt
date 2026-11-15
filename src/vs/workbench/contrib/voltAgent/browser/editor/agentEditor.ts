@@ -183,7 +183,7 @@ import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentLandingRecents } from '../home/agentLandingRecents.js';
 import { IAgentThreadLifecycleService, needsBringBack } from '../home/agentThreadLifecycle.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
-import { composerDraftShape } from './agentComposerDraft.js';
+import { clipForPrediction, clipPiecesForPrediction, composerDraftShape, lastLines } from './agentComposerDraft.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
@@ -202,6 +202,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { IAgentTurnReveal, onDidRequestAgentTurnReveal, takeAgentTurnReveal } from '../search/agentTurnReveal.js';
 import { AgentThreadView } from './agentThreadView.js';
+import { InputFirstGate } from './agentInputFirst.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip, setIconButtonTooltip } from '../chrome/agentTooltip.js';
 import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
@@ -697,9 +698,12 @@ const DRAFT_USAGE_MS = 150;
 /** How long the composer's ghost text reuses the prompts it read; a send refreshes them at once. */
 const PREDICTION_PROMPTS_TTL_MS = 10_000;
 
-function clipForPrediction(text: string, max: number): string {
-	const flat = text.replace(/\s+/g, ' ').trim();
-	return flat.length <= max ? flat : `${flat.slice(0, max)}...`;
+function* predictionTextPieces(segments: readonly AgentSegment[]): Iterable<string> {
+	for (const segment of segments) {
+		if (segment.kind === 'text') {
+			yield segment.text;
+		}
+	}
 }
 
 /**
@@ -722,7 +726,7 @@ function predictionActivity(segments: readonly AgentSegment[]): string[] {
 		const block = segment.block;
 		if (block.type === 'terminal') {
 			const status = block.exitCode === undefined ? (block.status === 'streaming' ? ' (running)' : '') : ` (exit ${block.exitCode})`;
-			const tail = block.exitCode ? `: ${clipForPrediction(block.output.trimEnd().split('\n').slice(-2).join(' '), 160)}` : '';
+			const tail = block.exitCode ? `: ${clipForPrediction(lastLines(block.output, 2), 160)}` : '';
 			out.push(`$ ${clipForPrediction(block.command, 100)}${status}${tail}`);
 		} else if (block.type === 'tool' && block.status === 'streaming') {
 			out.push(`Running ${clipForPrediction(block.title || block.name, 80)}`);
@@ -955,6 +959,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private eventDisposable: IDisposable | undefined;
 	/** A redraw waiting for the next animation frame. */
 	private renderHandle: IDisposable | undefined;
+	/** A streamed redraw in the frame of a composer key waits one frame (see InputFirstGate). */
+	private readonly inputFirst = this._register(new InputFirstGate((callback, priority) => scheduleAtNextAnimationFrame(getWindow(this.container), callback, priority)));
 	/** The pane width at the last layout; a prompt's clamp is measured once per width. */
 	private layoutWidth = 0;
 	private readonly promptClamps = new WeakMap<IAgentUserMessage, { readonly width: number; readonly text: string; readonly multiline: boolean; readonly clamped: boolean }>();
@@ -6603,7 +6609,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
 		// The pointer reaching the composer comes before the click into it: a short-lived warm starts here.
 		this.editorDisposables.add(addDisposableListener(this.inputBox, 'pointerenter', () => this.prewarmOnIntent()));
-		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
+		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(e => {
+			// A key typed (or a paste): not a send clearing the composer or a draft put back (setValue),
+			// whose frame should show the thread's change with it.
+			if (!e.isFlush) {
+				this.inputFirst.noteKey();
+			}
 			// Typing is the surest sign a message is coming: make sure an agent is (still) warm. Cheap
 			// when one is: the runtime returns at once for a live or pooled agent.
 			if (Date.now() - this.prewarmedAt > PREWARM_ON_TYPE_MS && !this.isStreaming() && this.inputEditor?.getModel()?.getValueLength()) {
@@ -6794,9 +6805,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				}
 				continue;
 			}
-			const text = message.text || message.segments.map(segment => segment.kind === 'text' ? segment.text : '').join('');
-			if (text.trim()) {
-				transcript.push(`Agent: ${clipForPrediction(text, 600)}`);
+			// A streaming reply has no text yet: its segments are read only as far as the cut needs.
+			const text = message.text ? clipForPrediction(message.text, 600) : clipPiecesForPrediction(predictionTextPieces(message.segments), 600);
+			if (text) {
+				transcript.push(`Agent: ${text}`);
 			}
 			for (const path of message.changes ?? []) {
 				names.add(basename(path));
@@ -8894,7 +8906,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (this.renderHandle !== undefined) {
 			return;
 		}
-		this.renderHandle = scheduleAtNextAnimationFrame(getWindow(this.threadInner), () => {
+		const win = getWindow(this.threadInner);
+		const paint = () => {
+			// The frame that draws a key typed in the composer does not also patch the streaming reply:
+			// the reply is drawn one frame later, so the key's echo waits for the composer's work only.
+			if (this.inputFirst.shouldYield() && this.isStreaming()) {
+				this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
+				return;
+			}
 			this.renderHandle = undefined;
 			// Tool arguments streamed since the last frame are parsed once, here.
 			if (this.input instanceof AgentEditorInput) {
@@ -8912,7 +8931,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (syncDock) {
 				this._onDidChangeDock.fire();
 			}
-		});
+		};
+		this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
 	}
 
 	/**

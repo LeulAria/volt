@@ -108,4 +108,20 @@ suite('Fresh streamed text', () => {
 		tracker.apply(reply, [final], false, 400);
 		assert.deepStrictEqual(fresh(final), [{ text: 'Done', delay: '-400ms' }]);
 	});
+	test('text added in place after its chunk joins that chunk\'s span; a later chunk gets its own', () => {
+		const tracker = new FreshTextTracker();
+		const reply = {};
+		const root = render('<p>Hello</p>');
+		const p = root.querySelector('p')!;
+		tracker.apply(reply, [root], true, 1000);
+		// The block grew in place (no re-render): the new text node joins the coalesced chunk's span.
+		p.append(' world');
+		tracker.apply(reply, [root], true, 1050);
+		assert.deepStrictEqual(fresh(root), [{ text: 'Hello world', delay: '0ms' }]);
+		// Past the coalescing window, the next words fade on their own.
+		p.append(' again');
+		tracker.apply(reply, [root], true, 1050 + FRESH_TEXT_COALESCE_MS + 10);
+		assert.deepStrictEqual(fresh(root), [{ text: 'Hello world', delay: '0ms' }, { text: ' again', delay: '0ms' }]);
+		assert.strictEqual(root.textContent, 'Hello world again');
+	});
 });
