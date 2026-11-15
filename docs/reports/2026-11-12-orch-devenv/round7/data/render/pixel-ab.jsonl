@@ -1,0 +1,14 @@
+{"script":"pixcmp.mjs","build":"dev after (ba677355e66)","window":"1500x896","what":"bottom-clear as set (mask off) vs class removed (mask on, as before)","label":"theme1b","theme":"dark","toolbar":"expanded","name":"asis-baroff","bytes":18936000,"diffBytes":25897,"box":{"x0":529,"y0":20,"x1":2969,"y1":549},"maxDelta":[1,1,1,0]}
+{"script":"pixcmp.mjs","label":"theme1","theme":"dark","toolbar":"expanded","name":"asis-baron","bytes":18936000,"diffBytes":25897,"firstDiffPx":{"x":543,"y":20},"note":"scrollbar shown"}
+{"script":"pixcmp.mjs","label":"control","theme":"dark","toolbar":"expanded","name":"asis-baroff","what":"A/A (no toggle)","bytes":18936000,"diffBytes":0}
+{"script":"pixcmp.mjs","label":"control","theme":"dark","toolbar":"expanded","name":"asis-baron","what":"A/A (no toggle)","bytes":18936000,"diffBytes":0}
+{"script":"pixcmp.mjs","label":"ab2","theme":"dark","toolbar":"expanded","name":"asis-baroff","bytes":18936000,"diffBytes":25897,"box":{"x0":529,"y0":20,"x1":2969,"y1":549},"maxDelta":[1,1,1,0]}
+{"script":"pixcmp.mjs","label":"collapsed","theme":"dark","toolbar":"collapsed","name":"asis-baroff","bytes":18936000,"diffBytes":4145,"box":{"x0":726,"y0":20,"x1":2951,"y1":457},"maxDelta":[1,1,1,0],"clearState":{"barMask":true}}
+{"script":"pixcmp.mjs","label":"collapsed","theme":"dark","toolbar":"collapsed","name":"asis-baron","bytes":18936000,"diffBytes":4145,"box":{"x0":726,"y0":20,"x1":2951,"y1":457},"maxDelta":[1,1,1,0],"note":"slider drawn at x 2980-2999, y 1530-1577 (in the fade band): no difference there"}
+{"script":"pixcmp.mjs","label":"light-collapsed","theme":"light","toolbar":"collapsed","name":"asis-baroff","bytes":18936000,"diffBytes":897,"box":{"x0":2922,"y0":95,"x1":2950,"y1":458},"maxDelta":[1,1,1,0]}
+{"script":"pixcmp.mjs","label":"light-collapsed","theme":"light","toolbar":"collapsed","name":"asis-baron","bytes":18936000,"diffBytes":897,"box":{"x0":2922,"y0":95,"x1":2950,"y1":458},"maxDelta":[1,1,1,0]}
+{"script":"pixcmp.mjs","label":"light-expanded","theme":"light","toolbar":"expanded","name":"asis-baroff","bytes":18936000,"diffBytes":12236,"box":{"x0":2514,"y0":24,"x1":2969,"y1":549},"maxDelta":[1,1,1,0]}
+{"script":"pixcmp.mjs","label":"light-expanded","theme":"light","toolbar":"expanded","name":"asis-baron","bytes":18936000,"diffBytes":12236,"box":{"x0":2514,"y0":24,"x1":2969,"y1":549},"maxDelta":[1,1,1,0]}
+{"script":"pixab.mjs","label":"stuck-orig-orig","what":"stuck-turn reply mask, A/A","bytes":18936000,"diffBytes":0}
+{"script":"pixab.mjs","label":"stuck-orig-two","what":"stuck-turn reply mask as shipped vs a two-layer mask (24 px ramp + solid); not adopted","bytes":18936000,"diffBytes":29277,"box":{"x0":557,"y0":123,"x1":1956,"y1":138},"maxDelta":[1,1,1,0]}
+{"script":"vibab.mjs","what":"macOS window capture (vibrancy on)","result":"screencapture: could not create image from window (no Screen Recording permission for the agent's shell); not run"}
