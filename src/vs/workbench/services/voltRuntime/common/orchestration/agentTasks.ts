@@ -242,7 +242,10 @@ function delegateTaskTool(): IAgentTaskToolInfo {
 		alwaysLoad: 'top',
 		description: [
 			'Run work on a Volt subagent (its own chat; the report comes back to you): parallel parts, a second opinion, self-contained work; not quick lookups.',
-			'Brief: the files and facts you found, exactly what to do.',
+			// The capsule (context brief, the default) carries the user's request in full up to 6,000 characters
+			// (taskContext.ts): a lead that copied each C1 item's spec into its brief wrote 2.7-4.5K characters per
+			// call, 9-14 s each, one after another (round 5).
+			'Brief: the files and facts you found, exactly what to do. It also gets the user\'s request: for a part the request spells out, name it and add only what you found.',
 			'Several parts: one call each, in one message (each starts once written).',
 			'after: task_ids, or 1-based positions of this chat\'s tasks, that must finish first (their reports join the brief).',
 			'Reports arrive as a message: end your turn or call wait_tasks (wait=true: wait here).',
@@ -271,7 +274,9 @@ export const AGENT_TASK_TOOLS: readonly IAgentTaskToolInfo[] = [
 		name: WAIT_TASKS_TOOL_NAME,
 		title: 'Waited for tasks',
 		alwaysLoad: 'top',
-		description: 'Wait for delegated tasks (default: all running; any=true: the first) and return their reports. Returns early after 45 s-4 min: call again, or end your turn.',
+		// any=true is named for what it buys: a lead that waited for all four C1 workers merged nothing for the
+		// 50-70 s between the first report and the last (round 5), then merged all four after the last one.
+		description: 'Wait for delegated tasks and return their reports: default all running; any=true: the first to finish (merge or check it while the rest run). Returns early after 45 s-4 min: call again, or end your turn.',
 		inputSchema: { type: 'object', properties: { task_ids: STRINGS } },
 	},
 	{

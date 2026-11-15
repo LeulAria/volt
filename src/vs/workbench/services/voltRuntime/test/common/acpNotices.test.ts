@@ -47,6 +47,19 @@ suite('ACP provider notices', () => {
 		assert.deepStrictEqual(fromNotice, [{ severity: 'warning', title: 'Retrying Claude, attempt 1 of 10.' }]);
 	});
 
+	test('a session failure keeps its class and the adapter\'s suggested actions', () => {
+		const lost = noticesFromAcpUpdate({
+			sessionUpdate: 'usage_update',
+			_meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: 'error', title: 'The connection to Claude was lost.', category: 'connection', actions: ['new_session'] } } } },
+		});
+		assert.deepStrictEqual(lost, [{ severity: 'error', title: 'The connection to Claude was lost.', failure: { category: 'connection', actions: ['new_session'] } }]);
+		const untyped = noticesFromAcpUpdate({
+			sessionUpdate: 'usage_update',
+			_meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: 'error', title: 'Something failed.', actions: 'retry' } } } },
+		});
+		assert.deepStrictEqual(untyped, [{ severity: 'error', title: 'Something failed.' }]);
+	});
+
 	test('formats a rejected rate limit and ignores an allowed one', () => {
 		const resetsAt = Date.UTC(2026, 8, 27, 3, 20) / 1000;
 		const rejected = noticesFromAcpUpdate({

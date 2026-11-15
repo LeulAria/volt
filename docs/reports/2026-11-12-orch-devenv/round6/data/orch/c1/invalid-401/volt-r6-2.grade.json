@@ -1,0 +1,73 @@
+{
+ "branch": "main",
+ "shipped": 0,
+ "groups": {
+  "W1": false,
+  "W2": false,
+  "W3": false,
+  "W4": false,
+  "Integration": false
+ },
+ "handoff": 0,
+ "codesPlaced": 0,
+ "handoffDetail": {
+  "W1": false,
+  "W2": false,
+  "W3": false,
+  "W4": false
+ },
+ "placedDetail": {
+  "W1": false,
+  "W2": false,
+  "W3": false,
+  "W4": false
+ },
+ "codes": {
+  "W1": "ADM-W1-KEUN56",
+  "W2": "ADM-W2-CPWLPJ",
+  "W3": "ADM-W3-35F4IM",
+  "W4": "ADM-W4-GDCE3M"
+ },
+ "npmTest": {
+  "status": 1,
+  "summary": ""
+ },
+ "files": {
+  "w1-limiter": {
+   "pass": false,
+   "failed": [],
+   "tail": "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/c1-grade-wvOmam/src/rate-limiter.ts' imported from /private/var/folders/t_/_4p090dx54db0x332ct91th00000gn/T/c1-grade-wvOmam/test/hidden-w1-limiter.test.ts"
+  },
+  "w1-api": {
+   "pass": false,
+   "failed": [],
+   "tail": "  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: undefined,\n    expected: '1',\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: 200,\n    expected: 429,\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: 200,\n    expected: 429,\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: undefined,\n    expected: '0',"
+  },
+  "w2-dates": {
+   "pass": false,
+   "failed": [],
+   "tail": "  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n      invalid: 'RangeError',\n    actual: { due: '2026-03-30', dueLeap: '2024-02-28', springForward: '2026-03-08', fallBack: '2026-11-01', yearEnd: '2026-12-31', back: '2026-02-27', zero: '2026-06-14', roundTrip: '2026-02-28', overdue2: 3, overdueDst: 10, notYet: 0, onDue: true, dayAfter: true, invalid: 'RangeError' },\n    expected: { due: '2026-03-31', dueLeap: '2024-02-29', springForward: '2026-03-09', fallBack: '2026-11-02', yearEnd: '2027-01-01', back: '2026-02-28', zero: '2026-06-15', roundTrip: '2026-03-01', overdue2: 2, overdueDst: 9, notYet: 0, onDue: false, dayAfter: true, invalid: 'RangeError' },\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n  + actual - expected\n      invalid: 'RangeError',\n    actual: { due: '2026-03-30', dueLeap: '2024-02-28', springForward: '2026-03-08', fallBack: '2026-11-01', yearEnd: '2026-12-31', back: '2026-02-27', zero: '2026-06-14', roundTrip: '2026-02-28', overdue2: 3, overdueDst: 10, notYet: 0, onDue: true, dayAfter: true, invalid: 'RangeError' },\n    expected: { due: '2026-03-31', dueLeap: '2024-02-29', springForward: '2026-03-09', fallBack: '2026-11-02', yearEnd: '2027-01-01', back: '2026-02-28', zero: '2026-06-15', roundTrip: '2026-03-01', overdue2: 2, overdueDst: 9, notYet: 0, onDue: false, dayAfter: true, invalid: 'RangeError' },\n  AssertionError [ERR_ASSERTION]: no test names America/Los_Angeles\n    actual: false,"
+  },
+  "w3-cursor": {
+   "pass": false,
+   "failed": [],
+   "tail": "  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: undefined,\n    expected: 20,\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: undefined,\n    expected: 1,\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: undefined,\n    expected: 7,\n  AssertionError [ERR_ASSERTION]: limit=0\n    actual: 200,\n    expected: 400,"
+  },
+  "w4-create": {
+   "pass": false,
+   "failed": [],
+   "tail": "  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: 405,\n    expected: 201,\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  + actual - expected\n    actual: undefined,\n    expected: 'INV-04101',\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: 405,\n    expected: 400,"
+  },
+  "w4-idempotency": {
+   "pass": false,
+   "failed": [],
+   "tail": "  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: 405,\n    expected: 201,\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: 405,\n    expected: 201,\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: 405,\n    expected: 422,\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  + actual - expected\n    actual: undefined,"
+  },
+  "integration": {
+   "pass": false,
+   "failed": [],
+   "tail": "  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: 405,\n    expected: 201,\n  AssertionError [ERR_ASSERTION]: America/Los_Angeles\n  + actual - expected\n    actual: { status: 405, due: '2025-10-17' },\n    expected: { status: 201, due: '2026-03-31' },\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n    actual: 405,\n    expected: 201,"
+  }
+ },
+ "report": ""
+}

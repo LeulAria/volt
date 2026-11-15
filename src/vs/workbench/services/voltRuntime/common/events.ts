@@ -138,7 +138,8 @@ export type IVoltEvent =
 	/** Provider status that is not assistant prose: usage limits, retries, and other ACP notices. */
 	/** `resetAt`: when a usage limit resets (epoch ms), from the provider's structured rate-limit data. */
 	/** `rateLimit`: the structured reading behind a usage-limit line, so a chat shows a warning once per window. */
-	| { type: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; resetAt?: number; rateLimit?: IVoltRateLimitReading }
+	/** `failure`: a session failure's class and the adapter's suggested actions (`IAcpNotice.failure`). */
+	| { type: 'notice'; severity: 'info' | 'warning' | 'error'; title: string; description?: string; resetAt?: number; rateLimit?: IVoltRateLimitReading; failure?: { readonly category: string; readonly actions: readonly string[] } }
 	/** The chat's OS sandbox stopped something the agent tried (a write outside the workspace, a host while network is off). */
 	| { type: 'sandbox.denial'; denial: ISandboxDenial }
 	/** A memory was saved, read or deleted through Volt's memory tools: the transcript shows a recall chip. */

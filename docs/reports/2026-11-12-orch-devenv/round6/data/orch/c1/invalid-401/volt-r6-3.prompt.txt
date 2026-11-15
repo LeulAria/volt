@@ -1,0 +1,55 @@
+Use Volt's delegate_task to run the four work items in parallel, one subagent per item.
+You are working in the Ledger repository: a TypeScript invoicing API that runs natively on Node 26 with no dependencies. Read AGENTS.md first.
+
+Ship the four work items below. Work on them in parallel with up to 4 agents, one agent per item, each in its own git worktree or branch. Then merge all four into main so that npm test passes on main.
+
+Rules:
+- Do not change or delete existing files in test/. New test files are allowed.
+- Do not add dependencies.
+- Each work item has a handoff code. The agent that does the item puts it as the first line of the named module, exactly: // handoff: <code>
+- When all four items are merged, write REPORT.md at the repository root with one line per item, in this form: W1 | <branch> | <handoff code>
+- Run npm test on main before you finish.
+
+W1. Rate limiting. Handoff code ADM-W1-6A2MZ3. Module: src/rate-limiter.ts
+Create src/rate-limiter.ts. It exports createRateLimiter(options: { capacity: number; refillPerSecond: number; now?: () => number }). The result has take(key: string, cost = 1): { allowed: boolean; remaining: number; retryAfterMs: number }.
+- It is a token bucket per key. A new key starts with capacity tokens. Tokens refill continuously at refillPerSecond and never go above capacity.
+- take() removes cost tokens and returns allowed: true when enough tokens are available. Otherwise it removes nothing and returns allowed: false.
+- remaining is the whole number of tokens left after the call.
+- retryAfterMs is 0 when allowed. Otherwise it is the milliseconds until cost tokens are available.
+- now defaults to Date.now and returns milliseconds. cost must be an integer from 1 to capacity, otherwise take() throws RangeError.
+Wire it into createApp with a new option AppOptions.rateLimit?: { capacity: number; refillPerSecond: number; now?: () => number }.
+- The key is the x-api-key request header, or "anonymous" when the header is missing.
+- Every request except GET /health takes 1 token.
+- A limited request returns 429 with the body { "error": "rate_limited" } and the header retry-after, set to the wait in whole seconds, rounded up, minimum 1.
+- Every response except GET /health has the header x-ratelimit-remaining.
+- src/server.ts turns rate limiting on with capacity 60 and refillPerSecond 1.
+
+W2. Timezone drift. Handoff code ADM-W2-DW6KSV. Module: src/dates.ts
+Due dates move one day back on machines west of UTC. For example, with TZ=America/Los_Angeles an invoice issued 2026-03-01 with netDays 30 shows the due date 2026-03-30 instead of 2026-03-31.
+- Fix src/dates.ts so that parseDay, formatDay, addDays, dueDate, daysOverdue and isOverdue give the same results in every time zone. Keep their signatures.
+- Add tests that run under TZ=America/Los_Angeles, TZ=UTC and TZ=Asia/Tokyo.
+
+W3. Cursor pagination. Handoff code ADM-W3-C6BORU. Module: src/paginate.ts
+GET /invoices uses page numbers and repeats one invoice between pages. Replace it with cursor pagination.
+- The request is GET /invoices?limit=<n>&cursor=<c>. limit is an integer from 1 to 100, default 20. Any other limit returns 400 { "error": "bad_request" }.
+- Items are ordered by id, ascending. Each item keeps the current summary shape.
+- The response body is { "items": [...], "nextCursor": string | null, "limit": n }. nextCursor is null on the last page.
+- The cursor is an opaque string. A malformed cursor returns 400 { "error": "bad_cursor" }.
+- Following nextCursor from the first page returns every invoice that existed at the first request exactly once, also when invoices are added between requests.
+- The page and pageSize parameters are no longer accepted. They return 400 { "error": "use_cursor" }.
+- Keep paginate() exported from src/paginate.ts for other callers, and fix it: a page has at most pageSize items, and hasNext is false on the last page.
+
+W4. Idempotent invoice creation. Handoff code ADM-W4-QN6YKJ. Module: src/idempotency.ts
+Add POST /invoices.
+- Add an optional body field (a parsed JSON value) to the Request type. src/server.ts reads the request body and parses it as JSON.
+- A valid body has client (non-empty string), issued (YYYY-MM-DD), netDays (integer >= 0), currency ("USD", "EUR" or "MXN") and items (at least one item; quantity is an integer >= 1, unitPriceCents an integer >= 0, taxRate a number from 0 to 1). status is optional and defaults to "draft".
+- A valid request creates the invoice with the next id (INV- and the next 5-digit number after the highest existing id). It returns 201 with the invoice and the header location: /invoices/<id>.
+- An invalid body returns 400 { "error": "invalid_invoice", "message": "<what is wrong>" }.
+- When the request has an idempotency-key header:
+  - The same key with the same body returns the first response again, with the extra header idempotent-replay: true, and creates nothing. Same body means the same JSON value; key order does not matter.
+  - The same key with a different body returns 422 { "error": "idempotency_key_reused" }.
+  - A key expires 24 hours after its first use. After that it acts as a new key.
+  - A 400 response is not stored, so the client can fix the body and retry with the same key.
+- Time comes from a new option AppOptions.now?: () => number in milliseconds, default Date.now.
+- Put the idempotency store in src/idempotency.ts.
+- Methods other than GET and POST keep returning 405.
