@@ -98,6 +98,8 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	private readonly acpHosts = new AcpSharedHosts(this.acpHostDelegate());
 	/** The sandbox launch of each CLI a shared host's chat runs. */
 	private readonly acpChildLaunches = new WeakMap<ChildProcess, ISandboxLaunch>();
+	/** The running sandbox launches of each shared-host chat (its CLI, and helpers such as a sign-in probe). */
+	private readonly acpRunning = new Map<string, { readonly launch: ISandboxLaunch; readonly helper: boolean }[]>();
 	/** Sandboxed commands by sandbox tag: their denials go into their result (native models' Volt Guard cards). */
 	private readonly execTags = new Map<string, ExecRun>();
 	/** Sandboxes of ended processes, kept a moment for the kernel log's last denials: disposed at once when the service goes. */
@@ -474,7 +476,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 	 * attested and confirmed before it may run; registered under `id` for the sandbox calls by id), else
 	 * with the login shell's environment. `unset`: variables to leave out of either environment.
 	 */
-	private async startChild(id: string, options: IVoltStdioSpawnOptions, unset?: readonly string[]): Promise<{ child: ChildProcessWithoutNullStreams; command: string; launch?: ISandboxLaunch }> {
+	private async startChild(id: string, options: IVoltStdioSpawnOptions, unset?: readonly string[], joinState = false): Promise<{ child: ChildProcessWithoutNullStreams; command: string; launch?: ISandboxLaunch }> {
 		let command = options.command;
 		let args = options.args ?? [];
 		let cwd = options.cwd;
@@ -483,7 +485,7 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 			await this.snapshotBuildEntries(options.sandbox);
 		}
 		// Throws SandboxUnavailableError when the sandbox cannot be established: the agent does not start.
-		const launch = options.sandbox ? await this.sandbox.prepare(command, args, options.sandbox, { cwd: options.cwd, hostEnv: await this.env(), env: options.env }) : undefined;
+		const launch = options.sandbox ? await this.sandbox.prepare(command, args, options.sandbox, { cwd: options.cwd, hostEnv: await this.env(), env: options.env, ...(joinState ? { joinState } : {}) }) : undefined;
 		if (launch) {
 			command = launch.command;
 			args = launch.args;
@@ -543,6 +545,21 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 		return { child, command, ...(launch ? { launch } : {}) };
 	}
 
+	/**
+	 * A shared-host chat runs several processes at a time (its CLI, a sign-in probe, git), each on its own
+	 * launch of the chat's sandbox. The sandbox calls by id (file broker, denials, state sync, allowed
+	 * domains) go to the CLI's launch: the oldest running one that is not a helper, else the oldest.
+	 */
+	private acpLaunchOf(id: string): void {
+		const running = this.acpRunning.get(id) ?? [];
+		const launch = (running.find(entry => !entry.helper) ?? running[0])?.launch;
+		if (launch) {
+			this.sandboxes.set(id, launch);
+		} else {
+			this.sandboxes.delete(id);
+		}
+	}
+
 	/** What the shared adapter hosts need from this service (see `acpSharedHosts.ts`). */
 	private acpHostDelegate(): IAcpSharedHostDelegate {
 		return {
@@ -560,17 +577,21 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 					launch.dispose();
 				}
 			},
-			startChild: async (id, options, unset) => {
-				// A chat's CLI after an earlier one (a respawn): the earlier launch goes first.
-				const earlier = this.sandboxes.get(id);
-				if (earlier) {
-					this.sandboxes.delete(id);
-					this.retire(earlier, 3_000);
+			startChild: async (id, options, unset, helper) => {
+				let started: Awaited<ReturnType<VoltStdioService['startChild']>>;
+				try {
+					// The chat's config overlay was prepared when its connection opened (`sandboxView`): every process joins it.
+					started = await this.startChild(id, options, unset, true);
+				} catch (err) {
+					this.acpLaunchOf(id);
+					throw err;
 				}
-				const { child, command, launch } = await this.startChild(id, options, unset);
+				const { child, command, launch } = started;
 				this.track(child, command);
 				if (launch) {
 					this.acpChildLaunches.set(child, launch);
+					this.acpRunning.set(id, [...this.acpRunning.get(id) ?? [], { launch, helper }]);
+					this.acpLaunchOf(id);
 				}
 				return { child, ...(launch ? { policy: launch.policy } : {}) };
 			},
@@ -584,9 +605,13 @@ export class VoltStdioService extends Disposable implements IVoltStdioService {
 				void launch.terminate(child);
 				if (child.exitCode !== null || child.signalCode !== null) {
 					this.acpChildLaunches.delete(child);
-					if (this.sandboxes.get(id) === launch) {
-						this.sandboxes.delete(id);
+					const running = (this.acpRunning.get(id) ?? []).filter(entry => entry.launch !== launch);
+					if (running.length) {
+						this.acpRunning.set(id, running);
+					} else {
+						this.acpRunning.delete(id);
 					}
+					this.acpLaunchOf(id);
 					// A moment for the kernel log to deliver the last denials of a process that just ended.
 					if (!this.retiring.has(launch)) {
 						this.retire(launch, 3_000);

@@ -43,7 +43,7 @@ export const enum AcpHostFrame {
 	Closed = 'closed',
 	/** service → host: the chat's resolved sandbox policy (changes when its CLI is launched). */
 	Policy = 'policy',
-	/** host → service: start a process for the chat. Payload: `<n> { command, args, cwd, env, unset }`. */
+	/** host → service: start a process for the chat. Payload: `<n> { command, args, cwd, env, unset, exec }`. */
 	Spawn = 'spawn',
 	/** service → host: `<n> { pid }` or `<n> { error }`. */
 	Spawned = 'spawned',
@@ -64,7 +64,9 @@ export const ACP_HOST_LINGER_MS = 2_000;
 
 /**
  * JavaScript source of `voltAllows(policy, path, access)`: whether a sandboxed chat's resolved policy
- * lets the host read or write `path` for it. Reads follow `resolvedPolicyAllows` exactly. Writes are
+ * lets the host read or write `path` for it. Reads follow `resolvedPolicyAllows` exactly; `meta` (stat)
+ * and `list` (a folder's names) are what the OS sandbox adds to reads: metadata of any path that is not
+ * denied, and the folders of the policy's `list`. Writes are
  * a subset of it (no write into any git folder, no lock-file siblings of `writeFiles`): the adapter
  * writes only its sessions' files. `sandboxPolicyHostCheck.test.ts` holds both to the real function.
  */
@@ -97,7 +99,14 @@ function voltAllows(policy, path, access) {
 	if ((policy.isolated || []).some(entry => insideFolded(entry.root) && !inside(entry.keep))) {
 		return false;
 	}
-	if (access === 'read') {
+	if (access === 'meta') {
+		// The OS sandbox lets a workload stat any path it is not denied (file-read-metadata).
+		return true;
+	}
+	if (access === 'list' && (policy.list || []).some(dir => inside(dir, true))) {
+		return true;
+	}
+	if (access === 'read' || access === 'list') {
 		return !!policy.readAll || (policy.read || []).some(root => inside(root)) || (policy.write || []).some(root => inside(root)) || (policy.writeFiles || []).some(file => inside(file, true));
 	}
 	if ((policy.protect || []).some(insideFolded) || (policy.protectPatterns || []).some(matches)) {
@@ -172,24 +181,36 @@ class RelayedChild extends EventEmitter {
 		this.spawnargs = [command, ...args];
 		this.stdout = new PassThrough();
 		this.stderr = new PassThrough();
+		// What is written or asked before the service has started the process waits for it.
+		this.waiting = [];
 		this.stdin = new Writable({
 			decodeStrings: false,
 			write: (chunk, encoding, done) => {
 				if (this.exitCode === null && this.signalCode === null) {
-					send('in', chat.id, n + ' ' + JSON.stringify(typeof chunk === 'string' ? chunk : chunk.toString('utf8')));
+					this.tell('in', n + ' ' + JSON.stringify(typeof chunk === 'string' ? chunk : chunk.toString('utf8')));
 				}
 				done();
 			},
-			final: done => { send('end', chat.id, String(n)); done(); },
+			final: done => { this.tell('end', String(n)); done(); },
 		});
 		this.stdin.on('error', () => undefined);
 		this.stdio = [this.stdin, this.stdout, this.stderr];
+	}
+	tell(kind, payload) {
+		if (this.waiting) { this.waiting.push([kind, payload]); } else { send(kind, this.chat.id, payload); }
+	}
+	started(pid) {
+		this.pid = pid;
+		const waiting = this.waiting || [];
+		this.waiting = undefined;
+		for (const [kind, payload] of waiting) { send(kind, this.chat.id, payload); }
+		this.emit('spawn');
 	}
 	kill(signal) {
 		if (this.exitCode !== null || this.signalCode !== null) {
 			return false;
 		}
-		send('kill', this.chat.id, this.n + ' ' + (typeof signal === 'string' ? signal : 'SIGTERM'));
+		this.tell('kill', this.n + ' ' + (typeof signal === 'string' ? signal : 'SIGTERM'));
 		this.killed = true;
 		return true;
 	}
@@ -239,7 +260,7 @@ function relayedSpawn(command, args, options) {
 		}
 	}
 	const unset = Object.keys(chat.base).filter(key => given[key] === undefined);
-	send('spawn', chat.id, n + ' ' + JSON.stringify({ command: String(command), args: args.map(String), cwd: options.cwd ? String(options.cwd) : undefined, env, unset }));
+	send('spawn', chat.id, n + ' ' + JSON.stringify({ command: String(command), args: args.map(String), cwd: options.cwd ? String(options.cwd) : undefined, env, unset, exec: options.voltExec === true }));
 	if (options.signal) {
 		const abort = () => child.kill(options.killSignal || 'SIGTERM');
 		if (options.signal.aborted) { abort(); } else { options.signal.addEventListener('abort', abort, { once: true }); }
@@ -252,7 +273,7 @@ function relayedExecFile(file, args, options, callback) {
 	else if (!Array.isArray(args)) { callback = options; options = args; args = []; }
 	if (typeof options === 'function') { callback = options; options = {}; }
 	options = options || {};
-	const child = relayedSpawn(file, args, { cwd: options.cwd, env: options.env, signal: options.signal });
+	const child = relayedSpawn(file, args, { cwd: options.cwd, env: options.env, signal: options.signal, voltExec: true });
 	let stdout = '';
 	let stderr = '';
 	let done = false;
@@ -326,7 +347,7 @@ function fileRefusal(value, access) {
 	const path = resolvePath(given);
 	const allowed = chat
 		? !!policy && voltAllows(policy, path, access) && voltAllows(policy, nearestReal(path), access)
-		: access === 'read';
+		: access !== 'write';
 	if (allowed) {
 		return undefined;
 	}
@@ -341,8 +362,8 @@ const WRITE_FLAGS = /[wa+]/;
 const openAccess = flags => typeof flags === 'number' ? ((flags & 3) !== 0 || (flags & (fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_APPEND)) !== 0 ? 'write' : 'read') : WRITE_FLAGS.test(String(flags ?? 'r')) ? 'write' : 'read';
 /** name -> the access each leading path argument needs. */
 const GUARDED = {
-	access: ['read'], exists: ['read'], lstat: ['read'], stat: ['read'], statfs: ['read'], readdir: ['read'], readFile: ['read'],
-	readlink: ['read'], realpath: ['read'], opendir: ['read'], createReadStream: ['read'], watch: ['read'], watchFile: ['read'], openAsBlob: ['read'],
+	access: ['meta'], exists: ['meta'], lstat: ['meta'], stat: ['meta'], statfs: ['meta'], readlink: ['meta'], realpath: ['meta'],
+	readdir: ['list'], opendir: ['list'], readFile: ['read'], createReadStream: ['read'], watch: ['read'], watchFile: ['read'], openAsBlob: ['read'],
 	appendFile: ['write'], chmod: ['write'], chown: ['write'], lchmod: ['write'], lchown: ['write'], lutimes: ['write'], utimes: ['write'],
 	mkdir: ['write'], mkdtemp: ['write'], rm: ['write'], rmdir: ['write'], truncate: ['write'], unlink: ['write'], writeFile: ['write'], createWriteStream: ['write'],
 	copyFile: ['read', 'write'], cp: ['read', 'write'], rename: ['write', 'write'], link: ['read', 'write'], symlink: [undefined, 'write'],
@@ -517,7 +538,7 @@ function onFrame(line) {
 			else if (kind === 'err') { child.stderr.write(payload); }
 			else if (kind === 'spawned') {
 				if (payload.error) { child.emit('error', Object.assign(new Error(payload.error), { code: payload.code || 'ENOENT' })); child.ended(-2, null); }
-				else { child.pid = payload.pid; child.emit('spawn'); }
+				else { child.started(payload.pid); }
 			}
 			else if (kind === 'exit') { child.ended(payload.code, payload.signal); }
 		});

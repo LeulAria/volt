@@ -44,6 +44,8 @@ export function acpProtocolRouter(logger, onAgent) {
 				if (request.do === 'execFile') { return execFileAsync(request.command, request.args, { env: { ...process.env, EXTRA: 'e' } }).then(out => ({ stdout: out.stdout }), error => ({ error: String(error.message) })); }
 				if (request.do === 'start') {
 					child = spawn(request.command, request.args, { env: { ...process.env, ADDED: 'by-adapter' }, stdio: ['pipe', 'pipe', 'pipe'] });
+					// As the Agent SDK does: its first request is written before the process is up.
+					if (request.first) { child.stdin.write(request.first); }
 					child.stdout.setEncoding('utf8').on('data', data => reply({ event: 'out', data }));
 					child.on('exit', (code, signal) => reply({ event: 'exit', code, signal }));
 					child.on('error', error => reply({ event: 'error', message: error.message }));
@@ -98,7 +100,7 @@ suite('Shared ACP adapter host', () => {
 	let hosts: AcpSharedHosts;
 	let output: Map<string, string[]>;
 	let exits: Map<string, number | null>;
-	let started: { id: string; options: IVoltStdioSpawnOptions; unset: readonly string[] }[];
+	let started: { id: string; options: IVoltStdioSpawnOptions; unset: readonly string[]; helper: boolean }[];
 	let views: Map<string, { env: Record<string, string>; policy: IResolvedSandboxPolicy }>;
 	let waiters: (() => void)[];
 	const children = new Set<ChildProcess>();
@@ -111,8 +113,10 @@ suite('Shared ACP adapter host', () => {
 	const delegate = (): IAcpSharedHostDelegate => ({
 		hostEnv: async () => ({ PATH: process.env['PATH'], HOME: process.env['HOME'], SHARED: 'host' }),
 		sandboxView: async options => options.sandbox ? views.get(options.cwd ?? '') : undefined,
-		startChild: async (id, options, unset) => {
-			started.push({ id, options, unset });
+		startChild: async (id, options, unset, helper) => {
+			started.push({ id, options, unset, helper });
+			// A sandbox launch takes a moment (prepare, attest): what the adapter wrote meanwhile must not be lost.
+			await new Promise(resolve => setTimeout(resolve, 40));
 			const env: NodeJS.ProcessEnv = { PATH: process.env['PATH'], ...options.env, ...(options.sandbox ? { FROM_LAUNCH: 'sandbox' } : {}) };
 			for (const key of unset) {
 				delete env[key];
@@ -222,15 +226,17 @@ suite('Shared ACP adapter host', () => {
 
 		// Processes: never started in the host; each chat's goes to the service with the chat's own launch.
 		assert.strictEqual((await ask(a, { do: 'spawnSync' })).error, 'EPERM');
-		await ask(a, { do: 'start', command: process.execPath, args: [join(dir, 'cli.js')] });
+		await ask(a, { do: 'start', command: process.execPath, args: [join(dir, 'cli.js')], first: 'early\n' });
 		await ask(b, { do: 'start', command: process.execPath, args: [join(dir, 'cli.js')] });
 		await until(() => events(a).some(e => e.event === 'out') && events(b).some(e => e.event === 'out'), 'both CLIs');
+		await until(() => events(a).some(e => e.data?.includes('EARLY\n')), 'what a\'s adapter wrote before its CLI was up');
 		assert.strictEqual(started.length, 2);
 		const [forA, forB] = [started.find(s => s.id === a)!, started.find(s => s.id === b)!];
 		assert.ok(forA.options.sandbox && !forB.options.sandbox, 'each CLI starts with its own chat\'s sandbox request');
 		assert.strictEqual(forA.options.context.principal, 'chat:a');
+		assert.strictEqual(forA.helper, false);
 		assert.deepStrictEqual(forA.options.env, { ADDED: 'by-adapter' }, 'only what the adapter added: the launch\'s environment is not sent back');
-		assert.strictEqual(events(a).find(e => e.event === 'out').data, 'env by-adapter - sandbox\n');
+		assert.ok(events(a).find(e => e.event === 'out').data.startsWith('env by-adapter - sandbox\n'));
 		assert.strictEqual(events(b).find(e => e.event === 'out').data, 'env by-adapter - -\n');
 
 		// Each chat talks to its own CLI.
@@ -263,6 +269,7 @@ suite('Shared ACP adapter host', () => {
 		const out = await ask(a, { do: 'execFile', command: process.execPath, args: ['-e', 'process.stdout.write("hi " + process.env.EXTRA)'] });
 		assert.strictEqual(out.stdout, 'hi e');
 		assert.deepStrictEqual(started[0].options.env, { EXTRA: 'e' });
+		assert.strictEqual(started[0].helper, true, 'an execFile is a helper, not the chat\'s CLI');
 
 		const other = (await hosts.open(options({ env: { CLAUDE_CONFIG_DIR: '/accounts/two' } }), entry))!;
 		assert.strictEqual(hosts.hostCount, 2, 'a chat with another config folder never shares a process');
@@ -277,19 +284,23 @@ suite('Shared ACP adapter host', () => {
 	});
 
 	test('the host\'s file check allows nothing the sandbox policy refuses', () => {
-		const voltAllows = new Function(`${ACP_HOST_POLICY_CHECK_SOURCE}; return voltAllows;`)() as (policy: IResolvedSandboxPolicy, path: string, access: 'read' | 'write') => boolean;
+		const voltAllows = new Function(`${ACP_HOST_POLICY_CHECK_SOURCE}; return voltAllows;`)() as (policy: IResolvedSandboxPolicy, path: string, access: 'read' | 'write' | 'meta' | 'list') => boolean;
 		const policies = [
 			policy({ readAll: true, write: ['/w', '/Users/u/proj'], deny: ['/Users/u/.ssh', '/w/Denied'], denyPatterns: [{ root: '/Users/u/proj', names: ['.env'] }], protect: ['/Users/u/proj/.volt'], protectPatterns: [{ root: '/', names: ['.claude', 'settings.json'] }], gitDirs: [{ root: '/Users/u/proj', anyDepth: true }, { root: '/Users/u/bare.git', anyDepth: false }], newRepositoryGuard: ['/w'], writeFiles: ['/Users/u/.claude.json'], isolated: [{ root: '/cache', keep: '/cache/one' }] }),
-			policy({ platform: 'linux', read: ['/usr', '/Users/u/proj'], write: ['/tmp/x'], deny: ['/usr/Secret'], writeFiles: ['/etc/one'] }),
+			policy({ platform: 'linux', read: ['/usr', '/Users/u/proj'], write: ['/tmp/x'], deny: ['/usr/Secret'], writeFiles: ['/etc/one'], list: ['/Users', '/Users/u'] }),
 			policy({}),
 		];
 		const paths = ['/', '/w', '/w/a', '/w/a/../b', 'relative', '/w/denied/x', '/w/Denied', '/Users/u/.ssh/id', '/users/U/.SSH/id', '/Users/u/proj/src/a.ts', '/Users/u/proj/.env', '/Users/u/proj/sub/.ENV',
 			'/Users/u/proj/.git/config', '/Users/u/proj/.git/index.lock', '/Users/u/proj/sub/.git/objects/ab', '/Users/u/bare.git/HEAD', '/Users/u/bare.git/objects/x', '/w/.git', '/w/new/.git/HEAD',
-			'/Users/u/proj/.volt/sandbox.json', '/Users/u/proj/.claude/settings.json', '/Users/u/.claude.json', '/Users/u/.claude.json.lock', '/cache/one/a', '/cache/two/a', '/usr/bin/env', '/usr/Secret/a', '/usr/secret/a', '/tmp/x/y', '/etc/one', '/etc/two', '/w/'];
+			'/Users/u/proj/.volt/sandbox.json', '/Users/u/proj/.claude/settings.json', '/Users/u/.claude.json', '/Users/u/.claude.json.lock', '/cache/one/a', '/cache/two/a', '/usr/bin/env', '/usr/Secret/a', '/usr/secret/a', '/tmp/x/y', '/etc/one', '/etc/two', '/w/', '/Users', '/Users/u', '/Users/other'];
 		let allowed = 0;
 		for (const p of policies) {
 			for (const path of paths) {
 				assert.strictEqual(voltAllows(p, path, 'read'), resolvedPolicyAllows(p, path, 'read'), `read ${path} (${p.platform})`);
+				// Metadata: any path the policy does not deny (a readable one included); a listing: readable, or named in `list`.
+				assert.ok(!resolvedPolicyAllows(p, path, 'read') || (voltAllows(p, path, 'meta') && voltAllows(p, path, 'list')), `meta of readable ${path}`);
+				assert.strictEqual(voltAllows(p, path, 'meta'), resolvedPolicyAllows({ ...p, readAll: true }, path, 'read'), `meta ${path} (${p.platform})`);
+				assert.strictEqual(voltAllows(p, path, 'list'), resolvedPolicyAllows(p, path, 'read') || (p.list ?? []).includes(path.length > 1 ? path.replace(/\/+$/, '') : path) && voltAllows(p, path, 'meta'), `list ${path} (${p.platform})`);
 				if (voltAllows(p, path, 'write')) {
 					allowed++;
 					assert.ok(resolvedPolicyAllows(p, path, 'write'), `write ${path} (${p.platform})`);

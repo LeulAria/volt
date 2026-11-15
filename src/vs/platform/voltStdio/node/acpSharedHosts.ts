@@ -21,8 +21,9 @@ export interface IAcpSharedHostDelegate {
 	/**
 	 * Starts a chat's process (its Claude Code CLI) as `spawn` starts an agent: through the chat's sandbox
 	 * launch when it has one, registered under the chat's id. `unset`: variables the adapter removed.
+	 * `helper`: a short command (`execFile`: a sign-in probe, git), not the chat's CLI.
 	 */
-	startChild(id: string, options: IVoltStdioSpawnOptions, unset: readonly string[]): Promise<{ readonly child: ChildProcessWithoutNullStreams; readonly policy?: IResolvedSandboxPolicy }>;
+	startChild(id: string, options: IVoltStdioSpawnOptions, unset: readonly string[], helper: boolean): Promise<{ readonly child: ChildProcessWithoutNullStreams; readonly policy?: IResolvedSandboxPolicy }>;
 	/** Stops a chat's process and everything it started (the whole sandbox). */
 	stopChild(id: string, child: ChildProcess): void;
 	/** Output of a chat's connection, and its end, as a process's stdout and exit. */
@@ -232,7 +233,7 @@ export class AcpSharedHosts {
 		}
 	}
 
-	private async spawnChild(chat: IChat, n: number, request: { command?: unknown; args?: unknown; cwd?: unknown; env?: unknown; unset?: unknown }): Promise<void> {
+	private async spawnChild(chat: IChat, n: number, request: { command?: unknown; args?: unknown; cwd?: unknown; env?: unknown; unset?: unknown; exec?: unknown }): Promise<void> {
 		const { id, host, options } = chat;
 		const strings = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 		const env: Record<string, string> = { ...options.env };
@@ -252,7 +253,7 @@ export class AcpSharedHosts {
 				env,
 				...(options.sandbox ? { sandbox: options.sandbox } : {}),
 				context: options.context,
-			}, strings(request.unset));
+			}, strings(request.unset), request.exec === true);
 			const child = started.child;
 			if (this.chats.get(id) !== chat) {
 				// The chat closed while its process started.
