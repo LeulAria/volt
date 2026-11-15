@@ -1,0 +1,7 @@
+agent server pid 9075 started Sun Nov 15 01:34:21 2026    
+== toggle 1 01:35:19
+-- round 1: 4 spawns in 45 s; code index forks: 0; log show: 1
+-rw-r--r--@ 1 leularia  staff  213 Nov 15 01:34 /Users/leularia/.volt-r6/idle/ud/after/volt-index-server/status-cache.js
+== toggle 2 01:37:47
+-- round 2: 6 spawns in 45 s; code index forks: 0; log show: 1
+-rw-r--r--@ 1 leularia  staff  213 Nov 15 01:34 /Users/leularia/.volt-r6/idle/ud/after/volt-index-server/status-cache.js

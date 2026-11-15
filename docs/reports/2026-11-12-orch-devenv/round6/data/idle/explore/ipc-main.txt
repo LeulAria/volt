@@ -1,0 +1,11 @@
+locations [{"scriptId":"235","lineNumber":285,"columnNumber":21}]
+    3 localFilesystem.stat
+    2 T 30000 () => this.evaluate() @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+    2 localFilesystem.readFile
+    2 voltAwake.setLease
+    1 T 60000 () => void this.refreshManagedPolicy().catch(() => undefined) @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+    1 voltGit.listBranches
+    1 storage.updateItems
+    1 voltPullRequests.gitStatus
+    1 voltPullRequests.resolveRepo
+    1 voltCodeIndex.reportWorkspaceActivity

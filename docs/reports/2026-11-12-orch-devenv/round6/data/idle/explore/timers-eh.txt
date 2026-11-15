@@ -1,0 +1,1 @@
+timer fires: 0 in 60.0 s (0.00/s), distinct callbacks 0

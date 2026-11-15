@@ -1,0 +1,27 @@
+{"secs":30,"load":79.73,"state":"{\"vis\":\"hidden\",\"focus\":false}","spanMs":30029,"events":14911}
+
+== busy threads (tasks/s, ms/s)
+Renderer / ThreadPoolForegroundWorker                            6.9 /s 1269.06 ms/s
+Renderer / CrRendererMain                                       73.3 /s  732.70 ms/s
+Renderer / DedicatedWorker thread                                7.8 /s    8.79 ms/s
+Browser / CrBrowserMain                                          3.5 /s    4.74 ms/s
+Renderer / ThreadPoolServiceThread                               1.0 /s    4.61 ms/s
+Browser / ThreadPoolForegroundWorker                             4.6 /s    4.60 ms/s
+Renderer / Compositor                                            0.1 /s    2.33 ms/s
+GPU Process / PerfettoTrace                                      3.5 /s    0.50 ms/s
+GPU Process / CrGpuMain                                          0.7 /s    0.48 ms/s
+Browser / ThreadPoolServiceThread                                0.8 /s    0.39 ms/s
+Browser / Chrome_IOThread                                        0.4 /s    0.19 ms/s
+Browser / Chrome_DevToolsHandlerThread                           0.1 /s    0.01 ms/s
+GPU Process / VizCompositorThread                                0.2 /s    0.01 ms/s
+GPU Process / GpuWatchdog                                        0.0 /s    0.00 ms/s
+Browser / CacheThread_BlockFile                                  0.1 /s    0.00 ms/s
+
+== renderer main: callbacks (count, ms) over the window
+    2    109.3 ms  FunctionCall  vs/workbench/services/extensions/electron-browser/localProcessExtensionHost.js:308:23 
+    2      9.3 ms  FunctionCall  vs/workbench/contrib/performance/electron-browser/rendererAutoProfiler.js:37:40 
+
+== renderer main: rendering passes
+display link callbacks: 0 (0.0/s)
+
+viz DrawAndSwap: 0 (0.0/s)

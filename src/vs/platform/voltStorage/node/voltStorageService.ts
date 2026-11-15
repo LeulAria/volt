@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { execFile } from 'child_process';
+import { execFile, ExecFileException } from 'child_process';
 import { createHash } from 'crypto';
 import { Dirent, promises as fs } from 'fs';
 import { basename, dirname, isAbsolute, join, normalize, resolve } from '../../../base/common/path.js';
@@ -107,16 +107,64 @@ export function measurePathsWithDu(paths: readonly string[]): Promise<Map<string
 	if (process.platform === 'win32' || !paths.length) {
 		return Promise.resolve(process.platform === 'win32' ? undefined : new Map());
 	}
-	return new Promise(resolve => {
-		execFile('/usr/bin/du', ['-sk', '--', ...paths], { maxBuffer: 16 * 1024 * 1024, env: { LC_ALL: 'C' } }, (err, stdout) => {
-			// `du` exits 1 when one entry is unreadable but still prints the others.
-			if (err && !stdout) {
-				resolve(undefined);
-				return;
-			}
-			resolve(parseDuOutput(stdout));
-		});
+	// At low priority: a pass over 68 checkouts kept a core 28 % busy for over a minute while the window rested
+	// (round 6); the user's and the agents' work come first. Plain `du` where `nice` is missing.
+	const run = (file: string, args: string[]) => new Promise<{ err: ExecFileException | null; stdout: string }>(resolve => {
+		execFile(file, args, { maxBuffer: 16 * 1024 * 1024, env: { LC_ALL: 'C' } }, (err, stdout) => resolve({ err, stdout: stdout ?? '' }));
 	});
+	const duArgs = ['-sk', '--', ...paths];
+	return (async () => {
+		let result = await run('/usr/bin/nice', ['-n', '10', '/usr/bin/du', ...duArgs]);
+		if (result.err?.code === 'ENOENT' && !result.stdout) {
+			result = await run('/usr/bin/du', duArgs);
+		}
+		// `du` exits 1 when one entry is unreadable but still prints the others.
+		if (result.err && !result.stdout) {
+			return undefined;
+		}
+		return parseDuOutput(result.stdout);
+	})();
+}
+
+/**
+ * Where a run of Volt keeps the checkout sizes it measured (in the user data folder). Without it every launch
+ * measured every checkout again 10 minutes in: 68 checkouts kept a core 28 % busy for over a minute at rest
+ * (round 6). With it a launch measures only the checkouts whose chats ran since the last measurement.
+ */
+const CHECKOUT_SIZES_FILE = 'volt-checkout-sizes.json';
+const CHECKOUT_SIZES_VERSION = 1;
+
+interface ICheckoutSizesFile {
+	readonly version: number;
+	readonly sizes: Record<string, { readonly bytes: number; readonly at: number }>;
+}
+
+/** The saved checkout sizes, by path key; empty when the file is missing, unreadable or of another version. */
+export async function readCheckoutSizes(file: string): Promise<Map<string, { bytes: number; at: number }>> {
+	const sizes = new Map<string, { bytes: number; at: number }>();
+	try {
+		const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as ICheckoutSizesFile;
+		if (parsed?.version !== CHECKOUT_SIZES_VERSION || typeof parsed.sizes !== 'object' || !parsed.sizes) {
+			return sizes;
+		}
+		for (const [key, entry] of Object.entries(parsed.sizes)) {
+			if (typeof entry?.bytes === 'number' && Number.isFinite(entry.bytes) && typeof entry.at === 'number' && Number.isFinite(entry.at)) {
+				sizes.set(key, { bytes: entry.bytes, at: entry.at });
+			}
+		}
+	} catch {
+		// First run, or a file from another Volt: measured afresh.
+	}
+	return sizes;
+}
+
+/** Saves the checkout sizes atomically (written beside, then renamed over). */
+export async function writeCheckoutSizes(file: string, sizes: ReadonlyMap<string, { bytes: number; at: number }>): Promise<void> {
+	const content: ICheckoutSizesFile = { version: CHECKOUT_SIZES_VERSION, sizes: Object.fromEntries(sizes) };
+	await fs.mkdir(dirname(file), { recursive: true });
+	const tmp = `${file}.${process.pid}.tmp`;
+	await fs.writeFile(tmp, JSON.stringify(content));
+	await fs.rename(tmp, file);
 }
 
 /** `du -sk` lines (`<KiB>\t<path>`) as bytes per path. */
@@ -180,6 +228,8 @@ export class VoltStorageService implements IVoltStorageService {
 	private cleaning: Promise<unknown> = Promise.resolve();
 	/** Checkout sizes from the last worktree-limit pass, by path key, with when they were measured. */
 	private readonly checkoutSizes = new Map<string, { bytes: number; at: number }>();
+	/** The sizes the last run of Volt saved, read once before the first pass. */
+	private checkoutSizesLoaded: Promise<void> | undefined;
 
 	constructor(
 		private readonly layout: IVoltStorageLayout,
@@ -260,6 +310,7 @@ export class VoltStorageService implements IVoltStorageService {
 	 * now a checkout is measured again only when its chat ran since the last pass, all of them in one `du`.
 	 */
 	private async sizeCheckouts(checkouts: readonly string[], context: IVoltStorageContext): Promise<Map<string, number>> {
+		await (this.checkoutSizesLoaded ??= this.loadCheckoutSizes());
 		const at = Date.now();
 		const stale = checkoutsToMeasure(checkouts, this.checkoutSizes, context);
 		const measured = await measurePathsWithDu(stale) ?? new Map(await Promise.all(stale.map(async path => [path, (await measurePath(path)).bytes] as const)));
@@ -275,7 +326,20 @@ export class VoltStorageService implements IVoltStorageService {
 				this.checkoutSizes.delete(key);
 			}
 		}
+		if (stale.length) {
+			await writeCheckoutSizes(this.checkoutSizesFile, this.checkoutSizes).catch(err => this.logService.warn('[volt-storage] checkout sizes not saved', err));
+		}
 		return new Map(checkouts.map(path => [path, this.checkoutSizes.get(samePathKey(path))?.bytes ?? measured.get(path) ?? 0]));
+	}
+
+	private get checkoutSizesFile(): string {
+		return join(this.layout.userDataPath, CHECKOUT_SIZES_FILE);
+	}
+
+	private async loadCheckoutSizes(): Promise<void> {
+		for (const [key, entry] of await readCheckoutSizes(this.checkoutSizesFile)) {
+			this.checkoutSizes.set(key, entry);
+		}
 	}
 
 	private async doClean(id: VoltStorageId, context: IVoltStorageContext, project: IVoltProjectStorageRequest | undefined): Promise<IVoltStorageCleanResult> {

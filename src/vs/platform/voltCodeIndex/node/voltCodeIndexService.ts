@@ -3,8 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { promises as fs } from 'fs';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { Disposable, IDisposable } from '../../../base/common/lifecycle.js';
+import { join } from '../../../base/common/path.js';
 import { FileAccess } from '../../../base/common/network.js';
 import { getNextTickChannel, ProxyChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { Client } from '../../../base/parts/ipc/node/ipc.cp.js';
@@ -12,8 +14,20 @@ import { ILogService } from '../../log/common/log.js';
 import { IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltFffStatus, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexService, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeImportersRequest, IVoltCodeImportersResult, IVoltCodeStructuralRequest, IVoltCodeStructuralResult, IVoltCodeStructureRequest, IVoltCodeStructureResult, IVoltLspBudget, IVoltLspLimits, IVoltWorkspaceActivity } from '../common/voltCodeIndex.js';
 import type { ICodeIndexWorker } from './codeIndexEngine.js';
 
-/** The index process (and its file watchers) stays up this long after the last use. */
+/** The index process (and its file watchers) stays up this long after the last search. */
 const KEEP_ALIVE_MS = 20 * 60_000;
+/**
+ * After a warm-up alone (a workspace opened, an agent about to start) it stays this long: long enough for the
+ * search that usually follows to find it hot, short enough that a window left alone does not keep a 50-60 MB
+ * process and its watchers for 20 minutes (ADEMark A5/A6, round 6). The index is on disk; the next use forks
+ * the process again and it catches up from file sizes and mtimes.
+ */
+const WARM_KEEP_ALIVE_MS = 90_000;
+/** How long a status answer serves questions asked while no index process runs (see {@link VoltCodeIndexService.status}). */
+const STATUS_CACHE_MS = 10 * 60_000;
+/** Where the status cache is kept between runs of Volt (in the index's data folder). */
+const STATUS_CACHE_FILE = 'status-cache.json';
+const STATUS_CACHE_VERSION = 1;
 /** Then it exits once no call is in flight for this long. */
 const IDLE_EXIT_MS = 30_000;
 /** A workbench that has not reported for this long is forgotten (it crashed or closed). */
@@ -74,6 +88,7 @@ export class VoltCodeIndexService extends Disposable implements IVoltCodeIndexSe
 			this._register(client.onDidProcessExit(({ code, signal }) => {
 				// The client forks a fresh process on the next call; hold it open again then.
 				this.keepAlive = undefined;
+				this.live = false;
 				if (code && signal !== 'SIGTERM') {
 					this.logService.warn(`[code index] process exited with ${code} ${signal ?? ''}`);
 				}
@@ -81,20 +96,31 @@ export class VoltCodeIndexService extends Disposable implements IVoltCodeIndexSe
 			this.client = client;
 			this.worker = ProxyChannel.toService<ICodeIndexWorker>(getNextTickChannel(client.getChannel('codeIndex')));
 		}
+		// Every call through the client forks the process when none runs.
+		this.live = true;
 		return this.worker!;
 	}
 
-	/** Holds the process (and its watchers) open while Volt is using the index. */
-	private use(): ICodeIndexWorker {
+	/** Until when the process is held open; a shorter hold never cuts a longer one. */
+	private keepAliveUntil = 0;
+
+	/** Holds the process (and its watchers) open while Volt is using the index, for `holdMs` after this use. */
+	private use(holdMs = KEEP_ALIVE_MS): ICodeIndexWorker {
 		const worker = this.connect();
 		if (!this.keepAlive) {
 			this.keepAlive = worker.onDidChangeStatus(() => { /* only held to keep the process alive */ });
+			this.keepAliveUntil = 0;
 		}
-		clearTimeout(this.keepAliveTimer);
-		this.keepAliveTimer = setTimeout(() => {
-			this.keepAlive?.dispose();
-			this.keepAlive = undefined;
-		}, KEEP_ALIVE_MS);
+		const until = Date.now() + holdMs;
+		if (until > this.keepAliveUntil) {
+			this.keepAliveUntil = until;
+			clearTimeout(this.keepAliveTimer);
+			this.keepAliveTimer = setTimeout(() => {
+				this.keepAlive?.dispose();
+				this.keepAlive = undefined;
+				this.keepAliveUntil = 0;
+			}, holdMs);
+		}
 		return worker;
 	}
 
@@ -104,7 +130,7 @@ export class VoltCodeIndexService extends Disposable implements IVoltCodeIndexSe
 	}
 
 	async warm(root: string, options?: IVoltCodeIndexOptions): Promise<void> {
-		await this.use().warm(root, options).catch(err => this.logService.warn('[code index] warm failed', err));
+		await this.use(WARM_KEEP_ALIVE_MS).warm(root, options).catch(err => this.logService.warn('[code index] warm failed', err));
 	}
 
 	search(request: IVoltCodeIndexSearchRequest): Promise<IVoltCodeIndexSearchResult> {
@@ -143,8 +169,71 @@ export class VoltCodeIndexService extends Disposable implements IVoltCodeIndexSe
 		return this.use().installFff();
 	}
 
-	status(roots?: readonly string[]): Promise<readonly IVoltCodeIndexStatus[]> {
-		return this.connect().status(roots).catch(() => []);
+	/**
+	 * The last answer per root, for a question asked while no index process runs. Every agent start asked whether
+	 * its project is large and indexed, which forked a 50-60 MB process for one number, 30 s each time (round 6).
+	 * A live process answers itself; a stopped one is asked again only once the answer is older than
+	 * STATUS_CACHE_MS, or for a root never asked about.
+	 */
+	private readonly statusCache = new Map<string, { at: number; status: IVoltCodeIndexStatus }>();
+	/** The cache the last run of Volt saved (the first question after a launch forked a process too), read once. */
+	private statusCacheLoaded: Promise<void> | undefined;
+	/** Whether the process has been forked and has not exited since. */
+	private live = false;
+
+	async status(roots?: readonly string[]): Promise<readonly IVoltCodeIndexStatus[]> {
+		if (!this.live && roots?.length) {
+			await (this.statusCacheLoaded ??= this.loadStatusCache());
+			const now = Date.now();
+			const cached = roots.map(root => this.statusCache.get(root));
+			if (cached.every(entry => entry && now - entry.at < STATUS_CACHE_MS)) {
+				return cached.map(entry => entry!.status);
+			}
+		}
+		try {
+			const list = await this.connect().status(roots);
+			const at = Date.now();
+			for (const status of list) {
+				this.statusCache.set(status.root, { at, status });
+			}
+			if (list.length) {
+				void this.saveStatusCache();
+			}
+			return list;
+		} catch {
+			return [];
+		}
+	}
+
+	private get statusCacheFile(): string {
+		return join(this.dataDir, STATUS_CACHE_FILE);
+	}
+
+	private async loadStatusCache(): Promise<void> {
+		try {
+			const parsed = JSON.parse(await fs.readFile(this.statusCacheFile, 'utf8')) as { version?: number; entries?: Record<string, { at: number; status: IVoltCodeIndexStatus }> };
+			if (parsed?.version !== STATUS_CACHE_VERSION || !parsed.entries) {
+				return;
+			}
+			for (const [root, entry] of Object.entries(parsed.entries)) {
+				if (typeof entry?.at === 'number' && entry.status && typeof entry.status.files === 'number' && !this.statusCache.has(root)) {
+					this.statusCache.set(root, entry);
+				}
+			}
+		} catch {
+			// First run, or a file from another Volt: asked afresh.
+		}
+	}
+
+	private async saveStatusCache(): Promise<void> {
+		try {
+			await fs.mkdir(this.dataDir, { recursive: true });
+			const tmp = `${this.statusCacheFile}.${process.pid}.tmp`;
+			await fs.writeFile(tmp, JSON.stringify({ version: STATUS_CACHE_VERSION, entries: Object.fromEntries(this.statusCache) }));
+			await fs.rename(tmp, this.statusCacheFile);
+		} catch (err) {
+			this.logService.trace('[code index] status cache not saved', err);
+		}
 	}
 
 	async rebuild(root: string, options?: IVoltCodeIndexOptions): Promise<void> {

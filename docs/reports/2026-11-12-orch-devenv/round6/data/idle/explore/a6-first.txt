@@ -1,0 +1,13 @@
+{"arm":"after","variant":"front","cpuApp":6.137,"wakeups":1075.6,"cpuAgents":0.653,"loadStart":27.96,"loadEnd":27.67,"stateDuring":"{\"vis\":\"visible\",\"focus\":true}"}
+node utility                             n=2 cpu 3.208% wakeups 705.6/s
+main                                     n=1 cpu 2.099% wakeups 356.7/s
+ACP adapter                              n=2 cpu 0.653% wakeups 17/s
+agent server                             n=1 cpu 0.448% wakeups 7.8/s
+renderer                                 n=1 cpu 0.201% wakeups 1.8/s
+gpu                                      n=1 cpu 0.087% wakeups 1/s
+code index                               n=1 cpu 0.035% wakeups 1/s
+sandbox helper                           n=2 cpu 0.026% wakeups 1/s
+network service                          n=1 cpu 0.022% wakeups 0.3/s
+plugin host                              n=1 cpu 0.012% wakeups 0.4/s
+other: Electron                          n=1 cpu 0.000% wakeups 0/s
+other: sh                                n=2 cpu 0.000% wakeups 0/s
