@@ -1,0 +1,46 @@
+load 58.53 30.30 21.75
+GPU pid 7726: shared images 280 MiB
+    127 MiB  n= 23  GpuRasterTile 3008x480
+     78 MiB  n= 15  GpuRasterTile 1472x928
+     62 MiB  n=  3  VizBufferQueue 3000x1792
+      7 MiB  n=  1  RenderPassOverlay 1472x1216
+      2 MiB  n=  2  GpuRasterTile 1472x192
+      2 MiB  n=  1  GpuRasterTile 2304x192
+      2 MiB  n=  1  GpuRasterTile 3008x128
+      1 MiB  n=  1  GpuRasterTile 1536x128
+      0 MiB  n=  2  GpuRasterTile 64x640
+      0 MiB  n=  2  GpuRasterTile 512x64
+      0 MiB  n=  2  GpuRasterTile 64x256
+      0 MiB  n=  1  GpuRasterTile 64x320
+      0 MiB  n=  1  GpuRasterTile 64x64
+      0 MiB  n=  1  GpuRasterTile 128x64
+  raster tiles: 52 (212 MiB)
+app 2411 agents 813 total 3224 MiB (26 processes, 3 s)
+  claude CLI [agents]                                  n=5   813 MiB
+  gpu [app]                                            n=1   725 MiB
+  renderer [app]                                       n=1   696 MiB
+  ACP adapter (node) [app]                             n=5   306 MiB
+  agent server [app]                                   n=1   233 MiB
+  main [app]                                           n=1   179 MiB
+  extension host [app]                                 n=1   110 MiB
+  node utility (shared process/file watcher/pty) [app] n=1    94 MiB
+  utility (other) [app]                                n=1    45 MiB
+  network service [app]                                n=1    15 MiB
+  sandbox watchdog sh [app]                            n=5     6 MiB
+  sandbox helper [app]                                 n=2     2 MiB
+  other: caffeinate [app]                              n=1     2 MiB
+pid 7726 GPU Process: top-level allocators 446 MiB
+     73.6  cc
+     88.4  gpu
+     38.4  ioaccelerator
+    208.5  iosurface
+     21.1  malloc
+     15.8  skia
+pid 7776 Renderer: top-level allocators 720 MiB
+     85.9  blink_gc
+    139.8  cc
+     23.2  gpu
+     59.4  malloc
+    168.9  parkable_strings
+     62.6  partition_alloc
+    180.1  v8
