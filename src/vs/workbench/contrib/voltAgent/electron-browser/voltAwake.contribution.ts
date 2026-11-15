@@ -16,7 +16,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { INativeHostService } from '../../../../platform/native/common/native.js';
 import { preventBackgroundThrottling } from '../../../../platform/native/electron-browser/voltBackgroundThrottling.js';
 import { INotificationService, NeverShowAgainScope, Severity } from '../../../../platform/notification/common/notification.js';
-import { AWAKE_LID_CLOSED_MODE_SETTING, IAwakeLease, IAwakeState, IVoltAwakeService, LidCapability, readAwakePrefs, VOLT_AWAKE_CHANNEL_NAME } from '../../../../platform/voltAwake/common/voltAwake.js';
+import { AWAKE_LID_CLOSED_MODE_SETTING, IAwakeLease, IAwakeState, IVoltAwakeService, leaseNeedsRefresh, LidCapability, readAwakePrefs, VOLT_AWAKE_CHANNEL_NAME } from '../../../../platform/voltAwake/common/voltAwake.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
@@ -26,8 +26,8 @@ import '../common/agentAwakeSettings.js';
 registerMainProcessRemoteService(IVoltAwakeService, VOLT_AWAKE_CHANNEL_NAME);
 
 /**
- * How often the lease is re-sent unchanged so main's copy (kept 2 minutes) stays fresh. At rest this was the only
- * renderer-to-main call left (round 6 IPC census, 3 in 90 s): once a minute keeps twice the headroom under the TTL.
+ * How often the lease is re-sent unchanged while it holds work (see leaseNeedsRefresh), so main's copy (kept 2 minutes)
+ * stays fresh: once a minute keeps twice the headroom under the TTL. An idle lease is re-sent only when it changes.
  */
 const HEARTBEAT_MS = 60_000;
 /** A run the orchestrator does not track counts only while it still emits; one that never ended stops counting. */
@@ -91,7 +91,8 @@ class VoltAwakeContribution extends Disposable implements IWorkbenchContribution
 			}
 		}));
 		this._register(awake.onDidChange(state => this.onState(state)));
-		this._register(disposableWindowInterval(mainWindow, () => this.send(true), HEARTBEAT_MS));
+		// At rest this sends nothing: the lease is idle and unchanged (an untracked run going quiet is a change).
+		this._register(disposableWindowInterval(mainWindow, () => this.send(leaseNeedsRefresh(this.lease())), HEARTBEAT_MS));
 		void this.watchBattery();
 		void awake.getState().then(state => this.state = state, () => undefined);
 		// A reloaded window starts from nothing; what it reported before the reload goes.

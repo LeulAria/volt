@@ -19,6 +19,20 @@ export interface IDriftStall {
 }
 
 /**
+ * IPC calls that only re-send state a window already reported (heartbeats), and bring no work of their own. At rest
+ * they were the only calls into main, and each woke the stall monitor's timer for 10 s at 10 ticks a second.
+ */
+const HEARTBEAT_CALLS: ReadonlySet<string> = new Set([
+	'voltCodeIndex.reportWorkspaceActivity', // every window, every 2 minutes (the language-server budget)
+	'voltAwake.setLease', // a window with agents at work, every minute
+]);
+
+/** Whether an IPC call into main should wake the stall monitor (see {@link DriftStallMonitor.poke}). */
+export function ipcCallWakesStallMonitor(channelName: string, command: string): boolean {
+	return !HEARTBEAT_CALLS.has(`${channelName}.${command}`);
+}
+
+/**
  * Detects event-loop stalls from a repeating timer: a tick that arrives `threshold` ms or more
  * late means the loop was blocked that long. Pure, so the decision is testable; `tick(now)` is
  * called by the timer with the current time.

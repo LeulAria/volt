@@ -21,6 +21,7 @@ import {
 	collectRemarks,
 	commitMessageFrom,
 	currentLink,
+	canDiscoverPullRequests,
 	createdPullRequestUrl,
 	discoveredPrBelongs,
 	evaluateWatch,
@@ -345,6 +346,13 @@ suite('Volt agent pull requests', () => {
 		assert.ok(isTrunkBranch('release-x', 'release-x'));
 		assert.ok(isTrunkBranch(undefined));
 		assert.ok(!isTrunkBranch('feature/a', 'main'));
+
+		// Only a GitHub checkout of a branch of its own has anything to look up.
+		assert.ok(canDiscoverPullRequests({ provider: 'github', branch: 'feature/a' }));
+		assert.ok(!canDiscoverPullRequests({ provider: 'github', branch: 'main' }));
+		assert.ok(!canDiscoverPullRequests({ provider: 'github', branch: undefined }), 'detached HEAD');
+		assert.ok(!canDiscoverPullRequests({ provider: 'gitlab', branch: 'feature/a' }));
+		assert.ok(!canDiscoverPullRequests(undefined), 'not a repository, or no remote');
 
 		const chat = { ownBranch: false, createdAt: 0, lastPromptAt: 10_000, updatedAt: 20_000 };
 		assert.ok(discoveredPrBelongs({ createdAt: 15_000, state: 'open' }, chat));

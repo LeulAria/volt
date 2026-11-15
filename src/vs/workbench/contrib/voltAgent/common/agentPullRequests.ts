@@ -563,6 +563,15 @@ export function isTrunkBranch(branch: string | undefined, defaultBranch?: string
 	return !branch || branch === defaultBranch || TRUNK_BRANCHES.has(branch.toLowerCase());
 }
 
+/**
+ * Whether discovery can look up pull requests for a checkout: a GitHub repository with a branch of its own checked
+ * out. Anything else (no GitHub remote, a trunk branch, detached HEAD, not a repository) has nothing to find until its
+ * remotes or its branch change.
+ */
+export function canDiscoverPullRequests<T extends { readonly provider: string; readonly branch?: string }>(repo: T | undefined): repo is T & { readonly branch: string } {
+	return !!repo && repo.provider === 'github' && !!repo.branch && !isTrunkBranch(repo.branch);
+}
+
 export interface IAgentPrDiscoveryContext {
 	/** The chat has a worktree of its own on this branch. */
 	readonly ownBranch: boolean;

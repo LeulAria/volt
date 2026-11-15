@@ -290,7 +290,9 @@ export class VoltAwakeMainService extends Disposable implements IVoltAwakeServic
 			await this.releaseLid();
 		}
 
-		if (engaged || this.leases.size) {
+		// Only work (or its grace period) needs re-deciding on a timer, and a working lease that goes stale is dropped by
+		// the same tick. Idle leases hold nothing: they no longer keep a 30 s timer running in main at rest.
+		if (engaged) {
 			this.startTick();
 		} else {
 			this.stopTick();

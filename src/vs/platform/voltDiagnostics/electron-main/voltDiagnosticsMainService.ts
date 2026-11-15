@@ -22,7 +22,7 @@ import { IWindowsMainService } from '../../windows/electron-main/windows.js';
 import { IUpdateService, State as UpdateState, StateType as UpdateStateType } from '../../update/common/update.js';
 import { IpcActivityRecorder } from '../common/ipcActivity.js';
 import { OtlpBatchExporter, OtlpTransport } from '../common/otlp.js';
-import { DriftStallMonitor, formatStall, StallRateLimiter } from '../common/stalls.js';
+import { DriftStallMonitor, formatStall, ipcCallWakesStallMonitor, StallRateLimiter } from '../common/stalls.js';
 import { IVoltSpan, VoltTracer } from '../common/tracer.js';
 import {
 	IVoltDiagnosticsService, IVoltHeapSnapshotResult, IVoltSpanData, IVoltStallReport, IVoltTracingConfig, readStallThreshold, readTracingConfig,
@@ -196,9 +196,11 @@ export class VoltDiagnosticsMainService extends Disposable implements IVoltDiagn
 		this.exporter.value?.add(spans);
 	}
 
-	/** An IPC call is about to run: the stall monitor watches the loop for a while (it rests otherwise). */
-	willHandleIpcCall(): void {
-		this.stallMonitor.value?.poke();
+	/** An IPC call is about to run: the stall monitor watches the loop for a while (it rests otherwise). A heartbeat does not count. */
+	willHandleIpcCall(channelName: string, command: string): void {
+		if (ipcCallWakesStallMonitor(channelName, command)) {
+			this.stallMonitor.value?.poke();
+		}
 	}
 
 	/** Observes IPC calls on the traced channels. Called by {@link IpcActivityRecorder.instrument}. */
@@ -368,7 +370,7 @@ export class VoltDiagnosticsMainService extends Disposable implements IVoltDiagn
 export function registerVoltDiagnosticsMain(accessor: ServicesAccessor, server: IChannelServer<string>): IDisposable {
 	const service = accessor.get(IVoltDiagnosticsService) as VoltDiagnosticsMainService;
 	const disposables = new DisposableStore();
-	const restore = service.ipcActivity.instrument(server, (channel, command, startTime, result) => service.observeIpcCall(channel, command, startTime, result), () => service.willHandleIpcCall());
+	const restore = service.ipcActivity.instrument(server, (channel, command, startTime, result) => service.observeIpcCall(channel, command, startTime, result), (channel, command) => service.willHandleIpcCall(channel, command));
 	disposables.add(toDisposable(restore));
 	server.registerChannel(VOLT_DIAGNOSTICS_CHANNEL_NAME, ProxyChannel.fromService(service, disposables));
 	return disposables;

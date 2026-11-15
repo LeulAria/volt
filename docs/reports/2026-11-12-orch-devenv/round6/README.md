@@ -95,7 +95,18 @@ Release builds, ADEMark's sampler, MB.
 
 ## Idle CPU (report 56)
 
-PENDING.
+Release builds, ADEMark's sampler, median (n 5 per arm), window in front; ABBA, load 4-14.
+
+| Test | Before | After | Leader |
+|---|---|---|---|
+| A6 idle CPU, in front | 0.70 % (0.46-1.16) | 0.71 % (0.49-0.88) | super.engineering 0.18 |
+| A6 wakeups/s, in front | 19.8 | 16.0 | |
+| A5 at rest (same samples) | 869 MiB | 742 MiB | super.engineering 134 |
+
+- Six fixes cut what Volt re-reads and keeps at rest (worktree `du` pass, code index hold and status forks, a second
+  kernel-log read, the awake lease every 30 s): fewer wakeups and processes, **no CPU change beyond the noise**.
+- Covered rows on the release builds are too few to compare: the window sat on another Space (the user had a
+  full-screen app in front) for 5 of 9 covered samples, and both valid "after" covered rows had a warm agent alive.
 
 ## Typing lag (report 57)
 
