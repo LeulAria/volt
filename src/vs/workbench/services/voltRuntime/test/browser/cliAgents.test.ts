@@ -105,6 +105,11 @@ suite('runCli', () => {
 		assert.strictEqual(cliAgentDefinition('claude-code')?.acpEnv?.CLAUDE_CODE_MCP_STARTUP_WAIT_MS, '0');
 	});
 
+	test('A7-HOOKS-1: Claude Code runs Volt\'s hook module on its own thread, not in a second heap per CLI', () => {
+		// The Worker cost each chat's CLI about 45 MB; the requests are byte-identical either way (round 7, report 61).
+		assert.strictEqual(cliAgentDefinition('claude-code')?.acpEnv?.CLAUDE_CODE_HOOKS_SAME_THREAD, '1');
+	});
+
 	test('Codex launches the ACP adapter, never `codex acp`', () => {
 		const codex = cliAgentDefinition('codex');
 		assert.deepStrictEqual(acpLaunchFor(codex, 'codex', ['acp'], true), { command: 'codex-acp', args: [] });
