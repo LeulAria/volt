@@ -115,7 +115,7 @@ export class AcpSharedHosts {
 		const chat: IChat = { id, host, options, children: new Map(), pending: '' };
 		this.chats.set(id, chat);
 		host.chats.add(id);
-		this.send(host, AcpHostFrame.Open, id, JSON.stringify(view ? { sandboxed: true, env: view.env, policy: view.policy } : {}));
+		this.send(host, AcpHostFrame.Open, id, JSON.stringify({ ...(options.cwd ? { cwd: options.cwd } : {}), ...(view ? { sandboxed: true, env: view.env, policy: view.policy } : {}) }));
 		return id;
 	}
 

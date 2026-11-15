@@ -18,8 +18,8 @@
  *   service, which starts it through that chat's own sandbox launch, exactly as it started the
  *   chat's adapter before; its stdio is relayed here. A spawn outside a chat's context, and every
  *   synchronous or shell spawn, is refused.
- * - **Each chat has its own environment.** `process.env` reads the environment of the chat whose
- *   code is running (the async context), which for a sandboxed chat is its sandbox launch's
+ * - **Each chat has its own environment and folder.** `process.env` and `process.cwd()` read those of the
+ *   chat whose code is running (the async context), which for a sandboxed chat is its sandbox launch's
  *   environment (its own `CLAUDE_CONFIG_DIR` overlay). Chats whose spawn environment differs
  *   (another account's config folder) get different hosts.
  * - **The host's own file access follows the chat's sandbox policy.** `fs` calls made in a sandboxed
@@ -34,7 +34,7 @@
 export const enum AcpHostFrame {
 	/** host → service, once: the adapter loaded and chats can open. Payload: `{}`. */
 	Ready = 'ready',
-	/** service → host: a chat's connection. Payload: `{ env?, base?, policy? }`. */
+	/** service → host: a chat's connection. Payload: `{ cwd?, sandboxed?, env?, policy? }` (`env`, `policy`: a sandboxed chat's). */
 	Open = 'open',
 	/** Both ways: one ACP JSON-RPC line of the chat. */
 	Acp = 'acp',
@@ -165,6 +165,10 @@ process.env = new Proxy({}, {
 	},
 	defineProperty: (_, key, descriptor) => { envNow()[key] = String(descriptor.value); return true; },
 });
+
+// The adapter process used to start in the folder of its chat: process.cwd() is the running one.
+const realCwd = process.cwd.bind(process);
+process.cwd = () => context.getStore()?.cwd ?? realCwd();
 
 // --- no process is started here -------------------------------------------------------------------
 
@@ -429,6 +433,13 @@ console.info = console.error;
 console.warn = console.error;
 console.debug = console.error;
 process.on('unhandledRejection', reason => { console.error('Unhandled Rejection:', reason); });
+// An adapter process of its own died with its chat. Here the chat whose code threw ends (its connection
+// closes, as a crashed adapter's would); the other chats keep theirs.
+process.on('uncaughtException', error => {
+	const chat = context.getStore();
+	log('uncaught exception' + (chat ? ' in chat ' + chat.id : '') + ': ' + (error?.stack || error));
+	if (chat) { closeChat(chat.id); }
+});
 
 const entry = realpathSync(process.argv[process.argv.length - 1]);
 const dist = dirname(entry);
@@ -466,6 +477,7 @@ function openChat(id, options) {
 		// A sandboxed chat sees its sandbox launch's environment; any other the host's own.
 		env: options.env ? { ...options.env, ...managedEnv } : undefined,
 		base: options.env ? options.env : startEnv,
+		cwd: typeof options.cwd === 'string' && options.cwd ? options.cwd : undefined,
 		sandboxed: !!options.sandboxed,
 		policy: options.policy,
 		children: new Map(),

@@ -28,6 +28,8 @@ export function acpProtocolRouter(logger, onAgent) {
 			const writer = stream.writable.getWriter();
 			const reply = value => writer.write(new TextEncoder().encode(JSON.stringify(value) + '\\n'));
 			const handle = async request => {
+				if (request.do === 'cwd') { return { cwd: process.cwd() }; }
+				if (request.do === 'throw') { setTimeout(() => { throw new Error('scripted'); }, 0); return { thrown: true }; }
 				if (request.do === 'env') { return { value: process.env[request.name], keys: Object.keys({ ...process.env }).includes(request.name) }; }
 				if (request.do === 'read') { return readFile(request.path, 'utf8').then(text => ({ text }), error => ({ error: error.code })); }
 				if (request.do === 'readSync') { try { return { text: fs.readFileSync(request.path, 'utf8') }; } catch (error) { return { error: error.code }; } }

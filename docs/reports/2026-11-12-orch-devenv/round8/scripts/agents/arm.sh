@@ -8,8 +8,8 @@
 # Every arm uses CDP 9986 and the replay server on 18996, so only one arm runs at a time. Profile ud-<arm>.
 unset ELECTRON_RUN_AS_NODE SPEED_APP SPEED_CHECKOUT
 W=$HOME/.volt-r8/agents
-if [[ -n $2 ]]; then
-	export SPEED_APP=$2
+if [[ -n ${2:-$R8_APP} ]]; then
+	export SPEED_APP=${2:-$R8_APP}
 else
 	case $1 in
 		base) export SPEED_APP=$HOME/.volt-r7/min/base/VOLT.app ;;

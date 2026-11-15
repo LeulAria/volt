@@ -140,6 +140,8 @@ suite('Shared ACP adapter host', () => {
 		assert.strictEqual((await ask(a, { do: 'env', name: 'SHARED' })).value, undefined, 'a sandboxed chat does not see the host\'s environment');
 		assert.strictEqual((await ask(b, { do: 'env', name: 'SHARED' })).value, 'host');
 
+		assert.deepStrictEqual([(await ask(a, { do: 'cwd' })).cwd, (await ask(b, { do: 'cwd' })).cwd], ['/chat-a', '/chat-b'], 'each chat\'s adapter code runs in its own folder');
+
 		// Files: the sandboxed chat's policy holds the host's own reads and writes; the other chat is unconfined.
 		assert.deepStrictEqual([(await ask(a, { do: 'read', path: secret })).error, (await ask(a, { do: 'readSync', path: secret })).error], ['EACCES', 'EACCES']);
 		assert.strictEqual((await ask(a, { do: 'read', path: open })).text, 'open');
@@ -198,6 +200,12 @@ suite('Shared ACP adapter host', () => {
 		assert.strictEqual(hosts.hostCount, 2, 'a chat with another config folder never shares a process');
 		assert.strictEqual((await ask(other, { do: 'env', name: 'CLAUDE_CONFIG_DIR' })).value, '/accounts/two');
 		assert.strictEqual((await ask(a, { do: 'env', name: 'CLAUDE_CONFIG_DIR' })).value, undefined);
+
+		// An exception nobody caught, in one chat's code: that chat's connection ends, the host and the other chat stay.
+		await ask(other, { do: 'throw' });
+		await until(() => exits.has(other), 'the end of the chat that threw');
+		assert.strictEqual((await ask(a, { do: 'env', name: 'SHARED' })).value, 'host');
+		assert.strictEqual(exits.has(a), false);
 
 		const broken = join(dir, 'broken', 'index.js');
 		await fs.mkdir(join(dir, 'broken'));
