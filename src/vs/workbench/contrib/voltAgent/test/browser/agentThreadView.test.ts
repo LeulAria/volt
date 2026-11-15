@@ -7,7 +7,7 @@ import assert from 'assert';
 import { $ } from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { AgentThreadView } from '../../browser/editor/agentThreadView.js';
+import { AgentThreadView, isBottomFadeClear } from '../../browser/editor/agentThreadView.js';
 
 suite('Agent thread view', () => {
 
@@ -90,6 +90,39 @@ suite('Agent thread view', () => {
 			await new Promise(resolve => mainWindow.requestAnimationFrame(() => setTimeout(resolve, 0)));
 			assert.notStrictEqual(slider.style.top, before, 'the slider is drawn by the end of the frame');
 			assert.strictEqual(thread.inner.scrollTop, 450, 'the element itself scrolled at once');
+		} finally {
+			thread.element.remove();
+		}
+	});
+
+	test('the bottom fade is marked clear only while no content reaches its band', () => {
+		assert.strictEqual(isBottomFadeClear(220, 300), true);
+		assert.strictEqual(isBottomFadeClear(220.5, 300), false);
+
+		const thread = store.add(new AgentThreadView());
+		thread.element.style.height = '300px';
+		thread.inner.style.height = '300px';
+		thread.inner.style.overflow = 'hidden';
+		thread.inner.style.boxSizing = 'border-box';
+		// Stands in for the empty space under the last exchange (`.volt-agent-thread-inner::after`).
+		thread.inner.style.paddingBottom = '200px';
+		mainWindow.document.body.appendChild(thread.element);
+		try {
+			const content = thread.inner.appendChild($('div'));
+			content.style.height = '1000px';
+			content.style.flexShrink = '0';
+			thread.scroll.scanDomNode();
+			const scroller = thread.scroll.getDomNode();
+			const at = (scrollTop: number) => {
+				thread.scroll.setScrollPosition({ scrollTop });
+				thread.syncStuckTurns();
+				return scroller.classList.contains('bottom-clear');
+			};
+			assert.strictEqual(at(900), true, 'at the end only the empty space is under the fade');
+			assert.strictEqual(at(780), true, 'the last line is just above the fade');
+			assert.strictEqual(at(700), false, 'content in the fade keeps the mask');
+			assert.strictEqual(at(0), false);
+			assert.strictEqual(at(900), true);
 		} finally {
 			thread.element.remove();
 		}
