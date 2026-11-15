@@ -27,7 +27,10 @@ const env = {
 const load = loadAvg();
 const t0 = Date.now();
 const out = createWriteStream(join(RUNS, `${id}.stream.jsonl`));
-const child = spawn('claude', ['-p', prompt, '--model', model, '--effort', effort, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'], { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'] });
+// CLAUDE_BIN: the binary to run (round 6 compares at 2.1.322, the SDK's bundled build that Volt's adapter runs).
+const bin = process.env.CLAUDE_BIN ?? 'claude';
+const version = execSync(`${JSON.stringify(bin)} --version`).toString().trim();
+const child = spawn(bin, ['-p', prompt, '--model', model, '--effort', effort, '--dangerously-skip-permissions', '--output-format', 'stream-json', '--verbose'], { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'] });
 let buffer = '';
 let result;
 child.stdout.on('data', chunk => {
@@ -63,7 +66,7 @@ const graded = grade(repo, seed);
 const minutes = +((end - t0) / 60_000).toFixed(2);
 const efforts = [...new Set(rows.filter(r => r.meta).map(r => `${r.model}:${r.meta.effort ?? '-'}:${r.meta.thinking ?? '-'}`))];
 const row = {
-	id, arm: `cli-${kind}`, model, effort, at: new Date(t0).toISOString(), load, timedOut, minutes,
+	id, arm: `cli-${kind}`, model, effort, version, at: new Date(t0).toISOString(), load, timedOut, minutes,
 	timeToGreen: graded.shipped === 5 && !timedOut ? minutes : null,
 	shipped: graded.shipped, groups: graded.groups, handoff: graded.handoff, codesPlaced: graded.codesPlaced, npmTest: graded.npmTest,
 	tokensTotal: tokens.total, usd: usd?.usd ?? null, tokens, requests: rows.length, agents: seen, fanOut: fanOut(intervals.filter(s => s.cwd !== repo)),

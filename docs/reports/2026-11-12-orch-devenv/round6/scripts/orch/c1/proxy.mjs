@@ -146,6 +146,9 @@ createServer((req, res) => {
 					model: json?.model ?? parsed?.model ?? null, ua: req.headers['user-agent'] ?? null, beta: req.headers['anthropic-beta'] ?? null,
 					request_id: up.headers['request-id'] ?? null, message_id: parsed?.id ?? null, stop: parsed?.stop ?? null,
 					req_bytes: body.length, usage: parsed?.usage ?? null, meta,
+					// The subscription's limit state (5 h / 7 d utilization) as the API reports it, so a queue can stop
+					// before a run would spend the account's last few percent.
+					rl: Object.fromEntries(Object.entries(up.headers).filter(([k]) => k.startsWith('anthropic-ratelimit-unified')).map(([k, v]) => [k.slice('anthropic-ratelimit-unified-'.length), v])),
 					...(up.statusCode >= 400 ? { error: text.slice(0, 400) } : {}),
 				};
 				try { appendFileSync(out, JSON.stringify(row) + '\n'); } catch (err) { console.error('row not kept', n, String(err)); }
