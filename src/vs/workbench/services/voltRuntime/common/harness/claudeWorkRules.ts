@@ -406,8 +406,13 @@ export function isClaudePlaceholderTitle(title: string): boolean {
  *   model call after every turn but the first (the whole context again plus ~300 tokens). Volt
  *   never shows it (its composer predicts on its own), and in Volt's long-lived prediction
  *   session it ran after every prediction (3.4k tokens each, measured 2026-11-13).
+ * - `allowedTools: ['mcp__volt']`: names Volt's own MCP server in the session's allow rules, which makes it
+ *   a server Claude Code's first command waits for (up to 2 s) while it waits for no other
+ *   (CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0 in the Claude provider's `env`, extensions/volt-provider-claude): the first message of a
+ *   stopped chat's agent never leaves without Volt's tools, and never waits for the claude.ai connectors.
+ *   It changes no permission: Volt answers every prompt for its own tools itself (isVoltHostToolPermission).
  */
-export const CLAUDE_SESSION_OPTIONS = { promptSuggestions: false } as const;
+export const CLAUDE_SESSION_OPTIONS = { promptSuggestions: false, allowedTools: ['mcp__volt'] } as const;
 
 /** Appended to Claude Code's prompt for a subagent that changes files: the main rules without the user-facing parts (Tasks card, handing work on). */
 export const CLAUDE_WORK_SUBAGENT_RULES = [

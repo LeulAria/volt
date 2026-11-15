@@ -1,0 +1,27 @@
+{"label":"r6-diag1","flags":["warm=400"],"rep":0,"at":"2026-11-14T20:52:21.584Z","load":"26.91 18.94 12.32","initMs":954,"sessionMs":2054,"readyMs":3332,"warmMs":400,"mainReqMs":542,"firstTextMs":679,"resultMs":887,"spawnToFirstTextMs":4413,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":954,"sessionMs":2054,"mainReqMs":542,"firstTextMs":679,"spawnToFirstTextMs":4413}
+{"label":"r6-diag1","flags":["warm=400","env:ENABLE_CLAUDEAI_MCP_SERVERS=false"],"rep":0,"at":"2026-11-14T20:52:55.597Z","load":"27.47 19.91 12.94","initMs":1491,"sessionMs":2483,"readyMs":4179,"warmMs":400,"mainReqMs":429,"firstTextMs":454,"resultMs":627,"spawnToFirstTextMs":5038,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":1491,"sessionMs":2483,"mainReqMs":429,"firstTextMs":454,"spawnToFirstTextMs":5038}
+{"label":"r6-diag1","flags":["warm=400","nomcp"],"rep":0,"at":"2026-11-14T20:53:30.436Z","load":"29.47 21.17 13.67","initMs":1775,"sessionMs":2139,"readyMs":4574,"warmMs":400,"mainReqMs":514,"firstTextMs":625,"resultMs":855,"spawnToFirstTextMs":5605,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":1775,"sessionMs":2139,"mainReqMs":514,"firstTextMs":625,"spawnToFirstTextMs":5605}
+{"label":"r6-diag1","flags":["warm=400","nomcp","env:ENABLE_CLAUDEAI_MCP_SERVERS=false"],"rep":0,"at":"2026-11-14T20:54:05.900Z","load":"29.58 21.94 14.24","initMs":1263,"sessionMs":1441,"readyMs":2888,"warmMs":400,"mainReqMs":308,"firstTextMs":328,"resultMs":562,"spawnToFirstTextMs":3618,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":1263,"sessionMs":1441,"mainReqMs":308,"firstTextMs":328,"spawnToFirstTextMs":3618}
+{"label":"r6-diag1","flags":["warm=400"],"rep":0,"at":"2026-11-14T20:54:39.358Z","load":"37.49 24.59 15.51","initMs":1594,"sessionMs":1515,"readyMs":3391,"warmMs":400,"mainReqMs":755,"firstTextMs":829,"resultMs":1021,"spawnToFirstTextMs":4660,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":1594,"sessionMs":1515,"mainReqMs":755,"firstTextMs":829,"spawnToFirstTextMs":4660}
+{"label":"r6-diag1","flags":["warm=400","env:ENABLE_CLAUDEAI_MCP_SERVERS=false"],"rep":0,"at":"2026-11-14T20:55:13.482Z","load":"43.49 27.27 16.79","initMs":2867,"sessionMs":2478,"readyMs":5712,"warmMs":400,"mainReqMs":468,"firstTextMs":498,"resultMs":1039,"spawnToFirstTextMs":6615,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":2867,"sessionMs":2478,"mainReqMs":468,"firstTextMs":498,"spawnToFirstTextMs":6615}
+{"label":"r6-diag1","flags":["warm=400","nomcp"],"rep":0,"at":"2026-11-14T20:55:49.970Z","load":"55.84 32.51 19.19","initMs":2518,"sessionMs":4963,"readyMs":7977,"warmMs":400,"mainReqMs":1573,"firstTextMs":1677,"resultMs":2102,"spawnToFirstTextMs":10063,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":2518,"sessionMs":4963,"mainReqMs":1573,"firstTextMs":1677,"spawnToFirstTextMs":10063}
+{"label":"r6-diag1","flags":["warm=400","nomcp","env:ENABLE_CLAUDEAI_MCP_SERVERS=false"],"rep":0,"at":"2026-11-14T20:56:28.720Z","load":"67.65 37.98 21.72","initMs":2680,"sessionMs":3800,"readyMs":6958,"warmMs":400,"mainReqMs":1067,"firstTextMs":1144,"resultMs":1672,"spawnToFirstTextMs":8511,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":2680,"sessionMs":3800,"mainReqMs":1067,"firstTextMs":1144,"spawnToFirstTextMs":8511}
+{"label":"r6-diag1","flags":["warm=400"],"rep":0,"at":"2026-11-14T20:57:06.311Z","load":"72.79 42.71 24.18","initMs":1344,"sessionMs":1789,"readyMs":3514,"warmMs":400,"mainReqMs":630,"firstTextMs":666,"resultMs":902,"spawnToFirstTextMs":4584,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":1344,"sessionMs":1789,"mainReqMs":630,"firstTextMs":666,"spawnToFirstTextMs":4584}
+{"label":"r6-diag1","flags":["warm=400","env:ENABLE_CLAUDEAI_MCP_SERVERS=false"],"rep":0,"at":"2026-11-14T20:57:40.428Z","load":"62.47 43.60 25.26","initMs":1328,"sessionMs":2230,"readyMs":3884,"warmMs":400,"mainReqMs":265,"firstTextMs":307,"resultMs":530,"spawnToFirstTextMs":4625,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":1328,"sessionMs":2230,"mainReqMs":265,"firstTextMs":307,"spawnToFirstTextMs":4625}
+{"label":"r6-diag1","flags":["warm=400","nomcp"],"rep":0,"at":"2026-11-14T20:58:15.146Z","load":"52.21 43.13 25.83","initMs":1533,"sessionMs":1362,"readyMs":3297,"warmMs":400,"mainReqMs":728,"firstTextMs":800,"resultMs":1009,"spawnToFirstTextMs":4541,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":1533,"sessionMs":1362,"mainReqMs":728,"firstTextMs":800,"spawnToFirstTextMs":4541}
+{"label":"r6-diag1","flags":["warm=400","nomcp","env:ENABLE_CLAUDEAI_MCP_SERVERS=false"],"rep":0,"at":"2026-11-14T20:58:49.069Z","load":"57.05 45.05 27.21","initMs":1362,"sessionMs":1204,"readyMs":2704,"warmMs":400,"mainReqMs":419,"firstTextMs":433,"resultMs":609,"spawnToFirstTextMs":3545,"before":0,"mainMessages":2}
+{"label":"r6-diag1","n":1,"initMs":1362,"sessionMs":1204,"mainReqMs":419,"firstTextMs":433,"spawnToFirstTextMs":3545}
+{"label":"r6-diag1-debug","flags":["warm=400","debug"],"rep":0,"at":"2026-11-14T20:59:22.389Z","load":"62.15 47.58 28.75","initMs":997,"sessionMs":1859,"readyMs":3032,"warmMs":400,"mainReqMs":381,"firstTextMs":447,"resultMs":697,"spawnToFirstTextMs":3891,"before":0,"mainMessages":2}
+{"label":"r6-diag1-debug","n":1,"initMs":997,"sessionMs":1859,"mainReqMs":381,"firstTextMs":447,"spawnToFirstTextMs":3891}
+diag1 done Sun Nov 15 00:59:55 +04 2026

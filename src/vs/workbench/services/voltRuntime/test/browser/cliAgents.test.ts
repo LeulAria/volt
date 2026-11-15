@@ -99,6 +99,12 @@ suite('runCli', () => {
 		assert.ok(timeout > taskWaitMs(true) + 30_000, `MCP_TOOL_TIMEOUT ${timeout} must outlast ${taskWaitMs(true)} ms`);
 	});
 
+	test('FIRSTWORD-WAIT-2: Claude\'s first command does not wait for MCP servers it does not require (the claude.ai connectors)', () => {
+		// Without it a message sent 0.4-1.1 s after a stopped chat's agent came back waited for the account's
+		// connectors, until about 1.1 s after ready (round 5, chain 4; round 6, report 52).
+		assert.strictEqual(cliAgentDefinition('claude-code')?.acpEnv?.CLAUDE_CODE_MCP_STARTUP_WAIT_MS, '0');
+	});
+
 	test('Codex launches the ACP adapter, never `codex acp`', () => {
 		const codex = cliAgentDefinition('codex');
 		assert.deepStrictEqual(acpLaunchFor(codex, 'codex', ['acp'], true), { command: 'codex-acp', args: [] });
@@ -110,6 +116,18 @@ suite('runCli', () => {
 		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], false, bin), { command: 'node', args: ['--import', acpAdapterPreload('@agentclientprotocol/claude-agent-acp@0.106.0')!, bin] });
 		const codexBin = '/home/u/.npm/_npx/def/node_modules/.bin/codex-acp';
 		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('codex'), 'codex', [], false, codexBin), { command: codexBin, args: [] });
+	});
+
+	test('FIRSTWORD-PATH-1: Claude\'s adapter found on PATH runs on node with Volt\'s preload too (compile cache, after-turn patches); a path-less PATH hit runs by name', () => {
+		// Round 6: a global `claude-agent-acp` on PATH skipped the preload, which cost the cold start its compile
+		// cache and every prompt the deferred skill-file read and sign-in probe.
+		const global = '/opt/homebrew/bin/claude-agent-acp';
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], global), { command: 'node', args: ['--import', acpAdapterPreload('@agentclientprotocol/claude-agent-acp@0.106.0')!, global] });
+		// A path on PATH wins over npx's copy.
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], global, '/home/u/.npm/_npx/abc/node_modules/.bin/claude-agent-acp').args[2], global);
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], true), { command: 'claude-agent-acp', args: [] });
+		// Codex has no preload: its global adapter runs as the file it is.
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('codex'), 'codex', [], '/opt/homebrew/bin/codex-acp'), { command: '/opt/homebrew/bin/codex-acp', args: [] });
 	});
 
 	test('an adapter cached by npx runs directly, without npx as its parent', () => {

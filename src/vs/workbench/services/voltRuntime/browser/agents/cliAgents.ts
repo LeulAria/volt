@@ -124,22 +124,28 @@ export function grokAcpArgs(args: readonly string[]): string[] {
  * What to spawn for an ACP session. A profile still pointing at the bare CLI of an agent that
  * needs an adapter (including stored `claude acp` and `codex acp` profiles) launches the adapter
  * instead; a custom command is left alone. Stored `grok acp` is rewritten to `grok agent stdio`.
+ *
+ * `adapterOnPath`: the adapter's path when `which` found it on PATH (a global install), `true` when it is
+ * known to be there but its path is not, `false` otherwise. An adapter Volt has a preload for (Claude's, see
+ * claudeAcpPatch.ts: Node's compile cache and the after-turn patches) runs on `node --import <preload>` from
+ * any known path, a global install as much as npx's copy; a path-less `true` runs it by name, unpatched.
  */
-export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: string, args: readonly string[], adapterOnPath: boolean, adapterBin?: string): { command: string; args: string[] } {
+export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: string, args: readonly string[], adapterOnPath: boolean | string, adapterBin?: string): { command: string; args: string[] } {
 	const launchArgs = def?.id === 'grok' ? grokAcpArgs(args) : args;
 	const adapter = def?.acpAdapter;
 	if (!adapter || !def.commands.includes(command)) {
 		return { command, args: [...launchArgs] };
 	}
+	// A known file (a global install, or the copy npx installed earlier) is started directly: npx itself costs
+	// 0.5-1.5 s per spawn. Its `node` is the one its `#!/usr/bin/env node` line would find, with Volt's load hook
+	// for the work the adapter does between a prompt and its model request (see claudeAcpPatch.ts).
+	const bin = typeof adapterOnPath === 'string' ? adapterOnPath : adapterOnPath ? undefined : adapterBin;
+	if (bin) {
+		const preload = acpAdapterPreload(adapter.package);
+		return preload ? { command: 'node', args: ['--import', preload, bin] } : { command: bin, args: [] };
+	}
 	if (adapterOnPath) {
 		return { command: adapter.command, args: [] };
-	}
-	if (adapterBin) {
-		// The copy npx installed earlier, started directly: npx itself costs 0.5-1.5 s per spawn. Its
-		// `node` is the one its `#!/usr/bin/env node` line would find, with Volt's load hook for the
-		// work the adapter does between a prompt and its model request (see claudeAcpPatch.ts).
-		const preload = acpAdapterPreload(adapter.package);
-		return preload ? { command: 'node', args: ['--import', preload, adapterBin] } : { command: adapterBin, args: [] };
 	}
 	// The adapter version is pinned, so a cached copy is the right one: --prefer-offline skips the
 	// registry round trip npx makes on every spawn (a cold start of seconds, a failure offline).

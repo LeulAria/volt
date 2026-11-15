@@ -115,6 +115,16 @@ suite('Volt Claude work rules', () => {
 		assert.ok(!isClaudePlaceholderTitle('Fix sidebar list jumping to top'));
 	});
 
+	test('FIRSTWORD-WAIT-1: every session names Volt\'s MCP server in its allow rules, so Claude Code\'s first command waits for it and for no other server', () => {
+		// With CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0 (the Claude provider's manifest env) the first command waits only for servers
+		// the session requires; the allow rule is what makes Volt's one required (round 6, report 52).
+		type Meta = { claudeCode: { options: { allowedTools?: string[] } } };
+		for (const subagent of [false, 'work', 'readonly'] as const) {
+			const options = (claudeWorkRulesMeta('claude-haiku-5-5', { subagent, voltAsks: !subagent }) as Meta).claudeCode.options;
+			assert.deepStrictEqual(options.allowedTools, ['mcp__volt'], String(subagent));
+		}
+	});
+
 	test('with the lazy-tools plugin, a main session defers Agent, Workflow, ScheduleWakeup, ReportFindings and ListAgents and names them in its rules', () => {
 		type Meta = { systemPrompt: { append?: string } | string; claudeCode: { options: { plugins?: unknown; disallowedTools?: string[] } } };
 		const lazy = claudeWorkRulesMeta('claude-opus-5-5', { voltAsks: true, lazyToolsPlugin: '/Users/me/.volt/claude-plugins/volt-lazy-tools-1' }) as Meta;
