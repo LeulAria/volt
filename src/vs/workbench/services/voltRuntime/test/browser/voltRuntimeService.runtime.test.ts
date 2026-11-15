@@ -664,10 +664,16 @@ suite('Agent runtime orchestration', () => {
 		reap();
 		assert.ok(agent.disposed.includes(first), 'past its grace, an agent that can resume stops');
 		assert.ok(sessions.get('chat')!.releasedAgent, 'and the chat remembers its session');
+		// Round 7: the chat in use (the most recently used agent) has the same grace: within it the agent stays,
+		// past it an agent that can resume stops too (it comes back on the first sign of a message).
 		const otherHandle = agent.promptHandles[1];
-		sessions.get('other')!.agentUsedAt = Date.now() - 31_000;
+		sessions.get('other')!.agentUsedAt = Date.now() - 10_000;
 		reap();
-		assert.ok(!agent.disposed.includes(otherHandle), 'the most recently used agent is kept');
+		assert.ok(!agent.disposed.includes(otherHandle), 'the chat in use keeps its agent within its grace');
+		sessions.get('other')!.agentUsedAt = Date.now() - 21_000;
+		reap();
+		assert.ok(agent.disposed.includes(otherHandle), 'past its grace the chat in use\'s agent stops as well');
+		assert.ok(sessions.get('other')!.releasedAgent, 'and that chat remembers its session too');
 
 		const before = agent.starts.length;
 		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'what was the word?', mode: 'agent', providerRef: ref }))).reason, 'done');

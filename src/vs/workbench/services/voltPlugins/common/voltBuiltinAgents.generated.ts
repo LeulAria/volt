@@ -53,6 +53,7 @@ export const VOLT_BUILTIN_AGENTS: readonly { readonly extensionId: string; reado
 					CLAUDE_CODE_ENABLE_TODO_TOOLS: '1',
 					MCP_TOOL_TIMEOUT: '300000',
 					CLAUDE_CODE_MCP_STARTUP_WAIT_MS: '0',
+					CLAUDE_CODE_HOOKS_SAME_THREAD: '1',
 				},
 				authProbe: 'claude',
 				login: ['claude', 'auth', 'login'],

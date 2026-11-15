@@ -44,7 +44,10 @@ export const CLI_AGENT_DEFINITIONS: readonly ICliAgentDefinition[] = [
 		// setting makes the first command wait only for servers it requires (Volt's own, named in the session's
 		// allow rules: CLAUDE_SESSION_OPTIONS); the connectors' tools join the session when they connect, as
 		// they do for a message sent the moment the agent is ready.
-		acpEnv: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1', MCP_TOOL_TIMEOUT: '300000', CLAUDE_CODE_MCP_STARTUP_WAIT_MS: '0' },
+		// CLAUDE_CODE_HOOKS_SAME_THREAD=1: Claude Code (2.1.322) runs a plugin's hook module in a Worker, a second
+		// JS heap in every CLI: Volt's prompt-rewriting module (volt-lazy-tools) cost each chat's CLI about 45 MB
+		// (ADEMark A7, round 7). On the CLI's own thread the module makes byte-identical requests.
+		acpEnv: { CLAUDE_CODE_ENABLE_TODO_TOOLS: '1', MCP_TOOL_TIMEOUT: '300000', CLAUDE_CODE_MCP_STARTUP_WAIT_MS: '0', CLAUDE_CODE_HOOKS_SAME_THREAD: '1' },
 		probeAuth: probeClaudeAuth,
 	},
 	{

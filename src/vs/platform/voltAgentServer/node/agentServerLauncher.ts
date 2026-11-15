@@ -38,11 +38,12 @@ export function localNetworkAddress(): string | undefined {
  * The server's command line. `--disable-sigusr1` keeps SIGUSR1 from opening an inspector, which any
  * same-user process could otherwise send to take over the server (B-19, HOST-SIG-1; verified on
  * Electron 37's Node 22.19 under `ELECTRON_RUN_AS_NODE`). A build from sources keeps the signal
- * for debugging when `VOLT_AGENT_SERVER_INSPECT=1` is set.
+ * for debugging when `VOLT_AGENT_SERVER_INSPECT=1` is set. `--expose-gc` lets the server collect its
+ * heap once it goes quiet (see ServerMemoryReducer).
  */
 export function agentServerProgram(electronPath: string, entry: string, userDataDir: string, network: boolean, env: NodeJS.ProcessEnv = process.env): string[] {
 	const debuggable = !!env['VSCODE_DEV'] && env['VOLT_AGENT_SERVER_INSPECT'] === '1';
-	const program = [electronPath, ...(debuggable ? [] : ['--disable-sigusr1']), entry, '--user-data-dir', userDataDir];
+	const program = [electronPath, ...(debuggable ? [] : ['--disable-sigusr1']), '--expose-gc', entry, '--user-data-dir', userDataDir];
 	if (network) {
 		program.push('--host', '0.0.0.0');
 	}
