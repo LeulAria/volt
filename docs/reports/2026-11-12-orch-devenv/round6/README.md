@@ -31,7 +31,20 @@ Data is in `data/<area>/`, scripts in `scripts/<area>/`.
 
 ## Orchestration (report 51)
 
-PENDING: C1 runs in progress.
+C1, Opus 5.5 at medium effort, n 1 per arm. The queue stopped itself at 97 % of the account's 7-day limit; five
+overnight runs were refused on an expired token and do not count.
+
+| Arm | Shipped | Time | Tokens | Cost |
+|---|---|---|---|---|
+| Volt after | 5/5 | **2.58 min** | 842K | $1.56 |
+| Volt before | 5/5 | 2.69 min | 1,106K | $1.83 |
+| Claude Code 2.1.322 alone | 5/5 | 3.72 min | **695K** | **$1.11** |
+| ADEMark v1 leader, Synara (other machine, high effort) | 5/5 | 5.18 min | 2.03M | |
+
+Giving subagents the user's request whole cut their tokens by 34 % (722K -> 473K). Volt is 31 % faster than Claude
+Code alone but uses 21 % more tokens. Reliability, on our own rigs: C2 delivered 3/3 follow-ups and C3 had 0 locks.
+C4 (agent killed), C5 (network cut) and C6 (app restart) pass after two fixes: a lost agent process now restarts
+and retries, and Claude Code's own connection retry stays a notice.
 
 ## First word (report 52)
 
