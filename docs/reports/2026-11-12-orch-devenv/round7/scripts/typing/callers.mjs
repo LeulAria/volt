@@ -45,3 +45,30 @@ console.log('== callers (inclusive ms)');
 for (const [k, v] of [...callers].sort((a, b) => b[1] - a[1]).slice(0, top)) { console.log(`${ms(v)} ${k}`); }
 console.log('== callees (inclusive ms)');
 for (const [k, v] of [...callees].sort((a, b) => b[1] - a[1]).slice(0, top)) { console.log(`${ms(v)} ${k}`); }
+
+// --tree N: the merged call tree below the matching nodes, N levels deep, entries of at least --min ms (default 2).
+if (rest.includes('--tree')) {
+	const depth = opt('tree', 4);
+	const min = opt('min', 2) * 1000;
+	const merged = { kids: new Map(), us: 0 };
+	const add = (node, into, level) => {
+		into.us += total(node.id);
+		if (level >= depth) { return; }
+		for (const c of node.children ?? []) {
+			const cn = byId.get(c);
+			const k = name(cn);
+			const slot = into.kids.get(k) ?? into.kids.set(k, { kids: new Map(), us: 0 }).get(k);
+			add(cn, slot, level + 1);
+		}
+	};
+	for (const n of p.nodes) { if (re.test(n.callFrame.functionName)) { add(n, merged, 0); } }
+	const print = (m, indent) => {
+		for (const [k, v] of [...m.kids].sort((a, b) => b[1].us - a[1].us)) {
+			if (v.us < min) { continue; }
+			console.log(`${ms(v.us)} ${'  '.repeat(indent)}${k}`);
+			print(v, indent + 1);
+		}
+	};
+	console.log(`== tree below ${pattern} (${ms(merged.us)} ms)`);
+	print(merged, 0);
+}

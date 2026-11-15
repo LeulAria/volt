@@ -219,3 +219,25 @@ console.log(`main thread busy ${ms(busyUs)} ms of ${spanMs} ms (${Math.round(bus
 		}
 	}
 }
+
+// Round 7: large style recalcs (100 elements or more), by what forced them (a JS stack) or the frame's own pass, and
+// the event or callback whose task they ran in.
+{
+	const big = main.filter(e => e.name === 'UpdateLayoutTree' && (e.args?.elementCount ?? 0) >= 100);
+	const tasks = main.filter(e => e.name === 'RunTask' || e.name === 'ThreadControllerImpl::RunTask');
+	const by = new Map();
+	for (const e of big) {
+		const st = e.args?.beginData?.stackTrace;
+		const forced = st?.length ? st.slice(0, 3).map(f => `${f.functionName || '(anon)'}:${f.lineNumber}:${f.columnNumber}`).join(' < ') : '(frame)';
+		const task = tasks.find(t => t.ts <= e.ts && e.ts < t.ts + t.dur);
+		const inner = task && main.filter(x => x.ts >= task.ts && x.ts < task.ts + task.dur && /^(EventDispatch|FireAnimationFrame|TimerFire|FunctionCall)$/.test(x.name)).sort((a, b) => b.dur - a.dur)[0];
+		const k = `${forced}  in ${inner ? inner.name + (inner.args?.data?.type ? ' ' + inner.args.data.type : '') : '?'}`;
+		const s = by.get(k) ?? { n: 0, els: 0, us: 0 };
+		s.n++; s.els += e.args.elementCount; s.us += e.dur;
+		by.set(k, s);
+	}
+	console.log(`\n== large style recalcs (>= 100 elements): ${big.length}; by forcing stack and task (count, elements, ms)`);
+	for (const [k, v] of [...by].sort((a, b) => b[1].us - a[1].us).slice(0, 12)) {
+		console.log(`${String(v.n).padStart(5)} ${String(v.els).padStart(7)} ${(v.us / 1000).toFixed(1).padStart(8)} ${k.slice(0, 200)}`);
+	}
+}
