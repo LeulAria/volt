@@ -850,7 +850,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private commitReviewSlot: AgentComposerTraySlot | undefined;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
-	private readonly freshText = new FreshTextTracker();
+	// The fade's colour steps of every span share the document timeline's clock (see alignedFadeDelay).
+	private readonly freshText = new FreshTextTracker(document => {
+		const time = document.timeline?.currentTime;
+		return typeof time === 'number' ? time : undefined;
+	});
 	private readonly suggestListeners = this._register(new DisposableStore());
 	private sendKind: 'mic' | 'send' = 'mic';
 	private submitting = false;
