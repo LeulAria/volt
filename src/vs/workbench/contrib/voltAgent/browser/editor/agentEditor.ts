@@ -149,7 +149,7 @@ import { nativeScrollerTakesWheel, prefersReducedMotion, ThreadFollow } from './
 import { openAgentPanel } from '../workspace/agentPanels.js';
 import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
 import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/agentPendingChanges.js';
-import { FRESH_TEXT_CLASS, FRESH_TEXT_FADE_MS, FRESH_TEXT_STEP_MS, FreshTextTracker, settleFreshText } from '../chrome/agentFreshText.js';
+import { FRESH_TEXT_CLASS, FRESH_TEXT_STEP_MS, FreshTextTracker, settleFreshText } from '../chrome/agentFreshText.js';
 import { reconcileChildren, TranscriptReuse } from '../chrome/agentTranscriptReuse.js';
 import { IAgentPendingFile } from '../review/agentEditsService.js';
 import { AgentCaretRest } from '../composer/agentCaretRest.js';
@@ -965,8 +965,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private renderHandle: IDisposable | undefined;
 	/** A streamed redraw in the frame of a composer key waits one frame (see InputFirstGate). */
 	private readonly inputFirst = this._register(new InputFirstGate((callback, priority) => scheduleAtNextAnimationFrame(getWindow(this.container), callback, priority)));
-	/** When a streaming reply was last drawn: its text fades for FRESH_TEXT_FADE_MS after that. */
-	private streamPaintAt = 0;
 	/** A streamed redraw waits for a frame the fade paints text in anyway (see TextFrameClock). */
 	private readonly textFrames = this._register(new TextFrameClock(
 		callback => scheduleAtNextAnimationFrame(getWindow(this.container), callback),
@@ -8927,13 +8925,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			// the reply is drawn one frame later, so the key's echo waits for the composer's work only.
 			// Nor does a frame between two of the fade's colour steps, while a fade runs: text is painted in
 			// the step frames only. A reply's first words (nothing fading yet) are drawn at once.
-			if (this.isStreaming()) {
-				const fading = Date.now() - this.streamPaintAt < FRESH_TEXT_FADE_MS;
-				if (this.inputFirst.shouldYield() || (fading && this.textFrames.shouldWait())) {
-					this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
-					return;
-				}
-				this.streamPaintAt = Date.now();
+			if (this.isStreaming() && (this.inputFirst.shouldYield() || (this.freshText.isFading() && this.textFrames.shouldWait()))) {
+				this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
+				return;
 			}
 			this.renderHandle = undefined;
 			// Tool arguments streamed since the last frame are parsed once, here.

@@ -100,6 +100,8 @@ export interface IFreshTextPart {
 export class FreshTextTracker {
 
 	private readonly replies = new WeakMap<object, IReplyText>();
+	/** When the newest stretch of streamed text appeared, in any reply this tracker draws. */
+	private lastChunkAt = -Infinity;
 
 	/**
 	 * `timelineNow` gives the document timeline's time of the frame being drawn; with it the spans'
@@ -112,6 +114,15 @@ export class FreshTextTracker {
 	 * is new when the reply grew past what the previous render showed; a reply seen for the first
 	 * time only counts as new while it is still streaming, so reopening a finished chat does not flash.
 	 */
+	/**
+	 * Whether streamed text drawn by this tracker is still fading at `now`. Before a reply's first
+	 * words, and once its last words have faded, nothing is: the thinking line, a tool row or the
+	 * user's own prompt drawn while the turn runs start no fade.
+	 */
+	isFading(now = Date.now()): boolean {
+		return now - this.lastChunkAt < FRESH_TEXT_FADE_MS;
+	}
+
 	apply(owner: object, roots: readonly HTMLElement[], streaming: boolean, now = Date.now()): void {
 		this.applyParts(owner, roots.map(root => ({ text: root.textContent ?? '', roots: [root] })), streaming, now);
 	}
@@ -138,6 +149,7 @@ export class FreshTextTracker {
 				reply.chunks[reply.chunks.length - 1] = { start: last.start, end: text.length, at: last.at };
 			} else {
 				reply.chunks.push({ start, end: text.length, at: now });
+				this.lastChunkAt = Math.max(this.lastChunkAt, now);
 			}
 		}
 		reply.text = text;

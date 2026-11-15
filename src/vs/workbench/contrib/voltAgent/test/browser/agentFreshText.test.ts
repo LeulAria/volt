@@ -168,4 +168,21 @@ suite('Fresh streamed text', () => {
 			assert.ok(span.style.animationTimingFunction.startsWith('linear('));
 		}
 	});
+
+	test('fading only from a reply\'s first words until its last words have faded', () => {
+		const tracker = new FreshTextTracker();
+		const reply = {};
+		// The turn has started (the prompt, the thinking line) but no words arrived: nothing fades.
+		tracker.apply(reply, [render('')], true, 1000);
+		assert.strictEqual(tracker.isFading(1000), false);
+		tracker.apply(reply, [render('<p>Hello</p>')], true, 2000);
+		assert.strictEqual(tracker.isFading(2000), true);
+		// Text coalesced into that chunk fades with it and ends with it.
+		tracker.apply(reply, [render('<p>Hello world</p>')], true, 2050);
+		assert.strictEqual(tracker.isFading(2000 + FRESH_TEXT_FADE_MS - 1), true);
+		assert.strictEqual(tracker.isFading(2000 + FRESH_TEXT_FADE_MS), false);
+		// A redraw with no new text starts no fade.
+		tracker.apply(reply, [render('<p>Hello world</p>')], true, 2000 + FRESH_TEXT_FADE_MS + 10);
+		assert.strictEqual(tracker.isFading(2000 + FRESH_TEXT_FADE_MS + 10), false);
+	});
 });
