@@ -1227,9 +1227,9 @@ class VoltMenuWidget<T> extends Disposable {
 
 let coarse: boolean | undefined;
 
-/** Whether the primary pointer is a finger (read once: a window does not trade its screen). */
+/** Whether rows are sized for a finger: the primary pointer is one (read once), or the window is phone-sized. */
 function coarsePointer(): boolean {
-	return coarse ??= !!globalThis.matchMedia?.('(pointer: coarse)').matches;
+	return isVoltCompact() || (coarse ??= !!globalThis.matchMedia?.('(pointer: coarse)').matches);
 }
 
 function rowHeight<T>(row: Row<T>): number {

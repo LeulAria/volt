@@ -6,6 +6,8 @@
 import '../media/agentWorkflowBuilder.css';
 import { $, addDisposableListener, append, clearNode, getWindow, isHTMLElement, isHTMLInputElement, isHTMLTextAreaElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { openVoltSurface } from '../../../../../base/browser/ui/voltMobile/voltSurfaces.js';
+import { isVoltCompact } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
@@ -196,6 +198,8 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 	private readonly shownApprovals = new Set<string>();
 	private failNodes = new Set<string>();
 	private layoutState: ILayoutState;
+	/** A phone's Back while the inspector covers the canvas: it closes the panel. */
+	private readonly phoneSide = this._register(new MutableDisposable());
 	private runOpen = false;
 	private saveState: SaveState = 'saved';
 	private saveFlash: ReturnType<typeof setTimeout> | undefined;
@@ -253,6 +257,10 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 		super();
 		clearNode(host.bar);
 		this.layoutState = this.readLayout();
+		// A phone opens on the canvas: the panel covers it, so it waits for a step to be picked.
+		if (isVoltCompact()) {
+			this.layoutState.sideOpen = false;
+		}
 		this.root = append(host.stage, $('.volt-wfb-builder'));
 		this.root.tabIndex = -1;
 		const loading = append(this.root, $('.volt-wfb-loading'));
@@ -682,10 +690,13 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 		const reported = this.host.stageSize();
 		const width = this.host.stage.clientWidth || reported.width;
 		const height = this.host.stage.clientHeight || reported.height;
-		const bodyHeight = Math.max(0, height - BAR_HEIGHT);
+		// A phone's bar takes two rows: the name, then the tools (voltMobileWorkbench.css).
+		const bodyHeight = Math.max(0, height - (isVoltCompact() ? BAR_HEIGHT * 2 : BAR_HEIGHT));
 		const sideOpen = this.layoutState.sideOpen;
-		const sideWidth = sideOpen ? clamp(this.layoutState.side, SIDE_MIN, Math.max(SIDE_MIN, Math.min(SIDE_MAX, width - CANVAS_MIN))) : 0;
-		const centerWidth = Math.max(0, width - sideWidth);
+		// A phone has no room for both: the panel covers the canvas as a screen of its own (voltMobileWorkbench.css).
+		const phone = isVoltCompact();
+		const sideWidth = !sideOpen ? 0 : phone ? width : clamp(this.layoutState.side, SIDE_MIN, Math.max(SIDE_MIN, Math.min(SIDE_MAX, width - CANVAS_MIN)));
+		const centerWidth = phone ? width : Math.max(0, width - sideWidth);
 		const dockHeight = this.runOpen ? clamp(this.layoutState.run, RUN_MIN, Math.max(RUN_MIN, bodyHeight - CANVAS_MIN)) : DOCK_STRIP;
 		const canvasHeight = Math.max(0, bodyHeight - dockHeight);
 		this.body.style.height = `${bodyHeight}px`;
@@ -1043,7 +1054,10 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 			this.renderSideTabs();
 			return;
 		}
-		this.storeLayout();
+		// A phone opens and closes the panel as a screen; the desktop layout keeps its own choice.
+		if (!isVoltCompact()) {
+			this.storeLayout();
+		}
 		this.applySide();
 		this.layout();
 		if (open && focus && tab === 'yaml') {
@@ -1055,6 +1069,11 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 		const open = this.layoutState.sideOpen;
 		const yaml = this.layoutState.tab === 'yaml';
 		this.side.classList.toggle('hidden', !open);
+		if (open && isVoltCompact()) {
+			this.phoneSide.value ??= openVoltSurface({ dismiss: () => this.setSideOpen(false), dismissible: true });
+		} else {
+			this.phoneSide.clear();
+		}
 		this.inspectorHost.classList.toggle('hidden', yaml);
 		this.yamlHost.classList.toggle('hidden', !yaml);
 		this.yaml?.setVisible(open && yaml);

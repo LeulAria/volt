@@ -338,9 +338,22 @@
 	position: absolute;
 	border-radius: 50%;
 	background: currentColor;
-	opacity: 0.16;
+	opacity: 0.2;
 	transform: scale(0.12);
 	transition: transform 420ms cubic-bezier(0.2, 0, 0, 1), opacity 260ms ease-out;
+}
+
+/* Round (icon buttons, the navigation's icons): a disc that swells out from the icon's center and fades as it goes. */
+.volt-ripple.round .volt-ripple-wave {
+	opacity: 0.18;
+	transform: scale(0.35);
+	transition: transform 360ms cubic-bezier(0.2, 0, 0, 1), opacity 200ms ease-out;
+}
+
+.volt-ripple.round.fading .volt-ripple-wave {
+	transform: scale(1.08);
+	opacity: 0;
+	transition: transform 420ms cubic-bezier(0.2, 0, 0, 1), opacity 360ms ease-out 100ms;
 }
 
 .volt-ripple.spreading .volt-ripple-wave {

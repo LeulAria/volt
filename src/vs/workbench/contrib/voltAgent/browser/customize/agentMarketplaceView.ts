@@ -5,9 +5,11 @@
 
 import { $, addDisposableListener, append, clearNode, getWindow } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { openVoltSurface } from '../../../../../base/browser/ui/voltMobile/voltSurfaces.js';
+import { isVoltCompact } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -113,6 +115,8 @@ export class AgentMarketplaceView extends Disposable {
 	private visible = false;
 	private detail: MarketplaceDetail | undefined;
 	private detailCts: CancellationTokenSource | undefined;
+	/** A phone's Back while an item's page is open: it returns to the listing. */
+	private readonly phoneDetail = this._register(new MutableDisposable());
 	/** Where the listing was scrolled when a page opened, to return there. */
 	private listScrollTop = 0;
 	/** Found skill folders by skill id; null when the skill's files could not be found. */
@@ -174,6 +178,7 @@ export class AgentMarketplaceView extends Disposable {
 		if (!visible) {
 			// Manage and back lands on the listing, like Cursor.
 			this.detail = undefined;
+			this.phoneDetail.clear();
 			this.detailCts?.dispose(true);
 			this.detailCts = undefined;
 			this.syncDetailChrome();
@@ -220,16 +225,26 @@ export class AgentMarketplaceView extends Disposable {
 			this.listScrollTop = this.host.scrollTop();
 		}
 		this.detail = detail;
+		if (isVoltCompact()) {
+			this.phoneDetail.value ??= openVoltSurface({ dismiss: () => this.closeDetail(), dismissible: true });
+		}
 		this.loadDetail(detail);
 		this.render();
 		this.host.setScrollTop(0);
 	}
 
-	private closeDetail(): void {
+	/** True while a skill's or plugin's page is open in place of the listing. */
+	get hasDetail(): boolean {
+		return !!this.detail;
+	}
+
+	/** Back from an item's page to the listing. */
+	closeDetail(): void {
 		if (!this.detail) {
 			return;
 		}
 		this.detail = undefined;
+		this.phoneDetail.clear();
 		this.detailCts?.dispose(true);
 		this.detailCts = undefined;
 		this.render();

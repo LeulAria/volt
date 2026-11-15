@@ -9,6 +9,8 @@ import { $, addDisposableListener, append, Dimension, getWindow, scheduleAtNextA
 import { InputBox } from '../../../../base/browser/ui/inputbox/inputBox.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { DomScrollableElement } from '../../../../base/browser/ui/scrollbar/scrollableElement.js';
+import { openVoltSurface } from '../../../../base/browser/ui/voltMobile/voltSurfaces.js';
+import { isVoltCompact } from '../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { isMacintosh } from '../../../../base/common/platform.js';
@@ -261,6 +263,8 @@ export class VoltSettingsEditor extends EditorPane {
 	private ownSidebarWidth: number | undefined;
 	private readonly renderStore = this._register(new DisposableStore());
 	private readonly scrollSync = this._register(new MutableDisposable());
+	/** A phone's Back while a page is open over the list (setPhoneDetail). */
+	private readonly phoneDetail = this._register(new MutableDisposable());
 	/** Lid-Closed Mode lives in the main process; absent in the web build. */
 	private readonly awake: IVoltAwakeService | undefined;
 	private awakeState: IAwakeState | undefined;
@@ -380,7 +384,10 @@ export class VoltSettingsEditor extends EditorPane {
 
 		// Volt's pages, then every setting VS Code and the extensions register, in one tree.
 		this.nav = this._register(this.instantiationService.createInstance(SettingsNav, sidebar));
-		this._register(this.nav.onDidOpen(id => this.showSection(id)));
+		this._register(this.nav.onDidOpen(id => {
+			this.showSection(id);
+			this.setPhoneDetail(true);
+		}));
 		this.loadCatalog();
 
 		// The agent list's footer row, so Usage, Automations and Customize are a click away here too.
@@ -394,12 +401,19 @@ export class VoltSettingsEditor extends EditorPane {
 				e.stopImmediatePropagation();
 				this.footerActions[action].blur();
 				this.setSection(action);
+				this.setPhoneDetail(true);
 			}, true));
 		}
 
 		// Where the page is, as the title bar puts it over a chat ("Settings / Usage"); the overlay covers that bar.
 		const main = append(this.container, $('.volt-settings-main'));
 		const topbar = append(main, $('.volt-settings-topbar'));
+		// A phone shows the list or a page: back to the list (voltMobileWorkbench.css shows it there only).
+		const detailBack = append(topbar, $('button.volt-settings-detail-back.volt-touch-icon')) as HTMLButtonElement;
+		detailBack.type = 'button';
+		detailBack.appendChild(renderIcon(Codicon.chevronLeft));
+		detailBack.setAttribute('aria-label', localize('voltSettings.allSettings', "All Settings"));
+		this._register(addDisposableListener(detailBack, 'click', () => this.setPhoneDetail(false)));
 		append(topbar, $('span.volt-settings-crumb.root')).textContent = localize('voltSettings.title', "Settings");
 		createAgentHeaderSeparatorIcon(append(topbar, $('span.volt-settings-crumb-sep')));
 		this.crumb = append(topbar, $('span.volt-settings-crumb'));
@@ -517,6 +531,7 @@ export class VoltSettingsEditor extends EditorPane {
 		this.usage.value?.setVisible(false);
 		this.customizePage?.hide();
 		this.automationsPage?.hide();
+		this.setPhoneDetail(false);
 		this.container.classList.remove('volt-settings-overlay');
 		this.layoutService.mainContainer.classList.remove('volt-settings-open');
 		this.container.remove();
@@ -631,8 +646,29 @@ export class VoltSettingsEditor extends EditorPane {
 		}
 	}
 
+	/**
+	 * A phone shows the list or one page, never both (voltMobileWorkbench.css): picking a section opens
+	 * its page over the list, and Back (the page's own or the system's) returns to the list. Elsewhere
+	 * the class does nothing.
+	 */
+	private setPhoneDetail(detail: boolean): void {
+		if (!this.container) {
+			return;
+		}
+		this.container.classList.toggle('volt-settings-detail', detail);
+		if (detail && isVoltCompact()) {
+			this.phoneDetail.value ??= openVoltSurface({ dismiss: () => this.setPhoneDetail(false), dismissible: true });
+			this.scheduleScrollSync();
+			this.layoutCustomize();
+		} else {
+			this.phoneDetail.clear();
+		}
+	}
+
 	/** Opens a page by id, e.g. `storage` from Volt: Manage Storage. */
 	showSection(section: string): void {
+		// A page asked for by name is the screen a phone shows, not the list in front of it.
+		this.setPhoneDetail(true);
 		// `devices:add` (or `devices:add:cloudflare`) opens Devices with Add Device on top.
 		const add = /^devices:add(?::(lan|tailscale|cloudflare|ssh))?$/.exec(section);
 		if (add) {
@@ -1154,19 +1190,45 @@ export class VoltSettingsEditor extends EditorPane {
 			this.side.appendChild(this.themeList.element);
 		}
 		const themesReady = this.themeList.refresh(this.search.trim().toLowerCase(), this.workbenchThemeService.getColorTheme().type).catch(() => undefined);
+		// A phone has no room for the list beside the page: the theme is a row of the page, picked from a sheet.
+		const phone = isVoltCompact();
 		this.pageHead(
 			localize('voltSettings.appearance', "Appearance"),
-			localize('voltSettings.appearanceLead2', "Pick a color theme from the list. Every VS Code theme you install shows up there too."),
+			phone
+				? localize('voltSettings.appearanceLeadPhone', "Every VS Code theme you install shows up in Color Theme too.")
+				: localize('voltSettings.appearanceLead2', "Pick a color theme from the list. Every VS Code theme you install shows up there too."),
 		);
 		const kit = this.settingsKit();
 		const themeGroup = this.settingsGroup();
+		const generation = this.renderGeneration;
+		if (phone) {
+			this.settingRow(
+				themeGroup,
+				localize('voltSettings.colorTheme', "Color Theme"),
+				localize('voltSettings.colorThemeDesc', "The colors of the whole window."),
+				host => {
+					void this.appearance.colorThemes().then(themes => {
+						if (generation !== this.renderGeneration) {
+							return;
+						}
+						const sorted = [...themes].sort((a, b) => a.label.localeCompare(b.label));
+						const current = this.workbenchThemeService.getColorTheme().settingsId;
+						this.dropdown(host, sorted.map(theme => ({ id: theme.settingsId, label: theme.label })), current, localize('voltSettings.colorTheme', "Color Theme"), id => {
+							const theme = sorted.find(candidate => candidate.settingsId === id);
+							if (theme) {
+								void this.appearance.pick(theme);
+							}
+						});
+					});
+				},
+			);
+		}
 		this.settingRow(
 			themeGroup,
 			localize('voltSettings.appearanceMode', "Mode"),
 			localize('voltSettings.appearanceModeDesc', "System follows macOS and switches between your dark and light themes."),
 			host => this.appearance.renderModeControl(host),
 		);
-		const generation = this.renderGeneration;
 
 		this.appearance.renderChatBackground(kit);
 		this.appearance.renderAgentConversations(kit);
