@@ -1297,6 +1297,10 @@ button.volt-tr-subagent-head:hover .volt-tr-chevron,
 	font-size: 13px;
 }
 
+.volt-agent-run-tray.sandbox {
+	margin-top: 5px;
+}
+
 .volt-agent-run-tray.failed .volt-agent-run-tray-title {
 	color: var(--vscode-errorForeground);
 }

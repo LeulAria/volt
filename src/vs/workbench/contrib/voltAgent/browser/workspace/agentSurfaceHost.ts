@@ -1290,6 +1290,7 @@ export class AgentSurfaceHost extends Disposable {
 		const empty = !this.shown?.part.groups.some(group => group.count > 0);
 		// The empty area is see-through like the chat beside it (agentEditor.css); tabs keep the solid fill.
 		this.area.classList.toggle('tools-empty', empty);
+		this.syncSashUnderGrip();
 		if (!hasTools && this.presentation !== 'split') {
 			this.setPresentation('split', false);
 		} else if (empty && this.presentation === 'fullscreen') {
@@ -1498,6 +1499,14 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	/**
+	 * The grip draws the split line. Where the area is see-through (the files sidebar beside the chat,
+	 * or no tab open) the sash's own line shows under it and doubles it, so the sash hides its line.
+	 */
+	private syncSashUnderGrip(): void {
+		this.sash.classList.toggle('under-grip', this.area.classList.contains('with-files-sidebar') || this.area.classList.contains('tools-empty'));
+	}
+
+	/**
 	 * Lays the files sidebar at the right edge of `available` pixels of tools and narrows the tabs
 	 * beside it. Its icon row lines up with the tabs' first row. Returns the width it takes.
 	 */
@@ -1509,8 +1518,7 @@ export class AgentSurfaceHost extends Disposable {
 		this.partsHost.classList.toggle('hidden', fills);
 		// The sidebar is see-through like the chat; only the tabs keep the area's solid fill (agentEditor.css).
 		this.area.classList.toggle('with-files-sidebar', width > 0);
-		// The grip draws the split line; through the see-through area this one would double it.
-		this.sash.classList.toggle('under-grip', width > 0);
+		this.syncSashUnderGrip();
 		if (width <= 0) {
 			this.partsHost.style.removeProperty('right');
 			this.filesSidebar.hide();
