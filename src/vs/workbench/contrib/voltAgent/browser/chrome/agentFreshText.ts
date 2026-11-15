@@ -121,6 +121,9 @@ export function settleFreshText(root: HTMLElement): IDisposable {
 
 const TABLE_PARTS = new Set(['TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'COLGROUP']);
 
+/** When the chunk a fade span shows first appeared. */
+const spanChunkAt = new WeakMap<Node, number>();
+
 function commonPrefixLength(a: string, b: string): number {
 	const max = Math.min(a.length, b.length);
 	let i = 0;
@@ -150,7 +153,7 @@ function wrapFreshText(roots: readonly HTMLElement[], chunks: readonly IChunk[],
 		const end = start + (node.nodeValue?.length ?? 0);
 		const ranges = chunks
 			.filter(chunk => chunk.start < end && chunk.end > start)
-			.map(chunk => ({ from: Math.max(chunk.start, start) - start, to: Math.min(chunk.end, end) - start, age: now - chunk.at }))
+			.map(chunk => ({ from: Math.max(chunk.start, start) - start, to: Math.min(chunk.end, end) - start, at: chunk.at, age: now - chunk.at }))
 			// Split from the end so earlier offsets stay valid.
 			.sort((a, b) => b.from - a.from);
 		for (const range of ranges) {
@@ -158,7 +161,14 @@ function wrapFreshText(roots: readonly HTMLElement[], chunks: readonly IChunk[],
 				node.splitText(range.to);
 			}
 			const fresh = range.from > 0 ? node.splitText(range.from) : node;
+			// Text added after its chunk's span (a block that grew in place) joins that span and its fade.
+			const before = fresh.previousSibling;
+			if (fresh === node && before && spanChunkAt.get(before) === range.at) {
+				before.appendChild(fresh);
+				continue;
+			}
 			const span = node.ownerDocument.createElement('span');
+			spanChunkAt.set(span, range.at);
 			span.className = FRESH_TEXT_CLASS;
 			span.style.animationDuration = `${FRESH_TEXT_FADE_MS}ms`;
 			span.style.animationDelay = `-${Math.max(0, Math.round(range.age))}ms`;
