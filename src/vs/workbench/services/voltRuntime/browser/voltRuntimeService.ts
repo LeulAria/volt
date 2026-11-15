@@ -1544,6 +1544,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * reads before its request instead (see prewarmNative).
 	 */
 	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode, options?: IAgentPrewarmOptions): void {
+		if (options?.keepOnly) {
+			// The user is in the chat (reading its reply): its live agent's idle stop counts from now. Starts nothing.
+			const kept = this.sessions.get(sessionId) as ISessionState | undefined;
+			if (kept?.agentHandle && !isRunActive(kept)) {
+				const provider = kept.agentProviderId ? this.agentProviders.get(kept.agentProviderId) : undefined;
+				if (provider?.isLive?.(kept.agentHandle) ?? true) {
+					kept.agentUsedAt = Date.now();
+				}
+			}
+			return;
+		}
 		const ttlMs = options?.ttlMs;
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
 		if (session.run && !session.run.ended) {

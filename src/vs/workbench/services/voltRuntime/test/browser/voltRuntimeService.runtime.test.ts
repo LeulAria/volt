@@ -670,6 +670,17 @@ suite('Agent runtime orchestration', () => {
 		sessions.get('other')!.agentUsedAt = Date.now() - 10_000;
 		reap();
 		assert.ok(!agent.disposed.includes(otherHandle), 'the chat in use keeps its agent within its grace');
+		// Round 8: the user reading the reply (pointer, wheel) keeps the live agent a follow-up needs, and starts none.
+		sessions.get('other')!.agentUsedAt = Date.now() - 19_000;
+		const startsBeforeKeep = agent.starts.length;
+		service.prewarmAgent('other', ref, 'agent', { keepOnly: true });
+		service.prewarmAgent('chat', ref, 'agent', { keepOnly: true });
+		service.prewarmAgent('never-used', ref, 'agent', { keepOnly: true });
+		assert.ok(Date.now() - sessions.get('other')!.agentUsedAt! < 1_000, 'a keep counts the idle stop from now');
+		assert.strictEqual(agent.starts.length, startsBeforeKeep, 'a keep starts no agent, not even for a chat whose agent stopped');
+		assert.ok(!internals.sessions.has('never-used'), 'nor makes a session for a chat that has none');
+		reap();
+		assert.ok(!agent.disposed.includes(otherHandle), 'the kept agent stays past its first 20 s');
 		sessions.get('other')!.agentUsedAt = Date.now() - 21_000;
 		reap();
 		assert.ok(agent.disposed.includes(otherHandle), 'past its grace the chat in use\'s agent stops as well');

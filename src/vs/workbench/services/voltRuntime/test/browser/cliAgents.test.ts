@@ -9,7 +9,7 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { isWindows } from '../../../../../base/common/platform.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { acpLaunchFor, cliAgentDefinition, cliLoginForNotice, grokAcpArgs, npxCachedLaunchScript, runCli } from '../../browser/agents/cliAgents.js';
+import { acpLaunchFor, acpSharedHostEntry, cliAgentDefinition, cliLoginForNotice, grokAcpArgs, npxCachedLaunchScript, runCli } from '../../browser/agents/cliAgents.js';
 import { taskWaitMs } from '../../common/orchestration/agentTasks.js';
 import { acpAdapterPreload } from '../../common/claudeAcpPatch.js';
 
@@ -121,6 +121,19 @@ suite('runCli', () => {
 		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], false, bin), { command: 'node', args: ['--import', acpAdapterPreload('@agentclientprotocol/claude-agent-acp@0.106.0')!, bin] });
 		const codexBin = '/home/u/.npm/_npx/def/node_modules/.bin/codex-acp';
 		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('codex'), 'codex', [], false, codexBin), { command: codexBin, args: [] });
+	});
+
+	test('only Claude\'s adapter on node with Volt\'s preload may be served from the shared host', () => {
+		const claude = cliAgentDefinition('claude-code');
+		const bin = '/home/u/.npm/_npx/abc/node_modules/.bin/claude-agent-acp';
+		assert.strictEqual(acpSharedHostEntry(claude, acpLaunchFor(claude, 'claude', [], false, bin)), bin);
+		// By name (no known file), through npx, a custom command, another agent: a process per chat.
+		assert.strictEqual(acpSharedHostEntry(claude, acpLaunchFor(claude, 'claude', [], true)), undefined);
+		assert.strictEqual(acpSharedHostEntry(claude, acpLaunchFor(claude, 'claude', [], false)), undefined);
+		assert.strictEqual(acpSharedHostEntry(claude, { command: 'node', args: ['--import', 'data:text/javascript,0', bin] }), undefined);
+		assert.strictEqual(acpSharedHostEntry(claude, { command: 'my-claude', args: [] }), undefined);
+		const codex = cliAgentDefinition('codex');
+		assert.strictEqual(acpSharedHostEntry(codex, acpLaunchFor(codex, 'codex', [], false, '/home/u/.npm/_npx/def/node_modules/.bin/codex-acp')), undefined);
 	});
 
 	test('FIRSTWORD-PATH-1: Claude\'s adapter found on PATH runs on node with Volt\'s preload too (compile cache, after-turn patches); a path-less PATH hit runs by name', () => {

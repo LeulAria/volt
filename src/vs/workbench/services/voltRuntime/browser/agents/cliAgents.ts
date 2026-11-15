@@ -154,6 +154,19 @@ export function acpLaunchFor(def: ICliAgentDefinition | undefined, command: stri
 }
 
 /**
+ * The adapter's entry file when `launch` is `node --import <preload> <entry>` ({@link acpLaunchFor} for an
+ * adapter Volt has a preload for, Claude's): such an adapter may serve several chats from one process
+ * (`acpSharedHostSource.ts`). Undefined for every other launch: a process per chat.
+ */
+export function acpSharedHostEntry(def: ICliAgentDefinition | undefined, launch: { readonly command: string; readonly args: readonly string[] }): string | undefined {
+	const adapter = def?.acpAdapter;
+	if (!adapter || launch.command !== 'node' || launch.args.length !== 3 || launch.args[0] !== '--import' || launch.args[1] !== acpAdapterPreload(adapter.package)) {
+		return undefined;
+	}
+	return launch.args[2];
+}
+
+/**
  * `npx -y <pkg>` stays alive as the adapter's parent for the whole session (about 250 MB RSS per
  * agent) and re-resolves the package on every launch. Once npx has installed the pinned version,
  * exec its bin from the npx cache instead, so the shell becomes the adapter itself. Falls back to

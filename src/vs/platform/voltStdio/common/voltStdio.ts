@@ -147,7 +147,17 @@ export interface IVoltStdioSpawnOptions {
 	sandbox?: IVoltSandboxRequest;
 	/** Who it runs for; see {@link IVoltExecContext}. */
 	readonly context: IVoltExecContext;
+	/**
+	 * The command is `node [flags] <entry>`, an ACP adapter that may be served from a process shared with
+	 * other chats of the same launch (`acpSharedHostSource.ts`): the returned id is then the chat's
+	 * connection on it. The sandbox then holds the processes the adapter starts for this chat (its CLI),
+	 * each through the chat's own launch, not the adapter.
+	 */
+	readonly acpHost?: { readonly entry: string };
 }
+
+/** `volt.agents.sharedAdapterHost`: false starts an adapter process per chat again. */
+export const ACP_SHARED_HOST_SETTING = 'volt.agents.sharedAdapterHost';
 
 /** A command for a sandboxed chat, to run on a PTY (a managed terminal) inside the chat's sandbox. */
 export interface IVoltSandboxedTerminalRequest {
