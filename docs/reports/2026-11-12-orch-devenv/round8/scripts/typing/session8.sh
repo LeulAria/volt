@@ -17,7 +17,7 @@ while true; do
 		echo "typing session8.sh $* pid $$ start $(date)" > "$LOCK/owner"
 		break
 	fi
-	sleep 3
+	sleep 0.5
 done
 trap 'rm -rf "$LOCK"' EXIT
 echo "== lock taken $(date) load $(load1)"

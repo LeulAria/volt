@@ -6,9 +6,11 @@
 //   noglide = the reader scrolled up 300 px, so the follow glide does not run (the reply still paints, off screen end)
 //   nomask  = the transcript's bottom fade mask off
 //   noanim  = every CSS animation and transition in the window off
+//   census  = no keys: print the running animations (anims.mjs)
 //   oldfade = the fade's colour changing on every frame, as before round 8 (builds with the stepped fade)
 import { arm as armOf, cdp, focusComposer, launch, load1, median, newChat, pct, send, sleep, stop, waitWorkbench, writeSettings } from './lib.mjs';
 import { freshProfile, keyLatencies, keyStages } from './a8.mjs';
+import { CENSUS } from './anims.mjs';
 const arm = armOf(process.argv[2] ?? 'after');
 const keys = Number(process.argv[3] ?? 40);
 const variants = (process.argv[4] ?? 'plain,nofade,plain,noglide,plain,nomask').split(',');
@@ -37,6 +39,11 @@ await sleep(8000);
 const traced = [];
 c.on('Tracing.dataCollected', p => { for (const e of p.value) { if (e.ph === 'b' || e.ph === 'e' || e.name === 'EventLatency') { traced.push(e); } } });
 for (const v of variants) {
+	if (v === 'census') {
+		// Not a segment: the running animations at this moment (anims.mjs).
+		console.log((await c.evaluate(CENSUS)).join('\n'));
+		continue;
+	}
 	const names = v.split('+');
 	await c.evaluate(`(() => { document.getElementById('volt-exp')?.remove(); const s = document.createElement('style'); s.id = 'volt-exp'; s.textContent = ${JSON.stringify(names.map(n => CSS[n] ?? '').join('\n'))}; document.head.appendChild(s); })()`);
 	await c.evaluate(names.includes('step30') ? ALIGN(1100 / 33) : names.includes('step60') ? ALIGN(1100 / 66) : 'window.__align?.stop()');
