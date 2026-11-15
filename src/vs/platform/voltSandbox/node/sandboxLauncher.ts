@@ -403,7 +403,7 @@ export class VoltSandboxLauncher extends Disposable {
 			const own = agentQuietPaths(request.providerId, host.home);
 			// The CLI's own housekeeping and looks at the home folder: logged, never a card (B-05).
 			const realConfig = statePlan?.links[0] ? dirname(statePlan.links[0].target) : undefined;
-			const housekeeping = (denial: ISandboxDenial) => isAgentHousekeepingDenial(request.providerId, host.home, denial, { sentinel: prepared.policy.sentinel, ...(realConfig ? { realConfig } : {}) });
+			const housekeeping = (denial: ISandboxDenial) => isAgentHousekeepingDenial(request.providerId, host.home, denial, { sentinel: prepared.policy.sentinel, ...(realConfig ? { realConfig } : {}), ...(statePlan ? { overlayConfig: statePlan.configDir } : {}) });
 			return this.launch(prepared, overlay, policy, sealed, [...files.warnings, ...describeIgnoredEntries([...files.ignored, ...ignored], policyFileName)], { home: host.home, roots, ...(own ? { own } : {}), housekeeping });
 		} catch (err) {
 			// Every failure here (a cache or overlay folder that can't be made, a config that can't be

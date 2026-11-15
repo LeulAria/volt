@@ -259,7 +259,7 @@ suite('Volt sandbox denials', () => {
 
 	test('HOUSEKEEPING-1: the agent CLI\'s own background state, the run\'s canary and the home listing are never offered; real edits still are', () => {
 		const home = '/Users/me';
-		const quiet = (kind: 'read' | 'write' | 'network' | 'launch', target: string, own: { sentinel?: string; realConfig?: string } = {}, providerId = 'claude-code') => isAgentHousekeepingDenial(providerId, home, { kind, target }, own);
+		const quiet = (kind: 'read' | 'write' | 'network' | 'launch', target: string, own: { sentinel?: string; realConfig?: string; overlayConfig?: string } = {}, providerId = 'claude-code') => isAgentHousekeepingDenial(providerId, home, { kind, target }, own);
 		// What Claude Code writes on its own at start (seen as "Blocked by the sandbox" cards in a fresh chat).
 		for (const target of ['/Users/me/.claude/skills/synced/0b1c/manifest.json', '/Users/me/.claude/skills/.trash', '/Users/me/.claude/plugins/store', '/Users/me/.claude/sessions/123.key.tmp', '/Users/me/.claude.json', '/Users/me/.local/state/claude/locks', '/Users/me/.cache/claude/staging/x']) {
 			assert.ok(quiet('write', target), target);
@@ -275,6 +275,15 @@ suite('Volt sandbox denials', () => {
 		assert.ok(quiet('read', '/Users/me/.volt/sandbox/runs/volt-sbx-x/canary', { sentinel: '/Users/me/.volt/sandbox/runs/volt-sbx-x/canary' }), 'the attestation canary');
 		// A moved config folder (CLAUDE_CONFIG_DIR): its housekeeping there too.
 		assert.ok(quiet('write', '/opt/claude-cfg/skills/synced/a/manifest.json', { realConfig: '/opt/claude-cfg' }));
+		// The chat's config overlay (a pooled agent's, 2026-11-15: a Volt Guard card for its plugin sync).
+		const overlayConfig = '/Users/me/.volt/sandbox/agent-state/volt-pool-1/claude-code/config';
+		for (const target of [`${overlayConfig}/plugins`, `${overlayConfig}/plugins/synced/a/manifest.json`, `${overlayConfig}/sessions/1.key.tmp`]) {
+			assert.ok(quiet('write', target, { overlayConfig }), target);
+		}
+		for (const target of [`${overlayConfig}/settings.json`, `${overlayConfig}/CLAUDE.md`, `${overlayConfig}/skills/my-skill/SKILL.md`, `${overlayConfig}/plugins-evil`]) {
+			assert.ok(!quiet('write', target, { overlayConfig }), target);
+		}
+		assert.ok(!quiet('write', `${overlayConfig}/plugins`, { overlayConfig }, 'codex'), 'another CLI has its own links');
 		// Still shown: edits to settings, instructions and skills, anything else in the home folder, other agents, network.
 		for (const target of ['/Users/me/.claude/settings.json', '/Users/me/.claude/CLAUDE.md', '/Users/me/.claude/skills/my-skill/SKILL.md', '/Users/me/.claude/hooks/x.sh', '/Users/me/.zshrc', '/Users/me/notes/a.txt', '/Users/me/.claude.json.evil', '/Users/me/.claude-other/x', '/Users/me/.claude/plugins/known_marketplaces_claudeai.json.evil']) {
 			assert.ok(!quiet('write', target), target);
