@@ -6609,8 +6609,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
 		// The pointer reaching the composer comes before the click into it: a short-lived warm starts here.
 		this.editorDisposables.add(addDisposableListener(this.inputBox, 'pointerenter', () => this.prewarmOnIntent()));
-		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
-			this.inputFirst.noteKey();
+		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(e => {
+			// A key typed (or a paste): not a send clearing the composer or a draft put back (setValue),
+			// whose frame should show the thread's change with it.
+			if (!e.isFlush) {
+				this.inputFirst.noteKey();
+			}
 			// Typing is the surest sign a message is coming: make sure an agent is (still) warm. Cheap
 			// when one is: the runtime returns at once for a live or pooled agent.
 			if (Date.now() - this.prewarmedAt > PREWARM_ON_TYPE_MS && !this.isStreaming() && this.inputEditor?.getModel()?.getValueLength()) {
