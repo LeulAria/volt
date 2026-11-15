@@ -1,0 +1,9 @@
+{"variant":"bare","rep":1,"at":"2026-11-15T07:56:01.594Z","load":"43.18 44.61 42.24","resultS":null,"textChars":29783,"peakMiB":135,"restMiB":126,"samples":400}
+{"variant":"mcp","rep":1,"at":"2026-11-15T07:57:41.990Z","load":"39.64 43.74 42.22","resultS":null,"textChars":30231,"peakMiB":162,"restMiB":145,"samples":400}
+{"variant":"volt","rep":1,"at":"2026-11-15T07:59:22.347Z","load":"34.12 40.61 41.19","resultS":null,"textChars":30327,"peakMiB":197,"restMiB":181,"samples":400}
+{"variant":"bare","rep":2,"at":"2026-11-15T08:01:02.683Z","load":"35.24 40.87 41.34","resultS":null,"textChars":30599,"peakMiB":141,"restMiB":134,"samples":400}
+{"variant":"mcp","rep":2,"at":"2026-11-15T08:02:43.081Z","load":"38.95 41.11 41.41","resultS":null,"textChars":29559,"peakMiB":142,"restMiB":136,"samples":400}
+{"variant":"volt","rep":2,"at":"2026-11-15T08:04:23.412Z","load":"35.17 41.45 41.66","resultS":null,"textChars":30343,"peakMiB":202,"restMiB":182,"samples":400}
+{"variant":"mcp1","rep":1,"at":"2026-11-15T08:06:08.993Z","load":"33.48 39.68 40.98","resultS":null,"textChars":29527,"peakMiB":137,"restMiB":133,"samples":400}
+{"variant":"volt-noplugin","rep":1,"at":"2026-11-15T08:07:49.403Z","load":"48.45 41.20 41.31","resultS":null,"textChars":28103,"peakMiB":139,"restMiB":134,"samples":400}
+{"variant":"volt-nosettings","rep":1,"at":"2026-11-15T08:09:29.882Z","load":"68.07 50.47 44.94","resultS":null,"textChars":28647,"peakMiB":177,"restMiB":160,"samples":400}
