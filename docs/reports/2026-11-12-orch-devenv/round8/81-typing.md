@@ -117,6 +117,26 @@ census during the probe holds only the fade's spans (`anims.mjs`). The live stat
 animation that repaints every frame) is not on screen while text streams (the live line hides while text arrives), so
 it is not in A8's frame and was left as it is.
 
+## Volt r8 against T3 Code and Paseo, one stopwatch (16 November, 20:56-21:09 +04)
+
+`session8.sh a8 r8 t3 1 paseo 1 paseo 1 a8 r8 t3 1 t3 1 paseo 1 a8 r8` (log `~/.volt-r8/typing/session-9-a8x3.log`),
+rows in `data/typing/a8.jsonl` (arms `r8`, `t3code`, `paseo`). Paseo is driven by `paseoa8.mjs`: its Cmd+N opens a
+new-workspace page that first asks for a model, so its 5 chats are started with its own CLI (`paseo run -d
+--workspace <main> 'replay:stream-<n>'`, 2 s apart) and open as tabs in the workspace on screen. Every arm: a fresh
+launch with its own profile, 5 replay streams, 60 keys at 250 ms +-20 % in the front chat's composer, EventLatency
+of each KEY_PRESSED. Median of 3 runs, ranked by p95:
+
+| Place | App | p95 (runs) | p50 (runs) | Pooled p50 / p95 (180 keys) | Worst key | Front reply grew during the keys | Load while typing |
+|---|---|---|---|---|---|---|---|
+| 1 | Paseo 0.9.2 | **31.1** (29.2, 31.5, 31.1) | 24.25 (25.45, 24.25, 23.8) | 24.9 / 31.1 | 36.2 | 5,679-5,871 chars | 8.7-11.6 |
+| 2 | Volt r8 | 34.4 (28.7, 34.8, 34.4) | 24.75 (23.85, 25.2, 24.75) | 24.4 / 33.4 | 41.2 | 5,923-6,177 chars | 7.7-10.5 |
+| 3 | T3 Code 0.1.6-nightly | 35.5 (35.4, 39.8, 35.5) | **23.3** (22.25, 23.45, 23.3) | 22.9 / 37.7 | 129.8 | 16 chars | 16.6-40.4 |
+
+0 missed keys in every run. T3 Code still holds streamed text by paragraph, so its rows are close to its idle floor;
+its rows also ran under the highest load (the 1-minute load includes its own launch). Zeron (native, Metal) has no
+Chromium timing and needs ADEMark's screen-recording method, which this account cannot run (no Screen Recording
+permission): not measured.
+
 ## T3 Code, read (`~/.volt-r8/src/t3code`, one squashed commit `50a2f5b9`, so "long threads open about 2.5x faster"
 cannot be read as a diff)
 

@@ -3,6 +3,7 @@
 # free lock, runs the steps given, frees the lock. Each launch inside also waits for the load gate (rows record it).
 #   session8.sh a8 <arm,arm,...>      A8 once per arm in that order (arms: before after base r7 r8, or name=/path/VOLT.app)
 #   session8.sh t3 [reps]            the same measure on T3 Code (t3a8.mjs)
+#   session8.sh paseo [reps]         the same measure on Paseo (paseoa8.mjs)
 #   session8.sh ab <arm,arm> [reps] [n3] [n4]   A3 and A4 per launch, interleaved (ab.mjs)
 #   session8.sh exp <arm> <keys> <variants>      the switch-off experiment (exp.mjs)
 #   session8.sh cast <arm,arm,...>   a screencast of one streaming reply per arm (cast.mjs)
@@ -26,6 +27,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 		a8) node a8.mjs 1 "$2"; shift 2 ;;
 		t3) node t3a8.mjs "${2:-1}"; shift; [ $# -gt 0 ] && shift ;;
+		paseo) node paseoa8.mjs "${2:-1}"; shift; [ $# -gt 0 ] && shift ;;
 		ab) node ab.mjs "$2" "${3:-2}" "${4:-6}" "${5:-6}"; shift $# ;;
 		exp) node exp.mjs "$2" "$3" "$4"; shift 4 ;;
 		cast) node cast.mjs "$2"; shift 2 ;;
