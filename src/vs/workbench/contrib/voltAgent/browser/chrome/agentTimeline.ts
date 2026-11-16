@@ -40,12 +40,15 @@ export function isProcessNarration(text: string): boolean {
 
 export function partitionAssistantText(text: string): Array<{ kind: 'thought' | 'reply'; text: string }> {
 	const parts: Array<{ kind: 'thought' | 'reply'; text: string }> = [];
-	for (const raw of text.split(/\n{2,}/)) {
-		const para = raw.trim();
+	const raws = text.split(/\n{2,}/);
+	for (let i = 0; i < raws.length; i++) {
+		const para = raws[i].trim();
 		if (!para) {
 			continue;
 		}
-		const kind = classifyAssistantParagraph(para);
+		// The last paragraph of a streaming reply is still being written: a new string on every frame, so it is
+		// classified but not remembered (remembered, each version kept its whole reply alive, see `ownString`).
+		const kind = i === raws.length - 1 ? classifyAssistantParagraphNow(para) : classifyAssistantParagraph(para);
 		const last = parts.at(-1);
 		if (last && last.kind === kind) {
 			last.text += `\n\n${para}`;
@@ -63,6 +66,23 @@ export function partitionAssistantText(text: string): Array<{ kind: 'thought' | 
  */
 const paragraphKinds = new Map<string, 'thought' | 'reply'>();
 const PARAGRAPH_KINDS_MAX = 4096;
+/** Characters the keys may hold in all: a few huge paragraphs cannot outgrow what the count limit means. */
+const PARAGRAPH_KINDS_MAX_CHARS = 1 << 20;
+let paragraphKindsChars = 0;
+
+/**
+ * A paragraph cut out of a reply (`split`, `trim`) is a slice that keeps the whole reply's string alive: as a key
+ * it held every version of a streaming reply (one per frame; 13 MB after 75 s of one ADEMark stream). The key is
+ * a copy of its own characters instead: `' ' + para` is flattened into a new string, and the slice keeps only that.
+ */
+function ownString(para: string): string {
+	return (' ' + para).slice(1);
+}
+
+/** Paragraphs remembered by {@link partitionAssistantText} (tests). */
+export function rememberedParagraphKinds(): number {
+	return paragraphKinds.size;
+}
 
 function classifyAssistantParagraph(para: string): 'thought' | 'reply' {
 	const known = paragraphKinds.get(para);
@@ -70,10 +90,12 @@ function classifyAssistantParagraph(para: string): 'thought' | 'reply' {
 		return known;
 	}
 	const kind = classifyAssistantParagraphNow(para);
-	if (paragraphKinds.size >= PARAGRAPH_KINDS_MAX) {
+	if (paragraphKinds.size >= PARAGRAPH_KINDS_MAX || paragraphKindsChars + para.length > PARAGRAPH_KINDS_MAX_CHARS) {
 		paragraphKinds.clear();
+		paragraphKindsChars = 0;
 	}
-	paragraphKinds.set(para, kind);
+	paragraphKinds.set(ownString(para), kind);
+	paragraphKindsChars += para.length;
 	return kind;
 }
 

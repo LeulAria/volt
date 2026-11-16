@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { AgentSegment, createFileChangeBlock, createTerminalBlock } from '../../browser/blocks/agentBlocks.js';
-import { buildThreadParts, carryTodoSteps, classifySupervisionNotice, composerTasks, createdPlanPrompt, failureTitle, fileChangeGroupTitle, formatElapsed, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, runEndTray, STATUS_ROTATE_MS, stampTodoSteps, streamingActivityLines, supervisionActions, tasksCard, todoChecklist, todoOutcome, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
+import { buildThreadParts, carryTodoSteps, classifySupervisionNotice, composerTasks, createdPlanPrompt, failureTitle, fileChangeGroupTitle, formatElapsed, isProcessNarration, looksLikeAnswerForm, partitionAssistantText, rememberedParagraphKinds, runEndTray, STATUS_ROTATE_MS, stampTodoSteps, streamingActivityLines, supervisionActions, tasksCard, todoChecklist, todoOutcome, visibleReplyParts } from '../../browser/chrome/agentTimeline.js';
 
 suite('Agent timeline', () => {
 
@@ -60,6 +60,19 @@ suite('Agent timeline', () => {
 		const paragraph = 'Local development servers bind to 127.0.0.1 because that address is the loopback interface: traffic sent there never leaves the machine, so nothing on the network can reach a half-finished app, and the operating system never has to ask for firewall permission either. It also keeps a stray debug endpoint off the office Wi-Fi.';
 		assert.ok(paragraph.length > 280);
 		assert.deepStrictEqual(partitionAssistantText(`${paragraph}\n\n${paragraph}`).map(part => part.kind), ['reply']);
+	});
+
+	test('remembers finished paragraphs of a streaming reply, not each version of the one being written', () => {
+		const done = 'The pagination bug is in src/paginate.ts: the page number is read as a string and compared to a number.';
+		partitionAssistantText(done);
+		const before = rememberedParagraphKinds();
+		let reply = `${done}\n\n`;
+		for (let i = 0; i < 50; i++) {
+			reply += `word${i} `;
+			assert.deepStrictEqual(partitionAssistantText(reply).map(part => part.kind), ['reply']);
+		}
+		// The first paragraph (finished) is remembered once; the 50 versions of the growing one are not.
+		assert.ok(rememberedParagraphKinds() - before <= 1, `remembered ${rememberedParagraphKinds() - before}`);
 	});
 
 	test('keeps the URL reply visible', () => {
