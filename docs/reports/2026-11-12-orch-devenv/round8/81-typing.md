@@ -1,4 +1,4 @@
-Status: **draft** (release `r8` rows pending: the coordinator builds `r8`)
+Status: **final** (release `r8` rows taken by the coordinator on 16 November, under "Final rows on the release builds")
 
 # Round 8, area "typing": A8 typing lag while 5 agents stream
 
@@ -16,7 +16,8 @@ streams and day: p50 24.85, p95 35.25 (2 rows; pooled 24.8 / 36.5), and its repl
 (its paragraph mode holds the text), so that is its idle floor. **Volt now ties T3 Code on this measure, it does not
 clearly beat it**: p95 35.55 vs 35.25 by row medians, 35.8 vs 36.5 pooled, p50 about 1 ms over. Both sit at this
 panel's floor (an idle Volt chat: p50 23.6): the rest of each key is the vsync wait and two refreshes to presentation.
-Final release rows (`r7` vs `r8`, T3 Code alongside) below.
+On the release builds (3 interleaved rows each): `r7` 27.85 / 36.2, `r8` **26.55 / 34.6**, T3 Code 24.5 / 43.6 (its
+reply not streaming); details under "Final rows on the release builds".
 
 The cause was the fade of freshly streamed text: its colour changed on every frame, so every frame of a streaming
 chat painted text, the compositor always had a frame in flight on this 120 Hz panel and held each next frame (the
@@ -48,7 +49,39 @@ Three dev rows had other agents' work push the load over 14 during typing (secon
 Release arms, session 1 (same rig, before this branch): `base` 34.6/79.9, 35.3/110.3; `r7` 37.6/100.9 (load to 19),
 32.35/36.8. The p95 outliers sit in rows whose load rose to 15-19 during typing.
 
-Final rows on the release build `r8`: PENDING (`session8.sh a8 r7,r8,r8,r7,r7,r8 t3 2 ab r7,r8 2 3 6`).
+### Final rows on the release builds (`r7` vs `r8`)
+
+`r8` = `~/.volt-r8/min/r8/VOLT.app`, `3c920df8444` (all three round-8 branches merged), built 16 November 01:29.
+Session of 01:41-01:51 +04 under the timing lock (`session8.sh a8 r7,r8,r8,r7,r7,r8 t3 2`), 60 keys per row, 0
+missed in every row, 5 replay streams in every Volt row (6,364-6,613 characters streamed during the 60 keys).
+
+| Arm | Rows (p50 / p95, load start / typing) | Median p50 (range) | Median p95 (range) | Pooled p50 / p95 (n) |
+|---|---|---|---|---|
+| `r7` release | 29.95/36.2 (12.7/9.8), 27.85/35.3 (10.4/9.7), 27.85/36.2 (9.6/8.1) | 27.85 (27.85-29.95) | 36.2 (35.3-36.2) | 28.6 / 36.2 (180) |
+| `r8` release | 26.55/40.1 (12.8/12.8), 26.7/34.6 (11.6/11.2), 24.7/32.1 (6.6/12.1) | 26.55 (24.7-26.7) | 34.6 (32.1-40.1) | 26.3 / 35.3 (180) |
+| T3 Code (Nightly) | 24.15/41.1 (9.5/14.05), 24.85/46.1 (10.8/10.3) | 24.5 (24.15-24.85) | 43.6 (41.1-46.1) | 24.5 / 41.3 (120) |
+
+On the release builds `r8` is 1.3 ms (p50) and 1.6 ms (p95) under `r7`; one `r8` row (40.1) holds a 120.7 ms key. T3
+Code's reply grew 16 characters during each of its rows: it does not stream to the screen while its probe types, so
+its rows are its idle floor, not a like-for-like test. On this rig `r8` and T3 Code are within a frame of each other.
+This is Chromium's EventLatency (key to presentation), not ADEMark's pixel method (key to OCR'd pixels, T3 Code 47.9
+ms on the board): ADEMark's method needs Screen Recording, which this shell does not have.
+
+A3 and A4 on the release builds (`session8.sh ab r7,r8 2 3 6`, 02:01-02:07 +04, loads 5.2-8.6, 2 launches per arm,
+interleaved r7, r8, r8, r7):
+
+| | `r7` | `r8` |
+|---|---|---|
+| A3 ready, median of each launch (n 3 per launch) | 149, 162 ms | 152, 151 ms |
+| A4 total, Enter to first word (n 6 per launch) | 1,074, 1,029 ms | 735.5, 698.5 ms |
+| A4 before the request (agent start) | 1,049, 1,005.5 ms | 710.5, 674 ms |
+| A4 on screen (request to first word) | 26.5, 24 ms | 25, 24.5 ms |
+
+A3 is unchanged. A4 on screen is unchanged; A4's total is 330 ms faster on `r8` (the shared adapter host: no adapter
+process to start). **Every A4 run started a cold agent** (`agentSource: cold`, 24 of 24 here and 48 of 48 on the dev
+rows): round 6's 92 ms (dev) was taken with a warm spare agent waiting, and since `cdc82211e86` (round 7: the spare
+started when a run ends lives 20 s, not 10 min) A4's runs find none. A4 is a regression from round 6, not from this
+round.
 
 ### A3 and A4 (`session8.sh ab before,after 2 ...`, interleaved launches, loads 7-11)
 
