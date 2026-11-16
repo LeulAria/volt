@@ -109,6 +109,8 @@ import { IAgentRuntimeService } from '../../../workbench/services/voltRuntime/co
 import { IVoltSessionContextService } from '../../../workbench/services/voltRuntime/common/sessionContext.js';
 import { RunModeTracker } from '../../../workbench/services/voltRuntime/common/hostSessionResolver.js';
 import { AgentServerApi, createCollections } from './serverApi.js';
+import { ServerVoice } from './serverVoice.js';
+import { VoltVoiceChatService } from '../../../platform/voltVoiceChat/node/voltVoiceChatService.js';
 import { ServerFeatureEnablement } from './serverFeatureEnablement.js';
 import { ServerAgentWorkspaceService } from './serverAgentWorkspace.js';
 import { IAgentServerClients } from './serverClients.js';
@@ -419,6 +421,10 @@ export async function main(argv: string[]): Promise<void> {
 	disposables.add(instantiationService.createInstance(VoltHostMcpBridge));
 	// Mode and folder per chat for the host tools (a window's browser automation did this).
 	instantiationService.invokeFunction(accessor => accessor.get(IVoltHostToolService).setSessionResolver(disposables.add(new RunModeTracker(accessor.get(IAgentRuntimeService)))));
+	// Voice chat keys and call records, one folder per machine (the desktop's main process uses it too):
+	// the browser workbench's channel and paired phones' calls (`voice.*`).
+	const voiceChat = new VoltVoiceChatService(resolveEnv, logService, join(args.userDataDir, 'volt-voice'));
+	disposables.add(instantiationService.createInstance(ServerVoice, protocol, voiceChat));
 	disposables.add(instantiationService.createInstance(AgentServerApi, protocol, collections, sessionHost, editsJournal, async (secrets: Record<string, string>) => {
 		const imported: string[] = [];
 		for (const [key, value] of Object.entries(secrets)) {
@@ -499,6 +505,7 @@ export async function main(argv: string[]): Promise<void> {
 		codeIndex,
 		sendFile,
 		usage,
+		voiceChat,
 		pullRequests,
 		plugins: stdioService,
 	}));
