@@ -2160,4 +2160,54 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 		},
 	},
+	{
+		publisher: 'volt',
+		name: 'voice-chat',
+		engines: {
+			volt: '^1.0.0',
+		},
+		contributes: {
+			voltSettingsPages: [
+				{
+					id: 'voice',
+					label: 'Voice',
+				},
+			],
+			voltCapabilities: {
+				required: [
+					{
+						id: 'agents.send',
+						class: 'medium',
+						reason: 'The voice sends the work you ask for to the chat you are on.',
+					},
+					{
+						id: 'agents.create',
+						class: 'high',
+						reason: 'A call started from a new chat starts that chat with your first request.',
+					},
+					{
+						id: 'net.connect',
+						class: 'low',
+						reason: 'Streams the call\'s audio to the realtime voice provider you chose (xAI or OpenAI).',
+					},
+					{
+						id: 'secrets.use:voice',
+						class: 'high',
+						reason: 'Uses the voice provider\'s API key, kept on this computer, to start each call.',
+					},
+				],
+			},
+			voltModule: {
+				feature: 'voiceChat',
+				entry: 'voltVoiceChat',
+				label: 'Voice chat',
+				description: 'A live voice call with your agents from the composer (Start voice chat): it sends work to the chat, steers it while it runs, and speaks the results.',
+				category: 'agents',
+				icon: 'mic',
+				order: 75,
+				settings: ['volt.voiceChat.'],
+				commands: ['volt.voiceChat.start', 'volt.voiceChat.end', 'volt.voiceChat.toggleMute', 'volt.voiceChat.openTranscript', 'volt.voiceChat.setKey'],
+			},
+		},
+	},
 ];

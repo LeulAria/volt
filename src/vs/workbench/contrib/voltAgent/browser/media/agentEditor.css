@@ -5216,6 +5216,50 @@ pre.volt-agent-searchable {
 	background: #d8d8da;
 }
 
+/* Start voice chat (Cursor's waveform button): the same light circle as Stop, a dark glyph. */
+.volt-agent-send.voice {
+	background: #f4f4f5;
+	color: #111;
+}
+
+.volt-agent-send.voice:hover {
+	background: #d8d8da;
+}
+
+/* A call is up: the waveform stays, green like a live line; clicking it shows the call. */
+.volt-agent-send.voice.live,
+.volt-agent-send.voice.live:hover {
+	background: color-mix(in srgb, #4ade80 22%, transparent);
+}
+
+.volt-agent-send.voice.live .volt-agent-svg-icon.waveform,
+.volt-agent-send.voice.live .volt-agent-svg-icon.waveform svg {
+	color: #4ade80;
+}
+
+.volt-agent-mic-btn.disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.volt-agent-send.voice .volt-agent-svg-icon.waveform,
+.volt-agent-send.voice .volt-agent-svg-icon.waveform svg {
+	width: 15px;
+	height: 15px;
+	color: #111;
+}
+
+.monaco-workbench.vs .volt-agent-send.voice,
+.monaco-workbench.hc-light .volt-agent-send.voice {
+	background: var(--vscode-foreground);
+	color: var(--vscode-editor-background, #fff);
+}
+
+.monaco-workbench.vs .volt-agent-send.voice .volt-agent-svg-icon.waveform,
+.monaco-workbench.hc-light .volt-agent-send.voice .volt-agent-svg-icon.waveform {
+	color: var(--vscode-editor-background, #fff);
+}
+
 .monaco-workbench.vs .volt-agent-send.stop,
 .monaco-workbench.hc-light .volt-agent-send.stop {
 	background: var(--vscode-foreground);
@@ -7364,6 +7408,7 @@ pre.volt-agent-searchable {
 	questions, a worktree's setup) they stay in flow. */
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-composer-stack.has-stack ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-question-tray:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-voice-tray-slot:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-commit-plan:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-agent-clone-banner:not(.hidden) ~ .volt-agent-composer-chips.is-visible,
 .volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-worktree-setup:not(.hidden) ~ .volt-agent-composer-chips.is-visible {
@@ -10763,4 +10808,13 @@ pre.volt-agent-searchable {
 /* Four classes: `.monaco-workbench .codicon[class*='codicon-']` draws every codicon at 16px. */
 .monaco-workbench .volt-agent-multitask-token .volt-agent-composer-chip-close .codicon.codicon-close {
 	font-size: 12px;
+}
+
+/* --- "Sent by voice call" above a message the call sent --- */
+
+.volt-agent-subagent-of.from-voice .volt-agent-svg-icon.waveform,
+.volt-agent-subagent-of.from-voice .volt-agent-svg-icon.waveform svg {
+	width: 12px;
+	height: 12px;
+	display: block;
 }

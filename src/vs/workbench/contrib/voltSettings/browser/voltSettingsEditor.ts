@@ -94,7 +94,7 @@ import { SettingsThemeList } from './settingsThemeList.js';
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
 /** Volt's own pages, then every registered setting by category (`cat:`), Extensions included. */
-type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'access' | 'connected' | 'devices' | 'orchestration' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
+type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'voice' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'access' | 'connected' | 'devices' | 'orchestration' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
 type CatalogSection = `cat:${string}`;
 
 function isCatalogSection(section: string): section is CatalogSection {
@@ -126,6 +126,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: ThemeIcon; group: nu
 	{ id: 'modes', label: localize('voltSettings.modes', "Modes"), icon: Codicon.sparkle, group: 1 },
 	{ id: 'composer', label: localize('voltSettings.composer', "Composer"), icon: Codicon.commentDiscussion, group: 1 },
 	{ id: 'tab', label: localize('voltSettings.tab', "Tab & Prediction"), icon: Codicon.keyboard, group: 1 },
+	{ id: 'voice', label: localize('voltSettings.voice', "Voice"), icon: Codicon.mic, group: 1 },
 	{ id: 'codeIntelligence', label: localize('voltSettings.codeIntelligence', "Code Intelligence"), icon: Codicon.database, group: 1 },
 	{ id: 'canvas', label: localize('voltSettings.canvasScratch', "Canvas & Scratch"), icon: Codicon.symbolColor, group: 1 },
 	{ id: 'beta', label: localize('voltSettings.betaPage', "Beta"), icon: Codicon.beaker, group: 1 },
@@ -794,6 +795,7 @@ export class VoltSettingsEditor extends EditorPane {
 				this.renderTab();
 				break;
 			case 'codeIntelligence':
+			case 'voice':
 				pending = this.renderModulePage(this.section);
 				break;
 			case 'canvas':

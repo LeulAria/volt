@@ -231,6 +231,8 @@ import './contrib/voltThemes/browser/voltThemes.contribution.js';
 
 // Volt Customize: look tokens, layouts, ~/.volt/customize, the Playground
 import './contrib/voltCustomize/browser/voltCustomize.contribution.js';
+// Voice chat's settings (the feature itself is a module: contrib/voltVoiceChat, loaded on first use)
+import './contrib/voltVoiceChat/common/voltVoiceChatSettings.js';
 
 // Volt Prediction (Tab / NES / cross-file edits)
 import './contrib/voltPrediction/browser/voltPrediction.contribution.js';

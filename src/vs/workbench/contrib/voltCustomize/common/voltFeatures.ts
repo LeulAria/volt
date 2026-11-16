@@ -199,6 +199,13 @@ export const VOLT_FEATURES_HAND_WRITTEN: readonly IVoltFeature[] = [
 	},
 	CORE.runGroups,
 	CORE.questions,
+	{
+		id: 'voiceChat', label: 'Voice chat', category: 'agents', icon: 'mic', extensionId: 'volt.voice-chat',
+		description: 'A live voice call with your agents from the composer (Start voice chat): it sends work to the chat, steers it while it runs, and speaks the results.',
+		commands: ['volt.voiceChat.start', 'volt.voiceChat.end', 'volt.voiceChat.toggleMute', 'volt.voiceChat.openTranscript', 'volt.voiceChat.setKey'],
+		settings: ['volt.voiceChat.'],
+		sections: ['voice'],
+	},
 	// --- Workspace (core) ---
 	CORE.worktrees,
 	CORE.terminals,

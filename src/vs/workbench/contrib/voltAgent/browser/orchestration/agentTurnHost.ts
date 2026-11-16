@@ -55,7 +55,8 @@ export interface IAgentThreadSourceHost {
 	readonly fromThread: {
 		readonly id: string;
 		readonly title: string;
-		readonly kind: 'message' | 'launch' | 'fork' | 'merge' | 'continue';
+		/** `voice`: a voice call's agent sent it (`id` is the call). */
+		readonly kind: 'message' | 'launch' | 'fork' | 'merge' | 'continue' | 'voice';
 		/** An agent outside Volt (OAuth MCP): `title` is its name and `id` is no chat. */
 		readonly external?: boolean;
 	};
@@ -64,7 +65,7 @@ export interface IAgentThreadSourceHost {
 export function threadSourceOf(host: unknown): IAgentThreadSourceHost['fromThread'] | undefined {
 	const from = (host as Partial<IAgentThreadSourceHost> | undefined)?.fromThread;
 	return from && typeof from.id === 'string' && typeof from.title === 'string'
-		? { id: from.id, title: from.title, kind: from.kind === 'launch' || from.kind === 'fork' || from.kind === 'merge' || from.kind === 'continue' ? from.kind : 'message', ...(from.external === true ? { external: true } : {}) }
+		? { id: from.id, title: from.title, kind: from.kind === 'launch' || from.kind === 'fork' || from.kind === 'merge' || from.kind === 'continue' || from.kind === 'voice' ? from.kind : 'message', ...(from.external === true ? { external: true } : {}) }
 		: undefined;
 }
 
