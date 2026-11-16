@@ -13,9 +13,10 @@ A7=$!
 # a7.mjs opens five chats 3.5 s apart before the streams run.
 sleep $(( ${3:-40} + 18 ))
 echo "load $(uptime | sed 's/.*averages: //')" > $OUT/$2-peak.txt
+node parked.mjs >> $OUT/$2-peak.txt 2>&1
 node gputiles.mjs >> $OUT/$2-peak.txt 2>&1
 node fp.mjs 3 >> $OUT/$2-peak.txt 2>&1
-node allocators.mjs "" 1 >> $OUT/$2-peak.txt 2>&1
+node allocators.mjs "" ${ALLOC_DEPTH:-1} >> $OUT/$2-peak.txt 2>&1
 node heapsummary.mjs http://127.0.0.1:$SPEED_CDP '' 30 > $OUT/$2-heap.txt 2>&1
 wait $A7
 echo "done $2"

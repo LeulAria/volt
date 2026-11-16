@@ -1,0 +1,9 @@
+{
+ "a7.jsonl": {
+  "2026-11-15T10:32:36.663Z": "taken before roles.mjs told tsserver helpers from main (main n=4), in a block that collided with exploratory launches",
+  "2026-11-15T11:28:08.804Z": "a7-baseline2 block: the restarted render agent ran standalone Electron windows in front (15:27-15:40 +04) during it, which can occlude the test window",
+  "2026-11-15T11:32:33.435Z": "a7-baseline2 block: the restarted render agent ran standalone Electron windows in front (15:27-15:40 +04) during it, which can occlude the test window",
+  "2026-11-15T11:36:57.885Z": "a7-baseline2 block: the restarted render agent ran standalone Electron windows in front (15:27-15:40 +04) during it, which can occlude the test window",
+  "2026-11-15T11:41:22.123Z": "a7-baseline2 block: the restarted render agent ran standalone Electron windows in front (15:27-15:40 +04) during it, which can occlude the test window"
+ }
+}
