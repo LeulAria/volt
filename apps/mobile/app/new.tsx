@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { useVoiceCall } from '../src/chat/voice/voiceCall';
+import { VoiceTray } from '../src/chat/voice/VoiceTray';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { type AccessMode, type ComposerMode, errorMessage, type IPromptAttachment, runSelectionProblem, selectProjects, shortPath, startRunGroup } from '@volt/client-core';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -35,6 +37,7 @@ function NewChat() {
 	const projects = useMemo(() => selectProjects(cols), [cols]);
 	const params = useLocalSearchParams<{ project?: string }>();
 	const [projectId, setProjectId] = useState<string | undefined>(params.project);
+	const voice = useVoiceCall();
 	const [mode, setMode] = useState<ComposerMode>('Agent');
 	const [modelRef, setModelRef] = useState<string | undefined>();
 	const [modelTouched, setModelTouched] = useState(false);
@@ -153,9 +156,14 @@ function NewChat() {
 					) : null}
 				</ScrollView>
 				<Animated.View style={[{ paddingTop: 6 }, lift]}>
+					<View style={{ paddingHorizontal: 16 }}>
+						<VoiceTray chatKey="new" />
+					</View>
 					<Composer
 						draftKey="new"
 						autoFocus
+						onStartVoice={project ? () => void voice?.start({ projectId: project.id, originKey: 'new' }) : undefined}
+						voiceLive={!!voice?.active}
 						mode={mode}
 						onModeChange={setMode}
 						modelRef={effectiveModel}

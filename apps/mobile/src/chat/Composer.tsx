@@ -49,6 +49,10 @@ export interface IComposerProps {
 	readonly chatId?: string;
 	readonly folder?: string;
 	readonly onStop?: () => void;
+	/** Start voice chat (Cursor's waveform): shown in an empty composer, beside the mic. */
+	readonly onStartVoice?: () => void;
+	/** A voice call is up: the waveform stays, live, and the mic hides (the call holds it). */
+	readonly voiceLive?: boolean;
 	readonly placeholder?: string;
 	readonly autoFocus?: boolean;
 	readonly disabled?: boolean;
@@ -398,8 +402,8 @@ export function Composer(props: IComposerProps) {
 								<ModelIcon label={catalogItem(runtime, props.modelRef)?.label ?? modelName} providerId={catalogItem(runtime, props.modelRef)?.providerId} size={20} color={p.fgSecondary} />
 							</Tap>
 						)}
-						{dictation.available ? <MicButton listening={false} onPress={() => void dictation.start(text)} /> : null}
-						{showStop ? (
+						{dictation.available && !props.voiceLive ? <MicButton listening={false} onPress={() => void dictation.start(text)} /> : null}
+						{!showStop && props.onStartVoice ? <VoiceStartButton live={!!props.voiceLive} onPress={props.onStartVoice} size={36} /> : showStop ? (
 							<Tap haptics="medium" hitSlop={8} onPress={props.onStop} accessibilityLabel="Stop" style={{ width: 36, height: 36, borderRadius: 18, marginLeft: 2, backgroundColor: p.primary, alignItems: 'center', justifyContent: 'center' }}>
 								<View style={{ width: 11, height: 11, borderRadius: 2, backgroundColor: p.onPrimary }} />
 							</Tap>
@@ -440,9 +444,9 @@ export function Composer(props: IComposerProps) {
 						</Tap>
 					</ScrollView>
 					{props.contextUsed && props.contextWindow ? <ContextRing used={props.contextUsed} size={props.contextWindow} onPress={() => setSheet('context')} /> : null}
-					{dictation.available ? <MicButton listening={dictation.listening} onPress={() => dictation.listening ? dictation.stop() : void dictation.start(text)} /> : null}
+					{dictation.available && !props.voiceLive ? <MicButton listening={dictation.listening} onPress={() => dictation.listening ? dictation.stop() : void dictation.start(text)} /> : null}
 					<Animated.View style={sendScale}>
-						{showStop ? (
+						{!showStop && !sendable && !uploading && !dictation.listening && props.onStartVoice ? <VoiceStartButton live={!!props.voiceLive} onPress={props.onStartVoice} size={30} /> : showStop ? (
 							// agentEditor.css `.volt-agent-send.stop`: the near-white circle with a dark square.
 							<Tap haptics="medium" hitSlop={8} onPress={props.onStop} accessibilityLabel="Stop" style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: p.primary, alignItems: 'center', justifyContent: 'center' }}>
 								<View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: p.onPrimary }} />
@@ -600,6 +604,16 @@ function ContextSheet({ visible, onClose, used, size, model }: { readonly visibl
 				))}
 			</View>
 		</Sheet>
+	);
+}
+
+/** Start voice chat: Cursor's waveform in the near-white send circle; green while a call is live (tap: show the call). */
+function VoiceStartButton({ live, onPress, size }: { readonly live: boolean; readonly onPress: () => void; readonly size: number }) {
+	const { p } = useTheme();
+	return (
+		<Tap haptics="medium" onPress={onPress} hitSlop={6} accessibilityRole="button" accessibilityLabel={live ? 'Voice chat in progress' : 'Start voice chat'} style={{ width: size, height: size, borderRadius: size / 2, marginLeft: 2, alignItems: 'center', justifyContent: 'center', backgroundColor: live ? `${p.success}38` : p.primary }}>
+			<Icon name="waveform" size={size > 32 ? 19 : 16} color={live ? p.success : p.onPrimary} strokeWidth={2} />
+		</Tap>
 	);
 }
 

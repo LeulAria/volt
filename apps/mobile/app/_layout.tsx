@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { VoiceCallProvider } from '../src/chat/voice/voiceCall';
 import { DarkTheme, DefaultTheme, Stack, type Theme, ThemeProvider as NavigationThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -74,6 +75,7 @@ function Root() {
 
 	return (
 		<ClientProvider environment={environment}>
+			<VoiceCallProvider>
 			<NavigationThemeProvider value={navigationTheme}>
 				<StatusBar style={dark ? 'light' : 'dark'} />
 				<Stack
@@ -121,6 +123,7 @@ function Root() {
 				<ImageViewerHost />
 				<FrameViewerHost />
 			</NavigationThemeProvider>
+			</VoiceCallProvider>
 		</ClientProvider>
 	);
 }

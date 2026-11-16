@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { useVoiceCall } from '../../src/chat/voice/voiceCall';
+import { VoiceTray } from '../../src/chat/voice/VoiceTray';
 import {
 	approvalsFor, attachmentsOf, chatStatus, chatTerminals, isTerminalLive, type ComposerMode, COMPOSER_MODES, historyOf, type IPromptAttachment, isStreaming, projectOf, questionsFor, runtimeOf, sessionsOf,
 	statusColor, threadsOf, uriPath, uuid
@@ -261,6 +263,7 @@ function ChatView({ chatId, split }: { readonly chatId: string; readonly split?:
 		}
 	}, [client, chatId, meta?.unread]);
 
+	const voice = useVoiceCall();
 	const tabsShown = tabCount > 1 && !split;
 	const top = insets.top + HEADER_HEIGHT + (tabsShown ? CHAT_TABS_HEIGHT : 0);
 	const projectName = project?.displayName ?? meta?.workspaceLabel;
@@ -285,9 +288,14 @@ function ChatView({ chatId, split }: { readonly chatId: string; readonly split?:
 								{thread ? <QueueChip chatId={chatId} thread={thread} /> : null}
 							</View>
 						) : null}
+						<View style={{ paddingHorizontal: 16 }}>
+							<VoiceTray chatKey={chatId} />
+						</View>
 						<Composer
 							draftKey={chatId}
 							chatId={chatId}
+							onStartVoice={() => void voice?.start({ chatId, originKey: chatId })}
+							voiceLive={!!voice?.active}
 							folder={folder}
 							running={running}
 							mode={mode}
