@@ -19,12 +19,24 @@ import { EditorInput } from '../../../common/editor/editorInput.js';
 
 export const IVoltAgentWindowService = createDecorator<IVoltAgentWindowService>('voltAgentWindowService');
 
+/** Who wrote a prompt a feature sends for the user: the transcript shows its pill instead of the user's own. */
+export interface IVoltPromptSource {
+	/** `voice`: a voice call (`id` is the call's id). */
+	readonly kind: 'voice';
+	readonly id: string;
+	readonly title: string;
+}
+
 /** A chat a feature opened, to hand it a prompt. */
 export interface IVoltChatPane {
 	/** Keeps the transcript on screen when it is a side chat in a right panel (those show only the composer by default). */
 	showTranscript(): void;
 	/** Sends `prompt` as the user's next message; `display` is what the transcript shows for it. */
-	submitPrompt(prompt: string, display?: { readonly text: string }): void;
+	submitPrompt(prompt: string, display?: { readonly text: string }, source?: IVoltPromptSource): void;
+	/** The chat's id (a new chat's too, before its first message). */
+	readonly sessionKey?: string;
+	/** True while the chat has no messages (a new chat's composer). */
+	isEmpty?(): boolean;
 }
 
 /** A page's own right panel (a main tab's, like the Git Graph's): its side chats open there. */
@@ -62,6 +74,23 @@ export interface IVoltComposerTray extends IDisposable {
 
 export type VoltComposerTrayFactory = (host: IVoltComposerTrayHost) => IVoltComposerTray;
 
+/** A feature's card in a chat's thread (a voice call), placed after the message that was last when it began. */
+export interface IVoltThreadCard {
+	/** Stable across refreshes: the chat keeps a card's element while its id stays. */
+	readonly id: string;
+	/** The message it follows (by id, the last message with that id: a turn's reply after its prompt); unknown or undefined: the thread's end. */
+	readonly afterMessageId?: string;
+	/** Draws the card into `container`; disposed when the card leaves the thread. */
+	render(container: HTMLElement): IDisposable;
+}
+
+/** Where a feature's thread cards come from. */
+export interface IVoltThreadCardProvider {
+	cards(sessionKey: string): readonly IVoltThreadCard[];
+	/** A chat's cards changed (undefined: any chat's). */
+	readonly onDidChange: Event<string | undefined>;
+}
+
 export interface IVoltAgentWindowService {
 	readonly _serviceBrand: undefined;
 
@@ -73,10 +102,21 @@ export interface IVoltAgentWindowService {
 	composerTray(id: string): VoltComposerTrayFactory | undefined;
 	readonly onDidChangeComposerTrays: Event<string>;
 
+	/** Adds cards to chats' threads until disposed. */
+	registerThreadCards(provider: IVoltThreadCardProvider): IDisposable;
+	/** Every registered provider's cards for a chat. */
+	threadCards(sessionKey: string): readonly IVoltThreadCard[];
+	/** A chat's thread cards changed (undefined: any chat's). */
+	readonly onDidChangeThreadCards: Event<string | undefined>;
+
 	/** The agent layout is on (rather than the IDE layout). */
 	isAgentLayout(): boolean;
 	/** The chat on screen: the active editor's, else the first chat any group shows. */
 	visibleChat(): string | undefined;
+	/** The chat pane showing `sessionKey` (else the active chat pane), to send it a prompt. */
+	chatPane(sessionKey?: string): IVoltChatPane | undefined;
+	/** Opens a chat (by its id) in the main area. */
+	openChat(sessionKey: string): Promise<void>;
 
 	/**
 	 * Opens `input` as a tab in the right panel of the chat on screen (preferring `sessionId`'s).
