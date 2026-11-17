@@ -12,6 +12,8 @@ const SAMPLE = `new Promise(resolve => {
 	const inner = [...document.querySelectorAll('.volt-agent-thread-inner')].find(e => e.offsetParent);
 	let scroller = inner; while (scroller && !(scroller.scrollHeight > scroller.clientHeight + 1 && scroller.scrollTop > 0)) { scroller = scroller.parentElement; }
 	const palette = new Set(), born = new Map(), last = new Map(); let colourChanges = 0, maxLife = 0, stuck = 0, maxSpans = 0;
+	// The thread's position on screen, however it is scrolled.
+	scroller = { get scrollTop() { return -inner.getBoundingClientRect().top; } };
 	let top = scroller?.scrollTop ?? 0, topAt = performance.now(); const gaps = []; let moves = 0, maxStep = 0;
 	const t0 = performance.now();
 	const timer = setInterval(() => {
@@ -38,6 +40,23 @@ const SAMPLE = `new Promise(resolve => {
 		}
 	}, 2);
 })`;
+// The live status line's shimmer (a probe element with its classes): its band position (--volt-shimmer) sampled every 2 ms for
+// 1.5 s: how many positions were seen, their range, and the animation's play state.
+const SHIMMER = `new Promise(resolve => {
+	const vals = []; let state = 'none', seen = 0; const t0 = performance.now();
+	// A status line of our own (the real one shows only until the first words): same classes, same CSS.
+	const probe = document.querySelector('.volt-agent-editor').appendChild(document.createElement('span'));
+	probe.className = 'volt-agent-activity-progress shimmer'; probe.textContent = 'Thinking about it'; probe.style.cssText = 'position:absolute;left:8px;bottom:4px;z-index:5';
+	const timer = setInterval(() => {
+		const el = probe;
+		if (el) { seen++; vals.push(parseFloat(getComputedStyle(el).getPropertyValue('--volt-shimmer'))); state = el.getAnimations()[0]?.playState ?? 'no animation'; }
+		if (performance.now() - t0 > 1500) {
+			clearInterval(timer); probe.remove();
+			const changes = vals.filter((v, i) => i && v !== vals[i - 1]).length;
+			resolve({ samplesWithShimmer: seen, playState: state, positionChangesPerS: Math.round(changes / 1.5), min: Math.min(...vals), max: Math.max(...vals) });
+		}
+	}, 2);
+})`;
 const out = {};
 for (const arm of (process.argv[2] ?? 'r8,after').split(',').map(armOf)) {
 	await freshProfile(arm);
@@ -47,7 +66,8 @@ for (const arm of (process.argv[2] ?? 'r8,after').split(',').map(armOf)) {
 	await sleep(8000);
 	const c = await cdp();
 	await c.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-	await newChat(c); await sleep(1500); await send(c, 'replay:stream-1'); await sleep(5000);
+	await newChat(c); await sleep(1500); await send(c, 'replay:stream-1'); await sleep(12000);
+	console.log(arm.padEnd(8), 'shimmer', JSON.stringify(await c.evaluate(SHIMMER)));
 	const r = await c.evaluate(SAMPLE);
 	out[arm] = r.palettes; delete r.palettes;
 	console.log(arm.padEnd(8), 'load', load1(), JSON.stringify(r));

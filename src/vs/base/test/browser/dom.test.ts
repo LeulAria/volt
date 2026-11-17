@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import { $, h, trackAttributes, copyAttributes, disposableWindowInterval, FRAME_LATE_MAX_MS, FrameClock, getWindows, getWindowsCount, getWindowId, getWindowById, hasWindow, getWindow, getDocument, isHTMLElement, SafeTriangle } from '../../browser/dom.js';
+import { $, h, trackAttributes, copyAttributes, disposableWindowInterval, FRAME_LATE_MARGIN_MS, FRAME_LATE_MAX_MS, FrameClock, getWindows, getWindowsCount, getWindowId, getWindowById, hasWindow, getWindow, getDocument, isHTMLElement, SafeTriangle } from '../../browser/dom.js';
 import { asCssValueWithDefault } from '../../browser/cssValue.js';
 import { ensureCodeWindow, isAuxiliaryWindow, mainWindow } from '../../browser/window.js';
 import { DeferredPromise, timeout } from '../../common/async.js';
@@ -69,6 +69,33 @@ suite('dom - FrameClock (Volt)', () => {
 		assert.strictEqual(clock.lateDelay(last + 2 * HZ120 + 5, HZ120 - 2.5), 0);
 		// After a pause the phase is not trusted.
 		assert.strictEqual(clock.lateDelay(last + 500, HZ120 - 2.5), undefined);
+	});
+
+	test('a late frame that ran out of time pauses late frames, for longer when it happens again soon', () => {
+		const clock = new FrameClock();
+		clock.noteFrame(0, false);
+		clock.noteFrame(HZ120, true);
+		clock.noteFrame(2 * HZ120, true);
+		const last = 2 * HZ120;
+		// Done with time to spare: nothing changes.
+		assert.strictEqual(clock.noteLateFrameDone(last, last + HZ120 - FRAME_LATE_MARGIN_MS - 0.1), false);
+		assert.notStrictEqual(clock.lateDelay(last + 7, 4), undefined);
+		// Done too close to the next refresh: frames are asked for at the refresh for 500 ms.
+		assert.strictEqual(clock.noteLateFrameDone(last, last + HZ120 - 1), true);
+		assert.strictEqual(clock.lateDelay(last + 7.5, 4), undefined);
+		// Frames keep coming (at the refresh, measuring the interval); late frames are back after the pause.
+		let time = last;
+		const run = (ms: number) => { for (const end = time + ms; time < end;) { time += HZ120; clock.noteFrame(time, true); } };
+		run(400);
+		assert.strictEqual(clock.lateDelay(time + 1, 4), undefined);
+		run(120);
+		assert.notStrictEqual(clock.lateDelay(time + 1, 4), undefined);
+		// Out of time again right away: twice as long.
+		assert.strictEqual(clock.noteLateFrameDone(time, time + HZ120), true);
+		run(900);
+		assert.strictEqual(clock.lateDelay(time + 1, 4), undefined);
+		run(150);
+		assert.notStrictEqual(clock.lateDelay(time + 1, 4), undefined);
 	});
 
 	test('a 60 Hz screen gets the same few milliseconds, not half its interval', () => {

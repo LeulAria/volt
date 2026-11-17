@@ -150,6 +150,7 @@ import { openAgentPanel } from '../workspace/agentPanels.js';
 import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
 import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/agentPendingChanges.js';
 import { FRESH_TEXT_CLASS, FRESH_TEXT_STEP_MS, FreshTextTracker, settleFreshText } from '../chrome/agentFreshText.js';
+import { stepAnimationsLate } from '../chrome/agentLateAnimations.js';
 import { reconcileChildren, TranscriptReuse } from '../chrome/agentTranscriptReuse.js';
 import { IAgentPendingFile } from '../review/agentEditsService.js';
 import { AgentCaretRest } from '../composer/agentCaretRest.js';
@@ -1255,6 +1256,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.threadEl = this.threadView.element;
 		this.threadInner = this.threadView.inner;
 		this._register(settleFreshText(this.threadInner));
+		// The status line's shimmer (and the to-do card's) is stepped from late frames too.
+		this._register(stepAnimationsLate(getWindow(this.container)));
 		// Live agent pages wait here (still loaded) while the thread is redrawn around them.
 		this.visualParking = append(this.threadEl, $('.volt-agent-visual-parking'));
 		// `has-turns` stands in for `.volt-agent-editor:has(.volt-agent-turn)`: a :has() on the chat restyles

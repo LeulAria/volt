@@ -42,7 +42,9 @@ const traced = [];
 let mainFrames = new Map();
 // Where in the refresh interval main frames were sent: Scheduler::BeginFrame (the refresh) and SendBeginMainFrame times.
 let sched = [];
-c.on('Tracing.dataCollected', p => { for (const e of p.value) { if (e.name === 'Scheduler::BeginFrame' || (e.name === 'SendBeginMainFrame' && e.cat === 'cc,benchmark')) { sched.push([e.pid, e.name === 'SendBeginMainFrame' ? 1 : 0, e.ts]); } if (e.name === 'ProxyMain::BeginMainFrame' && e.ph === 'X') { mainFrames.set(e.pid, (mainFrames.get(e.pid) ?? 0) + 1); } else if (e.ph === 'b' || e.ph === 'e' || e.name === 'EventLatency') { traced.push(e); } } });
+// Impl frames that began with the main thread having missed the one before (a frame shown a refresh late), per process.
+let missed = new Map();
+c.on('Tracing.dataCollected', p => { for (const e of p.value) { if (e.name === 'Scheduler::BeginImplFrame' && e.args?.main_thread_missed_last_deadline) { missed.set(e.pid, (missed.get(e.pid) ?? 0) + 1); } if (e.name === 'Scheduler::BeginFrame' || (e.name === 'SendBeginMainFrame' && e.cat === 'cc,benchmark')) { sched.push([e.pid, e.name === 'SendBeginMainFrame' ? 1 : 0, e.ts]); } if (e.name === 'ProxyMain::BeginMainFrame' && e.ph === 'X') { mainFrames.set(e.pid, (mainFrames.get(e.pid) ?? 0) + 1); } else if (e.ph === 'b' || e.ph === 'e' || e.name === 'EventLatency') { traced.push(e); } } });
 for (const v of variants) {
 	if (v === 'census') {
 		// Not a segment: the running animations at this moment (anims.mjs).
@@ -67,7 +69,7 @@ for (const v of variants) {
 	traced.length = 0;
 	const done = new Promise(r => { c.off('Tracing.tracingComplete'); c.on('Tracing.tracingComplete', r); });
 	await c.send('Tracing.start', { transferMode: 'ReportEvents', traceConfig: { recordMode: 'recordAsMuchAsPossible', includedCategories: ['latencyInfo', 'input', 'benchmark', 'cc'] } });
-	mainFrames = new Map(); sched = [];
+	mainFrames = new Map(); sched = []; missed = new Map();
 	const t0 = Date.now();
 	for (let i = 0; i < keys; i++) {
 		const ch = 'abcdefghijklmnopqrstuvwxyz'[i % 26];
@@ -88,7 +90,8 @@ for (const v of variants) {
 	let lastBf = 0; const offs = [];
 	for (const [, isSend, ts] of mine) { if (!isSend) { lastBf = ts; } else if (lastBf) { offs.push((ts - lastBf) / 1000); } }
 	const share = (lo, hi) => Math.round(offs.filter(o => o >= lo && o < hi).length / Math.max(1, offs.length) * 100);
-	const bmfAt = `bmf@ <0.5ms ${share(0, 0.5)}% 0.5-2 ${share(0.5, 2)}% 2-3.5 ${share(2, 3.5)}% 3.5-6 ${share(3.5, 6)}% >6 ${share(6, 1e9)}%`;
+	const missedPerS = Math.round((missed.get(rpid) ?? 0) / (typedS + 0.5) * 10) / 10;
+	const bmfAt = `missed ${missedPerS}/s bmf@ <0.5ms ${share(0, 0.5)}% 0.5-2 ${share(0.5, 2)}% 2-3.5 ${share(2, 3.5)}% 3.5-6 ${share(3.5, 6)}% >6 ${share(6, 1e9)}%`;
 	const k = keyLatencies(traced).filter(x => x <= 2000);
 	const st = keyStages(traced);
 	const pick = n => st[n]?.[0] ?? 0;
