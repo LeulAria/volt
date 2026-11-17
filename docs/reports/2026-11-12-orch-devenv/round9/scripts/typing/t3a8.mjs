@@ -4,7 +4,7 @@
 // each sent `replay:stream-<n>` 2 s apart, then 60 probe characters at 250 ms +-20 %.
 // Setup once: settings.json in <home>/userdata and `t3 project add --title arena <arena>` (see the report).
 //   node t3a8.mjs [reps=1]      rows appended to data/typing/a8.jsonl with arm "t3code"
-import { appendFileSync, mkdirSync, openSync } from 'fs';
+import { appendFileSync, mkdirSync, openSync, writeFileSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { join } from 'path';
 import { connect, DATA, HOME, load1, median, pct, PORT, REPLAY, sleep, waitQuiet } from './lib.mjs';
@@ -83,6 +83,8 @@ async function rep() {
 	const running = await c.evaluate(`document.body.innerText.match(/Working|Stop|Thinking/g)?.length ?? 0`);
 	const loadEnd = load1();
 	const k2p = keyLatencies(traced).filter(v => v <= 2000);
+	// Analysis aid: SMOOTH_TRACE_OUT=<file> keeps the key spans (latencyInfo) for per-key stage tools.
+	if (process.env.SMOOTH_TRACE_OUT) { writeFileSync(process.env.SMOOTH_TRACE_OUT, JSON.stringify({ traceEvents: traced })); }
 	const row = {
 		arm: 't3code', app: APP, at: new Date().toISOString(), loadStart, loadTyping, loadEnd, streamingS: Math.round((Date.now() - sentAt) / 1000), focused, textBefore, textAfter, streamed: textAfter > textBefore, running,
 		keys: 60, typed, missed: 60 - typed, k2pN: k2p.length, k2pP50: median(k2p), k2pP95: pct(k2p, 0.95), k2pMax: k2p.length ? Math.max(...k2p) : null, stages: keyStages(traced), k2p,

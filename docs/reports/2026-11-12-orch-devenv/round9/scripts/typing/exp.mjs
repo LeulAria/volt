@@ -37,7 +37,10 @@ await c.send('Emulation.setFocusEmulationEnabled', { enabled: true });
 for (let n = 1; n <= 5; n++) { await newChat(c); await sleep(1500); await send(c, `replay:stream-${n}`); await sleep(2000); }
 await sleep(8000);
 const traced = [];
-c.on('Tracing.dataCollected', p => { for (const e of p.value) { if (e.ph === 'b' || e.ph === 'e' || e.name === 'EventLatency') { traced.push(e); } } });
+// Main frames are counted from the trace (BeginMainThreadFrame), not by a rAF loop: a loop of our own would ask for a
+// main frame on every vsync and so hide what the variant changes (round 9).
+let mainFrames = new Map();
+c.on('Tracing.dataCollected', p => { for (const e of p.value) { if (e.name === 'ProxyMain::BeginMainFrame' && e.ph === 'X') { mainFrames.set(e.pid, (mainFrames.get(e.pid) ?? 0) + 1); } else if (e.ph === 'b' || e.ph === 'e' || e.name === 'EventLatency') { traced.push(e); } } });
 for (const v of variants) {
 	if (v === 'census') {
 		// Not a segment: the running animations at this moment (anims.mjs).
@@ -46,6 +49,8 @@ for (const v of variants) {
 	}
 	const names = v.split('+');
 	await c.evaluate(`(() => { document.getElementById('volt-exp')?.remove(); const s = document.createElement('style'); s.id = 'volt-exp'; s.textContent = ${JSON.stringify(names.map(n => CSS[n] ?? '').join('\n'))}; document.head.appendChild(s); })()`);
+	// exp60 (round 9, dev builds with the experiment hook only): stream frames kept on the 60 Hz text clock.
+	await c.evaluate(`globalThis.__voltExp60 = ${names.includes('exp60')}`);
 	await c.evaluate(names.includes('step30') ? ALIGN(1100 / 33) : names.includes('step60') ? ALIGN(1100 / 66) : 'window.__align?.stop()');
 	const box = await c.center(`[...document.querySelectorAll('.volt-agent-thread-inner')].find(e => e.offsetParent)`);
 	if (names.includes('noglide')) {
@@ -58,8 +63,8 @@ for (const v of variants) {
 	await focusComposer(c);
 	traced.length = 0;
 	const done = new Promise(r => { c.off('Tracing.tracingComplete'); c.on('Tracing.tracingComplete', r); });
-	await c.send('Tracing.start', { transferMode: 'ReportEvents', traceConfig: { recordMode: 'recordAsMuchAsPossible', includedCategories: ['latencyInfo', 'input', 'benchmark'] } });
-	const frames0 = await c.evaluate(`(window.__f ??= (() => { const s = { n: 0 }; const t = () => { s.n++; requestAnimationFrame(t); }; requestAnimationFrame(t); return s; })()).n`);
+	await c.send('Tracing.start', { transferMode: 'ReportEvents', traceConfig: { recordMode: 'recordAsMuchAsPossible', includedCategories: ['latencyInfo', 'input', 'benchmark', 'cc'] } });
+	mainFrames = new Map();
 	const t0 = Date.now();
 	for (let i = 0; i < keys; i++) {
 		const ch = 'abcdefghijklmnopqrstuvwxyz'[i % 26];
@@ -68,7 +73,7 @@ for (const v of variants) {
 		await c.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch, code: `Key${ch.toUpperCase()}`, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code });
 		await sleep(250 * (0.8 + Math.random() * 0.4));
 	}
-	const fps = Math.round((await c.evaluate('window.__f.n') - frames0) / ((Date.now() - t0) / 1000));
+	const fps = Math.round(Math.max(0, ...mainFrames.values()) / ((Date.now() - t0) / 1000));
 	await sleep(500);
 	await c.send('Tracing.end');
 	await done;

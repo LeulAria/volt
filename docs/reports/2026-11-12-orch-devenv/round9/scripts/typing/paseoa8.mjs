@@ -7,7 +7,7 @@
 // Setup once (see the round-8 typing report): <P>/home copied from round 3's Paseo home, .claude/settings.json with
 // ANTHROPIC_BASE_URL = the replay server, `paseo project create <P>/arena`.
 //   node paseoa8.mjs [reps=1]      rows appended to data/typing/a8.jsonl with arm "paseo"
-import { appendFileSync, mkdirSync, openSync, readFileSync } from 'fs';
+import { appendFileSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { join } from 'path';
 import { connect, DATA, HOME, load1, median, pct, PORT, sleep, waitQuiet } from './lib.mjs';
@@ -93,6 +93,8 @@ async function rep() {
 	const textAfter = await c.evaluate(TEXT);
 	const running = (cli('ls -q').match(/\S+/g) ?? []).length;
 	const loadEnd = load1();
+	// Analysis aid: SMOOTH_TRACE_OUT=<file> keeps the key spans (latencyInfo) for per-key stage tools.
+	if (process.env.SMOOTH_TRACE_OUT) { writeFileSync(process.env.SMOOTH_TRACE_OUT, JSON.stringify({ traceEvents: traced })); }
 	const k2p = keyLatencies(traced).filter(v => v <= 2000);
 	const row = {
 		arm: 'paseo', app: APP, at: new Date().toISOString(), loadStart, loadTyping, loadEnd, streamingS: Math.round((Date.now() - sentAt) / 1000), focused, textBefore, textAfter, streamed: textAfter > textBefore, running,

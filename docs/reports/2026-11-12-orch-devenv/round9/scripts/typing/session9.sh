@@ -7,6 +7,7 @@
 #   session9.sh ab <arm,arm> [reps] [n3] [n4]   A3 and A4 per launch, interleaved (ab.mjs)
 #   session9.sh exp <arm> <keys> <variants>      the switch-off experiment (exp.mjs)
 #   session9.sh cast <arm,arm,...>   a screencast of one streaming reply per arm (cast.mjs)
+#   session9.sh inject <arm> <keys> <variants>   busy waits / frame loops in an idle composer (inject.mjs)
 # Steps chain: session9.sh a8 r8 t3 1 paseo 1 a8 r8
 # The rerun for a given app: session9.sh a8 r8,new=/path/VOLT.app t3 1 paseo 1 a8 new=/path/VOLT.app,r8 ...
 cd "$(dirname "$0")"
@@ -31,6 +32,7 @@ while [ $# -gt 0 ]; do
 		ab) node ab.mjs "$2" "${3:-2}" "${4:-6}" "${5:-6}"; shift $# ;;
 		exp) node exp.mjs "$2" "$3" "$4"; shift 4 ;;
 		cast) node cast.mjs "$2"; shift 2 ;;
+		inject) node ctl.mjs launch "$2" --keep && sleep 8 && node inject.mjs "$3" "$4"; node ctl.mjs stop "$2"; shift 4 ;;
 		*) echo "unknown step $1"; exit 2 ;;
 	esac
 done

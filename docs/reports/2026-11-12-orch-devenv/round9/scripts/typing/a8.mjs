@@ -10,7 +10,7 @@
 // composer took the character; and Event Timing (entries of 16 ms and more).
 // A key with no input event within 2 s is missed.
 //   node a8.mjs [reps=3] [arms=before,after]     rows appended to data/typing/a8.jsonl (SMOOTH_DATA elsewhere for exploration)
-import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'fs';
+import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { arm as armOf, cdp, DATA, FOLDER, focusComposer, launch, load1, newChat, pct, profileProcesses, role, send, sleep, stop, storeWindowSize, ud, waitQuiet, waitWorkbench, writeSettings, median } from './lib.mjs';
@@ -183,6 +183,8 @@ async function rep(arm, delayS) {
 	c.close();
 	const { keys, events } = JSON.parse(st ?? '{"keys":[],"events":[]}');
 	const lat = keys.filter(k => k.t1 !== null && k.t1 - k.t0 <= 2000).map(k => Math.round((k.t1 - k.t0) * 10) / 10);
+	// Analysis aid: SMOOTH_TRACE_OUT=<file> keeps the key spans (latencyInfo) for per-key stage tools.
+	if (process.env.SMOOTH_TRACE_OUT) { writeFileSync(process.env.SMOOTH_TRACE_OUT, JSON.stringify({ traceEvents: traced })); }
 	const k2p = keyLatencies(traced).filter(v => v <= 2000);
 	const missed = 60 - lat.length;
 	const row = {
