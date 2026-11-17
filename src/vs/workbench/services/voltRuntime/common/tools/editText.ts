@@ -185,6 +185,13 @@ export function diffHunk(before: string, after: string, context = 3, maxLines = 
 	if (!removed.length && !added.length) {
 		return { text: '(no changes)', added: 0, removed: 0 };
 	}
+	// Changes far apart (a rename's two uses in one file) are separate hunks: one hunk from the first
+	// changed line to the last listed every line between as removed and added again (a 2-line
+	// rename read "+17 -17" and cost four times the tokens).
+	const ops = lineOps(removed, added);
+	if (ops) {
+		return hunksOf(a, prefix, ops, context, maxLines);
+	}
 	const start = Math.max(0, prefix - context);
 	const lead = a.slice(start, prefix).map(line => ` ${line}`);
 	const trail = a.slice(a.length - suffix, Math.min(a.length, a.length - suffix + context)).map(line => ` ${line}`);
@@ -195,6 +202,116 @@ export function diffHunk(before: string, after: string, context = 3, maxLines = 
 	}
 	const header = `@@ -${start + 1},${lead.length + removed.length + trail.length} +${start + 1},${lead.length + added.length + trail.length} @@`;
 	return { text: [header, ...lead, ...body, ...trail].join('\n'), added: added.length, removed: removed.length };
+}
+
+/** Past this many cells the line comparison is skipped (the changed region is reported whole). */
+const MAX_DIFF_CELLS = 400_000;
+
+type LineOp = { readonly kind: '=' | '-' | '+'; readonly text: string };
+
+/** The changed region as kept, removed and added lines (longest common subsequence); undefined when it has no common line or is too large. */
+function lineOps(removed: readonly string[], added: readonly string[]): LineOp[] | undefined {
+	const m = removed.length;
+	const n = added.length;
+	if (!m || !n || m * n > MAX_DIFF_CELLS) {
+		return undefined;
+	}
+	const width = n + 1;
+	const table = new Uint32Array((m + 1) * width);
+	for (let i = m - 1; i >= 0; i--) {
+		for (let j = n - 1; j >= 0; j--) {
+			table[i * width + j] = removed[i] === added[j] ? table[(i + 1) * width + j + 1] + 1 : Math.max(table[(i + 1) * width + j], table[i * width + j + 1]);
+		}
+	}
+	if (!table[0]) {
+		return undefined;
+	}
+	const ops: LineOp[] = [];
+	let i = 0;
+	let j = 0;
+	while (i < m && j < n) {
+		if (removed[i] === added[j]) {
+			ops.push({ kind: '=', text: removed[i] });
+			i++;
+			j++;
+		} else if (table[(i + 1) * width + j] >= table[i * width + j + 1]) {
+			ops.push({ kind: '-', text: removed[i++] });
+		} else {
+			ops.push({ kind: '+', text: added[j++] });
+		}
+	}
+	while (i < m) {
+		ops.push({ kind: '-', text: removed[i++] });
+	}
+	while (j < n) {
+		ops.push({ kind: '+', text: added[j++] });
+	}
+	return ops;
+}
+
+function hunksOf(a: readonly string[], prefix: number, middle: readonly LineOp[], context: number, maxLines: number): { text: string; added: number; removed: number } {
+	// The lines around the changed region join it as kept lines, so every hunk gets its context.
+	const leadFrom = Math.max(0, prefix - context);
+	const consumed = middle.filter(op => op.kind !== '+').length;
+	const ops: LineOp[] = [
+		...a.slice(leadFrom, prefix).map((text): LineOp => ({ kind: '=', text })),
+		...middle,
+		...a.slice(prefix + consumed, prefix + consumed + context).map((text): LineOp => ({ kind: '=', text })),
+	];
+	const out: string[] = [];
+	let added = 0;
+	let removed = 0;
+	let shown = 0;
+	let oldLine = leadFrom + 1;
+	let newLine = leadFrom + 1;
+	let index = 0;
+	while (index < ops.length) {
+		// Skip kept lines until `context` before the next change.
+		let next = index;
+		while (next < ops.length && ops[next].kind === '=') {
+			next++;
+		}
+		if (next === ops.length) {
+			break;
+		}
+		const from = Math.max(index, next - context);
+		oldLine += from - index;
+		newLine += from - index;
+		// The hunk runs until 2 * context kept lines follow a change (or the end).
+		let end = next;
+		let kept = 0;
+		for (let cursor = next; cursor < ops.length; cursor++) {
+			if (ops[cursor].kind === '=') {
+				if (++kept > 2 * context) {
+					break;
+				}
+			} else {
+				kept = 0;
+				end = cursor + 1;
+			}
+		}
+		const to = Math.min(ops.length, end + context);
+		const hunk = ops.slice(from, to);
+		const olds = hunk.filter(op => op.kind !== '+').length;
+		const news = hunk.filter(op => op.kind !== '-').length;
+		out.push(`@@ -${oldLine},${olds} +${newLine},${news} @@`);
+		for (const op of hunk) {
+			added += op.kind === '+' ? 1 : 0;
+			removed += op.kind === '-' ? 1 : 0;
+			if (op.kind === '=' || shown < maxLines) {
+				out.push(`${op.kind === '=' ? ' ' : op.kind}${op.text}`);
+				shown += op.kind === '=' ? 0 : 1;
+			}
+		}
+		oldLine += olds;
+		newLine += news;
+		index = to;
+	}
+	const changed = added + removed;
+	if (changed > maxLines) {
+		out.push(`... ${changed - maxLines} more changed lines ...`);
+	}
+	return { text: out.join('\n'), added, removed };
 }
 
 function countOccurrences(haystack: string, needle: string): number {
