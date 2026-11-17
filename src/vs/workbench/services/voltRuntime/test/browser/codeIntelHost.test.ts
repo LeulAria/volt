@@ -218,6 +218,31 @@ suite('Volt code intelligence: the new-errors check after an agent write', () =>
 		assert.ok(Array.isArray(changes) && changes[0].before === 'export const a = 3;\n' && changes[0].after === 'export const z = 3;\n');
 	}));
 
+	test('format uses a language\'s range formatter on the whole file when it has no document formatter', async () => {
+		const disposables = store.add(new DisposableStore());
+		const markers = new MarkerService();
+		disposables.add({ dispose: () => markers.dispose() });
+		const textModels = {
+			createModelReference: async (uri: URI) => {
+				const model: ITextModel = disposables.add(createTextModel('const  a=1;\n', 'typescript', undefined, uri));
+				return { object: { textEditorModel: model }, dispose: () => { } };
+			},
+		} as unknown as ITextModelService;
+		const features = new LanguageFeaturesService();
+		const files = { readFile: async () => ({ value: VSBuffer.fromString('const  a=1;\n') }) } as unknown as IFileService;
+		const host = disposables.add(new CodeIntelHost(markers, textModels, features as ILanguageFeaturesService, files));
+		assert.strictEqual(await host.format(FILE), 'No formatter is registered for this file type. Run the project\'s formatter with shell instead.');
+		const ranges: string[] = [];
+		disposables.add(features.documentRangeFormattingEditProvider.register({ pattern: '**/*.ts' }, {
+			provideDocumentRangeFormattingEdits: (_model, range) => {
+				ranges.push(`${range.startLineNumber}:${range.startColumn}-${range.endLineNumber}:${range.endColumn}`);
+				return [{ range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 12 }, text: 'const a = 1;' }];
+			},
+		}));
+		assert.deepStrictEqual(await host.format(FILE), [{ uri: FILE, before: 'const  a=1;\n', after: 'const a = 1;\n' }]);
+		assert.deepStrictEqual(ranges, ['1:1-2:1']);
+	});
+
 	test('a file changed on disk by a CLI agent is read again before anyone is asked about it', async () => {
 		const disposables = store.add(new DisposableStore());
 		const markers = new MarkerService();

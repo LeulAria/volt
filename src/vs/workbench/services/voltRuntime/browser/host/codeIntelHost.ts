@@ -563,11 +563,18 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	async format(uri: URI): Promise<readonly ITextFileChange[] | string> {
 		const model = await this.model(uri);
 		const [provider] = this.languageFeatures.documentFormattingEditProvider.ordered(model);
-		if (!provider) {
+		// TypeScript and JavaScript (and others) register only a range formatter; the editor's Format
+		// Document uses it on the whole file, and so does this. Without it format answered "No formatter
+		// is registered" for every .ts file.
+		const [ranged] = provider ? [] : this.languageFeatures.documentRangeFormattingEditProvider.ordered(model);
+		if (!provider && !ranged) {
 			return 'No formatter is registered for this file type. Run the project\'s formatter with shell instead.';
 		}
 		const options = model.getOptions();
-		const edits = await this.ask(token => provider.provideDocumentFormattingEdits(model, { tabSize: options.tabSize, insertSpaces: options.insertSpaces }, token), EDIT_TIMEOUT_MS);
+		const formatting = { tabSize: options.tabSize, insertSpaces: options.insertSpaces };
+		const edits = await this.ask(token => provider
+			? provider.provideDocumentFormattingEdits(model, formatting, token)
+			: ranged.provideDocumentRangeFormattingEdits(model, model.getFullModelRange(), formatting, token), EDIT_TIMEOUT_MS);
 		if (!edits?.length) {
 			return [];
 		}
