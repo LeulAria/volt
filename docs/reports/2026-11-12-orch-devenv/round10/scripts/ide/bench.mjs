@@ -63,7 +63,10 @@ async function runCase(chat, root, item) {
 		} else {
 			times.push(result.ms);
 			// A later repetition that answers differently is a finding of its own.
-			if (verdict.status !== first.status) { first.flaky = `${first.flaky ? first.flaky + ', ' : ''}rep ${rep + 1}: ${verdict.status}`; }
+			if (verdict.status !== first.status) {
+				first.flaky = `${first.flaky ? first.flaky + ', ' : ''}rep ${rep + 1}: ${verdict.status}`;
+				first.flakyText ??= `${verdict.detail ?? ''} | ${result.text.slice(0, 600)}`;
+			}
 		}
 	}
 	if (item.kind === 'edit' || item.prepare) { reset(root); }

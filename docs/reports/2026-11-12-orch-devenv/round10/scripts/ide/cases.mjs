@@ -21,7 +21,7 @@ const NAMES = {
 		hover: /computeTax\(amount: number, region: Region\): number/,
 		badLine: 'export const broken: number = \'x\';', badMessage: /not assignable|2322/,
 		refundMessage: /Cannot find name 'computeTax'|2304/,
-		structural: 'roundCents($X)', structuralHits: [['tax', 'return roundCents(amount'], ['checkout', 'subtotal: roundCents('], ['checkout', 'discounted: roundCents('], ['checkout', 'total: roundCents('], ['checkout', 'return roundCents(applyRules'], ['report', 'roundCents( cart.subtotal() )']],
+		structural: 'roundCents($X)', structuralHits: [['tax', 'return roundCents(amount'], ['checkout', 'subtotal: roundCents('], ['checkout', 'discounted: roundCents('], ['checkout', 'total: roundCents(discounted +'], ['checkout', 'return roundCents(applyRules'], ['report', 'roundCents( cart.subtotal() )']],
 		formatted: ['export function summarize(cart: Cart): string {', 'const total = roundCents(cart.subtotal())'],
 		organized: { has: [/import \{ Cart \} from '\.\/cart\.ts';/, /import \{ roundCents \} from '\.\/tax\.ts';/], lacks: [/computeTax/, /lineTotal/] },
 		fixTitle: /Add import from ["']\.\/tax(\.ts)?["']/, fixed: /import \{ computeTax \} from ['"]\.\/tax\.ts['"]/,
@@ -40,7 +40,7 @@ const NAMES = {
 		hover: /compute_tax\(amount: float, region: str\) -> float/,
 		badLine: 'broken: int = undefined_name', badMessage: /undefined_name/,
 		refundMessage: /compute_tax/,
-		structural: 'round_cents($X)', structuralHits: [['tax', 'return round_cents(amount'], ['checkout', 'subtotal=round_cents('], ['checkout', 'discounted=round_cents('], ['checkout', 'total=round_cents('], ['checkout', 'return round_cents(apply_rules'], ['report', 'round_cents( cart.subtotal() )']],
+		structural: 'round_cents($X)', structuralHits: [['tax', 'return round_cents(amount'], ['checkout', 'subtotal=round_cents('], ['checkout', 'discounted=round_cents('], ['checkout', 'total=round_cents(discounted +'], ['checkout', 'return round_cents(apply_rules'], ['report', 'round_cents( cart.subtotal() )']],
 		formatted: ['def summarize(cart: Cart) -> str:', 'total = round_cents(cart.subtotal())'],
 		organized: { has: [/from shop\.cart import Cart/, /from shop\.tax import round_cents$/m], lacks: [/compute_tax/, /line_total/] },
 		fixTitle: /import.*compute_tax|compute_tax.*import/i, fixed: /from shop\.tax import compute_tax/,
@@ -68,7 +68,7 @@ const NAMES = {
 };
 
 /** What a result says when it knows it could not really answer (no language server, not checked). */
-const DEGRADED = /no language server|language servers? (?:is|are) (?:off|not)|not type-checked|matched by name|no formatter|not checked|cannot check|no (?:call|type) hierarchy|offers rename|not covered|no test|run (?:it|them|those|the project's)[^.]* (?:in|with) (?:the )?shell|install /i;
+const DEGRADED = /no language server|language servers? (?:is|are) (?:off|not)|not type-checked|matched by name|no formatter|not checked|cannot check|no (?:call|type) hierarchy|offers rename|not the whole project|No (?:quickfix|quick fixes)[^.]* offered|no language service|still loading|not covered|no test|run (?:it|them|those|the project's)[^.]* (?:in|with) (?:the )?shell|install /i;
 
 const PRISTINE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -144,7 +144,7 @@ function textFiles(root, dir = '') {
 	});
 }
 
-const git = (root, args) => execSync(`git -C ${JSON.stringify(root)} ${args}`, { encoding: 'utf8' });
+const git = (root, args) => execSync(`git -C ${JSON.stringify(root)} ${args}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
 export const reset = root => { git(root, 'checkout -q .'); git(root, 'clean -fdq'); };
 
 export function cases(lang, fx) {
