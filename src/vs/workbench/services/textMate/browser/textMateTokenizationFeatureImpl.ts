@@ -30,6 +30,7 @@ import { ITelemetryService } from '../../../../platform/telemetry/common/telemet
 import { IWorkbenchEnvironmentService } from '../../environment/common/environmentService.js';
 import { ExtensionMessageCollector, IExtensionPointUser } from '../../extensions/common/extensionsRegistry.js';
 import { ITextMateTokenizationService } from './textMateTokenizationFeature.js';
+import { SharedOnigPatterns } from './sharedOnigScanner.js';
 import { TextMateTokenizationSupport } from './tokenizationSupport/textMateTokenizationSupport.js';
 import { TokenizationSupportWithLineLimit } from './tokenizationSupport/tokenizationSupportWithLineLimit.js';
 import { ThreadedBackgroundTokenizerFactory } from './backgroundTokenization/threadedBackgroundTokenizerFactory.js';
@@ -257,8 +258,10 @@ export class TextMateTokenizationFeature extends Disposable implements ITextMate
 		}
 
 		const [vscodeTextmate, vscodeOniguruma] = await Promise.all([importAMDNodeModule<typeof import('vscode-textmate')>('vscode-textmate', 'release/main.js'), this._getVSCodeOniguruma()]);
+		// Each distinct pattern is compiled once for all the rules that list it (see sharedOnigScanner.ts).
+		const sharedPatterns = new SharedOnigPatterns(vscodeOniguruma);
 		const onigLib: Promise<IOnigLib> = Promise.resolve({
-			createOnigScanner: (sources: string[]) => vscodeOniguruma.createOnigScanner(sources),
+			createOnigScanner: (sources: string[]) => sharedPatterns.createOnigScanner(sources),
 			createOnigString: (str: string) => vscodeOniguruma.createOnigString(str)
 		});
 
