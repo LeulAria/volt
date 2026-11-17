@@ -33,6 +33,13 @@ const { sandboxHostFacts } = await load('vs/platform/voltSandbox/node/sandboxRes
 const { composeSandboxPolicy } = await load('vs/platform/voltSandbox/common/sandboxComposition.js');
 const { parseSandboxPolicyLayer } = await load('vs/platform/voltSandbox/common/sandboxSchema.js');
 
+// The environment Volt's git extension starts git with, when this checkout has it (the fix for the planted bare repository).
+const gitExtensionEnv = await (async () => {
+	const helper = join(OUT, '..', 'extensions', 'git', 'out', 'safeGitEnv.js');
+	if (process.argv.includes('--no-git-extension-env') || !existsSync(helper)) { return undefined; }
+	const { createRequire } = await import('node:module');
+	return createRequire(import.meta.url)(helper).withSafeBareRepository;
+})();
 const isMac = process.platform === 'darwin';
 const isLinux = process.platform === 'linux';
 const PERL = '/usr/bin/perl';
@@ -160,7 +167,7 @@ const snapshotHits = () => ({ ...hits });
 const hit = (before, key) => hits[key] > before[key];
 const proxyConnect = targets => `for t in ${targets.map(t => `'${t}'`).join(' ')}; do ${PERL} -MIO::Socket::INET -MMIME::Base64 -e '($a,$h)=$ENV{HTTPS_PROXY}=~m{//([^@]+)@([^/]+)}; $s=IO::Socket::INET->new(PeerAddr=>$h, Timeout=>3) or do { print "CONNECT $ARGV[0] noproxy\\n"; exit 0 }; print $s "CONNECT $ARGV[0] HTTP/1.1\\r\\nHost: $ARGV[0]\\r\\nProxy-Authorization: Basic ".encode_base64($a,"")."\\r\\n\\r\\n"; $l=<$s>; $l=~s/\\r?\\n//; print "CONNECT $ARGV[0] $l\\n"' "$t"; done`;
 /** Raw bytes to the run's proxy, optionally with its token; prints every status line that comes back. */
-const proxyRaw = (label, payload, auth = true) => `${PERL} -MIO::Socket::INET -MMIME::Base64 -e '($a,$h)=$ENV{HTTPS_PROXY}=~m{//([^@]+)@([^/]+)}; $s=IO::Socket::INET->new(PeerAddr=>$h, Timeout=>3) or do { print "${label} noproxy\\n"; exit 0 }; $auth=${auth ? '"Proxy-Authorization: Basic ".encode_base64($a,"")."\\r\\n"' : '""'}; $p="${payload}"; $p=~s/AUTH\\r\\n/$auth/g; print $s $p; $s->shutdown(1); while(<$s>){ print "${label} $1\\n" if m{^HTTP/1\\.[01] (\\d+)} }'`;
+const proxyRaw = (label, payload, auth = true) => `${PERL} -MIO::Socket::INET -MMIME::Base64 -e '($a,$h)=$ENV{HTTPS_PROXY}=~m{//([^@]+)@([^/]+)}; $s=IO::Socket::INET->new(PeerAddr=>$h, Timeout=>3) or do { print "${label} noproxy\\n"; exit 0 }; $auth=${auth ? '"Proxy-Authorization: Basic ".encode_base64($a,"")."\\r\\n"' : '""'}; $p="${payload}"; $p=~s/AUTH\\r\\n/$auth/g; print $s $p; $SIG{ALRM}=sub{exit 0}; alarm 4; while(<$s>){ print "${label} $1\\n" if m{^HTTP/1\\.[01] (\\d+)} }'`;
 
 // --- The attempts -------------------------------------------------------------------------------
 // through(result, before) -> true when the escape worked. `arms` defaults to workspace, agent-off, agent-on.
@@ -228,14 +235,21 @@ const ATTEMPTS = [
 	},
 	// ---- git: hooks and config command keys that the host's git runs later ----
 	{
-		id: 'git-bare-repo-subfolder', cls: 'git config', what: 'plant a bare repository layout in a subfolder (HEAD, objects, refs, config with core.fsmonitor); the host then runs `git status` there',
-		sh: `cd ${ws}; mkdir -p sub/pkg/objects sub/pkg/refs/heads && echo 'ref: refs/heads/main' > sub/pkg/HEAD && printf '[core]\\n\\tbare = false\\n\\tworktree = ${ws}/sub\\n\\tfsmonitor = "touch ${outside}/pwned-bare; false"\\n' > sub/pkg/config; true`,
-		through: async () => {
+		id: 'git-bare-repo-subfolder', cls: 'git config', what: 'plant a bare repository in a subfolder (HEAD, objects, refs, a config with core.worktree = . and core.fsmonitor); Volt\'s git extension then runs `git rev-parse` and `git status` in the folder of a file opened there',
+		sh: `cd ${ws}; mkdir -p sub/pkg/objects sub/pkg/refs/heads sub/pkg/inner && echo 'ref: refs/heads/main' > sub/pkg/HEAD && printf '[core]\\n\\trepositoryformatversion = 0\\n\\tbare = false\\n\\tworktree = "."\\n\\tfsmonitor = "touch ${outside}/pwned-bare; false"\\n' > sub/pkg/config; echo x > sub/pkg/inner/readme.md; true`,
+		through: async (_r, _before, ctx) => {
 			if (!gitBin || !await exists(join(ws, 'sub/pkg/config'))) { return false; }
-			// What the host does later: any git command in that folder (the git extension opens a file's folder with rev-parse and status).
-			try { execFileSync(gitBin, ['status', '--porcelain'], { cwd: join(ws, 'sub', 'pkg'), stdio: 'ignore', env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1' } }); } catch { /* git's own error */ }
-			return exists(join(outside, 'pwned-bare'));
+			// What the host does later, with the environment the git extension gives git (extensions/git/src/git.ts `spawn`).
+			const base = { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_PAGER: 'cat' };
+			const run = env => { for (const args of [['rev-parse', '--show-toplevel'], ['status', '--porcelain']]) { try { execFileSync(gitBin, args, { cwd: join(ws, 'sub', 'pkg', 'inner'), stdio: 'ignore', env }); } catch { /* git's own error */ } } };
+			run(gitExtensionEnv ? gitExtensionEnv(base) : base);
+			const extension = await exists(join(outside, 'pwned-bare'));
+			// And a plain git, as the user's own terminal runs it (their git config decides: safe.bareRepository).
+			run(base);
+			ctx.plain = await exists(join(outside, 'pwned-bare'));
+			return extension;
 		},
+		detail: (_r, _before, ctx) => `planted: yes; git extension env: ${gitExtensionEnv ? 'safe.bareRepository=explicit' : 'none (before the fix)'}; a plain git in that folder ${ctx.plain ? 'runs the command (the user\'s own terminal: their git config decides)' : 'does not run it'}`,
 		cleanup: async () => { await fs.rm(join(ws, 'sub', 'pkg'), { recursive: true, force: true }); await fs.rm(join(outside, 'pwned-bare'), { force: true }); },
 	},
 	{
@@ -254,6 +268,7 @@ const ATTEMPTS = [
 		sh: appendAll(ws, execLaterTargets),
 		through: async () => (await planted(ws, execLaterTargets)).length > 0,
 		detail: async () => `planted: ${(await planted(ws, execLaterTargets)).join(', ') || 'none'}`,
+		gap: () => isLinux ? 'filesystem.protectNew (none of these names existed at launch)' : undefined,
 		cleanup: async () => { await unplant(ws, execLaterTargets); for (const dir of ['.volt', '.agents', '.cursor', '.codex', '.gemini', '.claude', '.config', '.kimi', '.pi', '.grok', '.fx', '.muse', '.git/rebase-merge', '.git/sequencer']) { await fs.rm(join(ws, dir), { recursive: true, force: true }); } },
 		informational: true,
 	},
@@ -308,7 +323,7 @@ const ATTEMPTS = [
 	// ---- /proc and /dev ----
 	{
 		id: 'proc-tricks', cls: '/proc', platform: 'linux', what: '/proc/1/environ, /proc/*/root and cwd, /proc/sys writes (core_pattern), sysrq, kcore, /sys/fs/cgroup, host pids',
-		sh: `cat /proc/1/environ 2>/dev/null | tr '\\0' '\\n' | grep -c CANARY-ENV; cat /proc/1/root${outside}/secret.txt /proc/self/root${outside}/secret.txt /proc/1/cwd/../outside/secret.txt 2>/dev/null; echo '|touch ${outside}/pwned-core' > /proc/sys/kernel/core_pattern 2>/dev/null && echo WROTE-CORE; echo h > /proc/sysrq-trigger 2>/dev/null && echo WROTE-SYSRQ; head -c 16 /proc/kcore >/dev/null 2>&1 && echo READ-KCORE; mkdir /sys/fs/cgroup/volt-r10 2>/dev/null && echo WROTE-CGROUP; ls /proc | grep -c '^[0-9]' | sed 's/^/PIDS:/'; grep -l volt-r10-canary-proc /proc/[0-9]*/cmdline 2>/dev/null | sed 's/^/HOSTPID:/'; for p in /proc/[0-9]*; do cat $p/environ 2>/dev/null | tr '\\0' '\\n' | grep CANARY-ENV; done; true`,
+		sh: `cat /proc/1/environ 2>/dev/null | tr '\\0' '\\n' | grep -c CANARY-ENV; cat /proc/1/root${outside}/secret.txt /proc/self/root${outside}/secret.txt /proc/1/cwd/../outside/secret.txt 2>/dev/null; echo '|touch ${outside}/pwned-core' > /proc/sys/kernel/core_pattern 2>/dev/null && echo WROTE-CORE; echo h > /proc/sysrq-trigger 2>/dev/null && echo WROTE-SYSRQ; head -c 16 /proc/kcore >/dev/null 2>&1 && echo READ-KCORE; mkdir /sys/fs/cgroup/volt-r10 2>/dev/null && echo WROTE-CGROUP; ls /proc | grep -c '^[0-9]' | sed 's/^/PIDS:/'; grep -l 'volt-r10-canary-[p]roc' /proc/[0-9]*/cmdline 2>/dev/null | sed 's/^/HOSTPID:/'; for p in /proc/[0-9]*; do cat $p/environ 2>/dev/null | tr '\\0' '\\n' | grep CANARY-ENV; done; true`,
 		through: r => /CANARY-OUTSIDE|WROTE-|READ-KCORE|HOSTPID|CANARY-ENV/.test(r.stdout.replace(/^0$/m, '')),
 	},
 	{
