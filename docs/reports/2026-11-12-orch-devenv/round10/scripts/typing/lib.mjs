@@ -1,4 +1,4 @@
-// Shared helpers for the round-9 typing rig (ADEMark A8 method, unofficial, over CDP), from round 7's rig.
+// Shared helpers for the round-10 typing rig (ADEMark A8 method, unofficial, over CDP), from round 7's rig.
 // Arms, one at a time on CDP 9985, profiles ~/.volt-r9/typing/ud/<arm>:
 //   after  = /Users/leularia/Desktop/VOLT/volt-e5-codeintel (dev, e9/typing)
 //   r8     = ~/.volt-r8/min/r8/VOLT.app   (release, round 9's base)
@@ -6,7 +6,7 @@
 //   any other arm: pass `name=/path/to/VOLT.app` (or a dev tree) wherever an arm name is taken.
 // Env: SMOOTH_REPLAY (18995), SMOOTH_FOLDER (~/.volt-r9/typing/arena), SMOOTH_CDP (9985).
 import { execSync, spawn } from 'child_process';
-import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -14,6 +14,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const HOME = process.env.HOME;
 export const ARMS = {
 	after: '/Users/leularia/Desktop/VOLT/volt-e5-codeintel',
+	// Round 10: the same dev tree with the changed files' transpiled output swapped at launch (see launch): `before` =
+	// the branch's base code, `after` = the branch. Same build type, same tree, only those files differ.
+	before: '/Users/leularia/Desktop/VOLT/volt-e5-codeintel',
 	r8: `${HOME}/.volt-r8/min/r8/VOLT.app`,
 	r9: `${HOME}/.volt-r9/min/r9/VOLT.app`,
 };
@@ -122,6 +125,12 @@ export function launch(arm, { keepRendering = false, args = [] } = {}) {
 	const inspect = process.env.SMOOTH_INSPECT === '1' ? [`--inspect=${process.env.SMOOTH_INSPECT_PORT ?? 9987}`] : [];
 	// A built app (the shared minified "before" build) runs its own binary, always with --use-mock-keychain (its notes).
 	const app = ARMS[arm].endsWith('.app');
+	// Round 10 dev A/B in one tree: ~/.volt-r9/typing/out-<arm>/ holds that arm's transpiled files (paths under out/);
+	// they are copied over the tree's out/ before the arm starts. One arm runs at a time, so the tree is always whole.
+	const swap = `${HOME}/.volt-r9/typing/out-${arm}`;
+	if (!app && existsSync(swap)) {
+		cpSync(swap, join(ARMS[arm], 'out'), { recursive: true });
+	}
 	const bin = app ? (existsSync(`${ARMS[arm]}/Contents/MacOS/Electron`) ? `${ARMS[arm]}/Contents/MacOS/Electron` : `${ARMS[arm]}/Contents/MacOS/${ARMS[arm].replace(/^.*\//, '').replace(/\.app$/, '')}`) : './scripts/code.sh';
 	const child = spawn(bin, [...(app ? ['--use-mock-keychain'] : []), '--user-data-dir', ud(arm), '--extensions-dir', ext(arm), `--remote-debugging-port=${PORT}`, ...inspect, ...keep, ...args, FOLDER],
 		{ cwd: app ? HOME : ARMS[arm], env: { ...cleanEnv(), VOLT_AGENT_SERVER_LAUNCHD: '0' }, detached: true, stdio: ['ignore', log, log] });

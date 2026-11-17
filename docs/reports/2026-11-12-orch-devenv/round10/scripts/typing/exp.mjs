@@ -40,7 +40,9 @@ const traced = [];
 // Main frames are counted from the trace (BeginMainThreadFrame), not by a rAF loop: a loop of our own would ask for a
 // main frame on every vsync and so hide what the variant changes (round 9).
 let mainFrames = new Map();
-c.on('Tracing.dataCollected', p => { for (const e of p.value) { if (e.name === 'ProxyMain::BeginMainFrame' && e.ph === 'X') { mainFrames.set(e.pid, (mainFrames.get(e.pid) ?? 0) + 1); } else if (e.ph === 'b' || e.ph === 'e' || e.name === 'EventLatency') { traced.push(e); } } });
+// Where in the refresh interval main frames were sent: Scheduler::BeginFrame (the refresh) and SendBeginMainFrame times.
+let sched = [];
+c.on('Tracing.dataCollected', p => { for (const e of p.value) { if (e.name === 'Scheduler::BeginFrame' || (e.name === 'SendBeginMainFrame' && e.cat === 'cc,benchmark')) { sched.push([e.pid, e.name === 'SendBeginMainFrame' ? 1 : 0, e.ts]); } if (e.name === 'ProxyMain::BeginMainFrame' && e.ph === 'X') { mainFrames.set(e.pid, (mainFrames.get(e.pid) ?? 0) + 1); } else if (e.ph === 'b' || e.ph === 'e' || e.name === 'EventLatency') { traced.push(e); } } });
 for (const v of variants) {
 	if (v === 'census') {
 		// Not a segment: the running animations at this moment (anims.mjs).
@@ -49,8 +51,9 @@ for (const v of variants) {
 	}
 	const names = v.split('+');
 	await c.evaluate(`(() => { document.getElementById('volt-exp')?.remove(); const s = document.createElement('style'); s.id = 'volt-exp'; s.textContent = ${JSON.stringify(names.map(n => CSS[n] ?? '').join('\n'))}; document.head.appendChild(s); })()`);
-	// exp60 (round 9, dev builds with the experiment hook only): stream frames kept on the 60 Hz text clock.
-	await c.evaluate(`globalThis.__voltExp60 = ${names.includes('exp60')}`);
+	// comp: a compositor-only animation runs too (a 2 px element's transform), so the compositor draws on every vsync
+	// without the main thread and a frame with no main-thread work stays open until its deadline.
+	await c.evaluate(`(() => { document.getElementById('volt-inj-comp')?.remove(); if (!${names.includes('comp')}) { return; } const el = document.body.appendChild(document.createElement('div')); el.id = 'volt-inj-comp'; el.style.cssText = 'position:fixed;left:2px;top:0;width:2px;height:2px;background:#888;opacity:0.02;pointer-events:none;will-change:transform'; el.animate([{ transform: 'translateY(0px)' }, { transform: 'translateY(40px)' }], { duration: 2000, iterations: Infinity, direction: 'alternate' }); })()`);
 	await c.evaluate(names.includes('step30') ? ALIGN(1100 / 33) : names.includes('step60') ? ALIGN(1100 / 66) : 'window.__align?.stop()');
 	const box = await c.center(`[...document.querySelectorAll('.volt-agent-thread-inner')].find(e => e.offsetParent)`);
 	if (names.includes('noglide')) {
@@ -64,7 +67,7 @@ for (const v of variants) {
 	traced.length = 0;
 	const done = new Promise(r => { c.off('Tracing.tracingComplete'); c.on('Tracing.tracingComplete', r); });
 	await c.send('Tracing.start', { transferMode: 'ReportEvents', traceConfig: { recordMode: 'recordAsMuchAsPossible', includedCategories: ['latencyInfo', 'input', 'benchmark', 'cc'] } });
-	mainFrames = new Map();
+	mainFrames = new Map(); sched = [];
 	const t0 = Date.now();
 	for (let i = 0; i < keys; i++) {
 		const ch = 'abcdefghijklmnopqrstuvwxyz'[i % 26];
@@ -73,14 +76,23 @@ for (const v of variants) {
 		await c.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch, code: `Key${ch.toUpperCase()}`, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code });
 		await sleep(250 * (0.8 + Math.random() * 0.4));
 	}
-	const fps = Math.round(Math.max(0, ...mainFrames.values()) / ((Date.now() - t0) / 1000));
+	const typedS = (Date.now() - t0) / 1000;
 	await sleep(500);
 	await c.send('Tracing.end');
 	await done;
+	// Counted once the trace is in: its events arrive after Tracing.end.
+	const fps = Math.round(Math.max(0, ...mainFrames.values()) / (typedS + 0.5));
+	// Main frames by how far into the refresh interval they were sent (renderer = the process with most main frames).
+	const rpid = [...mainFrames].sort((a, b) => b[1] - a[1])[0]?.[0];
+	const mine = sched.filter(x => x[0] === rpid).sort((a, b) => a[2] - b[2]);
+	let lastBf = 0; const offs = [];
+	for (const [, isSend, ts] of mine) { if (!isSend) { lastBf = ts; } else if (lastBf) { offs.push((ts - lastBf) / 1000); } }
+	const share = (lo, hi) => Math.round(offs.filter(o => o >= lo && o < hi).length / Math.max(1, offs.length) * 100);
+	const bmfAt = `bmf@ <0.5ms ${share(0, 0.5)}% 0.5-2 ${share(0.5, 2)}% 2-3.5 ${share(2, 3.5)}% 3.5-6 ${share(3.5, 6)}% >6 ${share(6, 1e9)}%`;
 	const k = keyLatencies(traced).filter(x => x <= 2000);
 	const st = keyStages(traced);
 	const pick = n => st[n]?.[0] ?? 0;
-	console.log(`${v.padEnd(16)} load ${String(load1()).padEnd(5)} fps ${String(fps).padStart(3)} n ${k.length} p50 ${String(median(k)).padEnd(6)} p95 ${String(pct(k, 0.95)).padEnd(6)} max ${String(Math.max(...k)).padEnd(6)} | toMain ${pick('RendererCompositorToMain')} handler ${pick('RendererMainProcessing')} toCommit ${pick('RendererMainFinishedToCommit')}/${pick('SendBeginMainFrameToCommit')} activate>submit ${pick('EndActivateToSubmitCompositorFrame')} draw>swap ${pick('StartDrawToSwapStart')} submit>present ${pick('SubmitCompositorFrameToPresentationCompositorFrame')}`);
+	console.log(`${v.padEnd(16)} load ${String(load1()).padEnd(5)} fps ${String(fps).padStart(3)} n ${k.length} p50 ${String(median(k)).padEnd(6)} p95 ${String(pct(k, 0.95)).padEnd(6)} max ${String(Math.max(...k)).padEnd(6)} | toMain ${pick('RendererCompositorToMain')} handler ${pick('RendererMainProcessing')} toCommit ${pick('RendererMainFinishedToCommit')}/${pick('SendBeginMainFrameToCommit')} activate>submit ${pick('EndActivateToSubmitCompositorFrame')} draw>swap ${pick('StartDrawToSwapStart')} submit>present ${pick('SubmitCompositorFrameToPresentationCompositorFrame')} | ${bmfAt}`);
 	await c.key('a', 'KeyA', 65, 4);
 	await c.key('Backspace', 'Backspace', 8);
 }

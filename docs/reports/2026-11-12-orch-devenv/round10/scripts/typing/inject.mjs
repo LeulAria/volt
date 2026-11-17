@@ -23,11 +23,15 @@ for (const v of variants) {
 	// stream's per-frame paint: loop120 every frame of this panel, loop60 every other frame (the rAF requested from a
 	// timer), so the effect of stream frames on a key's wait for its frame shows without a stream.
 	await c.evaluate(`(() => { window.__loop?.(); window.__loop = undefined; const hz = ${loop ? Number(loop[1]) : 0}; if (!hz) { return; } const el = document.body.appendChild(document.createElement('div')); el.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;font-size:1px;opacity:0.01;pointer-events:none'; let on = true, n = 0; const tick = () => { if (!on) { return; } el.textContent = String(n++ % 10); if (hz >= 120) { requestAnimationFrame(tick); } else { setTimeout(() => requestAnimationFrame(tick), 1000 / hz - 8.4); } }; requestAnimationFrame(tick); window.__loop = () => { on = false; el.remove(); }; })()`);
+	// late<o>: a main frame in every vsync interval like loop120, but asked for <o> ms after the vsync (from a timer),
+	// so the first <o> ms of every interval have no main frame sent yet.
+	const lateM = /^late(\d+(?:\.\d+)?)/.exec(v);
+	if (lateM) { await c.evaluate(`(() => { const o = ${Number(lateM[1])}; const el = document.body.appendChild(document.createElement('div')); el.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;font-size:1px;opacity:0.01;pointer-events:none'; let on = true, n = 0, last = 0, interval = 1000 / 120; const tick = ts => { if (!on) { return; } if (last && ts - last > 1 && ts - last < interval * 1.5) { interval = interval * 0.9 + (ts - last) * 0.1; } last = ts; el.textContent = String(n++ % 10); setTimeout(() => requestAnimationFrame(tick), Math.max(0, ts + interval + o - performance.now())); }; requestAnimationFrame(tick); window.__loop = () => { on = false; el.remove(); }; })()`); }
 	await c.evaluate(`(() => { window.__inj?.(); window.__inj = undefined; const kind = ${JSON.stringify(m?.[1] ?? '')}, ms = ${m ? Number(m[2]) : 0}; if (!kind) { return; } const busy = () => { const t = performance.now(); while (performance.now() - t < ms) { } }; const on = e => { if (kind === 'key') { busy(); } else { requestAnimationFrame(busy); } }; window.addEventListener('keydown', on, true); window.__inj = () => window.removeEventListener('keydown', on, true); })()`);
 	await focusComposer(c);
 	traced.length = 0;
 	const done = new Promise(r => { c.off?.('Tracing.tracingComplete'); c.on('Tracing.tracingComplete', r); });
-	await c.send('Tracing.start', { transferMode: 'ReportEvents', traceConfig: { recordMode: 'recordAsMuchAsPossible', includedCategories: ['latencyInfo', 'input', 'benchmark'] } });
+	await c.send('Tracing.start', { transferMode: 'ReportEvents', traceConfig: { recordMode: 'recordAsMuchAsPossible', includedCategories: ['latencyInfo', 'input', 'benchmark', 'cc'] } });
 	await sleep(300);
 	for (let i = 0; i < keys; i++) {
 		const ch = PROBE_CHARS[i % PROBE_CHARS.length];

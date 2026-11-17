@@ -1,0 +1,71 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>engine-probe</title>
+<style>
+	html, body { margin: 0; height: 100%; background: #1e1e1e; color: #ccc; font: 13px/1.5 -apple-system, sans-serif; }
+	#thread { position: absolute; left: 280px; right: 0; top: 0; bottom: 120px; overflow: hidden; }
+	#inner { padding: 16px 120px; white-space: pre-wrap; }
+	#box { position: absolute; left: 400px; right: 120px; bottom: 24px; height: 72px; background: #2a2a2a; color: #ddd; border: 1px solid #444; border-radius: 8px; font: 13px/1.5 Menlo, monospace; padding: 8px; resize: none; outline: none; }
+</style>
+<div id="thread"><div id="inner"></div></div>
+<textarea id="box" autofocus></textarea>
+<script>
+	// window.__mode(name): idle | loop120 | loop60 | stream120 | stream60, with a trailing "c" for a compositor-only
+	// animation on top (a 2 px element's transform).
+	//   loop<hz>   a 1 px element's text changes <hz> times a second (a main frame each time, almost no work)
+	//   stream<hz> a reply streams: 12 characters appended 60 times a second and the thread scrolled to its end by a
+	//              follow step <hz> times a second (the shape of a streaming chat's frame)
+	const thread = document.getElementById('thread'), inner = document.getElementById('inner');
+	let stop = () => { };
+	const WORDS = 'the quick brown fox jumps over the lazy dog and keeps running along the river bank until night falls '.split(' ');
+	window.__mode = name => {
+		stop();
+		document.getElementById('comp')?.remove();
+		let on = true;
+		const timers = [];
+		stop = () => { on = false; for (const t of timers) { clearInterval(t); } };
+		if (name.endsWith('c')) {
+			name = name.slice(0, -1);
+			const el = document.body.appendChild(document.createElement('div'));
+			el.id = 'comp';
+			el.style.cssText = 'position:fixed;left:2px;top:0;width:2px;height:2px;background:#888;opacity:0.02;pointer-events:none;will-change:transform';
+			el.animate([{ transform: 'translateY(0px)' }, { transform: 'translateY(40px)' }], { duration: 2000, iterations: Infinity, direction: 'alternate' });
+		}
+		// late<o> / streamlate<o>: a frame in every vsync interval, asked for <o> ms after the vsync (not at it).
+		const m = /^(loop|stream|late|streamlate)(\d+(?:\.\d+)?)$/.exec(name);
+		if (!m) { return name; }
+		const late = m[1].endsWith('late');
+		if (late) { m[1] = m[1] === 'late' ? 'loop' : 'stream'; }
+		const hz = late ? 0 : Number(m[2]);
+		// A frame callback <hz> times a second: every frame at 120, else from a timer that lands before every other vsync.
+		const frame = fn => {
+			let last = 0, interval = 1000 / 120;
+			const tick = ts => {
+				if (!on) { return; }
+				if (last && ts - last > 1 && ts - last < interval * 1.5) { interval = interval * 0.9 + (ts - last) * 0.1; }
+				last = ts;
+				fn();
+				if (late) { setTimeout(() => requestAnimationFrame(tick), Math.max(0, ts + interval + Number(m[2]) - performance.now())); }
+				else if (hz >= 120) { requestAnimationFrame(tick); } else { setTimeout(() => requestAnimationFrame(tick), 1000 / hz - 8.4); }
+			};
+			requestAnimationFrame(tick);
+		};
+		if (m[1] === 'loop') {
+			const el = document.body.appendChild(document.createElement('div'));
+			el.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;font-size:1px;opacity:0.01;pointer-events:none';
+			let n = 0;
+			frame(() => { el.textContent = String(n++ % 10); });
+			const prev = stop; stop = () => { prev(); el.remove(); };
+		} else {
+			inner.textContent = '';
+			let para = inner.appendChild(document.createElement('p')), n = 0, pos = 0;
+			timers.push(setInterval(() => {
+				para.append(WORDS[n++ % WORDS.length] + ' ' + WORDS[n++ % WORDS.length] + ' ');
+				if (n % 120 === 0) { para = inner.appendChild(document.createElement('p')); }
+				if (inner.childElementCount > 60) { inner.firstElementChild.remove(); }
+			}, 1000 / 60));
+			frame(() => { const target = thread.scrollHeight - thread.clientHeight; pos += (target - pos) * 0.2; thread.scrollTop = pos; });
+		}
+		return name;
+	};
+</script>
