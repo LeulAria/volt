@@ -70,6 +70,16 @@ const ESCAPE_SERVICES = [
 	'com.apple.lsd.modifydb',
 	'com.apple.lsd.open',
 	'com.apple.coreservices.launchservicesd',
+	// Shortcuts: `shortcuts run <name>` runs any of the user's shortcuts (shell scripts, messages,
+	// home automation) in Shortcuts' own process, with input the agent chooses.
+	'com.apple.siri.VoiceShortcuts.xpc',
+	'com.apple.shortcuts.daemon',
+	'com.apple.WorkflowKit.BackgroundShortcutRunner',
+	// Spotlight: `mdfind` answers from the index of the whole disk, the names of files the sandbox
+	// may not read and whether their text matches a query (a read of other projects and documents,
+	// one question at a time). Build tools find Xcode through xcode-select, not through Spotlight.
+	'com.apple.metadata.mds',
+	'com.apple.metadata.mds.legacy',
 ];
 
 /** DNS lookups outside the broker: denied unless the network is open (B-31, J.1 "DNS"). */

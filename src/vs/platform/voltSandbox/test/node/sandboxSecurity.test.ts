@@ -1504,6 +1504,8 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 			'com.apple.coreservices.sharedfilelistd.xpc', 'com.apple.lsd.modifydb', 'com.apple.lsd.open', 'com.apple.coreservices.launchservicesd',
 			'com.apple.CoreServices.coreservicesd', 'com.apple.coreservices.appleevents', 'com.apple.cfprefsd.agent', 'com.apple.cfprefsd.daemon',
 			'com.apple.pasteboard.1', 'com.apple.windowserver.active',
+			// MACOS-OUT-3: Shortcuts (runs the user's shortcuts) and Spotlight (answers about every indexed file).
+			'com.apple.siri.VoiceShortcuts.xpc', 'com.apple.shortcuts.daemon', 'com.apple.WorkflowKit.BackgroundShortcutRunner', 'com.apple.metadata.mds', 'com.apple.metadata.mds.legacy',
 		];
 		// A control the agent legitimately reaches: user and group lookups. If this came back CLOSED the
 		// probe would be meaningless (every lookup failing), so the denials below would prove nothing.
@@ -1518,5 +1520,22 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		}
 		await fs.rm(probe, { force: true });
 		await assertHostUnchanged();
+	});
+
+	macTest('MACOS-OUT-3: an agent cannot list or run the user\'s Shortcuts, nor ask Spotlight about files outside its sandbox', async function () {
+		if (!await exists('/usr/bin/shortcuts') || !await exists('/usr/bin/mdfind')) {
+			this.skip();
+		}
+		for (const network of [false, true]) {
+			const result = await sh(agent(network), [
+				'/usr/bin/shortcuts list >/dev/null 2>&1 && echo SHORTCUTS-REACHED',
+				'/usr/bin/shortcuts run volt-sbx-no-such-shortcut >/dev/null 2>&1; echo "shortcuts-run=$?"',
+				// Application bundles are indexed on every Mac: a count above zero is Spotlight answering.
+				`n=$(/usr/bin/mdfind -count 'kMDItemContentType == "com.apple.application-bundle"' 2>/dev/null); [ "\${n:-0}" -gt 0 ] && echo SPOTLIGHT-ANSWERED`,
+				`/usr/bin/mdfind -name readme.txt 2>/dev/null | head -1 | sed 's/^/SPOTLIGHT-NAME /'`,
+			].join('; '));
+			assert.ok(!/SHORTCUTS-REACHED|SPOTLIGHT-ANSWERED|SPOTLIGHT-NAME/.test(result.stdout), `network=${network}: ${result.stdout}`);
+			assert.ok(/shortcuts-run=[1-9]/.test(result.stdout), `no shortcut runs (network=${network}): ${result.stdout}`);
+		}
 	});
 });
