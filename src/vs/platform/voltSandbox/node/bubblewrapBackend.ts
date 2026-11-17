@@ -962,13 +962,26 @@ export async function walkPatterns(policy: IResolvedSandboxPolicy, options: { co
 			if (!first) {
 				continue;
 			}
-			const path = join(dir, ...pattern.names);
+			let path = join(dir, ...pattern.names);
 			let matchKind: 'dir' | 'file' | undefined;
 			if (pattern.names.length === 1 && !first.isSymbolicLink()) {
 				matchKind = first.isDirectory() ? 'dir' : 'file';
 			} else {
-				const st = await fs.stat(path).catch(() => undefined);
-				matchKind = st ? (st.isDirectory() ? 'dir' : 'file') : undefined;
+				const link = first.isSymbolicLink() ? first : await fs.lstat(path).catch(() => undefined);
+				if (link?.isSymbolicLink()) {
+					// A mount cannot land on a link's own name: bubblewrap refuses it and the whole launch with it
+					// (a `.git/commondir` link an earlier run planted stopped every later one). A denied link is
+					// masked at what it points to. A protected one is left to `filesystem.protectNew`, which the
+					// run already reports: binding its target would bring a folder from outside into the sandbox.
+					const target = kind === 'deny' ? await fs.realpath(path).catch(() => undefined) : undefined;
+					const st = target ? await fs.stat(target).catch(() => undefined) : undefined;
+					if (target && st) {
+						path = target;
+						matchKind = st.isDirectory() ? 'dir' : 'file';
+					}
+				} else if (link) {
+					matchKind = link.isDirectory() ? 'dir' : 'file';
+				}
 			}
 			if (matchKind) {
 				(kind === 'deny' ? deny : protect).set(path, { path, kind: matchKind });
