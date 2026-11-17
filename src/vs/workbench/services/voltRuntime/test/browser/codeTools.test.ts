@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { declarationLineIn, declarationsOnly, declaredNameOn, declaredSupertypes, enclosingName, ICodeIntelHost, ICodeLocation, ICodeNavIndex, IDiagnostic, outlineSymbols, runCodeAction, runCodeNav, runDiagnostics } from '../../browser/tools/codeTools.js';
+import { declarationLineIn, declarationsOnly, declaredNameOn, declaredSupertypes, enclosingName, ICodeIntelHost, ICodeLocation, ICodeNavIndex, IDiagnostic, onceIndexed, outlineSymbols, runCodeAction, runCodeNav, runDiagnostics } from '../../browser/tools/codeTools.js';
 
 suite('code_nav answers', () => {
 
@@ -244,6 +244,15 @@ suite('code_nav answers', () => {
 		assert.match(found, /pricing\/percent\.go:3 {2}type PercentOff struct \{/);
 		assert.match(found, /pricing\/free\.go:3 {2}type FreeShipping struct\{\}/);
 		assert.doesNotMatch(found, /base\.go/);
+	});
+
+	test('a lookup that arrives while the index is loading waits for it, and says so if it never loads', async () => {
+		let asks = 0;
+		const loading: ICodeNavIndex = { ...index([]), definitions: async () => ++asks < 3 ? undefined : [at('src/tax.ts', 13, 'export function computeTax(amount: number): number {')] };
+		assert.deepStrictEqual(await onceIndexed(() => loading.definitions(root, 'computeTax'), 1_000, 5).then(found => found?.map(item => item.line)), [13]);
+		assert.strictEqual(asks, 3);
+		assert.strictEqual(await onceIndexed(async () => undefined, 20, 5), undefined);
+		assert.deepStrictEqual(await onceIndexed(async () => [], 1_000, 5), [], 'an empty answer is an answer');
 	});
 
 	test('a rename that would reach outside the project changes nothing', async () => {

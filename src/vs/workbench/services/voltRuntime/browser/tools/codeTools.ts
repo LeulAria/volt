@@ -420,14 +420,34 @@ async function locateDeclaration(host: ICodeIntelHost, root: URI, qualified: str
 	if (ranked.length > 1) {
 		return `"${qualified}" is declared in ${ranked.length} places; pass path (and line) for the one you mean:\n${ranked.slice(0, 10).map(symbol => `${symbol.kind} ${symbol.container ? `${symbol.container}.` : ''}${symbol.name}  ${displayPath(root, symbol.uri)}:${symbol.line}`).join('\n')}`;
 	}
-	const indexed = nav && /^[\w$]+$/.test(name) ? declarationsOnly(await nav.definitions(root, name).catch(() => undefined)) : undefined;
+	// A chat's first lookup can arrive while the index is still loading the project: wait for it
+	// instead of answering "No declaration found" for a symbol that exists.
+	const indexed = nav && /^[\w$]+$/.test(name) ? declarationsOnly(await onceIndexed(() => nav.definitions(root, name))) : undefined;
 	if (indexed?.length === 1) {
 		return { uri: indexed[0].uri, line: indexed[0].line };
 	}
 	if (indexed?.length) {
 		return `"${qualified}" may be declared in ${indexed.length} places; pass path (and line) for the one you mean:\n${indexed.slice(0, 10).map(item => `${displayPath(root, item.uri)}:${item.line}${item.preview ? `  ${item.preview}` : ''}`).join('\n')}`;
 	}
+	if (nav && !indexed) {
+		return `Volt's code index is still loading this project, and no language server knows "${qualified}" yet. Ask again in a few seconds, or pass path and line.`;
+	}
 	return `No declaration of "${qualified}" found. Pass path and line, or search with grep.`;
+}
+
+/** How long a lookup waits for an index that cannot answer yet (still loading), and how often it asks. */
+const INDEX_LOAD_WAIT_MS = 8_000;
+const INDEX_LOAD_POLL_MS = 250;
+
+/** The index's answer, asked again while it has none to give (undefined: loading); undefined after {@link INDEX_LOAD_WAIT_MS}. */
+export async function onceIndexed<T>(ask: () => Promise<T | undefined>, waitMs = INDEX_LOAD_WAIT_MS, pollMs = INDEX_LOAD_POLL_MS): Promise<T | undefined> {
+	for (const until = Date.now() + waitMs; ;) {
+		const answer = await ask().catch(() => undefined);
+		if (answer !== undefined || Date.now() + pollMs > until) {
+			return answer;
+		}
+		await new Promise(resolve => setTimeout(resolve, pollMs));
+	}
 }
 
 /**
@@ -664,7 +684,8 @@ async function navigate(host: ICodeIntelHost, root: URI, op: 'definition' | 'ref
 		}
 	}
 	if (nav && position.name) {
-		const found = op === 'definition' ? await nav.definitions(root, position.name) : await nav.references(root, position.name);
+		const name = position.name;
+		const found = await onceIndexed(() => op === 'definition' ? nav.definitions(root, name) : nav.references(root, name));
 		if (found?.length) {
 			return locations(root, op, found, FROM_INDEX);
 		}
@@ -820,7 +841,7 @@ async function workspaceSymbols(host: ICodeIntelHost, root: URI, query: string |
 		const lines = found.slice(0, MAX_SYMBOLS).map(symbol => `${symbol.kind} ${symbol.container ? `${symbol.container}.` : ''}${symbol.name}  ${displayPath(root, symbol.uri)}:${symbol.line}`);
 		return text(`${found.length} symbol${found.length === 1 ? '' : 's'} matching "${query}":\n${lines.join('\n')}`);
 	}
-	const indexed = nav && /^[\w$]+$/.test(query.trim()) ? declarationsOnly(await nav.definitions(root, query.trim())) : undefined;
+	const indexed = nav && /^[\w$]+$/.test(query.trim()) ? declarationsOnly(await onceIndexed(() => nav.definitions(root, query.trim()))) : undefined;
 	if (indexed?.length) {
 		return locations(root, 'definition', indexed, FROM_INDEX);
 	}

@@ -66,7 +66,7 @@ export function createCodeIndexNav(index: ISearchIndex): ICodeNavIndex {
 	return {
 		definitions: async (root, name) => {
 			if (!usable(root)) {
-				return undefined;
+				return []; // off, not loading: nothing to wait for (see onceIndexed)
 			}
 			const result = await index.service.symbols({ root: root.fsPath, query: name, match: 'exact', limit: MAX_DEFINITIONS, options: index.options() }).catch(() => undefined);
 			if (result?.kind !== 'results') {
@@ -76,7 +76,7 @@ export function createCodeIndexNav(index: ISearchIndex): ICodeNavIndex {
 		},
 		references: async (root, name) => {
 			if (!usable(root) || !/^[\w$]+$/.test(name)) {
-				return undefined;
+				return [];
 			}
 			const result = await index.service.search({
 				root: root.fsPath,
