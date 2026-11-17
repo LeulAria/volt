@@ -8,7 +8,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/c
 import { denialKindForOperation, denialsInOutput, describeDenial, folderToAllow, isNoiseDenial } from '../../common/sandboxDenials.js';
 import { agentApiDomains, agentEndpointLoopbackPorts, codexSandboxValue, domainAllowed, isAgentHousekeepingDenial, ISandboxHostInfo, isPathInside, IVoltSandboxRequest, IVoltSandboxSettings, nativeSandboxOffArgs, normalizeSandboxLevel, planAllowsWrite, resolveSandboxPlan, sandboxLaunchKey, sandboxStrategy, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../common/sandboxPolicy.js';
 import { parseSeatbeltLogLine, sbplRegex, sbplString } from '../../common/seatbelt.js';
-import { protectedEditTarget } from '../../common/sandboxProfiles.js';
+import { HOOK_MANAGER_CONFIGS, PROTECTED_ROOT_NAMES, protectedEditTarget } from '../../common/sandboxProfiles.js';
 import { isUserFacingDenial } from '../../common/sandboxWorkloads.js';
 
 /** Who writes a real refusal to the unified log. */
@@ -364,6 +364,25 @@ suite('Volt sandbox: edits through the window and host warnings (e2e review)', (
 		assert.strictEqual(protectedEditTarget('/repo/.claude/settings.json'), '.claude/settings.json');
 		assert.strictEqual(protectedEditTarget('/repo/.mcp.json'), '.mcp.json');
 		for (const path of ['/repo/src/a.ts', '/repo/lab-notes.md', '/repo/.git/COMMIT_EDITMSG', '/repo/refs/notes.md', '/repo/objects/model.ts', '/repo/HEAD.md', '/repo/.claude/notes.md', '/repo/.vscodeignore', '/repo/docs/.github/x.md']) {
+			assert.strictEqual(protectedEditTarget(path), undefined, path);
+		}
+	});
+
+	test('EXEC-LATER-2: every file name a hook manager reads its commands from is protected, and so are the CLI files that pre-approve commands or load code', () => {
+		// lefthook merges `lefthook-local.*` over the main file and reads five formats in three places; husky 4 reads `.huskyrc*`.
+		for (const name of ['lefthook.yml', '.lefthook.yml', 'lefthook.yaml', 'lefthook.toml', 'lefthook.json', 'lefthook.jsonc', '.lefthook.toml', 'lefthook-local.yml', '.lefthook-local.json', '.config/lefthook.yml', '.config/lefthook-local.toml', '.huskyrc', '.huskyrc.json', '.huskyrc.js', 'husky.config.js']) {
+			assert.ok(HOOK_MANAGER_CONFIGS.includes(name), name);
+			assert.ok(PROTECTED_ROOT_NAMES.includes(name), `${name} is read-only for a sandboxed writer`);
+			assert.strictEqual(protectedEditTarget(`/repo/${name}`), name);
+		}
+		assert.strictEqual(HOOK_MANAGER_CONFIGS.length, 38);
+		for (const name of ['.cursor/cli.json', '.codex/rules', '.pi/extensions', '.pi/settings.json']) {
+			assert.ok(PROTECTED_ROOT_NAMES.includes(name), name);
+		}
+		assert.strictEqual(protectedEditTarget('/repo/.codex/rules/default.rules'), '.codex/rules');
+		assert.strictEqual(protectedEditTarget('/repo/.pi/extensions/x/index.ts'), '.pi/extensions');
+		// Ordinary files with similar names stay editable.
+		for (const path of ['/repo/lefthook.md', '/repo/docs/lefthook-setup.yml.md', '/repo/.cursor/rules/style.mdc', '/repo/.codex/notes.md', '/repo/.pi/notes.md', '/repo/.config/app.yml', '/repo/husky.config.ts.md']) {
 			assert.strictEqual(protectedEditTarget(path), undefined, path);
 		}
 	});

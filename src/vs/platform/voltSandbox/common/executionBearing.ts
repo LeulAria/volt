@@ -11,12 +11,12 @@
  * third-party principal).
  */
 
-import { PROTECTED_ROOT_NAMES } from './sandboxProfiles.js';
+import { HOOK_MANAGER_CONFIGS, PROTECTED_ROOT_NAMES } from './sandboxProfiles.js';
 
 /** Files at a workspace root that a build, a task, an install or worktree setup runs. */
 export const BUILD_ENTRY_FILES: readonly string[] = [
 	'.vscode/tasks.json', '.vscode/launch.json', 'package.json', 'Makefile', 'makefile', 'GNUmakefile', 'justfile', 'Justfile', 'Taskfile.yml',
-	'.envrc', '.pre-commit-config.yaml', 'lefthook.yml', '.lefthook.yml', '.npmrc', '.yarnrc', '.yarnrc.yml', 'bunfig.toml', 'build.rs',
+	'.envrc', '.pre-commit-config.yaml', ...HOOK_MANAGER_CONFIGS, '.npmrc', '.yarnrc', '.yarnrc.yml', 'bunfig.toml', 'build.rs',
 	'.cargo/config.toml', '.cargo/config', 'pyproject.toml', 'setup.py', '.devcontainer/devcontainer.json',
 	't3.json', 'volt.json', '.volt/worktrees.json', '.cursor/worktrees.json', '.volt/hooks.json',
 ];

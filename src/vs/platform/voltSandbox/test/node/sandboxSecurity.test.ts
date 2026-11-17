@@ -487,13 +487,16 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 			'.claude/skills/y/SKILL.md', '.claude/skills/y/run.sh', '.gemini/commands/x.toml', '.gemini/extensions/x/gemini-extension.json', '.codex/hooks.json', '.cursor/mcp.json',
 			'.zed/tasks.json', '.helix/config.toml', '.nvimrc', '.exrc', '.husky/pre-commit', '.githooks/pre-commit', '.idea/workspace.xml', '.devcontainer/devcontainer.json',
 			'.volt/hooks.json', '.pre-commit-config.yaml', 'lefthook.yml',
+			// EXEC-LATER-2: every name lefthook and husky 4 read, and the CLI files that pre-approve commands or load code.
+			'lefthook-local.yml', 'lefthook.yaml', '.lefthook.toml', 'lefthook.json', '.lefthook-local.jsonc', '.config/lefthook.yml', '.config/lefthook-local.toml', '.huskyrc', '.huskyrc.json', 'husky.config.js',
+			'.cursor/cli.json', '.codex/rules/default.rules', '.pi/extensions/x.ts', '.pi/settings.json',
 		];
 		// A case-insensitive volume: another spelling is the same file.
 		const variants = ['.GIT/config', '.Git/hooks/pre-commit', '.git/HOOKS/pre-commit', '.git/INFO/attributes', '.git/OBJECTS/info/alternates', 'sub/.GIT/config', '.GITMODULES', '.VSCode/tasks.json',
-			'.ENVRC', '.MCP.json', '.CLAUDE/settings.json', '.Claude/skills/x/SKILL.md', '.GEMINI/settings.json', '.Codex/config.toml', '.Cursor/mcp.json', '.ZED/settings.json', '.HUSKY/pre-commit', '.VOLT/hooks.json', 'LEFTHOOK.yml'];
+			'.ENVRC', '.MCP.json', '.CLAUDE/settings.json', '.Claude/skills/x/SKILL.md', '.GEMINI/settings.json', '.Codex/config.toml', '.Cursor/mcp.json', '.ZED/settings.json', '.HUSKY/pre-commit', '.VOLT/hooks.json', 'LEFTHOOK.yml', 'Lefthook-Local.YML', '.Cursor/CLI.json'];
 		// By design writable: the build-entry guard shows changes to the build files before Volt runs them,
 		// CI runs remotely after a push the user makes, and the rest name no command (05-limitations item 42).
-		const writable = ['package.json', 'Makefile', '.npmrc', '.yarnrc.yml', '.github/workflows/ci.yml', '.gitattributes', '.lfsconfig', 'sub/.vscode/tasks.json', 'app.code-workspace', 'AGENTS.md'];
+		const writable = ['package.json', 'Makefile', '.npmrc', '.yarnrc.yml', '.github/workflows/ci.yml', '.gitattributes', '.lfsconfig', 'sub/.vscode/tasks.json', 'app.code-workspace', 'AGENTS.md', '.config/app.yml', '.cursor/rules/style.mdc'];
 		const before = new Set([...await fs.readdir(f.ws), ...(await fs.readdir(join(f.ws, 'sub'))).map(name => `sub/${name}`)]);
 		for (const target of existing) {
 			await fs.mkdir(join(f.ws, target, '..'), { recursive: true });

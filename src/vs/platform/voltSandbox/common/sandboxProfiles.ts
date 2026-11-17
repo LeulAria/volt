@@ -40,6 +40,17 @@ export const SECRET_FILE_PATTERNS: readonly string[] = [
 ];
 
 /**
+ * Every file name lefthook and husky 4 read their hooks' commands from, at a project's root. The
+ * hook they installed in `.git/hooks` runs these on the user's next commit, outside any sandbox.
+ * lefthook: `lefthook`, `.lefthook` and `.config/lefthook`, each also as `-local` (merged over the
+ * main file), in yml, yaml, json, jsonc or toml. husky 4: `.huskyrc` and `husky.config.js`.
+ */
+export const HOOK_MANAGER_CONFIGS: readonly string[] = [
+	...['lefthook', '.lefthook', '.config/lefthook'].flatMap(base => [base, `${base}-local`]).flatMap(base => ['yml', 'yaml', 'json', 'jsonc', 'toml'].map(extension => `${base}.${extension}`)),
+	'.huskyrc', '.huskyrc.json', '.huskyrc.yaml', '.huskyrc.yml', '.huskyrc.js', '.huskyrc.cjs', 'husky.config.js', 'husky.config.cjs',
+];
+
+/**
  * Files at a writable root that the host runs or trusts later: shell startup files, git hook
  * managers, editor, agent and worktree-setup configs, MCP server lists, and the files that would
  * make the root a bare git repository. Agent CLIs' project configs are here because Volt starts
@@ -51,10 +62,13 @@ export const PROTECTED_ROOT_NAMES: readonly string[] = [
 	'.gitconfig', '.gitmodules', '.bashrc', '.bash_profile', '.bash_login', '.zshrc', '.zprofile', '.zshenv', '.zlogin', '.profile',
 	'.ripgreprc', '.mcp.json', '.envrc', '.vscode', '.idea', '.devcontainer',
 	'.zed/settings.json', '.zed/tasks.json', '.helix/languages.toml', '.helix/config.toml', '.nvim.lua', '.nvimrc', '.exrc',
-	'.husky', '.githooks', '.pre-commit-config.yaml', 'lefthook.yml', '.lefthook.yml',
+	'.husky', '.githooks', '.pre-commit-config.yaml', ...HOOK_MANAGER_CONFIGS,
 	'.claude/settings.json', '.claude/settings.local.json', '.claude/commands', '.claude/agents', '.claude/hooks', '.claude/skills',
 	'.gemini/settings.json', '.gemini/commands', '.gemini/extensions', '.codex/config.toml', '.codex/hooks.json',
 	'.cursor/mcp.json', '.cursor/hooks.json', '.cursor/hooks', '.cursor/worktrees.json',
+	// What the next, unsandboxed session of the CLI may run without asking, or loads as code: Cursor's project
+	// permissions (the `.claude/settings.json` of its CLI), Codex's command rules, Pi's extensions and settings.
+	'.cursor/cli.json', '.codex/rules', '.pi/extensions', '.pi/settings.json',
 	'.volt/hooks.json', '.volt/hooks', '.volt/mcp.json', '.volt/worktrees.json', '.volt/sandbox.json', 'volt.json', 't3.json',
 	'opencode.json', 'opencode.jsonc', '.opencode',
 	'HEAD', 'objects', 'refs',
