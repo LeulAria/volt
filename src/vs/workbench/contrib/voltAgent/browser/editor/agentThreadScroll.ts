@@ -3,10 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { getWindow, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { getWindow, scheduleAtNextAnimationFrame, scheduleAtNextAnimationFrameLate } from '../../../../../base/browser/dom.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { findLastIdx } from '../../../../../base/common/arraysFind.js';
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
+import { STREAM_FRAME_RESERVE_MS } from './agentInputFirst.js';
 
 /** How long a glide to a message or a page takes; reduced motion jumps instead. */
 export const THREAD_GLIDE_MS = 220;
@@ -145,7 +146,9 @@ const FOLLOW_PRIORITY = -1500;
 /**
  * Keeps a thread pinned to its end while the reply streams, gliding there frame by frame instead
  * of snapping on each chunk. It is the only writer while it runs: it stops as soon as `follows`
- * says no (the reader scrolled up), when a glide takes over, or once it has landed.
+ * says no (the reader scrolled up), when a glide takes over, or once it has landed. Its frames
+ * are asked for late in the refresh interval ({@link STREAM_FRAME_RESERVE_MS}): one step per refresh as
+ * before, with the start of each interval left open for a key typed in the composer.
  */
 export class ThreadFollow {
 
@@ -171,7 +174,7 @@ export class ThreadFollow {
 			return;
 		}
 		this.last = 0;
-		this.frame = scheduleAtNextAnimationFrame(getWindow(this.element), this.step, FOLLOW_PRIORITY);
+		this.frame = scheduleAtNextAnimationFrameLate(getWindow(this.element), this.step, FOLLOW_PRIORITY, STREAM_FRAME_RESERVE_MS);
 	}
 
 	jumpToEnd(): void {
@@ -201,7 +204,7 @@ export class ThreadFollow {
 		this.velocity = next.velocity;
 		this.write(next.position);
 		if (!next.done) {
-			this.frame = scheduleAtNextAnimationFrame(getWindow(this.element), this.step, FOLLOW_PRIORITY);
+			this.frame = scheduleAtNextAnimationFrameLate(getWindow(this.element), this.step, FOLLOW_PRIORITY, STREAM_FRAME_RESERVE_MS);
 		}
 	};
 

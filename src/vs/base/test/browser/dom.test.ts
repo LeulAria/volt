@@ -4,12 +4,82 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import { $, h, trackAttributes, copyAttributes, disposableWindowInterval, getWindows, getWindowsCount, getWindowId, getWindowById, hasWindow, getWindow, getDocument, isHTMLElement, SafeTriangle } from '../../browser/dom.js';
+import { $, h, trackAttributes, copyAttributes, disposableWindowInterval, FRAME_LATE_MAX_MS, FrameClock, getWindows, getWindowsCount, getWindowId, getWindowById, hasWindow, getWindow, getDocument, isHTMLElement, SafeTriangle } from '../../browser/dom.js';
 import { asCssValueWithDefault } from '../../browser/cssValue.js';
 import { ensureCodeWindow, isAuxiliaryWindow, mainWindow } from '../../browser/window.js';
 import { DeferredPromise, timeout } from '../../common/async.js';
 import { runWithFakedTimers } from '../common/timeTravelScheduler.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../common/utils.js';
+
+suite('dom - FrameClock (Volt)', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	const HZ120 = 1000 / 120;
+
+	test('the interval comes from frames in a row only, and needs two measures that agree', () => {
+		const clock = new FrameClock();
+		clock.noteFrame(0, false);
+		assert.strictEqual(clock.interval(0), undefined);
+		clock.noteFrame(HZ120, true);
+		assert.strictEqual(clock.interval(HZ120), undefined, 'one measure is not enough');
+		clock.noteFrame(2 * HZ120, true);
+		assert.ok(Math.abs(clock.interval(2 * HZ120)! - HZ120) < 0.01);
+		// Frames asked for from a timer (not chained) are no measure, however far apart.
+		clock.noteFrame(4 * HZ120, false);
+		clock.noteFrame(6 * HZ120, false);
+		assert.ok(Math.abs(clock.interval(6 * HZ120)! - HZ120) < 0.01);
+	});
+
+	test('a skipped refresh does not stretch a fresh interval; an aged one is taken again', () => {
+		const clock = new FrameClock();
+		clock.noteFrame(0, false);
+		clock.noteFrame(HZ120, true);
+		clock.noteFrame(2 * HZ120, true);
+		clock.noteFrame(4 * HZ120, true);
+		assert.ok(Math.abs(clock.interval(4 * HZ120)! - HZ120) < 0.01);
+		// Aged out after 2 s: unknown until measured again; the interval known before counts at once.
+		assert.strictEqual(clock.interval(3000), undefined);
+		clock.noteFrame(3000, false);
+		clock.noteFrame(3000 + HZ120, true);
+		assert.ok(Math.abs(clock.interval(3000 + HZ120)! - HZ120) < 0.01);
+		// Another screen (60 Hz): two measures in a row that agree.
+		clock.noteFrame(6000, false);
+		clock.noteFrame(6000 + 2 * HZ120, true);
+		assert.strictEqual(clock.interval(6000 + 2 * HZ120), undefined);
+		clock.noteFrame(6000 + 4 * HZ120, true);
+		assert.ok(Math.abs(clock.interval(6000 + 4 * HZ120)! - 2 * HZ120) < 0.01);
+	});
+
+	test('a late frame is asked for after the next refresh, with the reserve left for its work', () => {
+		const clock = new FrameClock();
+		assert.strictEqual(clock.lateDelay(5, 5), undefined, 'no clock yet: ask now');
+		clock.noteFrame(0, false);
+		clock.noteFrame(HZ120, true);
+		clock.noteFrame(2 * HZ120, true);
+		const last = 2 * HZ120;
+		// Asked 1 ms into the frame of this interval, 5.83 ms kept: 2.5 ms after the next refresh.
+		assert.ok(Math.abs(clock.lateDelay(last + 1, HZ120 - 2.5)! - (HZ120 - 1 + 2.5)) < 0.01);
+		// Never more than 4 ms (and half an interval) late, however little is kept.
+		assert.ok(Math.abs(clock.lateDelay(last + 1, 1)! - (HZ120 - 1 + FRAME_LATE_MAX_MS)) < 0.01);
+		// No room for the reserve: ask now.
+		assert.strictEqual(clock.lateDelay(last + 1, HZ120), undefined);
+		// Asked in a later interval that has had no frame: that interval, or now when the point has passed.
+		assert.ok(Math.abs(clock.lateDelay(last + 2 * HZ120 + 1, HZ120 - 2.5)! - 1.5) < 0.01);
+		assert.strictEqual(clock.lateDelay(last + 2 * HZ120 + 5, HZ120 - 2.5), 0);
+		// After a pause the phase is not trusted.
+		assert.strictEqual(clock.lateDelay(last + 500, HZ120 - 2.5), undefined);
+	});
+
+	test('a 60 Hz screen gets the same few milliseconds, not half its interval', () => {
+		const clock = new FrameClock();
+		const HZ60 = 1000 / 60;
+		clock.noteFrame(0, false);
+		clock.noteFrame(HZ60, true);
+		clock.noteFrame(2 * HZ60, true);
+		assert.ok(Math.abs(clock.lateDelay(2 * HZ60 + 1, HZ120 - 2.5)! - (HZ60 - 1 + FRAME_LATE_MAX_MS)) < 0.01);
+	});
+});
 
 suite('dom', () => {
 	test('hasClass', () => {

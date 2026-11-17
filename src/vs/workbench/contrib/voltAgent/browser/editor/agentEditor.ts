@@ -6,7 +6,7 @@
 import '../media/agentEditor.css';
 import '../media/agentComposerInput.css';
 import { findLast, findLastIdx } from '../../../../../base/common/arraysFind.js';
-import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, isSVGElement, runAtThisOrScheduleAtNextAnimationFrame, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, Dimension, DragAndDropObserver, getWindow, isHTMLElement, isSVGElement, runAtThisOrScheduleAtNextAnimationFrame, scheduleAtNextAnimationFrame, scheduleAtNextAnimationFrameLate } from '../../../../../base/browser/dom.js';
 import { isWeb } from '../../../../../base/common/platform.js';
 import type { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
@@ -202,7 +202,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { IAgentTurnReveal, onDidRequestAgentTurnReveal, takeAgentTurnReveal } from '../search/agentTurnReveal.js';
 import { AgentThreadView } from './agentThreadView.js';
-import { InputFirstGate, TextFrameClock } from './agentInputFirst.js';
+import { InputFirstGate, STREAM_FRAME_RESERVE_MS, TextFrameClock } from './agentInputFirst.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip, setIconButtonTooltip } from '../chrome/agentTooltip.js';
 import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
@@ -850,11 +850,14 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private commitReviewSlot: AgentComposerTraySlot | undefined;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
-	// The fade's colour steps of every span share the document timeline's clock (see alignedFadeDelay).
+	// The fade's colour steps of every span share the document timeline's clock (see alignedFadeDelay),
+	// and this editor steps them (scheduleFadeFrame): the spans' animations do not run on their own.
 	private readonly freshText = new FreshTextTracker(document => {
 		const time = document.timeline?.currentTime;
 		return typeof time === 'number' ? time : undefined;
-	});
+	}, () => this.scheduleFadeFrame());
+	/** The next frame that steps the fades of streamed text. */
+	private fadeFrame: IDisposable | undefined;
 	private readonly suggestListeners = this._register(new DisposableStore());
 	private sendKind: 'mic' | 'send' = 'mic';
 	private submitting = false;
@@ -8915,6 +8918,24 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	}
 
 	/**
+	 * Steps the fades of streamed text frame by frame until the last one is over. The frames are asked
+	 * for late in the refresh interval (see STREAM_FRAME_RESERVE_MS), the ones that change no colour later
+	 * still, so a key typed in the composer does not wait behind them.
+	 */
+	private scheduleFadeFrame(): void {
+		if (this.fadeFrame || this._store.isDisposed) {
+			return;
+		}
+		this.fadeFrame = scheduleAtNextAnimationFrameLate(getWindow(this.container), () => {
+			this.fadeFrame = undefined;
+			const time = this.container.ownerDocument.timeline?.currentTime;
+			if (typeof time === 'number' ? this.freshText.step(time) : this.freshText.hasDrivenFades) {
+				this.scheduleFadeFrame();
+			}
+		}, 0, this.textFrames.nextFrameReserveMs());
+	}
+
+	/**
 	 * Redraws at the next animation frame, at most once per frame however many events arrived. A
 	 * streamed frame only patches the live reply's changed rows (patchLiveTurn) and reads the layout
 	 * once, so the reply can follow the model every frame. The composer state and the dock (status
@@ -8925,13 +8946,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			return;
 		}
 		const win = getWindow(this.threadInner);
+		// While streamed text fades its frames run late in the refresh interval (scheduleFadeFrame) and
+		// the paint joins them; a paint asked for at the refresh would bring the frame forward again.
+		// A reply's first words (nothing fading yet) are asked for at once.
+		const schedule = () => this.isStreaming() && this.freshText.isFading()
+			? scheduleAtNextAnimationFrameLate(win, paint, 0, STREAM_FRAME_RESERVE_MS)
+			: scheduleAtNextAnimationFrame(win, paint);
 		const paint = () => {
 			// The frame that draws a key typed in the composer does not also patch the streaming reply:
 			// the reply is drawn one frame later, so the key's echo waits for the composer's work only.
 			// Nor does a frame between two of the fade's colour steps, while a fade runs: text is painted in
 			// the step frames only. A reply's first words (nothing fading yet) are drawn at once.
 			if (this.isStreaming() && (this.inputFirst.shouldYield() || (this.freshText.isFading() && this.textFrames.shouldWait()))) {
-				this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
+				this.renderHandle = schedule();
 				return;
 			}
 			this.renderHandle = undefined;
@@ -8952,7 +8979,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				this._onDidChangeDock.fire();
 			}
 		};
-		this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
+		this.renderHandle = schedule();
 	}
 
 	/**
@@ -9692,6 +9719,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.clockTimer.clear();
 		this.statusRotateTimer?.dispose();
 		this.renderHandle?.dispose();
+		this.fadeFrame?.dispose();
 		this.slowTurnTimer?.dispose();
 		this.textQuietTimer?.dispose();
 		this.contextUsageTimer?.dispose();

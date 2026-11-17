@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { InputFirstGate, isTextFrame, TextFrameClock } from '../../browser/editor/agentInputFirst.js';
+import { InputFirstGate, isTextFrame, STREAM_FRAME_RESERVE_MS, STREAM_TEXT_FRAME_RESERVE_MS, TextFrameClock } from '../../browser/editor/agentInputFirst.js';
 
 /** A frame runner: callbacks queued for the next frame run by priority, highest first. */
 class FakeFrames {
@@ -122,5 +122,24 @@ suite('Agent input first', () => {
 				assert.deepStrictEqual(waits.slice(4), [false, true, false, true, false, true, false, true]);
 			}
 		}
+	});
+
+	test('the next frame is asked for later when it paints no text', () => {
+		const frames = new FakeFrames();
+		let now = 0;
+		const clock = store.add(new TextFrameClock(callback => frames.schedule(callback, 0), () => now, 1000 / 60));
+		// Not measured yet: as for a text frame.
+		assert.strictEqual(clock.nextFrameReserveMs(), STREAM_TEXT_FRAME_RESERVE_MS);
+		const reserve: number[] = [];
+		for (let i = 0; i < 10; i++) {
+			now = 2 + i * 1000 / 120;
+			frames.frame();
+			clock.shouldWait();
+			reserve.push(clock.nextFrameReserveMs());
+		}
+		// At 120 Hz the frames after a text frame (even ones here) paint none, the frames after those do.
+		assert.deepStrictEqual(reserve.slice(4), [STREAM_FRAME_RESERVE_MS, STREAM_TEXT_FRAME_RESERVE_MS, STREAM_FRAME_RESERVE_MS, STREAM_TEXT_FRAME_RESERVE_MS, STREAM_FRAME_RESERVE_MS, STREAM_TEXT_FRAME_RESERVE_MS]);
+		// A text frame keeps more of the interval for its work.
+		assert.ok(STREAM_TEXT_FRAME_RESERVE_MS > STREAM_FRAME_RESERVE_MS);
 	});
 });

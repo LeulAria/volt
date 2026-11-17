@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { mainWindow } from '../../../../../base/browser/window.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { alignedFadeDelay, FRESH_TEXT_CLASS, FRESH_TEXT_COALESCE_MS, FRESH_TEXT_FADE_MS, FRESH_TEXT_STEP_MS, FreshTextTracker, steppedEaseOut } from '../../browser/chrome/agentFreshText.js';
 
@@ -20,7 +21,7 @@ function fresh(root: HTMLElement): { text: string; delay: string }[] {
 
 suite('Fresh streamed text', () => {
 
-	ensureNoDisposablesAreLeakedInTestSuite();
+	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
 	test('marks each new stretch with how long ago it arrived', () => {
 		const tracker = new FreshTextTracker();
@@ -184,5 +185,65 @@ suite('Fresh streamed text', () => {
 		// A redraw with no new text starts no fade.
 		tracker.apply(reply, [render('<p>Hello world</p>')], true, 2000 + FRESH_TEXT_FADE_MS + 10);
 		assert.strictEqual(tracker.isFading(2000 + FRESH_TEXT_FADE_MS + 10), false);
+	});
+
+	test('fades stepped by the owner: held between steps, same colours as the running fade, unwrapped at the end', () => {
+		let timeline = 1003;
+		let started = 0;
+		const tracker = new FreshTextTracker(() => timeline, () => started++);
+		const reply = {};
+		const root = render('<p>Hello</p>');
+		mainWindow.document.body.appendChild(root);
+		store.add({ dispose: () => root.remove() });
+		tracker.apply(reply, [root], true, 5000);
+		const span = root.querySelector<HTMLElement>(`.${FRESH_TEXT_CLASS}`)!;
+		assert.strictEqual(started, 1, 'the owner is told a fade began');
+		assert.strictEqual(span.style.animationPlayState, 'paused', 'the animation does not run on its own');
+		// The fade began on the step clock, at or just before the frame it was drawn in.
+		const begin = timeline + parseFloat(span.style.animationDelay);
+		assert.ok(timeline - begin < FRESH_TEXT_STEP_MS && Math.abs(begin / FRESH_TEXT_STEP_MS - Math.round(begin / FRESH_TEXT_STEP_MS)) < 0.001);
+		// A frame in the same step changes nothing; the first frame of the next step moves the fade there.
+		assert.strictEqual(tracker.step(timeline), true);
+		const before = span.style.animationDelay;
+		timeline = begin + FRESH_TEXT_STEP_MS - 1;
+		assert.strictEqual(tracker.step(timeline), true);
+		assert.strictEqual(span.style.animationDelay, before);
+		timeline = begin + 3 * FRESH_TEXT_STEP_MS + 2;
+		assert.strictEqual(tracker.step(timeline), true);
+		assert.ok(Math.abs(parseFloat(span.style.animationDelay) + 3 * FRESH_TEXT_STEP_MS + 2) < 0.011, span.style.animationDelay);
+		// Once its time is up the span is gone and the text stays.
+		timeline = begin + FRESH_TEXT_FADE_MS + 1;
+		assert.strictEqual(tracker.step(timeline), false);
+		assert.strictEqual(root.querySelector(`.${FRESH_TEXT_CLASS}`), null);
+		assert.strictEqual(root.textContent, 'Hello');
+		assert.strictEqual(tracker.hasDrivenFades, false);
+	});
+
+	test('a stepped fade out of the document is still ended on time', () => {
+		let timeline = 0;
+		const tracker = new FreshTextTracker(() => timeline, () => { });
+		const root = render('<p>Hello</p>');
+		mainWindow.document.body.appendChild(root);
+		try {
+			tracker.apply({}, [root], true, 5000);
+			const span = root.querySelector<HTMLElement>(`.${FRESH_TEXT_CLASS}`)!;
+			root.remove();
+			timeline = 500;
+			assert.strictEqual(tracker.step(timeline), true);
+			assert.strictEqual(span.style.animationDelay, '0ms', 'not touched while detached');
+			timeline = FRESH_TEXT_FADE_MS + 20;
+			assert.strictEqual(tracker.step(timeline), false);
+			assert.strictEqual(root.querySelector(`.${FRESH_TEXT_CLASS}`), null);
+		} finally {
+			root.remove();
+		}
+	});
+
+	test('without an owner to step them the fades run on their own', () => {
+		const tracker = new FreshTextTracker(() => 1000);
+		const root = render('<p>Hello</p>');
+		tracker.apply({}, [root], true, 5000);
+		assert.strictEqual(root.querySelector<HTMLElement>(`.${FRESH_TEXT_CLASS}`)!.style.animationPlayState, '');
+		assert.strictEqual(tracker.hasDrivenFades, false);
 	});
 });
