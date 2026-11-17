@@ -370,6 +370,7 @@ async function faultTest(kind, name) {
 	} else {
 		if (flag('--queued')) { await sendText(c, 'Also: when you are done, write the single word QUEUED-OK as the last line before ledger-ok.'); await sleep(1500); }
 		const mainPid = profileProcesses().find(p => p.cmd.includes(`--user-data-dir ${UD}`) && !/--type=/.test(p.cmd))?.pid;
+		if (!mainPid) { throw new Error('no main process of the test instance'); }
 		const quitAt = Date.now();
 		// The window closes under the key: its reply may never come.
 		await Promise.race([c.key('q', 'KeyQ', 81, 4).catch(() => { }), sleep(1500)]);
@@ -384,6 +385,11 @@ async function faultTest(kind, name) {
 		}
 		const quitMs = Date.now() - quitAt;
 		const exited = !alive();
+		// The relaunch needs the CDP port back (a rig matter: ADEMark's launches have no debug port).
+		for (let i = 0; i < 100; i++) {
+			try { execSync(`lsof -nP -iTCP:${PORT} -sTCP:LISTEN`, { stdio: 'pipe' }); await sleep(200); } catch { break; }
+		}
+		const portWaitMs = Date.now() - quitAt - quitMs;
 		try { c.close(); } catch { }
 		const left = profileProcesses().map(p => p.cmd.split(' ')[0].split('/').at(-1) + (/agent-server|agentServer/.test(p.cmd) ? '(agent-server)' : ''));
 		const pid = launchDev({ replay: true });
@@ -398,7 +404,7 @@ async function faultTest(kind, name) {
 			await sleep(2000);
 			returned = /cursor pagination/.test(await threadText(c));
 		}
-		fault = { kind: 'app-restart', applied: exited, quitMs, dialog, processesLeftAfterQuit: left, newPid: pid, returnedToThread: returned, queued: flag('--queued') };
+		fault = { kind: 'app-restart', applied: exited, quitMs, portWaitMs, dialog, processesLeftAfterQuit: left, newPid: pid, returnedToThread: returned, queued: flag('--queued') };
 	}
 	const faultEnd = Date.now();
 	await sleep(1200);
