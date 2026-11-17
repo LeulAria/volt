@@ -139,6 +139,22 @@ suite('code_nav answers', () => {
 		assert.ok(tie.text.startsWith('"StateReader" is declared in 2 places; pass path (and line) for the one you mean:\ninterface StateReader  a/one.ts:3\ninterface StateReader  b/two.ts:9'), tie.text);
 	});
 
+	test('workspace symbols of another project the language server has loaded are not this chat\'s', async () => {
+		const other = { name: 'PriceRule', kind: 'interface', uri: URI.file('/other/src/pricing/rule.ts'), line: 4, column: 18 };
+		const own = { name: 'PriceRule', kind: 'interface', uri: URI.file('/repo/pricing/rule.go'), line: 6, column: 6 };
+		const asked: string[] = [];
+		const lsp = (symbols: (typeof own)[]): ICodeIntelHost => ({ ...host([]), workspaceSymbols: async () => symbols, references: async uri => { asked.push(uri.path); return [at('pricing/rule.go', 6, 'type PriceRule interface {')]; } });
+		const listed = await runCodeNav(lsp([other, own]), root, { op: 'workspace_symbols', query: 'PriceRule' }, undefined);
+		assert.strictEqual(listed.text, '1 symbol matching "PriceRule":\ninterface PriceRule  pricing/rule.go:6');
+		await runCodeNav(lsp([other, own]), root, { op: 'references', symbol: 'PriceRule' }, undefined);
+		assert.deepStrictEqual(asked, ['/repo/pricing/rule.go']);
+		// Only the other project has it: the index answers for this one (here: nothing), never the other project's file.
+		const none = await runCodeNav(lsp([other]), root, { op: 'references', symbol: 'PriceRule' }, index([]));
+		assert.strictEqual(none.isError, true);
+		assert.doesNotMatch(none.text, /other/);
+		assert.doesNotMatch((await runCodeNav(lsp([other]), root, { op: 'workspace_symbols', query: 'PriceRule' }, index([]))).text, /other/);
+	});
+
 	test('a rename that would reach outside the project changes nothing', async () => {
 		// The hotel copy's node_modules link into another checkout: a rename through them would edit it.
 		let wrote = 0;

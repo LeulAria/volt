@@ -371,7 +371,7 @@ async function locateDeclaration(host: ICodeIntelHost, root: URI, qualified: str
 	const parts = qualified.split('.').filter(Boolean);
 	const name = parts.at(-1) ?? qualified;
 	const container = parts.length > 1 ? parts.at(-2) : undefined;
-	const symbols = host.workspaceSymbols ? await host.workspaceSymbols(name, MAX_SYMBOLS).catch(() => []) : [];
+	const symbols = inProject(root, host.workspaceSymbols ? await host.workspaceSymbols(name, MAX_SYMBOLS).catch(() => []) : []);
 	const exact = symbols.filter(symbol => symbol.name === name && (!container || symbol.container === container || symbol.container?.endsWith(`.${container}`)));
 	// Declarations in tests and generated or vendored code lose to the real one.
 	const ranked = [...exact].sort((a, b) => noiseRank(displayPath(root, a.uri)) - noiseRank(displayPath(root, b.uri)));
@@ -398,6 +398,16 @@ async function locateDeclaration(host: ICodeIntelHost, root: URI, qualified: str
  */
 export function declarationsOnly(found: readonly ICodeLocation[] | undefined): ICodeLocation[] | undefined {
 	return found?.filter(location => !location.preview || !/^(?:import\b|type\s+[\w$]+(?:\s+as\s+[\w$]+)?,?$|[\w$]+\s+as\s+[\w$]+,?$)/.test(location.preview));
+}
+
+/**
+ * A language server's workspace symbols span every project it has loaded, in any window or chat:
+ * a Go project's chat asking for `PriceRule` got five classes of a TypeScript project another chat
+ * had open, by absolute path, and "implementations of PriceRule" then answered from that project.
+ * Only symbols in the chat's own project count.
+ */
+function inProject<T extends { readonly uri: URI }>(root: URI, symbols: readonly T[]): T[] {
+	return symbols.filter(symbol => insideRoot(symbol.uri, root));
 }
 
 function noiseRank(path: string): number {
@@ -761,7 +771,7 @@ async function workspaceSymbols(host: ICodeIntelHost, root: URI, query: string |
 	if (!query?.trim()) {
 		return fail('code_nav', 'workspace_symbols needs query.');
 	}
-	const found = host.workspaceSymbols ? await host.workspaceSymbols(query.trim(), MAX_SYMBOLS).catch(() => []) : [];
+	const found = inProject(root, host.workspaceSymbols ? await host.workspaceSymbols(query.trim(), MAX_SYMBOLS).catch(() => []) : []);
 	if (found.length) {
 		const lines = found.slice(0, MAX_SYMBOLS).map(symbol => `${symbol.kind} ${symbol.container ? `${symbol.container}.` : ''}${symbol.name}  ${displayPath(root, symbol.uri)}:${symbol.line}`);
 		return text(`${found.length} symbol${found.length === 1 ? '' : 's'} matching "${query}":\n${lines.join('\n')}`);
