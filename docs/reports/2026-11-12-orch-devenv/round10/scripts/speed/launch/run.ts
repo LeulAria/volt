@@ -71,7 +71,7 @@ const COMPOSER_TEXT = `(()=>{const a=document.activeElement; const ed=a?.closest
   const realControls=!!realRoot&&vis(realRoot.querySelector('.volt-agent-send'))&&vis(realRoot.querySelector('.monaco-editor'));
   const attach=vis((snapControls?snapHost:realRoot)?.querySelector('.volt-agent-attach-btn'));
   return {real: ed ? (ed.querySelector('.view-lines')?.textContent ?? '') : null, snap: a?.id === 'volt-window-snapshot-input' ? a.value : null,
-    controls: snapControls ? 'snapshot' : realControls ? 'composer' : null, attach}})()`;
+    controls: snapControls ? 'snapshot' : realControls ? 'composer' : null, attach, focus: document.hasFocus()}})()`;
 
 function voltLabel(ud: string): string {
   return `com.volt.agent-server.${new Bun.CryptoHasher("sha256").update(ud).digest("hex").slice(0, 12)}`;
@@ -188,12 +188,16 @@ async function cdpKey(cdp: Cdp, key: string, code: string, vk: number, modifiers
  * ADEMark's echo timer, DOM edition (round 3): a probe key every 50 ms +-20 %, Ready = first poll whose focused composer
  * (real, or the window snapshot's stand-in) holds a probe pair; it keeps polling until the real composer holds one too.
  */
-async function domEcho(t0: bigint, timeoutMs: number): Promise<{ readyMs: number | null; readyFrom: string | null; readyRealMs: number | null; controlsMs: number | null; controlsFrom: string | null; controlsAttach: boolean | null; typed: number; cdp: Cdp | null; readyText: string | null; realText: string | null; firstKeyMs: number | null }> {
+async function domEcho(t0: bigint, timeoutMs: number): Promise<{ readyMs: number | null; readyFrom: string | null; readyRealMs: number | null; controlsMs: number | null; controlsFrom: string | null; controlsAttach: boolean | null; typed: number; cdp: Cdp | null; readyText: string | null; realText: string | null; firstKeyMs: number | null; focusAtControls: boolean | null; pageFocusMs: number | null }> {
   let cdp: Cdp | null = null;
   let done = false; let typed = 0; let i = 0;
   // Round 10: when the first probe key was sent, and the composer's text at Ready and when the real composer has it
   // (a text that starts with the probe's first letters shows that no key typed during the launch was lost).
   let firstKeyMs: number | null = null; let readyText: string | null = null; let realText: string | null = null;
+  // Whether the page had the keyboard focus (document.hasFocus(): its view is the window's first responder) when the
+  // controls were first seen, and when it first had it: keys from a real keyboard reach the page only then (the
+  // rig's CDP keys reach it regardless).
+  let focusAtControls: boolean | null = null; let pageFocusMs: number | null = null;
   const typer = (async () => {
     while (!done) {
       if (cdp) {
@@ -212,11 +216,12 @@ async function domEcho(t0: bigint, timeoutMs: number): Promise<{ readyMs: number
     if (!cdp) { try { cdp = await Cdp.connect(200); } catch { /* */ } }
     if (cdp) {
       const a = nowNs();
-      let c: { real: string | null; snap: string | null; controls: string | null; attach: boolean } | undefined;
+      let c: { real: string | null; snap: string | null; controls: string | null; attach: boolean; focus?: boolean } | undefined;
       try { c = await cdp.eval(COMPOSER_TEXT); } catch { c = undefined; }
       const b = nowNs();
       const at = ms(t0, (a + b) / 2n);
-      if (controlsMs === null && c?.controls) { controlsMs = at; controlsFrom = c.controls; controlsAttach = c.attach; }
+      if (controlsMs === null && c?.controls) { controlsMs = at; controlsFrom = c.controls; controlsAttach = c.attach; focusAtControls = c.focus ?? null; }
+      if (pageFocusMs === null && c?.focus) { pageFocusMs = at; }
       if (readyMs === null && (hasProbePair(c?.real) || hasProbePair(c?.snap))) { readyMs = at; readyFrom = hasProbePair(c?.real) ? "composer" : "snapshot"; readyText = (hasProbePair(c?.real) ? c?.real : c?.snap) ?? null; }
       if (hasProbePair(c?.real)) { readyRealMs = at; realText = c?.real ?? null; break; }
     }
@@ -224,7 +229,7 @@ async function domEcho(t0: bigint, timeoutMs: number): Promise<{ readyMs: number
   }
   done = true;
   await typer;
-  return { readyMs, readyFrom, readyRealMs, controlsMs, controlsFrom, controlsAttach, typed, cdp, readyText, realText, firstKeyMs };
+  return { readyMs, readyFrom, readyRealMs, controlsMs, controlsFrom, controlsAttach, typed, cdp, readyText, realText, firstKeyMs, focusAtControls, pageFocusMs };
 }
 
 /** The app's own marks, relative to t0 (wall clock ms): main marks handed to the window, then the renderer's. */
@@ -286,7 +291,7 @@ async function launchTest(app: App, test: "A1" | "A2", rep: number) {
     await sleep(300);
     r.cdp.close();
   }
-  row({ app: app.id, test, rep, window_ms: windowMs, ready_ms: r.readyMs, ready_from: r.readyFrom, ready_real_ms: r.readyRealMs, controls_ms: r.controlsMs, controls_from: r.controlsFrom, controls_attach: r.controlsAttach, method: "dom-echo, cdp keys", typed: r.typed, first_key_ms: r.firstKeyMs, ready_text: r.readyText, real_text: r.realText, quit: quitHow,
+  row({ app: app.id, test, rep, window_ms: windowMs, ready_ms: r.readyMs, ready_from: r.readyFrom, ready_real_ms: r.readyRealMs, controls_ms: r.controlsMs, controls_from: r.controlsFrom, controls_attach: r.controlsAttach, method: "dom-echo, cdp keys", typed: r.typed, first_key_ms: r.firstKeyMs, focus_at_controls: r.focusAtControls, page_focus_ms: r.pageFocusMs, ready_text: r.readyText, real_text: r.realText, quit: quitHow,
     server_alive_before: serverAlive, gate_quiet: gate.quiet, gate_cores: gate.cores_last, marks: breakdown(marks, t0Wall), code_caching: marks?.cached ?? null });
 }
 
