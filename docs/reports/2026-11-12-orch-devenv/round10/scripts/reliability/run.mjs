@@ -160,14 +160,17 @@ async function startTask(c, repo, prompt) {
 	return { t0, chat, chips, load: startLoad };
 }
 
-const capture = out => readJsonl(join(out, 'capture.jsonl'));
+const captureAll = out => readJsonl(join(out, 'capture.jsonl'));
+/** Answered (or aborted) requests; `inFlight`: task requests that arrived and whose answer is still streaming. */
+const capture = out => captureAll(out).filter(r => !r.start);
+const inFlight = out => { const all = captureAll(out); const ended = new Set(all.filter(r => !r.start).map(r => r.n)); return all.filter(r => r.start && !ended.has(r.n)); };
 /** The end: the model's last answer for the task is its final message, and nothing followed for `quietMs`. */
 async function waitEnd(out, { t0, minMs = 0, capMs = 9 * 60_000, quietMs = 20_000 }) {
 	for (;;) {
 		const rows = capture(out).filter(r => r.task);
 		const last = rows.at(-1);
 		const now = Date.now();
-		if (last?.step === 'final' && last.status === 200 && now - (last.t + (last.ms ?? 0)) >= quietMs && now - t0 >= minMs) {
+		if (last?.step === 'final' && last.status === 200 && !inFlight(out).length && now - (last.t + (last.ms ?? 0)) >= quietMs && now - t0 >= minMs) {
 			return { done: true, endMs: last.t + last.ms - t0 };
 		}
 		if (now - t0 >= capMs) { return { done: false, endMs: now - t0, last: last ? { step: last.step, status: last.status, ago: now - last.t } : null }; }
@@ -257,6 +260,48 @@ function locks(samples) {
 	return runs;
 }
 
+/** C6's fault, scoped to the test window: Cmd+Q (a queued follow-up first with --queued), wait for the exit, launch again, return to the thread. */
+async function restartApp(c, threadMark) {
+	if (flag('--queued')) { await sendText(c, 'Also: when you are done, write the single word QUEUED-OK as the last line before ledger-ok.'); await sleep(1500); }
+	const mainPid = profileProcesses().find(p => p.cmd.includes(`--user-data-dir ${UD}`) && !/--type=/.test(p.cmd))?.pid;
+	if (!mainPid) { throw new Error('no main process of the test instance'); }
+	const quitAt = Date.now();
+	// The window closes under the key: its reply may never come.
+	await Promise.race([c.key('q', 'KeyQ', 81, 4).catch(() => { }), sleep(1500)]);
+	let dialog = null;
+	const alive = () => { try { process.kill(mainPid, 0); return true; } catch { return false; } };
+	while (alive() && Date.now() - quitAt < 10_000) {
+		await sleep(300);
+		try {
+			const text = await Promise.race([c.evaluate(`(() => { const d = [...document.querySelectorAll('.monaco-dialog-box')].filter(e => e.offsetParent).at(-1); if (!d) { return null; } const t = d.innerText.replace(/\\s+/g, ' ').slice(0, 300); d.querySelector('.dialog-buttons .monaco-button')?.click(); return t; })()`), sleep(800)]);
+			if (text) { dialog = text; }
+		} catch { }
+	}
+	const quitMs = Date.now() - quitAt;
+	const exited = !alive();
+	// The relaunch needs the CDP port back (a rig matter: ADEMark's launches have no debug port).
+	for (let i = 0; i < 100; i++) {
+		try { execSync(`lsof -nP -iTCP:${PORT} -sTCP:LISTEN`, { stdio: 'pipe' }); await sleep(200); } catch { break; }
+	}
+	const portWaitMs = Date.now() - quitAt - quitMs;
+	try { c.close(); } catch { }
+	const left = profileProcesses().map(p => p.cmd.split(' ')[0].split('/').at(-1) + (/agent-server|agentServer/.test(p.cmd) ? '(agent-server)' : ''));
+	const pid = launchDev({ replay: true });
+	await waitWorkbench();
+	await sleep(1500);
+	c = await cdp();
+	await c.send('Page.bringToFront');
+	// returnToThread: Volt reopens the chat it was showing; check it is the interrupted one, else pick it in the sidebar.
+	let returned = threadMark.test(await threadText(c));
+	if (!returned) {
+		await c.evaluate(`(() => { const r = [...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && /Ledger|pagination|cursor/i.test(e.innerText)).at(0); r?.click(); })()`);
+		await sleep(2000);
+		returned = threadMark.test(await threadText(c));
+	}
+	const fault = { kind: 'app-restart', applied: exited, quitMs, portWaitMs, dialog, processesLeftAfterQuit: left, newPid: pid, returnedToThread: returned, queued: flag('--queued') };
+	return { c, fault };
+}
+
 // ---------- the tests ----------
 
 function freshRepo(name) {
@@ -271,7 +316,7 @@ function finishRow(row) {
 	mkdirSync(DATA, { recursive: true });
 	appendFileSync(join(DATA, 'runs.jsonl'), JSON.stringify(row) + '\n');
 	const brief = { ...row };
-	for (const k of ['processesAtFault', 'probes', 'threadTail', 'ui', 'captureSteps']) { delete brief[k]; }
+	for (const k of ['processesAtFault', 'probes', 'threadTail', 'captureSteps']) { delete brief[k]; }
 	console.log(JSON.stringify(brief, null, 1));
 }
 
@@ -302,7 +347,8 @@ async function c2(name) {
 		const phase = (await brain('/_ctl/state')).phase?.C2;
 		states.push({ id: f.id, sentAt, delayMs: sentAt - (t0 + f.at * 1000), accepted, queuedUi: ui.marks.filter(m => /queue/i.test(m)).slice(0, 3), modelPhase: phase ? `${phase.step}:${phase.phase}` : null });
 	}
-	const end = await waitEnd(out, { t0, minMs: 160_000 });
+	// A queued follow-up goes out after the turn's own checks, so the quiet window is long.
+	const end = await waitEnd(out, { t0, minMs: 160_000, quietMs: 60_000 });
 	stop = true;
 	await probing;
 	await sleep(1500);
@@ -368,43 +414,7 @@ async function faultTest(kind, name) {
 		await sleep(seconds * 1000 + 300);
 		fault = { kind: `network-cut-${opt('--mode', 'drop')}`, seconds, applied: true };
 	} else {
-		if (flag('--queued')) { await sendText(c, 'Also: when you are done, write the single word QUEUED-OK as the last line before ledger-ok.'); await sleep(1500); }
-		const mainPid = profileProcesses().find(p => p.cmd.includes(`--user-data-dir ${UD}`) && !/--type=/.test(p.cmd))?.pid;
-		if (!mainPid) { throw new Error('no main process of the test instance'); }
-		const quitAt = Date.now();
-		// The window closes under the key: its reply may never come.
-		await Promise.race([c.key('q', 'KeyQ', 81, 4).catch(() => { }), sleep(1500)]);
-		let dialog = null;
-		const alive = () => { try { process.kill(mainPid, 0); return true; } catch { return false; } };
-		while (alive() && Date.now() - quitAt < 10_000) {
-			await sleep(300);
-			try {
-				const text = await Promise.race([c.evaluate(`(() => { const d = [...document.querySelectorAll('.monaco-dialog-box')].filter(e => e.offsetParent).at(-1); if (!d) { return null; } const t = d.innerText.replace(/\\s+/g, ' ').slice(0, 300); d.querySelector('.dialog-buttons .monaco-button')?.click(); return t; })()`), sleep(800)]);
-				if (text) { dialog = text; }
-			} catch { }
-		}
-		const quitMs = Date.now() - quitAt;
-		const exited = !alive();
-		// The relaunch needs the CDP port back (a rig matter: ADEMark's launches have no debug port).
-		for (let i = 0; i < 100; i++) {
-			try { execSync(`lsof -nP -iTCP:${PORT} -sTCP:LISTEN`, { stdio: 'pipe' }); await sleep(200); } catch { break; }
-		}
-		const portWaitMs = Date.now() - quitAt - quitMs;
-		try { c.close(); } catch { }
-		const left = profileProcesses().map(p => p.cmd.split(' ')[0].split('/').at(-1) + (/agent-server|agentServer/.test(p.cmd) ? '(agent-server)' : ''));
-		const pid = launchDev({ replay: true });
-		await waitWorkbench();
-		await sleep(1500);
-		c = await cdp();
-		await c.send('Page.bringToFront');
-		// returnToThread: Volt reopens the chat it was showing; check it is the interrupted one, else pick it in the sidebar.
-		let returned = /cursor pagination/.test(await threadText(c));
-		if (!returned) {
-			await c.evaluate(`(() => { const r = [...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && /Ledger|pagination|cursor/i.test(e.innerText)).at(0); r?.click(); })()`);
-			await sleep(2000);
-			returned = /cursor pagination/.test(await threadText(c));
-		}
-		fault = { kind: 'app-restart', applied: exited, quitMs, portWaitMs, dialog, processesLeftAfterQuit: left, newPid: pid, returnedToThread: returned, queued: flag('--queued') };
+		({ c, fault } = await restartApp(c, /cursor pagination/));
 	}
 	const faultEnd = Date.now();
 	await sleep(1200);
@@ -436,8 +446,84 @@ async function faultTest(kind, name) {
 		test: kind.toUpperCase(), id: name, arm: ARM, at: new Date(t0).toISOString(), load: startLoad, loadEnd: load(), chat, chips, repo,
 		survival, resumed: watch.resumed, resumedAfterMs: watch.afterMs ?? null, manualContinue: manual, done: end.done, endS: Math.round(end.endMs / 1000), lastStep: end.last ?? null,
 		groups: graded.groups, crashed, fault: { ...fault, atS: Math.round((faultAt - t0) / 100) / 10, tookMs: faultEnd - faultAt, phaseAtFault: phaseAtFault ? `${phaseAtFault.step}:${phaseAtFault.phase}` : null },
+		queuedDelivered: flag('--queued') ? capture(out).some(r => (r.lastUser ?? '').includes('QUEUED-OK')) : undefined, queuedAnswered: flag('--queued') ? /QUEUED-OK\s+ledger-ok/.test(thread) : undefined,
 		uiAfterFault, uiAfterWatch, threadAfterWatch, processesAtFault, threadTail: thread.slice(-500), finalHasLedgerOk: /ledger-ok/.test(thread.slice(-400)),
 		captureSteps: rows.map(r => `${r.n}:${r.step}${r.attempt > 1 ? `#${r.attempt}` : ''}:${r.status}`),
+	});
+	stopBrain();
+}
+
+
+/**
+ * Harder than ADEMark's: a lead that hands two slow tasks to Volt subagents and waits for their reports.
+ * --fault sub-cli: kill -9 of one subagent's CLI in the middle of a tool call; --fault quit: Cmd+Q with a queued
+ * follow-up while both subagents run, then relaunch; --fault server: kill -9 of the agent server; none: control.
+ */
+async function orch(name) {
+	const repo = freshRepo(name);
+	const out = join(RUNS, `${name}.capture`);
+	const n = Number(opt('--steps', 8));
+	await startBrain(out, { pad: Number(opt('--pad', 1500)), sleep: Number(opt('--sleep', 8)) });
+	let c = await cdp();
+	const { t0, chat, chips, load: startLoad } = await startTask(c, repo, `brain:orch ${n}\nSplit this between two subagents and wait for their reports.`);
+	const kind = opt('--fault', 'none');
+	// Both subagents in the middle of a command (the model waits for its tool result), a few steps in.
+	let phases;
+	for (let i = 0; i < 1200; i++) {
+		phases = (await brain('/_ctl/state')).phase ?? {};
+		const mid = k => phases[k] && /^slow[3-9]/.test(phases[k].step) && phases[k].phase === 'tool' && Date.now() - phases[k].since > 1500;
+		if (mid('SLOW-A') && mid('SLOW-B')) { break; }
+		await sleep(250);
+	}
+	const faultAt = Date.now();
+	let fault = { kind: 'none', applied: false };
+	if (kind === 'sub-cli') {
+		const session = capture(out).filter(r => r.key === 'SLOW-B').at(-1)?.session;
+		const procs = processes(repo).filter(p => p.exe === 'claude');
+		const target = procs.filter(p => session && profileProcesses().find(q => q.pid === p.pid)?.cmd.includes(session));
+		for (const p of target) { try { process.kill(p.pid, 'SIGKILL'); } catch { } }
+		fault = { kind, applied: target.length > 0, pids: target.map(p => p.pid), session, clis: procs.length };
+	} else if (kind === 'server') {
+		const target = processes(repo).filter(p => p.role === 'agent-server');
+		for (const p of target) { try { process.kill(p.pid, 'SIGKILL'); } catch { } }
+		fault = { kind, applied: target.length > 0, pids: target.map(p => p.pid) };
+	} else if (kind === 'quit') {
+		({ c, fault } = await restartApp(c, /brain:orch/));
+	}
+	fault.atS = Math.round((faultAt - t0) / 100) / 10;
+	fault.phases = Object.fromEntries(Object.entries(phases ?? {}).map(([k, v]) => [k, `${v.step}:${v.phase}`]));
+	await sleep(3000);
+	const uiAfterFault = await uiState(c).catch(() => null);
+	await shot(c, join(RUNS, `${name}.fault.png`)).catch(() => { });
+	// The end: the lead's final answer, then quiet.
+	const cap = t0 + Number(opt('--cap-s', 600)) * 1000;
+	let done = false;
+	while (Date.now() < cap && !done) {
+		await sleep(3000);
+		const rows = capture(out);
+		const last = rows.filter(r => r.task === 'ORCH').at(-1);
+		const newest = rows.filter(r => r.task).at(-1);
+		done = last?.step === 'final' && last.status === 200 && !inFlight(out).length && Date.now() - (newest.t + (newest.ms ?? 0)) > 20_000;
+	}
+	const endS = Math.round((Date.now() - t0) / 1000);
+	const rows = capture(out).filter(r => r.task);
+	const lines = w => { try { return readFileSync(join(repo, `slow-${w}.log`), 'utf8').trim().split('\n'); } catch { return []; } };
+	const work = Object.fromEntries(['A', 'B'].map(w => { const l = lines(w); return [w, { lines: l.length, distinct: new Set(l).size, complete: new Set(l).size === n }]; }));
+	const finals = Object.fromEntries(['SLOW-A', 'SLOW-B', 'ORCH'].map(k => [k, rows.filter(r => r.key === k && r.step === 'final' && r.status === 200).length]));
+	const thread = await threadText(c).catch(() => '');
+	const reports = /reports seen: ([A-B,none]+)/.exec(thread)?.[1] ?? null;
+	let tree;
+	try { tree = JSON.parse(readFileSync(join(USER, 'voltOrchestrator', 'roots', `${chat}.json`), 'utf8')); } catch { }
+	await shot(c, join(RUNS, `${name}.end.png`)).catch(() => { });
+	const ui = await uiState(c).catch(() => null);
+	c.close();
+	const queued = flag('--queued') ? { delivered: capture(out).some(r => (r.lastUser ?? '').includes('QUEUED-OK')), answered: /QUEUED-OK/.test(thread.slice(-1500)) } : undefined;
+	const ok = done && work.A.complete && work.B.complete && reports === 'A,B' && (!queued || (queued.delivered && queued.answered));
+	finishRow({
+		test: 'ORCH', id: name, arm: ARM, at: new Date(t0).toISOString(), load: startLoad, loadEnd: load(), chat, chips, repo,
+		result: ok ? 'pass' : 'fail', done, endS, work, finals, reportsSeenByLead: reports, queued, fault, uiAfterFault, ui,
+		tasks: (tree?.tasks ?? []).map(t => ({ title: t.title, state: t.state, rounds: t.rounds?.length ?? t.rounds })),
+		threadTail: thread.slice(-600), captureSteps: rows.map(r => `${r.n}:${r.key}:${r.step}${r.attempt > 1 ? `#${r.attempt}` : ''}:${r.status}`),
 	});
 	stopBrain();
 }
@@ -452,6 +538,8 @@ if (cmd === 'launch') {
 	console.log(writeStorage() ? 'storage written' : 'no application.vscdb yet: launch once, stop, then run storage');
 } else if (cmd === 'c2') {
 	await c2(id);
+} else if (cmd === 'orch') {
+	await orch(id);
 } else if (cmd === 'c4' || cmd === 'c5' || cmd === 'c6') {
 	await faultTest(cmd, id);
 } else if (cmd === 'shot') {

@@ -1,0 +1,215 @@
+{
+  "schema": 1,
+  "ade": "volt",
+  "app": {
+    "path": "/Applications/Volt.app",
+    "version": "0.0.6",
+    "bundleSha256": "66139e8daab32c77fd50d4f1aa4dc33f1d33ea0e2402ec288cc507ca7488c4d6",
+    "processNames": [
+      "Volt",
+      "Electron",
+      "Volt Helper",
+      "Volt Helper (Renderer)",
+      "Volt Helper (GPU)",
+      "Volt Helper (Plugin)",
+      "volt-sandbox-helper"
+    ]
+  },
+  "window": {
+    "w": 1600,
+    "h": 1000
+  },
+  "calibration": {
+    "appName": "Volt",
+    "bundleId": "com.leularia.volt",
+    "composerRect": {
+      "x": 590,
+      "y": 395,
+      "w": 730,
+      "h": 90
+    },
+    "activeComposerRect": {
+      "x": 500,
+      "y": 928,
+      "w": 850,
+      "h": 60
+    },
+    "launchComposerRect": {
+      "x": 590,
+      "y": 395,
+      "w": 730,
+      "h": 90
+    },
+    "threadRect": {
+      "x": 320,
+      "y": 60,
+      "w": 900,
+      "h": 840
+    },
+    "focusClick": null,
+    "masks": [],
+    "drive": "cli",
+    "dataDirs": [
+      "~/Library/Application Support/Volt",
+      "~/.volt"
+    ],
+    "launchAgents": [
+      "com.volt.agent-server.f097d5268fa1"
+    ]
+  },
+  "login": {
+    "kind": "agent-cli",
+    "files": [],
+    "signIn": null
+  },
+  "reset": {
+    "seeds": [
+      "Library/Application Support/Volt/User/settings.json",
+      "Library/Application Support/Volt/agentServer/application.vscdb",
+      ".volt/setup-shown"
+    ],
+    "jsonKeys": []
+  },
+  "steps": {
+    "afterLaunch": [
+      {
+        "kind": "wait",
+        "ms": 3000
+      }
+    ],
+    "openProject": [
+      {
+        "kind": "run",
+        "argv": [
+          "/Applications/Volt.app/Contents/Resources/app/bin/code",
+          "${worktree}"
+        ],
+        "timeoutMs": 60000
+      },
+      {
+        "kind": "wait",
+        "ms": 3000
+      },
+      {
+        "kind": "keys",
+        "combo": "cmd+n"
+      },
+      {
+        "kind": "wait",
+        "ms": 1500
+      }
+    ],
+    "configure": {
+      "claude": [
+        {
+          "kind": "expectText",
+          "region": {
+            "x": 590,
+            "y": 470,
+            "w": 400,
+            "h": 40
+          },
+          "texts": [
+            "Opus 5.5",
+            "Opus 5,5"
+          ],
+          "timeoutMs": 8000
+        }
+      ],
+      "codex": []
+    },
+    "quit": [],
+    "returnToThread": [
+      {
+        "kind": "wait",
+        "ms": 3000
+      },
+      {
+        "kind": "expectText",
+        "region": {
+          "x": 320,
+          "y": 60,
+          "w": 900,
+          "h": 840
+        },
+        "texts": [
+          "pagination",
+          "Ledger"
+        ],
+        "timeoutMs": 20000
+      }
+    ]
+  },
+  "timed": {
+    "launch": [
+      {
+        "kind": "open",
+        "bundleId": "com.leularia.volt"
+      }
+    ],
+    "newThread": [
+      {
+        "kind": "keys",
+        "combo": "cmd+n"
+      }
+    ],
+    "send": [
+      {
+        "kind": "enter"
+      }
+    ],
+    "longThread": [
+      {
+        "kind": "click",
+        "point": {
+          "x": 150,
+          "y": 191
+        }
+      }
+    ],
+    "shortThread": [
+      {
+        "kind": "click",
+        "point": {
+          "x": 150,
+          "y": 237
+        }
+      }
+    ]
+  },
+  "waitDone": {
+    "cwd": "worktree",
+    "idleFallback": true
+  },
+  "processes": {
+    "vendorDirs": [
+      "~/.volt"
+    ],
+    "launchAgentLabels": [
+      "com.volt.agent-server.f097d5268fa1"
+    ],
+    "teamId": null,
+    "agentExecutables": [
+      "claude",
+      "codex",
+      "claude-agent-acp",
+      "/Users/ademark/.local/share/claude/versions/"
+    ]
+  },
+  "orchestrationTrigger": "Use Volt's delegate_task to run the four work items in parallel, one subagent per item.",
+  "notes": [
+    "Draft from round 3 of Volt's own benchmark work (2026-11-13), in a normal account with an isolated HOME, not the ademark user. Rects were read from the DOM with the viewport emulated at 1600 x 1000 (the laptop screen is 1512 x 982 points), so a person must confirm them on a real 1600 x 1000 window before the gate.",
+    "composerRect and launchComposerRect: the empty draft's composer, centred (a new thread and a launch both show it). activeComposerRect: the follow-up composer at the bottom of an open thread.",
+    "Sidebar rows sort by recency, 46 pt tall from y 168: the long thread built last is the first chat row (y 191), a seed thread the second (y 237). The 'New Agent' draft row sits above them at y 123.",
+    "The seed holds the Claude agent profile with Opus 5.5 at High (volt.runtime.modelOptions in agentServer/application.vscdb), the default access mode Full access (volt.runtime.accessMode) and the first-run setup marked shown (~/.volt/setup-shown). User settings: security.workspace.trust.enabled false, volt.agent.defaultModel agent:seed-claude-code:claude-opus-5-5.",
+    "Volt lists Claude's models only when ~/.claude.json names an account (oauthAccount.emailAddress). The ademark user's subscription login has one; an API-key-only login shows no Claude models.",
+    "The agent sandbox is on by default (workspace write). Volt 0.0.6 refuses the replay server's loopback port inside it; builds after commit 6cc80c0a9bd grant the port of the CLI's *_BASE_URL. On 0.0.6 the sandbox must be off for Track A, and that is a pin to publish.",
+    "The agent server is a launch agent (com.volt.agent-server.<12 hex of sha256 of the user data folder>) that keeps running after Cmd+Q by design; A9 counts it.",
+    "waitDone idleFallback is on: a sandboxed chat runs Claude with its config under ~/.volt/sandbox/agent-state, so its session log is not under ~/.claude/projects.",
+    "Round 10 (2026-11-17), still outside the ademark user: Track C was run with Volt's own rig on a scripted model (docs/reports/2026-11-12-orch-devenv/round10/106-reliability.md in the Volt repository). returnToThread: Volt reopens the chat it showed at quit and the agent server kept the turn running, so the step only waits and checks that the C6 thread is on screen (a word of the C4-C6 prompt in threadRect); it selects nothing. Confirm the OCR words on a real 1600 x 1000 window.",
+    "orchestrationTrigger: the line Volt's own C1 runs used in rounds 4 and 5 (5/5 shipped, 4 subagents in their own worktrees); not yet proven in the ademark user.",
+    "C4: the agent to kill is the `claude` CLI started by the shared claude-agent-acp adapter host; its cwd is the worktree, so TESTS.md 1.6's rule finds it. The adapter host and the agent server are other processes and stay up.",
+    "C5/C6 with the shipped launch agent: the agent server is a launchd job with only HOME in its environment, so a capture proxy set with `launchctl setenv` reaches it only if set before the job starts; boot the job out in reset (launchAgents) so it restarts under the block's environment."
+  ],
+  "agentGuide": "Cmd+N opens a new draft in the current project with its composer focused. The model chip sits under the composer text."
+}

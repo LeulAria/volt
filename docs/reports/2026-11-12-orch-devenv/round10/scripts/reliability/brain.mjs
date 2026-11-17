@@ -66,6 +66,7 @@ function taskOf(body) {
 	const text = userTexts(body.messages).join('\n');
 	if (text.includes('replace page-number pagination with cursor pagination')) { return 'W3'; }
 	if (text.includes('In the Ledger repository, add rate limiting.')) { return 'C2'; }
+	if (text.includes('brain:orch')) { return 'ORCH'; }
 	if (text.includes('brain:slow')) { return 'SLOW'; }
 	return null;
 }
@@ -84,7 +85,7 @@ const write = (id, why, file, content) => ({ id, why, calls: (cwd, attempt) => [
 	{ name: 'Write', input: { file_path: `${cwd}/${file}`, content: content() } },
 ] });
 
-function stepsFor(task, texts) {
+function stepsFor(task, texts, toolNames = []) {
 	if (task === 'W3') {
 		return [
 			read('agents', 'Reading the repository rules first.', 'AGENTS.md'),
@@ -128,9 +129,22 @@ function stepsFor(task, texts) {
 		}
 		return steps;
 	}
+	if (task === 'ORCH') {
+		// A lead that hands two slow tasks to Volt's subagents and waits for their reports (the variants: a
+		// subagent's CLI killed mid-tool-call, the app quit with a queued message and running subagents).
+		const n = Number(/brain:orch (\d+)/.exec(texts.join('\n'))?.[1] ?? 8);
+		const tool = name => (id, why, input) => ({ id, why, calls: () => [{ name, input }] });
+		const delegate = tool(toolNames.find(t => /delegate_task$/.test(t)) ?? 'mcp__volt__delegate_task');
+		const wait = tool(toolNames.find(t => /wait_tasks$/.test(t)) ?? 'mcp__volt__wait_tasks');
+		return [
+			delegate('delegate-a', 'Handing the first slow task to a subagent.', { title: 'Worker A', task: `brain:slow ${n} worker A. Run the slow steps one after another and report when they are done.`, wait: false }),
+			delegate('delegate-b', 'Handing the second slow task to a subagent.', { title: 'Worker B', task: `brain:slow ${n} worker B. Run the slow steps one after another and report when they are done.`, wait: false }),
+			wait('wait', 'Waiting for both reports.', {}),
+		];
+	}
 	// SLOW: a turn that only streams and sleeps, for the variants (two windows, quit with a queued message).
 	const n = Number(/brain:slow (\d+)/.exec(texts.join('\n'))?.[1] ?? 6);
-	return Array.from({ length: n }, (_, i) => bash(`slow${i + 1}`, `Slow step ${i + 1} of ${n}`, `echo slow-step-${i + 1}`));
+	return Array.from({ length: n }, (_, i) => bash(`slow${i + 1}`, `Slow step ${i + 1} of ${n}`, `echo slow-step-${i + 1} >> slow-${/worker ([AB])/.exec(texts.join('\n'))?.[1] ?? 'X'}.log`));
 }
 
 /** Per step: attempts made, and whether one of them has a successful result. */
@@ -177,12 +191,16 @@ function plan(body) {
 	const texts = userTexts(body.messages);
 	const cwd = cwdOf(body) ?? process.env.BRAIN_CWD ?? '.';
 	const prefix = `toolu_${task.toLowerCase()}`;
-	const steps = stepsFor(task, texts);
+	const steps = stepsFor(task, texts, (body.tools ?? []).map(t => t.name));
 	const { done, attempts } = progress(body.messages, prefix);
 	const index = steps.findIndex(s => !done.has(s.id));
 	if (index < 0) {
 		const followups = task === 'C2' ? FOLLOWUPS.filter(f => texts.some(t => t.includes(f.mark) && t.includes('Also:'))).map(f => f.id) : [];
-		const text = `Done. ${task === 'W3' ? 'GET /invoices now uses cursor pagination and paginate() is fixed.' : task === 'C2' ? `Rate limiting is in place${followups.length ? `, with the follow-ups applied (${followups.join(', ')})` : ''}.` : 'The slow steps finished.'} The tests ran.\n\nledger-ok`;
+		const worker = /worker ([AB])/.exec(texts.join('\n'))?.[1] ?? 'X';
+		const results = JSON.stringify((body.messages ?? []).flatMap(m => Array.isArray(m.content) ? m.content.filter(b => b.type === 'tool_result') : [])) + texts.join('\n');
+		const extra = task === 'SLOW' ? ` SLOW-DONE-${worker}` : task === 'ORCH' ? ` ORCH-DONE reports seen: ${['A', 'B'].filter(w => results.includes(`SLOW-DONE-${w}`)).join(',') || 'none'}.` : '';
+		const queued = texts.some(t => t.includes('QUEUED-OK')) ? '\n\nQUEUED-OK' : '';
+		const text = `Done.${extra} ${task === 'W3' ? 'GET /invoices now uses cursor pagination and paginate() is fixed.' : task === 'C2' ? `Rate limiting is in place${followups.length ? `, with the follow-ups applied (${followups.join(', ')})` : ''}.` : 'The slow steps finished.'} The tests ran.${queued}\n\nledger-ok`;
 		return { task, step: 'final', blocks: [{ type: 'text', text }], stop: 'end_turn' };
 	}
 	const step = steps[index];
@@ -274,9 +292,12 @@ const server = createServer(async (req, res) => {
 	const bodyFile = `bodies/${String(n).padStart(4, '0')}.json`;
 	if (turn.task) { writeFileSync(join(OUT, bodyFile), raw); state.taskRequests++; }
 	const texts = userTexts(body.messages);
-	const entry = { t: Date.now(), n, path: url.pathname, model: body.model, bytes: raw.length, messages: body.messages?.length ?? 0, task: turn.task, step: turn.step ?? null, attempt: turn.attempt ?? null, body_file: turn.task ? bodyFile : null, cwd: cwdOf(body), lastUser: texts.at(-1)?.slice(0, 160) ?? null, session: req.headers['x-claude-code-session-id'] ?? null, ua: req.headers['user-agent'] ?? null };
+	const key = turn.task === 'SLOW' ? `SLOW-${/worker ([AB])/.exec(texts.join('\n'))?.[1] ?? 'X'}` : turn.task;
+	const entry = { key, t: Date.now(), n, path: url.pathname, model: body.model, bytes: raw.length, messages: body.messages?.length ?? 0, task: turn.task, step: turn.step ?? null, attempt: turn.attempt ?? null, body_file: turn.task ? bodyFile : null, cwd: cwdOf(body), lastUser: texts.at(-1)?.slice(0, 160) ?? null, session: req.headers['x-claude-code-session-id'] ?? null, ua: req.headers['user-agent'] ?? null };
 	state.last = { n, task: turn.task, step: entry.step, t: entry.t };
-	if (turn.task) { state.phase[turn.task] = { step: entry.step, phase: 'streaming', n, since: Date.now() }; }
+	// A line when the request arrives too: the answer's line is written only when its stream ends.
+	if (turn.task) { log({ start: true, t: entry.t, n, task: turn.task, key, step: entry.step }); }
+	if (turn.task) { state.phase[key] = { step: entry.step, phase: 'streaming', n, since: Date.now() }; }
 	try {
 		if (body.stream) {
 			await stream(res, body, turn, entry);
@@ -285,11 +306,11 @@ const server = createServer(async (req, res) => {
 			res.end(JSON.stringify({ id: `msg_brain_${n}`, type: 'message', role: 'assistant', model: body.model, content: turn.blocks, stop_reason: turn.stop, stop_sequence: null, usage: { input_tokens: Math.ceil(raw.length / 4), output_tokens: 10 } }));
 		}
 		entry.status = 200;
-		if (turn.task && state.phase[turn.task]?.n === n) { state.phase[turn.task] = { step: entry.step, phase: turn.stop === 'tool_use' ? 'tool' : 'ended', n, since: Date.now() }; }
+		if (turn.task && state.phase[key]?.n === n) { state.phase[key] = { step: entry.step, phase: turn.stop === 'tool_use' ? 'tool' : 'ended', n, since: Date.now() }; }
 	} catch (error) {
 		entry.status = 0;
 		entry.aborted = String(error?.message ?? error);
-		if (turn.task && state.phase[turn.task]?.n === n) { state.phase[turn.task] = { step: entry.step, phase: 'aborted', n, since: Date.now() }; }
+		if (turn.task && state.phase[key]?.n === n) { state.phase[key] = { step: entry.step, phase: 'aborted', n, since: Date.now() }; }
 	}
 	entry.ms = Date.now() - entry.t;
 	log(entry);
