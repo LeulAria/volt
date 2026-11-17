@@ -371,13 +371,14 @@ async function faultTest(kind, name) {
 		if (flag('--queued')) { await sendText(c, 'Also: when you are done, write the single word QUEUED-OK as the last line before ledger-ok.'); await sleep(1500); }
 		const mainPid = profileProcesses().find(p => p.cmd.includes(`--user-data-dir ${UD}`) && !/--type=/.test(p.cmd))?.pid;
 		const quitAt = Date.now();
-		await c.key('q', 'KeyQ', 81, 4);
+		// The window closes under the key: its reply may never come.
+		await Promise.race([c.key('q', 'KeyQ', 81, 4).catch(() => { }), sleep(1500)]);
 		let dialog = null;
 		const alive = () => { try { process.kill(mainPid, 0); return true; } catch { return false; } };
 		while (alive() && Date.now() - quitAt < 10_000) {
 			await sleep(300);
 			try {
-				const text = await c.evaluate(`(() => { const d = [...document.querySelectorAll('.monaco-dialog-box')].filter(e => e.offsetParent).at(-1); if (!d) { return null; } const t = d.innerText.replace(/\\s+/g, ' ').slice(0, 300); d.querySelector('.dialog-buttons .monaco-button')?.click(); return t; })()`);
+				const text = await Promise.race([c.evaluate(`(() => { const d = [...document.querySelectorAll('.monaco-dialog-box')].filter(e => e.offsetParent).at(-1); if (!d) { return null; } const t = d.innerText.replace(/\\s+/g, ' ').slice(0, 300); d.querySelector('.dialog-buttons .monaco-button')?.click(); return t; })()`), sleep(800)]);
 				if (text) { dialog = text; }
 			} catch { }
 		}
