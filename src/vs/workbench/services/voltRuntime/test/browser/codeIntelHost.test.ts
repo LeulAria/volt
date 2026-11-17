@@ -243,6 +243,14 @@ suite('Volt code intelligence: the new-errors check after an agent write', () =>
 		assert.deepStrictEqual(ranges, ['1:1-2:1']);
 	});
 
+	test('organize imports with no language service says so instead of "already organized"', async () => {
+		const bare = setup(false);
+		const answer = await bare.host.applyCodeAction(FILE, { startLine: 1, endLine: 1 }, 'source.organizeImports', undefined);
+		assert.ok(typeof answer === 'string' && /^No language service offers organize imports/.test(answer), String(answer));
+		// A language with a service that offers nothing: nothing to change.
+		assert.deepStrictEqual(await setup(true).host.applyCodeAction(FILE, { startLine: 1, endLine: 1 }, 'source.organizeImports', undefined), []);
+	});
+
 	test('a file changed on disk by a CLI agent is read again before anyone is asked about it', async () => {
 		const disposables = store.add(new DisposableStore());
 		const markers = new MarkerService();

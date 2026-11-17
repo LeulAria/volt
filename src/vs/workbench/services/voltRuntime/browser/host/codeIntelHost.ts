@@ -623,6 +623,10 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 				: usable.find(({ action }) => action.isPreferred) ?? (usable.length === 1 || only?.startsWith('source') ? usable[0] : undefined);
 			if (!pick) {
 				if (!usable.length) {
+					// Nothing offers it at all (no extension for the language): not "already organized".
+					if (only === 'source.organizeImports' && !offered.actions.length && !this.hasLanguageProviders(await this.model(uri))) {
+						return 'No language service offers organize imports for this file type (no extension for the language is installed). Edit the imports directly, or run the project\'s formatter or linter with shell.';
+					}
 					return only === 'source.organizeImports' ? [] : `No ${only ?? 'code actions'} offered there.`;
 				}
 				return `${wanted ? `No action titled "${title}". ` : 'Several actions apply; pass title. '}Offered: ${usable.slice(0, 12).map(({ action }) => JSON.stringify(action.title)).join(', ')}.`;
