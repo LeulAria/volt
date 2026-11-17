@@ -68,6 +68,53 @@
 
 	//#endregion
 
+	//#region Volt: keys typed before the page can take them
+
+	/**
+	 * A starting window has nothing to type into until its page has drawn the window's last screen (whose composer is a
+	 * text area standing in for the real one): a key pressed before that went to the empty document and was lost. Plain
+	 * characters typed from the document's start are kept here instead, and the stand-in text area takes them when it is
+	 * made (`takeEarlyKeys`), so they show in its first frame and reach the composer like anything typed into it.
+	 *
+	 * Only characters: no shortcut (a key with Control, Command or Option), no composition (an input method needs its
+	 * text box) and no Enter. Listening ends when the keys are taken, when a key goes to a text box of the page (it has
+	 * what is typed from then on), when the buffer is full, or after {@link EARLY_KEYS_MS}.
+	 */
+	const EARLY_KEYS_MAX = 256;
+	const EARLY_KEYS_MS = 15_000;
+	let earlyKeys = '';
+	let earlyKeysTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+	const stopEarlyKeys = () => {
+		window.removeEventListener('keydown', onEarlyKey, true);
+		clearTimeout(earlyKeysTimer);
+	};
+	const onEarlyKey = (e: KeyboardEvent) => {
+		const target = e.target as { nodeName?: string; isContentEditable?: boolean } | null;
+		if (target && (target.isContentEditable || /^(input|textarea|select)$/i.test(target.nodeName ?? ''))) {
+			earlyKeys = '';
+			stopEarlyKeys();
+			return;
+		}
+		if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) {
+			return;
+		}
+		if (e.key === 'Backspace') {
+			earlyKeys = earlyKeys.slice(0, -1);
+		} else if (e.key.length === 1) {
+			earlyKeys += e.key;
+			if (earlyKeys.length >= EARLY_KEYS_MAX) {
+				stopEarlyKeys();
+			}
+		}
+	};
+	window.addEventListener('keydown', onEarlyKey, true);
+	earlyKeysTimer = setTimeout(() => {
+		earlyKeys = '';
+		stopEarlyKeys();
+	}, EARLY_KEYS_MS);
+
+	//#endregion
+
 	//#region Resolve Shell Environment
 
 	/**
@@ -242,6 +289,17 @@
 			 */
 			async resolveConfiguration(): Promise<ISandboxConfiguration> {
 				return resolveConfiguration;
+			},
+
+			/**
+			 * Volt: the characters typed since the document started, before the page had a text box (see above).
+			 * Taking them ends the listening: the caller's text box has the keys from now on.
+			 */
+			takeEarlyKeys(): string {
+				const typed = earlyKeys;
+				earlyKeys = '';
+				stopEarlyKeys();
+				return typed;
 			}
 		}
 	};

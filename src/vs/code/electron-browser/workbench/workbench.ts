@@ -24,6 +24,15 @@ import { EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL } from '../../../platform/w
 	const preloadGlobals: IMainWindowSandboxGlobals = (window as any).vscode; // defined by preload.ts
 	const safeProcess = preloadGlobals.process;
 
+	//#region Volt: keys typed before the first screen
+
+	// What was typed since this document started, before it had a text box (the preload script keeps the characters):
+	// the composer's stand-in text area of the window's last screen takes them, so nothing typed while the window
+	// appears is lost and its first frame shows it.
+	const takeEarlyKeys = (): string => preloadGlobals.context.takeEarlyKeys?.() ?? '';
+
+	//#endregion
+
 	//#region Volt: launch window
 
 	// The launch window's page (src/bootstrap-window.ts) loads while the main process is still starting. In the built
@@ -47,7 +56,7 @@ import { EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL } from '../../../platform/w
 			try {
 				const snapshot = JSON.parse(raw) as IVoltWindowSnapshot;
 				const before = new Set(doc.documentElement.classList);
-				if (canPaintVoltWindowSnapshot(snapshot, snapshot.key, window, undefined) && paintWindowSnapshot(doc, snapshot)) {
+				if (canPaintVoltWindowSnapshot(snapshot, snapshot.key, window, undefined) && paintWindowSnapshot(doc, snapshot, takeEarlyKeys)) {
 					launchSnapshot = { snapshot, htmlClasses: [...doc.documentElement.classList].filter(name => !before.has(name)) };
 					performance.mark('code/voltDidPaintWindowSnapshot');
 				}
@@ -396,7 +405,7 @@ import { EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL } from '../../../platform/w
 		}
 		try {
 			const snapshot = JSON.parse(configuration.voltWindowSnapshot) as IVoltWindowSnapshot;
-			if (canPaintVoltWindowSnapshot(snapshot, voltWindowSnapshotKey(configuration), window, baseTheme) && paintWindowSnapshot(document, snapshot)) {
+			if (canPaintVoltWindowSnapshot(snapshot, voltWindowSnapshotKey(configuration), window, baseTheme) && paintWindowSnapshot(document, snapshot, takeEarlyKeys)) {
 				performance.mark('code/voltDidPaintWindowSnapshot');
 				return true;
 			}
