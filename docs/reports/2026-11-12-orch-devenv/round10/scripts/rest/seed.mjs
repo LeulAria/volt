@@ -1,0 +1,35 @@
+// ADEMark seeded state: n finished threads, each `replay:seed` answered by the replay server. The test window must
+// have the arena project selected (setup.sh, then pick ~/.volt-r10/rest/arena once in the project picker).
+//   node seed.mjs [n=5]
+import { cdp, focusComposer, newChat, paste, requireClaudeModel, sleep } from './lib.mjs';
+
+const n = Number(process.argv[2] ?? 5);
+const marker = `[...document.querySelectorAll('.volt-agent-editor-main')].filter(e => e.offsetParent).some(m => m.textContent.includes('unchanged'))`;
+const c = await cdp();
+for (let i = 0; i < n; i++) {
+	await newChat(c);
+	await sleep(1500);
+	if (!await focusComposer(c)) {
+		throw new Error('no composer');
+	}
+	await requireClaudeModel(c);
+	// Pasted, as ADEMark's `timed.send` pastes (a paste starts no Tab predictor; typing would).
+	await paste(c, 'replay:seed');
+	await sleep(500);
+	await c.key('Enter', 'Enter', 13, 0, '\r');
+	let ok = false;
+	for (let t = 0; t < 150 && !ok; t++) {
+		await sleep(200);
+		ok = await c.evaluate(marker);
+		// A built app may ask before the seed's command runs (Supervised): approve it, as a user seeding would.
+		if (!ok && t % 5 === 4) {
+			await c.evaluate(`[...document.querySelectorAll('.volt-agent-editor-main button, .volt-agent-editor-main .monaco-button, .volt-agent-editor-main [role=button]')].find(b => b.offsetParent && /^Run\b/.test((b.textContent || '').trim()))?.click()`);
+		}
+	}
+	console.log(`thread ${i + 1}: ${ok ? 'seeded' : 'no seed reply in 30 s'}`);
+	if (!ok) {
+		throw new Error('seed failed');
+	}
+	await sleep(1500);
+}
+c.close();
