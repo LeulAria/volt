@@ -255,6 +255,14 @@ suite('Volt host tool sandbox classes', () => {
 			assert.strictEqual(page(url, granted), undefined, `${url} on a granted port`);
 		}
 		assert.match(page('http://localhost:3001', granted) ?? '', /not granted/);
+		// B-16b: `localhost.` (a trailing dot) is this machine too. It was judged as a host name, which the
+		// host rule lets through on any port: a sandboxed chat's browser reached every local server (a CDP port).
+		for (const url of ['http://localhost.:9222/json', 'http://LOCALHOST.:9222', 'http://app.localhost.:9222/', 'http://localhost..:9222/', 'ws://localhost.:9222/devtools']) {
+			assert.match(page(url) ?? '', /local server on a port this chat's sandbox was not granted/, url);
+			assert.match(page(url, granted) ?? '', /not granted/, `${url}: another port than the granted ones`);
+		}
+		assert.strictEqual(page('http://localhost.:3000/', granted), undefined, 'a granted port, written with the dot');
+		assert.ok(page('localhost.:9222'), 'without a scheme it is refused as well');
 		assert.match(page('https://example.com') ?? '', /network is off/);
 		assert.match(page('//example.com/x') ?? '', /network is off/, 'a scheme-relative URL is another site');
 		assert.match(page('example.com') ?? '', /network is off/);
