@@ -15,7 +15,7 @@ import { allEnforcement, ISandboxBackendCapabilities, ISandboxLayerState, ISandb
 import { denialKindForOperation } from '../common/sandboxDenials.js';
 import { IResolvedSandboxPolicy } from '../common/sandboxResolved.js';
 import { SandboxDimension } from '../common/sandboxSchema.js';
-import { buildSeatbeltProfile, MDNS_SOCKET, parseSeatbeltLogLine, SANDBOX_EXEC_PATH, SEATBELT_FDS, SEATBELT_PROLOGUE, SEATBELT_TAG_PREFIX } from '../common/seatbelt.js';
+import { buildSeatbeltProfile, MDNS_SOCKET, parseSeatbeltLogLine, SANDBOX_EXEC_PATH, SEATBELT_FDS, seatbeltLauncherEnv, SEATBELT_PROLOGUE, SEATBELT_TAG_PREFIX } from '../common/seatbelt.js';
 import { ISandboxBackend, ISandboxEvidence, ISandboxLaunchOptions, ISandboxLaunchSpec, SandboxConfirmation, SandboxFault } from './sandboxBackends.js';
 import { binaryDigest, osBuild, ProbeCache } from './sandboxProbeCache.js';
 
@@ -321,7 +321,8 @@ export class SeatbeltBackend implements ISandboxBackend {
 			// The helper becomes sandbox-exec (same pid, same fds), its own responsible process.
 			command: disclaim ? helper : SANDBOX_EXEC_PATH,
 			args: disclaim ? ['spawn', SANDBOX_EXEC_PATH, ...sandboxArgs] : sandboxArgs,
-			env: { ...policy.env, VOLT_SANDBOX_TAG: options.tag },
+			// Without `DYLD_*`: the launcher is not sandboxed yet, and dyld would act on them in the helper.
+			env: { ...seatbeltLauncherEnv(policy.env), VOLT_SANDBOX_TAG: options.tag },
 			cwd: policy.cwd,
 			// SEATBELT_FDS: fd 3 carries the prologue's ready line out, fd 4 the go byte in.
 			extraStdio: ['pipe', 'pipe'],

@@ -644,6 +644,31 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		assert.ok(result.stdout.includes(`HOME=${f.home}`), 'the real home folder');
 	});
 
+	macTest('ENV-INJECT-1: dyld variables in a launch\'s own environment (an MCP server\'s or a task\'s `env`) are never loaded by the launcher outside the sandbox', async () => {
+		// A library whose constructor writes outside the workspace: whatever loads it unsandboxed leaves the marker.
+		const source = join(f.ws, 'inject.c');
+		const library = join(f.ws, 'inject.dylib');
+		const marker = join(f.outside, 'pwned-preload');
+		await fs.writeFile(source, `#include <stdio.h>\n__attribute__((constructor)) static void pwn(void) { FILE *f = fopen("${marker}", "a"); if (f) { fputs("x", f); fclose(f); } }\n`);
+		const compiled = (() => { try { execFileSync('/usr/bin/cc', ['-dynamiclib', '-o', library, source], { stdio: 'ignore' }); return true; } catch { return false; } })();
+		try {
+			for (const policy of [workspace(), agent(false)]) {
+				// A library that does not exist makes dyld abort the program it is inserted into: before, the helper died and nothing ran.
+				for (const inserted of [join(f.ws, 'no-such.dylib'), ...(compiled ? [library] : [])]) {
+					const result = await sh(policy, 'env', { env: { DYLD_INSERT_LIBRARIES: inserted, DYLD_LIBRARY_PATH: f.ws, DYLD_FRAMEWORK_PATH: f.ws, PLAIN_SETTING: 'kept' } });
+					assert.strictEqual(result.exitCode, 0, `${policy.name}: ${result.stderr}`);
+					assert.ok(result.stdout.includes('PLAIN_SETTING=kept'), `${policy.name}: the rest of the launch's environment passes`);
+					assert.ok(!await exists(marker), `${policy.name}: the library ran outside the sandbox`);
+				}
+			}
+			await assertHostUnchanged();
+		} finally {
+			for (const path of [source, library, marker]) {
+				await fs.rm(path, { force: true });
+			}
+		}
+	});
+
 	// --- Git internals: `.git` is an allow list (B-03, INV-15) ------------------------------------
 
 	/** A real repository with one commit and a linked worktree (so `.git/worktrees/<name>/` exists), made on the host. */

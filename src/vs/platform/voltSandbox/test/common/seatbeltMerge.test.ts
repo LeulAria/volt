@@ -14,7 +14,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { IResolvedPattern, IResolvedSandboxPolicy } from '../../common/sandboxResolved.js';
-import { buildSeatbeltProfile } from '../../common/seatbelt.js';
+import { buildSeatbeltProfile, seatbeltLauncherEnv } from '../../common/seatbelt.js';
 import { forAll, Gen } from './seededGen.js';
 import { buildReferenceSeatbeltProfile } from './seatbeltReference.js';
 
@@ -138,6 +138,12 @@ function randomPolicy(gen: Gen): IResolvedSandboxPolicy {
 suite('Volt sandbox Seatbelt regex merging (PERF-SB)', () => {
 
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('ENV-INJECT-1: the launcher starts without dyld variables, and with everything else of the run\'s environment', () => {
+		const env = { PATH: '/usr/bin:/bin', HOME: '/Users/u', DYLD_INSERT_LIBRARIES: '/ws/evil.dylib', DYLD_LIBRARY_PATH: '/ws', DYLD_FRAMEWORK_PATH: '/ws', DYLD_FALLBACK_LIBRARY_PATH: '/ws', dyld_lower: 'kept', NODE_OPTIONS: '--max-old-space-size=4096', MY_DYLD_SETTING: 'kept' };
+		assert.deepStrictEqual(seatbeltLauncherEnv(env), { PATH: '/usr/bin:/bin', HOME: '/Users/u', dyld_lower: 'kept', NODE_OPTIONS: '--max-old-space-size=4096', MY_DYLD_SETTING: 'kept' });
+		assert.strictEqual(Object.keys(env).length, 9, 'the run\'s own environment is not changed');
+	});
 
 	test('PERF-SB law: merged profiles match exactly the paths the unmerged profile did, rule by rule', () => {
 		forAll('merge equivalence', gen => {

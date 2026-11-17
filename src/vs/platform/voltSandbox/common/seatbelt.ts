@@ -613,6 +613,18 @@ export function parseSeatbeltLogLine(line: string): ISeatbeltViolation | undefin
 	};
 }
 
+/**
+ * The environment the launcher itself starts with. The launcher (Volt's helper, then
+ * `/usr/bin/sandbox-exec`) runs outside the sandbox until the profile is applied, and dyld acts on
+ * `DYLD_*` in any program that is not a platform binary: a `DYLD_INSERT_LIBRARIES` from a launch's
+ * own environment (an MCP server's `env` in a repository's config, a task's) would be loaded into
+ * the helper, unsandboxed. They are left out here. Nothing a workload had is lost: sandbox-exec is
+ * a platform binary, so dyld already removed every `DYLD_*` before the workload started.
+ */
+export function seatbeltLauncherEnv(env: Readonly<Record<string, string>>): Record<string, string> {
+	return Object.fromEntries(Object.entries(env).filter(([name]) => !name.startsWith('DYLD_')));
+}
+
 /** File descriptors of the launch protocol (F.5), in `extraStdio` order from fd 3. */
 export const SEATBELT_FDS = { status: 3, go: 4 } as const;
 
