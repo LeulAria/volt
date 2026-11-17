@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { declarationLineIn, declarationsOnly, declaredNameOn, enclosingName, ICodeIntelHost, ICodeLocation, ICodeNavIndex, outlineSymbols, runCodeAction, runCodeNav } from '../../browser/tools/codeTools.js';
+import { declarationLineIn, declarationsOnly, declaredNameOn, enclosingName, ICodeIntelHost, ICodeLocation, ICodeNavIndex, IDiagnostic, outlineSymbols, runCodeAction, runCodeNav, runDiagnostics } from '../../browser/tools/codeTools.js';
 
 suite('code_nav answers', () => {
 
@@ -153,6 +153,26 @@ suite('code_nav answers', () => {
 		assert.strictEqual(none.isError, true);
 		assert.doesNotMatch(none.text, /other/);
 		assert.doesNotMatch((await runCodeNav(lsp([other]), root, { op: 'workspace_symbols', query: 'PriceRule' }, index([]))).text, /other/);
+	});
+
+	test('diagnostics never says "no errors" for a file nothing checks, or for a project it only knows the open files of', async () => {
+		const go = URI.file('/repo/api/refund.go');
+		const withUnchecked = (found: IDiagnostic[]): ICodeIntelHost => ({ ...host([]), diagnostics: async () => found, unchecked: async uris => uris.filter(uri => uri.path.endsWith('.go') || uri.path.endsWith('.py')) });
+		const none = await runDiagnostics(withUnchecked([]), root, { paths: ['api/refund.go'] });
+		assert.strictEqual(none.isError, true);
+		assert.strictEqual(none.text, 'Not checked: api/refund.go. No language service in Volt covers this file (no extension for the language is installed), so this says nothing about its errors. Run `go vet ./...` (or `go build ./...`) with your shell tool.');
+		const mixed = await runDiagnostics(withUnchecked([]), root, { paths: ['src/a.ts', 'shop/refund.py'] });
+		assert.ok(!mixed.isError);
+		assert.match(mixed.text, /^No errors in src\/a\.ts\.\nNot checked: shop\/refund\.py\. .*py_compile/);
+		const found = await runDiagnostics(withUnchecked([{ uri: URI.file('/repo/src/a.ts'), line: 4, column: 9, severity: 'error', message: 'Cannot find name \'x\'.', source: 'ts', code: '2304' }]), root, { paths: ['src/a.ts', 'api/refund.go'] });
+		assert.match(found.text, /^1 error, 0 other:\nsrc\/a\.ts:4:9 error 2304: Cannot find name 'x'\. \(ts\)\nNot checked: api\/refund\.go\./);
+		void go;
+		// A checked file with nothing to report is still a plain answer.
+		assert.strictEqual((await runDiagnostics(withUnchecked([]), root, { paths: ['src/a.ts'] })).text, 'No errors in src/a.ts.');
+		// No paths: what the language services have open, said as such.
+		const all = await runDiagnostics(withUnchecked([]), root, {});
+		assert.match(all.text, /^No errors in the files the language services have open\. That is not the whole project/);
+		assert.doesNotMatch(all.text, /in the workspace/);
 	});
 
 	test('a rename that would reach outside the project changes nothing', async () => {

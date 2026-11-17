@@ -71,6 +71,13 @@ export function confineCodeIntel(host: ICodeIntelHost, nav: ICodeNavIndex | unde
 		lspAllowed: uri => host.lspAllowed(uri),
 		wordAt: (uri, line, column) => ifReadable(uri, () => host.wordAt(uri, line, column), undefined),
 	};
+	if (host.unchecked) {
+		const unchecked = host.unchecked;
+		confined.unchecked = async uris => {
+			const flags = await Promise.all(uris.map(uri => readable(uri)));
+			return unchecked.call(host, uris.filter((_, index) => flags[index]));
+		};
+	}
 	const { fileText, implementations, typeDefinitions, hover, workspaceSymbols, calls, typeHierarchy, rename, format, codeActions, applyCodeAction } = host;
 	if (fileText) {
 		confined.fileText = (uri: URI) => ifReadable(uri, () => fileText.call(host, uri), undefined);

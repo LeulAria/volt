@@ -96,6 +96,11 @@ export interface ICodeIntelHost {
 	columnOf(uri: URI, line: number, symbol: string): Promise<number | undefined>;
 	/** Whether language servers may be asked about this file (Settings > Code Intelligence). */
 	lspAllowed(uri: URI): boolean;
+	/**
+	 * Of these files, the ones no language service in the window reports on (no extension for the
+	 * language is installed): for them "no errors" would say nothing. Asked after {@link diagnostics}.
+	 */
+	unchecked?(uris: readonly URI[]): Promise<URI[]>;
 	/** The identifier at a position, read from disk (no language server involved). */
 	wordAt(uri: URI, line: number, column: number): Promise<string | undefined>;
 	// The rest is optional: a host that cannot answer (the agent server without a window) leaves it out.
@@ -216,9 +221,21 @@ export async function runDiagnostics(host: ICodeIntelHost, root: URI | undefined
 	}
 	try {
 		const found = await host.diagnostics(checked.length ? checked : undefined, severity);
+		// Files of a language nothing here checks: never "no errors" for them.
+		const unchecked = checked.length && host.unchecked ? await host.unchecked(checked).catch(() => []) : [];
+		const skipped = unchecked.length ? notCheckedNote(unchecked.map(uri => displayPath(root, uri))) : '';
 		if (!found.length) {
-			const scope = uris.length ? uris.map(uri => displayPath(root, uri)).join(', ') : 'the workspace';
-			return { callId: '', name: 'diagnostics', kind: 'read', text: `No ${severity === 'all' ? 'problems' : `${severity}s`} in ${scope}.` };
+			if (unchecked.length && unchecked.length === checked.length) {
+				return fail('diagnostics', skipped);
+			}
+			const noun = severity === 'all' ? 'problems' : `${severity}s`;
+			if (!uris.length) {
+				// Language services report on open documents only; an agent window has few.
+				return { callId: '', name: 'diagnostics', kind: 'read', text: `No ${noun} in the files the language services have open. That is not the whole project: they check a file once it is open in a tab or named here, so pass paths for the files you changed, and run the project's type checker or build for everything.` };
+			}
+			const covered = new Set(unchecked.map(uri => uri.toString()));
+			const scope = uris.filter(uri => !covered.has(uri.toString())).map(uri => displayPath(root, uri)).join(', ');
+			return { callId: '', name: 'diagnostics', kind: 'read', text: `No ${noun} in ${scope}.${skipped ? `\n${skipped}` : ''}` };
 		}
 		const lines = found.slice(0, MAX_DIAGNOSTICS).map(item => {
 			const code = item.code ? ` ${item.code}` : '';
@@ -227,10 +244,32 @@ export async function runDiagnostics(host: ICodeIntelHost, root: URI | undefined
 		});
 		const more = found.length > MAX_DIAGNOSTICS ? `\n[${found.length - MAX_DIAGNOSTICS} more]` : '';
 		const errors = found.filter(item => item.severity === 'error').length;
-		return { callId: '', name: 'diagnostics', kind: 'read', text: `${errors} error${errors === 1 ? '' : 's'}, ${found.length - errors} other:\n${lines.join('\n')}${more}` };
+		return { callId: '', name: 'diagnostics', kind: 'read', text: `${errors} error${errors === 1 ? '' : 's'}, ${found.length - errors} other:\n${lines.join('\n')}${more}${skipped ? `\n${skipped}` : ''}` };
 	} catch (err) {
 		return fail('diagnostics', errorText(err));
 	}
+}
+
+/** The project's own check for a file type no language service covers here. */
+const OWN_CHECKS: readonly [RegExp, string][] = [
+	[/\.py$/i, '`python3 -m py_compile <file>` for syntax, or the project\'s linter or type checker (ruff, pyright, mypy)'],
+	[/\.go$/i, '`go vet ./...` (or `go build ./...`)'],
+	[/\.rs$/i, '`cargo check`'],
+	[/\.(?:java|kt|kts)$/i, 'the project\'s build (gradle or maven)'],
+	[/\.(?:c|cc|cpp|h|hpp)$/i, 'the project\'s build'],
+	[/\.cs$/i, '`dotnet build`'],
+	[/\.rb$/i, '`ruby -c <file>` or rubocop'],
+	[/\.php$/i, '`php -l <file>`'],
+	[/\.swift$/i, '`swift build`'],
+];
+
+/**
+ * Why files were not checked and what does check them. Without a language extension the tool
+ * waited 3 s and answered "No errors in api/refund.go" for a file that does not compile.
+ */
+export function notCheckedNote(paths: readonly string[]): string {
+	const hints = [...new Set(paths.map(path => OWN_CHECKS.find(([pattern]) => pattern.test(path))?.[1] ?? 'the project\'s build, type checker or linter'))];
+	return `Not checked: ${paths.slice(0, 8).join(', ')}${paths.length > 8 ? ` and ${paths.length - 8} more` : ''}. No language service in Volt covers ${paths.length === 1 ? 'this file' : 'these files'} (no extension for the language is installed), so this says nothing about ${paths.length === 1 ? 'its' : 'their'} errors. Run ${hints.join('; ')} with your shell tool.`;
 }
 
 interface IResolvedPosition {

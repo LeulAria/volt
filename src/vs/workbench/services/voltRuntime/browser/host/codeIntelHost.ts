@@ -389,10 +389,26 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	async diagnostics(uris: readonly URI[] | undefined, severity: 'error' | 'warning' | 'all'): Promise<IDiagnostic[]> {
 		const severities = severity === 'error' ? MarkerSeverity.Error : severity === 'warning' ? MarkerSeverity.Error | MarkerSeverity.Warning : MarkerSeverity.Error | MarkerSeverity.Warning | MarkerSeverity.Info;
 		if (!uris?.length) {
-			return this.markerService.read({ severities }).slice(0, 500).map(toDiagnostic);
+			// The open documents a language service is asked about directly have no markers (TypeScript
+			// outside editor tabs): with markers alone, a project chat's "all problems" was always empty.
+			const probed = [...this.open.keys()].filter(uri => PROBED_LANGUAGES.has(this.open.get(uri)!.ref.object.textEditorModel.getLanguageId()) && !this.markerService.read({ resource: uri, take: 1 }).length);
+			await Promise.all(probed.map(uri => this.freshen(uri).catch(() => undefined)));
+			return [...this.markerService.read({ severities }).slice(0, 500).map(toDiagnostic), ...probed.flatMap(uri => this.currentErrors(uri, severity).map(item => item.diagnostic))];
 		}
 		await Promise.all(uris.map(uri => this.freshen(uri)));
 		return uris.flatMap(uri => this.currentErrors(uri, severity).map(item => item.diagnostic));
+	}
+
+	async unchecked(uris: readonly URI[]): Promise<URI[]> {
+		const out: URI[] = [];
+		for (const uri of uris) {
+			const model = await this.model(uri).catch(() => undefined);
+			// Nothing reports on it and no language provider answers for it: no extension knows the language.
+			if (model && !this.hasLanguageProviders(model) && !this.markerService.read({ resource: uri, take: 1 }).length && !probedErrors.has(uri)) {
+				out.push(uri);
+			}
+		}
+		return out;
 	}
 
 	async definitions(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
