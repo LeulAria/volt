@@ -534,7 +534,7 @@ async function positional(host: ICodeIntelHost, root: URI, op: CodeNavOp, positi
 			}
 			// The language server only looks in the projects it loaded: an interface in a shared
 			// package had "no implementations" while nine classes in the app implement it.
-			const named = position.name && nav?.implementations ? await nav.implementations(root, position.name) ?? [] : [];
+			const named = await namedImplementations(host, root, position, nav);
 			const unseen = await unseenImplementations(host, root, position, named, nav);
 			if (named.length) {
 				return text(`${locations(root, 'implementation', named, FROM_INDEX).text}${unseen}`);
@@ -543,16 +543,21 @@ async function positional(host: ICodeIntelHost, root: URI, op: CodeNavOp, positi
 		}
 		case 'hover': {
 			const hover = position.column && host.hover ? await host.hover(uri, position.line, position.column) : undefined;
-			return text(hover ? `${where(root, position)}:\n${hover}` : `No type information at ${where(root, position)}${noLspNote(lsp)}.`);
+			if (hover) {
+				return text(`${where(root, position)}:\n${hover}`);
+			}
+			// No language server for this language: what the symbol's declaration says.
+			const declared = await declaredSignature(host, root, position, nav);
+			return text(declared ?? `No type information at ${where(root, position)}${noLspNote(lsp)}.`);
 		}
 		case 'inspect':
 			return inspect(host, root, position, nav, lsp);
 		case 'callers':
 		case 'callees':
-			return callHierarchy(host, root, position, op, lsp, depth);
+			return callHierarchy(host, root, position, op, lsp, depth, nav);
 		case 'supertypes':
 		case 'subtypes':
-			return typeHierarchy(host, root, position, op, lsp);
+			return typeHierarchy(host, root, position, op, lsp, nav);
 		default:
 			return fail('code_nav', `Unknown op ${op}.`);
 	}
@@ -822,23 +827,26 @@ async function workspaceSymbols(host: ICodeIntelHost, root: URI, query: string |
 	return text(`No symbols matching "${query}". Try grep or find_symbol with part of the name.`);
 }
 
-async function callHierarchy(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'callers' | 'callees', lsp: boolean, depth: number | undefined): Promise<IToolResult> {
-	const edges = position.column && host.calls ? await host.calls(position.uri, position.line, position.column, op === 'callers' ? 'incoming' : 'outgoing') : undefined;
-	if (!edges) {
+async function callHierarchy(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'callers' | 'callees', lsp: boolean, depth: number | undefined, nav?: ICodeNavIndex): Promise<IToolResult> {
+	const calls = callSource(host, root, nav, op === 'callers' ? 'incoming' : 'outgoing');
+	const answer = await calls(position);
+	if (!answer) {
 		return text(`No call hierarchy for ${where(root, position)}${noLspNote(lsp)}. ${op === 'callers' ? 'Use op references' : 'Read the function body'} instead.`);
 	}
+	const edges = answer.edges;
+	const note = answer.byName ? BY_NAME : '';
 	if (!edges.length) {
-		return text(op === 'callers' ? `Nothing calls ${where(root, position)}.` : `${where(root, position)} calls nothing the language server can resolve.`);
+		return text(op === 'callers' ? `Nothing calls ${where(root, position)}${note}.` : `${where(root, position)} calls nothing ${answer.byName ? `declared in this project${note}` : 'the language server can resolve'}.`);
 	}
 	const levels = Math.max(1, Math.min(MAX_CALL_DEPTH, Math.floor(depth ?? 1)));
 	if (levels > 1) {
-		return callTree(host, root, position, op, edges, levels);
+		return callTree(host, root, position, op, edges, levels, calls, note);
 	}
-	const named = op === 'callers' ? await Promise.all(edges.slice(0, MAX_LOCATIONS).map(edge => namedSites(host, edge))) : [];
+	const named = op === 'callers' && !answer.byName ? await Promise.all(edges.slice(0, MAX_LOCATIONS).map(edge => namedSites(host, edge))) : [];
 	const lines = edges.slice(0, MAX_LOCATIONS).map((edge, index) => named[index]
 		? `${displayPath(root, edge.uri)}: calls in ${named[index]}`
-		: `${edge.kind} ${edge.container ? `${edge.container}.` : ''}${edge.name}  ${displayPath(root, edge.uri)}:${edge.line}${edge.sites.length ? `  (${op === 'callers' ? 'calls at' : 'called at'} line${edge.sites.length === 1 ? '' : 's'} ${edge.sites.slice(0, 6).join(', ')})` : ''}`);
-	return text(`${edges.length} ${op === 'callers' ? 'caller' : 'callee'}${edges.length === 1 ? '' : 's'} of ${position.name ?? where(root, position)}:\n${lines.join('\n')}${edges.length > MAX_LOCATIONS ? `\n[${edges.length - MAX_LOCATIONS} more]` : ''}`);
+		: `${edge.kind} ${edge.container ? `${edge.container}.` : ''}${edge.name}  ${displayPath(root, edge.uri)}:${edge.line}${edge.sites.length ? `  (${op === 'callers' ? 'calls at' : 'called at'} line${edge.sites.length === 1 ? '' : 's'} ${edge.sites.slice(0, 6).join(', ')})` : ''}${answer.byName && edge.detail ? `  ${edge.detail}` : ''}`);
+	return text(`${edges.length} ${op === 'callers' ? 'caller' : 'callee'}${edges.length === 1 ? '' : 's'} of ${position.name ?? where(root, position)}${note}:\n${lines.join('\n')}${edges.length > MAX_LOCATIONS ? `\n[${edges.length - MAX_LOCATIONS} more]` : ''}`);
 }
 
 /**
@@ -846,8 +854,7 @@ async function callHierarchy(host: ICodeIntelHost, root: URI, position: IResolve
  * is one call instead of one per level. Each function is expanded once; the walk stops at the
  * depth, the node budget or the deadline, and says so.
  */
-async function callTree(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'callers' | 'callees', first: readonly ICallEdge[], levels: number): Promise<IToolResult> {
-	const direction = op === 'callers' ? 'incoming' : 'outgoing';
+async function callTree(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'callers' | 'callees', first: readonly ICallEdge[], levels: number, calls: CallSource, note: string): Promise<IToolResult> {
 	const deadline = Date.now() + CALL_TREE_DEADLINE_MS;
 	const seen = new Set<string>([`${position.uri.toString()}:${position.line}`]);
 	const lines: string[] = [];
@@ -866,7 +873,7 @@ async function callTree(host: ICodeIntelHost, root: URI, position: IResolvedPosi
 			const indent = '  '.repeat(level - 1);
 			// A module "caller" is the code at the top of a file: calls from object members (route
 			// handlers), which nothing calls by name. Each one names its own sites, so it is never "repeated".
-			const named = op === 'callers' ? await namedSites(host, edge) : undefined;
+			const named = op === 'callers' && !note ? await namedSites(host, edge) : undefined;
 			if (named) {
 				lines.push(`${indent}${displayPath(root, edge.uri)}: calls in ${named}`);
 				continue;
@@ -880,7 +887,7 @@ async function callTree(host: ICodeIntelHost, root: URI, position: IResolvedPosi
 			if (level >= levels) {
 				continue;
 			}
-			const next = await host.calls!(edge.uri, edge.line, edge.column, direction).catch(() => undefined);
+			const next = edge.kind === 'module' && note ? undefined : (await calls(edge).catch(() => undefined))?.edges;
 			if (next && !next.length && op === 'callers') {
 				tops.push(`${edge.container ? `${edge.container}.` : ''}${edge.name} (${displayPath(root, edge.uri)}:${edge.line})`);
 				lines[lines.length - 1] += '  [no callers]';
@@ -890,7 +897,7 @@ async function callTree(host: ICodeIntelHost, root: URI, position: IResolvedPosi
 		}
 	};
 	await walk(first, 1);
-	const head = `${op === 'callers' ? 'Callers' : 'Callees'} of ${position.name ?? where(root, position)} (${where(root, position)}), ${levels} levels, ${nodes} functions:`;
+	const head = `${op === 'callers' ? 'Callers' : 'Callees'} of ${position.name ?? where(root, position)} (${where(root, position)}), ${levels} levels, ${nodes} functions${note}:`;
 	const notes = [
 		...(tops.length ? [`Nothing calls these (entry points such as route handlers, exports used by name, or tests): ${tops.join(', ')}.`] : []),
 		...(cut ? [`Stopped early (${nodes >= MAX_CALL_TREE_NODES ? `${MAX_CALL_TREE_NODES} functions` : 'time limit'}); ask again from a deeper function for the rest.`] : []),
@@ -899,10 +906,12 @@ async function callTree(host: ICodeIntelHost, root: URI, position: IResolvedPosi
 	return text(`${head}\n${lines.join('\n')}\n${notes.join('\n')}`);
 }
 
-async function typeHierarchy(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'supertypes' | 'subtypes', lsp: boolean): Promise<IToolResult> {
+async function typeHierarchy(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'supertypes' | 'subtypes', lsp: boolean, nav?: ICodeNavIndex): Promise<IToolResult> {
 	const types = position.column && host.typeHierarchy ? await host.typeHierarchy(position.uri, position.line, position.column, op) : undefined;
 	if (!types) {
-		return text(`No type hierarchy for ${where(root, position)}${noLspNote(lsp)}.${op === 'subtypes' ? ' Try op implementations.' : ''}`);
+		// No type hierarchy provider (TypeScript has none; Python, Go and others without their extension): the declarations say.
+		const declared = await declaredHierarchy(host, root, position, op, nav);
+		return declared ?? text(`No type hierarchy for ${where(root, position)}${noLspNote(lsp)}.${op === 'subtypes' ? ' Try op implementations.' : ''}`);
 	}
 	if (!types.length) {
 		return text(`${position.name ?? where(root, position)} has no ${op}.`);
@@ -910,6 +919,294 @@ async function typeHierarchy(host: ICodeIntelHost, root: URI, position: IResolve
 	const lines = types.slice(0, MAX_LOCATIONS).map(type => `${type.kind} ${type.name}${type.detail ? ` ${type.detail}` : ''}  ${displayPath(root, type.uri)}:${type.line}`);
 	return text(`${types.length} ${op === 'supertypes' ? 'supertype' : 'subtype'}${types.length === 1 ? '' : 's'} of ${position.name ?? where(root, position)}:\n${lines.join('\n')}`);
 }
+
+//#region answers without a language server
+
+const BY_NAME = ' (by name, from the syntax tree and the code index: not type-checked; no language server answers this here)';
+
+interface ICallTarget {
+	readonly uri: URI;
+	readonly line: number;
+	readonly column?: number;
+	readonly name?: string;
+}
+
+type CallSource = (target: ICallTarget) => Promise<{ readonly edges: ICallEdge[]; readonly byName: boolean } | undefined>;
+
+/**
+ * Who calls a function, or what it calls: the language server's call hierarchy, else by name from
+ * the index and the syntax tree. Python, Go, Rust and the rest have no call hierarchy until their
+ * extension is installed, and callers / callees / impact answered "No call hierarchy" for them.
+ */
+function callSource(host: ICodeIntelHost, root: URI, nav: ICodeNavIndex | undefined, direction: 'incoming' | 'outgoing'): CallSource {
+	return async target => {
+		const fromServer = target.column && host.calls ? await host.calls(target.uri, target.line, target.column, direction).catch(() => undefined) : undefined;
+		if (fromServer) {
+			return { edges: fromServer, byName: false };
+		}
+		if (!nav?.structure || !target.name || !/^[\w$]+$/.test(target.name)) {
+			return undefined;
+		}
+		const edges = direction === 'incoming' ? await nameCallers(root, target.name, target, nav) : await nameCallees(host, root, target, nav);
+		return edges && { edges, byName: true };
+	};
+}
+
+const CALLABLE_KINDS: ReadonlySet<string> = new Set(['function', 'method', 'constructor']);
+const CONTAINER_KINDS: ReadonlySet<string> = new Set(['class', 'struct', 'interface', 'trait', 'impl', 'module', 'namespace', 'enum']);
+
+function smallestAround<T extends { readonly line: number; readonly endLine: number; readonly kind: string }>(symbols: readonly T[], line: number, kinds: ReadonlySet<string>): T | undefined {
+	return symbols.filter(symbol => kinds.has(symbol.kind) && symbol.line <= line && symbol.endLine >= line).sort((a, b) => (a.endLine - a.line) - (b.endLine - b.line))[0];
+}
+
+/** Functions whose body calls `name`: its whole-word uses followed by `(`, grouped by the function they sit in. */
+async function nameCallers(root: URI, name: string, declaration: ICallTarget, nav: ICodeNavIndex): Promise<ICallEdge[] | undefined> {
+	const references = await nav.references(root, name).catch(() => undefined);
+	if (!references) {
+		return undefined;
+	}
+	const call = new RegExp(`(?<![\\w$])${name.replace(/[$]/g, '\\$&')}\\s*\\(`);
+	const declares = new RegExp(`\\b(?:def|func|function|fn)\\s+(?:\\([^)]*\\)\\s*)?${name.replace(/[$]/g, '\\$&')}\\b`);
+	const uses = references.filter(ref => ref.preview && call.test(ref.preview) && !declares.test(ref.preview) && !IMPORT_LINE.test(ref.preview)
+		&& !(ref.uri.toString() === declaration.uri.toString() && ref.line === declaration.line));
+	const edges = new Map<string, ICallEdge & { sites: number[] }>();
+	for (const [, refs] of groupByFile(root, uses)) {
+		const uri = refs[0].uri;
+		const parsed = await nav.structure!(root, uri).catch(() => undefined);
+		for (const ref of refs) {
+			const owner = parsed && smallestAround(parsed.symbols, ref.line, CALLABLE_KINDS);
+			const container = owner && owner.depth > 0 ? smallestAround(parsed!.symbols.filter(symbol => symbol.depth < owner.depth), owner.line, CONTAINER_KINDS) : undefined;
+			const key = owner ? `${uri.toString()}:${owner.line}` : `${uri.toString()}:top`;
+			let edge = edges.get(key);
+			if (!edge) {
+				edge = owner
+					? { name: owner.name, kind: owner.kind, uri, line: owner.line, column: owner.column, ...(container ? { container: container.name } : {}), sites: [] }
+					: { name: 'top level', kind: 'module', uri, line: ref.line, column: 1, sites: [] };
+				edges.set(key, edge);
+			}
+			edge.sites.push(ref.line);
+		}
+	}
+	return [...edges.values()];
+}
+
+const NOT_CALLS: ReadonlySet<string> = new Set(['if', 'for', 'while', 'switch', 'return', 'catch', 'function', 'def', 'func', 'fn', 'new', 'typeof', 'await', 'yield', 'throw', 'super', 'elif', 'and', 'or', 'not', 'in', 'is', 'with', 'match', 'case', 'go', 'defer', 'select', 'range', 'print', 'len', 'make', 'append']);
+const MAX_NAMED_CALLEES = 40;
+
+/** What a function's body calls, among the functions declared in this project: `name(` in its lines, each looked up by name. */
+async function nameCallees(host: ICodeIntelHost, root: URI, target: ICallTarget, nav: ICodeNavIndex): Promise<ICallEdge[] | undefined> {
+	const [content, parsed] = await Promise.all([host.fileText?.(target.uri).catch(() => undefined), nav.structure!(root, target.uri).catch(() => undefined)]);
+	const owner = parsed?.symbols.filter(symbol => CALLABLE_KINDS.has(symbol.kind) && symbol.line <= target.line && symbol.endLine >= target.line && (!target.name || symbol.name === target.name)).sort((a, b) => (a.endLine - a.line) - (b.endLine - b.line))[0];
+	if (!content || !owner) {
+		return undefined;
+	}
+	const lines = content.split('\n');
+	const hash = /\.(?:py|pyi|rb|sh)$/i.test(target.uri.path);
+	const sites = new Map<string, number[]>();
+	for (let index = owner.line - 1; index < Math.min(owner.endLine, lines.length); index++) {
+		const code = lines[index].replace(hash ? /#.*$/ : /\/\/.*$/, '').replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
+		for (const match of code.matchAll(/(?<![\w$])([A-Za-z_$][\w$]*)\s*\(/g)) {
+			const called = match[1];
+			if (!NOT_CALLS.has(called) && !(index === owner.line - 1 && called === owner.name)) {
+				sites.set(called, [...(sites.get(called) ?? []), index + 1]);
+			}
+		}
+	}
+	const edges: ICallEdge[] = [];
+	for (const [called, at] of [...sites].slice(0, MAX_NAMED_CALLEES)) {
+		const declared = inProject(root, declarationsOnly(await nav.definitions(root, called).catch(() => undefined)) ?? []);
+		if (!declared.length) {
+			continue; // a library or built-in call
+		}
+		const chosen = declared.find(item => item.uri.toString() === target.uri.toString()) ?? declared[0];
+		edges.push({ name: called, kind: 'function', uri: chosen.uri, line: chosen.line, column: chosen.column, sites: [...new Set(at)], ...(declared.length > 1 ? { detail: `(one of ${declared.length} declarations named ${called})` } : {}) });
+	}
+	return edges;
+}
+
+/** A list of type names (`A, pkg.B<T>, C(x)`) as bare names. */
+function typeNames(list: string): string[] {
+	let flat = list;
+	for (let previous = ''; previous !== flat;) {
+		previous = flat;
+		flat = flat.replace(/<[^<>]*>/g, '');
+	}
+	return flat.split(',').filter(item => !item.includes('=')).map(item => item.replace(/\(.*$/, '').trim().split('.').at(-1) ?? '').filter(item => /^[\w$]+$/.test(item));
+}
+
+/**
+ * The types a declaration names as its parents, read from its own lines: `extends` / `implements`
+ * (TypeScript, Java, Kotlin-like), Python's `class X(A, B)`, a Go struct's or interface's embedded types.
+ */
+export function declaredSupertypes(lines: readonly string[], line: number, path: string): string[] {
+	const head = lines.slice(line - 1, line + 5).join(' ');
+	if (/\.pyi?$/i.test(path)) {
+		const bases = /^\s*class\s+\w+\s*\(([^)]*)\)/.exec(head)?.[1];
+		return bases ? [...new Set(typeNames(bases))] : [];
+	}
+	if (/\.go$/i.test(path)) {
+		if (!/^\s*type\s+\w+\s+(?:struct|interface)\s*\{\s*$/.test(lines[line - 1] ?? '')) {
+			return [];
+		}
+		const embedded: string[] = [];
+		for (let index = line; index < lines.length && !/^\}/.test(lines[index]); index++) {
+			const name = /^\s*\*?((?:\w+\.)?\w+)\s*(?:\/\/.*)?$/.exec(lines[index])?.[1];
+			if (name) {
+				embedded.push(name.split('.').at(-1)!);
+			}
+		}
+		return [...new Set(embedded)];
+	}
+	const declaration = head.split('{')[0];
+	const parents = /\bextends\s+(.+?)(?=\s+implements\b|$)/.exec(declaration)?.[1];
+	const contracts = /\bimplements\s+(.+)$/.exec(declaration)?.[1];
+	return [...new Set([...(parents ? typeNames(parents) : []), ...(contracts ? typeNames(contracts) : [])])];
+}
+
+const MAX_SUBTYPE_LEVELS = 3;
+
+/**
+ * Types that name `position`'s type as a parent, and types naming those (three levels), from the
+ * index; for a Go interface, the types whose methods (their own and their embedded types') cover it.
+ */
+async function namedImplementations(host: ICodeIntelHost, root: URI, position: IResolvedPosition, nav: ICodeNavIndex | undefined): Promise<ICodeLocation[]> {
+	if (!nav || !position.name || !/^[\w$]+$/.test(position.name)) {
+		return [];
+	}
+	const structural = /\.go$/i.test(position.uri.path) ? await goImplementors(host, root, position, nav).catch(() => undefined) : undefined;
+	if (structural) {
+		return structural;
+	}
+	if (!nav.implementations) {
+		return [];
+	}
+	const found = new Map<string, ICodeLocation>();
+	let names = [position.name];
+	const asked = new Set(names);
+	for (let level = 0; level < MAX_SUBTYPE_LEVELS && names.length && found.size < MAX_LOCATIONS; level++) {
+		const next: string[] = [];
+		for (const name of names) {
+			for (const location of await nav.implementations(root, name).catch(() => undefined) ?? []) {
+				const key = `${location.uri.toString()}:${location.line}`;
+				if (!found.has(key)) {
+					found.set(key, location);
+					const declared = /\b(?:class|interface)\s+([\w$]+)/.exec(location.preview ?? '')?.[1];
+					if (declared && !asked.has(declared)) {
+						asked.add(declared);
+						next.push(declared);
+					}
+				}
+			}
+		}
+		names = next;
+	}
+	return [...found.values()];
+}
+
+/** Go satisfies interfaces implicitly: the types that declare every method of the interface, counting the methods of types they embed. */
+async function goImplementors(host: ICodeIntelHost, root: URI, position: IResolvedPosition, nav: ICodeNavIndex): Promise<ICodeLocation[] | undefined> {
+	const lines = (await host.fileText?.(position.uri).catch(() => undefined))?.split('\n');
+	if (!lines || !/^\s*type\s+\w+\s+interface\s*\{\s*$/.test(lines[position.line - 1] ?? '')) {
+		return undefined;
+	}
+	const methods: string[] = [];
+	for (let index = position.line; index < lines.length && !/^\}/.test(lines[index]); index++) {
+		const method = /^\s*([A-Za-z_]\w*)\s*\(/.exec(lines[index])?.[1];
+		if (method) {
+			methods.push(method);
+		}
+	}
+	if (!methods.length) {
+		return undefined;
+	}
+	const receivers = new Map<string, Set<string>>();
+	for (const method of methods) {
+		const declared = new RegExp(`^func\\s*\\(\\s*(?:\\w+\\s+)?\\*?(\\w+)\\s*\\)\\s*${method}\\s*\\(`);
+		receivers.set(method, new Set((await nav.references(root, method).catch(() => undefined) ?? []).map(ref => declared.exec(ref.preview ?? '')?.[1]).filter((name): name is string => !!name)));
+	}
+	const withMethods = new Set([...receivers.values()].flatMap(set => [...set]));
+	// A struct that embeds one of those types has its methods too.
+	const embeds = new Map<string, Set<string>>();
+	for (const embedded of withMethods) {
+		const field = new RegExp(`^\\*?(?:\\w+\\.)?${embedded}$`);
+		for (const ref of await nav.references(root, embedded).catch(() => undefined) ?? []) {
+			if (!field.test((ref.preview ?? '').replace(/\s*\/\/.*$/, ''))) {
+				continue;
+			}
+			const parsed = await nav.structure?.(root, ref.uri).catch(() => undefined);
+			const owner = parsed?.symbols.filter(symbol => symbol.line < ref.line && symbol.endLine >= ref.line).sort((a, b) => (a.endLine - a.line) - (b.endLine - b.line))[0];
+			if (owner) {
+				embeds.set(owner.name, (embeds.get(owner.name) ?? new Set()).add(embedded));
+			}
+		}
+	}
+	const has = (type: string, method: string) => receivers.get(method)!.has(type) || [...(embeds.get(type) ?? [])].some(embedded => receivers.get(method)!.has(embedded));
+	const implementors = [...new Set([...withMethods, ...embeds.keys()])].filter(type => methods.every(method => has(type, method)));
+	const out: ICodeLocation[] = [];
+	for (const type of implementors) {
+		const declared = (declarationsOnly(await nav.definitions(root, type).catch(() => undefined)) ?? []).find(item => new RegExp(`^type\\s+${type}\\b`).test(item.preview ?? ''));
+		if (declared) {
+			out.push(declared);
+		}
+	}
+	return out;
+}
+
+/** supertypes / subtypes read from declarations when no type hierarchy provider answers. */
+async function declaredHierarchy(host: ICodeIntelHost, root: URI, position: IResolvedPosition, op: 'supertypes' | 'subtypes', nav: ICodeNavIndex | undefined): Promise<IToolResult | undefined> {
+	const name = position.name;
+	if (!nav || !name) {
+		return undefined;
+	}
+	const note = ' (read from the declarations, by name: no type hierarchy provider answers this here)';
+	if (op === 'subtypes') {
+		const found = await namedImplementations(host, root, position, nav);
+		return found.length ? locations(root, 'subtype', found, note) : text(`No subtypes of ${name} found${note}.`);
+	}
+	const lines = (await host.fileText?.(position.uri).catch(() => undefined))?.split('\n');
+	if (!lines) {
+		return undefined;
+	}
+	const parents = declaredSupertypes(lines, position.line, position.uri.path);
+	const go = /\.go$/i.test(position.uri.path) ? ' Interfaces a Go type satisfies are not declared on it: ask implementations of the interface.' : '';
+	if (!parents.length) {
+		return text(`${name} declares no supertypes${note}.${go}`);
+	}
+	const resolved = await Promise.all(parents.map(async parent => {
+		const declared = inProject(root, declarationsOnly(await nav.definitions(root, parent).catch(() => undefined)) ?? []);
+		const type = declared.find(item => /\b(?:class|interface|type|struct|trait|enum)\b/.test(item.preview ?? '')) ?? declared[0];
+		return type ? `${parent}  ${displayPath(root, type.uri)}:${type.line}` : `${parent}  (not declared in this project)`;
+	}));
+	return text(`${parents.length} supertype${parents.length === 1 ? '' : 's'} of ${name}${note}:\n${resolved.join('\n')}${go ? `\n${go.trim()}` : ''}`);
+}
+
+const MAX_SIGNATURE_LINES = 6;
+
+/** hover without a language server: the declaration's own lines (its doc comment and signature). */
+async function declaredSignature(host: ICodeIntelHost, root: URI, position: IResolvedPosition, nav: ICodeNavIndex | undefined): Promise<string | undefined> {
+	if (!nav || !position.name || !/^[\w$]+$/.test(position.name)) {
+		return undefined;
+	}
+	const declared = inProject(root, declarationsOnly(await nav.definitions(root, position.name).catch(() => undefined)) ?? []);
+	const chosen = declared.find(item => item.uri.toString() === position.uri.toString() && item.line === position.line) ?? declared.find(item => item.uri.toString() === position.uri.toString()) ?? declared[0];
+	const lines = chosen && (await host.fileText?.(chosen.uri).catch(() => undefined))?.split('\n');
+	if (!chosen || !lines) {
+		return undefined;
+	}
+	let end = chosen.line;
+	while (end < lines.length && end - chosen.line + 1 < MAX_SIGNATURE_LINES && !/[{:;]\s*$|\)\s*(?:->[^{]*)?$/.test(lines[end - 1])) {
+		end++;
+	}
+	// Python's docstring sits under the signature.
+	if (/^\s*(?:"""|''')/.test(lines[end] ?? '')) {
+		end++;
+	}
+	const first = docStart(lines, chosen.line);
+	const shown = lines.slice(first - 1, end).map((value, index) => `${String(first + index).padStart(5)}  ${value}`).join('\n');
+	return `${where(root, position)}: no type information from a language server; ${position.name} is declared at ${displayPath(root, chosen.uri)}:${chosen.line} (from the code index${declared.length > 1 ? `, one of ${declared.length} declarations` : ''}):\n${shown}`;
+}
+
+//#endregion
 
 //#region body, impact, structural
 
@@ -1090,14 +1387,13 @@ interface ICallerNode {
 	top?: boolean;
 }
 
-async function collectCallers(host: ICodeIntelHost, root: URI, position: IResolvedPosition, levels: number, deadline: number): Promise<{ nodes: ICallerNode[]; cut: boolean } | undefined> {
-	if (!position.column || !host.calls) {
+async function collectCallers(host: ICodeIntelHost, root: URI, position: IResolvedPosition, levels: number, deadline: number, nav?: ICodeNavIndex): Promise<{ nodes: ICallerNode[]; cut: boolean; byName: boolean } | undefined> {
+	const calls = callSource(host, root, nav, 'incoming');
+	const answer = await calls(position).catch(() => undefined);
+	if (!answer) {
 		return undefined;
 	}
-	const first = await host.calls(position.uri, position.line, position.column, 'incoming').catch(() => undefined);
-	if (!first) {
-		return undefined;
-	}
+	const first = answer.edges;
 	const seen = new Set<string>([`${position.uri.toString()}:${position.line}`]);
 	const nodes: ICallerNode[] = [];
 	let cut = false;
@@ -1107,7 +1403,7 @@ async function collectCallers(host: ICodeIntelHost, root: URI, position: IResolv
 				cut = true;
 				return;
 			}
-			const named = await namedSites(host, edge);
+			const named = answer.byName ? undefined : await namedSites(host, edge);
 			if (named) {
 				nodes.push({ level, label: `${displayPath(root, edge.uri)}: calls in ${named}`, uri: edge.uri, sites: edge.sites });
 				continue;
@@ -1120,7 +1416,7 @@ async function collectCallers(host: ICodeIntelHost, root: URI, position: IResolv
 			const node: ICallerNode = { level, label: `${edge.container ? `${edge.container}.` : ''}${edge.name}  ${displayPath(root, edge.uri)}:${edge.line}${edge.sites.length ? ` (calls at ${edge.sites.slice(0, 4).join(', ')})` : ''}`, uri: edge.uri, sites: edge.sites };
 			nodes.push(node);
 			if (level < levels) {
-				const next = await host.calls!(edge.uri, edge.line, edge.column, 'incoming').catch(() => undefined);
+				const next = edge.kind === 'module' && answer.byName ? undefined : (await calls(edge).catch(() => undefined))?.edges;
 				if (next && !next.length) {
 					node.top = true;
 				} else if (next?.length) {
@@ -1130,7 +1426,7 @@ async function collectCallers(host: ICodeIntelHost, root: URI, position: IResolv
 		}
 	};
 	await walk(first, 1);
-	return { nodes, cut };
+	return { nodes, cut, byName: answer.byName };
 }
 
 const IMPORT_LINE = /^\s*(?:import\b|export\s+(?:\*|\{[^}]*\}|type\s+\{)[^;]*\bfrom\b|(?:const|let|var)\s+[\w${},\s]+=\s*require\(|from\s+[\w.]+\s+import\b|use\s)/;
@@ -1150,7 +1446,7 @@ async function impact(host: ICodeIntelHost, root: URI, position: IResolvedPositi
 	const [span, lspReferences, callers, moduleImporters] = await Promise.all([
 		symbolSpan(host, root, position.uri, position.line, name, nav, lsp, content),
 		position.column ? host.references(position.uri, position.line, position.column).catch(() => []) : Promise.resolve([]),
-		collectCallers(host, root, position, levels, started + IMPACT_CALLERS_MS),
+		collectCallers(host, root, position, levels, started + IMPACT_CALLERS_MS, nav),
 		nav?.importers?.(root, position.uri, 1).catch(() => undefined),
 	]);
 	let references: readonly ICodeLocation[] = lspReferences;
@@ -1224,9 +1520,9 @@ async function impact(host: ICodeIntelHost, root: URI, position: IResolvedPositi
 	out.push(`Impact of ${name ? `\`${name}\`` : 'the symbol'} (${span.kind ? `${span.kind}, ` : ''}${where})${noLspNote(lsp)}:`);
 	if (callers?.nodes.length) {
 		const tops = callers.nodes.filter(node => node.top).length;
-		out.push(`Callers, ${levels} level${levels === 1 ? '' : 's'}${tops ? ` (${tops} with no callers: entry points or used by name)` : ''}:\n${callers.nodes.map(node => `${'  '.repeat(node.level)}${node.label}${node.top ? '  [no callers]' : ''}`).join('\n')}${callers.cut ? '\n  [stopped early; ask callers from a deeper function for the rest]' : ''}`);
+		out.push(`Callers${callers.byName ? ' by name (syntax tree, not type-checked)' : ''}, ${levels} level${levels === 1 ? '' : 's'}${tops ? ` (${tops} with no callers: entry points or used by name)` : ''}:\n${callers.nodes.map(node => `${'  '.repeat(node.level)}${node.label}${node.top ? '  [no callers]' : ''}`).join('\n')}${callers.cut ? '\n  [stopped early; ask callers from a deeper function for the rest]' : ''}`);
 	} else if (callers) {
-		out.push('Callers: none found by the language server.');
+		out.push(callers.byName ? 'Callers: none found by name.' : 'Callers: none found by the language server.');
 	}
 	const imports = [...affected.values()].filter(entry => entry.reasons.has('imports')).length;
 	const files = [...affected.values()].sort((a, b) => a.level - b.level || displayPath(root, a.uri).localeCompare(displayPath(root, b.uri)));
