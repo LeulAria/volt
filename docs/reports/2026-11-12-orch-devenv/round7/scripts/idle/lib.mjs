@@ -27,6 +27,8 @@ export const ARMS = {
 	minafter: readyPath(`${process.env.HOME}/.volt-r7/min/idle/READY`, `${process.env.HOME}/.volt-r7/min/idle/VOLT.app`),
 	// Exploration only (no timed rows): round 6's release "after" build (314da58e1ad).
 	minr6: `${process.env.HOME}/.volt-r6/min/idle/VOLT.app`,
+	// Exploration only: the base release build under its own profile (e.g. with a language server's trace on).
+	probe: readyPath(`${process.env.HOME}/.volt-r7/min/base/READY`, `${process.env.HOME}/.volt-r7/min/base/VOLT.app`),
 };
 export const PORT = Number(process.env.SMOOTH_CDP ?? 9977);
 export const REPLAY = Number(process.env.SMOOTH_REPLAY ?? 18987);
@@ -318,6 +320,8 @@ export function role(cmd) {
 	if (/\/claude( |$)/.test(cmd)) { return 'claude CLI'; }
 	if (/volt-sandbox-helper/.test(cmd)) { return 'sandbox helper'; }
 	if (/log stream/.test(cmd)) { return 'log stream'; }
+	// A Plugin helper without --type is a child of the extension host (a language server such as jsonServerMain), not main.
+	if (/Helper \(Plugin\)/.test(cmd) && !/--type=/.test(cmd)) { return /jsonServerMain/.test(cmd) ? 'json server' : 'ext host child'; }
 	if (/MacOS\/(Electron|VOLT)/.test(cmd) && !/--type=/.test(cmd)) { return 'main'; }
 	if (/voltCodeIndex|codeIndex/.test(cmd)) { return 'code index'; }
 	if (/watcher|parcel/i.test(cmd)) { return 'file watcher'; }

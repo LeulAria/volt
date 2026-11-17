@@ -1,0 +1,3 @@
+every 60000 ms (unref)  vs/platform/voltSandbox/node/sandboxLauncher.js:640:28
+    () => void this.refreshManagedPolicy().catch(() => undefined)
+2 live timers, 1 shown
