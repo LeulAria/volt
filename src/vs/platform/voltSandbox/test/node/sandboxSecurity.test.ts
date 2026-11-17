@@ -616,15 +616,28 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		const free = await canaryListener();
 		const port = free.port;
 		await free.close();
-		// With the network on the sandbox shares the host's loopback: squatting a port is the risk.
-		const open = await sh(agent(true), `${listen(0)}; ${listen(port)}`);
-		assert.ok(!open.stdout.includes('LISTENING'), `network on: ${open.stdout}`);
-		assert.ok(open.stderr.includes(`NOT-LISTENING-${port}: Operation not permitted`), `refused by the sandbox: ${open.stderr}`);
 		if (isMac) {
-			// Linux puts a network-off sandbox in its own namespace, where a listener reaches nothing outside.
-			const offline = await sh(agent(false), `${listen(0)}; ${listen(port)}`);
-			assert.ok(!offline.stdout.includes('LISTENING'), `network off: ${offline.stdout}`);
-			assert.ok(offline.stderr.includes(`NOT-LISTENING-${port}: Operation not permitted`), `refused by the sandbox: ${offline.stderr}`);
+			// On macOS the sandbox shares the host's loopback: squatting a port is the risk, network on or off.
+			for (const network of [true, false]) {
+				const result = await sh(agent(network), `${listen(0)}; ${listen(port)}`);
+				assert.ok(!result.stdout.includes('LISTENING'), `network ${network}: ${result.stdout}`);
+				assert.ok(result.stderr.includes(`NOT-LISTENING-${port}: Operation not permitted`), `refused by the sandbox: ${result.stderr}`);
+			}
+		} else {
+			// Linux: every agent launch has its own network namespace (its traffic goes through the broker
+			// route, network on or off), so a listener there is the sandbox's own: nothing on this machine
+			// reaches it. Checked from outside while it listens.
+			for (const network of [true, false]) {
+				const running = sh(agent(network), `${PERL} -MIO::Socket::INET -e '$s=IO::Socket::INET->new(Listen=>5, LocalAddr=>"0.0.0.0", LocalPort=>${port}, ReuseAddr=>1) or exit 0; print "LISTENING-${port}\n"; $|=1; sleep 3'`);
+				await new Promise(resolve => setTimeout(resolve, 1500));
+				const reached = await new Promise<boolean>(resolve => {
+					const socket = net.connect(port, '127.0.0.1');
+					socket.once('connect', () => { socket.destroy(); resolve(true); });
+					socket.once('error', () => resolve(false));
+				});
+				await running;
+				assert.ok(!reached, `network ${network}: a listener inside the sandbox was reachable from this machine`);
+			}
 		}
 		const granted = await sh(agent(true, 'claude-code', { listenPorts: [port] }), listen(port));
 		assert.ok(granted.stdout.includes(`LISTENING-${port}`), `a granted port works: ${granted.stderr}`);
@@ -941,7 +954,8 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 					'ps -axww -o pid=,command= 2>/dev/null',
 					'ps -axwwE -o command= 2>/dev/null',
 				].join('; '));
-				assert.ok(!/STOPPED|SIGNALLED|CAN-SEE/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+				// Whole lines: on Linux `ps` lists the sandbox's own shell, whose command line holds this script's text.
+				assert.ok(!/^(STOPPED|SIGNALLED|CAN-SEE)$/m.test(result.stdout), `${policy.name}: ${result.stdout}`);
 				assert.ok(!result.stdout.includes(secret), `${policy.name}: another process's command line or environment through ps`);
 				assert.strictEqual(victim.exitCode, null);
 				assert.strictEqual(victim.signalCode, null, `${policy.name}: the host process is untouched`);
