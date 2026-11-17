@@ -180,6 +180,44 @@ suite('Volt code intelligence: the new-errors check after an agent write', () =>
 		assert.deepStrictEqual((await host.diagnostics([FILE], 'error')).map(item => item.message), ['from a tab']);
 	});
 
+	test('files changed on disk by a shell command are read again on the next call, also the other open files a rename reaches', () => runWithFakedTimers({}, async () => {
+		const disposables = store.add(new DisposableStore());
+		const markers = new MarkerService();
+		disposables.add({ dispose: () => markers.dispose() });
+		const OTHER = URI.file('/repo/src/b.ts');
+		const disk = new Map([[FILE.path, 'export const a = 1;\n'], [OTHER.path, 'import { a } from \'./a\';\n']]);
+		const textModels = {
+			createModelReference: async (uri: URI) => {
+				const model: ITextModel = disposables.add(createTextModel(disk.get(uri.path)!, 'typescript', undefined, uri));
+				return { object: { textEditorModel: model, isDirty: () => false, resolve: async () => { if (model.getValue() !== disk.get(uri.path)) { model.setValue(disk.get(uri.path)!); } } }, dispose: () => { } };
+			},
+		} as unknown as ITextModelService;
+		const features = new LanguageFeaturesService();
+		const seen: string[] = [];
+		disposables.add(features.renameProvider.register({ pattern: '**/*.ts' }, {
+			provideRenameEdits: async (model, _position, newName) => {
+				// What the language server holds of the other file when it computes the edit.
+				seen.push(await host.fileText(OTHER) ?? '');
+				return { edits: [{ resource: model.uri, versionId: undefined, textEdit: { range: { startLineNumber: 1, startColumn: 14, endLineNumber: 1, endColumn: 15 }, text: newName } }] };
+			},
+		}));
+		const files = { readFile: async (uri: URI) => ({ value: VSBuffer.fromString(disk.get(uri.path)!) }) } as unknown as IFileService;
+		const host = disposables.add(new CodeIntelHost(markers, textModels, features as ILanguageFeaturesService, files));
+		assert.strictEqual(await host.fileText(FILE), 'export const a = 1;\n');
+		assert.strictEqual(await host.fileText(OTHER), 'import { a } from \'./a\';\n');
+		// `git checkout`, a formatter, sed: both files change with no write through Volt.
+		disk.set(FILE.path, 'export const a = 2;\n');
+		disk.set(OTHER.path, 'import { a } from \'./a\';\nexport const b = a;\n');
+		await timeout(40);
+		assert.strictEqual(await host.fileText(FILE), 'export const a = 2;\n', 'the asked file, 40 ms after the last check');
+		disk.set(FILE.path, 'export const a = 3;\n');
+		disk.set(OTHER.path, 'import { a } from \'./a\';\nexport const c = a;\n');
+		await timeout(40);
+		const changes = await host.rename(FILE, 1, 14, 'z');
+		assert.deepStrictEqual(seen, ['import { a } from \'./a\';\nexport const c = a;\n'], 'the other open file was read again before the rename was computed');
+		assert.ok(Array.isArray(changes) && changes[0].before === 'export const a = 3;\n' && changes[0].after === 'export const z = 3;\n');
+	}));
+
 	test('a file changed on disk by a CLI agent is read again before anyone is asked about it', async () => {
 		const disposables = store.add(new DisposableStore());
 		const markers = new MarkerService();

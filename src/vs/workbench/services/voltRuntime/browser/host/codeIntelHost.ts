@@ -35,8 +35,13 @@ export const DIAGNOSED_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|cs|c
 const PROBED_LANGUAGES = new Set(['typescript', 'typescriptreact', 'javascript', 'javascriptreact']);
 const PROBE_TIMEOUT_MS = 8_000;
 const MAX_PROBED = 200;
-/** An open document is compared with the file on disk at most this often (by etag, so unchanged files cost a stat). */
-const RECHECK_DISK_MS = 1_000;
+/**
+ * An open document is compared with its file (one stat) on every use, at most this often. It was a
+ * second: an agent that changed files with its shell (`git checkout`, `sed`, a formatter) and asked
+ * in the same step got answers for the old text: "No errors" for a file just broken, a rename
+ * applied to one of four files, organize imports "already organized".
+ */
+const RECHECK_DISK_MS = 30;
 /** Opened documents stay open a while so repeated checks are instant. */
 const KEEP_OPEN_MS = 90_000;
 const MAX_OPEN = 24;
@@ -407,6 +412,7 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	}
 
 	async references(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
+		await this.refreshOpen();
 		const model = await this.model(uri);
 		const position = new Position(line, column);
 		for (const provider of this.languageFeatures.referenceProvider.ordered(model)) {
@@ -459,6 +465,7 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	}
 
 	async implementations(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
+		await this.refreshOpen();
 		const model = await this.model(uri);
 		const position = new Position(line, column);
 		for (const provider of this.languageFeatures.implementationProvider.ordered(model)) {
@@ -519,6 +526,7 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 		if (!hierarchy) {
 			return undefined;
 		}
+		await this.refreshOpen();
 		const model = await this.model(uri);
 		return this.ask(token => hierarchy.calls(model, new Position(line, column), direction, token));
 	}
@@ -533,6 +541,7 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	}
 
 	async rename(uri: URI, line: number, column: number, newName: string): Promise<readonly ITextFileChange[] | string> {
+		await this.refreshOpen();
 		const model = await this.model(uri);
 		const position = new Position(line, column);
 		const providers = this.languageFeatures.renameProvider.ordered(model);
@@ -613,6 +622,7 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 
 	/** Every provider's actions for the range, kept with the provider that can resolve them. */
 	private async offeredActions(uri: URI, range: ICodeRange, only: string | undefined): Promise<{ readonly actions: readonly { readonly action: CodeAction; readonly provider: CodeActionProvider }[]; dispose(): void }> {
+		await this.refreshOpen();
 		const model = await this.model(uri);
 		const last = Math.min(Math.max(range.startLine, range.endLine), model.getLineCount());
 		const first = Math.min(range.startLine, last);
@@ -827,6 +837,20 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	}
 
 	private readonly opening = new ResourceMap<Promise<ITextModel>>();
+
+	/**
+	 * Every document this host has open, compared with its file. A language server answers about
+	 * several files at once (references, a rename's edits, call hierarchies) from the text it was
+	 * last given: a file changed on disk since is read again before it is asked.
+	 */
+	private async refreshOpen(): Promise<void> {
+		const now = Date.now();
+		const stale = [...this.open].filter(([uri, entry]) => !pinnedDocuments.has(uri) && now - entry.checkedAt > RECHECK_DISK_MS);
+		await Promise.all(stale.map(([, entry]) => {
+			entry.checkedAt = now;
+			return reloadFromDisk(entry.ref.object);
+		}));
+	}
 
 	private async model(uri: URI): Promise<ITextModel> {
 		const existing = this.open.get(uri);
