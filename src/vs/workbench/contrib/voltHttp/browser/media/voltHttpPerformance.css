@@ -562,6 +562,91 @@ td.volt-http-perf-card-delta {
 	margin-top: -4px;
 }
 
+/* --- Set up with AI ---------------------------------------------------------------------------- */
+
+.volt-http-perf-setup-ai {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 6px 0 8px;
+	padding: 10px 12px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+}
+
+.volt-http-perf-setup-ai.hidden {
+	display: none;
+}
+
+.volt-http-perf-setup-ai .volt-http-perf-ai-icon .volt-http-svg-icon {
+	width: 14px;
+	height: 14px;
+}
+
+.volt-http-perf-setup-ai-wish {
+	min-height: 54px;
+}
+
+.volt-http-perf-setup-ai-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-http-perf-setup-ai .volt-http-note {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	font-size: 12px;
+}
+
+.monaco-workbench .volt-http-perf-setup-ai-actions .volt-button {
+	height: 26px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+/* The proposal: a quiet outline of the setup, not a form. */
+.volt-http-perf-setup-ai-outline {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 10px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+	font-size: 12px;
+	line-height: 18px;
+	user-select: text;
+}
+
+.volt-http-perf-setup-ai-summary {
+	padding-bottom: 6px;
+	margin-bottom: 2px;
+	border-bottom: 1px solid var(--volt-http-line);
+	color: var(--volt-http-muted);
+}
+
+.volt-http-perf-setup-ai-row {
+	display: flex;
+	gap: 12px;
+	min-width: 0;
+}
+
+.volt-http-perf-setup-ai-label {
+	flex: none;
+	width: 76px;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-perf-setup-ai-values {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
 /* --- Assessment -------------------------------------------------------------------------------- */
 
 .volt-http-perf-ai {

@@ -31,7 +31,8 @@ import { IVoltLoadThreshold, VOLT_LOAD_MAX_USERS, VOLT_LOAD_METRICS, VOLT_LOAD_O
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { findHttpItemByPath, httpItemPath, httpRequestLabel, httpRequestsOf, IHttpRequest } from '../common/httpCollection.js';
-import { compareHttpPerfRuns, httpPerfLiveNumbers, formatHttpPerfBytes, formatHttpPerfMetric, formatHttpPerfMs, formatHttpPerfNumber, formatHttpPerfPercent, formatHttpPerfSeconds, HTTP_PERF_AGENT_MAX_SECONDS, HTTP_PERF_AGENT_MAX_USERS, HTTP_PERF_PHASES, HTTP_PERF_PROFILES, HttpPerfCompareKey, httpPerfAnalysisPrompt, httpPerfErrorKindLabel, httpPerfHistogramBins, httpPerfHtmlReport, httpPerfJsonReport, httpPerfLatencyLabel, httpPerfMarkdownReport, httpPerfMetricLabel, httpPerfRunText, httpPerfStatusClasses, httpPerfThresholdText, httpPerfUnit, IHttpPerfDelta, IHttpPerfFile, IHttpPerfInline, IHttpPerfLoad, IHttpPerfRun, IHttpPerfTarget, isHttpPerfLocalHost } from '../common/httpPerformance.js';
+import { httpFlowCatalogRequest } from '../common/httpAutomation.js';
+import { compareHttpPerfRuns, HTTP_PERF_SETUP_SYSTEM_PROMPT, httpPerfSetupPrompt, IHttpPerfCatalogCollection, parseHttpPerfSetupAnswer, httpPerfLiveNumbers, formatHttpPerfBytes, formatHttpPerfMetric, formatHttpPerfMs, formatHttpPerfNumber, formatHttpPerfPercent, formatHttpPerfSeconds, HTTP_PERF_AGENT_MAX_SECONDS, HTTP_PERF_AGENT_MAX_USERS, HTTP_PERF_PHASES, HTTP_PERF_PROFILES, HttpPerfCompareKey, httpPerfAnalysisPrompt, httpPerfErrorKindLabel, httpPerfHistogramBins, httpPerfHtmlReport, httpPerfJsonReport, httpPerfLatencyLabel, httpPerfMarkdownReport, httpPerfMetricLabel, httpPerfRunText, httpPerfStatusClasses, httpPerfThresholdText, httpPerfUnit, IHttpPerfDelta, IHttpPerfFile, IHttpPerfInline, IHttpPerfLoad, IHttpPerfRun, IHttpPerfTarget, isHttpPerfLocalHost } from '../common/httpPerformance.js';
 import { httpRequestBadge, httpRequestBadgeKey } from '../common/httpProtocols.js';
 import { HttpHistogramChart, HttpLineChart, renderHttpStackedBar } from './voltHttpCharts.js';
 import { IVoltHttpCollections } from './voltHttpCollections.js';
@@ -141,6 +142,9 @@ export class HttpPerformancePage extends Disposable implements IHttpToolPage {
 	private readonly sectionStore = this._register(new DisposableStore());
 	private readonly aiStore = this._register(new DisposableStore());
 	private readonly aiRun = this._register(new MutableDisposable());
+	private setupEl: HTMLElement | undefined;
+	private readonly setupStore = this._register(new DisposableStore());
+	private readonly setupRun = this._register(new MutableDisposable());
 	private readonly liveScheduler: RunOnceScheduler;
 	private readonly ticker = this._register(new MutableDisposable());
 	private wasRunning = false;
@@ -553,6 +557,7 @@ export class HttpPerformancePage extends Disposable implements IHttpToolPage {
 			action('perf.exportMarkdown', localize('voltHttp.perfExportMarkdown', "Export Report as Markdown"), () => void this.export('markdown'), !!run),
 			action('perf.exportJson', localize('voltHttp.perfExportJson', "Export Report as JSON"), () => void this.export('json'), !!run),
 			new Separator(),
+			action('perf.setupAi', localize('voltHttp.perfSetupAiMenu', "Set Up with AI"), () => this.openSetupAi()),
 			action('perf.analyze', localize('voltHttp.perfAnalyzeMenu', "Analyze with AI"), () => this.startAnalysis(), !!run),
 			action('perf.chat', localize('voltHttp.perfAddToChat', "Add to Chat"), () => this.addToChat()),
 			new Separator(),
@@ -612,11 +617,12 @@ export class HttpPerformancePage extends Disposable implements IHttpToolPage {
 		this.loadStore.clear();
 		this.thresholdStore.clear();
 		this.aiStore.clear();
+		this.setupStore.clear();
 		this.compareStore.clear();
 		this.targetList = this.runList = undefined;
 		this.profileChart = this.throughputChart = this.usersChart = this.latencyChart = undefined;
 		this.targetHost = this.targetEditor = this.loadEl = this.hostsEl = this.thresholdsEl = undefined;
-		this.cardsEl = this.verdictEl = this.aiEl = this.runHost = this.compareEl = undefined;
+		this.cardsEl = this.verdictEl = this.aiEl = this.runHost = this.compareEl = this.setupEl = undefined;
 	}
 
 	private renderTab(): void {
@@ -678,6 +684,8 @@ export class HttpPerformancePage extends Disposable implements IHttpToolPage {
 	private renderSetup(): void {
 		const file = this.file!;
 		const page = append(this.body, $('.volt-http-perf-setup'));
+		this.setupEl = append(page, $('.volt-http-perf-setup-ai'));
+		this.renderSetupAi();
 
 		const about = this.section(page, localize('voltHttp.perfDescription', "Description")).section;
 		const description = append(about, $('input.volt-http-input.volt-http-perf-description')) as HTMLInputElement;
@@ -716,6 +724,9 @@ export class HttpPerformancePage extends Disposable implements IHttpToolPage {
 				onChange: order => void this.setLoad({ order }).then(() => this.targetList?.rerender()),
 			}, this.sectionStore);
 		}
+		const ai = this.sectionStore.add(createVoltButton(head, 'ghost'));
+		decorateHttpHeadButton(ai, createHttpAgentIcon(), localize('voltHttp.perfSetupAi', "Set Up with AI"));
+		this.sectionStore.add(ai.onDidClick(() => this.openSetupAi()));
 		const add = this.sectionStore.add(createVoltButton(head, 'secondary'));
 		add.label = localize('voltHttp.perfAddRequest', "Add Request");
 		this.sectionStore.add(add.onDidClick(() => void this.pickRequests()));
@@ -725,7 +736,7 @@ export class HttpPerformancePage extends Disposable implements IHttpToolPage {
 
 		if (!file.targets.length) {
 			append(section, $('.volt-http-perf-empty-list')).textContent = file.mode === 'http'
-				? localize('voltHttp.perfNoTargets', "No targets yet. Add requests from the project's collections, or type a URL.")
+				? localize('voltHttp.perfNoTargets', "No targets yet. Add requests from the project's collections, type a URL, or describe the test and let AI set it up.")
 				: localize('voltHttp.perfNoTargetsStream', "No target yet. Add a request of this kind from the project's collections, or type its URL.");
 		}
 		this.targetHost = append(section, $('.volt-http-perf-list.volt-http-perf-target-list'));
@@ -1619,6 +1630,220 @@ export class HttpPerformancePage extends Disposable implements IHttpToolPage {
 			append(tables, $('.volt-http-note')).textContent = localize('voltHttp.perfPhasesNote', "DNS, TCP and TLS are measured on new connections only: kept-alive connections skip them.");
 		}
 		append(tables, $('.volt-http-note.volt-http-perf-sent')).textContent = localize('voltHttp.perfDataLine', "{0} received, {1} sent", formatHttpPerfBytes(run.bytesIn), formatHttpPerfBytes(run.bytesOut));
+	}
+
+	// --- Set up with AI ---------------------------------------------------------------------------
+
+	private openSetupAi(): void {
+		this.state.memory.setupOpen = true;
+		if (this.tab !== 'setup') {
+			this.setTab('setup');
+		} else {
+			this.renderSetupAi();
+		}
+		this.setupEl?.querySelector('textarea')?.focus();
+	}
+
+	/** The project's saved requests as the model is told about them: names, kinds, methods, URLs and body fields, never values. */
+	private async perfCatalog(): Promise<IHttpPerfCatalogCollection[]> {
+		const entries = await this.collections.collections(this.root).catch(() => []);
+		return entries.filter(entry => !entry.error).map(entry => ({
+			collection: this.performance.collectionRef(this.root, entry.uri),
+			name: entry.collection.name,
+			requests: httpRequestsOf(entry.collection.items).map(({ request, ancestors }) => ({ ...httpFlowCatalogRequest([...ancestors.map(folder => folder.name), request.name], request), protocol: request.protocol ?? 'http' })),
+		})).filter(collection => collection.requests.length);
+	}
+
+	private async generateSetup(wish: string): Promise<void> {
+		const file = this.file;
+		if (!file) {
+			return;
+		}
+		this.state.memory.setupError = undefined;
+		this.state.memory.setupProposal = undefined;
+		const ref = this.modelRef();
+		if (!ref) {
+			this.state.memory.setupError = localize('voltHttp.perfAiNoModel', "No model is set up. Add one in Settings, Providers & Models.");
+			this.renderSetupAi();
+			return;
+		}
+		const cancel = new CancellationTokenSource();
+		const timer = setTimeout(() => cancel.cancel(), AI_TIMEOUT_MS);
+		this.setupRun.value = toDisposable(() => {
+			clearTimeout(timer);
+			cancel.dispose(true);
+		});
+		this.renderSetupAi();
+		let answer = '';
+		let failure: string | undefined;
+		try {
+			const prompt = httpPerfSetupPrompt(await this.perfCatalog(), wish, file);
+			if (this.runtime.resolveCatalogItem(ref)?.kind === 'agent') {
+				const text = await raceCancellation(this.runtime.generateText(prompt, { ref, systemPrompt: HTTP_PERF_SETUP_SYSTEM_PROMPT, timeoutMs: AI_TIMEOUT_MS - 5000 }), cancel.token);
+				if (text === undefined && !cancel.token.isCancellationRequested) {
+					failure = localize('voltHttp.perfAiAgentFailed', "{0} did not answer. Check that it is signed in, or pick another model.", this.runtime.resolveCatalogItem(ref)?.label ?? ref);
+				}
+				answer = text ?? '';
+			} else {
+				for await (const event of this.runtime.streamModel(ref, [{ role: 'system', content: HTTP_PERF_SETUP_SYSTEM_PROMPT }, { role: 'user', content: prompt }], this.runtime.getModelOptions(ref), cancel.token, 'code')) {
+					if (cancel.token.isCancellationRequested) {
+						break;
+					}
+					if (event.type === 'text.delta' && event.delta) {
+						answer += event.delta;
+					} else if (event.type === 'error') {
+						failure = event.message;
+						break;
+					}
+				}
+			}
+		} catch (err) {
+			failure = err instanceof Error ? err.message : String(err);
+		}
+		const cancelled = cancel.token.isCancellationRequested;
+		this.setupRun.clear();
+		if (this._store.isDisposed) {
+			return;
+		}
+		if (!failure && !(cancelled && !answer)) {
+			const parsed = parseHttpPerfSetupAnswer(answer, file.name);
+			if (parsed.definition) {
+				this.state.memory.setupProposal = parsed.definition;
+			} else {
+				failure = parsed.error;
+			}
+		}
+		this.state.memory.setupError = failure ?? (cancelled && !answer ? localize('voltHttp.perfSetupStopped', "Stopped.") : undefined);
+		this.renderSetupAi();
+	}
+
+	/** The proposal takes the place of the test's setup; its name, confirmed hosts and runs stay. */
+	private async applySetup(proposal: Omit<IHttpPerfFile, 'confirmedHosts' | 'runs'>): Promise<void> {
+		this.state.memory.setupProposal = undefined;
+		this.state.memory.setupOpen = false;
+		this.state.memory.setupWish = undefined;
+		this.state.memory.target = undefined;
+		await this.change(file => {
+			if (proposal.description) {
+				file.description = proposal.description;
+			}
+			file.mode = proposal.mode;
+			file.targets = structuredClone(proposal.targets);
+			file.load = { ...proposal.load };
+			file.ws = { ...proposal.ws };
+			file.thresholds = structuredClone(proposal.thresholds);
+		});
+		this.renderTab();
+	}
+
+	/** The proposal as a few quiet lines: what gets the load, how much, and when it passes. */
+	private renderSetupOutline(parent: HTMLElement, proposal: Omit<IHttpPerfFile, 'confirmedHosts' | 'runs'>): void {
+		const box = append(parent, $('.volt-http-perf-setup-ai-outline'));
+		if (proposal.description) {
+			append(box, $('.volt-http-perf-setup-ai-summary')).textContent = proposal.description;
+		}
+		const line = (label: string, values: readonly string[]) => {
+			const row = append(box, $('.volt-http-perf-setup-ai-row'));
+			append(row, $('span.volt-http-perf-setup-ai-label')).textContent = label;
+			const list = append(row, $('.volt-http-perf-setup-ai-values'));
+			for (const value of values) {
+				append(list, $('span')).textContent = value;
+			}
+		};
+		line(localize('voltHttp.perfSetupAiMode', "Kind"), [MODE_LABELS[proposal.mode]]);
+		line(localize('voltHttp.perfTargets', "Targets"), proposal.targets.map(target => {
+			const what = target.ref ? target.ref.path.join(' / ') : `${proposal.mode === 'http' ? `${target.inline?.method ?? 'GET'} ` : ''}${target.inline?.url ?? ''}`;
+			const name = target.name && target.name !== target.ref?.path[target.ref.path.length - 1] ? `${target.name}: ` : '';
+			return proposal.targets.length > 1 && proposal.mode === 'http' && proposal.load.order === 'weighted' ? `${name}${what}${DOT}${localize('voltHttp.perfSetupAiWeight', "weight {0}", target.weight)}` : `${name}${what}`;
+		}));
+		const load = proposal.load;
+		const facts = [
+			load.users === 1 ? localize('voltHttp.perfSetupAiOneUser', "1 virtual user") : localize('voltHttp.perfSetupAiUsers', "{0} virtual users", load.users),
+			load.durationSec !== undefined ? formatHttpPerfSeconds(load.durationSec) : localize('voltHttp.perfSetupAiRequests', "{0} requests", load.requests ?? 0),
+			PROFILE_LABELS[load.profile],
+			...(load.rps ? [localize('voltHttp.perfSetupAiRps', "at most {0} requests/s", load.rps)] : []),
+			...(load.warmupSec ? [localize('voltHttp.perfSetupAiWarmup', "{0} warm-up", formatHttpPerfSeconds(load.warmupSec))] : []),
+			...(load.thinkMs ? [localize('voltHttp.perfSetupAiThink', "{0} ms think time", load.thinkMs)] : []),
+		];
+		line(localize('voltHttp.perfLoad', "Load"), [facts.join(DOT)]);
+		if (proposal.thresholds.length) {
+			line(localize('voltHttp.perfThresholds', "Thresholds"), [proposal.thresholds.map(threshold => httpPerfThresholdText(threshold, proposal.mode)).join(DOT)]);
+		}
+	}
+
+	private renderSetupAi(): void {
+		const parent = this.setupEl;
+		if (!parent) {
+			return;
+		}
+		this.setupStore.clear();
+		clearNode(parent);
+		const open = this.state.memory.setupOpen === true;
+		parent.classList.toggle('hidden', !open);
+		if (!open) {
+			return;
+		}
+		const store = this.setupStore;
+		const running = !!this.setupRun.value;
+		const head = append(parent, $('.volt-http-perf-ai-head'));
+		append(head, $('span.volt-http-perf-ai-icon')).appendChild(createHttpAgentIcon());
+		append(head, $('span.volt-http-perf-ai-title')).textContent = localize('voltHttp.perfSetupAiTitle', "Set up the test with AI");
+		append(head, $('.volt-http-spacer'));
+		createHttpAiModelButton(head, this.instantiationService, store, localize('voltHttp.perfSetupAiModel', "The model that sets up the test"), AnchorAlignment.RIGHT);
+		createHttpIconButton(head, Codicon.close, localize('voltHttp.perfAiClose', "Close"), () => {
+			this.setupRun.clear();
+			this.state.memory.setupOpen = false;
+			this.state.memory.setupProposal = undefined;
+			this.state.memory.setupError = undefined;
+			this.renderSetupAi();
+		});
+		const proposal = this.state.memory.setupProposal as Omit<IHttpPerfFile, 'confirmedHosts' | 'runs'> | undefined;
+		if (proposal && !running) {
+			append(parent, $('.volt-http-note')).textContent = this.file?.targets.length
+				? localize('voltHttp.perfSetupAiCheckReplace', "The model proposes this setup. Check it, then apply it: it replaces the test's targets, load and thresholds.")
+				: localize('voltHttp.perfSetupAiCheck', "The model proposes this setup. Check it, then apply it.");
+			this.renderSetupOutline(parent, proposal);
+			const actions = append(parent, $('.volt-http-perf-setup-ai-actions'));
+			const apply = store.add(createVoltButton(actions, 'primary'));
+			apply.label = localize('voltHttp.perfSetupAiApply', "Apply");
+			store.add(apply.onDidClick(() => void this.applySetup(proposal)));
+			const discard = store.add(createVoltButton(actions, 'ghost'));
+			discard.label = localize('voltHttp.perfSetupAiDiscard', "Discard");
+			store.add(discard.onDidClick(() => {
+				this.state.memory.setupProposal = undefined;
+				this.renderSetupAi();
+			}));
+			return;
+		}
+		const wish = append(parent, $('textarea.volt-http-textarea.volt-http-perf-setup-ai-wish')) as HTMLTextAreaElement;
+		wish.rows = 3;
+		wish.value = typeof this.state.memory.setupWish === 'string' ? this.state.memory.setupWish : '';
+		wish.placeholder = localize('voltHttp.perfSetupAiPlaceholder', "What to test, e.g. can checkout take 200 users at once? Ramp up over a minute, p95 under 400 ms and no errors");
+		wish.setAttribute('aria-label', localize('voltHttp.perfSetupAiWish', "What to test"));
+		wish.disabled = running;
+		store.add(addDisposableListener(wish, EventType.INPUT, () => this.state.memory.setupWish = wish.value));
+		store.add(addDisposableListener(wish, EventType.KEY_DOWN, (event: KeyboardEvent) => {
+			if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !running) {
+				event.preventDefault();
+				void this.generateSetup(wish.value);
+			}
+		}));
+		const foot = append(parent, $('.volt-http-perf-setup-ai-actions'));
+		const go = store.add(createVoltButton(foot, running ? 'secondary' : 'primary'));
+		go.label = running ? localize('voltHttp.perfSetupAiStop', "Stop") : localize('voltHttp.perfSetupAiGo', "Set Up");
+		store.add(go.onDidClick(() => running ? this.setupRun.clear() : void this.generateSetup(wish.value)));
+		const note = append(foot, $('span.volt-http-note'));
+		// allow-any-unicode-next-line
+		note.textContent = running ? localize('voltHttp.perfSetupAiWorking', "Setting up the test…") : localize('voltHttp.perfSetupAiPrivacy', "The model is shown the project's request names, methods, URLs and body field names; never values or secrets.");
+		if (running) {
+			const spinner = $('span.volt-http-spinner');
+			spinner.appendChild(renderIcon(Codicon.loading));
+			note.prepend(spinner);
+		}
+		const error = this.state.memory.setupError;
+		if (typeof error === 'string' && error) {
+			append(parent, $('.volt-http-perf-ai-error')).textContent = error;
+		}
 	}
 
 	// --- Analysis --------------------------------------------------------------------------------

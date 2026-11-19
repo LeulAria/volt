@@ -48,6 +48,7 @@ import { IHttpExchange } from './voltHttpService.js';
 import { IHttpToolPage, IHttpToolPageHost, IHttpToolTabState } from './voltHttpToolPages.js';
 import { createHttpAiModelButton, httpAiModelRef } from './voltHttpAiModel.js';
 import { createHttpCheck, createHttpDropdown, createHttpIconButton, createHttpVariableField, formatHttpDuration, HttpKeyValueTable, httpStatusClass, renderHttpReadOnlyTable, renderHttpTabs, showHttpActionMenu } from './voltHttpWidgets.js';
+import { createHttpAutomationIcon } from './voltHttpIcons.js';
 
 type AutomationTab = 'steps' | 'runs' | 'settings';
 type RequestTab = 'request' | 'extract' | 'assert' | 'options';
@@ -336,7 +337,7 @@ export class HttpAutomationPage extends Disposable implements IHttpToolPage {
 		this.element = append(parent, $('.volt-http-page.volt-http-auto'));
 
 		const head = append(this.element, $('.volt-http-auto-head'));
-		append(head, $('span.volt-http-auto-head-icon')).appendChild(renderIcon(Codicon.checklist));
+		append(head, $('span.volt-http-auto-head-icon')).appendChild(createHttpAutomationIcon());
 		this.nameInput = append(head, $('input.volt-http-auto-name')) as HTMLInputElement;
 		this.nameInput.type = 'text';
 		this.nameInput.spellcheck = false;

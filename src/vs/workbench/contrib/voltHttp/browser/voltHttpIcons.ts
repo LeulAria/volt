@@ -65,6 +65,23 @@ export function createHttpCheckIcon(size = 14): SVGElement {
 	return strokeIcon([['path', { d: 'M4 12.5l5 5L20 6.5' }]], 24, 2, size);
 }
 
+/** A security scan: a shield with a radar sweep, wherever a scan is offered or listed. */
+export function createHttpSecurityIcon(size = 16): SVGElement {
+	return strokeIcon([
+		['path', { d: 'M116.785 152a24.003 24.003 0 0 0-41.57 0m35.279-42.092a56 56 0 0 0-57.267 17.946' }],
+		['path', { d: 'm104 140 19.277-59.666a88 88 0 0 0-89.503 21.441' }],
+		['path', { d: 'M96 170S22 136 22 40c0 0 18-18 74-18s74 18 74 18c0 96-74 130-74 130' }],
+	], 192, 8, size);
+}
+
+/** An automation: three steps joined one after the other, wherever an automation is offered or listed. */
+export function createHttpAutomationIcon(size = 16): SVGElement {
+	return strokeIcon([
+		['path', { d: 'M3 4c0-1.655.345-2 2-2h4c1.655 0 2 .345 2 2s-.345 2-2 2H5c-1.655 0-2-.345-2-2Zm10 9c0-1.655.345-2 2-2h4c1.655 0 2 .345 2 2s-.345 2-2 2h-4c-1.655 0-2-.345-2-2Zm-9 7c0-1.655.345-2 2-2h4c1.655 0 2 .345 2 2s-.345 2-2 2H6c-1.655 0-2-.345-2-2Z' }],
+		['path', { d: 'M17 11c0-.465 0-.697-.038-.89a2 2 0 0 0-1.572-1.572c-.193-.038-.425-.038-.89-.038h-5c-.465 0-.697 0-.89-.038A2 2 0 0 1 7.038 6.89C7 6.697 7 6.465 7 6m10 9v1c0 1.886 0 2.828-.586 3.414S14.886 20 13 20h-1' }],
+	], 24, 1, size);
+}
+
 /**
  * The marks of the snippet languages and tools, from Aria Icons (the simple-icons set: one
  * single-colour path each on a 24 grid, drawn in the text colour).
