@@ -111,8 +111,9 @@
 	display: none;
 }
 
-/* A phone's Editor button (voltMobileWorkbench.css shows it). */
-.volt-agent-mobile-editor-toggle {
+/* A phone's Editor button (voltMobileWorkbench.css shows it). As specific as the toggles' own `display: flex`
+ * above, which otherwise wins and shows it on the desktop too. */
+.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle.volt-agent-mobile-editor-toggle {
 	display: none;
 }
 
