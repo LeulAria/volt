@@ -27,7 +27,7 @@ const HIDE_DELAY_MS = 160;
 /** Whether account names (emails) show in the clear; they are blurred until the user shows them. */
 const STORAGE_SHOW_NAMES = 'volt.usage.showAccountNames';
 
-const ACCOUNT_NAMES: Record<VoltUsageProvider, string> = {
+export const ACCOUNT_NAMES: Record<VoltUsageProvider, string> = {
 	claude: 'Claude',
 	codex: 'Codex',
 	cursor: 'Cursor',
@@ -36,7 +36,7 @@ const ACCOUNT_NAMES: Record<VoltUsageProvider, string> = {
 };
 
 /** Time until a reset, as short as it gets: "45m", "5h", "3d", "2w". */
-function shortIn(ms: number): string {
+export function shortIn(ms: number): string {
 	const minutes = Math.max(1, Math.round(ms / 60_000));
 	if (minutes < 60) {
 		return localize('voltUsageHover.minutes', "{0}m", minutes);

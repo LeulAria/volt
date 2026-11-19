@@ -747,49 +747,111 @@
 	color: inherit;
 }
 
-/* Usage: a brand mark and a thin bar per account; the full card opens on hover. */
+/*
+ * Usage: per account a line with its mark, name, and how much is used and when it resets, over a thin
+ * bar that starts under the name. The account in use reads bright; the full card opens on hover.
+ */
 .volt-agent-dock-usage-bars {
 	display: flex;
 	flex-direction: column;
-	gap: 7px;
-	padding: 4px 12px 8px;
+	gap: 10px;
+	padding: 2px 12px 12px;
 	cursor: default;
 }
 
 .volt-agent-dock-usage-line {
 	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	min-width: 0;
+}
+
+.volt-agent-dock-usage-head {
+	display: flex;
 	align-items: center;
 	gap: 8px;
-	height: 12px;
+	min-width: 0;
+	height: 16px;
+	font-size: 12px;
+	line-height: 16px;
 }
 
-.volt-agent-dock-usage-line > .volt-brand-icon {
+.volt-agent-dock-usage-head > .volt-brand-icon {
 	flex: none;
-	opacity: 0.8;
+	opacity: 0.7;
 }
 
-.volt-agent-dock-usage-line.active > .volt-brand-icon {
+.volt-agent-dock-usage-line.active .volt-agent-dock-usage-head > .volt-brand-icon {
 	opacity: 1;
 }
 
+.volt-agent-dock-usage-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-dock-usage-line.active .volt-agent-dock-usage-name {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-dock-usage-value {
+	flex: none;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 6px;
+	font-variant-numeric: tabular-nums;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-dock-usage-percent {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-dock-usage-reset {
+	font-size: 11px;
+	opacity: 0.8;
+}
+
+.volt-agent-dock-usage-line.high .volt-agent-dock-usage-percent {
+	color: var(--vscode-editorWarning-foreground, #e5a50a);
+}
+
+.volt-agent-dock-usage-line.full .volt-agent-dock-usage-percent {
+	color: var(--vscode-errorForeground, #f14c4c);
+}
+
+/* The bar starts under the name: the mark (14px) and the gap (8px). */
 .volt-agent-dock-usage-bar {
-	flex: 1;
 	display: block;
-	height: 3px;
+	height: 4px;
+	margin-left: 22px;
 	overflow: hidden;
 	border-radius: 999px;
-	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .volt-agent-dock-usage-fill {
 	display: block;
 	height: 100%;
+	min-width: 0;
 	border-radius: inherit;
+	background: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-agent-dock-usage-line.active .volt-agent-dock-usage-fill {
 	background: var(--vscode-textLink-foreground, #4c8dff);
 }
 
 .volt-agent-dock-usage-line.high .volt-agent-dock-usage-fill {
 	background: var(--vscode-editorWarning-foreground, #e5a50a);
+}
+
+.volt-agent-dock-usage-line.full .volt-agent-dock-usage-fill {
+	background: var(--vscode-errorForeground, #f14c4c);
 }
 
 .volt-agent-dock-usage-empty {
