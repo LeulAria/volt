@@ -1,0 +1,2 @@
+locations [{"scriptId":"235","lineNumber":285,"columnNumber":21}]
+    3 voltAwake.setLease [2,{"working":0,"waitingOnUser":0},{"whileAgentsWork":true,"lidClosedMode":true,"graceMinutes":2,"maxHours":0,"batteryFloorPercent":20}]

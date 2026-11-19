@@ -49,9 +49,9 @@ import {
 } from './agentBlocks.js';
 import { IMermaidOptions, isMermaidXyChart, renderMermaidDiagram } from './agentMermaid.js';
 import { mountChart, renderVisualBlock } from '../visuals/agentVisuals.js';
-import { highlight, ICodeCardOptions, renderCodeCard } from './agentCodeBlock.js';
+import { highlight, ICodeCardOptions, isLiveCodeFence, LiveCodeCard, renderCodeCard } from './agentCodeBlock.js';
 import { agentMarkdownRenderOptions, agentMarkedExtensions, decorateAgentMarkdown, fenceChartSpec, normalizeMathDelimiters, renderFenceChart } from './agentMarkdown.js';
-import type { IFreshTextPart } from '../chrome/agentFreshText.js';
+import { FRESH_TEXT_CLASS, type IFreshTextPart } from '../chrome/agentFreshText.js';
 import { extractHttpUrl, extractLocalPreviewUrl, linkifyPreviewUrls } from '../preview/localPreview.js';
 import { AccessDecisionScope } from '../../../../services/voltRuntime/common/access/accessTypes.js';
 import { formatAttachmentSize } from '../../../../services/voltRuntime/common/fileAttachments.js';
@@ -541,13 +541,67 @@ function openMarkdownLink(link: string, ctx: IBlockRenderContext): void {
 /** One top-level markdown block of a {@link LiveMarkdown}, as drawn. */
 interface ILiveMarkdownBlock {
 	/** Its source, as marked's lexer cut it. */
-	readonly raw: string;
+	raw: string;
 	readonly nodes: readonly HTMLElement[];
 	readonly store: DisposableStore;
 	/** Its text, for the fresh-text fade. */
-	readonly text: string;
+	text: string;
 	/** Drawn by the latest update. */
 	fresh: boolean;
+}
+
+/**
+ * Prose that a paragraph draws as itself: ASCII letters, digits, spaces and plain punctuation on one
+ * line. No markdown, HTML, entity, escape, emoji, math, footnote or email can start or end in it;
+ * a URL can (`://`, `www.`), which the caller checks across the last word.
+ */
+const PLAIN_PROSE = /^[A-Za-z0-9 ,.;:?!'"%/-]*$/;
+
+/** The run of non-space characters at the end of `text`. */
+function lastWord(text: string): string {
+	let start = text.length;
+	while (start > 0 && !/\s/.test(text[start - 1])) {
+		start--;
+	}
+	return text.slice(start);
+}
+
+/**
+ * Whether the line `text` ends in has a word with a letter before `word`, its last one. Block
+ * markers (list, heading, quote, rule, setext line) are read at the start of a line or of a list
+ * item: past such a word, more prose on the line cannot make or unmake one (`- 1` + `.` would).
+ */
+function lineStartSettled(text: string, word: string): boolean {
+	const end = text.length - word.length;
+	const start = text.lastIndexOf('\n', end - 1) + 1;
+	return /[A-Za-z]\S*\s/.test(text.slice(start, end));
+}
+
+/** Block elements whose last text a line of prose goes on: paragraphs, list items, quotes, headings. */
+const PROSE_BLOCKS = new Set(['P', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+
+/**
+ * The element whose last child is the block's last text (a text node or a fade span), following
+ * the last children of `root` through prose blocks; undefined when the block ends in anything else
+ * (code, a link, emphasis, an image, a table).
+ */
+function proseEnd(root: HTMLElement): HTMLElement | undefined {
+	let element = root;
+	while (PROSE_BLOCKS.has(element.tagName)) {
+		let end = element.lastChild;
+		// Line breaks between a list's items or a quote's paragraphs.
+		while (end?.nodeType === Node.TEXT_NODE && !end.nodeValue?.trim()) {
+			end = end.previousSibling;
+		}
+		if (end?.nodeType === Node.TEXT_NODE || (isHTMLElement(end) && end.classList.contains(FRESH_TEXT_CLASS))) {
+			return element.tagName === 'UL' || element.tagName === 'OL' || element.tagName === 'BLOCKQUOTE' ? undefined : element;
+		}
+		if (!isHTMLElement(end)) {
+			return undefined;
+		}
+		element = end;
+	}
+	return undefined;
 }
 
 /**
@@ -564,6 +618,8 @@ export class LiveMarkdown extends Disposable {
 	readonly element: HTMLElement;
 	private blocks: ILiveMarkdownBlock[] = [];
 	private source: string | undefined;
+	/** `source` as lexed (math delimiters and preview URLs normalized). */
+	private lexed: string | undefined;
 	private ctx: IBlockRenderContext;
 	private lexerFor: { readonly extensions: number; readonly instance: marked.Marked } | undefined;
 	/** One numbering for the reply's footnotes, so a note drawn in a later block keeps its number. */
@@ -620,6 +676,11 @@ export class LiveMarkdown extends Disposable {
 		this.source = text;
 		const win = getWindow(this.element);
 		const source = linkifyPreviewUrls(normalizeMathDelimiters(text));
+		const lexed = this.lexed;
+		this.lexed = source;
+		if (lexed !== undefined && this.appendPlainProse(lexed, source)) {
+			return;
+		}
 		const raws = this.split(win, source);
 		let keep = 0;
 		while (keep < raws.length && keep < this.blocks.length && this.blocks[keep].raw === raws[keep]) {
@@ -649,6 +710,37 @@ export class LiveMarkdown extends Disposable {
 			this.element.append(...nodes);
 			this.blocks.push({ raw: raws[index], nodes, store, text: nodes.map(node => node.textContent ?? '').join(''), fresh: true });
 		}
+	}
+
+	/**
+	 * Plain prose added to the open block (a paragraph, a list's last item, a quote, a heading) goes
+	 * into it as text. Drawing the block again on every chunk parsed and sanitized it again, rebuilt
+	 * its elements and restarted every fade span in it, for the words most of a reply is made of.
+	 * Only text that draws as itself takes this way (see PLAIN_PROSE), on a line whose start is
+	 * settled, after a block that ends in such a word as text; anything else (a link, an address,
+	 * emphasis, a new line or block) is drawn by the renderer as before.
+	 */
+	private appendPlainProse(drawn: string, source: string): boolean {
+		const last = this.blocks.at(-1);
+		if (!last || source.length <= drawn.length || !source.startsWith(drawn)) {
+			return false;
+		}
+		const added = source.slice(drawn.length);
+		const word = lastWord(drawn);
+		// The block's last word goes on with the added text: together they stay plain (`://` or `www.`
+		// would make them an autolink), and the block ends with that word as text.
+		if (!word || !PLAIN_PROSE.test(added) || !PLAIN_PROSE.test(word) || /\s$/.test(added) || /:\/\/|www\./i.test(word + added) || !lineStartSettled(drawn, word)) {
+			return false;
+		}
+		const end = last.nodes.length === 1 ? proseEnd(last.nodes[0]) : undefined;
+		if (!end || !last.raw.endsWith(word) || !last.text.endsWith(word)) {
+			return false;
+		}
+		end.append(added);
+		last.raw += added;
+		last.text += added;
+		last.fresh = true;
+		return true;
 	}
 
 	/** The text in reading order; the blocks drawn by the latest update carry their elements. */
@@ -757,6 +849,23 @@ export class StreamingMarkdownView implements IDisposable {
 		}
 		this.chunks = [];
 	}
+}
+
+/**
+ * A code fence still streaming that a {@link LiveCodeCard} grows in place: plain code or a diff,
+ * not a file card, a cited snippet or a chart fence (those are drawn whole, as the reply ends).
+ */
+export function isLiveCodeBlock(block: AgentBlock, ctx: IBlockRenderContext): block is ICodeBlock {
+	return block.type === 'code' && block.status === 'streaming' && ctx.streaming !== false && isLiveCodeFence(block.language, block.path)
+		&& !fenceChartSpec(block.language, block.code, true);
+}
+
+export function newLiveCodeCard(ctx: IBlockRenderContext, store: DisposableStore): LiveCodeCard {
+	return new LiveCodeCard({ ...codeCardOptions(ctx), store, streaming: true });
+}
+
+export function updateLiveCodeCard(card: LiveCodeCard, block: ICodeBlock, ctx: IBlockRenderContext): void {
+	card.update(block.language, block.code, { ...codeCardOptions(ctx), streaming: true });
 }
 
 /** A ```mermaid block drawn as a diagram (an xychart draws as a Volt chart instead). */

@@ -20,6 +20,9 @@ import { AutomationsRoute, IWorkflowSeed } from '../automations/automationRoutes
 import { registerAgentPaletteEntry } from '../editor/agentCommandPalette.js';
 import { WorkflowAutomationBridge } from './workflowAutomationBridge.js';
 import { WorkflowService } from './workflowService.js';
+// Registers IWorkflowTemplateService. The workflow pages load later with the Automations module, too late to
+// register a singleton, so the registration has to happen from here at startup.
+import './workflowTemplateService.js';
 
 registerSingleton(IWorkflowService, WorkflowService, InstantiationType.Delayed);
 

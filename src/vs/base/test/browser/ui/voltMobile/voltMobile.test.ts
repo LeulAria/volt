@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { mainWindow } from '../../../../browser/window.js';
+import { findHorizontalScroller } from '../../../../browser/ui/voltMobile/voltDragScroll.js';
 import { isIconButton } from '../../../../browser/ui/voltMobile/voltTouchFeedback.js';
 import { dismissAllVoltSurfaces, openVoltSurface, openVoltSurfaceCount, resetVoltSurfacesForTesting } from '../../../../browser/ui/voltMobile/voltSurfaces.js';
 import { getVoltLayoutInsets, getVoltViewport, isVoltCompact } from '../../../../browser/ui/voltMobile/voltViewport.js';
@@ -42,6 +44,42 @@ suite('Volt mobile primitives', () => {
 		test('explicit classes decide', () => {
 			assert.strictEqual(isIconButton(control(['volt-touch-icon'], 'x'), { width: 120, height: 44 }), true);
 			assert.strictEqual(isIconButton(control(['volt-touch-card']), { width: 28, height: 28 }), false);
+		});
+	});
+
+	suite('drag scroll', () => {
+		let root: HTMLElement;
+		setup(() => {
+			root = mainWindow.document.createElement('div');
+			mainWindow.document.body.appendChild(root);
+		});
+		teardown(() => root.remove());
+
+		/** A row 100px wide holding 300px of chips, with `overflow` sideways. */
+		const row = (overflow: string) => {
+			const element = root.appendChild(document.createElement('div'));
+			element.style.cssText = `width: 100px; overflow-x: ${overflow}; white-space: nowrap;`;
+			const chip = element.appendChild(document.createElement('button'));
+			chip.style.cssText = 'display: inline-block; width: 300px;';
+			return { element, chip };
+		};
+
+		test('finds the row a chip scrolls in', () => {
+			const { element, chip } = row('auto');
+			assert.strictEqual(findHorizontalScroller(chip, root), element);
+		});
+
+		test('skips rows that clip or have nothing more to show', () => {
+			assert.strictEqual(findHorizontalScroller(row('hidden').chip, root), undefined);
+			const { element, chip } = row('auto');
+			chip.style.width = '50px';
+			assert.strictEqual(findHorizontalScroller(chip, root), undefined, `${element.scrollWidth}`);
+		});
+
+		test('leaves text fields alone', () => {
+			const { element } = row('auto');
+			const input = element.appendChild(document.createElement('input'));
+			assert.strictEqual(findHorizontalScroller(input, root), undefined);
 		});
 	});
 

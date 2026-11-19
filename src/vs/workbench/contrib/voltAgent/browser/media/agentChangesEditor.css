@@ -11,8 +11,8 @@
  */
 .volt-agent-changes-editor,
 .volt-agent-review-diff {
-	--volt-changes-add: var(--vscode-chat-linesAddedForeground, var(--vscode-gitDecoration-addedResourceForeground, #3fb950));
-	--volt-changes-del: var(--vscode-chat-linesRemovedForeground, var(--vscode-gitDecoration-deletedResourceForeground, #f85149));
+	--volt-changes-add: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+	--volt-changes-del: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
 	--volt-changes-border: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
 	--volt-changes-bg: var(--vscode-editor-background);
 }
@@ -1013,6 +1013,10 @@
 	width: 16px;
 	height: 16px;
 	transform: scaleX(-1);
+}
+
+.volt-agent-files-sidebar-tab.hide > .volt-agent-files-sidebar-close-glyph {
+	display: none;
 }
 
 .volt-agent-files-sidebar-body {

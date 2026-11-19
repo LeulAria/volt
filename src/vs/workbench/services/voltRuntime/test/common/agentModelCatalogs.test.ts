@@ -20,7 +20,7 @@ suite('CLI model catalog overlays', () => {
 	});
 
 	test('Claude Fable overlay carries reasoning, ultracode, and a 200K/1M window', () => {
-		const overlay = catalogOverlay('claude-code', 'claude-fable-5-1', 'Fable 5.1');
+		const overlay = catalogOverlay('claude-code', 'claude-fable-5-2', 'Fable 5.2');
 		assert.ok(overlay);
 		assert.strictEqual(overlay.description, 'Most intelligent model for building agents');
 		const reasoning = overlay.optionDescriptors.find(option => option.id === MODEL_OPTION_REASONING);

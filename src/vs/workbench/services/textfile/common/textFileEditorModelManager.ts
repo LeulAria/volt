@@ -8,7 +8,7 @@ import { toErrorMessage } from '../../../../base/common/errorMessage.js';
 import { Event, Emitter } from '../../../../base/common/event.js';
 import { URI } from '../../../../base/common/uri.js';
 import { TextFileEditorModel } from './textFileEditorModel.js';
-import { dispose, IDisposable, Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
+import { dispose, IDisposable, Disposable, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import { ITextFileEditorModel, ITextFileEditorModelManager, ITextFileEditorModelResolveOrCreateOptions, ITextFileResolveEvent, ITextFileSaveEvent, ITextFileSaveParticipant } from './textfiles.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ResourceMap } from '../../../../base/common/map.js';
@@ -167,7 +167,35 @@ export class TextFileEditorModelManager extends Disposable implements ITextFileE
 		}
 	}
 
+	/** Models whose reload from disk is on hold (see {@link holdReload}): holders, and whether a reload was skipped. */
+	private readonly heldReloads = new ResourceMap<{ holders: number; missed: boolean }>();
+
+	holdReload(resource: URI): IDisposable {
+		const held = this.heldReloads.get(resource) ?? { holders: 0, missed: false };
+		held.holders++;
+		this.heldReloads.set(resource, held);
+		let released = false;
+		return toDisposable(() => {
+			if (released) {
+				return;
+			}
+			released = true;
+			if (--held.holders === 0) {
+				this.heldReloads.delete(resource);
+				const model = held.missed ? this.get(resource) : undefined;
+				if (model && !model.isDisposed() && !model.isDirty()) {
+					this.queueModelReload(model);
+				}
+			}
+		});
+	}
+
 	private queueModelReload(model: TextFileEditorModel): void {
+		const held = this.heldReloads.get(model.resource);
+		if (held) {
+			held.missed = true; // reloaded when the hold ends
+			return;
+		}
 
 		// Resolve model to update (use a queue to prevent accumulation of resolves
 		// when the resolve actually takes long. At most we only want the queue

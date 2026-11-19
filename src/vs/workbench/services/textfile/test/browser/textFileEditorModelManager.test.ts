@@ -417,6 +417,38 @@ suite('Files - TextFileEditorModelManager', () => {
 		assert.strictEqual(didResolve, true);
 	});
 
+	test('Volt: a held model is not reloaded by file change events until the last hold ends', async () => {
+		const manager = accessor.textFileService.files as ITestTextFileEditorModelManager;
+		const resource = URI.file('/path/held.txt');
+
+		disposables.add(await manager.resolve(resource));
+
+		let resolves = 0;
+		disposables.add(manager.onDidResolve(({ model }) => {
+			if (model.resource.toString() === resource.toString()) {
+				resolves++;
+			}
+		}));
+
+		const first = manager.holdReload(resource);
+		const second = manager.holdReload(resource);
+		accessor.fileService.fireFileChanges(new FileChangesEvent([{ resource, type: FileChangeType.UPDATED }], false));
+		await timeout(10);
+		assert.strictEqual(resolves, 0, 'held');
+		first.dispose();
+		first.dispose();
+		await timeout(10);
+		assert.strictEqual(resolves, 0, 'still held by the second holder');
+		second.dispose();
+		await timeout(10);
+		assert.strictEqual(resolves, 1, 'the skipped reload runs when the hold ends');
+
+		// A hold during which nothing changed reloads nothing.
+		manager.holdReload(resource).dispose();
+		await timeout(10);
+		assert.strictEqual(resolves, 1);
+	});
+
 	test('file change events trigger reload (after a model is resolved: https://github.com/microsoft/vscode/issues/132765)', async () => {
 		const manager = accessor.textFileService.files as ITestTextFileEditorModelManager;
 		const resource = URI.file('/path/index.txt');

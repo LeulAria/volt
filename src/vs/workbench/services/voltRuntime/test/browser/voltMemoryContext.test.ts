@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import * as sinon from 'sinon';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -25,7 +26,16 @@ suite('Volt memory context (sandboxed host)', () => {
 
 	function setup() {
 		const fileChanges = store.add(new Emitter<FileChangesEvent>());
-		const fileService = { onDidFilesChange: fileChanges.event, onDidRunOperation: Event.None } as unknown as IFileService;
+		// The notes' files, by folder: what a stale block's check stats.
+		const files = new Map<string, { name: string; size: number; mtime: number }[]>([['/u/User/voltMemory', [{ name: 'a.md', size: 10, mtime: 1 }]]]);
+		const resolve = async (dir: URI) => {
+			const children = files.get(dir.fsPath);
+			if (!children) {
+				throw new Error('not found');
+			}
+			return { children: children.map(child => ({ ...child, isFile: true })) };
+		};
+		const fileService = { onDidFilesChange: fileChanges.event, onDidRunOperation: Event.None, resolve } as unknown as IFileService;
 		let provider: IVoltHostToolProvider | undefined;
 		const hostTools = { registerToolProvider: (p: IVoltHostToolProvider) => { provider = p; return Disposable.None; } } as unknown as IVoltHostToolService;
 		const environment = { userRoamingDataHome: URI.file('/u/User') } as unknown as IEnvironmentService;
@@ -44,8 +54,69 @@ suite('Volt memory context (sandboxed host)', () => {
 			}
 			reads.shift()!(notes);
 		};
-		return { service, reads, answer, provider: () => provider! };
+		return { service, reads, answer, files, provider: () => provider!, setNotes: (text: string) => notes = text };
 	}
+
+	async function settle() {
+		for (let i = 0; i < 50; i++) {
+			await Promise.resolve();
+		}
+	}
+
+	test('a stale block is not read again while the notes\' files are as they were (no host started)', async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000_000, toFake: ['Date'] });
+		try {
+			const { service, reads, answer } = setup();
+			const first = service.context();
+			await answer();
+			assert.strictEqual(await first, 'note A');
+			clock.tick(31_000);
+			assert.strictEqual(await service.context(), 'note A');
+			await settle();
+			assert.strictEqual(reads.length, 0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	test('a notes folder created empty (the host\'s first start makes the user folder) is no change', async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000_000, toFake: ['Date'] });
+		try {
+			const { service, reads, answer, files } = setup();
+			files.delete('/u/User/voltMemory');
+			const first = service.context();
+			await answer();
+			await first;
+			files.set('/u/User/voltMemory', []);
+			clock.tick(31_000);
+			await service.context();
+			await settle();
+			assert.strictEqual(reads.length, 0);
+		} finally {
+			clock.restore();
+		}
+	});
+
+	test('a stale block is read again (behind the turn) once a note file changed', async () => {
+		const clock = sinon.useFakeTimers({ now: 1_000_000, toFake: ['Date'] });
+		try {
+			const { service, reads, answer, files, setNotes } = setup();
+			const first = service.context();
+			await answer();
+			await first;
+			files.set('/w/.volt/memory', [{ name: 'b.md', size: 5, mtime: 2 }]);
+			setNotes('note C');
+			clock.tick(31_000);
+			assert.strictEqual(await service.context(), 'note A');
+			await settle();
+			assert.strictEqual(reads.length, 1);
+			await answer();
+			await settle();
+			assert.strictEqual(await service.context(), 'note C');
+		} finally {
+			clock.restore();
+		}
+	});
 
 	test('a later turn gets the last block at once instead of waiting for the host', async () => {
 		const { service, reads, answer } = setup();

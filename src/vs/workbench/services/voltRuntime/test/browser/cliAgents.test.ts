@@ -9,7 +9,7 @@ import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { isWindows } from '../../../../../base/common/platform.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltExecResult, IVoltJobOutput, IVoltStdioService, IVoltStdioSpawnOptions } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { acpLaunchFor, cliAgentDefinition, cliLoginForNotice, grokAcpArgs, npxCachedLaunchScript, runCli } from '../../browser/agents/cliAgents.js';
+import { acpLaunchFor, acpSharedHostEntry, cliAgentDefinition, cliLoginForNotice, grokAcpArgs, npxCachedLaunchScript, runCli } from '../../browser/agents/cliAgents.js';
 import { taskWaitMs } from '../../common/orchestration/agentTasks.js';
 import { acpAdapterPreload } from '../../common/claudeAcpPatch.js';
 
@@ -99,6 +99,17 @@ suite('runCli', () => {
 		assert.ok(timeout > taskWaitMs(true) + 30_000, `MCP_TOOL_TIMEOUT ${timeout} must outlast ${taskWaitMs(true)} ms`);
 	});
 
+	test('FIRSTWORD-WAIT-2: Claude\'s first command does not wait for MCP servers it does not require (the claude.ai connectors)', () => {
+		// Without it a message sent 0.4-1.1 s after a stopped chat's agent came back waited for the account's
+		// connectors, until about 1.1 s after ready (round 5, chain 4; round 6, report 52).
+		assert.strictEqual(cliAgentDefinition('claude-code')?.acpEnv?.CLAUDE_CODE_MCP_STARTUP_WAIT_MS, '0');
+	});
+
+	test('A7-HOOKS-1: Claude Code runs Volt\'s hook module on its own thread, not in a second heap per CLI', () => {
+		// The Worker cost each chat's CLI about 45 MB; the requests are byte-identical either way (round 7, report 61).
+		assert.strictEqual(cliAgentDefinition('claude-code')?.acpEnv?.CLAUDE_CODE_HOOKS_SAME_THREAD, '1');
+	});
+
 	test('Codex launches the ACP adapter, never `codex acp`', () => {
 		const codex = cliAgentDefinition('codex');
 		assert.deepStrictEqual(acpLaunchFor(codex, 'codex', ['acp'], true), { command: 'codex-acp', args: [] });
@@ -110,6 +121,31 @@ suite('runCli', () => {
 		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], false, bin), { command: 'node', args: ['--import', acpAdapterPreload('@agentclientprotocol/claude-agent-acp@0.106.0')!, bin] });
 		const codexBin = '/home/u/.npm/_npx/def/node_modules/.bin/codex-acp';
 		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('codex'), 'codex', [], false, codexBin), { command: codexBin, args: [] });
+	});
+
+	test('only Claude\'s adapter on node with Volt\'s preload may be served from the shared host', () => {
+		const claude = cliAgentDefinition('claude-code');
+		const bin = '/home/u/.npm/_npx/abc/node_modules/.bin/claude-agent-acp';
+		assert.strictEqual(acpSharedHostEntry(claude, acpLaunchFor(claude, 'claude', [], false, bin)), bin);
+		// By name (no known file), through npx, a custom command, another agent: a process per chat.
+		assert.strictEqual(acpSharedHostEntry(claude, acpLaunchFor(claude, 'claude', [], true)), undefined);
+		assert.strictEqual(acpSharedHostEntry(claude, acpLaunchFor(claude, 'claude', [], false)), undefined);
+		assert.strictEqual(acpSharedHostEntry(claude, { command: 'node', args: ['--import', 'data:text/javascript,0', bin] }), undefined);
+		assert.strictEqual(acpSharedHostEntry(claude, { command: 'my-claude', args: [] }), undefined);
+		const codex = cliAgentDefinition('codex');
+		assert.strictEqual(acpSharedHostEntry(codex, acpLaunchFor(codex, 'codex', [], false, '/home/u/.npm/_npx/def/node_modules/.bin/codex-acp')), undefined);
+	});
+
+	test('FIRSTWORD-PATH-1: Claude\'s adapter found on PATH runs on node with Volt\'s preload too (compile cache, after-turn patches); a path-less PATH hit runs by name', () => {
+		// Round 6: a global `claude-agent-acp` on PATH skipped the preload, which cost the cold start its compile
+		// cache and every prompt the deferred skill-file read and sign-in probe.
+		const global = '/opt/homebrew/bin/claude-agent-acp';
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], global), { command: 'node', args: ['--import', acpAdapterPreload('@agentclientprotocol/claude-agent-acp@0.106.0')!, global] });
+		// A path on PATH wins over npx's copy.
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], global, '/home/u/.npm/_npx/abc/node_modules/.bin/claude-agent-acp').args[2], global);
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('claude-code'), 'claude', [], true), { command: 'claude-agent-acp', args: [] });
+		// Codex has no preload: its global adapter runs as the file it is.
+		assert.deepStrictEqual(acpLaunchFor(cliAgentDefinition('codex'), 'codex', [], '/opt/homebrew/bin/codex-acp'), { command: '/opt/homebrew/bin/codex-acp', args: [] });
 	});
 
 	test('an adapter cached by npx runs directly, without npx as its parent', () => {

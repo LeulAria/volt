@@ -1,0 +1,13 @@
+{"label":"r6-diag2","flags":["warm=400","debug"],"rep":0,"at":"2026-11-14T21:05:53.935Z","load":"50.90 50.27 37.37","initMs":2105,"sessionMs":2623,"readyMs":5058,"warmMs":400,"mainReqMs":1700,"firstTextMs":1736,"resultMs":2119,"spawnToFirstTextMs":7198,"before":0,"mainMessages":2}
+{"label":"r6-diag2","n":1,"initMs":2105,"sessionMs":2623,"mainReqMs":1700,"firstTextMs":1736,"spawnToFirstTextMs":7198}
+{"label":"r6-diag2","flags":["warm=400","debug","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T21:06:29.620Z","load":"47.58 49.54 37.70","initMs":1835,"sessionMs":2845,"readyMs":5002,"warmMs":400,"mainReqMs":731,"firstTextMs":846,"resultMs":1168,"spawnToFirstTextMs":6255,"before":0,"mainMessages":2}
+{"label":"r6-diag2","n":1,"initMs":1835,"sessionMs":2845,"mainReqMs":731,"firstTextMs":846,"spawnToFirstTextMs":6255}
+{"label":"r6-diag2","flags":["warm=400","debug"],"rep":0,"at":"2026-11-14T21:07:05.454Z","load":"61.14 52.63 39.30","initMs":2613,"sessionMs":6835,"readyMs":9670,"warmMs":400,"mainReqMs":1995,"firstTextMs":2024,"resultMs":2495,"spawnToFirstTextMs":12099,"before":0,"mainMessages":2}
+{"label":"r6-diag2","n":1,"initMs":2613,"sessionMs":6835,"mainReqMs":1995,"firstTextMs":2024,"spawnToFirstTextMs":12099}
+{"label":"r6-diag2","flags":["warm=400","debug","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T21:07:46.096Z","load":"66.19 55.19 40.86","initMs":3605,"sessionMs":3297,"readyMs":7352,"warmMs":400,"mainReqMs":879,"firstTextMs":942,"resultMs":1204,"spawnToFirstTextMs":8729,"before":0,"mainMessages":2}
+{"label":"r6-diag2","n":1,"initMs":3605,"sessionMs":3297,"mainReqMs":879,"firstTextMs":942,"spawnToFirstTextMs":8729}
+{"label":"r6-diag2","flags":["warm=400","debug"],"rep":0,"at":"2026-11-14T21:08:24.220Z","load":"62.77 55.74 41.72","initMs":1116,"sessionMs":2792,"readyMs":4075,"warmMs":400,"mainReqMs":888,"firstTextMs":922,"resultMs":1278,"spawnToFirstTextMs":5402,"before":0,"mainMessages":2}
+{"label":"r6-diag2","n":1,"initMs":1116,"sessionMs":2792,"mainReqMs":888,"firstTextMs":922,"spawnToFirstTextMs":5402}
+{"label":"r6-diag2","flags":["warm=400","debug","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-14T21:08:58.984Z","load":"84.64 61.54 44.30","initMs":2586,"sessionMs":3473,"readyMs":6683,"warmMs":400,"mainReqMs":1154,"firstTextMs":1225,"resultMs":1570,"spawnToFirstTextMs":8339,"before":0,"mainMessages":2}
+{"label":"r6-diag2","n":1,"initMs":2586,"sessionMs":3473,"mainReqMs":1154,"firstTextMs":1225,"spawnToFirstTextMs":8339}
+diag2 done Sun Nov 15 01:09:36 +04 2026

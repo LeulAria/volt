@@ -70,7 +70,7 @@ import {
 	isOpenState,
 	isReadyToMerge,
 	isTerminalState,
-	isTrunkBranch,
+	canDiscoverPullRequests,
 	newLink,
 	parseGeneratedJson,
 	PR_WATCH_FAILURE_LIMIT,
@@ -187,6 +187,12 @@ const DISCOVERY_MS = 2 * 60_000;
 /** Chats untouched for longer are not searched for branch pull requests. */
 const DISCOVERY_RECENT_MS = 7 * 24 * 3_600_000;
 const REPO_TTL_MS = 30_000;
+/**
+ * Background discovery reads again, only this rarely, a checkout it cannot search (see canDiscoverPullRequests): each
+ * read is several git processes in main, every 2 minutes for good in a window left alone. A turn, a remote edit or the
+ * window coming to the front reads it at once.
+ */
+const UNSEARCHABLE_REPO_TTL_MS = 10 * 60_000;
 /** Remotes are re-read on config edits and focus; this only catches what neither saw. */
 const ORIGIN_TTL_MS = 60_000;
 /** A remotes read that failed (git busy or briefly unavailable) is tried again this soon. */
@@ -251,7 +257,8 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	private readonly reloadScheduler = this._register(new RunOnceScheduler(() => void this.reloadFromDisk(), 150));
 	/** Second refreshes after pushes (see didPush). */
 	private readonly pushTimers = new Set<ReturnType<typeof setTimeout>>();
-	private readonly repos = new Map<string, { at: number; repo: Promise<IVoltPrRepo | undefined> }>();
+	/** `searchable`: whether the answer, once in, is one discovery can look up (see canDiscoverPullRequests). */
+	private readonly repos = new Map<string, { at: number; repo: Promise<IVoltPrRepo | undefined>; searchable?: boolean }>();
 	private readonly origins = new Map<string, IOriginState>();
 	/** Repository config files watched for remote edits (a linked worktree's is its main repository's). */
 	private readonly configWatches = this._register(new DisposableMap<string>());
@@ -370,6 +377,14 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			if (focused) {
 				for (const folder of this.origins.keys()) {
 					void this.readOrigin(folder);
+				}
+				// The user may have checked out a branch elsewhere: the next discovery reads those checkouts again
+				// (not one read a moment ago, as the launch's first focus would have it).
+				const now = Date.now();
+				for (const [folder, entry] of [...this.repos]) {
+					if (entry.searchable === false && now - entry.at > REPO_TTL_MS) {
+						this.repos.delete(folder);
+					}
 				}
 				this.syncOpenOnFocus();
 			}
@@ -641,8 +656,19 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			this.logService.trace('[volt-pr] could not read the repository of', folder, err);
 			return undefined;
 		});
-		this.repos.set(folder, { at: now, repo });
+		const entry: { at: number; repo: Promise<IVoltPrRepo | undefined>; searchable?: boolean } = { at: now, repo };
+		this.repos.set(folder, entry);
+		void repo.then(value => entry.searchable = canDiscoverPullRequests(value));
 		return repo;
+	}
+
+	/** The repository background discovery uses: a checkout it cannot search is read again only now and then. */
+	private repoForDiscovery(folder: string): Promise<IVoltPrRepo | undefined> {
+		const cached = this.repos.get(folder);
+		if (cached?.searchable === false && Date.now() - cached.at < UNSEARCHABLE_REPO_TTL_MS) {
+			return cached.repo;
+		}
+		return this.repoForFolder(folder);
 	}
 
 	hasOrigin(folder: string): boolean | undefined {
@@ -1341,14 +1367,14 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			if (!this.history.get(sessionId) || !folder) {
 				continue;
 			}
-			const repo = await this.repoForFolder(folder);
+			const repo = await this.repoForDiscovery(folder);
 			// A worktree renamed or switched since the chat made it: the chat follows its branch, so a
 			// pull request from that branch is the chat's own.
 			if (repo?.branch && this.history.get(sessionId)?.worktreePath === folder) {
 				followWorktreeBranch(this.history, this.runtime, folder, repo.branch);
 			}
 			const meta = this.history.get(sessionId);
-			if (!meta || !repo || repo.provider !== 'github' || !repo.branch || isTrunkBranch(repo.branch) || !this.hostReady(repo.host, false)) {
+			if (!meta || !repo || !canDiscoverPullRequests(repo) || !this.hostReady(repo.host, false)) {
 				continue;
 			}
 			if (!force && this.branchMisses.has(`${repoId(repo)}\u0000${repo.branch}`)) {

@@ -430,6 +430,58 @@ suite('ACP provider supervision', () => {
 		await finish(env, handle);
 	});
 
+	test('an agent process lost mid-turn (a connection session failure) fails the turn with a restartable error, not "done"', async () => {
+		const env = setup();
+		const { handle, turn } = await startTurn(env);
+		env.agent.update('p1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Editing' } });
+		// claude-agent-acp, its Claude process killed: a `transport_lost` session failure, then the prompt answered as a normal end of turn.
+		env.agent.update('p1', { sessionUpdate: 'usage_update', _meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: 'error', title: 'The connection to Claude was lost.', category: 'connection', actions: ['new_session'] } } } } });
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		const error = turn.events.find(event => event.type === 'error');
+		assert.ok(error?.type === 'error' && error.retryable, 'the turn carries a retryable error');
+		assert.ok(isAcpTurnRestartable(error.type === 'error' ? error.message : ''), 'the runtime restarts the agent on it');
+		assert.deepStrictEqual(kinds(turn.events), ['text.delta', 'notice:The connection to Claude was lost.', 'error', 'run.end:fail']);
+		await finish(env, handle);
+	});
+
+	test('a connection session failure on the prompt response (the adapter\'s usual place for it) fails the turn the same way', async () => {
+		const env = setup();
+		const { handle, turn } = await startTurn(env);
+		env.agent.update('p1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Editing' } });
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn', _meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: 'error', title: 'The connection to Claude was lost.', category: 'connection', actions: ['new_session'] } } } } });
+		await turn.done;
+		const error = turn.events.find(event => event.type === 'error');
+		assert.ok(error?.type === 'error' && isAcpTurnRestartable(error.message), 'restartable');
+		assert.deepStrictEqual(kinds(turn.events), ['text.delta', 'notice:The connection to Claude was lost.', 'error', 'run.end:fail']);
+		await finish(env, handle);
+	});
+
+	test('a connection retry in progress (an api_retry warning) is a notice only: the CLI is retrying itself', async () => {
+		const env = setup();
+		const { handle, turn } = await startTurn(env);
+		// claude-agent-acp's `api_retry` with no status: kind transport_lost, severity warning, the CLI retrying a dropped connection.
+		env.agent.update('p1', { sessionUpdate: 'session_info_update', _meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: 'warning', title: 'Reconnecting to Claude, attempt 1 of 10.', category: 'connection', actions: ['new_session'] } } } } });
+		env.agent.update('p1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Back, done.' } });
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		assert.deepStrictEqual(kinds(turn.events), ['notice:Reconnecting to Claude, attempt 1 of 10.', 'text.delta', 'run.end:done']);
+		await finish(env, handle);
+	});
+
+	test('a service session failure (overloaded) is a notice only; the turn ends as the agent says', async () => {
+		const env = setup();
+		const { handle, turn } = await startTurn(env);
+		env.agent.update('p1', { sessionUpdate: 'usage_update', _meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: 'warning', title: 'Claude is temporarily overloaded.', category: 'service', actions: ['retry'] } } } } });
+		env.agent.update('p1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Done.' } });
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		assert.deepStrictEqual(kinds(turn.events), ['notice:Claude is temporarily overloaded.', 'text.delta', 'run.end:done']);
+		await finish(env, handle);
+	});
+
 	test('a prompt that never produced anything is re-sent, then reported as a restartable stall', async () => {
 		const env = setup();
 		const { handle, turn } = await startTurn(env, 'original ask');

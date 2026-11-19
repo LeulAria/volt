@@ -184,6 +184,15 @@ export const AGENT_HOUSEKEEPING: Readonly<Record<string, readonly string[]>> = {
 	],
 };
 
+/**
+ * Read-only links of a CLI's config overlay (AGENT_OVERLAYS) that the CLI writes to by itself at
+ * start: Claude Code's plugin sync replaces or creates its `plugins` folder. The write stays
+ * denied (the link points at the user's real plugins); it is logged, never a card.
+ */
+export const AGENT_HOUSEKEEPING_LINKS: Readonly<Record<string, readonly string[]>> = {
+	'claude-code': ['plugins'],
+};
+
 const NPM_DOMAINS = ['registry.npmjs.org'];
 
 /**
@@ -392,8 +401,10 @@ function footprintOf(providerId: string): IAgentFootprint {
  * them to the user: each "Allow" there would widen the sandbox to something the user's own CLI or
  * the whole home folder depends on. `realConfig` is the CLI's config folder when the user moved it
  * (`CLAUDE_CONFIG_DIR`): the footprint's entries below its default folder are read there too.
+ * `overlayConfig` is the chat's own config overlay (agentState.ts): the same entries count there,
+ * and so do the read-only links the CLI rewrites by itself ({@link AGENT_HOUSEKEEPING_LINKS}).
  */
-export function isAgentHousekeepingDenial(providerId: string, home: string, denial: { readonly kind: string; readonly target: string }, own: { readonly sentinel?: string; readonly realConfig?: string } = {}): boolean {
+export function isAgentHousekeepingDenial(providerId: string, home: string, denial: { readonly kind: string; readonly target: string }, own: { readonly sentinel?: string; readonly realConfig?: string; readonly overlayConfig?: string } = {}): boolean {
 	if (denial.kind !== 'read' && denial.kind !== 'write') {
 		return false;
 	}
@@ -417,11 +428,20 @@ export function isAgentHousekeepingDenial(providerId: string, home: string, deni
 	if (denial.kind === 'read' && overlay && (target === `${root}/${overlay.home}` || (own.realConfig && target === normalizeSandboxPath(own.realConfig)))) {
 		return true;
 	}
+	const overlayConfig = own.overlayConfig ? normalizeSandboxPath(own.overlayConfig) : undefined;
+	// A link of the overlay the CLI rewrites by itself (its plugin folder): only the link, not what is below it.
+	if (denial.kind === 'write' && overlayConfig && Object.prototype.hasOwnProperty.call(AGENT_HOUSEKEEPING_LINKS, providerId) && AGENT_HOUSEKEEPING_LINKS[providerId].some(name => target === `${overlayConfig}/${name}`)) {
+		return true;
+	}
 	const housekeeping = Object.prototype.hasOwnProperty.call(AGENT_HOUSEKEEPING, providerId) ? AGENT_HOUSEKEEPING[providerId] : [];
 	return housekeeping.some(entry => {
 		const paths = [`${root}/${entry}`];
-		if (own.realConfig && configHome && entry.startsWith(configHome)) {
-			paths.push(`${normalizeSandboxPath(own.realConfig)}/${entry.slice(configHome.length)}`);
+		if (configHome && entry.startsWith(configHome)) {
+			for (const config of [own.realConfig ? normalizeSandboxPath(own.realConfig) : undefined, overlayConfig]) {
+				if (config) {
+					paths.push(`${config}/${entry.slice(configHome.length)}`);
+				}
+			}
 		}
 		return paths.some(path => isPathInside(target, path));
 	});

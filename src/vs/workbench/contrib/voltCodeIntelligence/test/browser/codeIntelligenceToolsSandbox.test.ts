@@ -10,6 +10,7 @@ import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ILanguageFeaturesService } from '../../../../../editor/common/services/languageFeatures.js';
+import { IModelService } from '../../../../../editor/common/services/model.js';
 import { ITextModelService } from '../../../../../editor/common/services/resolverService.js';
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
 import { FileService } from '../../../../../platform/files/common/fileService.js';
@@ -42,7 +43,7 @@ suite('Code intelligence host tools for a sandboxed chat', () => {
 		markers.changeOne('ts', URI.file('/Users/me/.aws/config.ts'), marker('aws_secret_access_key = AKIA-SECRET'));
 		// The agent window: no folders of its own.
 		const workspace = { getWorkspace: () => ({ folders: [] }), isInsideWorkspace: () => false, onDidChangeWorkspaceFolders: Event.None } as unknown as IWorkspaceContextService;
-		store.add(new CodeIntelligenceHostTools(hostTools, {} as IVoltCodeIndexService, {} as ISearchService, fileService, new TestConfigurationService(), workspace, markers, {} as ITextModelService, {} as ILanguageFeaturesService, { files: { get: () => undefined } } as unknown as ITextFileService));
+		store.add(new CodeIntelligenceHostTools(hostTools, {} as IVoltCodeIndexService, {} as ISearchService, fileService, new TestConfigurationService(), workspace, markers, {} as ITextModelService, {} as ILanguageFeaturesService, { files: { get: () => undefined } } as unknown as ITextFileService, { getModels: () => [] } as unknown as IModelService));
 		assert.ok(provider);
 
 		// The call as the agent server sends it: the sandbox and the folders its gate judged by, no closures.

@@ -45,7 +45,7 @@ import { turnWriteGate } from '../../common/turnWriteGate.js';
 import { accessBridgeFor } from './bridges/accessBridges.js';
 import { AcpJsonRpcClient, AcpRequestAbandonedError, IAcpIncomingRequest } from './acpJsonRpc.js';
 import { listClaudeModels } from './claudeCatalog.js';
-import { acpLaunchFor, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listFxModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
+import { acpLaunchFor, acpSharedHostEntry, cliAgentDefinition, forgetAcpAdapterBin, listAntigravityModels, listFxModels, listGrokModels, listOpenCodeModels, resolveAcpAdapterBin } from './cliAgents.js';
 import { listCodexModels } from './codexAppServer.js';
 import { sandboxRefusalLikely } from '../../common/sandboxDenialCheck.js';
 import { resolveAntigravityCliModelLabel } from '../../common/models/antigravityModels.js';
@@ -357,6 +357,17 @@ function cachedWhich(stdio: IVoltStdioService, command: string): Promise<string 
 }
 
 /** The CLI's link to its backend failed, not the model: `RetriableError: Connection stalled`, `[unavailable] PING timed out`, `ECONNRESET`. */
+/**
+ * A session failure that says the agent process behind the adapter is gone: claude-agent-acp's
+ * `transport_lost` / `worker_shutdown`, category `connection` at severity `error`. The same category
+ * at severity `warning` is a retry in progress ("Reconnecting to Claude, attempt 1 of 10.": the CLI
+ * retrying a dropped API connection itself, ADEMark C5), which must stay a notice: failing the turn
+ * on it threw the retry away and restarted the agent into the same outage (round 6, C5 run 1).
+ */
+export function isLostAgentProcess(notice: { readonly severity: string; readonly failure?: { readonly category: string } }): boolean {
+	return notice.failure?.category === 'connection' && notice.severity === 'error';
+}
+
 export function isAgentTransportError(message: string): boolean {
 	return /RetriableError|Connection stalled|PING timed out|ECONNRESET|ETIMEDOUT|socket hang up|\[(unavailable|aborted|deadline_exceeded)\]/i.test(message);
 }
@@ -963,7 +974,9 @@ export class AcpAgentProvider implements IAgentProvider {
 			// Rejects with a SandboxUnavailableError when the sandbox cannot be enforced; the runtime shows it.
 			// `sandboxed` follows the wrap: an agent whose strategy is its own sandbox gets no Volt wrap here (sandboxStrategy).
 			const context: IVoltExecContext = { principal: req.sessionId ? `chat:${req.sessionId}` : 'volt', reason: 'agent', sandboxed: !!sandbox };
-			processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}), context });
+			// Claude's adapter is served from one process for every chat; this chat's CLI still starts in its own sandbox.
+			const sharedEntry = acpSharedHostEntry(cliAgentDefinition(this.id), { command, args });
+			processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}), context, ...(sharedEntry ? { acpHost: { entry: sharedEntry } } : {}) });
 		} finally {
 			this.spawning--;
 		}
@@ -1346,7 +1359,8 @@ export class AcpAgentProvider implements IAgentProvider {
 		const command = profile.command || this.defaultCommand;
 		const def = cliAgentDefinition(this.id);
 		const adapter = def?.acpAdapter;
-		const adapterOnPath = !!adapter && def.commands.includes(command) && !!await cachedWhich(this.stdio, adapter.command);
+		// The path `which` found (a global install) runs through Volt's preload like npx's copy (see acpLaunchFor).
+		const adapterOnPath: string | false = (!!adapter && def.commands.includes(command) && await cachedWhich(this.stdio, adapter.command)) || false;
 		let adapterBin: string | undefined;
 		if (adapter && def.commands.includes(command) && !adapterOnPath) {
 			// The copy npx installed, run directly instead of through npx on every spawn.
@@ -1662,6 +1676,16 @@ export class AcpAgentProvider implements IAgentProvider {
 		for (const event of this.mapUpdate(params)) {
 			if (event.type === 'notice') {
 				this.pushNotice(live, turn, event);
+				if (isLostAgentProcess(event)) {
+					// The agent process behind the adapter died (killed, crashed): claude-agent-acp reports
+					// `transport_lost`, then answers the prompt as if the turn had ended, and the chat sat idle on
+					// a half-done task (ADEMark C4, round 6). It is the process death it is: the turn fails as a
+					// dead process does, and the runtime restarts the agent and sends the prompt again
+					// (`isAcpTurnRestartable`).
+					this.logService.info(`[ACP] ${this.id} lost its agent process mid-turn: ${event.title}`);
+					this.endTurn(live, turn, 'fail', { message: `ACP session is not running: ${event.title}`, retryable: true });
+					return;
+				}
 				continue;
 			}
 			if (event.type === 'tool.start') {
@@ -2028,8 +2052,20 @@ export class AcpAgentProvider implements IAgentProvider {
 					}
 				}
 				this.flushHeld(turn);
-				for (const notice of noticesFromAcpPayload(result)) {
+				const notices = noticesFromAcpPayload(result);
+				for (const notice of notices) {
 					this.pushNotice(live, turn, notice);
+				}
+				const lost = notices.find(isLostAgentProcess);
+				if (lost && result?.stopReason !== 'cancelled' && !turn.userCancelled) {
+					// claude-agent-acp attaches a `transport_lost` session failure to the prompt response when its
+					// Claude process died mid-turn (killed, crashed), and the response reads as a normal end of turn.
+					// Left as "done", the chat sat idle on a half-done task (ADEMark C4, round 6). It is the process
+					// death it is: the turn fails as a dead process does, and the runtime restarts the agent and sends
+					// the prompt again (`isAcpTurnRestartable`).
+					this.logService.info(`[ACP] ${this.id} lost its agent process mid-turn: ${lost.title}`);
+					this.endTurn(live, turn, 'fail', { message: `ACP session is not running: ${lost.title}`, retryable: true });
+					return;
 				}
 				const usage = parseTokenUsage(result);
 				if (usage) {
@@ -2369,6 +2405,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				...(notice.description ? { description: notice.description } : {}),
 				...(notice.resetAt !== undefined ? { resetAt: notice.resetAt } : {}),
 				...(notice.rateLimit ? { rateLimit: notice.rateLimit } : {}),
+				...(notice.failure ? { failure: notice.failure } : {}),
 			});
 		}
 		return events;

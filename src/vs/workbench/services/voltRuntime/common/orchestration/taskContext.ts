@@ -52,7 +52,10 @@ interface ICapsuleBudget {
 }
 
 const BUDGETS: Readonly<Record<Exclude<TaskContextLevel, 'none'>, ICapsuleBudget>> = {
-	brief: { latest: 1_500, earlier: 300, earlierCount: 2, reply: 700, planItems: 12, siblings: 8, siblingReport: 300, total: 4_500 },
+	// `latest` 6,000: a request that spells out every part (ADEMark's C1 is 5.4K characters) reaches each subagent
+	// whole, so the lead's brief can name the part instead of copying it (delegate_task's description says so).
+	// Before, the middle of such a request was cut at 1,500 and the lead rewrote every item's spec.
+	brief: { latest: 6_000, earlier: 300, earlierCount: 2, reply: 700, planItems: 12, siblings: 8, siblingReport: 300, total: 9_000 },
 	full: { latest: 4_000, earlier: 900, earlierCount: 6, reply: 2_500, planItems: 30, siblings: 12, siblingReport: 1_200, total: 14_000 },
 };
 

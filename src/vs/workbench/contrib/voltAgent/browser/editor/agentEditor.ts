@@ -136,7 +136,7 @@ import { AGENT_EDITOR_LINE_NUMBERS_SETTING, AgentEditorInput, NEW_AGENT_COMMAND_
 import { OPEN_CONNECTED_AGENTS_COMMAND_ID } from '../orchestration/agentExternalCaller.js';
 import { createAgentTitleActionViewItem } from './agentTitleActions.js';
 import { hasUserInput, watchForUserInput } from './agentUserInput.js';
-import { intentWantsPrewarm, openPrewarmDelay, PREWARM_ON_OPEN_MS } from './agentPrewarmIntent.js';
+import { intentWantsPrewarm, openPrewarmDelay, PREWARM_INTENT_GAP_MS, PREWARM_ON_OPEN_MS } from './agentPrewarmIntent.js';
 import { IAction } from '../../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../../base/browser/ui/actionbar/actionbar.js';
 import { IBaseActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
@@ -150,7 +150,7 @@ import { nativeScrollerTakesWheel, prefersReducedMotion, ThreadFollow } from './
 import { openAgentPanel } from '../workspace/agentPanels.js';
 import { AgentComposerChips, shouldOfferScrollToBottom } from '../composer/agentComposerChips.js';
 import { AgentPendingChanges, MINI_FILE_DIFF_VIEWER_ENABLED } from '../composer/agentPendingChanges.js';
-import { FRESH_TEXT_CLASS, FreshTextTracker, settleFreshText } from '../chrome/agentFreshText.js';
+import { FRESH_TEXT_CLASS, FRESH_TEXT_STEP_MS, FreshTextTracker, settleFreshText } from '../chrome/agentFreshText.js';
 import { reconcileChildren, TranscriptReuse } from '../chrome/agentTranscriptReuse.js';
 import { IAgentPendingFile } from '../review/agentEditsService.js';
 import { AgentCaretRest } from '../composer/agentCaretRest.js';
@@ -186,7 +186,7 @@ import { AgentLandingChrome } from '../home/agentLandingChrome.js';
 import { AgentLandingRecents } from '../home/agentLandingRecents.js';
 import { IAgentThreadLifecycleService, needsBringBack } from '../home/agentThreadLifecycle.js';
 import { AgentThreadSelectionActions } from './agentThreadSelectionActions.js';
-import { composerDraftShape } from './agentComposerDraft.js';
+import { clipForPrediction, clipPiecesForPrediction, composerDraftShape, lastLines } from './agentComposerDraft.js';
 import { ICitationSource, ICitationTarget, registerCitationTarget, revealCitation, revealCitationInChats } from './agentCitationSource.js';
 import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
@@ -205,6 +205,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { IAgentTurnReveal, onDidRequestAgentTurnReveal, takeAgentTurnReveal } from '../search/agentTurnReveal.js';
 import { AgentThreadView } from './agentThreadView.js';
+import { InputFirstGate, TextFrameClock } from './agentInputFirst.js';
 import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip, setIconButtonTooltip } from '../chrome/agentTooltip.js';
 import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
@@ -384,9 +385,7 @@ const RESTORE_REVEAL_TIMEOUT_MS = 1500;
 /** An "ago" label older than this reads in hours or days, so the clock redoes it only every {@link AGO_OLD_SWEEP_MS}. */
 const AGO_OLD_MS = 60 * 60_000;
 const AGO_OLD_SWEEP_MS = 60_000;
-/** An "ago" label younger than this changes within the second's pace ("a few seconds ago", "a minute ago"). */
-const AGO_SECONDS_MS = 90_000;
-/** The chat clock's pace while something on screen changes by the second, and otherwise (labels in minutes). */
+/** The chat clock's pace while something on screen changes by the second (live counters), and otherwise ("ago" labels, in minutes). */
 const CLOCK_FAST_MS = 1_000;
 const CLOCK_SLOW_MS = 10_000;
 /** How long the background picture's fade on a new chat's first send may run (420ms in agentChatBackground.css). */
@@ -728,9 +727,12 @@ const DRAFT_USAGE_MS = 150;
 /** How long the composer's ghost text reuses the prompts it read; a send refreshes them at once. */
 const PREDICTION_PROMPTS_TTL_MS = 10_000;
 
-function clipForPrediction(text: string, max: number): string {
-	const flat = text.replace(/\s+/g, ' ').trim();
-	return flat.length <= max ? flat : `${flat.slice(0, max)}...`;
+function* predictionTextPieces(segments: readonly AgentSegment[]): Iterable<string> {
+	for (const segment of segments) {
+		if (segment.kind === 'text') {
+			yield segment.text;
+		}
+	}
 }
 
 /**
@@ -753,7 +755,7 @@ function predictionActivity(segments: readonly AgentSegment[]): string[] {
 		const block = segment.block;
 		if (block.type === 'terminal') {
 			const status = block.exitCode === undefined ? (block.status === 'streaming' ? ' (running)' : '') : ` (exit ${block.exitCode})`;
-			const tail = block.exitCode ? `: ${clipForPrediction(block.output.trimEnd().split('\n').slice(-2).join(' '), 160)}` : '';
+			const tail = block.exitCode ? `: ${clipForPrediction(lastLines(block.output, 2), 160)}` : '';
 			out.push(`$ ${clipForPrediction(block.command, 100)}${status}${tail}`);
 		} else if (block.type === 'tool' && block.status === 'streaming') {
 			out.push(`Running ${clipForPrediction(block.title || block.name, 80)}`);
@@ -881,7 +883,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private threadCards: AgentThreadCards | undefined;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
-	private readonly freshText = new FreshTextTracker();
+	// The fade's colour steps of every span share the document timeline's clock (see alignedFadeDelay).
+	private readonly freshText = new FreshTextTracker(document => {
+		const time = document.timeline?.currentTime;
+		return typeof time === 'number' ? time : undefined;
+	});
 	private readonly suggestListeners = this._register(new DisposableStore());
 	private sendKind: 'mic' | 'send' | 'voice' = 'mic';
 	/** Who wrote the prompt `submitPrompt` is sending (a voice call), for the pill above it. */
@@ -963,6 +969,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private prewarmedAt = 0;
 	/** When a sign of intent short of a press or key (the pointer on the composer, the window to the front) last warmed the agent. */
 	private intentWarmedAt = 0;
+	/** When the pointer or the wheel in the chat last kept its live agent (see keepAgentForReader). */
+	private readerKeptAt = 0;
 	/** When the last chat this editor showed was opened by a click (see openPrewarmDelay). */
 	private lastClickedOpenAt: number | undefined;
 	/** An edited prompt is waiting on the "Revert files to this message?" dialog. */
@@ -992,6 +1000,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private eventDisposable: IDisposable | undefined;
 	/** A redraw waiting for the next animation frame. */
 	private renderHandle: IDisposable | undefined;
+	/** A streamed redraw in the frame of a composer key waits one frame (see InputFirstGate). */
+	private readonly inputFirst = this._register(new InputFirstGate((callback, priority) => scheduleAtNextAnimationFrame(getWindow(this.container), callback, priority)));
+	/** A streamed redraw waits for a frame the fade paints text in anyway (see TextFrameClock). */
+	private readonly textFrames = this._register(new TextFrameClock(
+		callback => scheduleAtNextAnimationFrame(getWindow(this.container), callback),
+		() => {
+			const time = this.container.ownerDocument.timeline?.currentTime;
+			return typeof time === 'number' ? time : undefined;
+		},
+		FRESH_TEXT_STEP_MS,
+	));
 	/** The pane width at the last layout; a prompt's clamp is measured once per width. */
 	private layoutWidth = 0;
 	private readonly promptClamps = new WeakMap<IAgentUserMessage, { readonly width: number; readonly text: string; readonly multiline: boolean; readonly clamped: boolean }>();
@@ -1225,6 +1244,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// The window coming to the front is the user coming back to the chat on screen: a short-lived warm.
 		this._register(addDisposableListener(getWindow(parent), 'focus', () => this.prewarmOnIntent()));
 		this.container = append(parent, $('.volt-agent-editor'));
+		// The pointer moving or the wheel turning in the chat is the user reading it: its live agent stays for the follow-up.
+		this._register(addDisposableListener(this.container, 'pointermove', () => this.keepAgentForReader(), { passive: true }));
+		this._register(addDisposableListener(this.container, 'wheel', () => this.keepAgentForReader(), { passive: true }));
 		this.container.dataset.mode = normalizeVoltMode(this.currentMode);
 		// Until the first chat's history is read the thread is empty, which lays out the
 		// new-chat landing for a few frames before the conversation replaces it.
@@ -6191,7 +6213,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (!Number.isFinite(when) || (!sweepOld && now - when > AGO_OLD_MS)) {
 				continue;
 			}
-			fast ||= now - when < AGO_SECONDS_MS;
+			// An "ago" label reads "just now" for its first minute and changes by the minute after (dayjs.ts), so no
+			// label needs the second's pace: only live counters do.
 			const text = el.querySelector('.volt-agent-searchable') ?? el;
 			const label = dayjs(when).fromNow();
 			if (text.textContent !== label) {
@@ -6690,7 +6713,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
 		// The pointer reaching the composer comes before the click into it: a short-lived warm starts here.
 		this.editorDisposables.add(addDisposableListener(this.inputBox, 'pointerenter', () => this.prewarmOnIntent()));
-		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(() => {
+		this.editorDisposables.add(this.inputEditor.onDidChangeModelContent(e => {
+			// A key typed (or a paste): not a send clearing the composer or a draft put back (setValue),
+			// whose frame should show the thread's change with it.
+			if (!e.isFlush) {
+				this.inputFirst.noteKey();
+			}
 			// Typing is the surest sign a message is coming: make sure an agent is (still) warm. Cheap
 			// when one is: the runtime returns at once for a live or pooled agent.
 			if (Date.now() - this.prewarmedAt > PREWARM_ON_TYPE_MS && !this.isStreaming() && this.inputEditor?.getModel()?.getValueLength()) {
@@ -6881,9 +6909,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				}
 				continue;
 			}
-			const text = message.text || message.segments.map(segment => segment.kind === 'text' ? segment.text : '').join('');
-			if (text.trim()) {
-				transcript.push(`Agent: ${clipForPrediction(text, 600)}`);
+			// A streaming reply has no text yet: its segments are read only as far as the cut needs.
+			const text = message.text ? clipForPrediction(message.text, 600) : clipPiecesForPrediction(predictionTextPieces(message.segments), 600);
+			if (text) {
+				transcript.push(`Agent: ${text}`);
 			}
 			for (const path of message.changes ?? []) {
 				names.add(basename(path));
@@ -9001,7 +9030,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (this.renderHandle !== undefined) {
 			return;
 		}
-		this.renderHandle = scheduleAtNextAnimationFrame(getWindow(this.threadInner), () => {
+		const win = getWindow(this.threadInner);
+		const paint = () => {
+			// The frame that draws a key typed in the composer does not also patch the streaming reply:
+			// the reply is drawn one frame later, so the key's echo waits for the composer's work only.
+			// Nor does a frame between two of the fade's colour steps, while a fade runs: text is painted in
+			// the step frames only. A reply's first words (nothing fading yet) are drawn at once.
+			if (this.isStreaming() && (this.inputFirst.shouldYield() || (this.freshText.isFading() && this.textFrames.shouldWait()))) {
+				this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
+				return;
+			}
 			this.renderHandle = undefined;
 			// Tool arguments streamed since the last frame are parsed once, here.
 			if (this.input instanceof AgentEditorInput) {
@@ -9019,7 +9057,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			if (syncDock) {
 				this._onDidChangeDock.fire();
 			}
-		});
+		};
+		this.renderHandle = scheduleAtNextAnimationFrame(win, paint);
 	}
 
 	/**
@@ -9491,6 +9530,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		this.intentWarmedAt = now;
 		this.prewarmAgent(UNTOUCHED_WARM_TTL_MS);
+	}
+
+	/**
+	 * The user reading the chat (the pointer moving, the wheel turning in it) keeps its live agent: its 20 s idle
+	 * stop counts from now, so a follow-up typed after reading the reply finds it up. Starts nothing for a chat
+	 * whose agent is stopped (reading an old chat costs no agent); asks at most every PREWARM_INTENT_GAP_MS.
+	 */
+	private keepAgentForReader(): void {
+		const now = Date.now();
+		if (now - this.readerKeptAt < PREWARM_INTENT_GAP_MS || !this.isVisible() || this.isStreaming()) {
+			return;
+		}
+		this.readerKeptAt = now;
+		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode, { keepOnly: true });
 	}
 
 	/** With `ttlMs`, the warm agent stops after that long unless a later prewarm (the user acting) keeps it. */

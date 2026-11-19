@@ -1,0 +1,3 @@
+timer fires: 2 in 60.0 s (0.03/s), distinct callbacks 2
+    1   0.02/s T every 0 ms  function () { [native code] } @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+    1   0.02/s T every 0 ms  () => { if (disposed) { return; } const end = Date.now() + 15; const deadline = { didTimeout: true, timeRemaining() { return Math.max(0, end - Date.now()); } }; runner(Object.freez @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)

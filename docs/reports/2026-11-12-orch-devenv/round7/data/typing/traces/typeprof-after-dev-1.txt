@@ -1,0 +1,154 @@
+typing window 16271 ms, 30 keys; renderer main thread pid 34095 tid 5535347; 266490 trace events
+
+== main thread timeline events (count, total ms, per s, max ms)
+  5258   15086.0   323.2/s  5263.5 RunTask
+  4888   10285.3   300.4/s  5258.2 FunctionCall
+   488    7593.8    30.0/s   341.3 ProxyMain::BeginMainFrame
+   245    5439.4    15.1/s  5255.8 V8.HandleInterrupts
+   233    5439.3    14.3/s  5255.8 V8.StackGuard
+     2    5255.8     0.1/s  5255.8 V8.InvokeApiInterruptCallbacks
+  2393    4683.3   147.1/s   329.0 AsyncTask Run
+   488    4314.8    30.0/s   330.0 WebFrameWidgetImpl::BeginMainFrame
+   488    4305.7    30.0/s   330.0 Blink.Animate.UpdateTime
+   488    4302.4    30.0/s   330.0 PageAnimator::serviceScriptedAnimations
+   487    4165.5    29.9/s   329.0 FrameRequestCallbackCollection::ExecuteFrameCallbacks
+   488    4164.6    30.0/s   329.0 FireAnimationFrame
+  6990    3116.2   429.6/s   179.7 LocalFrameView::UpdateStyleAndLayout
+   488    2692.9    30.0/s    94.3 WebFrameWidgetImpl::UpdateLifecycle
+  8797    2331.7   540.7/s   179.8 Document::UpdateStyleAndLayout
+  8397    2312.4   516.1/s   179.8 Blink.ForcedStyleAndLayout.UpdateTime
+  1088    2143.2    66.9/s   157.3 Blink.Style.UpdateTime
+  1088    2130.5    66.9/s   157.3 UpdateLayoutTree
+  1088    2029.1    66.9/s   157.2 Document::updateStyle
+  1087    1922.3    66.8/s   150.6 Document::recalcStyle
+  1708    1737.3   105.0/s    99.2 EventDispatch
+   488    1340.1    30.0/s    70.9 LocalFrameView::RunPaintLifecyclePhase
+   545     901.2    33.5/s    62.1 LocalFrameView::RunStyleAndLayoutLifecyclePhases
+   122     833.9     7.5/s   108.0 LatencyInfo.Flow
+    61     833.8     3.7/s   108.1 WidgetBaseInputHandler::OnHandleInputEvent
+
+== layout size: 669 passes, dirty objects p50 34 p95 64 max 401, total objects p50 985, full (not partial) 67, ms p50 0.24 p95 2.29
+== style size: 1088 recalcs, elements p50 9 p95 33 max 660, ms p50 0.43 p95 5.25
+== paint+prepaint: 1849, ms total 777
+
+== forced Layout: 318 of 669, 524.4 ms; top stacks
+  168    402.9 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629
+   43     43.7 adoptNativeScroll@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:98
+   30     28.5 _render@vs/editor/browser/controller/editContext/textArea/textAreaEditContext.js:629
+   34     26.0 readClientRect@vs/editor/browser/view/domLineBreaksComputer.js:291
+   33     18.9 _readClientRects@vs/editor/browser/viewParts/viewLines/rangeUtil.js:24
+    8      3.2 (anon)@vs/base/browser/ui/scrollbar/scrollableElement.js:546
+    1      0.9 overflows@vs/workbench/contrib/voltAgent/browser/chrome/agentTitlebarHeader.js:530
+    1      0.4 getDomNodePagePosition@vs/base/browser/dom.js:526
+
+== forced UpdateLayoutTree: 577 of 1088, 1513.2 ms; top stacks
+  169   1192.8 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629
+  251    233.2 adoptNativeScroll@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:98
+   54     39.5 (anon)@vs/base/browser/ui/scrollbar/scrollableElement.js:546
+   33     19.9 _readClientRects@vs/editor/browser/viewParts/viewLines/rangeUtil.js:24
+   34     12.8 readClientRect@vs/editor/browser/view/domLineBreaksComputer.js:291
+   30     11.5 _render@vs/editor/browser/controller/editContext/textArea/textAreaEditContext.js:629
+    2      2.2 setAttribute@vs/base/browser/fastDomNode.js:263
+    1      0.5 doLayoutInputEditor@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:8773
+    1      0.3 getDomNodePagePosition@vs/base/browser/dom.js:526
+    1      0.2 overflows@vs/workbench/contrib/voltAgent/browser/chrome/agentTitlebarHeader.js:530
+    1      0.2 getWidth@vs/editor/browser/viewParts/viewLines/viewLine.js:376
+
+== tasks: 5258, over 16 ms: 140, over 50 ms: 43, longest 5263.5, 341.3, 260.1, 247.8, 198.7 ms
+== inside tasks over 16 ms (count, ms)
+    8   5288.7 FunctionCall socket.onmessage@vs/platform/voltAgentServer/common/connection.js:192
+  108   3192.5 FireAnimationFrame @:
+  108   3010.0 FunctionCall @vs/base/browser/dom.js:291
+  298   1565.0 UpdateLayoutTree
+  254    561.0 Layout
+  350    393.9 Paint
+   13    371.3 EventDispatch keypress
+   13    360.2 EventDispatch textInput
+   39    351.0 FunctionCall fn@vs/base/browser/event.js:7
+  137    342.9 RunMicrotasks
+   13    268.9 EventDispatch keydown
+   13    251.0 EventDispatch input
+    5    154.3 TimerFire @:
+   31     62.6 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:944
+  106     56.2 FunctionCall @vs/workbench/contrib/voltAgent/browser/chrome/agentViewSidebars.js:597
+
+== callbacks (count, inclusive ms)
+ 1656   5413.9 FunctionCall socket.onmessage@vs/platform/voltAgentServer/common/connection.js:192
+  488   4164.6 FireAnimationFrame @:
+  487   3951.4 FunctionCall @vs/base/browser/dom.js:291
+  120    462.4 FunctionCall fn@vs/base/browser/event.js:7
+  377    327.2 TimerFire @:
+  297     66.8 FunctionCall @vs/workbench/contrib/voltAgent/browser/chrome/agentViewSidebars.js:597
+   55     63.8 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:944
+    1     42.5 FunctionCall @vs/platform/storage/common/storage.js:83
+   30     42.4 FunctionCall markRenderEnd@vs/base/browser/performance.js:89
+   41     36.7 FunctionCall @vs/base/common/async.js:457
+  417     20.8 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentThreadSelectionActions.js:67
+   30     20.4 FunctionCall @vs/workbench/services/keybinding/browser/keybindingService.js:224
+   66     17.5 FunctionCall onTimeout@vs/base/common/async.js:923
+   30     15.7 FunctionCall AgentChatBackdrop._register.addDisposableListener.capture@vs/workbench/contrib/voltAgent/browser/chat/agentChatBackground.js:424
+   30     15.1 FunctionCall @vs/base/browser/dom.js:1394
+    2     13.7 FunctionCall @vs/workbench/contrib/voltAgent/browser/composer/agentCaretRest.js:75
+   30     10.3 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:969
+  417      9.6 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:73
+   58      9.5 FunctionCall doFire@vs/base/common/event.js:142
+   30      8.8 FunctionCall @vs/base/browser/dom.js:1362
+
+== key to presented frame: n 30, p50 103.15, p95 308.2, max 5107.4
+main thread busy 15086 ms of 16271 ms (93 %)
+
+== key latency stages (30 keys): name, keys with it, p50, p95, max ms
+  RendererCompositorToMain                                    30    14.9   174.9  4760.8
+  SubmitCompositorFrameToPresentationCompositorFrame          30    19.8   117.7   234.2
+  StartDrawToSwapStart                                        30     3.9   105.2   218.9
+  RendererMainFinishedToCommit                                27    11.5   103.8   108.1
+  RendererMainProcessing                                      30    12.8   101.3   108.0
+  SendBeginMainFrameToCommit                                   3    31.6    65.9    65.9
+  EndActivateToSubmitCompositorFrame                          30     0.6    55.8    56.7
+  BrowserMainToRendererCompositor                             30     0.9    43.6    47.1
+  RendererMainFinishedToBeginImplFrame                         3    12.0    24.5    24.5
+  SwapEndToPresentationCompositorFrame                        30    13.5    16.9    17.2
+  EndCommitToActivation                                       30     0.9     7.5    18.3
+  SubmitToReceiveCompositorFrame                              30     0.4     4.5     8.0
+  LatchToSwapEnd                                              30     0.3     2.5     2.6
+  ReceiveCompositorFrameToStartDraw                           30     0.2     1.0    17.8
+  GenerationToBrowserMain                                     30     0.1     0.3     0.6
+  BufferReadyToLatch                                          30     0.1     0.2     0.2
+  Activation                                                  30     0.1     0.2     0.4
+  Commit                                                      30     0.1     0.1     0.3
+== slowest keys: total ms, stages over 4 ms, main-thread tasks over 4 ms inside the key span
+  5107.4 ms: RendererCompositorToMain 4760.8, RendererMainProcessing 97.6, RendererMainFinishedToCommit 11.5, StartDrawToSwapStart 218.9, SwapEndToPresentationCompositorFrame 14.0, SubmitCompositorFrameToPresentationCompositorFrame 234.2
+      task 5263.5 at +-522: FunctionCall socket.onmessage@vs/platform/voltAgentServer/common/connection.js:192 5258.2 | V8.HandleInterrupts 5255.8 | V8.GC_MC_COMPLETE_SWEEPING 23.9
+      task 117.5 at +4742: EventDispatch keypress 66.9 | EventDispatch textInput 59.1 | Layout 27.2
+      task 11.8 at +4859: ProxyMain::BeginMainFrame 11.8 | FireAnimationFrame 1.7 | FunctionCall@vs/base/browser/dom.js:291 1.6
+      task 22.0 at +4883: FunctionCall socket.onmessage@vs/platform/voltAgentServer/common/connection.js:192 10.9
+      task 11.0 at +4916: FunctionCall socket.onmessage@vs/platform/voltAgentServer/common/connection.js:192 0.1
+  308.2 ms: RendererCompositorToMain 174.9, RendererMainProcessing 11.2, RendererMainFinishedToCommit 28.8, EndCommitToActivation 18.3, EndActivateToSubmitCompositorFrame 55.8, SwapEndToPresentationCompositorFrame 15.1, SubmitCompositorFrameToPresentationCompositorFrame 18.3
+      task 181.7 at +-6: ProxyMain::BeginMainFrame 181.6 | FireAnimationFrame 178.4 | FunctionCall@vs/base/browser/dom.js:291 178.3
+      task 11.4 at +176: EventDispatch keypress 10.7 | EventDispatch textInput 10.6 | EventDispatch input 9.0
+      task 40.6 at +187: ProxyMain::BeginMainFrame 40.6 | Layout 15.5 | FireAnimationFrame 5.3
+      task 22.5 at +232: TimerFire 22.5 | V8.HandleInterrupts 0.1 | FunctionCall@vs/base/common/async.js:1842 0.0
+      task 44.8 at +255: ProxyMain::BeginMainFrame 44.8 | FireAnimationFrame 35.5 | FunctionCall@vs/base/browser/dom.js:291 35.2
+  254.6 ms: RendererCompositorToMain 16.6, RendererMainProcessing 108.0, RendererMainFinishedToCommit 108.1, SwapEndToPresentationCompositorFrame 12.9, SubmitCompositorFrameToPresentationCompositorFrame 17.3
+      task 18.5 at +1: FunctionCall socket.onmessage@vs/platform/voltAgentServer/common/connection.js:192 18.4
+      task 108.1 at +20: EventDispatch keydown 99.2 | FunctionCall fn@vs/base/browser/event.js:7 91.6 | EventDispatch keypress 8.7
+      task 113.7 at +128: ProxyMain::BeginMainFrame 113.7 | FireAnimationFrame 68.1 | FunctionCall markRenderEnd@vs/base/browser/performance.js:89 41.5
+      task 15.1 at +242: ProxyMain::BeginMainFrame 15.1 | FireAnimationFrame 9.7 | FunctionCall@vs/base/browser/dom.js:291 7.2
+  222.3 ms: RendererCompositorToMain 63.1, RendererMainProcessing 6.2, RendererMainFinishedToCommit 17.4, EndActivateToSubmitCompositorFrame 56.7, StartDrawToSwapStart 57.9, SwapEndToPresentationCompositorFrame 13.4, SubmitCompositorFrameToPresentationCompositorFrame 75.1
+      task 260.1 at +-195: ProxyMain::BeginMainFrame 260.1 | FireAnimationFrame 244.3 | FunctionCall@vs/base/browser/dom.js:291 191.4
+      task 7.2 at +66: EventDispatch keypress 5.4 | EventDispatch textInput 5.4 | EventDispatch input 4.0
+      task 17.4 at +73: ProxyMain::BeginMainFrame 17.3 | FireAnimationFrame 1.6 | FunctionCall@vs/base/browser/dom.js:291 1.5
+      task 13.0 at +91: 
+      task 41.5 at +164: 
+  207.8 ms: RendererCompositorToMain 153.8, RendererMainProcessing 22.8, RendererMainFinishedToCommit 9.4, SwapEndToPresentationCompositorFrame 17.2, SubmitCompositorFrameToPresentationCompositorFrame 20.8
+      task 168.3 at +-14: ProxyMain::BeginMainFrame 168.3 | FireAnimationFrame 102.3 | FunctionCall@vs/base/browser/dom.js:291 101.9
+      task 22.8 at +154: EventDispatch keypress 18.8 | EventDispatch textInput 18.7 | EventDispatch input 7.0
+      task 9.7 at +177: ProxyMain::BeginMainFrame 9.7 | FireAnimationFrame 5.0 | FunctionCall@vs/base/browser/dom.js:291 4.9
+      task 4.2 at +187: ProxyMain::BeginMainFrame 4.1 | UpdateLayoutTree 1.1 | FireAnimationFrame 0.7
+      task 63.8 at +193: TimerFire 63.8 | V8.HandleInterrupts 51.2 | FunctionCall@vs/base/common/async.js:1842 0.0
+  202.3 ms: RendererCompositorToMain 25.1, RendererMainProcessing 9.5, RendererMainFinishedToCommit 103.8, StartDrawToSwapStart 47.9, SwapEndToPresentationCompositorFrame 13.2, SubmitCompositorFrameToPresentationCompositorFrame 62.1
+      task 27.9 at +-3: ProxyMain::BeginMainFrame 27.8 | FireAnimationFrame 15.1 | FunctionCall@vs/base/browser/dom.js:291 14.9
+      task 9.8 at +25: EventDispatch keypress 6.9 | EventDispatch textInput 6.7 | EventDispatch input 4.7
+      task 153.8 at +35: ProxyMain::BeginMainFrame 153.7 | FireAnimationFrame 8.8 | FunctionCall@vs/base/browser/dom.js:291 8.7
+      task 7.9 at +189: EventDispatch keyup 7.7 | FunctionCall fn@vs/base/browser/event.js:7 5.9 | FunctionCall@vs/workbench/services/keybinding/browser/keybindingService.js:239 0.2
+      task 13.3 at +197: ProxyMain::BeginMainFrame 13.2 | UpdateLayoutTree 8.0 | FireAnimationFrame 1.6

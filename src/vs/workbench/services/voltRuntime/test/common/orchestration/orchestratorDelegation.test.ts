@@ -124,9 +124,10 @@ suite('Volt orchestrator: handoff contract and context', () => {
 			assert.strictEqual(byName.get(name)?.alwaysLoad, 'top', name);
 		}
 		assert.strictEqual(byName.get('task_status')?.alwaysLoad, undefined);
-		// In every request of a top-level chat: 5.7 KB, 2,078 tokens in round 3; 1.9 KB now (count_tokens, Haiku 5.5: see the round-4 report).
+		// In every request of a top-level chat: 5.7 KB, 2,078 tokens in round 3; 1.9 KB in round 4; 2.1 KB since round 6
+		// (the brief and any=true lines, about 40 tokens, for a shorter lead on multi-part requests).
 		const size = ['delegate_task', 'wait_tasks', 'message_task'].reduce((sum, name) => sum + JSON.stringify({ name: `mcp__volt__${name}`, description: byName.get(name)!.description, input_schema: byName.get(name)!.inputSchema }).length, 0);
-		assert.ok(size < 2_000, `${size} characters`);
+		assert.ok(size < 2_100, `${size} characters`);
 		// The options that are not typed in the schema are still named, so a task that needs one finds it.
 		const delegate = byName.get('delegate_task')!;
 		const typed = Object.keys((delegate.inputSchema as { properties: object }).properties);
@@ -169,7 +170,10 @@ suite('Volt orchestrator: handoff contract and context', () => {
 		assert.strictEqual(buildParentCapsule({ requests: ['x'], siblings: [] }, 'none'), undefined);
 
 		const huge = buildParentCapsule({ requests: ['x'.repeat(50_000)], siblings: [] }, 'brief')!;
-		assert.ok(huge.length <= 4_500 && huge.endsWith('</parent_context>'), 'a huge paste is clipped and the block still closes');
+		assert.ok(huge.length <= 9_000 && huge.endsWith('</parent_context>'), 'a huge paste is clipped and the block still closes');
+		// A request that spells out every part (ADEMark's C1 is 5.4K characters) reaches the subagent whole.
+		const spec = buildParentCapsule({ requests: [`Ship the four work items below.\n${'W1. '.padEnd(5_300, 'x')}\nRun npm test.`], siblings: [] }, 'brief')!;
+		assert.ok(spec.includes('Run npm test.\n</user_request>'), 'a 5.4K request is not cut');
 	});
 
 	test('the user\'s requests leave out Volt\'s own turns and blocks', () => {

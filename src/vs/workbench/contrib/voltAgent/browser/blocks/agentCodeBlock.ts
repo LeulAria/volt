@@ -7,7 +7,7 @@ import { $, addDisposableListener, append, getWindow, isHTMLElement, scheduleAtN
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
-import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { posix } from '../../../../../base/common/path.js';
@@ -18,7 +18,8 @@ import { EDITOR_FONT_DEFAULTS } from '../../../../../editor/common/config/editor
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { PLAINTEXT_LANGUAGE_ID } from '../../../../../editor/common/languages/modesRegistry.js';
 import { tokenizeToString } from '../../../../../editor/common/languages/textToHtmlTokenizer.js';
-import { TokenizationRegistry } from '../../../../../editor/common/languages.js';
+import { IState, ITokenizationSupport, TokenizationRegistry } from '../../../../../editor/common/languages.js';
+import { LineTokens } from '../../../../../editor/common/tokens/lineTokens.js';
 import { IModelService } from '../../../../../editor/common/services/model.js';
 import { ContextMenuController } from '../../../../../editor/contrib/contextmenu/browser/contextmenu.js';
 import { ViewportSemanticTokensContribution } from '../../../../../editor/contrib/semanticTokens/browser/viewportSemanticTokens.js';
@@ -192,6 +193,221 @@ export function renderCodeCard(parent: HTMLElement, language: string | undefined
 		});
 	}
 	return shell.card;
+}
+
+/** A fence {@link LiveCodeCard} can grow in place: a plain code or diff card, not a cited snippet, a file or a chart. */
+export function isLiveCodeFence(language: string | undefined, path: string | undefined): boolean {
+	return !path && !parseCodeCitation(language);
+}
+
+interface ILiveCodeLine {
+	readonly kind: DiffKind | 'code';
+	readonly text: string;
+	readonly el: HTMLElement;
+	/** The line's token nodes once coloured (empty for an empty line); undefined while plain. */
+	nodes: Node[] | undefined;
+}
+
+/**
+ * A code fence while it streams, drawn once and grown in place. {@link renderCodeCard} rebuilt the
+ * card and re-tokenized the whole fence on every chunk (twenty times a second, for every line it
+ * had so far). Here the card shell and the lines above the first changed one keep their DOM; only
+ * the changed tail is drawn again, and it is coloured from the tokenizer's state at the end of the
+ * line before it, so a chunk costs a line or two of tokenizing. The coloured lines are kept in the
+ * highlight cache under the key the final card uses, so when the fence closes {@link renderCodeCard}
+ * draws them at once, in the same colours.
+ */
+export class LiveCodeCard implements IDisposable {
+
+	readonly element: HTMLElement;
+	private readonly store = new DisposableStore();
+	private shell: ICodeCardShell | undefined;
+	private body: HTMLElement | undefined;
+	private lang = '';
+	private diff = false;
+	/** The alias the lines are coloured as: the fence's language, or the one guessed from a diff. */
+	private highlightLang = '';
+	private text: string | undefined;
+	private lines: ILiveCodeLine[] = [];
+	/** The tokenizer's state after each line, for colouring the tail from where it changed. */
+	private states: IState[] = [];
+	/** The tokenizer for `highlightLang`: undefined while not asked or pending, null when there is none. */
+	private tokenizer: ITokenizationSupport | null | undefined;
+	private tokenizerAsked = false;
+	private cacheKey: string | undefined;
+	private disposed = false;
+
+	constructor(private options: ICodeCardOptions) {
+		this.element = $('.volt-agent-block.code');
+	}
+
+	update(language: string | undefined, code: string, options: ICodeCardOptions): void {
+		this.options = options;
+		const text = code.replace(/\n$/, '');
+		const lang = (language ?? '').trim().toLowerCase();
+		const diff = DIFF_LANGS.has(lang) || (!lang && looksLikeUnifiedDiff(text));
+		if (!this.shell || lang !== this.lang || diff !== this.diff) {
+			this.rebuild(lang, diff);
+		}
+		if (text === this.text) {
+			return;
+		}
+		this.text = text;
+		const rows: { kind: DiffKind | 'code'; text: string }[] = diff
+			? text.split('\n').map(line => classifyDiffLine(line))
+			: text.split('\n').map(line => ({ kind: 'code', text: line }));
+		const highlightLang = diff ? guessDiffLanguage(rows.map(row => row.text)) : lang;
+		let keep = 0;
+		if (highlightLang !== this.highlightLang) {
+			// The guess for a diff changed with more lines: ask for that tokenizer and colour everything again.
+			this.highlightLang = highlightLang;
+			this.tokenizer = undefined;
+			this.tokenizerAsked = false;
+			this.states = [];
+		} else {
+			while (keep < this.lines.length && keep < rows.length && this.lines[keep].kind === rows[keep].kind && this.lines[keep].text === rows[keep].text) {
+				keep++;
+			}
+		}
+		for (const line of this.lines.splice(keep)) {
+			line.el.remove();
+		}
+		this.states.length = Math.min(this.states.length, keep);
+		for (let index = keep; index < rows.length; index++) {
+			const row = rows[index];
+			const el = this.diff ? $(`div.volt-md-diff-line.${row.kind}`) : $('div.volt-md-code-line');
+			const line: ILiveCodeLine = { kind: row.kind, text: row.text, el, nodes: undefined };
+			this.setLineContent(line, undefined);
+			this.body!.appendChild(el);
+			this.lines.push(line);
+		}
+		this.colour(keep);
+	}
+
+	private rebuild(lang: string, diff: boolean): void {
+		this.store.clear();
+		this.element.replaceChildren();
+		this.lang = lang;
+		this.diff = diff;
+		this.text = undefined;
+		this.lines = [];
+		this.states = [];
+		this.forgetCache();
+		this.shell = createCodeCardShell(this.element, { ...this.options, store: this.store }, [], () => this.text ?? '');
+		this.shell.card.dataset.lang = lang || 'text';
+		if (diff) {
+			this.shell.card.classList.add('diff');
+			this.body = append(this.shell.scroll, $('code.volt-md-code.volt-md-diff.volt-agent-searchable'));
+		} else {
+			this.body = append(this.shell.scroll, $('code.volt-md-code.volt-agent-searchable'));
+			applyEditorFont(this.body, this.options);
+		}
+	}
+
+	/** Colours the lines from `from` on, from the state the line before left; plain until the tokenizer is there. */
+	private colour(from: number): void {
+		const support = this.tokenizerSupport();
+		const codec = this.options.languageService?.languageIdCodec;
+		if (!support || !codec) {
+			return;
+		}
+		let state = from > 0 ? this.states[from - 1] : support.getInitialState();
+		for (let index = from; index < this.lines.length; index++) {
+			const line = this.lines[index];
+			if (line.kind === 'meta') {
+				// A hunk header or file line is not code: it stays plain and does not move the tokenizer.
+				this.states[index] = state;
+				line.nodes = [];
+				continue;
+			}
+			const result = support.tokenizeEncoded(line.text, true, state);
+			LineTokens.convertToEndOffset(result.tokens, line.text.length);
+			const tokens = new LineTokens(result.tokens, line.text, codec).inflate();
+			const nodes: Node[] = [];
+			let start = 0;
+			for (let token = 0, count = tokens.getCount(); token < count; token++) {
+				const end = tokens.getEndOffset(token);
+				const span = document.createElement('span');
+				span.className = tokens.getClassName(token);
+				span.textContent = line.text.substring(start, end);
+				nodes.push(span);
+				start = end;
+			}
+			this.setLineContent(line, line.text ? compactTokens(nodes) : []);
+			state = result.endState;
+			this.states[index] = state;
+		}
+		this.remember();
+	}
+
+	private setLineContent(line: ILiveCodeLine, nodes: Node[] | undefined): void {
+		line.nodes = nodes;
+		const target = this.diff ? (line.el.firstElementChild as HTMLElement | null) ?? append(line.el, $('span.volt-md-diff-text')) : line.el;
+		if (nodes?.length) {
+			target.replaceChildren(...nodes);
+		} else {
+			// allow-any-unicode-next-line
+			target.textContent = line.text || '​';
+		}
+	}
+
+	private tokenizerSupport(): ITokenizationSupport | undefined {
+		if (this.tokenizer !== undefined) {
+			return this.tokenizer ?? undefined;
+		}
+		const languageService = this.options.languageService;
+		const alias = this.highlightLang;
+		if (!languageService || !alias || PLAIN_ALIASES.has(alias)) {
+			this.tokenizer = null;
+			return undefined;
+		}
+		if (this.tokenizerAsked) {
+			return undefined;
+		}
+		this.tokenizerAsked = true;
+		void languageIdFor(languageService, alias)
+			.then(async id => id && await tokenizerFor(languageService, id) ? TokenizationRegistry.get(id) : null)
+			.then(support => {
+				if (this.disposed || alias !== this.highlightLang) {
+					return;
+				}
+				this.tokenizer = support;
+				if (support) {
+					this.states = [];
+					this.colour(0);
+					this.options.onDidChangeSize?.();
+				}
+			}, () => {
+				if (!this.disposed && alias === this.highlightLang) {
+					this.tokenizer = null;
+				}
+			});
+		return undefined;
+	}
+
+	/** The coloured lines go into the highlight cache under the final card's key (its node arrays, cloned on use). */
+	private remember(): void {
+		this.forgetCache();
+		if (this.text === undefined || !this.highlightLang || this.lines.some(line => line.nodes === undefined)) {
+			return;
+		}
+		const key = `${this.highlightLang}\n${this.diff ? this.lines.map(line => line.text).join('\n') : this.text}`;
+		highlightCache.set(key, this.lines.map(line => line.nodes!));
+		this.cacheKey = key;
+	}
+
+	private forgetCache(): void {
+		if (this.cacheKey !== undefined) {
+			highlightCache.delete(this.cacheKey);
+			this.cacheKey = undefined;
+		}
+	}
+
+	dispose(): void {
+		this.disposed = true;
+		// The last version stays cached: the finished card is drawn from it.
+		this.store.dispose();
+	}
 }
 
 /** The workbench editor's font size, line height and tab width on a static card (the family comes from `--volt-code-font`). */

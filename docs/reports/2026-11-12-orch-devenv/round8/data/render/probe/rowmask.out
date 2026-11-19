@@ -1,0 +1,36 @@
+== rowmask 1 before
+load 10.99 17.35 20.92
+GPU pid 15407: shared images 264 MiB
+  raster tiles: 49 (202 MiB)
+app 2318 agents 785 total 3103 MiB (28 processes, 3 s)
+  gpu [app]                                            n=1   778 MiB
+  renderer [app]                                       n=1   616 MiB
+  extension host [app]                                 n=1    85 MiB
+{"appP95":2520,"totalP95":3315,"gpuP95":779,"rendererP95":744,"gpuMed":727,"rendererMed":648,"load":"11.48 18.66 21.60"}
+== rowmask 2 after
+load 13.24 16.17 19.74
+GPU pid 38300: shared images 208 MiB
+  raster tiles: 45 (137 MiB)
+app 2201 agents 781 total 2982 MiB (28 processes, 3 s)
+  gpu [app]                                            n=1   653 MiB
+  renderer [app]                                       n=1   605 MiB
+  extension host [app]                                 n=1    88 MiB
+{"appP95":2431,"totalP95":3178,"gpuP95":724,"rendererP95":745,"gpuMed":642,"rendererMed":623,"load":"13.99 16.48 20.06"}
+== rowmask 3 before
+load 28.72 19.34 20.13
+GPU pid 60191: shared images 300 MiB
+  raster tiles: 55 (211 MiB)
+app 2230 agents 748 total 2978 MiB (26 processes, 3 s)
+  gpu [app]                                            n=1   725 MiB
+  renderer [app]                                       n=1   595 MiB
+  extension host [app]                                 n=1    83 MiB
+{"appP95":2495,"totalP95":3243,"gpuP95":784,"rendererP95":1260,"gpuMed":711,"rendererMed":607,"load":"12.39 14.53 18.58"}
+== rowmask 4 after
+load 15.25 19.35 20.13
+GPU pid 96584: shared images 202 MiB
+  raster tiles: 40 (140 MiB)
+app 2203 agents 788 total 2991 MiB (28 processes, 3 s)
+  gpu [app]                                            n=1   658 MiB
+  renderer [app]                                       n=1   605 MiB
+  extension host [app]                                 n=1    86 MiB
+{"appP95":2403,"totalP95":3196,"gpuP95":719,"rendererP95":744,"gpuMed":640,"rendererMed":631,"load":"22.44 21.14 20.78"}

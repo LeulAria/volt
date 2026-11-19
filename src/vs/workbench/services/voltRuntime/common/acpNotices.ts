@@ -21,6 +21,13 @@ export interface IAcpNotice {
 	readonly resetAt?: number;
 	/** The structured reading behind a usage-limit line. */
 	readonly rateLimit?: IVoltRateLimitReading;
+	/** A session failure's class ("connection", "service", "limit") and the adapter's suggested actions ("retry", "new_session"). */
+	readonly failure?: IAcpSessionFailure;
+}
+
+export interface IAcpSessionFailure {
+	readonly category: string;
+	readonly actions: readonly string[];
 }
 
 export interface IAcpNoticeOptions {
@@ -171,7 +178,12 @@ function sessionFailureNotice(meta: unknown): IAcpNotice | undefined {
 	if (!failure || !title) {
 		return undefined;
 	}
-	return notice(readSeverity(failure.severity, title), title, readString(failure.details) ?? readString(failure.description));
+	const made = notice(readSeverity(failure.severity, title), title, readString(failure.details) ?? readString(failure.description));
+	// The failure's class and what the adapter says can be done about it (claude-agent-acp's session-failure
+	// extension: `transport_lost` and `worker_shutdown` are "connection" failures with the action "new_session").
+	const category = readString(failure.category);
+	const actions = Array.isArray(failure.actions) ? failure.actions.filter((action): action is string => typeof action === 'string') : [];
+	return category ? { ...made, failure: { category, actions } } : made;
 }
 
 function rateLimitNotice(meta: unknown, options?: IAcpNoticeOptions): IAcpNotice | undefined {

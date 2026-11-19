@@ -56,6 +56,7 @@ import { chatExec, IChatExec, voltExec } from '../common/execContext.js';
 import { IVoltCodeIndexService } from '../../../../platform/voltCodeIndex/common/voltCodeIndex.js';
 import { codeIndexEnabled, editCheckPhase, INSTANT_GREP_TOOL_NAME, lspPolicy, readCodeIndexOptions, readFffSettings, readRtkExclusions, retrievalEnabled, rtkEnabled } from '../common/codeIntelligence.js';
 import { ContextRetriever, IRetrievedContext, parsePorcelainZ } from './search/contextRetriever.js';
+import { gitTrackedFileCount } from './search/projectSize.js';
 import { retrievalAddsToMessage } from '../common/search/contextRetrieval.js';
 import { ISearchIndex, VoltSearch } from './search/voltSearch.js';
 import { IAgentWorktreeSetupService } from '../common/git/worktreeSetupPlan.js';
@@ -162,6 +163,14 @@ const INDEX_STATUS_WAIT_MS = 250;
 const INDEX_STATUS_TTL_MS = 60_000;
 /** The files a message names (see retrieveContext). CLI agents search for themselves; this is a head start. */
 const AGENT_RETRIEVAL_DEADLINE_MS = 50;
+/**
+ * A project git tracks fewer files in is searched for a send's context with ripgrep, without the code index:
+ * ripgrep answers it inside the deadline, and the index process (35-55 MB, then held 20 minutes) is not started
+ * for it (ADEMark A7/A10, round 7). An agent's own index searches (instant_grep, find_symbol) still use the index.
+ */
+const RETRIEVAL_WITHOUT_INDEX_FILES = 1_000;
+/** A folder's tracked-file count is read again after this long. */
+const PROJECT_SIZE_TTL_MS = 5 * 60_000;
 /** The first turn's primer: the project's likely files, and the app in the chat's browser. */
 const PRIMER_WAIT_MS = 600;
 /** What the user has open beside the chat (see workspaceLead). */
@@ -185,11 +194,13 @@ const IDLE_AGENT_TTL_MS = 15 * 60_000;
 const IDLE_AGENT_CHECK_MS = 60_000;
 /**
  * An idle agent that can resume its session later (Claude Code, Codex: ACP `session/resume`) and is
- * not the most recently used one stops this long after its last turn or prewarm. Its process (the
- * ACP adapter and the CLI, a few hundred MB and some CPU at rest) comes back with the conversation
- * intact when the chat is opened, focused or sent to (see `releasedAgent`).
+ * has no background work stops this long after its last turn or prewarm, the chat in use's too. Its
+ * process (the ACP adapter and the CLI, a few hundred MB and some CPU at rest) comes back with the
+ * conversation intact when the chat is opened, pointed at, focused, typed in or sent to (see
+ * `releasedAgent`), so a follow-up's first word does not wait for it: the chat in use kept its agent
+ * 15 minutes and every other chat 30 s, which filled ADEMark's A10 window (round 7).
  */
-const IDLE_AGENT_GRACE_MS = 30_000;
+const IDLE_AGENT_GRACE_MS = 20_000;
 /** Appended to a native fast-lane request: a small change is edited, checked and answered without a test run or browser. */
 const FAST_LANE_NOTE = '[Volt] Small, well-scoped change: make the edit, check the files you changed for errors, and answer in a line or two. No test runs, builds, servers or browser unless the user asked for them.';
 /** The second opinion's wait: past it the run finishes with its items claimed, not reviewed. */
@@ -203,6 +214,14 @@ const NATIVE_IDLE_TTL_MS = 15 * 60_000;
 /** Warm spare agents for new chats (see AgentPool), across all models and folders. */
 const MAX_SPARE_AGENTS = 2;
 const SPARE_AGENT_TTL_MS = 10 * 60_000;
+/**
+ * The spare started when a run ends (the next new chat should not pay a cold start either) lives
+ * this long. A new chat warms its own agent when it opens (300 ms after the open, at once on a
+ * click), about a second before anyone can send, so this spare only helps a new chat started
+ * right after the reply; one that lived 10 minutes was an adapter and a CLI (about 170 MB) at
+ * rest after every chat.
+ */
+const SPARE_AFTER_RUN_TTL_MS = 20_000;
 /**
  * Subagent spares started when a chat is about to call delegate_task (see prewarmSubagents), on
  * top of MAX_SPARE_AGENTS. Three Claude subagents starting together cold took 8-21 s before their
@@ -679,6 +698,8 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	/** Every search Volt runs: the agent's tools and the context retriever (index, FFF, ripgrep). */
 	private readonly search: VoltSearch;
 	private readonly retriever: ContextRetriever;
+	/** Whether a folder is small enough for a send's context search without the index (see RETRIEVAL_WITHOUT_INDEX_FILES). */
+	private readonly smallProjects = new Map<string, { readonly at: number; readonly value: Promise<boolean> }>();
 	/** `git status` per root, briefly cached: the retriever ranks changed files up. */
 	private readonly workingTreeChangesByRoot = new Map<string, { readonly at: number; readonly value: Promise<ReadonlySet<string>> }>();
 	/** Whether a folder is a large indexed project, last answer (see largeIndexedProject); and the reads in flight. */
@@ -790,7 +811,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			fff: () => readFffSettings(this.configurationService),
 		};
 		this.search = this._register(new VoltSearch(searchService, this.searchIndex, fileService.onDidFilesChange));
-		this.retriever = new ContextRetriever(this.search, fileService);
+		this.retriever = new ContextRetriever(this.search, fileService, this._register(new VoltSearch(searchService, undefined, fileService.onDidFilesChange)));
 		this.mcpHost = this._register(new McpHost(fileService, stdio, requestService, logService, {
 			approvals: new VoltMcpApprovalStore(joinPath(environmentService.userRoamingDataHome, 'voltMcpApprovals.json'), fileService, logService),
 			trusted: root => this.mcpFolderTrusted(root),
@@ -928,11 +949,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			.sort((a, b) => (b.agentUsedAt ?? 0) - (a.agentUsedAt ?? 0));
 		let kept = 0;
 		let next = Infinity;
-		idle.forEach((session, index) => {
+		idle.forEach(session => {
 			const age = now - (session.agentUsedAt ?? 0);
 			const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
-			if (index > 0 && session.agentHandle && provider?.canResume?.(session.agentHandle)) {
-				// Not the chat in use, and it comes back intact: stop it after a short grace.
+			if (session.agentHandle && provider?.canResume?.(session.agentHandle)) {
+				// It comes back intact (the chat in use's on the first sign of a message): stop it after a short grace.
 				if (age >= IDLE_AGENT_GRACE_MS) {
 					this.releaseAgent(session, true);
 				} else {
@@ -1577,6 +1598,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * reads before its request instead (see prewarmNative).
 	 */
 	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode, options?: IAgentPrewarmOptions): void {
+		if (options?.keepOnly) {
+			// The user is in the chat (reading its reply): its live agent's idle stop counts from now. Starts nothing.
+			const kept = this.sessions.get(sessionId) as ISessionState | undefined;
+			if (kept?.agentHandle && !isRunActive(kept)) {
+				const provider = kept.agentProviderId ? this.agentProviders.get(kept.agentProviderId) : undefined;
+				if (provider?.isLive?.(kept.agentHandle) ?? true) {
+					kept.agentUsedAt = Date.now();
+				}
+			}
+			return;
+		}
 		const ttlMs = options?.ttlMs;
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
 		if (session.run && !session.run.ended) {
@@ -5022,6 +5054,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return undefined;
 		}
 		try {
+			const small = await this.smallProject(root);
 			const result = await this.retriever.retrieve(root, text, {
 				budgetTokens: forAgent ? 400 : 1_500,
 				// A warm agent is ready within milliseconds and the prompt waits for this: keep it short.
@@ -5030,6 +5063,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				...(session.retrievalSeen ? { seen: session.retrievalSeen } : {}),
 				changed: () => this.workingTreeChanges(root),
 				indexOnly: this.otherRunsActive(session),
+				...(small ? { noIndex: true } : {}),
 				token: run.cancel.token,
 			});
 			if (result && this.isCurrent(session, run)) {
@@ -5045,6 +5079,18 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			this.logService.trace('[volt] retrieval failed', err);
 			return undefined;
 		}
+	}
+
+	/** Whether git tracks fewer than RETRIEVAL_WITHOUT_INDEX_FILES files in `root`'s repository (no: not a repository). */
+	private smallProject(root: URI): Promise<boolean> {
+		const key = root.toString();
+		const cached = this.smallProjects.get(key);
+		if (cached && Date.now() - cached.at < PROJECT_SIZE_TTL_MS) {
+			return cached.value;
+		}
+		const value = gitTrackedFileCount(this.fileService, root).then(count => count !== undefined && count < RETRIEVAL_WITHOUT_INDEX_FILES, () => false);
+		this.smallProjects.set(key, { at: Date.now(), value });
+		return value;
 	}
 
 	/** Another chat's run is going: background work for this one should not compete with it for every core. */
@@ -5653,8 +5699,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const metrics = run.metrics.snapshot();
 		if (run.spare && metrics.outcome === 'done' && (metrics.agentSource === 'pool' || metrics.agentSource === 'cold')) {
 			// This chat keeps its agent; the next new chat should not pay a cold start either. Not after
-			// a failure: a provider that is out of quota or signed out would only fail again.
-			this.agentPool.ensure(run.spare);
+			// a failure: a provider that is out of quota or signed out would only fail again. Short-lived
+			// (SPARE_AFTER_RUN_TTL_MS): a new chat opened later warms its own, and the ask then keeps this one.
+			this.agentPool.ensure(run.spare, { ttlMs: SPARE_AFTER_RUN_TTL_MS });
 		}
 		if (this.healthDeferred && !this.anyRunLive() && this.healthAfterRun === undefined) {
 			this.healthAfterRun = setTimeout(() => {

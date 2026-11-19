@@ -1,0 +1,94 @@
+typing window 6534 ms, 16 keys; renderer main thread pid 24629 tid 2086700; 152786 trace events
+
+== main thread timeline events (count, total ms, per s, max ms)
+  2430    5883.1   371.9/s  1722.5 RunTask
+  1818    3246.3   278.2/s  1722.3 FunctionCall
+   324    3245.2    49.6/s   166.1 ProxyMain::BeginMainFrame
+   222    1953.6    34.0/s  1722.4 TimerBase::run
+    79    1756.3    12.1/s  1722.0 V8.StackGuard
+    84    1756.2    12.9/s  1722.0 V8.HandleInterrupts
+     2    1722.0     0.3/s  1722.0 V8.InvokeApiInterruptCallbacks
+  1032    1504.0   157.9/s   104.4 AsyncTask Run
+   325    1501.1    49.7/s   131.9 WebFrameWidgetImpl::UpdateLifecycle
+   325    1321.2    49.7/s    88.8 WebFrameWidgetImpl::BeginMainFrame
+   325    1319.3    49.7/s    88.8 Blink.Animate.UpdateTime
+   325    1316.7    49.7/s    88.8 PageAnimator::serviceScriptedAnimations
+   238    1154.3    36.4/s    88.8 FrameRequestCallbackCollection::ExecuteFrameCallbacks
+   240    1153.8    36.7/s    88.8 FireAnimationFrame
+  3698    1120.4   566.0/s    86.5 LocalFrameView::UpdateStyleAndLayout
+   325     964.3    49.7/s   127.7 LocalFrameView::RunPaintLifecyclePhase
+  4488     884.7   686.9/s    86.5 Document::UpdateStyleAndLayout
+  4310     877.3   659.6/s    86.5 Blink.ForcedStyleAndLayout.UpdateTime
+   610     868.4    93.4/s    55.9 EventDispatch
+   575     764.9    88.0/s    59.6 Blink.Style.UpdateTime
+   575     763.1    88.0/s    59.6 UpdateLayoutTree
+   575     693.0    88.0/s    59.5 Document::updateStyle
+   575     678.5    88.0/s    59.5 Document::recalcStyle
+   841     580.2   128.7/s   125.4 Paint
+   325     567.0    49.7/s   109.6 LocalFrameView::pushPaintArtifactToCompositor
+
+== forced Layout: 155 of 323, 220.7 ms; top stacks
+   91    160.7 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629
+   16     43.2 _render@vs/editor/browser/controller/editContext/textArea/textAreaEditContext.js:629
+   18     10.2 _readClientRects@vs/editor/browser/viewParts/viewLines/rangeUtil.js:24
+   19      3.3 readClientRect@vs/editor/browser/view/domLineBreaksComputer.js:291
+    7      1.9 adoptNativeScroll@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:98
+    2      0.7 syncStuckTurns@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:284
+    1      0.5 getDomNodePagePosition@vs/base/browser/dom.js:526
+    1      0.3 overflows@vs/workbench/contrib/voltAgent/browser/chrome/agentTitlebarHeader.js:530
+
+== forced UpdateLayoutTree: 250 of 575, 357.7 ms; top stacks
+   93    220.7 syncThreadScroll@vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4629
+   81     42.8 adoptNativeScroll@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:98
+    9     30.8 syncStuckTurns@vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:284
+   18     28.1 _readClientRects@vs/editor/browser/viewParts/viewLines/rangeUtil.js:24
+   17     16.7 _render@vs/editor/browser/controller/editContext/textArea/textAreaEditContext.js:629
+    1      6.8 getDomNodePagePosition@vs/base/browser/dom.js:526
+   19      4.0 readClientRect@vs/editor/browser/view/domLineBreaksComputer.js:291
+    6      3.3 (anon)@vs/base/browser/ui/scrollbar/scrollableElement.js:546
+    3      2.8 (anon)@vs/workbench/contrib/voltAgent/browser/composer/agentComposerChips.js:756
+    2      1.7 setAttribute@vs/base/browser/fastDomNode.js:263
+    1      0.2 overflows@vs/workbench/contrib/voltAgent/browser/chrome/agentTitlebarHeader.js:530
+
+== tasks: 2430, over 16 ms: 55, over 50 ms: 22, longest 1722.5, 166.1, 131.7, 117.1, 110.7 ms
+== inside tasks over 16 ms (count, ms)
+    1   1722.3 FunctionCall @vs/workbench/contrib/voltDiagnostics/electron-browser/voltDiagnostics.contribution.js:183
+   42    766.3 FireAnimationFrame @:
+   41    683.7 FunctionCall @vs/base/browser/dom.js:291
+  115    462.7 UpdateLayoutTree
+  143    459.3 Paint
+    7    203.2 EventDispatch keypress
+    7    202.2 EventDispatch textInput
+   92    194.9 Layout
+   53    166.3 RunMicrotasks
+    7    161.0 EventDispatch input
+   21    150.3 FunctionCall fn@vs/base/browser/event.js:7
+    1    104.4 TimerFire @:
+   42     36.6 FunctionCall @vs/workbench/contrib/voltAgent/browser/chrome/agentViewSidebars.js:580
+    3     22.4 EventDispatch animationend
+    1     22.3 FunctionCall @:
+
+== callbacks (count, inclusive ms)
+   21   1722.8 FunctionCall @vs/workbench/contrib/voltDiagnostics/electron-browser/voltDiagnostics.contribution.js:183
+  240   1153.8 FireAnimationFrame @:
+  236   1054.2 FunctionCall @vs/base/browser/dom.js:291
+  177    229.3 TimerFire @:
+   64    215.7 FunctionCall fn@vs/base/browser/event.js:7
+  162     44.2 FunctionCall @vs/workbench/contrib/voltAgent/browser/chrome/agentViewSidebars.js:580
+   16     41.7 FunctionCall @:
+  346     40.0 FunctionCall socket.onmessage@vs/platform/voltAgentServer/common/connection.js:192
+   34     26.4 FunctionCall onTimeout@vs/base/common/async.js:923
+   30     16.6 FunctionCall @vs/workbench/contrib/voltAgent/browser/chrome/agentFreshText.js:87
+   32     13.6 FunctionCall doFire@vs/base/common/event.js:142
+   25     10.0 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:944
+    6      8.8 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:5630
+   22      7.9 FunctionCall @vs/base/common/async.js:457
+   32      5.3 FunctionCall recordIfFinished@vs/base/browser/performance.js:125
+    3      4.7 FunctionCall @vs/base/common/observableInternal/utils/utils.js:65
+    1      4.5 FunctionCall @vs/platform/storage/common/storage.js:83
+  118      3.3 FunctionCall @vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:73
+    3      3.2 FunctionCall @vs/workbench/contrib/voltAgent/browser/composer/agentComposerChips.js:741
+   16      2.2 FunctionCall @vs/workbench/services/keybinding/browser/keybindingService.js:224
+
+== key to presented frame: n 16, p50 88.7, p95 1138, max 1138
+main thread busy 5883.1 ms of 6534 ms (90 %)

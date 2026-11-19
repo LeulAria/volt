@@ -1,0 +1,66 @@
+-- phase 1 shipped 13:37:35 load 23.52 33.09 26.85
+  renderer [app]                                       n=1  1074 MiB
+  gpu [app]                                            n=1   763 MiB
+GPU pid 7726: shared images 264 MiB
+    121 MiB  n= 22  GpuRasterTile 3008x480
+     73 MiB  n= 14  GpuRasterTile 1472x928
+      3 MiB  n=  2  GpuRasterTile 3008x128
+      2 MiB  n=  2  GpuRasterTile 1536x192
+1460x12617     95/s  mean 18017k px  max 1456x12613 1711.6 Mpx/s  div.volt-agent-turn.agent  
+1456x12612   92.5/s  mean   147k px  max 1404x1263    13.6 Mpx/s  div.volt-agent-turn.agent  RootScroller,OverflowScrolling
+3000x1792     1.5/s  mean  1793k px  max 3000x1792     2.7 Mpx/s    RootScroller,OverflowScrolling
+-- phase 2 variant 13:37:56 load 19.92 31.64 26.47
+  renderer [app]                                       n=1   849 MiB
+  gpu [app]                                            n=1   710 MiB
+GPU pid 7726: shared images 268 MiB
+     99 MiB  n= 19  GpuRasterTile 1472x928
+     55 MiB  n= 10  GpuRasterTile 3008x480
+      6 MiB  n=  4  GpuRasterTile 3008x128
+      4 MiB  n=  2  GpuRasterTile 1472x320
+1460x17393   61.5/s  mean 25151k px  max 1456x17389 1546.8 Mpx/s  div.volt-agent-turn.agent  RootScroller,OverflowScrolling
+1456x17388    109/s  mean   525k px  max 1404x9253    57.2 Mpx/s  div.volt-agent-turn.agent  OverflowScrolling
+3000x1792     1.5/s  mean  1793k px  max 3000x1792     2.7 Mpx/s    RootScroller,OverflowScrolling
+-- phase 3 shipped 13:38:18 load 20.28 30.75 26.30
+  renderer [app]                                       n=1   856 MiB
+  gpu [app]                                            n=1   745 MiB
+GPU pid 7726: shared images 299 MiB
+    121 MiB  n= 22  GpuRasterTile 3008x480
+     73 MiB  n= 14  GpuRasterTile 1472x928
+      5 MiB  n=  3  GpuRasterTile 3008x128
+      4 MiB  n=  2  GpuRasterTile 1472x320
+?              81/s  mean 32074k px  max 1456x22365   2598 Mpx/s    
+?             103/s  mean   287k px  max 1404x1335    29.6 Mpx/s    
+3000x1792      16/s  mean  1445k px  max 3000x1792    23.1 Mpx/s    RootScroller,OverflowScrolling
+-- phase 4 variant 13:38:38 load 18.00 29.56 25.98
+  renderer [app]                                       n=1   846 MiB
+  gpu [app]                                            n=1   706 MiB
+GPU pid 7726: shared images 251 MiB
+     94 MiB  n= 18  GpuRasterTile 1472x928
+     55 MiB  n= 10  GpuRasterTile 3008x480
+      5 MiB  n=  3  GpuRasterTile 3008x128
+      2 MiB  n=  2  GpuRasterTile 1536x192
+1460x28333     92/s  mean 40793k px  max 1456x28329   3753 Mpx/s  div.volt-agent-turn.agent  RootScroller,OverflowScrolling
+1456x28328  106.5/s  mean   655k px  max 1404x9367    69.8 Mpx/s  div.volt-agent-turn.agent  OverflowScrolling
+3000x1792     1.5/s  mean  1793k px  max 3000x1792     2.7 Mpx/s    RootScroller,OverflowScrolling
+-- phase 5 shipped 13:38:59 load 18.08 28.88 25.82
+  renderer [app]                                       n=1   875 MiB
+  gpu [app]                                            n=1   772 MiB
+GPU pid 7726: shared images 294 MiB
+    116 MiB  n= 21  GpuRasterTile 3008x480
+    104 MiB  n= 20  GpuRasterTile 1472x928
+      5 MiB  n=  3  GpuRasterTile 3008x128
+      3 MiB  n=  1  GpuRasterTile 1504x480
+?               7/s  mean 48339k px  max 1460x33197  338.4 Mpx/s    
+?             6.5/s  mean 47689k px  max 1460x32765    310 Mpx/s    
+?               4/s  mean 48029k px  max 1460x33073  192.1 Mpx/s    
+-- phase 6 variant 13:39:19 load 15.67 27.64 25.44
+  renderer [app]                                       n=1   894 MiB
+  gpu [app]                                            n=1   694 MiB
+GPU pid 7726: shared images 233 MiB
+     78 MiB  n= 15  GpuRasterTile 1472x928
+     55 MiB  n= 10  GpuRasterTile 3008x480
+      5 MiB  n=  3  GpuRasterTile 3008x128
+      2 MiB  n=  2  GpuRasterTile 1472x192
+1460x38181     78/s  mean 55280k px  max 1456x38177 4311.8 Mpx/s  div.volt-agent-turn.agent  RootScroller,OverflowScrolling
+1456x38176    115/s  mean   637k px  max 1404x9319    73.3 Mpx/s  div.volt-agent-turn.agent  OverflowScrolling
+3000x1792     1.5/s  mean  1793k px  max 3000x1792     2.7 Mpx/s    RootScroller,OverflowScrolling

@@ -1,0 +1,7 @@
+rest gpu 283 MiB
+== workbench.reduceMotion = "on", 3 seed turns
+-- before
+  gpu [app]                                            n=1   258 MiB
+-- after
+  gpu [app]                                            n=1   664 MiB
+peak gpu 737 MiB over        5 samples

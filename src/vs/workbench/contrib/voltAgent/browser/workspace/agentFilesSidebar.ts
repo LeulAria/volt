@@ -320,6 +320,8 @@ export class AgentFilesSidebar extends Disposable {
 		setAgentTooltip(hide, hideLabel);
 		// The title bar's sidebar glyph (thin frame, filled bar), mirrored by CSS to sit on the right.
 		hide.appendChild(createPrimarySidebarToggleIcon(hide, 'closed'));
+		// A phone shows the sidebar as a screen of its own: there it closes with an X (voltMobileWorkbench.css).
+		hide.appendChild(renderIcon(Codicon.close)).classList.add('volt-agent-files-sidebar-close-glyph');
 		this._register(addDisposableListener(hide, 'click', () => AgentFilesSidebar.setOpen(this.storageService, false)));
 		this.body = append(this.element, $('.volt-agent-files-sidebar-body.volt-agent-changes-scm'));
 		const unavailable = append(this.body, $('.volt-agent-changes-scm-unavailable'));
@@ -874,6 +876,11 @@ export class AgentFilesSidebar extends Disposable {
 			gap: 4,
 			width: 260,
 			ariaLabel: localize('voltAgent.filesSidebar.filterMenu', "Filter Files"),
+			// A filter is on: Clear goes back to All Files.
+			heading: this.resources.filter ? {
+				title: localize('voltAgent.filesSidebar.filterMenu', "Filter Files"),
+				action: { label: localize('voltAgent.filesSidebar.clearFilterMenu', "Clear"), run: () => pick(undefined) },
+			} : undefined,
 			// A function, so refresh() reads the counts again once the scan is in.
 			sections: () => sections(),
 			footer: [{ id: 'manage', label: localize('voltAgent.filesSidebar.manageResources', "Manage Agent Resources"), icon: Codicon.linkExternal, data: 'manage' }],

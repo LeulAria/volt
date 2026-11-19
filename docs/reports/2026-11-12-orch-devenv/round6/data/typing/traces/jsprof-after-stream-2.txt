@@ -1,0 +1,85 @@
+span 16037 ms; (idle) 5045 ms, (program) 4336 ms, GC 312 ms
+
+== total (inclusive) ms
+  5341.3 (root) :0
+  4821.5 (anon) vs/base/browser/dom.js:291
+  4773.2 animationFrameRunner vs/base/browser/dom.js:267
+  4767.0 execute vs/base/browser/dom.js:235
+  2407.2 (anon) vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4610
+  2406.2 syncThreadScroll vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4617
+  2355.2 get clientHeight :0
+   861.4 (anon) vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:8575
+   828.8 renderThreadTail vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:3445
+   817.3 patchLiveTurn vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4790
+   816.6 paintLiveTurn vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4761
+   793.2 get scrollTop :0
+   758.3 adoptNativeScroll vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:73
+   757.8 (anon) vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:67
+   602.3 fire vs/base/common/event.js:772
+   601.3 _deliver vs/base/common/event.js:744
+   573.1 ThreadFollow.step vs/workbench/contrib/voltAgent/browser/editor/agentThreadScroll.js:145
+   564.0 render vs/workbench/contrib/voltAgent/browser/chrome/agentTranscriptView.js:181
+   548.9 (anon) vs/base/browser/ui/scrollbar/scrollableElement.js:152
+   546.2 setScrollPositionNow vs/base/common/scrollable.js:141
+   540.5 _deliverQueue vs/base/common/event.js:760
+   483.4 (anon) vs/base/browser/ui/scrollbar/scrollableElement.js:544
+   482.5 set scrollTop :0
+   268.3 tokenizeToString vs/editor/common/languages/textToHtmlTokenizer.js:18
+   261.0 _tokenizeToString vs/editor/common/languages/textToHtmlTokenizer.js:104
+   252.2 tokenizeEncoded vs/workbench/services/textMate/browser/tokenizationSupport/textMateTokenizationSupport.js:41
+   251.5 tokenizeLine2 vscode-file://vscode-app/Users/leularia/Desktop/VOLT/volt-e5-codeintel/node_modules/vscode-textmate/release/main.js:1
+   248.5 _tokenize vscode-file://vscode-app/Users/leularia/Desktop/VOLT/volt-e5-codeintel/node_modules/vscode-textmate/release/main.js:1
+   246.4 c vscode-file://vscode-app/Users/leularia/Desktop/VOLT/volt-e5-codeintel/node_modules/vscode-textmate/release/main.js:1
+   236.6 y vscode-file://vscode-app/Users/leularia/Desktop/VOLT/volt-e5-codeintel/node_modules/vscode-textmate/release/main.js:1
+   231.0 draw vs/workbench/contrib/voltAgent/browser/chrome/agentTranscriptView.js:241
+   224.7 (anon) vscode-file://vscode-app/Users/leularia/Desktop/VOLT/volt-e5-codeintel/node_modules/vscode-textmate/release/main.js:1
+   220.9 renderCodeBlock vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.js:688
+   220.9 renderAgentBlock vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.js:32
+   220.9 renderBlock vs/workbench/contrib/voltAgent/browser/editor/agentEditor.js:4850
+   220.9 renderRow vs/workbench/contrib/voltAgent/browser/chrome/agentTranscriptView.js:594
+   220.2 tokenizeEncoded vs/workbench/services/textMate/browser/tokenizationSupport/tokenizationSupportWithLineLimit.js:22
+   213.5 update vs/workbench/contrib/voltAgent/browser/blocks/agentBlockRenderers.js:519
+   212.7 findNextMatchSync vscode-file://vscode-app/Users/leularia/Desktop/VOLT/volt-e5-codeintel/node_modules/vscode-oniguruma/release/main.js:1
+   212.0 _findNextMatchSync vscode-file://vscode-app/Users/leularia/Desktop/VOLT/volt-e5-codeintel/node_modules/vscode-oniguruma/release/main.js:1
+
+== self ms
+  2355.2 get clientHeight :0
+   793.2 get scrollTop :0
+   482.5 set scrollTop :0
+   167.1 wasm-function[198] vscode-file://vscode-app/Users/leularia/Desktop/VOLT/volt-e5-codeintel/node_modules/vscode-oniguruma/release/onig.wasm:1
+   102.3 cloneNode :0
+    87.7 trackDisposable vs/base/common/lifecycle.js:27
+    66.6 remove :0
+    44.6 setAttribute :0
+    39.3 partitionAssistantText vs/workbench/contrib/voltAgent/browser/chrome/agentTimeline.js:29
+    38.8 querySelectorAll :0
+    37.3 syncStuckTurns vs/workbench/contrib/voltAgent/browser/editor/agentThreadView.js:249
+    32.4 onFrame vs/platform/voltAgentServer/common/connection.js:206
+    30.2 shapeOf vs/workbench/contrib/voltAgent/browser/chrome/agentTranscriptView.js:373
+    29.3 clone vs/base/browser/dompurify/dompurify.js:138
+    29.2 wasm-function[107] vscode-file://vscode-app/Users/leularia/Desktop/VOLT/volt-e5-codeintel/node_modules/vscode-oniguruma/release/onig.wasm:1
+    29.1 getBoundingClientRect :0
+    28.1 inferPreviewUrlFromCommand vs/workbench/contrib/voltAgent/browser/preview/localPreview.js:27
+    24.2 querySelector :0
+    23.9 socket.onmessage vs/platform/voltAgentServer/common/connection.js:192
+    21.2 setTimeout :0
+    20.7 ThreadFollow.step vs/workbench/contrib/voltAgent/browser/editor/agentThreadScroll.js:145
+    18.3 doSanitizeHtml vs/base/browser/domSanitize.js:159
+    17.8 setProperty :0
+    17.1 replaceWith :0
+    15.0 splitTextWithShell vs/workbench/contrib/voltAgent/browser/blocks/agentBlocks.js:818
+    14.3 splitReplyText vs/workbench/contrib/voltAgent/browser/chrome/agentTranscript.js:271
+    14.0 onEditorMutation vs/workbench/contrib/voltAgent/browser/chrome/agentViewSidebars.js:772
+    13.8 add :0
+    13.3 parseCodeCitation vs/workbench/contrib/voltAgent/browser/blocks/agentCodeBlock.js:56
+    12.7 render vs/workbench/contrib/voltAgent/browser/chrome/agentTranscriptView.js:181
+    12.3 addToSet vs/base/browser/dompurify/dompurify.js:90
+    10.8 isRetryNotice vs/workbench/services/voltRuntime/common/acpNotices.js:27
+    10.5 extractLocalPreviewUrl vs/workbench/contrib/voltAgent/browser/preview/localPreview.js:11
+    10.0 accessSetting vs/platform/configuration/common/configuration.js:120
+     9.8 wrapFreshText vs/workbench/contrib/voltAgent/browser/chrome/agentFreshText.js:110
+     9.8 c vscode-file://vscode-app/Users/leularia/Desktop/VOLT/volt-e5-codeintel/node_modules/vscode-textmate/release/main.js:1
+     9.7 append :0
+     9.1 getAdditionalKeybindings vs/workbench/electron-browser/parts/titlebar/menubarControl.js:138
+     9.0 compactTokens vs/workbench/contrib/voltAgent/browser/blocks/agentCodeBlock.js:738
+     8.9 markupToFragment vs/workbench/contrib/voltAgent/browser/blocks/agentMarkupDom.js:44

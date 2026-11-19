@@ -53,6 +53,7 @@ const OPUS_5: ITokenRates = { input: 4e-6, output: 2e-5, cacheRead: 2e-7, cacheW
 const FALLBACK_RATES: Record<string, IModelRate> = {
 	'claude-opus-5-5': { ...OPUS_5, fast: scaleRates(OPUS_5, 2) },
 	'claude-opus-5': { ...OPUS_5, fast: scaleRates(OPUS_5, 2) },
+	'claude-fable-5-2': { input: 8e-6, output: 4e-5, cacheRead: 2e-7, cacheWrite: 1e-5 },
 	'claude-fable-5-1': { input: 1e-5, output: 5e-5, cacheRead: 2.5e-7, cacheWrite: 1.25e-5 },
 	'claude-sonnet-5-5': { input: 2e-6, output: 1e-5, cacheRead: 2e-7, cacheWrite: 2.5e-6 },
 	'claude-haiku-4-5': { input: 1e-6, output: 5e-6, cacheRead: 1e-7, cacheWrite: 1.25e-6 },

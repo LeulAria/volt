@@ -1,0 +1,24 @@
+span 45703 ms; (idle) 44903 ms, (program) 41 ms, GC 86 ms
+
+== total (inclusive) ms
+     3.1 (root) :0
+     1.6 postMessage :0
+     1.6 postMessage node:electron/js2c/utility_init:2
+     1.6 send vs/workbench/api/node/extensionHostProcess.js:129
+     1.6 send vs/workbench/api/node/extensionHostProcess.js:228
+     1.6 (anon) vs/workbench/services/extensions/common/rpcProtocol.js:318
+     1.5 alloc vs/workbench/services/extensions/common/rpcProtocol.js:435
+     1.5 _receiveRequest vs/workbench/services/extensions/common/rpcProtocol.js:298
+     1.5 _receiveOneMessage vs/workbench/services/extensions/common/rpcProtocol.js:223
+     1.5 (anon) vs/workbench/services/extensions/common/rpcProtocol.js:120
+     1.5 _deliver vs/base/common/event.js:744
+     1.5 fire vs/base/common/event.js:772
+     1.5 fire vs/base/parts/ipc/common/ipc.net.js:494
+     1.5 (anon) vs/workbench/api/node/extensionHostProcess.js:218
+     1.5 (anon) vs/workbench/api/node/extensionHostProcess.js:122
+     1.5 emit node:events:466
+     1.5 MessagePortMain._internalPort.emit node:electron/js2c/utility_init:2
+
+== self ms
+     1.6 postMessage :0
+     1.5 alloc vs/workbench/services/extensions/common/rpcProtocol.js:435

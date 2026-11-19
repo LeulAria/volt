@@ -1,0 +1,12 @@
+span 45652 ms; (idle) 44894 ms, (program) 26 ms, GC 76 ms
+
+== total (inclusive) ms
+     7.3 (anon) :0
+     7.3 (anon) node:electron/js2c/utility_init:2
+     7.3 schedule vs/base/common/async.js:901
+     7.3 work vs/base/common/async.js:996
+     7.3 onParcelEvents vs/platform/files/node/watcher/parcel/parcelWatcher.js:299
+     7.3 parcelWatcherLib.subscribe.backend vs/platform/files/node/watcher/parcel/parcelWatcher.js:261
+     7.3 (root) :0
+
+== self ms

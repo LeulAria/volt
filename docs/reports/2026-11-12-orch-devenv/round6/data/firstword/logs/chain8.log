@@ -1,0 +1,95 @@
+[timing] took the lock at 04:05:21, load 2.37
+{"arm":"before","variant":"restored","human":false,"at":"2026-11-15T00:06:19.169Z","load":"4.22 3.00 3.56","underLoad":false,"restS":45,"readyMs":2517,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5531,"swapTotalMiB":7168,"freePct":81,"pressure":1},"firstWordMs":1740,"trace":{"agentSource":"pool","agentReadyMs":22,"promptMs":44,"firstTextMs":1639}}
+{"arm":"after","variant":"restored","human":false,"at":"2026-11-15T00:07:22.694Z","load":"3.26 2.93 3.49","underLoad":false,"restS":45,"readyMs":2490,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5531,"swapTotalMiB":7168,"freePct":81,"pressure":1},"firstWordMs":368,"trace":{"agentSource":"pool","agentReadyMs":18,"promptMs":46,"firstTextMs":273}}
+{"arm":"before","variant":"restored","human":true,"at":"2026-11-15T00:08:27.079Z","load":"2.24 2.71 3.37","underLoad":false,"restS":45,"readyMs":2312,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5531,"swapTotalMiB":7168,"freePct":81,"pressure":1},"firstWordMs":625,"trace":{"agentSource":"pool","agentReadyMs":18,"promptMs":48,"firstTextMs":522}}
+{"arm":"after","variant":"restored","human":true,"at":"2026-11-15T00:09:30.725Z","load":"3.64 2.98 3.42","underLoad":false,"restS":45,"readyMs":2029,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5531,"swapTotalMiB":7168,"freePct":81,"pressure":1},"firstWordMs":217,"trace":{"agentSource":"pool","agentReadyMs":20,"promptMs":44,"firstTextMs":96}}
+[timing] dropped at 04:09:37
+[timing] took the lock at 04:09:37, load 3.75
+{"arm":"after","variant":"restored","human":false,"at":"2026-11-15T00:10:33.708Z","load":"4.52 3.45 3.56","underLoad":false,"restS":45,"readyMs":2028,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5531,"swapTotalMiB":7168,"freePct":81,"pressure":1},"firstWordMs":289,"trace":{"agentSource":"pool","agentReadyMs":18,"promptMs":43,"firstTextMs":184}}
+{"arm":"before","variant":"restored","human":false,"at":"2026-11-15T00:11:36.993Z","load":"3.73 3.48 3.57","underLoad":false,"restS":45,"readyMs":2332,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5531,"swapTotalMiB":7168,"freePct":80,"pressure":1},"firstWordMs":296,"trace":{"agentSource":"pool","agentReadyMs":17,"promptMs":41,"firstTextMs":204}}
+{"arm":"after","variant":"restored","human":true,"at":"2026-11-15T00:12:40.985Z","load":"3.50 3.61 3.62","underLoad":false,"restS":45,"readyMs":2347,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5531,"swapTotalMiB":7168,"freePct":80,"pressure":1},"firstWordMs":219,"trace":{"agentSource":"pool","agentReadyMs":18,"promptMs":45,"firstTextMs":90}}
+{"arm":"before","variant":"restored","human":true,"at":"2026-11-15T00:13:45.135Z","load":"3.51 3.65 3.64","underLoad":false,"restS":45,"readyMs":2011,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5531,"swapTotalMiB":7168,"freePct":80,"pressure":1},"firstWordMs":610,"trace":{"agentSource":"pool","agentReadyMs":19,"promptMs":45,"firstTextMs":515}}
+[timing] dropped at 04:13:51
+[timing] took the lock at 04:13:52, load 3.42
+{"arm":"before","variant":"restored","human":false,"at":"2026-11-15T00:14:48.411Z","load":"3.65 3.65 3.63","underLoad":false,"restS":45,"readyMs":2319,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5523,"swapTotalMiB":7168,"freePct":81,"pressure":1},"firstWordMs":322,"trace":{"agentSource":"pool","agentReadyMs":18,"promptMs":45,"firstTextMs":231}}
+{"arm":"after","variant":"restored","human":false,"at":"2026-11-15T00:15:51.446Z","load":"2.63 3.35 3.52","underLoad":false,"restS":45,"readyMs":1984,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5523,"swapTotalMiB":7168,"freePct":80,"pressure":1},"firstWordMs":346,"trace":{"agentSource":"pool","agentReadyMs":17,"promptMs":41,"firstTextMs":250}}
+{"arm":"before","variant":"restored","human":true,"at":"2026-11-15T00:16:56.681Z","load":"3.72 3.58 3.59","underLoad":false,"restS":45,"readyMs":2136,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5483,"swapTotalMiB":7168,"freePct":81,"pressure":1},"firstWordMs":1590,"trace":{"agentSource":"pool","agentReadyMs":17,"promptMs":42,"firstTextMs":1500}}
+{"arm":"after","variant":"restored","human":true,"at":"2026-11-15T00:18:00.749Z","load":"3.75 3.63 3.61","underLoad":false,"restS":45,"readyMs":2402,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":5443,"swapTotalMiB":7168,"freePct":81,"pressure":1},"firstWordMs":218,"trace":{"agentSource":"pool","agentReadyMs":22,"promptMs":50,"firstTextMs":100}}
+[timing] dropped at 04:18:07
+[timing] took the lock at 04:18:08, load 3.40
+{"pid":45402,"ms":2062,"load":"3.59 3.59 3.59"}
+{"arm":"before","rep":1,"human":false,"at":"2026-11-15T00:19:45.299Z","load":"3.05 3.40 3.52","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5443,"swapTotalMiB":7168,"freePct":81,"pressure":1},"ok":true,"firstWordMs":202,"trace":{"agentSource":"pool","agentReadyMs":2,"promptMs":35,"firstTextMs":87}}
+{"arm":"before","rep":2,"human":false,"at":"2026-11-15T00:20:33.465Z","load":"2.44 3.20 3.44","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5443,"swapTotalMiB":7168,"freePct":81,"pressure":1},"ok":true,"firstWordMs":202,"trace":{"agentSource":"pool","agentReadyMs":4,"promptMs":35,"firstTextMs":92}}
+median firstWordMs 202
+{"pid":55824,"ms":2033,"load":"3.40 3.37 3.49"}
+{"arm":"after","rep":1,"human":false,"at":"2026-11-15T00:22:19.141Z","load":"2.82 3.19 3.41","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5443,"swapTotalMiB":7168,"freePct":80,"pressure":1},"ok":true,"firstWordMs":197,"trace":{"agentSource":"pool","agentReadyMs":4,"promptMs":41,"firstTextMs":83}}
+{"arm":"after","rep":2,"human":false,"at":"2026-11-15T00:23:07.331Z","load":"3.13 3.28 3.43","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5443,"swapTotalMiB":7168,"freePct":81,"pressure":1},"ok":true,"firstWordMs":199,"trace":{"agentSource":"pool","agentReadyMs":2,"promptMs":29,"firstTextMs":70}}
+median firstWordMs 198
+[timing] dropped at 04:23:16
+[timing] took the lock at 04:23:16, load 3.03
+{"pid":65507,"ms":1955,"load":"3.03 3.25 3.42"}
+{"arm":"after","rep":1,"human":false,"at":"2026-11-15T00:24:36.257Z","load":"1.94 2.97 3.30","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5443,"swapTotalMiB":7168,"freePct":81,"pressure":1},"ok":true,"firstWordMs":202,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":38,"firstTextMs":79}}
+{"arm":"after","rep":2,"human":false,"at":"2026-11-15T00:25:24.338Z","load":"3.95 3.26 3.38","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5443,"swapTotalMiB":7168,"freePct":81,"pressure":1},"ok":true,"firstWordMs":206,"trace":{"agentSource":"pool","agentReadyMs":4,"promptMs":55,"firstTextMs":95}}
+median firstWordMs 204
+{"pid":74744,"ms":2095,"load":"3.63 3.22 3.37"}
+{"arm":"before","rep":1,"human":false,"at":"2026-11-15T00:26:53.494Z","load":"3.69 3.40 3.43","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5435,"swapTotalMiB":7168,"freePct":81,"pressure":1},"ok":true,"firstWordMs":200,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":34,"firstTextMs":88}}
+{"arm":"before","rep":2,"human":false,"at":"2026-11-15T00:27:41.731Z","load":"2.64 3.15 3.33","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5435,"swapTotalMiB":7168,"freePct":81,"pressure":1},"ok":true,"firstWordMs":201,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":32,"firstTextMs":88}}
+median firstWordMs 200.5
+[timing] dropped at 04:27:50
+[timing] took the lock at 04:27:50, load 3.06
+{"pid":84100,"ms":1986,"load":"3.05 3.21 3.35"}
+{"arm":"before","rep":1,"human":true,"at":"2026-11-15T00:29:13.777Z","load":"4.35 3.50 3.44","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5435,"swapTotalMiB":7168,"freePct":81,"pressure":1},"ok":true,"firstWordMs":209,"trace":{"agentSource":"pool","agentReadyMs":4,"promptMs":39,"firstTextMs":97}}
+{"arm":"before","rep":2,"human":true,"at":"2026-11-15T00:30:06.091Z","load":"3.16 3.28 3.36","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5435,"swapTotalMiB":7168,"freePct":81,"pressure":1},"ok":true,"firstWordMs":206,"trace":{"agentSource":"pool","agentReadyMs":4,"promptMs":34,"firstTextMs":89}}
+median firstWordMs 207.5
+{"pid":93698,"ms":1984,"load":"3.86 3.41 3.40"}
+{"arm":"after","rep":1,"human":true,"at":"2026-11-15T00:31:39.140Z","load":"2.53 3.18 3.32","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5435,"swapTotalMiB":7168,"freePct":81,"pressure":1},"ok":true,"firstWordMs":201,"trace":{"agentSource":"pool","agentReadyMs":2,"promptMs":32,"firstTextMs":87}}
+{"arm":"after","rep":2,"human":true,"at":"2026-11-15T00:32:31.246Z","load":"3.61 3.33 3.36","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5435,"swapTotalMiB":7168,"freePct":80,"pressure":1},"ok":true,"firstWordMs":208,"trace":{"agentSource":"pool","agentReadyMs":5,"promptMs":39,"firstTextMs":84}}
+median firstWordMs 204.5
+[timing] dropped at 04:32:41
+[timing] took the lock at 04:32:41, load 4.62
+{"pid":3522,"ms":2037,"load":"4.51 3.58 3.45"}
+{"arm":"after","rep":1,"human":true,"at":"2026-11-15T00:34:04.276Z","load":"3.07 3.32 3.36","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5333,"swapTotalMiB":6144,"freePct":81,"pressure":1},"ok":true,"firstWordMs":204,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":45,"firstTextMs":101}}
+{"arm":"after","rep":2,"human":true,"at":"2026-11-15T00:34:56.287Z","load":"3.15 3.26 3.33","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5325,"swapTotalMiB":6144,"freePct":81,"pressure":1},"ok":true,"firstWordMs":198,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":29,"firstTextMs":72}}
+median firstWordMs 201
+{"pid":14181,"ms":2036,"load":"3.74 3.39 3.37"}
+{"arm":"before","rep":1,"human":true,"at":"2026-11-15T00:36:29.387Z","load":"3.97 3.50 3.41","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5325,"swapTotalMiB":6144,"freePct":80,"pressure":1},"ok":true,"firstWordMs":203,"trace":{"agentSource":"pool","agentReadyMs":3,"promptMs":53,"firstTextMs":106}}
+{"arm":"before","rep":2,"human":true,"at":"2026-11-15T00:37:21.543Z","load":"4.86 3.85 3.55","underLoad":false,"openWaitS":1,"idleS":40,"mem":{"swapUsedMiB":5325,"swapTotalMiB":6144,"freePct":80,"pressure":1},"ok":true,"firstWordMs":222,"trace":{"agentSource":"pool","agentReadyMs":7,"promptMs":47,"firstTextMs":121}}
+median firstWordMs 212.5
+[timing] dropped at 04:37:31
+[timing] took the lock at 04:37:31, load 4.79
+{"pid":23295,"ms":2366,"load":"4.21 3.77 3.53"}
+{"rep":0,"totalMs":159,"pollMs":147.5,"beforeRequestMs":107,"onScreenMs":52,"domMs":145,"wsSendMs":7,"wsFrameMs":137,"serverAt":{"runStart":23,"running":39,"textEnd":113},"metrics":{"agentSource":"pool","preparedMs":10,"agentReadyMs":15,"promptMs":16,"firstEventMs":90,"firstTextMs":90,"totalMs":209},"load":"4.46 3.89 3.58"}
+{"rep":1,"totalMs":99,"pollMs":84.5,"beforeRequestMs":75,"onScreenMs":24,"domMs":84,"wsSendMs":7,"wsFrameMs":81,"serverAt":{"runStart":14,"running":19,"textEnd":80},"metrics":{"agentSource":"pool","preparedMs":5,"agentReadyMs":6,"promptMs":6,"firstEventMs":65,"firstTextMs":67,"totalMs":187},"load":"4.35 3.87 3.57"}
+{"rep":2,"totalMs":106,"pollMs":96.5,"beforeRequestMs":81,"onScreenMs":25,"domMs":91,"wsSendMs":8,"wsFrameMs":87,"serverAt":{"runStart":18,"running":19,"textEnd":86},"metrics":{"agentSource":"pool","preparedMs":0,"agentReadyMs":1,"promptMs":1,"firstEventMs":67,"firstTextMs":68,"totalMs":188},"load":"4.16 3.84 3.56"}
+{"arm":"before","n":3,"totalMs":106,"pollMs":96.5,"beforeRequestMs":81,"onScreenMs":25}
+{"pid":28653,"ms":2024,"load":"3.96 3.80 3.56"}
+{"rep":0,"totalMs":148,"pollMs":133.5,"beforeRequestMs":81,"onScreenMs":67,"domMs":134,"wsSendMs":7,"wsFrameMs":128,"serverAt":{"runStart":15,"running":29,"textEnd":85},"metrics":{"agentSource":"pool","preparedMs":10,"agentReadyMs":14,"promptMs":15,"firstEventMs":70,"firstTextMs":71,"totalMs":205},"load":"3.87 3.79 3.56"}
+{"rep":1,"totalMs":95,"pollMs":82.5,"beforeRequestMs":67,"onScreenMs":28,"domMs":82,"wsSendMs":6,"wsFrameMs":75,"serverAt":{"runStart":17,"running":22,"textEnd":70},"metrics":{"agentSource":"pool","preparedMs":4,"agentReadyMs":5,"promptMs":5,"firstEventMs":53,"firstTextMs":53,"totalMs":176},"load":"3.64 3.74 3.54"}
+{"rep":2,"totalMs":95,"pollMs":84.5,"beforeRequestMs":60,"onScreenMs":35,"domMs":81,"wsSendMs":6,"wsFrameMs":72,"serverAt":{"runStart":18,"running":18,"textEnd":63},"metrics":{"agentSource":"pool","preparedMs":0,"agentReadyMs":0,"promptMs":0,"firstEventMs":44,"firstTextMs":45,"totalMs":165},"load":"3.35 3.68 3.52"}
+{"arm":"after","n":3,"totalMs":95,"pollMs":84.5,"beforeRequestMs":67,"onScreenMs":35}
+[timing] dropped at 04:39:34
+[timing] took the lock at 04:39:34, load 3.55
+{"pid":35305,"ms":2039,"load":"3.50 3.70 3.53"}
+{"rep":0,"totalMs":155,"pollMs":143,"beforeRequestMs":83,"onScreenMs":72,"domMs":141,"wsSendMs":7,"wsFrameMs":136,"serverAt":{"runStart":23,"running":44,"textEnd":87},"metrics":{"agentSource":"pool","preparedMs":10,"agentReadyMs":20,"promptMs":21,"firstEventMs":64,"firstTextMs":64,"totalMs":187},"load":"3.06 3.58 3.49"}
+{"rep":1,"totalMs":96,"pollMs":84,"beforeRequestMs":67,"onScreenMs":29,"domMs":82,"wsSendMs":7,"wsFrameMs":78,"serverAt":{"runStart":19,"running":25,"textEnd":70},"metrics":{"agentSource":"pool","preparedMs":5,"agentReadyMs":6,"promptMs":6,"firstEventMs":51,"firstTextMs":51,"totalMs":172},"load":"5.05 3.99 3.64"}
+{"rep":2,"totalMs":106,"pollMs":92,"beforeRequestMs":77,"onScreenMs":29,"domMs":90,"wsSendMs":20,"wsFrameMs":83,"serverAt":{"runStart":32,"running":33,"textEnd":80},"metrics":{"agentSource":"pool","preparedMs":0,"agentReadyMs":1,"promptMs":1,"firstEventMs":47,"firstTextMs":48,"totalMs":168},"load":"4.52 3.90 3.61"}
+{"arm":"after","n":3,"totalMs":106,"pollMs":92,"beforeRequestMs":77,"onScreenMs":29}
+{"pid":39850,"ms":2049,"load":"5.28 4.11 3.69"}
+{"rep":0,"totalMs":156,"pollMs":145.5,"beforeRequestMs":100,"onScreenMs":56,"domMs":144,"wsSendMs":9,"wsFrameMs":140,"serverAt":{"runStart":25,"running":46,"textEnd":104},"metrics":{"agentSource":"pool","preparedMs":11,"agentReadyMs":22,"promptMs":22,"firstEventMs":80,"firstTextMs":80,"totalMs":200},"load":"5.00 4.13 3.71"}
+{"rep":1,"totalMs":121,"pollMs":109,"beforeRequestMs":87,"onScreenMs":34,"domMs":106,"wsSendMs":8,"wsFrameMs":101,"serverAt":{"runStart":19,"running":25,"textEnd":93},"metrics":{"agentSource":"pool","preparedMs":5,"agentReadyMs":6,"promptMs":6,"firstEventMs":74,"firstTextMs":74,"totalMs":193},"load":"5.08 4.16 3.72"}
+{"rep":2,"totalMs":122,"pollMs":116.5,"beforeRequestMs":88,"onScreenMs":34,"domMs":113,"wsSendMs":10,"wsFrameMs":111,"serverAt":{"runStart":21,"running":22,"textEnd":100},"metrics":{"agentSource":"pool","preparedMs":0,"agentReadyMs":1,"promptMs":1,"firstEventMs":78,"firstTextMs":79,"totalMs":192},"load":"5.41 4.27 3.77"}
+{"arm":"before","n":3,"totalMs":122,"pollMs":116.5,"beforeRequestMs":88,"onScreenMs":34}
+[timing] dropped at 04:41:36
+[timing] took the lock at 04:41:36, load 5.28
+{"pid":46088,"ms":2461,"load":"8.03 4.88 3.99"}
+{"rep":0,"totalMs":154,"pollMs":141.5,"beforeRequestMs":95,"onScreenMs":59,"domMs":140,"wsSendMs":8,"wsFrameMs":132,"serverAt":{"runStart":22,"running":43,"textEnd":100},"metrics":{"agentSource":"pool","preparedMs":10,"agentReadyMs":20,"promptMs":21,"firstEventMs":77,"firstTextMs":78,"totalMs":198},"load":"6.19 4.70 3.95"}
+{"rep":1,"totalMs":104,"pollMs":91,"beforeRequestMs":80,"onScreenMs":24,"domMs":90,"wsSendMs":8,"wsFrameMs":85,"serverAt":{"runStart":20,"running":26,"textEnd":84},"metrics":{"agentSource":"pool","preparedMs":5,"agentReadyMs":6,"promptMs":6,"firstEventMs":63,"firstTextMs":64,"totalMs":183},"load":"5.61 4.62 3.93"}
+{"rep":2,"totalMs":103,"pollMs":88.5,"beforeRequestMs":78,"onScreenMs":25,"domMs":89,"wsSendMs":8,"wsFrameMs":85,"serverAt":{"runStart":21,"running":21,"textEnd":84},"metrics":{"agentSource":"pool","preparedMs":0,"agentReadyMs":0,"promptMs":0,"firstEventMs":61,"firstTextMs":63,"totalMs":180},"load":"5.32 4.58 3.92"}
+{"arm":"before","n":3,"totalMs":104,"pollMs":91,"beforeRequestMs":80,"onScreenMs":25}
+{"pid":50795,"ms":2440,"load":"5.22 4.60 3.95"}
+{"rep":0,"totalMs":152,"pollMs":139,"beforeRequestMs":85,"onScreenMs":67,"domMs":138,"wsSendMs":6,"wsFrameMs":132,"serverAt":{"runStart":20,"running":41,"textEnd":90},"metrics":{"agentSource":"pool","preparedMs":10,"agentReadyMs":20,"promptMs":21,"firstEventMs":69,"firstTextMs":70,"totalMs":189},"load":"4.22 4.43 3.91"}
+{"rep":1,"totalMs":106,"pollMs":96,"beforeRequestMs":72,"onScreenMs":34,"domMs":91,"wsSendMs":8,"wsFrameMs":83,"serverAt":{"runStart":23,"running":29,"textEnd":75},"metrics":{"agentSource":"pool","preparedMs":5,"agentReadyMs":6,"promptMs":6,"firstEventMs":51,"firstTextMs":52,"totalMs":173},"load":"4.20 4.42 3.91"}
+{"rep":2,"totalMs":96,"pollMs":80.5,"beforeRequestMs":60,"onScreenMs":36,"domMs":81,"wsSendMs":7,"wsFrameMs":73,"serverAt":{"runStart":19,"running":20,"textEnd":63},"metrics":{"agentSource":"pool","preparedMs":0,"agentReadyMs":0,"promptMs":1,"firstEventMs":44,"firstTextMs":44,"totalMs":164},"load":"3.95 4.37 3.89"}
+{"arm":"after","n":3,"totalMs":106,"pollMs":96,"beforeRequestMs":72,"onScreenMs":36}
+[timing] dropped at 04:43:39
+chain8 done Sun Nov 15 04:43:39 +04 2026

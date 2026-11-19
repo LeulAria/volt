@@ -335,7 +335,7 @@ export class VoltSandboxLauncher extends Disposable {
 	 * `shadow` mode the earlier composition (`agentSandboxPolicy` straight from the request) acts and
 	 * the Authority's result is only compared; every difference is recorded either way.
 	 */
-	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest, options: { cwd?: string; hostEnv: Readonly<Record<string, string | undefined>>; env?: Readonly<Record<string, string>>; terminal?: boolean; label?: string; kind?: PrincipalKind }): Promise<ISandboxLaunch> {
+	async prepare(command: string, args: readonly string[], request: IVoltSandboxRequest, options: { cwd?: string; hostEnv: Readonly<Record<string, string | undefined>>; env?: Readonly<Record<string, string>>; terminal?: boolean; label?: string; kind?: PrincipalKind; /** One more process of a chat whose config overlay an earlier launch prepared: it is used as it is. */ joinState?: boolean }): Promise<ISandboxLaunch> {
 		// The model endpoint the user set for this CLI (a local gateway) is reachable like Volt's MCP server.
 		const endpointPorts = agentEndpointLoopbackPorts(request.providerId, options.hostEnv).filter(port => !request.loopbackPorts?.includes(port));
 		if (endpointPorts.length) {
@@ -375,7 +375,8 @@ export class VoltSandboxLauncher extends Disposable {
 			await fs.mkdir(cacheDir, { recursive: true, mode: 0o700 });
 			// The chat's own copy of the CLI's config (B-05); without a chat to key it, the config stays read-only.
 			const statePlan = request.stateKey !== undefined ? agentStatePlan(request.providerId, request.stateKey, { platform: host.platform, home: host.home, root: this.stateRoot(host.home), hostEnv: options.hostEnv }, AGENT_CONFIG_NAMES) : undefined;
-			const overlay = statePlan ? await AgentStateOverlay.prepare(statePlan, { warn: message => this.logger.warn(message) }) : undefined;
+			const overlayOptions = { warn: (message: string) => this.logger.warn(message) };
+			const overlay = !statePlan ? undefined : options.joinState ? AgentStateOverlay.attach(statePlan, overlayOptions) : await AgentStateOverlay.prepare(statePlan, overlayOptions);
 			const agentHost: IAgentSandboxHost = { ...host, cacheDir, ...(sshAuthSock ? { sshAuthSock } : {}), ...(statePlan ? { statePlan } : {}) };
 			const { policy, ignored, contained } = this.policyFor(principal.subject, mode, decision, this.compileInput(principal.subject, epoch, request, agentHost, files), files);
 			// The overlay's variables win over the user's own (`CLAUDE_CONFIG_DIR` set in their shell).
@@ -403,7 +404,7 @@ export class VoltSandboxLauncher extends Disposable {
 			const own = agentQuietPaths(request.providerId, host.home);
 			// The CLI's own housekeeping and looks at the home folder: logged, never a card (B-05).
 			const realConfig = statePlan?.links[0] ? dirname(statePlan.links[0].target) : undefined;
-			const housekeeping = (denial: ISandboxDenial) => isAgentHousekeepingDenial(request.providerId, host.home, denial, { sentinel: prepared.policy.sentinel, ...(realConfig ? { realConfig } : {}) });
+			const housekeeping = (denial: ISandboxDenial) => isAgentHousekeepingDenial(request.providerId, host.home, denial, { sentinel: prepared.policy.sentinel, ...(realConfig ? { realConfig } : {}), ...(statePlan ? { overlayConfig: statePlan.configDir } : {}) });
 			return this.launch(prepared, overlay, policy, sealed, [...files.warnings, ...describeIgnoredEntries([...files.ignored, ...ignored], policyFileName)], { home: host.home, roots, ...(own ? { own } : {}), housekeeping });
 		} catch (err) {
 			// Every failure here (a cache or overlay folder that can't be made, a config that can't be

@@ -196,6 +196,25 @@
 	mask-image: none;
 }
 
+/* While only the empty space under the last exchange is in the fade's band (`bottom-clear`, set by
+ * AgentThreadView.syncStuckTurns before the frame paints), the mask changes no pixel: it comes off, since a
+ * masked scroller is a GPU surface of its own with its own tiles. `isolation` keeps the stacking context the
+ * mask made (the side toolbar's z-index stays inside the scroller); the vertical scrollbar, which sat under
+ * the mask, takes the same fade itself. */
+.volt-agent-editor.has-turns .volt-agent-thread > .monaco-scrollable-element.volt-agent-thread-scroll {
+	isolation: isolate;
+}
+
+.volt-agent-editor.has-turns .volt-agent-thread > .monaco-scrollable-element.volt-agent-thread-scroll.bottom-clear {
+	-webkit-mask-image: none;
+	mask-image: none;
+}
+
+.volt-agent-editor.has-turns:not(.quick-open-expanded):not(.has-context-panel) .volt-agent-thread > .monaco-scrollable-element.volt-agent-thread-scroll.bottom-clear > .scrollbar.vertical {
+	-webkit-mask-image: linear-gradient(to top, rgb(0 0 0 / 0.1) 0px, rgb(0 0 0 / 0.1) 12px, rgb(0 0 0 / 0.415) 35px, #000 64px);
+	mask-image: linear-gradient(to top, rgb(0 0 0 / 0.1) 0px, rgb(0 0 0 / 0.1) 12px, rgb(0 0 0 / 0.415) 35px, #000 64px);
+}
+
 .volt-agent-thread-fade.bottom {
 	display: none;
 }
@@ -496,8 +515,8 @@
 	background: transparent;
 }
 
-/* Set on each reply on every scroll (agentThreadView.ts): the pinned card's bottom. Not inherited, so a
- * new value restyles the reply alone rather than everything in it. Replies stay hidden for 10px below
+/* Set on each masked reply or row on every scroll (agentThreadView.ts): the pinned card's bottom, from the
+ * element's own top. Not inherited, so a new value restyles that element alone rather than everything in it. Replies stay hidden for 10px below
  * the card (the gap it keeps above) so a line cut by its edge never peeks out half-drawn. */
 @property --volt-sticky-fade-end {
 	syntax: '<length>';
@@ -505,8 +524,10 @@
 	initial-value: 0px;
 }
 
-.volt-agent-exchange.has-stuck-turn > .volt-agent-turn:not(.user),
-.volt-agent-exchange.has-stuck-turn > .volt-agent-turn.notification {
+/* `volt-under-stuck`: a reply under the pinned card, or, of a tall reply, each row in the card's band
+ * (AgentThreadView.syncStuckTurns). Never the whole of a long reply: a masked element is a GPU layer and a
+ * mask of its own size, redrawn on every scrolled frame. */
+.volt-agent-exchange.has-stuck-turn .volt-under-stuck {
 	-webkit-mask-image: linear-gradient(to bottom, transparent 0px, transparent calc(var(--volt-sticky-fade-end, 0px) + 10px), #000 calc(var(--volt-sticky-fade-end, 0px) + 34px));
 	mask-image: linear-gradient(to bottom, transparent 0px, transparent calc(var(--volt-sticky-fade-end, 0px) + 10px), #000 calc(var(--volt-sticky-fade-end, 0px) + 34px));
 }

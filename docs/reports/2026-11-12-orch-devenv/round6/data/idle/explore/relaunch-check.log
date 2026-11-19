@@ -1,0 +1,44 @@
+stopped after; left: 0
+stopped 01:27:50
+{"pid":62899,"ms":33758,"load":60.01,"at":"2026-11-14T21:28:24.675Z"}
+== procs at +100 s 01:30:04
+62899 main 122 MiB ./.build/electron/VOLT.app/Contents/MacOS/Electron
+63075 gpu 61 MiB /Users/leularia/Desktop/VOLT/volt-e5-idle/.build/electron/VOLT.app/Contents/Frameworks/VOLT
+63076 network service 43 MiB
+63625 renderer 94 MiB /Users/leularia/Desktop/VOLT/volt-e5-idle/.build/electron/VOLT.app/Contents/Frameworks/VOLT
+63631 agent server 68 MiB
+66957 node utility 60 MiB
+66965 node utility 62 MiB
+70794 code index 52 MiB
+71019 sandbox helper 1 MiB
+67073 sandbox helper 1 MiB
+== focus toggle 01:30:13
+== spawns agent server (after)
+7 spawns in 70 s
+21:30:14.644 /Users/leularia/Desktop/VOLT/volt-e5-idle/.build/electron/VOLT.app/Contents/MacOS/Electron /Users/leularia/Desktop/VOLT/volt-e5-idle/out/bootstrap-fork --type=voltCodeIndex  @spawn (node:
+21:30:14.989 /usr/bin/sandbox-exec -p (version 1)
+; Volt sandbox: t2-plugin
+(deny default (with message "VOLTSBX-850eaf9f2e15480c"))
+(allow process-exec process-fork)
+(allow file-read* (literal "  @spawn (node:child_process:800:9) < vs/platform/voltSandbox/node/supervisor.js:634:12) < vs/platform/voltSandbox/node/supervisor.js:111:19) < vs/platform/voltPlugins/node
+21:30:15.074 /bin/sh -c read _ ; kill -KILL -- "-$1" 2>/dev/null volt-sandbox-watchdog 83189  @spawn (node:child_process:800:9) < vs/platform/voltSandbox/node/seatbeltBackend.js:430:17) < vs/platform/
+21:30:15.461 /Users/leularia/Desktop/VOLT/volt-e5-idle/out/volt-helpers/volt-sandbox-helper spawn /usr/bin/sandbox-exec -p (version 1)
+; Volt sandbox: agent claude-code workspace-write (system services)
+(allow default)
+(deny signal (with message "VOLTS  @spawn (node:child_process:800:9) < vs/platform/voltStdio/node/voltStdioService.js:405:12) < vs/workbench/services/voltRuntime/browser/agents/acpProvider.js:743:16)
+21:30:15.468 /bin/sh -c read _ ; kill -KILL -- "-$1" 2>/dev/null volt-sandbox-watchdog 83249  @spawn (node:child_process:800:9) < vs/platform/voltSandbox/node/seatbeltBackend.js:430:17) < vs/platform/
+21:30:18.053 /usr/bin/logger VOLTSBX-flush-387bc0a29bccb3b5  @spawn (node:child_process:800:9) < execFile (node:child_process:349:17) < vs/platform/voltSandbox/node/seatbeltBackend.js:554:66 < new Pro
+21:30:18.161 /usr/bin/log show --style ndjson --start 2026-11-15 01:30:12 --predicate (processID == 0 AND sender == "Sandbox" AND eventMessage CONTAINS "VOLTSBX-") OR (process == "logger  @spawn (node
+== spawns main (after): 18 spawns in 70 s
+== procs at +190 s 01:31:33
+62899 main 127 MiB ./.build/electron/VOLT.app/Contents/MacOS/Electron
+63075 gpu 59 MiB /Users/leularia/Desktop/VOLT/volt-e5-idle/.build/electron/VOLT.app/Contents/Frameworks/VOLT
+63076 network service 42 MiB
+63625 renderer 94 MiB /Users/leularia/Desktop/VOLT/volt-e5-idle/.build/electron/VOLT.app/Contents/Frameworks/VOLT
+63631 agent server 68 MiB
+66957 node utility 62 MiB
+66965 extension host 62 MiB
+71019 sandbox helper 1 MiB
+67073 sandbox helper 1 MiB
+83189 plugin host 47 MiB
+83198 other: sh 1 MiB

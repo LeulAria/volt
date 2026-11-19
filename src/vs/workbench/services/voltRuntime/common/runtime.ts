@@ -122,6 +122,11 @@ export interface IAgentPrewarmOptions {
 	 * warms for a short while, and the user's first key or click keeps it.
 	 */
 	readonly ttlMs?: number;
+	/**
+	 * Only keep the chat's live agent: its idle stop counts from now. Starts nothing for a chat whose agent
+	 * is stopped (the user reading the reply keeps the agent a follow-up needs; reading an old chat starts none).
+	 */
+	readonly keepOnly?: boolean;
 }
 
 export interface IAgentRuntimeService extends IVoltModelAccess {

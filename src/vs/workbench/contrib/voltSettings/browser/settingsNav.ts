@@ -7,6 +7,7 @@ import { $, append, getWindow } from '../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IListVirtualDelegate } from '../../../../base/browser/ui/list/list.js';
 import { RenderIndentGuides } from '../../../../base/browser/ui/tree/abstractTree.js';
+import { isVoltCompact } from '../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { ITreeElement, ITreeNode, ITreeRenderer } from '../../../../base/browser/ui/tree/tree.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
@@ -30,12 +31,15 @@ export interface ISettingsNavNode {
 }
 
 const ROW_HEIGHT = 28;
+/** A phone's rows are a finger tall (voltMobileWorkbench.css sizes their text to match). */
+const PHONE_ROW_HEIGHT = 48;
 /** How far a child row steps in from its parent. */
 const NAV_INDENT = 12;
 
 class NavDelegate implements IListVirtualDelegate<ISettingsNavNode> {
 	getHeight(node: ISettingsNavNode): number {
-		return node.heading ? 40 : ROW_HEIGHT;
+		const phone = isVoltCompact();
+		return node.heading ? (phone ? 44 : 40) : phone ? PHONE_ROW_HEIGHT : ROW_HEIGHT;
 	}
 	getTemplateId(): string {
 		return NavRenderer.ID;

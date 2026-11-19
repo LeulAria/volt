@@ -123,6 +123,15 @@ export class AgentStateOverlay {
 	) { }
 
 	/**
+	 * The overlay as an earlier {@link prepare} for the same chat left it, for one more process of a chat
+	 * whose agent is running: nothing is merged, linked or copied (a fresh seed would replace the config
+	 * the running CLI is writing).
+	 */
+	static attach(plan: IAgentStatePlan, options: IAgentStateOverlayOptions = {}): AgentStateOverlay {
+		return new AgentStateOverlay(plan, options);
+	}
+
+	/**
 	 * Makes the overlay ready for a launch: what a previous run left is merged first (a crash may
 	 * have skipped it), then the links are set again, the seeds copied in fresh and the logins
 	 * brought up to date.

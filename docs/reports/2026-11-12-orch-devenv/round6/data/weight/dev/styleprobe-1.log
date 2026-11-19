@@ -1,0 +1,47 @@
+== .volt-agent-thread-scroll
+   div.monaco-scrollable-element.volt-agent-thread-scroll.mac [1212x789] maskImage=linear-gradient(to top, rgba(0, 0, 0, 0.1) 0px, rgba(0, 0, 0 webkitMaskImage=linear-gradient(to top, rgba(0, 0, 0, 0.1) 0px, rgba(0, 0, 0 overflow=hidden position=relative
+   div.volt-agent-thread.at-end.scrolled [1212x789] isolation=isolate overflow=hidden position=relative
+   div.volt-agent-editor-main [1212x861] position=relative
+   div.volt-agent-editor.backdrop-host.follow-up [1212x861] overflow=hidden position=relative
+   div.editor-instance.volt-agent-editor-instance [1212x861] 
+   div.editor-container [1212x861] 
+   div.editor-group-container.active [1212x861] 
+   div.split-view-view.visible [1212x861] position=absolute
+   div.split-view-container [1212x861] position=relative
+   div.monaco-scrollable-element..mac [1212x861] position=relative
+   div.monaco-split-view2.vertical.separator-border [1212x861] position=relative
+   div.monaco-grid-branch-node [1212x861] 
+   div.monaco-grid-view [1212x861] overflow=hidden position=relative
+   div.grid-view-container [1212x861] 
+   div.content [1212x861] overflow=hidden
+   div.part.editor [1212x861] overflow=hidden
+   div.split-view-view.visible [1212x861] position=absolute
+   div.split-view-container [1212x861] position=relative
+   div.monaco-scrollable-element..mac [1212x861] position=relative
+   div.monaco-split-view2.vertical [1212x861] position=relative
+   div.monaco-grid-branch-node [1212x861] 
+   div.split-view-view.visible [1212x861] position=absolute
+   div.split-view-container [1512x861] position=relative
+   div.monaco-scrollable-element..mac [1512x861] position=relative
+   div.monaco-split-view2.horizontal [1512x861] position=relative
+   div.monaco-grid-branch-node [1512x861] 
+   div.split-view-view.visible.volt-grid-has-auxiliarybar [1512x861] position=absolute
+   div.split-view-container [1512x896] position=relative
+   div.monaco-scrollable-element..mac [1512x896] position=relative
+   div.monaco-split-view2.vertical [1512x896] position=relative
+   div.monaco-grid-branch-node [1512x896] 
+   div.monaco-grid-view [1512x896] overflow=hidden position=relative
+   div.file-icons-enabled.volt-layout-agent.volt-single-agent [1512x896] overflow=hidden position=relative
+== .volt-grid-auxiliarybar
+   div.split-view-view.visible.volt-grid-auxiliarybar [300x896] position=absolute
+   div.split-view-container [1512x861] position=relative
+   div.monaco-scrollable-element..mac [1512x861] position=relative
+   div.monaco-split-view2.horizontal [1512x861] position=relative
+   div.monaco-grid-branch-node [1512x861] 
+   div.split-view-view.visible.volt-grid-has-auxiliarybar [1512x861] position=absolute
+   div.split-view-container [1512x896] position=relative
+   div.monaco-scrollable-element..mac [1512x896] position=relative
+   div.monaco-split-view2.vertical [1512x896] position=relative
+   div.monaco-grid-branch-node [1512x896] 
+   div.monaco-grid-view [1512x896] overflow=hidden position=relative
+   div.file-icons-enabled.volt-layout-agent.volt-single-agent [1512x896] overflow=hidden position=relative

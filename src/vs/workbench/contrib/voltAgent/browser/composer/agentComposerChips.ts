@@ -9,6 +9,7 @@ import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.
 import { disposableTimeout } from '../../../../../base/common/async.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { createModeIcon } from '../chrome/agentModeIcons.js';
+import { prefersReducedMotion } from '../editor/agentThreadScroll.js';
 import { Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { extUriIgnorePathCase } from '../../../../../base/common/resources.js';
@@ -111,27 +112,75 @@ interface IGitShortStat {
 	deletions: number;
 }
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
+/**
+ * Which of the nine dots (row-major, 3x3) are on in each of the eight frames of Cursor's sine_3x3
+ * wave, 175 ms a frame.
+ */
+const THINKING_DOT_FRAMES: readonly string[] = [
+	'00000111', // dot 1 (top left)
+	'11000001',
+	'01110000',
+	'10001111',
+	'11100011',
+	'11111000',
+	'11011000',
+	'00110110',
+	'10001101', // dot 9 (bottom right)
+];
+
+/** The eight frames side by side as one mask (10.5 units a frame, r 1.125 on a 4 pitch), so one strip can step through them. */
+function thinkingDotsMask(): string {
+	let circles = '';
+	for (let frame = 0; frame < 8; frame++) {
+		for (let dot = 0; dot < 9; dot++) {
+			if (THINKING_DOT_FRAMES[dot][frame] === '1') {
+				circles += `<circle cx="${frame * 10.5 + 1.25 + (dot % 3) * 4}" cy="${1.25 + Math.floor(dot / 3) * 4}" r="1.125"/>`;
+			}
+		}
+	}
+	return `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84 10.5" fill="#000">${circles}</svg>`)}")`;
+}
+
+/** A frame of the wave lasts this long (Cursor's DotGridLoader). */
+const THINKING_DOTS_FRAME_MS = 175;
 
 /**
  * Cursor's in-progress loader for pills (DotGridLoader, sine_3x3): nine dots on a 3x3 grid, same
- * geometry (r 1.125 on a 4 pitch in a 10.5 box). The wave is CSS keyframes per dot (browserEditor.css).
+ * geometry (r 1.125 on a 4 pitch in a 10.5 box), eight frames that switch, not fade. One strip
+ * carries the eight frames as a mask over the text colour and is moved sideways under a 10 px window
+ * (browserEditor.css) by a timer, 6 times a second, only while the dots are on screen. Nine SVG
+ * circles with an opacity animation each cost the main thread nine style recalcs and a repaint on
+ * every frame for as long as the chat worked (54 times a second in the A8 trace), and a CSS
+ * transform animation on the strip still ticked style once a frame (Chromium did not composite it).
  */
 export function createThinkingDots(): HTMLElement {
 	const root = $('span.volt-browser-dock-dots');
 	root.setAttribute('aria-hidden', 'true');
-	const svg = root.ownerDocument.createElementNS(SVG_NS, 'svg');
-	svg.setAttribute('viewBox', '0 0 10.5 10.5');
-	svg.setAttribute('focusable', 'false');
-	for (let index = 0; index < 9; index++) {
-		const dot = root.ownerDocument.createElementNS(SVG_NS, 'circle');
-		dot.setAttribute('cx', String(1.25 + (index % 3) * 4));
-		dot.setAttribute('cy', String(1.25 + Math.floor(index / 3) * 4));
-		dot.setAttribute('r', '1.125');
-		dot.setAttribute('class', `volt-browser-dock-dot d${index + 1}`);
-		svg.appendChild(dot);
+	const strip = append(root, $('span.volt-browser-dock-dot-strip'));
+	const mask = thinkingDotsMask();
+	strip.style.setProperty('-webkit-mask-image', mask);
+	strip.style.setProperty('mask-image', mask);
+	const win = root.ownerDocument.defaultView;
+	if (!win) {
+		return root;
 	}
-	root.appendChild(svg);
+	let frame = 0;
+	let timer: number | undefined;
+	const step = () => {
+		frame = (frame + 1) % 8;
+		strip.style.transform = `translateX(${-frame * 10}px)`;
+	};
+	// Steps only while shown (display: none and a removed element both stop intersecting).
+	const observer = new win.IntersectionObserver(entries => {
+		const shown = entries.some(entry => entry.isIntersecting) && !prefersReducedMotion(root);
+		if (shown && timer === undefined) {
+			timer = win.setInterval(step, THINKING_DOTS_FRAME_MS);
+		} else if (!shown && timer !== undefined) {
+			win.clearInterval(timer);
+			timer = undefined;
+		}
+	});
+	observer.observe(root);
 	return root;
 }
 

@@ -33,8 +33,9 @@ const CLAUDE_FULL = ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode', 'ultr
 const CLAUDE_XHIGH = ['low', 'medium', 'high', 'xhigh', 'max', 'ultrathink'] as const;
 
 const CLAUDE_CATALOG: ICatalogEntry[] = [
-	entry('claude-fable-5-1', 'Fable 5.1', 'Most intelligent model for building agents', CLAUDE_FULL, [CLAUDE_CONTEXT], 200_000),
-	entry('claude-fable-5', 'Fable 5', 'Previous generation Fable', CLAUDE_FULL, [CLAUDE_CONTEXT], 200_000),
+	entry('claude-fable-5-2', 'Fable 5.2', 'Most intelligent model for building agents', CLAUDE_FULL, [CLAUDE_CONTEXT], 200_000),
+	entry('claude-fable-5-1', 'Fable 5.1', 'Previous generation Fable', CLAUDE_FULL, [CLAUDE_CONTEXT], 200_000),
+	entry('claude-fable-5', 'Fable 5', 'Older generation Fable', CLAUDE_FULL, [CLAUDE_CONTEXT], 200_000),
 	entry('claude-opus-5', 'Opus 5', 'Powerful model for complex work', CLAUDE_FULL, [CLAUDE_CONTEXT, CLAUDE_FAST], 200_000),
 	entry('claude-opus-4-8', 'Opus 4.8', 'Previous generation Opus', CLAUDE_FULL, [CLAUDE_FAST]),
 	entry('claude-opus-4-7', 'Opus 4.7', 'Older generation Opus', CLAUDE_XHIGH, [CLAUDE_FAST]),

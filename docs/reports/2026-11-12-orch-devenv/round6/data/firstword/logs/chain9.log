@@ -1,0 +1,68 @@
+[timing] took the lock at 08:28:07, load 7.52
+{"label":"r6-c7-window","flags":["warm=400"],"rep":0,"at":"2026-11-15T04:28:07.381Z","load":"7.52 6.94 6.47","initMs":323,"sessionMs":876,"readyMs":1249,"warmMs":400,"mainReqMs":395,"firstTextMs":402,"resultMs":533,"spawnToFirstTextMs":2053,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":323,"sessionMs":876,"mainReqMs":395,"firstTextMs":402,"spawnToFirstTextMs":2053}
+{"label":"r6-c7-window","flags":["warm=400","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-15T04:38:25.448Z","load":"13.61 17.48 14.29","initMs":827,"sessionMs":1163,"readyMs":2078,"warmMs":400,"mainReqMs":327,"firstTextMs":393,"resultMs":524,"spawnToFirstTextMs":2873,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":827,"sessionMs":1163,"mainReqMs":327,"firstTextMs":393,"spawnToFirstTextMs":2873}
+{"label":"r6-c7-atonce","flags":["warm=0"],"rep":0,"at":"2026-11-15T04:38:58.242Z","load":"13.64 17.12 14.27","initMs":1237,"sessionMs":1621,"readyMs":3105,"warmMs":0,"mainReqMs":915,"firstTextMs":937,"resultMs":1126,"spawnToFirstTextMs":4044,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":1237,"sessionMs":1621,"mainReqMs":915,"firstTextMs":937,"spawnToFirstTextMs":4044}
+--- restart Sun Nov 15 08:39:29 +04 2026
+[timing] took the lock at 10:28:30, load 2.82
+{"label":"r6-c7-window","flags":["warm=400"],"rep":0,"at":"2026-11-15T06:28:30.171Z","load":"2.82 4.59 6.33","initMs":273,"sessionMs":795,"readyMs":1118,"warmMs":400,"mainReqMs":310,"firstTextMs":333,"resultMs":480,"spawnToFirstTextMs":1853,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":273,"sessionMs":795,"mainReqMs":310,"firstTextMs":333,"spawnToFirstTextMs":1853}
+{"label":"r6-c7-window","flags":["warm=400","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-15T06:29:01.761Z","load":"4.98 4.87 6.36","initMs":128,"sessionMs":199,"readyMs":384,"warmMs":400,"mainReqMs":98,"firstTextMs":103,"resultMs":234,"spawnToFirstTextMs":889,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":128,"sessionMs":199,"mainReqMs":98,"firstTextMs":103,"spawnToFirstTextMs":889}
+{"label":"r6-c7-atonce","flags":["warm=0"],"rep":0,"at":"2026-11-15T06:29:32.646Z","load":"6.79 5.30 6.46","initMs":135,"sessionMs":194,"readyMs":357,"warmMs":0,"mainReqMs":72,"firstTextMs":79,"resultMs":204,"spawnToFirstTextMs":438,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":135,"sessionMs":194,"mainReqMs":72,"firstTextMs":79,"spawnToFirstTextMs":438}
+{"label":"r6-c7-atonce","flags":["warm=0","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-15T06:30:03.052Z","load":"4.94 4.99 6.30","initMs":132,"sessionMs":192,"readyMs":367,"warmMs":0,"mainReqMs":71,"firstTextMs":81,"resultMs":201,"spawnToFirstTextMs":449,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":132,"sessionMs":192,"mainReqMs":71,"firstTextMs":81,"spawnToFirstTextMs":449}
+[timing] dropped at 10:30:33
+[timing] took the lock at 10:30:33, load 4.91
+{"label":"r6-c7-window","flags":["warm=400","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-15T06:30:33.534Z","load":"4.91 4.98 6.26","initMs":134,"sessionMs":197,"readyMs":363,"warmMs":400,"mainReqMs":88,"firstTextMs":93,"resultMs":217,"spawnToFirstTextMs":858,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":134,"sessionMs":197,"mainReqMs":88,"firstTextMs":93,"spawnToFirstTextMs":858}
+{"label":"r6-c7-window","flags":["warm=400"],"rep":0,"at":"2026-11-15T06:31:04.383Z","load":"5.12 5.02 6.22","initMs":149,"sessionMs":224,"readyMs":430,"warmMs":400,"mainReqMs":751,"firstTextMs":756,"resultMs":881,"spawnToFirstTextMs":1588,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":149,"sessionMs":224,"mainReqMs":751,"firstTextMs":756,"spawnToFirstTextMs":1588}
+{"label":"r6-c7-atonce","flags":["warm=0","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-15T06:31:35.306Z","load":"4.38 4.84 6.12","initMs":124,"sessionMs":182,"readyMs":337,"warmMs":0,"mainReqMs":59,"firstTextMs":66,"resultMs":186,"spawnToFirstTextMs":405,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":124,"sessionMs":182,"mainReqMs":59,"firstTextMs":66,"spawnToFirstTextMs":405}
+{"label":"r6-c7-atonce","flags":["warm=0"],"rep":0,"at":"2026-11-15T06:32:05.732Z","load":"6.19 5.20 6.20","initMs":123,"sessionMs":186,"readyMs":340,"warmMs":0,"mainReqMs":61,"firstTextMs":70,"resultMs":189,"spawnToFirstTextMs":412,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":123,"sessionMs":186,"mainReqMs":61,"firstTextMs":70,"spawnToFirstTextMs":412}
+[timing] dropped at 10:32:36
+[timing] took the lock at 10:32:36, load 4.19
+{"label":"r6-c7-window","flags":["warm=400"],"rep":0,"at":"2026-11-15T06:32:36.171Z","load":"4.19 4.81 6.02","initMs":145,"sessionMs":185,"readyMs":363,"warmMs":400,"mainReqMs":787,"firstTextMs":792,"resultMs":918,"spawnToFirstTextMs":1557,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":145,"sessionMs":185,"mainReqMs":787,"firstTextMs":792,"spawnToFirstTextMs":1557}
+{"label":"r6-c7-window","flags":["warm=400","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-15T06:33:07.027Z","load":"4.08 4.77 5.96","initMs":123,"sessionMs":179,"readyMs":337,"warmMs":400,"mainReqMs":156,"firstTextMs":161,"resultMs":290,"spawnToFirstTextMs":899,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":123,"sessionMs":179,"mainReqMs":156,"firstTextMs":161,"spawnToFirstTextMs":899}
+{"label":"r6-c7-atonce","flags":["warm=0"],"rep":0,"at":"2026-11-15T06:33:37.848Z","load":"3.07 4.44 5.80","initMs":123,"sessionMs":170,"readyMs":332,"warmMs":0,"mainReqMs":62,"firstTextMs":69,"resultMs":189,"spawnToFirstTextMs":402,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":123,"sessionMs":170,"mainReqMs":62,"firstTextMs":69,"spawnToFirstTextMs":402}
+{"label":"r6-c7-atonce","flags":["warm=0","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-15T06:34:08.276Z","load":"2.51 4.16 5.65","initMs":118,"sessionMs":186,"readyMs":334,"warmMs":0,"mainReqMs":56,"firstTextMs":64,"resultMs":184,"spawnToFirstTextMs":400,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":118,"sessionMs":186,"mainReqMs":56,"firstTextMs":64,"spawnToFirstTextMs":400}
+[timing] dropped at 10:34:38
+[timing] took the lock at 10:34:38, load 3.08
+{"label":"r6-c7-window","flags":["warm=400","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-15T06:34:38.724Z","load":"3.08 4.14 5.59","initMs":123,"sessionMs":175,"readyMs":332,"warmMs":400,"mainReqMs":69,"firstTextMs":74,"resultMs":201,"spawnToFirstTextMs":807,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":123,"sessionMs":175,"mainReqMs":69,"firstTextMs":74,"spawnToFirstTextMs":807}
+{"label":"r6-c7-window","flags":["warm=400"],"rep":0,"at":"2026-11-15T06:35:09.542Z","load":"2.05 3.79 5.41","initMs":124,"sessionMs":175,"readyMs":327,"warmMs":400,"mainReqMs":91,"firstTextMs":96,"resultMs":224,"spawnToFirstTextMs":826,"before":0,"mainMessages":2}
+{"label":"r6-c7-window","n":1,"initMs":124,"sessionMs":175,"mainReqMs":91,"firstTextMs":96,"spawnToFirstTextMs":826}
+{"label":"r6-c7-atonce","flags":["warm=0","env:CLAUDE_CODE_MCP_STARTUP_WAIT_MS=0","allow=mcp__volt"],"rep":0,"at":"2026-11-15T06:35:40.357Z","load":"3.74 4.07 5.46","initMs":127,"sessionMs":178,"readyMs":335,"warmMs":0,"mainReqMs":62,"firstTextMs":68,"resultMs":191,"spawnToFirstTextMs":405,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":127,"sessionMs":178,"mainReqMs":62,"firstTextMs":68,"spawnToFirstTextMs":405}
+{"label":"r6-c7-atonce","flags":["warm=0"],"rep":0,"at":"2026-11-15T06:36:10.812Z","load":"2.69 3.79 5.31","initMs":137,"sessionMs":177,"readyMs":342,"warmMs":0,"mainReqMs":60,"firstTextMs":68,"resultMs":189,"spawnToFirstTextMs":412,"before":0,"mainMessages":2}
+{"label":"r6-c7-atonce","n":1,"initMs":137,"sessionMs":177,"mainReqMs":60,"firstTextMs":68,"spawnToFirstTextMs":412}
+[timing] dropped at 10:36:41
+chain7 done Sun Nov 15 10:36:41 +04 2026
+[timing] took the lock at 10:36:41, load 3.11
+{"arm":"after","variant":"restored","human":false,"at":"2026-11-15T06:37:38.156Z","load":"3.06 3.60 5.08","underLoad":false,"restS":45,"readyMs":2613,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4570,"swapTotalMiB":6144,"freePct":85,"pressure":1},"firstWordMs":390,"trace":{"agentSource":"pool","agentReadyMs":208,"promptMs":209,"firstTextMs":281}}
+{"arm":"before","variant":"restored","human":false,"at":"2026-11-15T06:38:41.733Z","load":"1.94 3.22 4.84","underLoad":false,"restS":45,"readyMs":2652,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4562,"swapTotalMiB":6144,"freePct":85,"pressure":1},"firstWordMs":214,"trace":{"agentSource":"pool","agentReadyMs":17,"promptMs":41,"firstTextMs":94}}
+{"arm":"after","variant":"restored","human":true,"at":"2026-11-15T06:39:46.182Z","load":"2.80 3.31 4.75","underLoad":false,"restS":45,"readyMs":2527,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4562,"swapTotalMiB":6144,"freePct":85,"pressure":1},"firstWordMs":235,"trace":{"agentSource":"pool","agentReadyMs":18,"promptMs":47,"firstTextMs":99}}
+{"arm":"before","variant":"restored","human":true,"at":"2026-11-15T06:40:50.948Z","load":"3.87 3.64 4.78","underLoad":false,"restS":45,"readyMs":2486,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4546,"swapTotalMiB":6144,"freePct":86,"pressure":1},"firstWordMs":641,"trace":{"agentSource":"pool","agentReadyMs":17,"promptMs":54,"firstTextMs":550}}
+[timing] dropped at 10:40:57
+[timing] took the lock at 10:40:57, load 3.82
+{"arm":"before","variant":"restored","human":false,"at":"2026-11-15T06:41:54.211Z","load":"3.22 3.53 4.66","underLoad":false,"restS":45,"readyMs":2326,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4538,"swapTotalMiB":6144,"freePct":85,"pressure":1},"firstWordMs":212,"trace":{"agentSource":"pool","agentReadyMs":18,"promptMs":42,"firstTextMs":97}}
+{"arm":"after","variant":"restored","human":false,"at":"2026-11-15T06:42:57.845Z","load":"2.36 3.26 4.48","underLoad":false,"restS":45,"readyMs":2612,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4538,"swapTotalMiB":6144,"freePct":85,"pressure":1},"firstWordMs":214,"trace":{"agentSource":"pool","agentReadyMs":34,"promptMs":51,"firstTextMs":97}}
+{"arm":"before","variant":"restored","human":true,"at":"2026-11-15T06:44:02.419Z","load":"2.57 3.17 4.35","underLoad":false,"restS":45,"readyMs":2394,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4538,"swapTotalMiB":6144,"freePct":84,"pressure":1},"firstWordMs":717,"trace":{"agentSource":"pool","agentReadyMs":17,"promptMs":42,"firstTextMs":611}}
+{"arm":"after","variant":"restored","human":true,"at":"2026-11-15T06:45:06.467Z","load":"3.12 3.25 4.29","underLoad":false,"restS":45,"readyMs":2395,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4522,"swapTotalMiB":6144,"freePct":84,"pressure":1},"firstWordMs":205,"trace":{"agentSource":"pool","agentReadyMs":18,"promptMs":47,"firstTextMs":100}}
+[timing] dropped at 10:45:13
+[timing] took the lock at 10:45:13, load 3.10
+{"arm":"after","variant":"restored","human":false,"at":"2026-11-15T06:46:09.867Z","load":"2.56 3.10 4.17","underLoad":false,"restS":45,"readyMs":2406,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4506,"swapTotalMiB":6144,"freePct":85,"pressure":1},"firstWordMs":208,"trace":{"agentSource":"pool","agentReadyMs":16,"promptMs":41,"firstTextMs":83}}
+{"arm":"before","variant":"restored","human":false,"at":"2026-11-15T06:47:13.893Z","load":"2.84 3.10 4.09","underLoad":false,"restS":45,"readyMs":3099,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4498,"swapTotalMiB":6144,"freePct":85,"pressure":1},"firstWordMs":218,"trace":{"agentSource":"pool","agentReadyMs":26,"promptMs":47,"firstTextMs":100}}
+{"arm":"after","variant":"restored","human":true,"at":"2026-11-15T06:48:17.955Z","load":"1.63 2.70 3.87","underLoad":false,"restS":45,"readyMs":2341,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4490,"swapTotalMiB":6144,"freePct":85,"pressure":1},"firstWordMs":209,"trace":{"agentSource":"pool","agentReadyMs":19,"promptMs":49,"firstTextMs":101}}
+{"arm":"before","variant":"restored","human":true,"at":"2026-11-15T06:49:23.182Z","load":"2.91 2.85 3.83","underLoad":false,"restS":45,"readyMs":2964,"agentAdaptersAtRest":0,"mem":{"swapUsedMiB":4490,"swapTotalMiB":6144,"freePct":85,"pressure":1},"firstWordMs":658,"trace":{"agentSource":"pool","agentReadyMs":18,"promptMs":42,"firstTextMs":569}}
+[timing] dropped at 10:49:30
+chain9 done Sun Nov 15 10:49:30 +04 2026

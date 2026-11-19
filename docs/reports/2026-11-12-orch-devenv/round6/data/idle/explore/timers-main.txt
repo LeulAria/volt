@@ -1,0 +1,3 @@
+timer fires: 3 in 60.0 s (0.05/s), distinct callbacks 2
+    2   0.03/s T every 30000 ms  () => this.evaluate() @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)
+    1   0.02/s T every 60000 ms  () => void this.refreshManagedPolicy().catch(() => undefined) @listOnTimeout (node:internal/timers:588:17) < process.processTimers (node:internal/timers:523:7)

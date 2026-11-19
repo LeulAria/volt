@@ -1448,6 +1448,7 @@
 		"--volt-http-stream",
 		"--volt-http-value-col",
 		"--volt-http-variable",
+		"--volt-accessory",
 		"--volt-bottom-bar",
 		"--volt-exit",
 		"--volt-inset-bottom",

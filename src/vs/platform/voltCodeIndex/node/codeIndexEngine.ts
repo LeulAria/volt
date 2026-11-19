@@ -3,11 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import { Emitter, Event } from '../../../base/common/event.js';
 import { dirname, join, normalize, relative, sep } from '../../../base/common/path.js';
 import { IVoltCodeIndexFilesRequest, IVoltCodeIndexFilesResult, IVoltCodeIndexFindFilesRequest, IVoltCodeIndexFindFilesResult, IVoltCodeIndexOptions, IVoltFffStatus, IVoltCodeIndexSearchRequest, IVoltCodeIndexSearchResult, IVoltCodeIndexStatus, IVoltCodeIndexSymbolsRequest, IVoltCodeIndexSymbolsResult, IVoltCodeImportersRequest, IVoltCodeImportersResult, IVoltCodeStructuralRequest, IVoltCodeStructuralResult, IVoltCodeStructureRequest, IVoltCodeStructureResult } from '../common/voltCodeIndex.js';
+import { diskIndexStatus, IManifestSummary, indexDirFor, normalizeIndexRoot, readIndexSummary } from './codeIndexDisk.js';
 import { FffEngine } from './fffEngine.js';
 import { optionsKey, RootIndex } from './rootIndex.js';
 
@@ -35,18 +35,7 @@ export interface ICodeIndexWorker {
 	remove(root?: string): Promise<void>;
 }
 
-interface IManifestSummary {
-	readonly root?: string;
-	readonly optionsKey?: string;
-	readonly updatedAt?: number;
-	readonly lastUsedAt?: number;
-	readonly stats?: { readonly files: number; readonly bytes: number; readonly symbols: number; readonly diskBytes: number };
-}
-
-function normalizeRoot(root: string): string {
-	const path = normalize(root);
-	return path.length > 1 && path.endsWith(sep) ? path.slice(0, -1) : path;
-}
+const normalizeRoot = normalizeIndexRoot;
 
 /** The engine's key of a folder's confined index (a sandboxed chat's; `IVoltCodeIndexOptions.confined`). */
 function confinedKey(root: string): string {
@@ -73,7 +62,7 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 	}
 
 	private dirFor(root: string): string {
-		return join(this.dataDir, createHash('sha1').update(root).digest('hex').slice(0, 24));
+		return indexDirFor(this.dataDir, root);
 	}
 
 	private fireChange(): void {
@@ -195,27 +184,12 @@ export class CodeIndexEngine implements ICodeIndexWorker {
 		return [...out.values()].sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
 	}
 
-	private async readSummary(dir: string): Promise<IManifestSummary | undefined> {
-		try {
-			return JSON.parse(await fs.readFile(join(dir, 'manifest.json'), 'utf8')) as IManifestSummary;
-		} catch {
-			return undefined;
-		}
+	private readSummary(dir: string): Promise<IManifestSummary | undefined> {
+		return readIndexSummary(dir);
 	}
 
-	private async diskStatus(root: string, dir: string): Promise<IVoltCodeIndexStatus> {
-		const summary = await this.readSummary(dir);
-		return {
-			root,
-			state: summary ? 'ready' : 'none',
-			files: summary?.stats?.files ?? 0,
-			bytes: summary?.stats?.bytes ?? 0,
-			diskBytes: summary?.stats?.diskBytes ?? 0,
-			symbols: summary?.stats?.symbols ?? 0,
-			pending: 0,
-			...(summary?.updatedAt ? { updatedAt: summary.updatedAt } : {}),
-			...(summary?.lastUsedAt ? { lastUsedAt: summary.lastUsedAt } : {}),
-		};
+	private diskStatus(root: string, dir: string): Promise<IVoltCodeIndexStatus> {
+		return diskIndexStatus(root, dir);
 	}
 
 	async rebuild(root: string, options?: IVoltCodeIndexOptions): Promise<void> {

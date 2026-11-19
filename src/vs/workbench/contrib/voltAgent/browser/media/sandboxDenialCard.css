@@ -43,7 +43,46 @@
 	font-size: 13px;
 }
 
+/*
+ * Turn Off Sandbox: white on a red fill, the input's height. Dark themes see the surface through the
+ * red (about 5.7:1 on #1e1e1e); light ones get it solid, where any see-through red drops white text
+ * under 4.5:1.
+ */
+.monaco-workbench .volt-sandbox-denial-confirm-line .volt-button.volt-button-danger {
+	height: 22px;
+	padding: 0 10px;
+	font-size: 12px;
+	color: #ffffff;
+	border-color: transparent;
+	background: color-mix(in srgb, var(--vscode-editorError-foreground) 72%, transparent);
+}
+
+.monaco-workbench .volt-sandbox-denial-confirm-line .volt-button.volt-button-danger:hover {
+	color: #ffffff;
+	border-color: transparent;
+	background: color-mix(in srgb, var(--vscode-editorError-foreground) 86%, transparent);
+}
+
+.monaco-workbench:is(.vs, .hc-light) .volt-sandbox-denial-confirm-line .volt-button.volt-button-danger {
+	background: var(--vscode-editorError-foreground);
+}
+
+.monaco-workbench:is(.vs, .hc-light) .volt-sandbox-denial-confirm-line .volt-button.volt-button-danger:hover {
+	background: color-mix(in srgb, var(--vscode-editorError-foreground) 86%, #000000);
+}
+
+.monaco-workbench:is(.hc-black, .hc-light) .volt-sandbox-denial-confirm-line .volt-button.volt-button-danger {
+	border-color: var(--vscode-contrastBorder);
+}
+
 .volt-sandbox-denial-confirm-input:focus {
 	outline: 1px solid var(--vscode-focusBorder);
 	outline-offset: -1px;
+}
+
+/* The card's buttons are a size down from the standard Volt button. */
+.monaco-workbench .volt-sandbox-denial-actions .volt-button {
+	height: 24px;
+	padding: 0 9px;
+	font-size: 12px;
 }

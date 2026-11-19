@@ -39,6 +39,8 @@ export interface IVoltViewportState {
 	readonly reducedMotion: boolean;
 	/** Px the bottom navigation takes, safe area included; 0 while it is hidden. */
 	readonly bottomBar: number;
+	/** Px a bar above the keyboard takes (the key bar); 0 while it is hidden. */
+	readonly accessory: number;
 }
 
 /** Narrower than this is a phone in portrait (and a narrow desktop window, which lays out the same). */
@@ -81,6 +83,7 @@ export class VoltViewport extends Disposable {
 	/** The tallest the window has been at each width: what it shrinks from when a keyboard opens (Android resizes the page). */
 	private readonly tallest = new Map<number, number>();
 	private bottomBar = 0;
+	private accessory = 0;
 	private frame: number | undefined;
 
 	/**
@@ -138,6 +141,14 @@ export class VoltViewport extends Disposable {
 	setBottomBar(height: number): void {
 		if (this.bottomBar !== height) {
 			this.bottomBar = height;
+			this.update();
+		}
+	}
+
+	/** A bar shown above the keyboard reports its height, or 0 when hidden. */
+	setAccessoryBar(height: number): void {
+		if (this.accessory !== height) {
+			this.accessory = height;
 			this.update();
 		}
 	}
@@ -201,6 +212,7 @@ export class VoltViewport extends Disposable {
 			keyboardOpen,
 			reducedMotion: win.matchMedia('(prefers-reduced-motion: reduce)').matches,
 			bottomBar: this.bottomBar,
+			accessory: keyboardOpen ? this.accessory : 0,
 		};
 	}
 
@@ -214,7 +226,7 @@ export class VoltViewport extends Disposable {
 		root.classList.toggle('volt-mobile-landscape', s.landscape);
 		root.classList.toggle('volt-mobile-keyboard', s.keyboardOpen);
 		root.classList.toggle('volt-mobile-reduced-motion', s.reducedMotion);
-		if (previous && sameInsets(previous.safe, s.safe) && previous.keyboard === s.keyboard && previous.bottomBar === s.bottomBar && previous.keyboardOpen === s.keyboardOpen) {
+		if (previous && sameInsets(previous.safe, s.safe) && previous.keyboard === s.keyboard && previous.bottomBar === s.bottomBar && previous.keyboardOpen === s.keyboardOpen && previous.accessory === s.accessory) {
 			return;
 		}
 		const insets = layoutInsets(s);
@@ -225,6 +237,7 @@ export class VoltViewport extends Disposable {
 			['--volt-safe-left', s.safe.left],
 			['--volt-keyboard', s.keyboard],
 			['--volt-bottom-bar', s.keyboardOpen ? 0 : s.bottomBar],
+			['--volt-accessory', s.accessory],
 			['--volt-inset-bottom', insets.bottom],
 		];
 		for (const [name, value] of vars) {
@@ -235,15 +248,16 @@ export class VoltViewport extends Disposable {
 	private clear(): void {
 		const root = this.root;
 		root.classList.remove('volt-mobile', 'volt-mobile-phone', 'volt-mobile-tablet', 'volt-mobile-touch', 'volt-mobile-landscape', 'volt-mobile-keyboard', 'volt-mobile-reduced-motion');
-		for (const name of ['--volt-safe-top', '--volt-safe-right', '--volt-safe-bottom', '--volt-safe-left', '--volt-keyboard', '--volt-bottom-bar', '--volt-inset-bottom']) {
+		for (const name of ['--volt-safe-top', '--volt-safe-right', '--volt-safe-bottom', '--volt-safe-left', '--volt-keyboard', '--volt-bottom-bar', '--volt-accessory', '--volt-inset-bottom']) {
 			root.style.removeProperty(name);
 		}
 	}
 }
 
 function layoutInsets(s: IVoltViewportState): IVoltInsets {
-	// The keyboard covers the home indicator and the navigation; the page already shrank for it.
-	const bottom = s.keyboardOpen ? 0 : Math.max(s.safe.bottom, s.bottomBar);
+	// The keyboard covers the home indicator and the navigation; the page already shrank for it, and
+	// only the bar riding on the keyboard is left to keep clear of.
+	const bottom = s.keyboardOpen ? s.accessory : Math.max(s.safe.bottom, s.bottomBar);
 	return { top: s.safe.top, right: s.safe.right, bottom, left: s.safe.left };
 }
 
@@ -253,5 +267,6 @@ function sameInsets(a: IVoltInsets, b: IVoltInsets): boolean {
 
 function sameState(a: IVoltViewportState, b: IVoltViewportState): boolean {
 	return a.formFactor === b.formFactor && a.touch === b.touch && a.landscape === b.landscape && sameInsets(a.safe, b.safe)
-		&& a.keyboard === b.keyboard && a.keyboardOpen === b.keyboardOpen && a.reducedMotion === b.reducedMotion && a.bottomBar === b.bottomBar;
+		&& a.keyboard === b.keyboard && a.keyboardOpen === b.keyboardOpen && a.reducedMotion === b.reducedMotion && a.bottomBar === b.bottomBar
+		&& a.accessory === b.accessory;
 }

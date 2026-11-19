@@ -1,0 +1,13 @@
+{"arm":"after","variant":"front","cpuApp":28.966,"wakeups":15.6,"cpuAgents":0,"loadStart":89.1,"loadEnd":55.68,"stateDuring":"{\"vis\":\"visible\",\"focus\":true}"}
+other: du                                n=1 cpu 28.255% wakeups 0.1/s
+main                                     n=1 cpu 0.231% wakeups 6.6/s
+renderer                                 n=1 cpu 0.137% wakeups 0.3/s
+node utility                             n=2 cpu 0.126% wakeups 1.6/s
+agent server                             n=1 cpu 0.089% wakeups 3.8/s
+gpu                                      n=1 cpu 0.030% wakeups 0.8/s
+code index                               n=1 cpu 0.030% wakeups 1.2/s
+sandbox helper                           n=2 cpu 0.029% wakeups 0.6/s
+network service                          n=1 cpu 0.024% wakeups 0.3/s
+plugin host                              n=1 cpu 0.008% wakeups 0.3/s
+other: Electron                          n=1 cpu 0.007% wakeups 0/s
+other: sh                                n=1 cpu 0.000% wakeups 0/s

@@ -1,0 +1,2 @@
+2026-11-15 11:27:00.060 [info] ExtensionService#_doActivateExtension vscode.typescript-language-features, startup: false, activationEvent: 'onLanguage:typescript'
+2026-11-15 11:27:00.506 [warning] [vscode.typescript-language-features] Accessing a resource scoped configuration without providing a resource is not expected. To get the effective value for 'files.watcherExclude', provide the URI of a resource or 'null' for any resource.

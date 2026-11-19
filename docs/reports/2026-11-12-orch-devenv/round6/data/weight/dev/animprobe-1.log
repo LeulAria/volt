@@ -1,0 +1,42 @@
+t=  5s layouts +5 restyles +30 script +11 ms  gpu 469 MiB
+      anim @-1s CSSTransition stroke-dashoffset 420ms x1 delay 0 on circle.fill
+      anim @-1s CSSTransition border-right-color 180ms x1 delay 0 on div.volt-agent-input-box.follow-up.focused
+      anim @-1s CSSTransition border-top-color 180ms x1 delay 0 on div.volt-agent-input-box.follow-up.focused
+      anim @-1s CSSTransition border-bottom-color 180ms x1 delay 0 on div.volt-agent-input-box.follow-up.focused
+      anim @-1s CSSTransition border-left-color 180ms x1 delay 0 on div.volt-agent-input-box.follow-up.focused
+      anim @-1s CSSAnimation volt-agent-shimmer 900ms xnull delay 0 on span.volt-agent-activity-progress.shimmer
+      anim @-1s CSSTransition background-color 120ms x1 delay 0 on span.line
+      anim @-1s CSSTransition width 120ms x1 delay 0 on span.line
+      anim @-1s CSSTransition background-color 120ms x1 delay 0 on span.line
+      anim @-1s CSSTransition width 120ms x1 delay 0 on span.line
+      anim @-1s CSSTransition background-color 120ms x1 delay 0 on span.line
+      anim @-1s CSSTransition width 120ms x1 delay 0 on span.line
+      anim @-1s CSSTransition background-color 120ms x1 delay 0 on span.line
+      anim @-1s CSSTransition width 120ms x1 delay 0 on span.line
+      anim @-1s CSSTransition opacity 100ms x1 delay 0 on div.visible.scrollbar.vertical
+      anim @-1s CSSTransition background-color 112.59107137375635ms x1 delay 0 on span.line
+      anim @-1s CSSTransition width 112.59107137375635ms x1 delay 0 on span.line
+      anim @-1s CSSTransition background-color 112.59107137375635ms x1 delay 0 on span.line
+      anim @-1s CSSTransition width 112.59107137375635ms x1 delay 0 on span.line
+      anim @-1s CSSTransition background-color 112.59107137375635ms x1 delay 0 on span.line
+      anim @-1s CSSTransition width 112.59107137375635ms x1 delay 0 on span.line
+      anim @-1s CSSAnimation volt-agent-shimmer 900ms xnull delay 0 on span.volt-agent-activity-progress.shimmer
+      anim @0s CSSTransition opacity 800ms x1 delay 0 on div.visible.scrollbar.vertical
+      anim @0s CSSTransition stroke-dashoffset 420ms x1 delay 0 on circle.fill
+      anim @0s CSSTransition opacity 17.76425000001325ms x1 delay 0 on div.visible.scrollbar.vertical
+      anim @0s CSSTransition opacity 800ms x1 delay 0 on div.invisible.scrollbar.vertical
+t= 10s layouts +1 restyles +10 script +9 ms  gpu 619 MiB
+t= 16s layouts +5 restyles +5 script +20 ms  gpu 638 MiB
+t= 21s layouts +5 restyles +5 script +117 ms  gpu 612 MiB
+t= 26s layouts +4 restyles +4 script +7 ms  gpu 612 MiB
+t= 32s layouts +5 restyles +5 script +4 ms  gpu 612 MiB
+t= 37s layouts +5 restyles +5 script +134 ms  gpu 617 MiB
+t= 42s layouts +4 restyles +4 script +54 ms  gpu 611 MiB
+t= 48s layouts +5 restyles +5 script +86 ms  gpu 596 MiB
+t= 53s layouts +5 restyles +5 script +51 ms  gpu 594 MiB
+t= 58s layouts +5 restyles +5 script +14 ms  gpu 594 MiB
+t= 64s layouts +1 restyles +1 script +7 ms  gpu 252 MiB
+t= 69s layouts +0 restyles +0 script +16 ms  gpu 248 MiB
+t= 75s layouts +2 restyles +2 script +4 ms  gpu 260 MiB
+t= 80s layouts +0 restyles +0 script +3 ms  gpu 245 MiB
+t= 85s layouts +2 restyles +2 script +1 ms  gpu 235 MiB

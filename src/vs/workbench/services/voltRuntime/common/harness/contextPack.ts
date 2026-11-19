@@ -403,9 +403,11 @@ const SCRATCH_DRAW_TOOL_NAME = 'scratch_draw';
 /**
  * Tool descriptions say what the visual tools do; this says when to reach for them unasked. Not
  * sent in the fast lane (small edits) or when the agent cannot reach the volt MCP server. 372 tokens
- * until 2026-11-14 (Opus 5.5 count), now 296: the same tools, cases and rules, fewer words.
+ * until 2026-11-14 (Opus 5.5 count), 291 until 2026-11-15, now 236: the same tools, cases and rules,
+ * fewer words; the fence fallback went (the note is only sent when the tools are reachable, and the
+ * volt MCP instructions say it for Claude Code chats).
  */
-export const VISUAL_REPLIES = `When a visual helps explain the answer, render it unasked: ${RENDER_CHART_TOOL_NAME} (volt MCP server) for numbers over time, comparisons, distributions, flows or hierarchies, repo and usage analyses included; ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts; ${SCRATCH_DRAW_TOOL_NAME} when a hand-drawn sketch reads better than a page (a comparison table or scorecard with takeaways, an architecture picture, a flow, a timeline, a mind map: \`page\`, \`diagram\`, \`mermaid\` or your own \`elements\`; be inventive), shown in the chat and openable on the user's Scratch board. Pick the chart type and style yourself; use observed data or label it illustrative. Without the visual tools, a volt-chart fence with the same JSON spec renders in Volt (mermaid fences for diagrams). Render before your final text and do not restate it. Skip it for short or trivial answers.`;
+export const VISUAL_REPLIES = `When a visual helps explain the answer, render it unasked: ${RENDER_CHART_TOOL_NAME} (volt MCP server) for numbers over time, comparisons, distributions, flows or hierarchies, repo and usage analyses included; ${RENDER_HTML_TOOL_NAME} for diagrams, relationships, processes and custom layouts; ${SCRATCH_DRAW_TOOL_NAME} when a hand-drawn sketch reads better (a comparison table or scorecard with takeaways, an architecture picture, a flow, a timeline, a mind map: \`page\`, \`diagram\`, \`mermaid\` or your own \`elements\`), shown in the chat and on the user's Scratch board. Pick the type and style yourself; use observed data or label it illustrative. Render before your final text, do not restate it, and skip it for short or trivial answers.`;
 
 /**
  * Only when the request asks for them: agents otherwise describe five sidebars in prose, or take

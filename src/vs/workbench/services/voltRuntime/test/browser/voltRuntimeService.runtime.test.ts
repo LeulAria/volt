@@ -516,6 +516,11 @@ suite('Agent runtime orchestration', () => {
 		assert.strictEqual((await waitEnd(runId)).reason, 'done');
 		assert.strictEqual(service.getRunMetrics('chat')[0].agentSource, 'pool');
 		await waitFor(() => agent.starts.length === 2, 'a replacement spare');
+		// The replacement is short-lived (a new chat warms its own agent when it opens); the asked-for spare was not.
+		const pool = (service as unknown as { agentPool: { entries: Map<string, { ttlMs: number }[]>; options: { ttlMs: number } } }).agentPool;
+		const replacement = [...pool.entries.values()].flat();
+		assert.strictEqual(replacement.length, 1);
+		assert.ok(replacement[0].ttlMs <= 30_000 && replacement[0].ttlMs < pool.options.ttlMs, `replacement spare lives ${replacement[0].ttlMs} ms`);
 		const followUp = await service.send('chat', { text: 'again', mode: 'agent', providerRef: ref });
 		await waitEnd(followUp);
 		assert.strictEqual(agent.starts.length, 2, 'a follow-up reuses the chat\'s own agent');
@@ -699,10 +704,27 @@ suite('Agent runtime orchestration', () => {
 		reap();
 		assert.ok(agent.disposed.includes(first), 'past its grace, an agent that can resume stops');
 		assert.ok(sessions.get('chat')!.releasedAgent, 'and the chat remembers its session');
+		// Round 7: the chat in use (the most recently used agent) has the same grace: within it the agent stays,
+		// past it an agent that can resume stops too (it comes back on the first sign of a message).
 		const otherHandle = agent.promptHandles[1];
-		sessions.get('other')!.agentUsedAt = Date.now() - 31_000;
+		sessions.get('other')!.agentUsedAt = Date.now() - 10_000;
 		reap();
-		assert.ok(!agent.disposed.includes(otherHandle), 'the most recently used agent is kept');
+		assert.ok(!agent.disposed.includes(otherHandle), 'the chat in use keeps its agent within its grace');
+		// Round 8: the user reading the reply (pointer, wheel) keeps the live agent a follow-up needs, and starts none.
+		sessions.get('other')!.agentUsedAt = Date.now() - 19_000;
+		const startsBeforeKeep = agent.starts.length;
+		service.prewarmAgent('other', ref, 'agent', { keepOnly: true });
+		service.prewarmAgent('chat', ref, 'agent', { keepOnly: true });
+		service.prewarmAgent('never-used', ref, 'agent', { keepOnly: true });
+		assert.ok(Date.now() - sessions.get('other')!.agentUsedAt! < 1_000, 'a keep counts the idle stop from now');
+		assert.strictEqual(agent.starts.length, startsBeforeKeep, 'a keep starts no agent, not even for a chat whose agent stopped');
+		assert.ok(!internals.sessions.has('never-used'), 'nor makes a session for a chat that has none');
+		reap();
+		assert.ok(!agent.disposed.includes(otherHandle), 'the kept agent stays past its first 20 s');
+		sessions.get('other')!.agentUsedAt = Date.now() - 21_000;
+		reap();
+		assert.ok(agent.disposed.includes(otherHandle), 'past its grace the chat in use\'s agent stops as well');
+		assert.ok(sessions.get('other')!.releasedAgent, 'and that chat remembers its session too');
 
 		const before = agent.starts.length;
 		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'what was the word?', mode: 'agent', providerRef: ref }))).reason, 'done');

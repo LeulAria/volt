@@ -8,7 +8,7 @@ import { Event } from '../../../../base/common/event.js';
 import { IServerChannel } from '../../../../base/parts/ipc/common/ipc.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { IpcActivityRecorder } from '../../common/ipcActivity.js';
-import { DriftStallDetector, DriftStallMonitor, formatStall, StallRateLimiter, stallTickInterval } from '../../common/stalls.js';
+import { DriftStallDetector, DriftStallMonitor, formatStall, ipcCallWakesStallMonitor, StallRateLimiter, stallTickInterval } from '../../common/stalls.js';
 import { runWithFakedTimers } from '../../../../base/test/common/timeTravelScheduler.js';
 import { readStallThreshold } from '../../common/voltDiagnostics.js';
 
@@ -123,14 +123,24 @@ suite('Volt IPC activity', () => {
 		assert.deepStrictEqual(recorder.attribute(5000, 5500), []);
 	});
 
+	test('heartbeat calls do not wake the stall monitor; calls that bring work do', () => {
+		assert.strictEqual(ipcCallWakesStallMonitor('voltCodeIndex', 'reportWorkspaceActivity'), false);
+		assert.strictEqual(ipcCallWakesStallMonitor('voltAwake', 'setLease'), false);
+		assert.strictEqual(ipcCallWakesStallMonitor('voltCodeIndex', 'search'), true);
+		assert.strictEqual(ipcCallWakesStallMonitor('voltPullRequests', 'resolveRepo'), true);
+		assert.strictEqual(ipcCallWakesStallMonitor('storage', 'updateItems'), true);
+	});
+
 	test('instrument wraps channels registered afterwards and can be undone', async () => {
 		const registered = new Map<string, IServerChannel<string>>();
 		const server = { registerChannel: (name: string, ch: IServerChannel<string>) => { registered.set(name, ch); } };
 		const recorder = new IpcActivityRecorder(() => 0);
-		const restore = recorder.instrument(server);
+		const willCall: string[] = [];
+		const restore = recorder.instrument(server, undefined, (name, command) => willCall.push(`${name}.${command}`));
 		server.registerChannel('a', channel(() => { }));
 		await registered.get('a')!.call('ctx', 'x');
 		assert.deepStrictEqual(recorder.recent().map(r => r.name), ['a.x']);
+		assert.deepStrictEqual(willCall, ['a.x'], 'the hook learns which call is coming');
 		restore();
 		const plain = channel(() => { });
 		server.registerChannel('b', plain);

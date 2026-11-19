@@ -131,6 +131,7 @@ import { AutomationHookSync, hookedTriggers } from '../../../workbench/contrib/v
 import { ServerProjectEnv } from './serverProjectEnv.js';
 import { ServerDocuments } from './serverDocuments.js';
 import { ServerAgentCheckpointService } from './serverCheckpoints.js';
+import { ServerMemoryReducer } from './serverMemoryReducer.js';
 import { ProjectEnvVoltStdioService } from '../../../workbench/services/voltRuntime/common/projectEnvStdio.js';
 import { AutomationService } from '../../../workbench/contrib/voltAgent/browser/automations/automationService.js';
 import { AgentCustomizeService, IAgentCustomizeService } from '../../../workbench/contrib/voltAgent/browser/customize/agentCustomizeService.js';
@@ -425,6 +426,8 @@ export async function main(argv: string[]): Promise<void> {
 	// the browser workbench's channel and paired phones' calls (`voice.*`).
 	const voiceChat = new VoltVoiceChatService(resolveEnv, logService, join(args.userDataDir, 'volt-voice'));
 	disposables.add(instantiationService.createInstance(ServerVoice, protocol, voiceChat));
+	// The heap's garbage goes back once the server is quiet (after startup and after the last run).
+	disposables.add(new ServerMemoryReducer(instantiationService.invokeFunction(accessor => accessor.get(IAgentRuntimeService)).onDidEmit));
 	disposables.add(instantiationService.createInstance(AgentServerApi, protocol, collections, sessionHost, editsJournal, async (secrets: Record<string, string>) => {
 		const imported: string[] = [];
 		for (const [key, value] of Object.entries(secrets)) {

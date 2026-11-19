@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, getWindow, runAtThisOrScheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, getWindow, isHTMLElement, runAtThisOrScheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
@@ -11,11 +11,37 @@ import { ScrollbarVisibility } from '../../../../../base/common/scrollable.js';
 /** Runs after the frame's redraw and scroll sync, so the sticky pass reads a settled layout once. */
 const STUCK_SYNC_PRIORITY = -2000;
 /**
+ * The transcript's bottom fade (agentEditor.css): content within this many pixels of the viewport's
+ * bottom edge is faded, so the mask only changes pixels while content reaches that band. 64px of fade
+ * plus room for a last card's shadow.
+ */
+export const THREAD_BOTTOM_FADE_REACH = 64 + 16;
+/**
  * After the frame's redraw and scroll sync (-1000), whose size read already laid the thread out, so
  * reading the native scroll position costs nothing; before the follow (-1500), so a native scroll
  * (find, a footnote) is adopted before the follow could write over it.
  */
 const NATIVE_SCROLL_CHECK_PRIORITY = -1200;
+/**
+ * The scrollbar's slider is drawn last in the frame, after the sticky pass (-2000) has read its
+ * rects. The scrollable used to draw it in the scroll event itself: every scroll sync and follow
+ * step then left the slider's style dirty, and each later read in the frame (the native scroll
+ * check, the sticky pass) and the follow's own scrollTop write flushed style and layout of the whole
+ * thread again: three or four forced passes per streamed frame instead of one.
+ */
+const SCROLLBAR_RENDER_PRIORITY = -2500;
+/**
+ * Replies under a pinned sent card are hidden up to 10px below it and fade in over the next 24px
+ * (agentEditor.css, `.volt-under-stuck`): what starts further below the card than this is untouched.
+ */
+export const STUCK_FADE_REACH = 10 + 24;
+/**
+ * A reply taller than this is not masked whole under a pinned card: only its rows in the card's band
+ * are. A masked element is a GPU layer of its own size plus a mask as large, both redrawn on every
+ * scrolled frame: for a long streaming reply that was the whole reply, tens of thousands of pixels
+ * tall, on every frame of its stream.
+ */
+const STUCK_MASK_SPLIT_HEIGHT = 400;
 /** Drag-select autoscroll starts this far inside the top edge, and inside the bottom one, where the composer's chips and the fade cover the rows. */
 const SELECT_SCROLL_EDGE_TOP = 24;
 const SELECT_SCROLL_EDGE_BOTTOM = 56;
@@ -40,6 +66,8 @@ export class AgentThreadView extends Disposable {
 	private stuckFrame: IDisposable | undefined;
 	/** The exchange whose sent card the last pass found pinned. */
 	private stuckExchange: HTMLElement | undefined;
+	/** What the last pass masked under the pinned card (replies, or rows of a long one). */
+	private underStuck = new Set<HTMLElement>();
 	private adoptingNative = false;
 
 	constructor() {
@@ -53,6 +81,8 @@ export class AgentThreadView extends Disposable {
 			useShadows: false,
 			handleMouseWheel: true,
 			alwaysConsumeMouseWheel: false,
+			// The slider is drawn once per frame, at the end (scheduleScrollbarRender), not in the scroll event.
+			lazyRender: true,
 		}));
 		const node = this.scroll.getDomNode();
 		node.style.width = '100%';
@@ -60,8 +90,12 @@ export class AgentThreadView extends Disposable {
 		this.element.appendChild(node);
 		append(this.element, $('.volt-agent-thread-fade.top'));
 		append(this.element, $('.volt-agent-thread-fade.bottom'));
-		this._register(this.scroll.onScroll(() => this.scheduleSyncStuckTurns()));
+		this._register(this.scroll.onScroll(() => {
+			this.scheduleSyncStuckTurns();
+			this.scheduleScrollbarRender();
+		}));
 		this._register(toDisposable(() => this.stuckFrame?.dispose()));
+		this._register(toDisposable(() => this.scrollbarFrame?.dispose()));
 		// A native scroll (scrollIntoView for a footnote or a cited quote, find, a drag-select past
 		// the edge, scroll anchoring as an off-screen exchange is laid out) moves the element under
 		// the scrollable; catch the scrollable up, or the next wheel turn would jump back. Its sizes
@@ -76,6 +110,18 @@ export class AgentThreadView extends Disposable {
 	}
 
 	private nativeScrollFrame: IDisposable | undefined;
+	private scrollbarFrame: IDisposable | undefined;
+
+	/** Draws the scrollbar's slider for this frame's scrolls, once, after every layout read of the frame. */
+	private scheduleScrollbarRender(): void {
+		if (this.scrollbarFrame) {
+			return;
+		}
+		this.scrollbarFrame = runAtThisOrScheduleAtNextAnimationFrame(getWindow(this.inner), () => {
+			this.scrollbarFrame = undefined;
+			this.scroll.renderNow();
+		}, SCROLLBAR_RENDER_PRIORITY);
+	}
 
 	private scheduleNativeScrollCheck(): void {
 		if (this.nativeScrollFrame) {
@@ -271,10 +317,45 @@ export class AgentThreadView extends Disposable {
 		const viewportTop = this.inner.getBoundingClientRect().top;
 		const exchange = this.exchangeAt(viewportTop);
 		// Only prompts the user sent pin; a subagent report scrolls with the replies under them.
-		const turn = exchange?.querySelector<HTMLElement>(':scope > .volt-agent-turn.user:not(.notification):not(.compact-command)') ?? undefined;
+		// The exchange's own children are walked, not queried: a `:scope >` query with `:not()`
+		// walked the whole reply's subtree on every scrolled frame (over 1 s in 67 s of streaming).
+		let turn: HTMLElement | undefined;
+		const turns: HTMLElement[] = [];
+		if (exchange) {
+			for (const child of exchange.children) {
+				if (!isHTMLElement(child) || !child.classList.contains('volt-agent-turn')) {
+					continue;
+				}
+				const user = child.classList.contains('user');
+				if (user && !turn && !child.classList.contains('notification') && !child.classList.contains('compact-command')) {
+					turn = child;
+				}
+				if (!user || child.classList.contains('notification')) {
+					turns.push(child);
+				}
+			}
+		}
+		// The space under the last exchange (`.volt-agent-thread-inner::after`) is empty: while that is all the
+		// bottom fade covers, the fade changes no pixel and its mask only costs the GPU a surface of its own.
+		const last = this.inner.lastElementChild;
+		let contentBottom = last ? last.getBoundingClientRect().bottom : viewportTop;
+		// The mask also covers what else the scroller holds: the side toolbar, and the card its rows open over the
+		// transcript when the chat has no room for its column (a child of the toolbar, outside its box). As a column
+		// (expanded, not an overlay: the editor's `quick-open-expanded`) the toolbar sits outside the fade.
+		for (const child of viewport.children) {
+			if (child === this.inner || child.classList.contains('scrollbar') || (child.classList.contains('expanded') && !child.classList.contains('overlay'))) {
+				continue;
+			}
+			contentBottom = Math.max(contentBottom, child.getBoundingClientRect().bottom);
+			for (const part of child.children) {
+				contentBottom = Math.max(contentBottom, part.getBoundingClientRect().bottom);
+			}
+		}
+		const bottomClear = isBottomFadeClear(contentBottom, viewportTop + dims.height);
 		let stuck = false;
 		let bottom = 0;
-		let replies: { reply: HTMLElement; top: number }[] = [];
+		const scale = getWindow(this.inner).devicePixelRatio || 1;
+		const replies: { reply: HTMLElement; end: number }[] = [];
 		if (exchange && turn) {
 			const rect = turn.getBoundingClientRect();
 			const exchangeRect = exchange.getBoundingClientRect();
@@ -287,28 +368,49 @@ export class AgentThreadView extends Disposable {
 			stuck = rect.top > naturalTop + 0.5 && exchangeRect.bottom > viewportTop;
 			bottom = rect.bottom;
 			if (stuck) {
-				replies = Array.from(exchange.querySelectorAll<HTMLElement>(':scope > .volt-agent-turn:not(.user), :scope > .volt-agent-turn.notification'), reply => ({ reply, top: reply.getBoundingClientRect().top }));
+				for (const reply of turns) {
+					// The fade's line sits a whole number of pixels below the reply's top, which is drawn
+					// from a whole device pixel (as when the reply was masked whole): rows are masked from
+					// that same line.
+					const top = reply.getBoundingClientRect().top;
+					collectUnderStuck(reply, viewportTop, snap(top, scale) + Math.round(bottom - top), scale, replies);
+				}
 			}
 		}
 
+		// On the scroller itself (monaco never rewrites its classes here): only that element restyles.
+		viewport.classList.toggle('bottom-clear', bottomClear);
 		this.element.classList.toggle('scrolled', pos.scrollTop > 1);
 		this.element.classList.toggle('at-end', pos.scrollTop + dims.height >= Math.max(dims.height, dims.scrollHeight) - 2);
 		const previous = this.stuckExchange;
 		if (previous && (previous !== exchange || !stuck)) {
 			this.unpin(previous);
 		}
+		const under = new Set<HTMLElement>();
 		if (exchange && turn && stuck) {
 			turn.classList.add('stuck');
 			// Stands in for `:has(> .volt-agent-turn.user.stuck)` on the exchange (see agentEditor.css).
 			exchange.classList.add('has-stuck-turn');
-			// Fade replies under the pinned card without painting a second window background.
-			for (const { reply, top } of replies) {
-				reply.style.setProperty('--volt-sticky-fade-end', `${bottom - top}px`);
+			// Fade replies under the pinned card without painting a second window background. Written
+			// only when the value moved: the write restyles and repaints the reply (its mask).
+			for (const { reply, end: line } of replies) {
+				under.add(reply);
+				reply.classList.add('volt-under-stuck');
+				const end = `${Math.round(line * 100) / 100}px`;
+				if (reply.style.getPropertyValue('--volt-sticky-fade-end') !== end) {
+					reply.style.setProperty('--volt-sticky-fade-end', end);
+				}
 			}
 			this.stuckExchange = exchange;
 		} else {
 			this.stuckExchange = undefined;
 		}
+		for (const reply of this.underStuck) {
+			if (!under.has(reply)) {
+				clearUnderStuck(reply);
+			}
+		}
+		this.underStuck = under;
 		// Stands in for `.volt-agent-thread:has(.volt-agent-turn.user.stuck)`.
 		this.element.classList.toggle('has-stuck-turn', !!this.stuckExchange);
 	}
@@ -337,9 +439,10 @@ export class AgentThreadView extends Disposable {
 		for (const turn of exchange.querySelectorAll<HTMLElement>(':scope > .volt-agent-turn.user.stuck')) {
 			turn.classList.remove('stuck');
 		}
-		for (const reply of exchange.querySelectorAll<HTMLElement>(':scope > .volt-agent-turn')) {
-			reply.style.removeProperty('--volt-sticky-fade-end');
+		for (const reply of this.underStuck) {
+			clearUnderStuck(reply);
 		}
+		this.underStuck.clear();
 	}
 
 	rememberHome(): void {
@@ -386,5 +489,92 @@ export class AgentThreadView extends Disposable {
 			this.scroll.scanDomNode();
 			this.syncStuckTurns();
 		});
+	}
+}
+
+/**
+ * Whether the transcript's bottom fade covers only the empty space under the last exchange: the last
+ * content ends at least {@link THREAD_BOTTOM_FADE_REACH} above the viewport's bottom edge (both in
+ * client pixels). Then the fade's mask can come off with no visible change.
+ */
+export function isBottomFadeClear(contentBottom: number, viewportBottom: number): boolean {
+	return contentBottom <= viewportBottom - THREAD_BOTTOM_FADE_REACH;
+}
+
+/** `value` (client pixels) at the nearest whole device pixel. */
+function snap(value: number, scale: number): number {
+	return Math.round(value * scale) / scale;
+}
+
+function clearUnderStuck(element: HTMLElement): void {
+	element.classList.remove('volt-under-stuck');
+	element.style.removeProperty('--volt-sticky-fade-end');
+}
+
+/** Elements that only stack their children and draw nothing themselves: a reply and its body of rows. */
+function stacksRows(element: HTMLElement): boolean {
+	return element.classList.contains('volt-agent-thread-body') || (element.classList.contains('volt-agent-turn') && !element.classList.contains('user'));
+}
+
+/**
+ * What a pinned sent card's mask has to cover of `element`: the element itself when it reaches into
+ * the band between the viewport's top edge and the end of the fade ({@link STUCK_FADE_REACH} below
+ * `line`, the card's bottom edge as the mask draws it), or, for a tall reply, only its rows that do.
+ * What lies above the viewport is clipped by the scroller anyway, and what starts below the band is
+* fully shown: masking either changes no pixel. Appends to `out` with `line` measured from each
+ * element's own top (client pixels; `scale`: device pixels per client pixel).
+ */
+export function collectUnderStuck(element: HTMLElement, viewportTop: number, line: number, scale: number, out: { reply: HTMLElement; end: number }[]): void {
+	const rect = element.getBoundingClientRect();
+	const bandBottom = line + STUCK_FADE_REACH;
+	if (rect.bottom <= viewportTop || rect.top >= bandBottom) {
+		return;
+	}
+	if (rect.height <= STUCK_MASK_SPLIT_HEIGHT || !stacksRows(element)) {
+		// A mask is drawn from its element's top edge at a whole device pixel.
+		out.push({ reply: element, end: line - snap(rect.top, scale) });
+		return;
+	}
+	// Rows stack downwards: the first that ends below the viewport's top edge, by binary search (a
+	// long reply has hundreds), then on while they start inside the band.
+	const rows = element.children;
+	/** The first row at or after `index` that has a box (a hidden row has none), up to `last`. */
+	const boxAt = (index: number, last: number): { index: number; rect: DOMRect } | undefined => {
+		for (let i = index; i <= last; i++) {
+			const box = rows[i].getBoundingClientRect();
+			if (box.width || box.height) {
+				return { index: i, rect: box };
+			}
+		}
+		return undefined;
+	};
+	let low = 0;
+	let high = rows.length - 1;
+	let first = rows.length;
+	while (low <= high) {
+		const mid = (low + high) >> 1;
+		const box = boxAt(mid, high);
+		if (!box) {
+			high = mid - 1; // nothing with a box from here to `high`
+		} else if (box.rect.bottom > viewportTop) {
+			first = box.index;
+			high = mid - 1;
+		} else {
+			low = box.index + 1;
+		}
+	}
+	for (let i = first; i < rows.length; i++) {
+		const row = rows[i];
+		if (!isHTMLElement(row)) {
+			continue;
+		}
+		const box = row.getBoundingClientRect();
+		if (!box.width && !box.height) {
+			continue;
+		}
+		if (box.top >= bandBottom) {
+			break;
+		}
+		collectUnderStuck(row, viewportTop, line, scale, out);
 	}
 }

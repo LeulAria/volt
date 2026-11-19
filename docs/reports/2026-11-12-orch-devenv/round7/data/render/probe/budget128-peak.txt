@@ -1,0 +1,57 @@
+load 39.97 41.70 41.57
+GPU pid 52229: shared images 227 MiB
+     68 MiB  n= 13  GpuRasterTile 1472x928
+     62 MiB  n=  3  VizBufferQueue 3000x1792
+     33 MiB  n=  6  GpuRasterTile 3008x480
+     20 MiB  n=  3  RenderPassOverlay 1472x1216
+      9 MiB  n=  2  GpuRasterTile 640x1792
+      8 MiB  n=  1  RenderPassBacking 1472x1344
+      4 MiB  n=  3  RenderPassOverlay 640x512
+      4 MiB  n=  1  RenderPassBacking 640x1472
+      3 MiB  n=  3  GpuRasterTile 1472x192
+      3 MiB  n=  1  GpuRasterTile 1504x480
+      3 MiB  n=  1  RenderPassOverlay 640x1024
+      3 MiB  n=  1  GpuRasterTile 640x1024
+      2 MiB  n=  2  GpuRasterTile 2432x128
+      2 MiB  n=  4  GpuRasterTile 640x192
+      2 MiB  n=  1  GpuRasterTile 1472x320
+      1 MiB  n=  1  RenderPassBacking 640x512
+      1 MiB  n=  1  GpuRasterTile 640x512
+      0 MiB  n=  1  GpuRasterTile 640x128
+      0 MiB  n=  2  GpuRasterTile 576x64
+      0 MiB  n=  1  GpuRasterTile 256x64
+  raster tiles: 46 (126 MiB)
+app 2920 agents 1276 total 4197 MiB (39 processes, 3 s)
+  claude CLI [agents]                                  n=7  1276 MiB
+  renderer [app]                                       n=1   696 MiB
+  gpu [app]                                            n=1   653 MiB
+  ACP adapter (node) [app]                             n=7   517 MiB
+  main [app]                                           n=4   397 MiB
+  agent server [app]                                   n=1   240 MiB
+  extension host [app]                                 n=1   111 MiB
+  code index [app]                                     n=2    88 MiB
+  node utility (shared process/file watcher/pty) [app] n=1    85 MiB
+  utility (other) [app]                                n=1    44 MiB
+  other: Electron [app]                                n=1    40 MiB
+  plugin host (Memory) [app]                           n=1    26 MiB
+  network service [app]                                n=1    15 MiB
+  sandbox watchdog sh [app]                            n=7     8 MiB
+  sandbox helper [app]                                 n=2     2 MiB
+  other: caffeinate [app]                              n=1     2 MiB
+pid 52229 GPU Process: top-level allocators 470 MiB
+     83.8  cc
+    104.0  gpu
+     40.7  ioaccelerator
+    197.9  iosurface
+     22.4  malloc
+      2.5  shared_memory
+     18.9  skia
+pid 52298 Renderer: top-level allocators 798 MiB
+    120.7  blink_gc
+    123.5  cc
+     37.2  gpu
+     75.1  malloc
+    168.8  parkable_strings
+     80.9  partition_alloc
+      2.8  shared_memory
+    188.7  v8

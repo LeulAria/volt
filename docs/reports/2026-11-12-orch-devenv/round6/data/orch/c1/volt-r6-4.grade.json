@@ -1,0 +1,66 @@
+{
+ "branch": "main",
+ "shipped": 5,
+ "groups": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true,
+  "Integration": true
+ },
+ "handoff": 4,
+ "codesPlaced": 4,
+ "handoffDetail": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true
+ },
+ "placedDetail": {
+  "W1": true,
+  "W2": true,
+  "W3": true,
+  "W4": true
+ },
+ "codes": {
+  "W1": "ADM-W1-N6NFVW",
+  "W2": "ADM-W2-Q6WEXP",
+  "W3": "ADM-W3-N2S2KD",
+  "W4": "ADM-W4-ZRAVBE"
+ },
+ "npmTest": {
+  "status": 0,
+  "summary": ""
+ },
+ "files": {
+  "w1-limiter": {
+   "pass": true,
+   "failed": []
+  },
+  "w1-api": {
+   "pass": true,
+   "failed": []
+  },
+  "w2-dates": {
+   "pass": true,
+   "failed": []
+  },
+  "w3-cursor": {
+   "pass": true,
+   "failed": []
+  },
+  "w4-create": {
+   "pass": true,
+   "failed": []
+  },
+  "w4-idempotency": {
+   "pass": true,
+   "failed": []
+  },
+  "integration": {
+   "pass": true,
+   "failed": []
+  }
+ },
+ "report": "W1 | volt/3b83c679 | ADM-W1-N6NFVW\nW2 | volt/a10b11ae | ADM-W2-Q6WEXP\nW3 | volt/b3a832a4 | ADM-W3-N2S2KD\nW4 | volt/9d57d98b | ADM-W4-ZRAVBE"
+}

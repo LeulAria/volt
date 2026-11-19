@@ -45,6 +45,11 @@ export interface IRetrieveOptions {
 	 * starting turn kept all cores busy, for context the agent can look up itself.
 	 */
 	readonly indexOnly?: boolean;
+	/**
+	 * Search without the code index (and do not start it): the project is small, so ripgrep is as fast. Takes
+	 * precedence over {@link indexOnly} (a small project's scan does not load the machine).
+	 */
+	readonly noIndex?: boolean;
 	readonly token: CancellationToken;
 }
 
@@ -71,6 +76,8 @@ export class ContextRetriever {
 	constructor(
 		private readonly search: VoltSearch,
 		private readonly fileService: IFileService,
+		/** The same searches without the code index (ripgrep), for {@link IRetrieveOptions.noIndex}. */
+		private readonly plainSearch: VoltSearch = search,
 	) { }
 
 	async retrieve(root: URI, message: string, options: IRetrieveOptions): Promise<IRetrievedContext | undefined> {
@@ -86,10 +93,12 @@ export class ContextRetriever {
 			cts.cancel();
 		}, options.deadlineMs);
 		const token = cts.token;
-		const indexOnly = options.indexOnly;
+		// A small project is searched without the index: ripgrep answers it as fast, and no index process starts.
+		const search = options.noIndex ? this.plainSearch : this.search;
+		const indexOnly = options.noIndex ? false : options.indexOnly;
 		// Started now, used after the searches: it only re-ranks what they find.
 		const changedRead = options.changed?.().catch(() => undefined);
-		const files = plan.terms.length ? this.search.fileCount(root).catch(() => undefined) : Promise.resolve(undefined);
+		const files = plan.terms.length ? search.fileCount(root).catch(() => undefined) : Promise.resolve(undefined);
 		const evidence: IRetrievalEvidence[] = [];
 		let searches = 0;
 		const run = semaphore(PARALLEL);
@@ -110,7 +119,7 @@ export class ContextRetriever {
 			const lineOf = new Map(plan.locations.map(location => [location.path, location.line]));
 			await settle(Promise.all([
 				...plan.identifiers.map(name => attempt(async () => {
-					const found = await this.search.symbols({ root, name, match: 'exact', limit: 5, indexOnly }, token);
+					const found = await search.symbols({ root, name, match: 'exact', limit: 5, indexOnly }, token);
 					for (const symbol of found.symbols) {
 						evidence.push({ path: symbol.path, kind: 'declaration', line: symbol.line, term: name, text: symbol.text });
 						declared.add(name);
@@ -121,12 +130,12 @@ export class ContextRetriever {
 					const name = path.split('/').pop()!;
 					const parts = path.replace(/^(\.\.\/)+/, '').split('/');
 					// An absolute path (a stack trace) holds folders above the project: try its tail too.
-					let found = parts.length > 1 ? await this.search.glob({ root, folder: root, pattern: `**/${parts.join('/')}`, limit: 3, indexOnly }, token) : undefined;
+					let found = parts.length > 1 ? await search.glob({ root, folder: root, pattern: `**/${parts.join('/')}`, limit: 3, indexOnly }, token) : undefined;
 					if (!found?.paths.length && parts.length > 2) {
-						found = await this.search.glob({ root, folder: root, pattern: `**/${parts.slice(-2).join('/')}`, limit: 3, indexOnly }, token);
+						found = await search.glob({ root, folder: root, pattern: `**/${parts.slice(-2).join('/')}`, limit: 3, indexOnly }, token);
 					}
 					if (!found?.paths.length) {
-						found = await this.search.findFiles({ root, query: name, limit: 5, indexOnly }, token);
+						found = await search.findFiles({ root, query: name, limit: 5, indexOnly }, token);
 					}
 					// A named file is that file: fuzzy neighbours are not evidence.
 					for (const hit of found.paths.filter(hit => hit === path || hit.endsWith(`/${path}`) || hit.split('/').pop() === name).slice(0, 3)) {
@@ -136,8 +145,8 @@ export class ContextRetriever {
 				// BM25 over the plain words: contents (match counts as term frequency) and paths (double).
 				...plan.terms.map(term => attempt(async () => {
 					const [content, names, total] = await Promise.all([
-						this.search.grep({ root, folder: root, pattern: term, literal: true, maxMatches: TERM_MATCHES, indexOnly }, token),
-						this.search.findFiles({ root, query: term, limit: 30, indexOnly }, token),
+						search.grep({ root, folder: root, pattern: term, literal: true, maxMatches: TERM_MATCHES, indexOnly }, token),
+						search.findFiles({ root, query: term, limit: 30, indexOnly }, token),
 						files,
 					]);
 					const inPath = names.paths.filter(path => path.toLowerCase().includes(term));
@@ -160,7 +169,7 @@ export class ContextRetriever {
 					}
 				})),
 				...plan.phrases.map(phrase => attempt(async () => {
-					const found = await this.search.grep({ root, folder: root, pattern: phrase, literal: true, maxMatches: 10, indexOnly }, token);
+					const found = await search.grep({ root, folder: root, pattern: phrase, literal: true, maxMatches: 10, indexOnly }, token);
 					for (const file of found.files) {
 						for (const [line, hit] of [...file.lines].filter(([, hit]) => hit.match).slice(0, 2)) {
 							evidence.push({ path: file.path, kind: 'phrase', line, term: phrase, text: hit.text, spread: found.files.length });
@@ -176,7 +185,7 @@ export class ContextRetriever {
 			const broad = [...undeclared, ...(firstDeclared ? [firstDeclared] : [])];
 			if (broad.length && !token.isCancellationRequested) {
 				await settle(Promise.all(broad.map(name => attempt(async () => {
-					const found = await this.search.grep({ root, folder: root, pattern: name, literal: true, wholeWord: true, caseSensitive: true, maxMatches: 40, indexOnly }, token);
+					const found = await search.grep({ root, folder: root, pattern: name, literal: true, wholeWord: true, caseSensitive: true, maxMatches: 40, indexOnly }, token);
 					const spread = found.limitHit ? Math.max(found.files.length, 40) : found.files.length;
 					for (const file of found.files.slice(0, 8)) {
 						for (const [line, hit] of [...file.lines].filter(([, hit]) => hit.match).slice(0, 2)) {
