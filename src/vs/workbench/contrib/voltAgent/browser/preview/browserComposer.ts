@@ -223,6 +223,11 @@ export class BrowserAgentComposer extends Disposable {
 	private extraContent = false;
 	/** Something waits on Send even while the agent works (the queue's picked multitasks): Send, not Stop. */
 	private pendingSend = false;
+	/**
+	 * The dock's text wrapped past its one-line bar: it stays open in rows until the box is emptied,
+	 * since the open box is wider and the same text could fit one line again and flip back and forth.
+	 */
+	private dockWrapped = false;
 	private currentMode = 'Agent';
 	private plusMenu: IVoltMenuHandle | undefined;
 	/** The model picked in this draft's chip; undefined follows the chat's model. */
@@ -677,8 +682,14 @@ export class BrowserAgentComposer extends Disposable {
 			if (!this.editor) {
 				return;
 			}
-			// The dock's one-line bar opens into rows when images ride along (thumbnails above the text).
-			const multiline = (this.model?.getLineCount() ?? 1) > 1 || (!!this.callbacks.dock && !!this.mentionController?.hasMedia);
+			// The dock's one-line bar opens into rows when images ride along (thumbnails above the text),
+			// and when a long line wraps: the bar only shows 22px, so the rest of the text was hidden.
+			if (!this.callbacks.dock || !this.value) {
+				this.dockWrapped = false;
+			} else if (this.editor.getContentHeight() > 22) {
+				this.dockWrapped = true;
+			}
+			const multiline = (this.model?.getLineCount() ?? 1) > 1 || this.dockWrapped || (!!this.callbacks.dock && !!this.mentionController?.hasMedia);
 			this.element.classList.toggle('multiline', multiline);
 			// The design prompt grows to five lines, then scrolls inside itself.
 			const contentHeight = this.callbacks.dock && !multiline
