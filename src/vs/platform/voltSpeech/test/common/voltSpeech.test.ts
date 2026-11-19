@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { SpeechTurnDetector } from '../../common/speechTurnDetector.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { pcm16Bytes, rmsLevel, transcriptionUrl, wavFromPcm16 } from '../../common/voltSpeech.js';
 
@@ -49,5 +50,21 @@ suite('Volt speech', () => {
 		assert.strictEqual(transcriptionUrl('http://localhost:9000'), 'http://localhost:9000/audio/transcriptions');
 		assert.throws(() => transcriptionUrl('file:///etc/passwd'), /http or https/);
 		assert.throws(() => transcriptionUrl('not a url'));
+	});
+
+	test('the turn detector is in speech from the first loud block until a long enough pause', () => {
+		const detector = new SpeechTurnDetector();
+		assert.strictEqual(detector.inSpeech, false);
+		detector.push(0.001, 128);
+		assert.strictEqual(detector.inSpeech, false);
+		detector.push(0.2, 128);
+		assert.strictEqual(detector.inSpeech, true);
+		assert.strictEqual(detector.hasSpeech, false, 'one block is not yet an utterance');
+		detector.push(0.001, 256);
+		assert.strictEqual(detector.inSpeech, true, 'a short gap between words');
+		detector.push(0.001, 512);
+		assert.strictEqual(detector.inSpeech, false, 'the pause ended it');
+		detector.reset();
+		assert.strictEqual(detector.inSpeech, false);
 	});
 });

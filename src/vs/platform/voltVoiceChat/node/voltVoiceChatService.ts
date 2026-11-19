@@ -77,6 +77,9 @@ export class VoltVoiceChatService implements IVoltVoiceChatService {
 		if (!isVoiceProvider(provider)) {
 			throw new Error('Unknown voice provider.');
 		}
+		if (provider === 'local') {
+			throw new Error('A voice chat on this computer opens no connection, so it needs no secret.');
+		}
 		const key = await this.key(provider);
 		if (provider === 'custom') {
 			const url = request.url?.trim() ?? '';

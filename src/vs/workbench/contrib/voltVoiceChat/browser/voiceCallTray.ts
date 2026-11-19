@@ -12,7 +12,9 @@ import { localize } from '../../../../nls.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
+import { IVoltLocalVoiceService } from '../../../../platform/voltLocalVoice/common/voltLocalVoice.js';
 import { IVoltVoiceChatService } from '../../../../platform/voltVoiceChat/common/voltVoiceChat.js';
+import { agentReadAloud, localVoiceDescription } from '../../voltAgent/browser/chat/agentReadAloud.js';
 import { IVoltAgentWindowService, IVoltComposerTray, IVoltComposerTrayHost } from '../../../services/voltPlugins/browser/voltAgentWindow.js';
 import { IAgentHistoryService } from '../../../services/voltRuntime/common/history/agentHistory.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
@@ -136,6 +138,7 @@ export class VoiceCallTray extends Disposable implements IVoltComposerTray {
 		@IVoltAgentWindowService private readonly agentWindow: IVoltAgentWindowService,
 		@IVoltVoiceChatService _voiceService: IVoltVoiceChatService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IVoltLocalVoiceService private readonly localVoiceService: IVoltLocalVoiceService,
 	) {
 		super();
 		this.element = $('.volt-voice-tray-slot');
@@ -301,14 +304,26 @@ export class VoiceCallTray extends Disposable implements IVoltComposerTray {
 		}
 		const state = this.service.state;
 		anchor.classList.add('on');
-		const open = () => {
+		const open = (local?: Awaited<ReturnType<VoiceCallService['localVoices']>>) => {
 			this.menu.value = showVoiceSettingsMenu(this.contextViewService, {
 				anchor,
 				provider: state.provider ?? 'xai',
-				value: this.service.state.settings,
-				playingPreview: this.preview.playing,
-				onChange: next => void this.service.setSettings(next),
+				value: local ? { ...this.service.state.settings, voice: local.current?.ref ?? '' } : this.service.state.settings,
+				voices: local?.voices.map(voice => ({ id: voice.ref, label: voice.name, description: localVoiceDescription(voice) })),
+				playingPreview: local ? undefined : this.preview.playing,
+				onChange: next => {
+					// On this computer the voice is the shared downloaded one, not the hosted call's setting.
+					if (local && next.voice !== undefined) {
+						void this.service.setLocalVoice(next.voice);
+						return;
+					}
+					void this.service.setSettings(next);
+				},
 				onPreview: voice => {
+					if (local) {
+						void agentReadAloud.read(getWindow(this.element), 'voice-call-preview', localize('voiceChat.localSample', "Hi. This is how I sound on a call."), { voice, rate: this.service.state.settings.speed, localVoices: this.localVoiceService });
+						return;
+					}
 					void this.preview.toggle(state.provider ?? 'xai', voice, this.service.state.settings.speed).catch(err => {
 						this.notificationService.error(err instanceof Error ? err.message : String(err));
 					});
@@ -320,7 +335,15 @@ export class VoiceCallTray extends Disposable implements IVoltComposerTray {
 				},
 			});
 		};
-		open();
+		if (state.provider === 'local') {
+			void this.service.localVoices().then(local => {
+				if (anchor.isConnected && !this.menu.value) {
+					open(local);
+				}
+			});
+		} else {
+			open();
+		}
 	}
 
 	private roundButton(parent: HTMLElement, name: string): HTMLButtonElement {

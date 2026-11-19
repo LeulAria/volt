@@ -21,6 +21,40 @@ const SAVE_DELAY_MS = 1_000;
 
 const SENT_INSTRUCTIONS = 'The job was sent to the agent. Say you sent it in one short clause of eight words or fewer, never that it started or is done. If the request was broad, ask one sharpening question; otherwise keep talking with a natural question or a suggestion. Do not stay_silent.';
 
+/**
+ * Added to what the agent is sent (never shown in the chat) on a line with no voice model: there
+ * the agent's own reply is what the caller hears, so it is asked to answer the way people talk.
+ */
+export const SPOKEN_REPLY_NOTE = '[Volt] The user said this on a voice call, and your final reply will be read aloud to them. Write that reply as you would say it across a desk: the answer first, in one to three short plain sentences. No markdown, lists, tables, headings or code blocks; name a file by its name only when it matters, and leave out caveats about what you did or did not run. If there is more they might want (a long list, a diff, details), say in a few words that it is there and offer it instead of reading it out.';
+
+/** What a line with no voice model says when work lands: the reply itself, or the outcome in a sentence. */
+export function landedWords(outcome: 'done' | 'needs-user' | 'stopped' | 'failed', answer: string | undefined, reply: string | undefined): string {
+	switch (outcome) {
+		case 'needs-user':
+			return 'The agent needs you in the chat.';
+		case 'stopped':
+			return 'The work was stopped.';
+		case 'failed':
+			return 'The work failed.';
+	}
+	return reply?.trim() || answer?.trim() || 'The agent finished without a written reply.';
+}
+
+/**
+ * What a saved reply says in its own words: its text segments, without the terminal output,
+ * tool rows and notices (where it ran, the sandbox) that its plain text also carries.
+ */
+export function replyProse(message: unknown): string | undefined {
+	const segments = message && typeof message === 'object' ? (message as { readonly segments?: unknown }).segments : undefined;
+	if (!Array.isArray(segments)) {
+		return undefined;
+	}
+	const prose = segments
+		.filter((segment): segment is { readonly kind: 'text'; readonly text: string } => !!segment && segment.kind === 'text' && typeof segment.text === 'string' && !!segment.text.trim())
+		.map(segment => segment.text.trim());
+	return prose.length ? prose.join('\n\n') : undefined;
+}
+
 /** Who wrote a prompt: a voice call (`id` is the call). */
 export interface IVoiceSource {
 	readonly kind: 'voice';
@@ -47,8 +81,11 @@ export interface IVoiceToolResult {
 
 /** Where the call runs: the window (desktop, browser) or the agent server for a phone. */
 export interface IVoiceBrainHost {
-	/** A note for the voice to say out loud (the chat's agent finished, or needs the user). */
-	speak(note: string): void;
+	/**
+	 * A note for the voice to say out loud (the chat's agent finished, or needs the user).
+	 * `spoken` is the same news as plain words to read as they are, for a line with no voice model.
+	 */
+	speak(note: string, spoken: string): void;
 	/** The call works in a new chat now (its first task started one). */
 	onChat(chatId: string): void;
 	/** The call's record changed (turns, chats, timing). */
@@ -56,10 +93,10 @@ export interface IVoiceBrainHost {
 	save(record: IVoltVoiceCall): Promise<void>;
 	/** The chat's earlier calls (recent context and search). */
 	earlierCalls(chatId: string): Promise<readonly IVoltVoiceCall[]>;
-	/** Starts a chat with the call's first task (the composer it was started from); its id, or undefined. */
-	startChat(text: string, source: IVoiceSource): Promise<string | undefined>;
+	/** Starts a chat with the call's first task (the composer it was started from); its id, or undefined. `shown` is what the chat displays for `text`. */
+	startChat(text: string, source: IVoiceSource, shown: string): Promise<string | undefined>;
 	/** Sends to an idle chat the user has on screen, so it draws there at once. False: not on screen. */
-	submitOnScreen?(chatId: string, text: string, source: IVoiceSource): boolean;
+	submitOnScreen?(chatId: string, text: string, source: IVoiceSource, shown: string): boolean;
 }
 
 export interface IVoiceBrainServices {
@@ -245,7 +282,7 @@ export class VoiceCallBrain extends Disposable {
 		} else if (thread.active && thread.inputs.length && !this.errands.some(errand => errand.request === '\u0000needs')) {
 			// Blocked on a question or an approval while the call runs: the voice says so once.
 			this.errands.push({ request: '\u0000needs', turnId: thread.active.id, at: Date.now() });
-			this.host.speak(workLandedNote(undefined, 'needs-user', undefined, false));
+			this.host.speak(workLandedNote(undefined, 'needs-user', undefined, false), landedWords('needs-user', undefined, undefined));
 		}
 	}
 
@@ -257,20 +294,21 @@ export class VoiceCallBrain extends Disposable {
 		}
 		const asked = request ?? (typed ? reply?.prompt : undefined);
 		this.addTurn({ role: 'note', text: outcome === 'done' ? 'The agent finished.' : outcome === 'needs-user' ? 'The agent needs you in the chat.' : outcome === 'failed' ? 'The work failed.' : 'The work was stopped.', chatId });
-		this.host.speak(workLandedNote(asked, outcome, outcome === 'done' ? (reply?.text ? spokenAnswer(reply.text) : undefined) : error, typed));
+		const answer = outcome === 'done' ? (reply?.text ? spokenAnswer(reply.text) : undefined) : error;
+		this.host.speak(workLandedNote(asked, outcome, answer, typed), landedWords(outcome, answer, reply?.prose));
 	}
 
 	/** A turn's prompt and final reply, from the saved transcript (the reply may land a moment after the turn ends). */
-	private async replyOf(chatId: string, turnId: string): Promise<{ readonly prompt?: string; readonly text?: string } | undefined> {
+	private async replyOf(chatId: string, turnId: string): Promise<{ readonly prompt?: string; readonly text?: string; readonly prose?: string } | undefined> {
 		for (let attempt = 0; attempt < 6; attempt++) {
 			try {
 				const turns = (await this.services.history.open(chatId).load()).turns;
 				const turn = turns.find(candidate => candidate.id === turnId) ?? turns.at(-1);
 				if (turn?.assistant?.final && turn.assistant.text.trim()) {
-					return { prompt: turn.user.text, text: turn.assistant.text.trim() };
+					return { prompt: turn.user.text, text: turn.assistant.text.trim(), prose: replyProse(turn.assistant.message) };
 				}
 				if (attempt === 5) {
-					return { prompt: turn?.user.text, text: turn?.assistant?.text.trim() || this.lastReply(chatId) };
+					return { prompt: turn?.user.text, text: turn?.assistant?.text.trim() || this.lastReply(chatId), prose: replyProse(turn?.assistant?.message) };
 				}
 			} catch {
 				// Read again.
@@ -368,6 +406,8 @@ export class VoiceCallBrain extends Disposable {
 			return { output: { receipt: 'already under way' }, instructions: 'That exact request is already with the agent. Say where it stands in one short line; nothing new was sent.' };
 		}
 		const source: IVoiceSource = { kind: 'voice', id: this._record.id, title: VOICE_SOURCE_TITLE };
+		// What the agent reads; the chat shows the caller's words alone.
+		const sent = this._record.provider === 'local' ? `${text}\n\n${SPOKEN_REPLY_NOTE}` : text;
 		const { orchestrator, runtime } = this.services;
 		let chatId = this._chatId;
 		if (!chatId) {
@@ -375,7 +415,7 @@ export class VoiceCallBrain extends Disposable {
 			this.errands.push({ request: text, at: Date.now() });
 			this.lastSeenTurn = undefined;
 			this.watchedTurn = undefined;
-			chatId = await this.host.startChat(text, source);
+			chatId = await this.host.startChat(sent, source, text);
 			if (!chatId) {
 				this.errands.pop();
 				return { output: { relay: 'unreachable', spoken: 'There is no chat open to send it to. Say that, and ask them to open a chat.' } };
@@ -389,7 +429,7 @@ export class VoiceCallBrain extends Disposable {
 			return { output: { relay: 'refused', spoken: 'The agent needs the person in the chat. Say that.' } };
 		}
 		const turnId = generateUuid();
-		const prompt: IOrchPrompt = { text, display: { text }, host: { fromThread: source } };
+		const prompt: IOrchPrompt = { text: sent, display: { text }, host: { fromThread: source } };
 		const running = !!thread?.active && thread.active.phase === 'running';
 		if (running && (thread!.active!.steerable || runtime.canSteer(chatId))) {
 			// Cursor's voice steers a running turn rather than queueing behind it.
@@ -400,7 +440,7 @@ export class VoiceCallBrain extends Disposable {
 			this.errands.push({ request: text, turnId: thread!.active!.id, at: Date.now() });
 			return { output: { receipt: 'under way', steered: true }, instructions: SENT_INSTRUCTIONS };
 		}
-		if (!running && this.host.submitOnScreen?.(chatId, text, source)) {
+		if (!running && this.host.submitOnScreen?.(chatId, sent, source, text)) {
 			this.errands.push({ request: text, at: Date.now() });
 			return { output: { receipt: 'under way' }, instructions: SENT_INSTRUCTIONS };
 		}
