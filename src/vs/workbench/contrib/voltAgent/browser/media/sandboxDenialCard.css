@@ -79,3 +79,10 @@
 	outline: 1px solid var(--vscode-focusBorder);
 	outline-offset: -1px;
 }
+
+/* The card's buttons are a size down from the standard Volt button. */
+.monaco-workbench .volt-sandbox-denial-actions .volt-button {
+	height: 24px;
+	padding: 0 9px;
+	font-size: 12px;
+}
