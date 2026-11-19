@@ -87,6 +87,8 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
 	],
 	'volt.usage': [{ id: 'usage.report' }, { id: 'net.connect' }, { id: 'secrets.use:*' }],
 	'volt.visuals': [{ id: 'tools.register' }, { id: 'files.read:workspace' }, { id: 'browser.drive' }, { id: 'devices.drive' }],
+	// The call sends work to chats (or starts one from a new chat's composer) and streams to the voice provider with its key.
+	'volt.voice-chat': [{ id: 'agents.send' }, { id: 'agents.create' }, { id: 'net.connect' }, { id: 'secrets.use:voice' }],
 });
 
 /**

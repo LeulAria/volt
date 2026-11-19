@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter } from '../../../../../base/common/event.js';
-import { Disposable, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -14,9 +14,10 @@ import { IEditorPane } from '../../../../common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
-import { IVoltAgentWindowService, IVoltChatPane, IVoltToolsPanel, VoltComposerTrayFactory } from '../../../../services/voltPlugins/browser/voltAgentWindow.js';
+import { IVoltAgentWindowService, IVoltChatPane, IVoltThreadCard, IVoltThreadCardProvider, IVoltToolsPanel, VoltComposerTrayFactory } from '../../../../services/voltPlugins/browser/voltAgentWindow.js';
 import { AgentEditor } from '../editor/agentEditor.js';
-import { AgentEditorInput } from '../editor/agentEditorInput.js';
+import { AgentEditorInput, OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { AgentSurfaceHost, openInAgentTools, openSideChatBeside, openSideChatOnScreen, revealAgentToolEditor } from './agentSurfaceHost.js';
 import { hasSavedAgentTools } from './agentToolsEditorPart.js';
 import { visibleChatSession } from './agentVisibleChat.js';
@@ -28,7 +29,9 @@ function chatPane(pane: IEditorPane | undefined): IVoltChatPane | undefined {
 	}
 	return {
 		showTranscript: () => pane.showTranscriptInTools(),
-		submitPrompt: (prompt, display) => pane.submitPrompt(prompt, display ? { text: display.text } : undefined),
+		submitPrompt: (prompt, display, source) => pane.submitPrompt(prompt, display ? { text: display.text } : undefined, source),
+		get sessionKey() { return pane.chatSessionKey; },
+		isEmpty: () => pane.chatIsEmpty(),
 	};
 }
 
@@ -45,11 +48,16 @@ export class VoltAgentWindowService extends Disposable implements IVoltAgentWind
 	private readonly _onDidChangeComposerTrays = this._register(new Emitter<string>());
 	readonly onDidChangeComposerTrays = this._onDidChangeComposerTrays.event;
 
+	private readonly cardProviders = this._register(new DisposableMap<IVoltThreadCardProvider>());
+	private readonly _onDidChangeThreadCards = this._register(new Emitter<string | undefined>());
+	readonly onDidChangeThreadCards = this._onDidChangeThreadCards.event;
+
 	constructor(
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IStorageService private readonly storageService: IStorageService,
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 	}
@@ -72,12 +80,44 @@ export class VoltAgentWindowService extends Disposable implements IVoltAgentWind
 		return this.trays.get(id);
 	}
 
+	registerThreadCards(provider: IVoltThreadCardProvider): IDisposable {
+		this.cardProviders.set(provider, provider.onDidChange(sessionKey => this._onDidChangeThreadCards.fire(sessionKey)));
+		this._onDidChangeThreadCards.fire(undefined);
+		return toDisposable(() => {
+			if (this.cardProviders.has(provider)) {
+				this.cardProviders.deleteAndDispose(provider);
+				this._onDidChangeThreadCards.fire(undefined);
+			}
+		});
+	}
+
+	threadCards(sessionKey: string): readonly IVoltThreadCard[] {
+		const cards: IVoltThreadCard[] = [];
+		for (const provider of this.cardProviders.keys()) {
+			cards.push(...provider.cards(sessionKey));
+		}
+		return cards;
+	}
+
 	isAgentLayout(): boolean {
 		return getLayoutMode(this.layoutService) === 'agent';
 	}
 
 	visibleChat(): string | undefined {
 		return this.instantiationService.invokeFunction(visibleChatSession);
+	}
+
+	chatPane(sessionKey?: string): IVoltChatPane | undefined {
+		const panes = this.editorService.visibleEditorPanes.filter(pane => pane instanceof AgentEditor) as unknown as AgentEditor[];
+		const active = this.editorService.activeEditorPane;
+		const match = sessionKey !== undefined
+			? panes.find(pane => pane.chatSessionKey === sessionKey)
+			: active instanceof AgentEditor ? active : panes[0];
+		return chatPane(match);
+	}
+
+	async openChat(sessionKey: string): Promise<void> {
+		await this.commandService.executeCommand(OPEN_AGENT_COMMAND_ID, sessionKey);
 	}
 
 	openInTools(input: EditorInput, sessionId?: string, options?: IEditorOptions): Promise<IEditorPane | undefined> | undefined {

@@ -108,7 +108,8 @@ export type AgentServerServerFrame = IAgentServerWelcome | IAgentServerCall | IA
  * - `hostTools`: a host tool was invoked (desktop attaches page state to the row).
  * - `server`: server notices (shutting down, version).
  */
-export type AgentServerTopic = 'col' | 'session' | 'sessionEdits' | 'runtime.event' | 'hostTools' | 'server';
+/** `voice`: notes for the voice of a phone's call (`voice.*`) to speak. */
+export type AgentServerTopic = 'col' | 'session' | 'sessionEdits' | 'runtime.event' | 'hostTools' | 'server' | 'voice';
 
 export const DEFAULT_TOPICS: readonly AgentServerTopic[] = ['col', 'session', 'hostTools', 'server'];
 

@@ -8,6 +8,7 @@ export * from './events';
 export * from './connection';
 export * from './environments';
 export * from './client';
+export * from './voice';
 export * from './drafts';
 export * from './types';
 export * from './git';

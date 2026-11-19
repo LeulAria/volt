@@ -25,6 +25,7 @@ import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, GIT_GRAPH_EXPLAIN_COMMIT_COMMAND_ID, GI
 import { REMOTE_DEVICES_FEATURE_ID } from '../../voltRemoteDevices/common/voltRemoteDevices.js';
 import { OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID, SKILLS_EDITOR_INPUT_TYPE_ID, SKILLS_FEATURE_ID } from '../../voltSkills/common/voltSkills.js';
 import { AGENT_USAGE_INPUT_ID, OPEN_AGENT_USAGE_COMMAND_ID, USAGE_FEATURE_ID } from '../../voltUsage/common/voltUsage.js';
+import { END_VOICE_CHAT_COMMAND_ID, OPEN_VOICE_CALL_TRANSCRIPT_COMMAND_ID, SET_VOICE_CHAT_KEY_COMMAND_ID, START_VOICE_CHAT_COMMAND_ID, TOGGLE_VOICE_CHAT_MUTE_COMMAND_ID, VOICE_CALL_TRANSCRIPT_INPUT_ID, VOICE_CHAT_FEATURE_ID } from '../../voltVoiceChat/common/voltVoiceChat.js';
 import { IVoltFeatureModuleEntry } from './voltFeatureModules.js';
 
 const AGENT_CATEGORY = localize2('voltAgent.category', "Agent");
@@ -126,6 +127,25 @@ const COMMIT_REVIEW_MODULE: IVoltFeatureModuleEntry = {
 	available: () => !isWeb,
 };
 
+/**
+ * Voice chat (`volt.voice-chat`): the composer's Start voice chat runs its start command; chats
+ * show their calls' cards, so it loads at startup (it only reads saved calls until a call starts).
+ */
+const VOICE_CHAT_MODULE: IVoltFeatureModuleEntry = {
+	feature: VOICE_CHAT_FEATURE_ID,
+	load: async () => (await import('../../voltVoiceChat/browser/voltVoiceChat.module.js')).voiceChatModule,
+	editors: [VOICE_CALL_TRANSCRIPT_INPUT_ID],
+	// Loaded once the window has restored: a chat that had calls shows their cards before any new call.
+	activation: 'startup',
+	commands: [
+		{ id: START_VOICE_CHAT_COMMAND_ID, visibility: 'public', f1: true, title: localize2('voiceChat.start', "Start Voice Chat"), category: AGENT_CATEGORY },
+		{ id: END_VOICE_CHAT_COMMAND_ID, visibility: 'public', f1: true, title: localize2('voiceChat.end', "End Voice Chat"), category: AGENT_CATEGORY },
+		{ id: TOGGLE_VOICE_CHAT_MUTE_COMMAND_ID, visibility: 'public', f1: true, title: localize2('voiceChat.mute', "Mute or Unmute Voice Chat"), category: AGENT_CATEGORY },
+		{ id: OPEN_VOICE_CALL_TRANSCRIPT_COMMAND_ID, visibility: 'public' },
+		{ id: SET_VOICE_CHAT_KEY_COMMAND_ID, f1: true, title: localize2('voiceChat.setKey', "Set Voice Chat API Key"), category: AGENT_CATEGORY },
+	],
+};
+
 export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
 	{
 		feature: AGENT_RESOURCES_FEATURE_ID,
@@ -188,4 +208,5 @@ export const VOLT_FEATURE_MODULES: readonly IVoltFeatureModuleEntry[] = [
 		commands: [{ id: OPEN_AGENT_USAGE_COMMAND_ID, title: localize2('voltAgent.usage', "Show Agent Usage and Limits"), category: Categories.View, f1: true, visibility: 'public' }],
 		editors: [AGENT_USAGE_INPUT_ID],
 	},
+	VOICE_CHAT_MODULE,
 ];

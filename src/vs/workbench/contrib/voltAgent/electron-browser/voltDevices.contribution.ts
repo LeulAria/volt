@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IVoltVoiceChatService, VOLT_VOICE_CHAT_CHANNEL_NAME } from '../../../../platform/voltVoiceChat/common/voltVoiceChat.js';
 import { timeout } from '../../../../base/common/async.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { localize, localize2 } from '../../../../nls.js';
@@ -50,6 +51,7 @@ registerMainProcessRemoteService(IVoltDevicesService, VOLT_DEVICES_CHANNEL_NAME)
 registerMainProcessRemoteService(IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME);
 // The desktop engines can always try: `isAvailable` is answered here, not sent to a main process that has no such method.
 registerMainProcessRemoteService(IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME, { proxyOptions: { properties: new Map([['isAvailable', undefined]]) } });
+registerMainProcessRemoteService(IVoltVoiceChatService, VOLT_VOICE_CHAT_CHANNEL_NAME);
 registerSingleton(IAgentDevicesService, AgentDevicesService, InstantiationType.Delayed);
 
 export const OPEN_DEVICE_PREVIEW_COMMAND_ID = 'volt.devices.openPreview';

@@ -17,10 +17,11 @@ export const CloseCode = {
 } as const;
 
 export type ClientKind = 'desktop' | 'web' | 'mobile' | 'test';
-export type Topic = 'col' | 'session' | 'runtime.event' | 'hostTools' | 'server';
+/** `voice`: notes for a phone's voice call to speak (`voice.*`). */
+export type Topic = 'col' | 'session' | 'runtime.event' | 'hostTools' | 'server' | 'voice';
 
 /** What a remote client follows: replicated state, transcripts and notices. */
-export const CLIENT_TOPICS: readonly Topic[] = ['col', 'session', 'server'];
+export const CLIENT_TOPICS: readonly Topic[] = ['col', 'session', 'server', 'voice'];
 
 export interface IHello {
 	readonly t: 'hello';

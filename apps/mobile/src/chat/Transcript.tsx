@@ -13,6 +13,8 @@ import { useTheme } from '../theme/theme';
 import { EmptyState, haptic, Icon, Tap } from '../ui/core';
 import { ChatContext, type IChatContext } from './context';
 import { PinnedPrompt, RowView, rowGap, rowInset } from './Rows';
+import { VoiceCallCard } from './voice/VoiceTray';
+import { useChatVoiceCalls, VoiceCallsContext } from './voice/useVoiceCalls';
 
 /** Height of the pinned prompt strip until it is measured: a prompt pins when its bubble's bottom reaches the strip's. */
 const PIN_STRIP = 58;
@@ -23,9 +25,13 @@ interface ICell {
 }
 
 const Cell = memo(function Cell({ cell, chatId }: { readonly cell: ICell; readonly chatId: string }) {
+	const voiceCalls = useContext(VoiceCallsContext);
+	// A voice call's card follows the reply of the turn that was last when the call reached the chat.
+	const calls = cell.row.kind === 'footer' && cell.row.turnId ? voiceCalls.byTurn.get(cell.row.turnId) : undefined;
 	return (
 		<View style={{ paddingTop: cell.gap, paddingHorizontal: rowInset(cell.row) }}>
 			<RowView row={cell.row} chatId={chatId} />
+			{calls?.map(call => <View key={call.id} style={{ paddingTop: 10 }}><VoiceCallCard call={call} /></View>)}
 		</View>
 	);
 });
@@ -90,6 +96,9 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 		}
 		return out;
 	}, [transcript?.messages, pending, toolDensity, openWorked, closedWorked]);
+
+	const footerTurns = useMemo(() => new Set(cells.flatMap(cell => cell.row.kind === 'footer' && cell.row.turnId ? [cell.row.turnId] : [])), [cells]);
+	const voiceCalls = useChatVoiceCalls(chatId, footerTurns);
 
 	// For each cell, the prompt that opened its turn (the newest user row at or above it).
 	const owners = useMemo(() => {
@@ -189,6 +198,7 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 
 	return (
 		<ChatContext.Provider value={ctx}>
+		<VoiceCallsContext.Provider value={voiceCalls}>
 		<View style={{ flex: 1 }}>
 			<FlatList
 				ref={list}
@@ -216,6 +226,8 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 				style={{ marginTop: topInset }}
 				contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12 }}
 				showsVerticalScrollIndicator={false}
+				// Inverted: the header is the newest end, where a call whose turn has no reply yet shows.
+				ListHeaderComponent={voiceCalls.loose.length ? <View style={{ gap: 10, paddingTop: 10 }}>{voiceCalls.loose.map(call => <VoiceCallCard key={call.id} call={call} />)}</View> : null}
 			/>
 			{pinnedRow?.kind === 'user' ? (
 				// Clipped at the list's top edge, so a pushed-up prompt slides out under the header instead of over it.
@@ -243,6 +255,7 @@ export function Transcript({ chatId, topInset }: { readonly chatId: string; read
 				</Animated.View>
 			) : null}
 		</View>
+		</VoiceCallsContext.Provider>
 		</ChatContext.Provider>
 	);
 }

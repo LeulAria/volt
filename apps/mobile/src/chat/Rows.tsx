@@ -222,8 +222,8 @@ function UserRow({ row, chatId }: { readonly row: RowOf<'user'>; readonly chatId
 		<Animated.View entering={row.pending ? FadeInDown.duration(220) : undefined} style={{ gap: 6 }}>
 			{row.from ? (
 				<View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-					<Icon name="message" size={12} color={p.iconTertiary} />
-					<Text style={[styles.step, { color: p.fgTertiary }]}>From {row.from}</Text>
+					<Icon name={row.fromVoice ? 'waveform' : 'message'} size={12} color={p.iconTertiary} />
+					<Text style={[styles.step, { color: p.fgTertiary }]}>{row.fromVoice ? 'Sent by voice call' : `From ${row.from}`}</Text>
 				</View>
 			) : null}
 			{row.images?.length ? <MessageImages images={row.images} /> : null}

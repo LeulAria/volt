@@ -81,7 +81,7 @@ export interface ITurnFile {
 }
 
 export type TranscriptRow =
-	| { readonly kind: 'user'; readonly key: string; readonly text: string; readonly chips: readonly string[]; readonly images?: readonly IRowImage[]; readonly turnId?: string; readonly mode?: string; readonly from?: string; readonly pending?: PendingState; readonly steer?: boolean; readonly running?: boolean }
+	| { readonly kind: 'user'; readonly key: string; readonly text: string; readonly chips: readonly string[]; readonly images?: readonly IRowImage[]; readonly turnId?: string; readonly mode?: string; readonly from?: string; readonly fromVoice?: boolean; readonly pending?: PendingState; readonly steer?: boolean; readonly running?: boolean }
 	| { readonly kind: 'divider'; readonly key: string; readonly icon: IconName; readonly label: string; readonly detail?: string; readonly live?: boolean }
 	| { readonly kind: 'system'; readonly key: string; readonly icon: IconName; readonly title: string; readonly body: string }
 	| { readonly kind: 'markdown'; readonly key: string; readonly docKey: string; readonly text: string; readonly streaming: boolean }
@@ -481,7 +481,7 @@ function userRows(message: IUserMessage, mkey: string): TranscriptRow[] {
 		...(message.steer ? { steer: true } : {}),
 		...(message.id ? { turnId: message.id } : {}),
 		...(message.mode && message.mode !== 'Agent' ? { mode: message.mode } : {}),
-		...(message.fromThread ? { from: message.fromThread.title } : {}),
+		...(message.fromThread ? { from: message.fromThread.title, ...(message.fromThread.kind === 'voice' ? { fromVoice: true } : {}) } : {}),
 	});
 	return rows;
 }

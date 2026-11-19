@@ -130,6 +130,11 @@ export const ICONS = {
 	home: { paths: ['M3 10.5 12 3l9 7.5', 'M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5'] },
 	palette: { paths: ['M12 2.5a9.5 9.5 0 0 0 0 19c1.2 0 1.8-.9 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.4-.5-.8-.5-1.3 0-1 .8-1.8 1.8-1.8h2.1a4.8 4.8 0 0 0 4.8-4.8c0-4.6-4.3-8.1-9.5-8.1Z', circle(7.5, 11, 1.2), circle(10.5, 7, 1.2), circle(15, 7.5, 1.2)] },
 	plug: { paths: ['M12 22v-5', 'M9 8V2', 'M15 8V2', 'M18 8v5a6 6 0 0 1-12 0V8Z'] },
+	/** Start voice chat (Cursor's waveform). */
+	waveform: { paths: ['M3 10v4', 'M6.5 7v10', 'M10 9.5v5', 'M13.5 4v16', 'M17 9.5v5', 'M20.5 7v10'] },
+	micOff: { paths: ['M15 10V5.5a3 3 0 0 0-5.7-1.3', 'M9 9v2.5a3 3 0 0 0 4.9 2.3', 'M19 10.5v1a7 7 0 0 1-1.2 3.9', 'M5 10.5v1a7 7 0 0 0 11.2 5.6', 'M12 18.5V22', 'm3 3 18 18'] },
+	phoneOff: { paths: ['M3.4 13.6c4.6-4.2 12.6-4.2 17.2 0l-1.4 2.7a1.3 1.3 0 0 1-1.6.6l-2.4-.9a1.3 1.3 0 0 1-.8-1.1l-.1-1.6a9 9 0 0 0-4.6 0l-.1 1.6a1.3 1.3 0 0 1-.8 1.1l-2.4.9a1.3 1.3 0 0 1-1.6-.6Z'] },
+	paragraph: { paths: ['M4 6h16', 'M4 10.5h16', 'M4 15h16', 'M4 19.5h9'] },
 } as const satisfies Record<string, IIconDef>;
 
 export type IconName = keyof typeof ICONS;

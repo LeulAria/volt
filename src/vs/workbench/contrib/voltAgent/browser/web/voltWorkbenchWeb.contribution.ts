@@ -49,6 +49,7 @@ import { IVoltSpeechService } from '../../../../../platform/voltSpeech/common/vo
 import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME } from '../../../../../platform/voltStorage/common/voltStorage.js';
 import { IVoltUsageService, VOLT_USAGE_CHANNEL_NAME } from '../../../../../platform/voltUsage/common/voltUsage.js';
+import { IVoltVoiceChatService, VOLT_VOICE_CHAT_CHANNEL_NAME } from '../../../../../platform/voltVoiceChat/common/voltVoiceChat.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { SIDE_BAR_BACKGROUND, TITLE_BAR_ACTIVE_BACKGROUND } from '../../../../common/theme.js';
@@ -193,6 +194,7 @@ registerServerService(IVoltCodeIndexService, VOLT_CODE_INDEX_CHANNEL_NAME);
 registerServerService(IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME);
 registerServerService(IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME);
 registerServerService(IVoltUsageService, VOLT_USAGE_CHANNEL_NAME);
+registerServerService(IVoltVoiceChatService, VOLT_VOICE_CHAT_CHANNEL_NAME);
 registerServerService(IVoltAccountsService, VOLT_ACCOUNTS_CHANNEL_NAME);
 registerServerService(IVoltSkillsDirectoryService, VOLT_SKILLS_DIRECTORY_CHANNEL_NAME);
 registerServerService(IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME);

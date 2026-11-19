@@ -65,6 +65,7 @@ import { IEditorOptions } from '../../../../../platform/editor/common/editor.js'
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { WORKSPACE_SNAPSHOT_COMMAND_ID } from '../../../../services/voltRuntime/common/harness/workspaceContext.js';
 import { IDialogService, IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
@@ -81,7 +82,7 @@ import { IAgentRuntimeService, type IVoltCompactionPlan } from '../../../../serv
 import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, IOrchSubmitResult, OrchDelivery, OrchEvent } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { AgentQueueOverlay } from '../../common/agentQueueOverlay.js';
-import { IAgentPromptHostOptions, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
+import { IAgentPromptHostOptions, IAgentThreadSourceHost, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
 import { peekTurnDisplay } from '../orchestration/agentTurnDisplays.js';
 import { IAgentSubagentChatService } from '../orchestration/agentSubagentChats.js';
 import { AgentHistoryCodec, resolveActivityImage } from '../history/agentHistoryCodec.js';
@@ -164,6 +165,8 @@ import { AgentTasksCard } from '../composer/agentTasksCard.js';
 import { AgentJobWaitRows } from '../jobs/agentJobWaitRows.js';
 import { AgentQuestionTray } from '../composer/agentQuestionTray.js';
 import { AgentComposerTraySlot } from '../composer/agentComposerTraySlot.js';
+import { AgentThreadCards } from '../chrome/agentThreadCards.js';
+import { OPEN_VOICE_CALL_TRANSCRIPT_COMMAND_ID, START_VOICE_CHAT_COMMAND_ID, VOICE_CHAT_ENABLED_SETTING, VOICE_CHAT_FEATURE_ID, VoiceChatActiveContext } from '../../../voltVoiceChat/common/voltVoiceChat.js';
 import { COMMIT_REVIEW_FEATURE_ID, ICommitReviewModule } from '../../../voltCommitReview/common/voltCommitReview.js';
 import { IVoltFeatureModule, IVoltFeatureModuleService } from '../../../voltCustomize/browser/voltFeatureModules.js';
 import { AgentWorktreeSetupCard } from '../composer/agentWorktreeSetupCard.js';
@@ -281,6 +284,32 @@ function createStopIcon(): HTMLElement {
 	path.setAttribute('d', 'M0 128c0-35.3 28.7-64 64-64h256c35.3 0 64 28.7 64 64v256c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64z');
 	path.setAttribute('fill', 'currentColor');
 	svg.appendChild(path);
+	el.appendChild(svg);
+	return el;
+}
+
+/** Cursor's "Start voice chat" glyph: seven rounded bars, tallest in the middle. */
+function createWaveformIcon(): HTMLElement {
+	const el = $('span.volt-agent-svg-icon.waveform');
+	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.setAttribute('viewBox', '0 0 16 16');
+	svg.setAttribute('width', '16');
+	svg.setAttribute('height', '16');
+	svg.setAttribute('aria-hidden', 'true');
+	// [x, height] of each bar on a 16px box.
+	const bars: readonly (readonly [number, number])[] = [[2, 3], [4.33, 7], [6.67, 5], [9, 11], [11.33, 5], [13.67, 7], [16, 3]];
+	for (const [x, h] of bars) {
+		const line = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'line');
+		const cx = String(x * 14 / 16 + 1);
+		line.setAttribute('x1', cx);
+		line.setAttribute('x2', cx);
+		line.setAttribute('y1', String(8 - h / 2));
+		line.setAttribute('y2', String(8 + h / 2));
+		line.setAttribute('stroke', 'currentColor');
+		line.setAttribute('stroke-width', '1.2');
+		line.setAttribute('stroke-linecap', 'round');
+		svg.appendChild(line);
+	}
 	el.appendChild(svg);
 	return el;
 }
@@ -511,7 +540,7 @@ export interface IAgentUserMessage {
 	/** Sent by a scheduled task, not typed now: drawn with a "Scheduled" divider above it. */
 	scheduled?: { id: string; title: string; webhook?: boolean };
 	/** Written by another chat's agent (a message, the task it launched, or a fork's first prompt): drawn with a "From" pill that opens that chat. */
-	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' | 'merge' | 'continue'; external?: boolean };
+	fromThread?: { id: string; title: string; kind: 'message' | 'launch' | 'fork' | 'merge' | 'continue' | 'voice'; external?: boolean };
 }
 
 /** A `context.handoff` as the transcript keeps it: the divider's numbers and the text that was sent. */
@@ -846,11 +875,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** The commits the agent proposed (propose_commits), docked above the composer while the user reviews them. */
 	/** The commit review's card and chip, while its module (volt.commit-review) is loaded. */
 	private commitReviewSlot: AgentComposerTraySlot | undefined;
+	/** The voice call's bar above the composer, filled by the voice chat module during a call. */
+	private voiceChatSlot: AgentComposerTraySlot | undefined;
+	/** Feature cards in the thread (a voice call's). */
+	private threadCards: AgentThreadCards | undefined;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
 	private readonly freshText = new FreshTextTracker();
 	private readonly suggestListeners = this._register(new DisposableStore());
-	private sendKind: 'mic' | 'send' = 'mic';
+	private sendKind: 'mic' | 'send' | 'voice' = 'mic';
+	/** Who wrote the prompt `submitPrompt` is sending (a voice call), for the pill above it. */
+	private nextPromptSource: IAgentThreadSourceHost['fromThread'] | undefined;
 	private submitting = false;
 	/** A multi-model send is being started (cost check, worktrees). */
 	private startingRunGroup = false;
@@ -1229,6 +1264,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		this.threadEl = this.threadView.element;
 		this.threadInner = this.threadView.inner;
+		this.threadCards = this._register(this.instantiationService.createInstance(AgentThreadCards, () => this.threadInner, () => this.messages, () => this.scheduleScrollSync()));
 		this._register(settleFreshText(this.threadInner));
 		// Live agent pages wait here (still loaded) while the thread is redrawn around them.
 		this.visualParking = append(this.threadEl, $('.volt-agent-visual-parking'));
@@ -1452,6 +1488,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// The commit review is opened and closed by its module (desktop only, like pull requests), which
 		// fills this slot while it is loaded; shrunk, it is a chip in the row above the composer.
 		this.commitReviewSlot = this._register(this.instantiationService.createInstance(AgentComposerTraySlot, COMMIT_REVIEW_FEATURE_ID, () => this.layoutInputEditor()));
+		this.voiceChatSlot = this._register(this.instantiationService.createInstance(AgentComposerTraySlot, VOICE_CHAT_FEATURE_ID, () => this.layoutInputEditor()));
 		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
 			commitReview: this.commitReviewSlot.chip,
 			agentRun: { element: subagentChip, get visible() { return !subagentChip.classList.contains('hidden'); }, onDidChange: this.onDidChangeSubagentChip.event },
@@ -1503,6 +1540,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}));
 		append(this.composerEl, this.questionTray.element);
 		this.commitReviewSlot?.mount(this.composerEl, this.questionTray.element);
+		// The voice call's tray: above the chip row, which then stays in flow under it.
+		this.voiceChatSlot?.mount(this.composerEl, this.questionTray.element);
 		this._register(this.runtime.onDidChangeQuestions(sessionId => {
 			if (sessionId === this.sessionKey) {
 				this.syncQuestionTray();
@@ -1544,6 +1583,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.voiceDictation = this._register(this.instantiationService.createInstance(AgentVoiceDictation));
 		this.voiceDictation.textBefore = () => this.dictatedText.textBefore();
 		this._register(this.voiceDictation.onDidChange(() => this.syncDictation()));
+		const voiceContextKeys = this.instantiationService.invokeFunction(accessor => accessor.get(IContextKeyService));
+		this._register(voiceContextKeys.onDidChangeContext(e => {
+			if (e.affectsSome(new Set([VoiceChatActiveContext.key]))) {
+				this.updateSendButton();
+			}
+		}));
+		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(VOICE_CHAT_ENABLED_SETTING)) {
+				this.updateSendButton();
+			}
+		}));
 		this._register(this.voiceDictation.onDidCommit(text => this.endDictatedText(text)));
 		this._register(this.voiceDictation.onDidFail(message => this.notificationService.warn(message)));
 		this.inputBox = append(this.composerEl, $('.volt-agent-input-box'));
@@ -1596,6 +1646,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			// The composer can change width without this pane's layout() (a tab beside the chat
 			// closing): lay the editor out again, or text keeps wrapping at the old width.
 			const width = this.inputBox.clientWidth;
+			// Cards above the prompt (the voice call's tray) take its width.
+			this.composerEl.style.setProperty('--volt-agent-input-width', `${this.inputBox.offsetWidth}px`);
 			if (width !== inputBoxWidth) {
 				const first = !inputBoxWidth;
 				inputBoxWidth = width;
@@ -1788,6 +1840,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.voiceDictation.toggle();
 		}));
 		this._register(addDisposableListener(this.sendButton, 'click', () => {
+			if (this.sendKind === 'voice') {
+				this.tooltip.hide();
+				void this.commandService.executeCommand(START_VOICE_CHAT_COMMAND_ID, { sessionId: this.messages.length ? this.sessionKey : undefined });
+				return;
+			}
 			if (this.sendKind === 'mic') {
 				this.voiceDictation.toggle();
 				return;
@@ -3595,6 +3652,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.layoutInputEditor();
 		this.publishSessionChanges();
 		this.syncTasksCard();
+		this.threadCards?.placeAll();
 	}
 
 	private renderThreadMessage(exchange: HTMLElement, message: IAgentMessage, index: number): void {
@@ -3632,6 +3690,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			}
 			this.renderAgentTurn(turn, message);
 		}
+		this.threadCards?.afterTurn(turn, message, index);
 	}
 
 	/**
@@ -3699,6 +3758,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	 * by"); a click opens that chat.
 	 */
 	private renderFromThreadPill(turn: HTMLElement, from: NonNullable<IAgentUserMessage['fromThread']>): void {
+		if (from.kind === 'voice') {
+			this.renderVoicePill(turn, from.id);
+			return;
+		}
 		const divider = append(turn, $('.volt-agent-subagent-of.from-thread'));
 		const pill = append(divider, $('span.volt-agent-subagent-of-pill'));
 		pill.appendChild(renderIcon(from.kind === 'fork' ? Codicon.repoForked : from.kind === 'merge' ? Codicon.gitMerge : from.kind === 'launch' ? Codicon.rocket : from.kind === 'continue' ? Codicon.export : Codicon.commentDiscussion));
@@ -3724,6 +3787,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			e.preventDefault();
 			e.stopPropagation();
 			void this.commandService.executeCommand(from.external ? OPEN_CONNECTED_AGENTS_COMMAND_ID : OPEN_AGENT_COMMAND_ID, from.id);
+		};
+		this.threadListeners.add(addDisposableListener(pill, 'click', open));
+		this.threadListeners.add(addDisposableListener(pill, 'keydown', e => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				open(e);
+			}
+		}));
+	}
+
+	/** Cursor's "Sent by voice call" above a message a voice call's agent sent; it opens the call's transcript. */
+	private renderVoicePill(turn: HTMLElement, callId: string): void {
+		const divider = append(turn, $('.volt-agent-subagent-of.from-thread.from-voice'));
+		const pill = append(divider, $('span.volt-agent-subagent-of-pill'));
+		pill.appendChild(createWaveformIcon());
+		append(pill, $('span.label')).textContent = localize('voltAgent.fromVoice', "Sent by voice call");
+		pill.setAttribute('role', 'button');
+		pill.tabIndex = 0;
+		setAgentTooltip(pill, localize('voltAgent.fromVoiceHint', "Your voice call sent this. Click to see the call's transcript."));
+		const open = (e: UIEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this.commandService.executeCommand(OPEN_VOICE_CALL_TRANSCRIPT_COMMAND_ID, { callId, sessionId: this.sessionKey });
 		};
 		this.threadListeners.add(addDisposableListener(pill, 'click', open));
 		this.threadListeners.add(addDisposableListener(pill, 'keydown', e => {
@@ -6305,11 +6390,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 	}
 
-	submitPrompt(text: string, display?: IAgentPromptDisplay): void {
+	submitPrompt(text: string, display?: IAgentPromptDisplay, source?: IAgentThreadSourceHost['fromThread']): void {
 		const value = text.trim();
 		if (!value) {
 			return;
 		}
+		this.nextPromptSource = source;
 		this.ensureInputEditor();
 		if (this.isStreaming()) {
 			this.enqueuePrompt(value, display);
@@ -7518,9 +7604,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// Sending to a settled or archived chat brings it back; until then it does not run.
 		const broughtBack = this.threadLifecycle.bringBack(threadId);
 		const request = this.sendRequest(value, display, mode);
-		const host: IAgentPromptHostOptions = {
+		const source = this.nextPromptSource;
+		this.nextPromptSource = undefined;
+		const host: IAgentPromptHostOptions & Partial<IAgentThreadSourceHost> = {
 			...(request.runOn ? { runOn: request.runOn } : {}),
 			...(request.worktreeTarget ? { worktreeTarget: request.worktreeTarget } : {}),
+			...(source ? { fromThread: source } : {}),
 		};
 		const frozen = this.freezeDisplay(display);
 		const prompt: IOrchPrompt = {
@@ -8549,11 +8638,23 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const comments = this.browserComments().pending({ sessionId: this.sessionId }).length > 0;
 		// Without dictation (a browser that cannot listen) there is no mic: the button stays send.
 		const dictation = this.voiceDictation?.available ?? true;
-		const kind: 'mic' | 'send' = !dictation || this.isFollowUpComposer() || this.hasDraft() || comments || !!this.multitaskPick?.length || this.voiceDictation?.active ? 'send' : 'mic';
+		const quiet = !this.hasDraft() && !comments && !this.multitaskPick?.length && !this.voiceDictation?.active;
+		// Cursor's composer: an empty box offers a voice chat (the waveform), with the mic beside it.
+		// During a call it stays, live: clicking it shows the call.
+		const voice = quiet && canSend && this.voiceChatOffered() && !this.isStreaming();
+		// During a call the voice holds the mic (Cursor hides dictation then): the button is Send.
+		const inCall = this.voiceCallActive();
+		const kind: 'mic' | 'send' | 'voice' = voice ? 'voice' : !dictation || inCall || this.isFollowUpComposer() || !quiet ? 'send' : 'mic';
+		this.sendButton.classList.toggle('live', kind === 'voice' && inCall);
 		this.sendButton.disabled = !canSend;
 		this.sendButton.classList.toggle('disabled', !canSend);
 		const motion = this.sendKind !== kind && this.sendButton.childElementCount ? this.captureMicMotion() : undefined;
 		this.micButton.hidden = kind === 'mic' || !dictation;
+		// The call holds the microphone: dictation waits (Cursor: "Voice chat is using the microphone").
+		this.micButton.disabled = inCall;
+		this.micButton.classList.toggle('disabled', inCall);
+		setIconButtonTooltip(this.micButton, inCall ? localize('voltAgent.voiceHeldByCall', "Voice chat is using the microphone") : this.voiceDictation?.active ? localize('voltAgent.voiceStop', "Stop dictation") : localize('voltAgent.voice', "Voice"));
+		this.sendButton.classList.toggle('voice', kind === 'voice');
 		if (this.sendKind === kind && this.sendButton.childElementCount) {
 			this.sendButton.classList.remove('stop');
 			return;
@@ -8565,8 +8666,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			? localize('voltAgent.makingScratchFolder', "Making a folder for this chat...")
 			: kind === 'send'
 				? localize('voltAgent.send', "Send")
-				: localize('voltAgent.voice', "Voice"));
-		this.sendButton.appendChild(kind === 'send' ? createSendIcon() : createMicIcon());
+				: kind === 'voice'
+					? inCall ? localize('voltAgent.voiceChatLive', "Voice chat in progress") : localize('voltAgent.startVoiceChat', "Start voice chat")
+					: localize('voltAgent.voice', "Voice"));
+		this.sendButton.setAttribute('aria-label', kind === 'voice' ? (inCall ? localize('voltAgent.voiceChatLive', "Voice chat in progress") : localize('voltAgent.startVoiceChat', "Start voice chat")) : kind === 'send' ? localize('voltAgent.send', "Send") : localize('voltAgent.voice', "Voice"));
+		this.sendButton.appendChild(kind === 'send' ? createSendIcon() : kind === 'voice' ? createWaveformIcon() : createMicIcon());
 		if (motion) {
 			this.playMicMotion(motion);
 		}
@@ -8698,6 +8802,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private syncQueueStack(): void {
 		this.syncQuestionTray();
 		this.commitReviewSlot?.setSession(this.sessionKey);
+		this.voiceChatSlot?.setSession(this.sessionKey);
+		this.threadCards?.setSession(this.sessionKey);
 		this.watchedTaskCard?.setChat(this.sessionKey ? this.runtime.chatFor(this.sessionKey) : undefined);
 		this.ideCard?.setChat(this.sessionKey ? this.runtime.chatFor(this.sessionKey) : undefined);
 		if (!this.composerQueue) {
@@ -8984,6 +9090,16 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.inputLayoutInProgress = false;
 		}
 		this.layoutEditEditor();
+	}
+
+	/** The voice chat button shows while the feature is on (live while a call runs). */
+	private voiceChatOffered(): boolean {
+		return !this.container?.classList.contains('browser-hosted') && this.configurationService.getValue<boolean>(VOICE_CHAT_ENABLED_SETTING) !== false;
+	}
+
+	private voiceCallActive(): boolean {
+		const contextKeys = this.instantiationService.invokeFunction(accessor => accessor.get(IContextKeyService));
+		return !!contextKeys.getContextKeyValue<boolean>(VoiceChatActiveContext.key);
 	}
 
 	private isFollowUpComposer(): boolean {
@@ -9784,6 +9900,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		} else if (result.outcome === 'queued') {
 			this.notificationService.info(localize('voltAgent.move.queued', "The chat moves when its current turn ends."));
 		}
+	}
+
+	/** The chat this pane shows (a new chat's id before its first message). */
+	get chatSessionKey(): string {
+		return this.sessionKey;
+	}
+
+	chatIsEmpty(): boolean {
+		return this.messages.length === 0;
 	}
 
 	private get sessionKey(): string {

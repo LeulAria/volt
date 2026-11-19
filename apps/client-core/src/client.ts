@@ -6,7 +6,8 @@
 import { defaultCreateSocket, type IConnectionStatus, type IWebSocketLike, type IWelcomeEvent, VoltConnection } from './connection';
 import { TerminalStream } from './terminals';
 import { chooseRoute, createRouteSocket, type IRoute, type ISavedEnvironment, refreshDeviceToken, TOKEN_REFRESH_WHEN_LEFT_MS, tokenNeedsRefresh, wsUrl } from './environments';
-import { KeyedNotifier, type Unsubscribe } from './events';
+import { Emitter, KeyedNotifier, type Unsubscribe } from './events';
+import type { IVoiceCallRecord, IVoiceSettings, IVoiceStart, IVoiceToolResult, VoiceServerEvent } from './voice';
 import { fileUri } from './format';
 import { newChatId, uuid } from './ids';
 import {
@@ -380,6 +381,9 @@ export class VoltClient {
 				return;
 			case 'session':
 				this.onSessionData(event.data as SessionTopicData);
+				return;
+			case 'voice':
+				this.voiceEvents.fire(event.data as VoiceServerEvent);
 				return;
 			case 'server': {
 				const notice = event.data as { kind?: string; severity?: number; message?: string };
@@ -830,6 +834,43 @@ export class VoltClient {
 			return undefined;
 		}
 	}
+
+	//#region Voice chat
+
+	private readonly voiceEvents = new Emitter<VoiceServerEvent>();
+
+	/** The server's notes for a phone's voice call (`voice` topic). */
+	onVoiceEvent(listener: (event: VoiceServerEvent) => void): Unsubscribe {
+		return this.voiceEvents.event(listener);
+	}
+
+	/** Starts a voice call in a chat, or from a project's new chat (its first task starts it). Rejects with the reason (no API key). */
+	voiceStart(options: { readonly chatId?: string; readonly projectId?: string } & Partial<IVoiceSettings>): Promise<IVoiceStart> {
+		return this.connection.call<IVoiceStart>('voice.start', [options], { requireOpen: true, timeoutMs: 30_000 });
+	}
+
+	voiceTool(callId: string, name: string, args: string): Promise<IVoiceToolResult> {
+		return this.connection.call<IVoiceToolResult>('voice.tool', [callId, name, args], { requireOpen: true, timeoutMs: 60_000 });
+	}
+
+	voiceSettings(callId: string, settings: Partial<IVoiceSettings>): Promise<Record<string, unknown>> {
+		return this.connection.call<Record<string, unknown>>('voice.settings', [callId, settings], { requireOpen: true });
+	}
+
+	/** A spoken line for the call's record; `connected`, `heard` (every few seconds) and `end` keep its timing. */
+	voiceReport(method: 'connected' | 'heard' | 'turn' | 'end', callId: string, ...params: readonly unknown[]): void {
+		void this.connection.call(`voice.${method}`, [callId, ...params]).catch(() => undefined);
+	}
+
+	voiceCalls(chatId: string): Promise<readonly IVoiceCallRecord[]> {
+		return this.connection.call<readonly IVoiceCallRecord[]>('voice.calls', [chatId]).catch(() => []);
+	}
+
+	voiceCall(callId: string): Promise<IVoiceCallRecord | undefined> {
+		return this.connection.call<IVoiceCallRecord | undefined>('voice.call', [callId]).catch(() => undefined);
+	}
+
+	//#endregion
 
 	//#region Terminals
 

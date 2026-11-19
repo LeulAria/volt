@@ -892,6 +892,7 @@
 		"--add-device-height",
 		"--add-device-pad",
 		"--volt-agent-drawer-width",
+		"--volt-agent-input-width",
 		"--volt-agent-quick-open-reserve",
 		"--volt-agent-right-dock-width",
 		"--volt-agent-sidebar-bg",
@@ -1434,6 +1435,10 @@
 		"--volt-safe-left",
 		"--volt-safe-right",
 		"--volt-safe-top",
-		"--volt-spring"
+		"--volt-spring",
+		"--volt-voice-faint",
+		"--volt-voice-hairline",
+		"--volt-voice-muted",
+		"--volt-voice-surface"
 	]
 }

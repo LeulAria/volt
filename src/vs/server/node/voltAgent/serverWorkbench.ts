@@ -45,6 +45,8 @@ import { IVoltStorageLayout } from '../../../platform/voltStorage/common/voltSto
 import { VoltStorageService } from '../../../platform/voltStorage/node/voltStorageService.js';
 import { VOLT_USAGE_CHANNEL_NAME } from '../../../platform/voltUsage/common/voltUsage.js';
 import { VoltUsageService } from '../../../platform/voltUsage/node/voltUsageService.js';
+import { VOLT_VOICE_CHAT_CHANNEL_NAME } from '../../../platform/voltVoiceChat/common/voltVoiceChat.js';
+import { VoltVoiceChatService } from '../../../platform/voltVoiceChat/node/voltVoiceChatService.js';
 import type { IServerAPI, IServerEmbedder } from '../remoteExtensionHostAgentServer.js';
 import { ServerExtensionSandbox } from './serverExtensionSandbox.js';
 import { COMPRESSIBLE } from './serverCompression.js';
@@ -87,6 +89,8 @@ export interface IServerWorkbenchOptions {
 	readonly sendFile: (req: http.IncomingMessage, res: http.ServerResponse, file: string, immutable: boolean) => Promise<boolean>;
 	/** The machine's usage reader, shared with the agent server's `/api/usage` (other machines read it there). */
 	readonly usage?: VoltUsageService;
+	/** Voice chat keys and call transcripts, shared with paired phones' voice calls (`voice.*` over /ws). */
+	readonly voiceChat?: VoltVoiceChatService;
 	/** The agent server's pull request service, shared with paired phones' git screens. */
 	readonly pullRequests?: IVoltPullRequestService;
 	/**
@@ -485,6 +489,13 @@ export class ServerWorkbench extends Disposable {
 
 	private _stdio: WorkbenchStdioService | undefined;
 
+	private get voiceChat(): VoltVoiceChatService {
+		this._voiceChat ??= this.options.voiceChat ?? new VoltVoiceChatService(this.options.resolveEnv, this.logService, join(this.options.userDataDir, 'volt-voice'));
+		return this._voiceChat;
+	}
+
+	private _voiceChat: VoltVoiceChatService | undefined;
+
 	/** Volt's machine-side services, for the workbench windows (the desktop gets them from its main process). */
 	private registerChannels(socketServer: SocketServer<RemoteAgentConnectionContext>): void {
 		const store = this._register(new DisposableStore());
@@ -521,6 +532,8 @@ export class ServerWorkbench extends Disposable {
 		socketServer.registerChannel(VOLT_PULL_REQUEST_CHANNEL_NAME, ProxyChannel.fromService(pullRequests, store));
 		const usage = this.options.usage ?? new VoltUsageService(resolveEnv, this.logService, join(userDataDir, 'volt-usage'));
 		socketServer.registerChannel(VOLT_USAGE_CHANNEL_NAME, ProxyChannel.fromService(usage, store));
+		// Voice chat in the browser: the same keys and call transcripts as the desktop (one folder per machine).
+		socketServer.registerChannel(VOLT_VOICE_CHAT_CHANNEL_NAME, ProxyChannel.fromService(this.voiceChat, store));
 		// The same saved Claude accounts as the desktop (one store per machine). Automatic switching
 		// stays with the desktop's main process, so two processes never switch at once.
 		const accounts = store.add(new VoltAccountsService({ autoSwitch: false }, this.configurationService, this.logService, usage));

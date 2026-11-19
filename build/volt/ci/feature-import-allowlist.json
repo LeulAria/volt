@@ -149,6 +149,14 @@
 			"src/vs/workbench/services/editor/common/editorService.ts",
 			"src/vs/workbench/services/voltRuntime/browser/providers/providerBrands.ts",
 			"src/vs/workbench/services/voltRuntime/browser/queryCache.ts"
+		],
+		"voiceChat": [
+			"src/vs/workbench/services/editor/common/editorGroupsService.ts",
+			"src/vs/workbench/services/editor/common/editorService.ts",
+			"src/vs/workbench/services/voltRuntime/common/history/agentHistory.ts",
+			"src/vs/workbench/services/voltRuntime/common/hostTools.ts",
+			"src/vs/workbench/services/voltRuntime/common/orchestration/orchestrator.ts",
+			"src/vs/workbench/services/voltRuntime/common/runtime.ts"
 		]
 	}
 }

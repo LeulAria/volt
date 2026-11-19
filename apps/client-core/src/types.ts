@@ -300,7 +300,8 @@ export interface IUserMessage {
 	readonly taskIds?: readonly string[];
 	readonly handoff?: { readonly fromLabel?: string; readonly toLabel: string; readonly at: number; readonly by: 'agent' | 'user'; readonly reason?: string };
 	readonly scheduled?: { readonly id: string; readonly title: string; readonly webhook?: boolean };
-	readonly fromThread?: { readonly id: string; readonly title: string; readonly kind: 'message' | 'launch' | 'fork' | 'merge'; readonly external?: boolean };
+	/** `voice`: a voice call sent it (`id` is the call). */
+	readonly fromThread?: { readonly id: string; readonly title: string; readonly kind: 'message' | 'launch' | 'fork' | 'merge' | 'continue' | 'voice'; readonly external?: boolean };
 	readonly steer?: boolean;
 }
 

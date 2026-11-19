@@ -1,0 +1,366 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Voice chat: the call's tray above the composer, its card in the chat, its transcript tab. */
+
+.volt-voice-tray-slot.hidden {
+	display: none;
+}
+
+.volt-voice-tray-slot {
+	--volt-voice-surface: color-mix(in srgb, var(--vscode-foreground) 6%, var(--vscode-editor-background));
+	--volt-voice-muted: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+	--volt-voice-faint: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
+	/* The prompt's width (.volt-agent-input-box, measured by the chat), right above it. */
+	box-sizing: border-box;
+	width: var(--volt-agent-input-width, 100%);
+	max-width: 100%;
+	margin: 0 auto 8px;
+}
+
+.volt-voice-tray {
+	background: var(--volt-voice-surface);
+	border-radius: 12px;
+	padding: 10px 12px 10px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	color: var(--vscode-foreground);
+}
+
+.volt-voice-tray-header,
+.volt-voice-tray-title {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	font-size: 13px;
+	line-height: 18px;
+	min-width: 0;
+}
+
+.volt-voice-tray-title,
+.volt-voice-tray-header > .volt-voice-tray-title {
+	color: var(--volt-voice-muted);
+}
+
+.volt-voice-tray-title > .text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-voice-clock {
+	color: var(--volt-voice-faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-voice-tray-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.volt-voice-line {
+	flex: 1 1 0;
+	min-width: 64px;
+	display: flex;
+	align-items: center;
+}
+
+.volt-voice-waveform {
+	position: relative;
+	flex: 1 1 0;
+	min-width: 64px;
+	height: 20px;
+	color: var(--vscode-foreground);
+	opacity: 0.36;
+	transition: opacity 200ms ease;
+}
+
+.volt-voice-waveform.live {
+	opacity: 0.74;
+}
+
+.volt-voice-waveform canvas {
+	display: block;
+}
+
+.volt-voice-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+}
+
+.volt-voice-round {
+	width: 32px;
+	height: 32px;
+	border: 0;
+	border-radius: 50%;
+	padding: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: var(--volt-voice-muted, var(--vscode-descriptionForeground));
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.volt-voice-round.small {
+	width: 24px;
+	height: 24px;
+}
+
+.volt-voice-round.ghost {
+	background: transparent;
+}
+
+.volt-voice-round:hover {
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 13%, transparent);
+}
+
+.volt-voice-round.on {
+	color: var(--vscode-textLink-foreground, #4c9aff);
+	background: color-mix(in srgb, var(--vscode-textLink-foreground, #4c9aff) 18%, transparent);
+}
+
+.volt-voice-round.danger {
+	color: #ff5f6d;
+	background: color-mix(in srgb, #ff5f6d 16%, transparent);
+}
+
+.volt-voice-round.danger:hover {
+	color: #ff7a86;
+	background: color-mix(in srgb, #ff5f6d 26%, transparent);
+}
+
+.volt-voice-round .volt-voice-icon,
+.volt-voice-round .volt-voice-icon svg {
+	display: block;
+	width: 16px;
+	height: 16px;
+}
+
+.volt-voice-tray.return {
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	padding: 8px 10px 8px 16px;
+}
+
+.volt-voice-tray.return .monaco-button {
+	height: 24px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+.volt-voice-tray.failed {
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.volt-voice-tray-text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	font-size: 13px;
+}
+
+.volt-voice-tray-error {
+	color: var(--vscode-foreground);
+}
+
+/* The settings menu's flyouts keep their check column. */
+.volt-voice-settings-menu {
+	min-width: 220px;
+}
+
+/* --- The call's card in the chat --- */
+
+.volt-agent-thread-card {
+	/* The reply column's width (.volt-agent-turn.agent), centered like it. */
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 728px;
+	margin: 0 auto;
+	padding: 6px 0;
+	align-self: center;
+}
+
+.volt-voice-card {
+	--volt-voice-muted: color-mix(in srgb, var(--vscode-foreground) 58%, transparent);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 10px 16px;
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, var(--vscode-editor-background));
+	cursor: pointer;
+	font-size: 13px;
+	line-height: 18px;
+}
+
+.volt-voice-card:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-voice-card-text {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.volt-voice-card-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--vscode-foreground);
+}
+
+.volt-voice-card-title .volt-voice-icon svg {
+	display: block;
+}
+
+.volt-voice-card-status {
+	color: var(--volt-voice-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-voice-card-view {
+	border: 0;
+	background: transparent;
+	color: var(--volt-voice-muted);
+	font: inherit;
+	cursor: pointer;
+	padding: 2px 0;
+	flex-shrink: 0;
+}
+
+.volt-voice-card-view:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-voice-card-view:focus {
+	outline: none;
+}
+
+.volt-voice-card-view:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+/* --- The transcript tab --- */
+
+.volt-voice-transcript {
+	--volt-voice-hairline: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	box-sizing: border-box;
+	color: var(--vscode-foreground);
+}
+
+.volt-voice-transcript-header {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 16px 16px 12px;
+	border-bottom: 0.5px solid var(--volt-voice-hairline);
+}
+
+.volt-voice-transcript-titles {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-voice-transcript-titles h2 {
+	margin: 0 0 4px;
+	font-size: 16px;
+	font-weight: 600;
+	line-height: 22px;
+}
+
+.volt-voice-transcript-timing {
+	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	font-size: 13px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-voice-transcript-scroll {
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-voice-transcript-turns {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 12px 16px 24px;
+	box-sizing: border-box;
+}
+
+.volt-voice-turn {
+	max-width: 640px;
+	font-size: 13px;
+	line-height: 1.6;
+}
+
+.volt-voice-turn.user .volt-voice-bubble {
+	background: var(--vscode-input-background, color-mix(in srgb, var(--vscode-foreground) 8%, transparent));
+	border: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	border-radius: 10px;
+	padding: 8px 14px;
+	white-space: pre-wrap;
+}
+
+.volt-voice-turn.assistant {
+	padding: 0 14px;
+}
+
+.volt-voice-turn.assistant p {
+	margin: 0 0 8px;
+	white-space: pre-wrap;
+}
+
+.volt-voice-turn.note {
+	padding: 0 14px;
+	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	font-size: 12px;
+}
+
+.volt-voice-transcript-empty {
+	padding: 12px 0;
+	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+	text-align: center;
+	font-size: 13px;
+}
+
+.volt-voice-transcript-empty.unavailable {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 16px;
+}
+
+.volt-voice-url {
+	width: 280px;
+	height: 26px;
+	box-sizing: border-box;
+	padding: 0 8px;
+	border-radius: 6px;
+	border: 1px solid var(--vscode-input-border, color-mix(in srgb, var(--vscode-foreground) 15%, transparent));
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font: inherit;
+}
