@@ -1,0 +1,1048 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * A performance test's tab: head (name, mode, Run), a status line with the run's progress, tabs
+ * (Setup, Results, History) over a scrolling body. Results: verdict, stat cards that wrap, charts
+ * two to a row (one below 720px), tables. Every colour comes from the theme.
+ */
+
+/* --- Head and status ------------------------------------------------------------------------- */
+
+.volt-http-perf .volt-http-perf-head {
+	gap: 10px;
+}
+
+.volt-http-perf-mode {
+	flex: none;
+	display: flex;
+}
+
+.monaco-workbench .volt-http-perf .volt-http-perf-run {
+	min-width: 64px;
+}
+
+.volt-http-perf-status {
+	position: relative;
+	flex: none;
+	padding: 0 16px;
+	font-size: 12px;
+}
+
+.volt-http-perf-status:empty {
+	display: none;
+}
+
+.volt-http-perf-status-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	height: 22px;
+	color: var(--vscode-foreground);
+}
+
+.volt-http-perf-status-line.muted {
+	color: var(--volt-http-muted);
+}
+
+.volt-http-perf-status-line.error {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-http-perf-status-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-perf-status-time {
+	flex: none;
+	margin-left: auto;
+	color: var(--volt-http-muted);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.volt-http-perf.tiny .volt-http-perf-status-time {
+	display: none;
+}
+
+.volt-http-perf-progress {
+	height: 2px;
+	margin-top: 2px;
+	border-radius: 1px;
+	background: var(--volt-http-line);
+	overflow: hidden;
+}
+
+.volt-http-perf-progress > span {
+	display: block;
+	height: 100%;
+	background: var(--vscode-progressBar-background, var(--vscode-focusBorder));
+	transition: width 0.25s linear;
+}
+
+.volt-http-perf-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	padding: 4px 16px 24px;
+	overflow: auto;
+}
+
+/* --- Sections and fields --------------------------------------------------------------------- */
+
+.volt-http-perf-setup {
+	display: flex;
+	flex-direction: column;
+	max-width: 920px;
+}
+
+.volt-http-perf-section {
+	padding: 6px 0 14px;
+}
+
+.volt-http-perf-section-head {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	min-height: 28px;
+}
+
+.volt-http-perf-section-title {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-http-perf-section-hint {
+	margin: 0 0 8px;
+}
+
+.monaco-workbench .volt-http-perf-section-head .volt-button {
+	height: 26px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+.volt-http-perf .volt-http-perf-description {
+	width: 100%;
+	height: 30px;
+}
+
+.volt-http-perf-empty-list {
+	padding: 10px 0;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-perf-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+	gap: 10px 16px;
+}
+
+.volt-http-perf-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.volt-http-perf-field > label {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-http-perf-field.wide {
+	margin-top: 10px;
+}
+
+.volt-http-perf-number {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.volt-http-perf .volt-http-perf-number .volt-http-input {
+	flex: 1 1 auto;
+	width: 0;
+	min-width: 48px;
+	height: 28px;
+	padding: 0 8px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-perf-unit {
+	flex: none;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-perf .volt-http-perf-code {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-http-perf-check-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 12px;
+	font-size: 12px;
+	cursor: default;
+}
+
+.volt-http-perf-preview {
+	margin-top: 14px;
+	padding: 10px 12px 6px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+}
+
+.volt-http-perf-preview-title {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+/* --- Target list (a WorkbenchList: rows edge to edge, square) -------------------------------- */
+
+.volt-http-perf-list {
+	margin: 0 -16px;
+}
+
+.volt-http-perf-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-http-perf-target-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 100%;
+	padding: 0 16px;
+	box-sizing: border-box;
+}
+
+.volt-http-perf-target-row .volt-http-row-method {
+	flex: 0 0 44px;
+}
+
+.volt-http-perf-target-main {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	line-height: 17px;
+}
+
+.volt-http-perf-target-name,
+.volt-http-perf-target-detail {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-perf-target-detail {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-perf-target-detail.missing {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-http-perf-weight {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-perf .volt-http-perf-weight-input {
+	width: 42px;
+	height: 22px;
+	padding: 0 6px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 3px;
+	outline: 0;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font-size: 12px;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-perf.tiny .volt-http-perf-weight > span {
+	display: none;
+}
+
+.volt-http-perf-row-actions {
+	flex: none;
+	display: flex;
+	opacity: 0;
+}
+
+.volt-http-perf-list .monaco-list-row:hover .volt-http-perf-row-actions,
+.volt-http-perf-list .monaco-list-row.focused .volt-http-perf-row-actions,
+.volt-http-perf-list .monaco-list-row.selected .volt-http-perf-row-actions {
+	opacity: 1;
+}
+
+.volt-http-perf-target-editor {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+	margin-top: 10px;
+	padding: 12px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+}
+
+.volt-http-perf-target-editor.hidden {
+	display: none;
+}
+
+.volt-http-perf-target-editor > .volt-http-note {
+	margin-top: 8px;
+}
+
+.volt-http-perf-url-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-http-perf-url-row .volt-http-field-box {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* --- Thresholds ------------------------------------------------------------------------------- */
+
+/* One grid for every row: metric, comparison, value and remove line up down the list. */
+.volt-http-perf-thresholds {
+	display: grid;
+	grid-template-columns: minmax(0, max-content) minmax(0, max-content) minmax(72px, 140px) 24px;
+	align-items: center;
+	gap: 6px 8px;
+}
+
+.volt-http-perf-threshold {
+	display: contents;
+}
+
+.monaco-workbench .volt-http-perf-thresholds .volt-dropdown {
+	width: 100%;
+	min-width: 0;
+}
+
+/* The unit sits inside the box's right end, so every value box ends on the same line. */
+.volt-http-perf-thresholds .volt-http-perf-number {
+	position: relative;
+}
+
+.volt-http-perf-thresholds .volt-http-perf-number > .volt-http-input {
+	width: 100%;
+	padding-right: 30px;
+	box-sizing: border-box;
+}
+
+.volt-http-perf-thresholds .volt-http-perf-unit {
+	position: absolute;
+	right: 8px;
+	pointer-events: none;
+}
+
+/* --- Hosts note -------------------------------------------------------------------------------- */
+
+.volt-http-perf-hosts {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 4px 0 8px;
+	font-size: 12px;
+}
+
+.volt-http-perf-hosts:empty {
+	display: none;
+}
+
+.volt-http-perf-host-line {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	color: var(--volt-http-muted);
+	line-height: 18px;
+}
+
+.volt-http-perf-host-line b {
+	color: var(--vscode-foreground);
+	font-weight: 600;
+}
+
+.volt-http-perf-host-line.warn {
+	color: var(--vscode-foreground);
+}
+
+.volt-http-perf-host-icon {
+	flex: none;
+	display: inline-flex;
+	padding-top: 1px;
+}
+
+.volt-http-perf-host-line.warn .volt-http-perf-host-icon {
+	color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
+}
+
+/* --- Results ------------------------------------------------------------------------------------ */
+
+.volt-http-perf-results {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding-top: 6px;
+}
+
+.volt-http-perf-verdict {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px 10px;
+	font-size: 12px;
+}
+
+.volt-http-perf-verdict-meta {
+	min-width: 0;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-perf-checks {
+	flex: 1 0 100%;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.volt-http-perf-check {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 22px;
+	box-sizing: border-box;
+	padding: 0 8px 0 6px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-perf .volt-http-perf-check.pass .codicon[class*='codicon-'] {
+	color: var(--vscode-charts-green);
+}
+
+.volt-http-perf .volt-http-perf-check.fail .codicon[class*='codicon-'] {
+	color: var(--vscode-charts-red);
+}
+
+.volt-http-perf-cards {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+	gap: 8px;
+}
+
+.volt-http-perf-card {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	padding: 10px 12px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+}
+
+.volt-http-perf-card-label {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-http-perf-card-value {
+	font-size: 20px;
+	font-weight: 600;
+	line-height: 26px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* No earlier run to compare with: the card is its label and its number. */
+.volt-http-perf-card > .volt-http-perf-card-delta:empty {
+	display: none;
+}
+
+.volt-http-perf-card-delta {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	min-height: 16px;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+td.volt-http-perf-card-delta {
+	display: table-cell;
+}
+
+.volt-http-perf-card-delta.better {
+	color: var(--vscode-charts-green);
+}
+
+.volt-http-perf-card-delta.worse {
+	color: var(--vscode-charts-red);
+}
+
+.volt-http-perf .volt-http-perf-card-delta .codicon[class*='codicon-'] {
+	font-size: 12px;
+	vertical-align: middle;
+}
+
+.volt-http-perf-charts {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+}
+
+.volt-http-perf.narrow .volt-http-perf-charts {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.volt-http-perf-chart-card {
+	min-width: 0;
+	padding: 10px 12px 8px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+}
+
+.volt-http-perf-chart-title {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-http-perf-subchart-title {
+	margin-top: 6px;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+}
+
+.volt-http-perf-codes {
+	margin-top: 8px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-perf-live-note {
+	margin-top: -4px;
+}
+
+/* --- Assessment -------------------------------------------------------------------------------- */
+
+.volt-http-perf-ai {
+	padding: 10px 12px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+}
+
+.volt-http-perf-ai.hidden {
+	display: none;
+}
+
+.volt-http-perf-ai-head {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	min-height: 26px;
+}
+
+.volt-http-perf-ai-icon {
+	display: inline-flex;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-perf-ai-title {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-http-perf-ai-elapsed {
+	font-variant-numeric: tabular-nums;
+}
+
+.monaco-workbench .volt-http-perf-ai-head .volt-button {
+	height: 24px;
+	padding: 0 8px;
+	font-size: 12px;
+}
+
+.volt-http-perf-ai-text {
+	margin-top: 6px;
+	font-size: 13px;
+	line-height: 20px;
+	white-space: pre-wrap;
+	user-select: text;
+}
+
+.volt-http-perf-ai-text:empty {
+	display: none;
+}
+
+.volt-http-perf-ai-error {
+	margin-top: 6px;
+	color: var(--vscode-errorForeground);
+	font-size: 12px;
+}
+
+/* --- Tables ------------------------------------------------------------------------------------ */
+
+.volt-http-perf-tables {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.volt-http-perf-table-section {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.volt-http-perf-stats {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+	border-top: 1px solid var(--volt-http-line);
+	border-left: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+	overflow: hidden;
+}
+
+.volt-http-perf-stat {
+	display: flex;
+	flex-direction: column;
+	padding: 6px 10px;
+	border-right: 1px solid var(--volt-http-line);
+	border-bottom: 1px solid var(--volt-http-line);
+}
+
+.volt-http-perf-stat-label {
+	color: var(--volt-http-muted);
+	font-size: 11px;
+}
+
+.volt-http-perf-stat-value {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-perf-table-scroll {
+	min-width: 0;
+	overflow-x: auto;
+}
+
+.volt-http-perf-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-perf-table th,
+.volt-http-perf-table td {
+	padding: 5px 10px 5px 0;
+	border-bottom: 1px solid var(--volt-http-line);
+	text-align: left;
+	white-space: nowrap;
+}
+
+.volt-http-perf-table td:first-child {
+	max-width: 320px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-http-perf-table th {
+	color: var(--volt-http-muted);
+	font-weight: 600;
+}
+
+.volt-http-perf-table .num {
+	text-align: right;
+}
+
+.volt-http-perf-table td.num {
+	font-family: var(--monaco-monospace-font);
+}
+
+/* --- History ----------------------------------------------------------------------------------- */
+
+.volt-http-perf-history {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 6px;
+}
+
+.volt-http-perf-run-row {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	height: 100%;
+	padding: 0 16px;
+	box-sizing: border-box;
+	line-height: 18px;
+	font-size: 12px;
+}
+
+.volt-http-perf-run-top {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+}
+
+.volt-http-perf-run-verdict {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-weight: 600;
+}
+
+.volt-http-perf .volt-http-perf-run-verdict.pass .codicon[class*='codicon-'] {
+	color: var(--vscode-charts-green);
+}
+
+.volt-http-perf .volt-http-perf-run-verdict.fail .codicon[class*='codicon-'] {
+	color: var(--vscode-charts-red);
+}
+
+.volt-http-perf-run-date,
+.volt-http-perf-run-facts {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-perf-run-by {
+	margin-left: auto;
+	color: var(--volt-http-muted);
+	white-space: nowrap;
+}
+
+.volt-http-perf-run-facts {
+	color: var(--volt-http-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-perf-compare {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 8px;
+}
+
+.volt-http-perf-compare:empty {
+	display: none;
+}
+
+.volt-http-perf-compare-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 28px;
+}
+
+.monaco-workbench .volt-http-perf-compare-head .volt-button {
+	height: 26px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+.volt-http-perf-run-text {
+	margin: 0;
+	padding: 10px 12px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 18px;
+	white-space: pre-wrap;
+	user-select: text;
+}
+
+/* --- Empty states ------------------------------------------------------------------------------ */
+
+.volt-http-perf-empty-state {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	max-width: 420px;
+	margin: 48px auto 0;
+	text-align: center;
+}
+
+.volt-http-perf .volt-http-perf-empty-icon .codicon[class*='codicon-'] {
+	font-size: 28px;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-perf-empty-title {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+/* --- Charts (voltHttpCharts.ts) ---------------------------------------------------------------- */
+
+.volt-http-chart {
+	position: relative;
+	min-width: 0;
+}
+
+.volt-http-chart-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px 12px;
+	margin: 4px 0 2px;
+}
+
+.volt-http-chart-key {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.volt-http-chart-key:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-http-chart-key:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-http-chart-key.off {
+	opacity: 0.45;
+}
+
+.volt-http-chart-swatch {
+	flex: none;
+	display: inline-block;
+	width: 12px;
+	height: 3px;
+	border-radius: 1px;
+}
+
+.volt-http-chart-swatch.dashed {
+	width: 12px;
+	background-image: linear-gradient(90deg, transparent 50%, var(--vscode-editor-background) 50%);
+	background-size: 6px 3px;
+}
+
+.volt-http-chart-plot {
+	position: relative;
+	width: 100%;
+	overflow: hidden;
+}
+
+.volt-http-chart-svg {
+	display: block;
+	font-size: 10px;
+}
+
+.volt-http-chart-label {
+	fill: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-chart-grid {
+	stroke: var(--volt-http-line);
+	stroke-dasharray: 2 3;
+}
+
+.volt-http-chart-axis {
+	stroke: var(--volt-http-line);
+}
+
+.volt-http-chart-line {
+	fill: none;
+	stroke-width: 2;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+}
+
+.volt-http-chart-area {
+	fill-opacity: 0.16;
+	stroke: none;
+}
+
+.volt-http-chart-shade {
+	fill: var(--vscode-foreground);
+	fill-opacity: 0.05;
+}
+
+.volt-http-chart-shade-label {
+	fill: var(--vscode-descriptionForeground);
+}
+
+.volt-http-chart-crosshair {
+	stroke: var(--vscode-descriptionForeground);
+	stroke-width: 1;
+	stroke-dasharray: 3 3;
+	pointer-events: none;
+}
+
+.volt-http-chart-dot,
+.volt-http-chart-point {
+	stroke: var(--vscode-editor-background);
+	stroke-width: 2;
+	pointer-events: none;
+}
+
+.volt-http-chart-bar {
+	pointer-events: none;
+}
+
+.volt-http-chart-hit {
+	fill: transparent;
+}
+
+.volt-http-chart-hit:hover {
+	fill: var(--vscode-foreground);
+	fill-opacity: 0.05;
+}
+
+.volt-http-chart-marker {
+	stroke: var(--vscode-foreground);
+	stroke-width: 1;
+	stroke-dasharray: 3 2;
+	opacity: 0.7;
+	pointer-events: none;
+}
+
+.volt-http-chart-marker-label {
+	fill: var(--vscode-foreground);
+	font-weight: 600;
+	text-anchor: middle;
+}
+
+.volt-http-chart-tip {
+	position: absolute;
+	z-index: 2;
+	min-width: 120px;
+	padding: 6px 8px;
+	border: 1px solid var(--vscode-editorHoverWidget-border, var(--volt-http-line));
+	border-radius: 3px;
+	background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
+	color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+	box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+	font-size: 12px;
+	pointer-events: none;
+}
+
+.volt-http-chart-tip-title {
+	margin-bottom: 4px;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-chart-tip-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	line-height: 18px;
+}
+
+.volt-http-chart-tip-label {
+	flex: 1 1 auto;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-chart-tip-value {
+	font-family: var(--monaco-monospace-font);
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-chart-swatch.none {
+	display: none;
+}
+
+.volt-http-stack-bar {
+	display: flex;
+	gap: 2px;
+	height: 12px;
+	margin: 10px 0 8px;
+	border-radius: 3px;
+	overflow: hidden;
+}
+
+.volt-http-stack-bar.empty {
+	background: var(--volt-http-line);
+}
+
+.volt-http-stack-part {
+	min-width: 2px;
+}
+
+.volt-http-stack-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 14px;
+	font-size: 12px;
+}
+
+.volt-http-stack-key {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-stack-key .volt-http-chart-swatch {
+	width: 8px;
+	height: 8px;
+	border-radius: 2px;
+}
+
+.volt-http-stack-key b {
+	font-weight: 600;
+}
+
+.volt-http-stack-share {
+	color: var(--volt-http-muted);
+}

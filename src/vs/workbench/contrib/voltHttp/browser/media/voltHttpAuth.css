@@ -1,0 +1,226 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The Authorization page, laid out like Postman's: the type, its help and where the data goes on
+ * the left; the fields on the right, the common ones first and "Advanced configuration" folded.
+ * Sized by its own width (a container), so it stacks in a narrow pane beside a chat too.
+ */
+
+.volt-http-auth-host {
+	container: volt-http-auth / inline-size;
+}
+
+.volt-http-auth-side-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 6px;
+}
+
+.volt-http-auth-side-label {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 17px;
+}
+
+.volt-http-auth-check {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 22px;
+	font-size: 12px;
+}
+
+.volt-http-auth-check > span {
+	cursor: pointer;
+	user-select: none;
+}
+
+/* --- Fields ------------------------------------------------------------------------------------ */
+
+.volt-http-auth-fields .volt-http-field > label {
+	flex: 0 0 150px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-auth-fields .volt-http-field.top {
+	align-items: flex-start;
+}
+
+.volt-http-auth-fields .volt-http-field.top > label {
+	padding-top: 7px;
+}
+
+.volt-http-auth-fields .volt-http-field-wrap {
+	max-width: 520px;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+}
+
+.volt-http-auth-fields .volt-http-field-wrap > .volt-http-field-box {
+	flex: 1 1 200px;
+}
+
+.volt-http-auth-fields .volt-http-field-wrap > .volt-http-auth-check {
+	flex: 1 1 100%;
+}
+
+.volt-http-auth-code {
+	flex: 1 1 100%;
+	width: 100%;
+	min-height: 60px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 18px;
+	white-space: pre;
+	overflow-wrap: normal;
+	tab-size: 2;
+}
+
+.volt-http-auth-group {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-width: 0;
+}
+
+.volt-http-auth-group[hidden],
+.volt-http-auth-advanced-note[hidden] {
+	display: none;
+}
+
+.volt-http-auth-group-title {
+	padding-top: 4px;
+	color: var(--vscode-foreground);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-http-auth-group + .volt-http-auth-group > .volt-http-auth-group-title {
+	padding-top: 12px;
+}
+
+.volt-http-auth-advanced {
+	display: inline-flex;
+	align-self: flex-start;
+	align-items: center;
+	gap: 4px;
+	margin-top: 6px;
+	padding: 2px 4px 2px 0;
+	border: 0;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.volt-http-auth-advanced:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-http-auth-chevron {
+	display: inline-flex;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-auth-advanced-note {
+	margin-top: -6px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 17px;
+}
+
+/* --- OAuth 2.0: getting a token ------------------------------------------------------------------ */
+
+.volt-http-auth-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding-left: 162px;
+}
+
+.volt-http-auth-status {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	max-width: 520px;
+	padding-left: 162px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 18px;
+	overflow-wrap: anywhere;
+}
+
+.volt-http-auth-status:empty {
+	display: none;
+}
+
+.volt-http-auth-status .volt-http-spinner,
+.volt-http-auth-status-icon {
+	flex: none;
+	padding-top: 1px;
+}
+
+.volt-http-auth-status[data-kind="ok"] .volt-http-auth-status-icon {
+	color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+
+.volt-http-auth-status[data-kind="error"] {
+	color: var(--vscode-errorForeground);
+}
+
+/* --- Narrow: the type above the fields, then each label above its field --------------------------- */
+
+@container volt-http-auth (max-width: 760px) {
+	.volt-http-auth {
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.volt-http-auth-type {
+		flex: none;
+		max-width: 640px;
+	}
+
+	.volt-http-auth-fields {
+		padding-top: 0;
+	}
+}
+
+@container volt-http-auth (max-width: 440px) {
+	.volt-http-auth-fields .volt-http-field {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 4px;
+	}
+
+	.volt-http-auth-fields .volt-http-field > label {
+		flex: none;
+	}
+
+	.volt-http-auth-fields .volt-http-field > label:empty {
+		display: none;
+	}
+
+	.volt-http-auth-fields .volt-http-field.top > label {
+		padding-top: 0;
+	}
+
+	.volt-http-auth-fields .volt-http-field-wrap {
+		max-width: none;
+	}
+
+	.volt-http-auth-actions,
+	.volt-http-auth-status {
+		padding-left: 0;
+	}
+}

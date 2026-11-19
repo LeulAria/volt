@@ -14,14 +14,43 @@ import { generateUuid } from '../../../../../base/common/uuid.js';
 
 export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT'] as const;
 
+/**
+ * What a request line may start with instead of an HTTP method: the kind of request it is
+ * (`WS wss://...`, `GRAPHQL https://...`, `MCP https://...`). `WEBSOCKET` is JetBrains' spelling.
+ */
+export const HTTP_PROTOCOL_KEYWORDS: Readonly<Record<string, string>> = {
+	GRAPHQL: 'graphql', SOAP: 'soap', AI: 'ai', MCP: 'mcp', GRPC: 'grpc',
+	WS: 'ws', WEBSOCKET: 'ws', SOCKETIO: 'socketio', SSE: 'sse', MQTT: 'mqtt',
+};
+
+/** The keyword a kind of request is written with. */
+export function httpProtocolKeyword(protocol: string): string | undefined {
+	return Object.keys(HTTP_PROTOCOL_KEYWORDS).find(keyword => HTTP_PROTOCOL_KEYWORDS[keyword] === protocol);
+}
+
+/** The HTTP method a kind of request goes out with, as far as it has one. */
+export function httpProtocolMethod(protocol: string): string {
+	return protocol === 'ws' || protocol === 'sse' || protocol === 'socketio' || protocol === 'mqtt' ? 'GET' : 'POST';
+}
+
 export interface IHttpRequestSpec {
 	readonly name?: string;
 	readonly method: string;
+	/** The kind of request when it is not plain HTTP (`HTTP_PROTOCOL_KEYWORDS`' values). */
+	readonly protocol?: string;
 	readonly url: string;
 	readonly headers: readonly (readonly [string, string])[];
 	readonly body?: string;
 	/** 1-based line of the request line. */
 	readonly line: number;
+	/** The comment lines above the request line. */
+	readonly description?: string;
+	/** Headers commented out in the block (`# Accept: text/plain`): kept, not sent. */
+	readonly disabledHeaders?: readonly (readonly [string, string])[];
+	/** `< {% ... %}` above the request line: runs before the send. */
+	readonly preScript?: string;
+	/** `> {% ... %}` after the body: runs on the response. */
+	readonly postScript?: string;
 }
 
 export interface IHttpFile {
@@ -37,6 +66,12 @@ export interface IHttpResponseRecord {
 	readonly body: string;
 	readonly durationMs: number;
 	readonly size: number;
+	/** The redirects followed to get here, in order: each hop's status and the URL that answered with it. */
+	readonly redirects?: readonly { readonly status: number; readonly url: string }[];
+	/** The negotiated protocol version when the network stack told it: `1.1`, `2`. */
+	readonly httpVersion?: string;
+	/** Each `Set-Cookie` line of the response on its own (`headers` joins them with ", "). */
+	readonly setCookies?: readonly string[];
 }
 
 export function parseHttpFile(text: string): IHttpFile {
@@ -73,9 +108,39 @@ function isComment(line: string): boolean {
 	return /^\s*(#|\/\/)/.test(line);
 }
 
+/** Reads a `{% ... %}` script that opens on `lines[index]` (after its `<` or `>`); returns it and the index after it. */
+function readScript(lines: readonly string[], index: number): { script: string; next: number } {
+	const first = lines[index].replace(/^\s*[<>]\s*\{%/, '');
+	const collected: string[] = [];
+	let current = first;
+	let at = index;
+	for (; ;) {
+		const end = current.indexOf('%}');
+		if (end >= 0) {
+			collected.push(current.slice(0, end));
+			break;
+		}
+		collected.push(current);
+		at++;
+		if (at >= lines.length) {
+			break;
+		}
+		current = lines[at];
+	}
+	while (collected.length && !collected[0].trim()) {
+		collected.shift();
+	}
+	while (collected.length && !collected[collected.length - 1].trim()) {
+		collected.pop();
+	}
+	return { script: collected.join('\n'), next: at + 1 };
+}
+
 function parseBlock(lines: readonly string[], start: number, separatorName: string | undefined): IHttpRequestSpec | undefined {
 	let name = separatorName;
 	let index = 0;
+	let preScript: string | undefined;
+	const description: string[] = [];
 	for (; index < lines.length; index++) {
 		const line = lines[index];
 		const named = /^\s*(?:#|\/\/)\s*@name\s+(\S+)/.exec(line);
@@ -83,7 +148,20 @@ function parseBlock(lines: readonly string[], start: number, separatorName: stri
 			name = named[1];
 			continue;
 		}
-		if (line.trim() && !isComment(line)) {
+		if (/^\s*<\s*\{%/.test(line)) {
+			const read = readScript(lines, index);
+			preScript = read.script;
+			index = read.next - 1;
+			continue;
+		}
+		if (isComment(line)) {
+			// `# @directive` lines are not prose.
+			if (!/^\s*(?:#|\/\/)\s*@/.test(line)) {
+				description.push(line.replace(/^\s*(?:#|\/\/)\s?/, ''));
+			}
+			continue;
+		}
+		if (line.trim()) {
 			break;
 		}
 	}
@@ -94,7 +172,9 @@ function parseBlock(lines: readonly string[], start: number, separatorName: stri
 	if (!requestLine) {
 		return undefined;
 	}
-	const method = (requestLine[1] ?? 'GET').toUpperCase();
+	const word = (requestLine[1] ?? 'GET').toUpperCase();
+	const protocol = HTTP_PROTOCOL_KEYWORDS[word];
+	const method = protocol ? httpProtocolMethod(protocol) : word;
 	if (!(HTTP_METHODS as readonly string[]).includes(method)) {
 		return undefined;
 	}
@@ -107,30 +187,70 @@ function parseBlock(lines: readonly string[], start: number, separatorName: stri
 		index++;
 	}
 	const headers: [string, string][] = [];
+	const disabledHeaders: [string, string][] = [];
 	for (; index < lines.length && lines[index].trim(); index++) {
 		if (isComment(lines[index])) {
+			const off = /^\s*(?:#|\/\/)\s*([A-Za-z][\w-]*)\s*:\s*(.*)$/.exec(lines[index]);
+			if (off) {
+				disabledHeaders.push([off[1], off[2].trim()]);
+			}
 			continue;
+		}
+		if (/^\s*>\s*\{%/.test(lines[index])) {
+			// A response handler right under the headers: the body loop below reads it.
+			index--;
+			break;
 		}
 		const header = /^\s*([^:\s]+)\s*:\s*(.*)$/.exec(lines[index]);
 		if (header) {
 			headers.push([header[1], header[2].trim()]);
 		}
 	}
-	const bodyLines = lines.slice(index + 1).filter(item => !/^\s*(?:#|\/\/)\s*@/.test(item));
+	const bodyLines: string[] = [];
+	let postScript: string | undefined;
+	for (index++; index < lines.length; index++) {
+		const item = lines[index];
+		if (/^\s*>\s*\{%/.test(item)) {
+			const read = readScript(lines, index);
+			postScript = postScript ? `${postScript}\n${read.script}` : read.script;
+			index = read.next - 1;
+			continue;
+		}
+		if (/^\s*(?:#|\/\/)\s*@/.test(item)) {
+			continue;
+		}
+		bodyLines.push(item);
+	}
 	while (bodyLines.length && !bodyLines[bodyLines.length - 1].trim()) {
 		bodyLines.pop();
 	}
 	const body = bodyLines.join('\n');
-	return { ...(name ? { name } : {}), method, url, headers, ...(body.trim() ? { body } : {}), line };
+	while (description.length && !description[0].trim()) {
+		description.shift();
+	}
+	while (description.length && !description[description.length - 1].trim()) {
+		description.pop();
+	}
+	return {
+		...(name ? { name } : {}), method, ...(protocol ? { protocol } : {}), url, headers, ...(body.trim() ? { body } : {}), line,
+		...(description.length ? { description: description.join('\n') } : {}),
+		...(disabledHeaders.length ? { disabledHeaders } : {}),
+		...(preScript ? { preScript } : {}),
+		...(postScript ? { postScript } : {}),
+	};
 }
 
 /** Turns a request back into `.http` text (the HTTP client saves through this). */
 export function serializeHttpRequest(request: IHttpRequestSpec): string {
 	return [
+		...(request.description ? request.description.split('\n').map(line => line ? `# ${line}` : '#') : []),
 		...(request.name ? [`# @name ${request.name}`] : []),
-		`${request.method} ${request.url}`,
+		...(request.preScript ? ['< {%', request.preScript, '%}'] : []),
+		`${(request.protocol && httpProtocolKeyword(request.protocol)) || request.method} ${request.url}`,
 		...request.headers.map(([key, value]) => `${key}: ${value}`),
+		...(request.disabledHeaders ?? []).map(([key, value]) => `# ${key}: ${value}`),
 		...(request.body !== undefined && request.body !== '' ? ['', request.body] : []),
+		...(request.postScript ? ['', '> {%', request.postScript, '%}'] : []),
 	].join('\n');
 }
 

@@ -4,9 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 
 /*
- * The HTTP client, laid out like Postman: the request's name and Save on top, method + URL in one
- * box beside a split Send, dotted tabs over bordered key/value tables, a sash, then the response.
- * Every colour comes from the theme. The sidebar's rows are at the end.
+ * The HTTP client, laid out like Postman: Collections / Environments / History on the left, a
+ * strip of open tabs with the environment picker, then the request in front (name and Save,
+ * method + URL in one box beside a split Send, dotted tabs over bordered tables, a sash, the
+ * response). Every colour comes from the theme. Below 640px the left side opens over the content.
  */
 
 .volt-http-editor,
@@ -16,15 +17,17 @@
 	--volt-http-put: var(--vscode-charts-blue, #4f8cff);
 	--volt-http-patch: var(--vscode-charts-purple, #a371f7);
 	--volt-http-delete: var(--vscode-charts-red, #f85149);
+	/* Not charts-orange: some themes make it see-through. */
+	--volt-http-variable: var(--vscode-charts-yellow, #d29922);
 	--volt-http-muted: var(--vscode-descriptionForeground);
 	--volt-http-line: var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.25)));
+	--volt-http-hover: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+	--volt-http-pad: 16px;
 }
 
 .volt-http-editor {
 	position: relative;
 	display: flex;
-	flex-direction: column;
-	height: 100%;
 	box-sizing: border-box;
 	background: var(--vscode-editor-background);
 	color: var(--vscode-foreground);
@@ -32,16 +35,811 @@
 	overflow: hidden;
 }
 
-/* Head: HTTP · file / name … environment, Save */
+.volt-http-editor button {
+	font-family: inherit;
+	color: inherit;
+}
+
+.volt-http-editor input,
+.volt-http-editor textarea {
+	font-family: inherit;
+}
+
+.volt-http-spacer {
+	flex: 1 1 auto;
+}
+
+@keyframes volt-http-spin {
+	to { transform: rotate(360deg); }
+}
+
+/* The glyph's box turns, not the glyph: an animated box is composited, an animated glyph repaints. */
+.volt-http-spinner {
+	display: inline-flex;
+	animation: volt-http-spin 0.9s linear infinite;
+}
+
+/* --- Shell: sidebar | tab strip over the content ------------------------------------------- */
+
+.volt-http-side-host {
+	flex: none;
+	height: 100%;
+	box-sizing: border-box;
+	border-right: 1px solid var(--volt-http-line);
+	background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+	overflow: hidden;
+}
+
+.volt-http-client.side-hidden .volt-http-side-host {
+	display: none;
+}
+
+.volt-http-main {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	height: 100%;
+}
+
+.volt-http-client.narrow .volt-http-side-host {
+	position: absolute;
+	z-index: 20;
+	left: 0;
+	/* Under the tab strip, so its toggle stays in reach to close it again. */
+	top: 35px;
+	height: calc(100% - 35px);
+	border-top: 1px solid var(--volt-http-line);
+	box-shadow: 8px 0 24px rgba(0, 0, 0, 0.28);
+}
+
+.volt-http-strip {
+	flex: none;
+	display: flex;
+	align-items: stretch;
+	height: 35px;
+	box-sizing: border-box;
+	background: var(--vscode-editorGroupHeader-tabsBackground, transparent);
+	border-bottom: 1px solid var(--vscode-editorGroupHeader-tabsBorder, var(--volt-http-line));
+}
+
+.volt-http-strip > .volt-http-side-toggle {
+	flex: none;
+	align-self: center;
+	margin: 0 4px 0 8px;
+}
+
+.volt-http-strip-tabs {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: stretch;
+	min-width: 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: none;
+}
+
+.volt-http-strip-tabs::-webkit-scrollbar {
+	display: none;
+}
+
+.volt-http-open-tab {
+	/* VS Code's editor tabs: the theme's tab colours, a hairline between tabs, the one in front on the editor's own background. Tabs keep their width and the strip scrolls. */
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 180px;
+	height: 35px;
+	padding: 0 4px 0 10px;
+	box-sizing: border-box;
+	border-right: 1px solid var(--vscode-tab-border, var(--volt-http-line));
+	border-top: 1px solid transparent;
+	background: var(--vscode-tab-inactiveBackground, transparent);
+	color: var(--vscode-tab-inactiveForeground, var(--volt-http-muted));
+	font-size: 13px;
+	cursor: pointer;
+	user-select: none;
+	outline: none;
+}
+
+.volt-http-open-tab:hover {
+	background: var(--vscode-tab-hoverBackground, var(--vscode-tab-inactiveBackground, transparent));
+	color: var(--vscode-tab-hoverForeground, var(--vscode-tab-activeForeground, var(--vscode-foreground)));
+}
+
+.volt-http-open-tab.active {
+	/* One pixel lower: it covers the strip's bottom line and joins the request under it. */
+	margin-bottom: -1px;
+	border-top-color: var(--vscode-tab-activeBorderTop, transparent);
+	background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
+	color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
+}
+
+.volt-http-open-tab:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-http-open-tab.gone .volt-http-open-tab-label {
+	text-decoration: line-through;
+}
+
+.volt-http-open-tab-label {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-open-tab-icon {
+	flex: none;
+	display: inline-flex;
+}
+
+.volt-http-editor .volt-http-open-tab-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-http-open-tab-close {
+	position: relative;
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	cursor: pointer;
+}
+
+.volt-http-editor .volt-http-open-tab-close .codicon[class*='codicon-'] {
+	font-size: 14px;
+	opacity: 0;
+}
+
+.volt-http-open-tab:hover .volt-http-open-tab-close .codicon,
+.volt-http-open-tab.active .volt-http-open-tab-close .codicon,
+.volt-http-open-tab-close:focus-visible .codicon {
+	opacity: 0.8;
+}
+
+.volt-http-open-tab-close:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+}
+
+/* Unsaved: a dot where the close button is, until the pointer is over the tab. */
+.volt-http-dirty-dot {
+	display: none;
+	position: absolute;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--volt-http-variable);
+}
+
+.volt-http-open-tab-close.dirty .volt-http-dirty-dot {
+	display: block;
+}
+
+.volt-http-open-tab:not(:hover) .volt-http-open-tab-close.dirty .codicon,
+.volt-http-open-tab.active:not(:hover) .volt-http-open-tab-close.dirty .codicon {
+	opacity: 0;
+}
+
+.volt-http-open-tab:hover .volt-http-open-tab-close.dirty .volt-http-dirty-dot {
+	display: none;
+}
+
+/* New Request sits beside the tabs, not among them: it stays in reach however many are open. */
+.volt-http-strip > .volt-http-strip-add {
+	flex: none;
+	align-self: center;
+	margin: 0 4px;
+}
+
+.volt-http-strip-tabs {
+	flex: 0 1 auto;
+}
+
+.volt-http-strip-actions {
+	margin-left: auto;
+}
+
+.volt-http-strip-actions {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 10px 0 6px;
+	border-left: 1px solid var(--volt-http-line);
+}
+
+.monaco-workbench .volt-http-env .volt-dropdown {
+	height: 26px;
+	max-width: 190px;
+}
+
+.volt-http-content {
+	flex: 1 1 auto;
+	position: relative;
+	min-height: 0;
+	overflow: hidden;
+}
+
+/* Every dropdown in the client, and the menu it opens: 3px corners. */
+.monaco-workbench .volt-http-editor .volt-dropdown {
+	border-radius: 3px;
+}
+
+/* A dropdown stretched over its field keeps its chevron at the far end, like a select. */
+.monaco-workbench .volt-http-editor .volt-dropdown .volt-dropdown-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.monaco-workbench .volt-http-editor .volt-dropdown .volt-dropdown-chevron {
+	flex: none;
+	margin-left: auto;
+}
+
+/* The variable mark (environments) takes its place's colour like every other icon here; as a symbol icon it would be blue. */
+.volt-http-editor .codicon.codicon-symbol-variable[class*='codicon-'] {
+	color: inherit !important;
+}
+
+/* A span that only holds an icon: the icon sits on the line's middle, not on its baseline. */
+.volt-http-ico {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	line-height: 1;
+}
+
+/* --- A variable's card: its value under the pointer, and a box to change it -------------------- */
+
+.monaco-workbench .volt-http-variable-card {
+	position: fixed;
+	z-index: 2600;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px 10px 9px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.3)));
+	border-radius: 6px;
+	background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
+	color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+	box-shadow: 0 4px 14px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+	font-size: 12px;
+	line-height: 17px;
+}
+
+.volt-http-variable-card-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-http-variable-card-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--monaco-monospace-font);
+	font-weight: 600;
+	color: var(--vscode-charts-yellow, #d29922);
+}
+
+.volt-http-variable-card-source {
+	flex: none;
+	margin-left: auto;
+	padding: 0 6px;
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+}
+
+.volt-http-variable-card-value {
+	height: 26px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.3)));
+	border-radius: 3px;
+	outline: 0;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground, var(--vscode-foreground));
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.volt-http-variable-card-value:focus {
+	border-color: var(--vscode-focusBorder);
+}
+
+.volt-http-variable-card-note {
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	overflow-wrap: anywhere;
+}
+
+.volt-http-variable-card-note:empty {
+	display: none;
+}
+
+.monaco-workbench .volt-menu.volt-http-menu,
+.monaco-workbench .volt-menu.volt-http-menu .monaco-list,
+.monaco-workbench .volt-menu.volt-http-menu .monaco-scrollable-element {
+	border-radius: 3px;
+}
+
+.volt-http-svg-icon {
+	flex: none;
+	display: block;
+}
+
+/* --- Small controls ---------------------------------------------------------------------------- */
+
+.volt-http-icon-button {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--volt-http-muted);
+	cursor: pointer;
+}
+
+.volt-http-icon-button:hover,
+.volt-http-icon-button.checked {
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-http-icon-button:focus-visible,
+.volt-http-check:focus-visible,
+.volt-http-link:focus-visible,
+.volt-http-radio:focus-visible,
+.volt-http-tab:focus-visible,
+.volt-http-crumb:focus-visible,
+.volt-http-side-tab:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-http-editor .volt-http-icon-button .codicon[class*='codicon-'] {
+	font-size: 15px;
+}
+
+.volt-http-link {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--vscode-textLink-foreground) !important;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.volt-http-link:hover {
+	color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground)) !important;
+	text-decoration: underline;
+}
+
+.volt-http-link.muted {
+	color: var(--volt-http-muted) !important;
+}
+
+.volt-http-link.muted:hover {
+	color: var(--vscode-foreground) !important;
+}
+
+.volt-http-link.end {
+	margin-left: auto;
+}
+
+.volt-http-check {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-checkbox-border, var(--volt-http-line));
+	border-radius: 3px;
+	background: var(--vscode-checkbox-background, transparent);
+	cursor: pointer;
+}
+
+.volt-http-check.hidden {
+	visibility: hidden;
+}
+
+.volt-http-editor .volt-http-check .codicon[class*='codicon-'] {
+	font-size: 12px;
+	opacity: 0;
+	color: var(--vscode-button-foreground, #fff);
+}
+
+.volt-http-check.checked {
+	border-color: var(--vscode-button-background, var(--vscode-focusBorder));
+	background: var(--vscode-button-background, var(--vscode-focusBorder));
+}
+
+.volt-http-editor .volt-http-check.checked .codicon[class*='codicon-'] {
+	opacity: 1;
+}
+
+.volt-http-note {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-http-note .volt-http-link {
+	margin-left: 8px;
+}
+
+.volt-http-note.end {
+	margin-left: auto;
+}
+
+.volt-http-sublabel {
+	flex: none;
+	padding: 8px 0 6px;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+/* --- Sidebar ------------------------------------------------------------------------------------ */
+
+.volt-http-sidebar {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.volt-http-side-tabs {
+	flex: none;
+	display: flex;
+	align-items: stretch;
+	gap: 2px;
+	height: 36px;
+	padding: 0 6px;
+	box-sizing: border-box;
+	border-bottom: 1px solid var(--volt-http-line);
+}
+
+/* Six equal icon tabs (their names are tooltips): the one in front is brighter, on a line of its own colour. */
+.volt-http-side-tab {
+	position: relative;
+	flex: 1 1 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--volt-http-muted) !important;
+	cursor: pointer;
+}
+
+.volt-http-side-tab::before {
+	content: '';
+	position: absolute;
+	inset: 5px 0;
+	border-radius: 5px;
+}
+
+.volt-http-side-tab:hover::before {
+	background: var(--volt-http-hover);
+}
+
+.volt-http-side-tab:hover,
+.volt-http-side-tab.active {
+	color: var(--vscode-foreground) !important;
+}
+
+/* The line is the text's own colour: some themes make the panel's active border see-through. */
+.volt-http-side-tab.active::after {
+	content: '';
+	position: absolute;
+	left: 50%;
+	bottom: -1px;
+	width: 20px;
+	height: 2px;
+	margin-left: -10px;
+	border-radius: 1px;
+	background: var(--vscode-foreground);
+}
+
+/* One colour for every tab's icon: a symbol icon would bring its own (blue). */
+.volt-http-editor .volt-http-side-tab .codicon[class*='codicon-'] {
+	position: relative;
+	flex: none;
+	font-size: 15px;
+	color: inherit !important;
+}
+
+.volt-http-side-tools {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 40px;
+	padding: 0 8px 0 10px;
+	box-sizing: border-box;
+}
+
+.volt-http-side-search {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	height: 26px;
+	margin-right: 4px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 6px;
+	background: var(--vscode-input-background);
+	color: var(--volt-http-muted);
+}
+
+/* A field in focus shows its caret; the client draws no ring or border around it. */
+.monaco-workbench .volt-http-editor input:focus,
+.monaco-workbench .volt-http-editor textarea:focus {
+	outline: none !important;
+	box-shadow: none;
+}
+
+.volt-http-side-search input {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 100%;
+	padding: 0;
+	border: 0;
+	outline: 0;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font-size: 12px;
+}
+
+.volt-http-editor .volt-http-side-search .codicon[class*='codicon-'] {
+	flex: none;
+	font-size: 13px;
+}
+
+/* Rows run edge to edge; their side padding is inside the row. */
+.volt-http-side-list {
+	flex: none;
+	overflow: hidden;
+}
+
+.volt-http-side-list.hidden {
+	display: none;
+}
+
+.volt-http-side-list .monaco-list-row,
+.volt-http-run-list .monaco-list-row,
+.volt-http-test-list .monaco-list-row,
+.volt-http-view .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-http-side-empty {
+	display: none;
+	padding: 18px 16px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-http-side-empty.shown {
+	display: block;
+}
+
+.volt-http-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 100%;
+	padding: 0 8px 0 12px;
+	box-sizing: border-box;
+	min-width: 0;
+}
+
+.volt-http-row.tree {
+	padding-left: 0;
+}
+
+.volt-http-row-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 16px;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-row-icon.none,
+.volt-http-row-icon:empty {
+	display: none;
+}
+
+.volt-http-row-icon.active {
+	color: var(--volt-http-get);
+}
+
+.volt-http-editor .volt-http-row-icon .codicon[class*='codicon-'],
+.volt-http-view .volt-http-row-icon .codicon[class*='codicon-'] {
+	font-size: 15px;
+}
+
+.volt-http-row-icon.status {
+	min-width: 28px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.volt-http-row-icon.status.ok { color: var(--volt-http-get); }
+.volt-http-row-icon.status.info { color: var(--volt-http-put); }
+.volt-http-row-icon.status.warn { color: var(--volt-http-post); }
+.volt-http-row-icon.status.error { color: var(--volt-http-delete); }
+
+.volt-http-row-method {
+	flex: none;
+	min-width: 30px;
+	color: var(--volt-http-muted);
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+}
+
+.volt-http-row-method:empty {
+	display: none;
+}
+
+.volt-http-method[data-method="GET"] .volt-dropdown,
+.volt-http-method[data-method="HEAD"] .volt-dropdown,
+.volt-http-row-method[data-method="GET"],
+.volt-http-row-method[data-method="HEAD"] { color: var(--volt-http-get); }
+.volt-http-method[data-method="POST"] .volt-dropdown,
+.volt-http-row-method[data-method="POST"] { color: var(--volt-http-post); }
+.volt-http-method[data-method="PUT"] .volt-dropdown,
+.volt-http-row-method[data-method="PUT"] { color: var(--volt-http-put); }
+.volt-http-method[data-method="PATCH"] .volt-dropdown,
+.volt-http-method[data-method="OPTIONS"] .volt-dropdown,
+.volt-http-row-method[data-method="PATCH"],
+.volt-http-row-method[data-method="OPTIONS"] { color: var(--volt-http-patch); }
+.volt-http-method[data-method="DELETE"] .volt-dropdown,
+.volt-http-row-method[data-method="DELETE"] { color: var(--volt-http-delete); }
+
+.volt-http-row-label {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-row.collection .volt-http-row-label {
+	font-weight: 600;
+}
+
+/* In a narrow sidebar the detail ellipsizes first (shrink 100) so the name stays readable. */
+.volt-http-row-detail {
+	flex: 0 100 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.volt-http-row-detail:empty {
+	display: none;
+}
+
+.volt-http-row-actions {
+	flex: none;
+	display: none;
+	align-items: center;
+	gap: 2px;
+}
+
+.monaco-list-row:hover .volt-http-row-actions,
+.monaco-list-row.focused .volt-http-row-actions,
+.monaco-list-row.selected .volt-http-row-actions {
+	display: inline-flex;
+}
+
+.monaco-list-row:hover .volt-http-row-actions + .volt-http-row-detail {
+	display: none;
+}
+
+.volt-http-row-actions .volt-http-icon-button {
+	width: 22px;
+	height: 22px;
+	color: inherit;
+}
+
+.volt-http-rename {
+	width: 100%;
+	height: 22px;
+	padding: 0 6px;
+	box-sizing: border-box;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+	outline: 0;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground, var(--vscode-foreground));
+	font-size: 13px;
+}
+
+/* --- Head: where the request lives, its name, Save -------------------------------------------- */
+
+.volt-http-request-view,
+.volt-http-page {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-width: 0;
+}
 
 .volt-http-head {
 	flex: none;
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	height: 52px;
-	padding: 0 16px 0 20px;
+	height: 46px;
+	padding: 0 var(--volt-http-pad);
 	box-sizing: border-box;
+	/* Its buttons drop their labels when the head itself is tight (below), whatever the client's width. */
+	container: volt-http-head / inline-size;
+}
+
+/* A tight head: Edit with AI, Add to Chat and Save as icons, so the request's name keeps its room. */
+@container volt-http-head (max-width: 560px) {
+	.volt-http-head-actions .volt-http-save > span,
+	.volt-http-head-button > span {
+		display: none;
+	}
+
+	.monaco-workbench .volt-http-head-actions .volt-http-save,
+	.monaco-workbench .volt-button.volt-http-head-button {
+		justify-content: center;
+		width: 28px;
+		padding: 0;
+	}
+
+	.volt-http-head-actions .volt-http-add-chat {
+		margin-right: 0;
+	}
 }
 
 .volt-http-crumbs {
@@ -54,9 +852,16 @@
 
 .volt-http-kind {
 	flex: none;
-	margin-right: 6px;
-	padding-bottom: 1px;
-	border-bottom: 1px solid currentColor;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 20px;
+	margin-right: 4px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 3px;
+	background: transparent;
+	cursor: pointer;
 	color: var(--vscode-textLink-foreground);
 	font-size: 9px;
 	font-weight: 700;
@@ -66,68 +871,134 @@
 
 .volt-http-crumb {
 	flex: 0 1 auto;
-	min-width: 0;
-	max-width: 40%;
+	min-width: 24px;
+	max-width: 30%;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--volt-http-muted) !important;
+	font-size: 13px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: var(--volt-http-muted);
+	cursor: pointer;
+}
+
+.volt-http-crumb:hover {
+	color: var(--vscode-foreground) !important;
 }
 
 .volt-http-crumb-sep {
 	flex: none;
 	color: var(--volt-http-muted);
-	opacity: 0.7;
-}
-
-.volt-http-crumbs.no-source .volt-http-crumb,
-.volt-http-crumbs.no-source .volt-http-crumb-sep {
-	display: none;
+	opacity: 0.6;
 }
 
 .volt-http-name {
-	flex: 1 1 auto;
-	min-width: 120px;
-	max-width: 420px;
-}
-
-.volt-http-name .monaco-inputbox > .ibwrapper > .input {
-	padding: 4px 6px;
+	flex: 1 1 80px;
+	min-width: 60px;
+	height: 28px;
+	padding: 0 6px;
+	margin-left: -6px;
+	box-sizing: border-box;
+	border: 1px solid transparent;
+	border-radius: 5px;
+	outline: 0;
+	background: transparent;
+	color: var(--vscode-foreground);
 	font-size: 13px;
 	font-weight: 600;
+	text-overflow: ellipsis;
 }
 
-.volt-http-name .monaco-inputbox {
-	margin-left: -6px;
-	border-radius: 4px;
+.volt-http-name:hover:not(:read-only) {
+	border-color: var(--volt-http-line);
 }
 
-.volt-http-name .monaco-inputbox:hover {
-	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent) !important;
+.volt-http-name:focus:not(:read-only) {
+	border-color: var(--volt-http-line);
+	background: var(--vscode-input-background);
+}
+
+.volt-http-name.title {
+	margin-left: 0;
+	font-size: 14px;
+}
+
+.volt-http-page-icon {
+	flex: none;
+	display: inline-flex;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-gone {
+	color: var(--volt-http-muted);
 }
 
 .volt-http-head-actions {
 	flex: none;
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 8px;
 }
 
 .monaco-workbench .volt-http-head-actions .volt-button {
-	height: 30px;
+	height: 28px;
+	padding: 0 10px;
 	font-size: 13px;
 }
 
-/* URL bar: [ METHOD v | url ] [ Send | v ] */
+/*
+ * The quiet buttons of a tab's head (Edit with AI, Add to Chat, Save, Analyze with AI, Triage with
+ * AI, More Actions) carry a resting fill, so they read as buttons before the pointer finds them.
+ */
+.monaco-workbench .volt-http-head-actions .volt-button-ghost,
+.monaco-workbench .volt-http-sec-head-actions .volt-button-ghost,
+.monaco-workbench .volt-http-auto-head-actions .volt-button-ghost,
+.volt-http-head-actions > .volt-http-icon-button,
+.volt-http-sec-head-actions > .volt-http-icon-button,
+.volt-http-auto-head-actions > .volt-http-icon-button {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	border: 0;
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	color: var(--vscode-foreground);
+	cursor: pointer;
+}
+
+.monaco-workbench .volt-http-head-actions .volt-button-ghost:hover,
+.monaco-workbench .volt-http-sec-head-actions .volt-button-ghost:hover,
+.monaco-workbench .volt-http-auto-head-actions .volt-button-ghost:hover,
+.volt-http-head-actions > .volt-http-icon-button:hover,
+.volt-http-sec-head-actions > .volt-http-icon-button:hover,
+.volt-http-auto-head-actions > .volt-http-icon-button:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+.volt-http-head-actions > .volt-http-icon-button,
+.volt-http-sec-head-actions > .volt-http-icon-button,
+.volt-http-auto-head-actions > .volt-http-icon-button {
+	width: 28px;
+	height: 28px;
+}
+
+/* Nothing to save: the mark steps back, the button stays. */
+.monaco-workbench .volt-http-head-actions .volt-http-save:not(.dirty):not(.volt-http-add-chat):not(.volt-http-ai-edit-toggle) {
+	color: var(--volt-http-muted);
+}
+
+/* --- URL bar: [ METHOD v | url ] [ Send | v ] ------------------------------------------------- */
 
 .volt-http-bar {
 	flex: none;
 	display: flex;
 	align-items: stretch;
 	gap: 8px;
-	height: 40px;
-	padding: 0 16px;
-	margin-top: 4px;
+	height: 32px;
+	padding: 0 var(--volt-http-pad);
 }
 
 .volt-http-urlgroup {
@@ -137,19 +1008,16 @@
 	min-width: 0;
 	box-sizing: border-box;
 	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
-	border-radius: 6px;
+	border-radius: 3px;
 	background: var(--vscode-input-background);
 	overflow: hidden;
-}
-
-.volt-http-urlgroup:focus-within {
-	border-color: var(--vscode-focusBorder);
+	--volt-http-field-height: 30px;
 }
 
 .volt-http-method {
 	flex: none;
 	display: flex;
-	width: 116px;
+	width: 88px;
 	border-right: 1px solid var(--vscode-input-border, var(--volt-http-line));
 }
 
@@ -157,10 +1025,10 @@
 	flex: 1;
 	justify-content: space-between;
 	height: 100%;
-	padding: 0 10px 0 14px;
-	border-radius: 0;
+	padding: 0 8px 0 12px;
+	border-radius: 0 !important;
 	background: transparent;
-	font-size: 13px;
+	font-size: 12px;
 	font-weight: 600;
 	letter-spacing: 0.01em;
 }
@@ -174,36 +1042,16 @@
 	outline-offset: -1px;
 }
 
-.volt-http-method[data-method="GET"] .volt-dropdown,
-.volt-http-row-method[data-method="GET"] { color: var(--volt-http-get); }
-.volt-http-method[data-method="POST"] .volt-dropdown,
-.volt-http-row-method[data-method="POST"] { color: var(--volt-http-post); }
-.volt-http-method[data-method="PUT"] .volt-dropdown,
-.volt-http-row-method[data-method="PUT"] { color: var(--volt-http-put); }
-.volt-http-method[data-method="PATCH"] .volt-dropdown,
-.volt-http-row-method[data-method="PATCH"] { color: var(--volt-http-patch); }
-.volt-http-method[data-method="DELETE"] .volt-dropdown,
-.volt-http-row-method[data-method="DELETE"] { color: var(--volt-http-delete); }
-
 .volt-http-url {
 	flex: 1 1 auto;
 	display: flex;
-	min-width: 120px;
+	min-width: 80px;
 }
 
-.volt-http-url .monaco-inputbox {
-	flex: 1;
-	height: 100%;
-}
-
-.volt-http-url .monaco-inputbox > .ibwrapper {
-	height: 100%;
-}
-
-.volt-http-url .monaco-inputbox > .ibwrapper > .input {
-	height: 100%;
+.volt-http-url .volt-http-field-input,
+.volt-http-url .volt-http-field-layer {
 	padding: 0 12px;
-	font-size: 13.5px;
+	font-size: 13px;
 }
 
 .volt-http-send {
@@ -215,19 +1063,94 @@
 .monaco-workbench .volt-http-send .volt-button {
 	height: 100%;
 	border: 0;
-	border-radius: 6px 0 0 6px;
-	padding: 0 26px;
-	font-size: 14px;
+	border-radius: 3px 0 0 3px;
+	padding: 0 18px;
+	font-size: 13px;
 	font-weight: 600;
 }
 
 .monaco-workbench .volt-http-send .volt-button.volt-http-send-more {
-	padding: 0 10px;
+	padding: 0 8px;
 	border-left: 1px solid var(--vscode-button-separator, rgba(0, 0, 0, 0.25));
-	border-radius: 0 6px 6px 0;
+	border-radius: 0 3px 3px 0;
 }
 
-/* Request tabs: Params • Authorization • Headers (n) Body • */
+/* --- Fields that colour {{variables}} --------------------------------------------------------- */
+
+.volt-http-field-box {
+	position: relative;
+	flex: 1 1 auto;
+	display: flex;
+	min-width: 0;
+	height: 100%;
+}
+
+.volt-http-field-input {
+	flex: 1 1 auto;
+	width: 100%;
+	min-width: 0;
+	height: 100%;
+	margin: 0;
+	padding: 0 10px;
+	box-sizing: border-box;
+	border: 0;
+	outline: 0;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font-size: 13px;
+	letter-spacing: normal;
+}
+
+.volt-http-field-input::placeholder,
+.volt-http-docs::placeholder,
+.volt-http-import::placeholder,
+.volt-http-name::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--volt-http-muted));
+	opacity: 0.7;
+}
+
+/* The same text as the input, drawn under it with the variables coloured. */
+.volt-http-field-layer {
+	display: none;
+	position: absolute;
+	inset: 0;
+	padding: 0 10px;
+	box-sizing: border-box;
+	overflow: hidden;
+	white-space: pre;
+	pointer-events: none;
+	font-size: 13px;
+	letter-spacing: normal;
+	line-height: var(--volt-http-field-height, 30px);
+	color: var(--vscode-foreground);
+}
+
+.volt-http-field-box.has-variables .volt-http-field-layer {
+	display: block;
+}
+
+.volt-http-field-box.has-variables .volt-http-field-input {
+	color: transparent;
+	caret-color: var(--vscode-foreground);
+}
+
+.volt-http-variable {
+	color: var(--volt-http-variable);
+}
+
+.volt-http-variable.unresolved {
+	color: var(--volt-http-delete);
+}
+
+.volt-http-field-box.boxed {
+	height: 30px;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 6px;
+	background: var(--vscode-input-background);
+	--volt-http-field-height: 28px;
+}
+
+/* --- Tabs: Params . Authorization . Headers (n) Body . ---------------------------------------- */
 
 .volt-http-request {
 	flex: none;
@@ -238,49 +1161,81 @@
 }
 
 .volt-http-tabs,
-.volt-http-res-tabs {
+.volt-http-res-tabs,
+.volt-http-subtabs {
 	flex: none;
 	display: flex;
 	align-items: stretch;
-	gap: 24px;
+	gap: 20px;
+	min-width: 0;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.volt-http-tabs::-webkit-scrollbar,
+.volt-http-res-tabs::-webkit-scrollbar,
+.volt-http-subtabs::-webkit-scrollbar,
+.volt-http-script-bar::-webkit-scrollbar {
+	display: none;
+}
+
+/* More behind an end (watchHttpOverflow): that end fades out instead of cutting a name in half. */
+.volt-http-tabs.more-end,
+.volt-http-res-tabs.more-end,
+.volt-http-subtabs.more-end,
+.volt-http-script-bar.more-end {
+	mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+}
+
+.volt-http-tabs.more-start,
+.volt-http-res-tabs.more-start,
+.volt-http-subtabs.more-start,
+.volt-http-script-bar.more-start {
+	mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent);
+}
+
+.volt-http-tabs.more-start.more-end,
+.volt-http-res-tabs.more-start.more-end,
+.volt-http-subtabs.more-start.more-end,
+.volt-http-script-bar.more-start.more-end {
+	mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+}
+
+/* A response's tabs give way (they scroll); its status, time and size stay whole. */
+.volt-http-res-bar > .volt-http-res-tabs {
+	flex: 0 1 auto;
 }
 
 .volt-http-tabs {
-	height: 40px;
-	margin-top: 6px;
-	padding: 0 20px;
+	height: 36px;
+	margin-top: 4px;
+	padding: 0 var(--volt-http-pad);
 }
 
 .volt-http-tab {
+	flex: none;
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
 	height: 100%;
 	padding: 0;
-	border: none;
+	border: 0;
 	border-top: 2px solid transparent;
 	border-bottom: 2px solid transparent;
-	box-sizing: border-box;
-	background: none;
-	color: var(--volt-http-muted);
-	font: inherit;
+	background: transparent;
+	color: var(--volt-http-muted) !important;
 	font-size: 13px;
-	white-space: nowrap;
 	cursor: pointer;
+	white-space: nowrap;
 }
 
 .volt-http-tab:hover,
 .volt-http-tab.active {
-	color: var(--vscode-foreground);
+	color: var(--vscode-foreground) !important;
 }
 
 .volt-http-tab.active {
 	border-bottom-color: var(--vscode-panelTitle-activeBorder, var(--vscode-focusBorder));
-}
-
-.volt-http-tab:focus-visible {
-	outline: 1px solid var(--vscode-focusBorder);
-	outline-offset: -1px;
 }
 
 .volt-http-tab-count {
@@ -290,114 +1245,125 @@
 .volt-http-tab-dot {
 	width: 6px;
 	height: 6px;
-	margin-left: 2px;
 	border-radius: 50%;
 	background: var(--volt-http-get);
 }
 
-.volt-http-tab-body {
+.volt-http-tab-badge {
+	padding: 0 6px;
+	border-radius: 8px;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 16px;
+}
+
+.volt-http-tab-badge.ok { color: var(--volt-http-get); background: color-mix(in srgb, var(--volt-http-get) 16%, transparent); }
+.volt-http-tab-badge.error { color: var(--volt-http-delete); background: color-mix(in srgb, var(--volt-http-delete) 16%, transparent); }
+
+.volt-http-tab-body,
+.volt-http-page-body {
 	flex: 1 1 auto;
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
 	min-height: 0;
-	padding: 14px 16px 16px;
+	padding: 4px var(--volt-http-pad) 12px;
 	overflow: auto;
 }
 
-/* Sections and key/value tables */
+.volt-http-tab-body.scripts,
+.volt-http-tab-body.docs,
+.volt-http-page-body.scripts,
+.volt-http-page-body.runs {
+	overflow: hidden;
+}
 
 .volt-http-section {
 	flex: none;
-	display: flex;
-	flex-direction: column;
-	gap: 10px;
-}
-
-.volt-http-section.bulk {
-	flex: 1 1 auto;
-	min-height: 160px;
+	margin-bottom: 12px;
 }
 
 .volt-http-section-head {
 	display: flex;
-	align-items: center;
-	gap: 8px;
-}
-
-.volt-http-section-head.hidden {
-	display: none;
+	align-items: baseline;
+	gap: 12px;
+	padding: 6px 0;
 }
 
 .volt-http-section-title {
 	color: var(--volt-http-muted);
+	font-size: 12px;
 	font-weight: 600;
 }
 
-.volt-http-section-actions {
-	margin-left: auto;
+.volt-http-auto-note {
+	min-width: 0;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
+
+/* --- Key/value tables ---------------------------------------------------------------------------- */
 
 .volt-http-kv {
-	display: flex;
-	flex-direction: column;
-	min-height: 0;
-}
-
-.volt-http-section.bulk .volt-http-kv {
-	flex: 1 1 auto;
-}
-
-.volt-http-link {
-	padding: 0;
-	border: 0;
-	background: none;
-	color: var(--vscode-textLink-foreground);
-	font: inherit;
-	white-space: nowrap;
-	cursor: pointer;
-}
-
-.volt-http-link:hover {
-	color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
-	text-decoration: underline;
-}
-
-.volt-http-link.muted {
-	color: var(--volt-http-muted);
-}
-
-.volt-http-link.muted:hover {
-	color: var(--vscode-foreground);
-	text-decoration: none;
-}
-
-.volt-http-link:focus-visible {
-	outline: 1px solid var(--vscode-focusBorder);
-	outline-offset: 2px;
-}
-
-.volt-http-link.end {
-	margin-left: auto;
-}
-
-.volt-http-table {
-	flex: none;
 	border: 1px solid var(--volt-http-line);
+	border-radius: 6px;
+	overflow: hidden;
+}
+
+/* A response's headers and cookies: the column names stay while the rows scroll under them. */
+.volt-http-kv.readonly {
+	overflow: visible;
+	border-top: 0;
+	border-radius: 0 0 6px 6px;
+}
+
+.volt-http-kv.readonly .volt-http-tr.head {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	border-top: 1px solid var(--volt-http-line);
+	border-bottom: 1px solid var(--volt-http-line);
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, var(--vscode-editor-background));
+}
+
+.volt-http-kv.readonly .volt-http-tr.head + .volt-http-tr {
+	border-top: 0;
 }
 
 .volt-http-tr {
+	position: relative;
 	display: grid;
-	grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr) 104px;
-	min-height: 32px;
-	border-bottom: 1px solid var(--volt-http-line);
+	grid-template-columns: 18px 30px minmax(0, var(--volt-http-key-col, 0.34fr)) minmax(0, var(--volt-http-value-col, 0.66fr)) 62px;
+	align-items: stretch;
+	min-height: 30px;
+	border-top: 1px solid var(--volt-http-line);
+	--volt-http-field-height: 30px;
 }
 
-.volt-http-tr:last-child {
-	border-bottom: 0;
+.volt-http-kv.with-description .volt-http-tr {
+	grid-template-columns: 18px 30px minmax(0, var(--volt-http-key-col, 0.34fr)) minmax(0, var(--volt-http-value-col, 0.66fr)) minmax(0, 0.7fr) 62px;
 }
 
-.volt-http-tr:not(.head):hover {
+.volt-http-kv.fixed .volt-http-tr {
+	grid-template-columns: minmax(0, var(--volt-http-key-col, 0.34fr)) minmax(0, var(--volt-http-value-col, 0.66fr));
+}
+
+.volt-http-kv.fixed.with-description .volt-http-tr {
+	grid-template-columns: minmax(0, var(--volt-http-key-col, 0.34fr)) minmax(0, var(--volt-http-value-col, 0.66fr)) minmax(0, 0.7fr);
+}
+
+.volt-http-kv.readonly .volt-http-tr {
+	grid-template-columns: repeat(var(--volt-http-columns, 2), minmax(0, 1fr));
+}
+
+.volt-http-tr:first-child {
+	border-top: 0;
+}
+
+.volt-http-tr.head {
+	min-height: 28px;
 	background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
 }
 
@@ -405,258 +1371,464 @@
 	display: flex;
 	align-items: center;
 	min-width: 0;
-	border-right: 1px solid var(--volt-http-line);
-}
-
-.volt-http-td:last-child {
-	border-right: 0;
+	box-sizing: border-box;
+	overflow: hidden;
 }
 
 .volt-http-td.label {
-	padding: 0 12px;
-	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+	position: relative;
+	padding: 0 10px;
+	border-left: 1px solid var(--volt-http-line);
+	color: var(--volt-http-muted);
+	font-size: 12px;
 	font-weight: 600;
+	overflow: visible;
 }
 
-.volt-http-td.check {
+.volt-http-td.cell,
+.volt-http-td.text {
+	border-left: 1px solid var(--volt-http-line);
+}
+
+.volt-http-kv.readonly .volt-http-td:first-child,
+.volt-http-kv.fixed .volt-http-td.check + .volt-http-td {
+	border-left: 0;
+}
+
+.volt-http-td.cell:focus-within {
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.volt-http-td.text {
+	padding: 6px 10px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 18px;
+	overflow-wrap: anywhere;
+	user-select: text;
+	align-items: flex-start;
+}
+
+.volt-http-td.check,
+.volt-http-td.grip {
 	justify-content: center;
 }
 
-.volt-http-td.check .monaco-checkbox {
-	margin: 0;
+.volt-http-td.grip {
+	color: var(--volt-http-muted);
+	cursor: grab;
+}
+
+.volt-http-editor .volt-http-td.grip .codicon[class*='codicon-'] {
+	font-size: 12px;
+	opacity: 0;
+}
+
+.volt-http-tr:hover .volt-http-td.grip .codicon {
+	opacity: 0.7;
 }
 
 .volt-http-td.tail {
 	justify-content: flex-end;
-	padding: 0 10px;
+	gap: 2px;
+	padding-right: 6px;
+	border-left: 1px solid var(--volt-http-line);
 }
 
-.volt-http-td.cell {
-	align-items: stretch;
+.volt-http-kv.fixed .volt-http-td.tail,
+.volt-http-kv.fixed .volt-http-td.grip,
+.volt-http-kv.fixed .volt-http-td.check {
+	display: none;
 }
 
-.volt-http-td.cell:focus-within {
-	outline: 1px solid var(--vscode-focusBorder);
-	outline-offset: -1px;
-}
-
-.volt-http-td.cell .monaco-inputbox {
-	flex: 1;
-}
-
-.volt-http-td.cell .monaco-inputbox > .ibwrapper {
-	height: 100%;
-}
-
-.volt-http-td.cell .monaco-inputbox > .ibwrapper > .input {
-	height: 100%;
-	padding: 0 12px;
-	font-size: 13px;
-}
-
-.volt-http-td.cell .monaco-inputbox.synthetic-focus {
-	outline: none;
-}
-
-.volt-http-tr.disabled .volt-http-td.cell {
-	opacity: 0.5;
-}
-
-.volt-http-td.text {
-	padding: 7px 12px;
-	overflow-wrap: anywhere;
-	user-select: text;
-	-webkit-user-select: text;
-}
-
-.volt-http-table.readonly .volt-http-tr {
-	grid-template-columns: minmax(140px, 34%) minmax(0, 1fr);
-}
-
-.volt-http-table.readonly .volt-http-tr:not(.head) .volt-http-td:first-child {
-	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
-}
-
-.volt-http-kv-remove {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 24px;
-	height: 24px;
-	padding: 0;
-	border: none;
-	border-radius: 4px;
-	background: none;
-	color: var(--volt-http-muted);
-	cursor: pointer;
+.volt-http-td.tail .volt-http-icon-button.quiet {
 	opacity: 0;
 }
 
-.volt-http-tr:hover .volt-http-kv-remove,
-.volt-http-kv-remove:focus-visible {
+.volt-http-tr:hover .volt-http-icon-button.quiet,
+.volt-http-tr:focus-within .volt-http-icon-button.quiet {
 	opacity: 1;
 }
 
-.volt-http-kv-remove:hover {
-	background: var(--vscode-toolbar-hoverBackground);
+.volt-http-tr.disabled .volt-http-field-input,
+.volt-http-tr.disabled .volt-http-field-layer {
+	opacity: 0.5;
+}
+
+.volt-http-tr.dragging {
+	opacity: 0.4;
+}
+
+.volt-http-tr.drop-before::before,
+.volt-http-tr.drop-after::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 2px;
+	background: var(--vscode-focusBorder);
+	z-index: 1;
+}
+
+.volt-http-tr.drop-before::before { top: -1px; }
+.volt-http-tr.drop-after::after { bottom: -1px; }
+
+/* The divider between Key and Value: drag to resize both columns of every table. */
+.volt-http-col-resize {
+	position: absolute;
+	top: 0;
+	right: -4px;
+	width: 8px;
+	height: 100%;
+	cursor: col-resize;
+	z-index: 2;
+}
+
+.volt-http-col-resize:hover::after,
+.volt-http-col-resize.active::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 3px;
+	width: 2px;
+	height: var(--volt-http-col-line, 100%);
+	background: var(--vscode-focusBorder);
+	pointer-events: none;
+}
+
+.volt-http-cell-kind {
+	flex: none;
+	height: 20px;
+	margin-right: 6px;
+	padding: 0 8px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 10px;
+	background: transparent;
+	color: var(--volt-http-muted) !important;
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.volt-http-cell-kind:hover {
+	color: var(--vscode-foreground) !important;
+}
+
+.volt-http-bulk-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--volt-http-line);
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-bulk,
+.volt-http-docs,
+.volt-http-import {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	border: 0;
+	outline: 0;
+	resize: none;
+	background: transparent;
 	color: var(--vscode-foreground);
+	font-size: 13px;
+	line-height: 20px;
 }
 
-.volt-http-kv-remove:focus-visible {
-	outline: 1px solid var(--vscode-focusBorder);
-	outline-offset: -1px;
+.volt-http-bulk {
+	min-height: 140px;
+	padding: 8px 10px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	resize: vertical;
 }
 
-/* Body: radio row (none · x-www-form-urlencoded · raw [JSON v] · GraphQL … Beautify) */
+.volt-http-docs,
+.volt-http-import {
+	flex: 1 1 auto;
+	min-height: 96px;
+	padding: 10px 12px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 6px;
+}
+
+.volt-http-import {
+	height: 220px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+/* --- Body ------------------------------------------------------------------------------------------ */
 
 .volt-http-modes {
 	flex: none;
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
-	gap: 8px 20px;
-	min-height: 28px;
+	gap: 4px 18px;
+	min-height: 34px;
+	padding-bottom: 6px;
 }
 
 .volt-http-radio {
 	display: inline-flex;
 	align-items: center;
-	gap: 8px;
-	padding: 0;
+	gap: 6px;
+	padding: 2px 0;
 	border: 0;
-	background: none;
-	color: color-mix(in srgb, var(--vscode-foreground) 85%, transparent);
-	font: inherit;
+	background: transparent;
+	color: var(--volt-http-muted) !important;
+	font-size: 13px;
 	cursor: pointer;
+	white-space: nowrap;
 }
 
 .volt-http-radio:hover,
 .volt-http-radio.checked {
-	color: var(--vscode-foreground);
-}
-
-.volt-http-radio:focus-visible {
-	outline: 1px solid var(--vscode-focusBorder);
-	outline-offset: 2px;
+	color: var(--vscode-foreground) !important;
 }
 
 .volt-http-radio-dot {
-	flex: none;
 	width: 14px;
 	height: 14px;
 	box-sizing: border-box;
-	border: 1px solid var(--vscode-checkbox-border, var(--volt-http-line));
+	border: 1px solid var(--vscode-checkbox-border, var(--volt-http-muted));
 	border-radius: 50%;
-	background: var(--vscode-checkbox-background, transparent);
-	transition: border-width 120ms ease, border-color 120ms ease;
 }
 
 .volt-http-radio.checked .volt-http-radio-dot {
-	border-width: 4px;
-	border-color: var(--vscode-button-background);
+	border: 4px solid var(--vscode-button-background, var(--vscode-focusBorder));
 }
 
-.volt-http-raw-format {
-	margin-left: -12px;
-}
-
-.monaco-workbench .volt-http-raw-format .volt-dropdown {
+.monaco-workbench .volt-http-raw-format .volt-dropdown,
+.monaco-workbench .volt-http-res-format .volt-dropdown {
 	height: 24px;
-	padding: 0 4px 0 6px;
+	padding: 0 6px;
 	background: transparent;
 	color: var(--vscode-textLink-foreground);
+	font-size: 12px;
 }
 
 .monaco-workbench .volt-http-raw-format .volt-dropdown:hover,
-.monaco-workbench .volt-http-raw-format .volt-dropdown.open {
-	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+.monaco-workbench .volt-http-raw-format .volt-dropdown.open,
+.monaco-workbench .volt-http-res-format .volt-dropdown:hover,
+.monaco-workbench .volt-http-res-format .volt-dropdown.open {
+	background: var(--volt-http-hover);
 }
 
 .volt-http-code {
-	flex: 1 1 0;
-	min-height: 120px;
+	flex: 1 1 auto;
+	min-height: 60px;
 	border: 1px solid var(--volt-http-line);
+	border-radius: 6px;
 	overflow: hidden;
 }
 
-.volt-http-code.bulk {
-	min-height: 140px;
+.volt-http-code.response,
+.volt-http-code.flush {
+	margin: 0;
+	border: 0;
+	border-radius: 0;
+}
+
+.volt-http-code.snippet {
+	flex: 1 1 auto;
+	height: 360px;
+	min-height: 160px;
+	border: 0;
+	border-radius: 0;
+}
+
+/* The snippet dialog is its editor: the code runs to the dialog's edges, under the head that holds the language. */
+.volt-http-modal-body.snippet {
+	padding: 0;
+	gap: 0;
+	overflow: hidden;
+}
+
+.volt-http-modal-title {
+	flex: none;
+}
+
+.volt-http-modal-tools {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	min-width: 0;
+	padding: 0 8px 0 16px;
+	font-weight: 400;
+}
+
+.monaco-workbench .volt-http-snippet-language .volt-dropdown {
+	height: 28px;
+	gap: 8px;
+}
+
+/* Copy: a secondary button whose icon turns into a check for a moment. */
+.monaco-workbench .volt-button.volt-http-copy {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 86px;
+	border-radius: 3px;
+	cursor: pointer;
+}
+
+.volt-http-copy:active {
+	transform: scale(0.97);
+}
+
+.monaco-workbench .volt-button.volt-http-copy.copied {
+	color: var(--volt-http-get);
+}
+
+.volt-http-copy-icon {
+	display: inline-flex;
+}
+
+@keyframes volt-http-pop {
+	0% { transform: scale(0.4); opacity: 0; }
+	60% { transform: scale(1.18); opacity: 1; }
+	100% { transform: scale(1); }
+}
+
+/* The wrapper pops, not the SVG: an animated box is composited, an animated SVG repaints. */
+.volt-http-copy.copied .volt-http-copy-icon {
+	animation: volt-http-pop 0.28s ease-out;
+}
+
+.volt-http-empty {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	color: var(--volt-http-muted);
+	text-align: center;
+}
+
+.volt-http-empty.center {
+	flex: 1 1 auto;
+	min-height: 60px;
+	padding: 12px;
+}
+
+.volt-http-empty.response {
+	flex: 1 1 auto;
+	flex-direction: column;
+	padding: 12px;
+}
+
+.volt-http-editor .volt-http-empty.response .codicon[class*='codicon-'] {
+	font-size: 32px;
+	opacity: 0.35;
+}
+
+.volt-http-binary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.volt-http-binary .volt-http-field-box {
+	height: 30px;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 6px;
+	background: var(--vscode-input-background);
+	--volt-http-field-height: 28px;
 }
 
 .volt-http-graphql {
 	flex: 1 1 auto;
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-	gap: 16px;
-	min-height: 160px;
+	display: flex;
+	gap: 12px;
+	min-height: 0;
 }
 
 .volt-http-graphql-pane {
+	flex: 1 1 0;
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
 	min-width: 0;
 	min-height: 0;
 }
 
-.volt-http-sublabel {
+.volt-http-script-bar {
 	flex: none;
-	color: var(--volt-http-muted);
-	font-size: 11px;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	height: 32px;
+	margin-bottom: 6px;
+	overflow-x: auto;
+	scrollbar-width: none;
 }
 
-/* Authorization: type on the left, its fields on the right */
+.volt-http-script-bar > :not(.volt-http-spacer) {
+	flex: none;
+}
+
+.volt-http-subtabs {
+	height: 100%;
+}
+
+/* --- Authorization ----------------------------------------------------------------------------- */
 
 .volt-http-auth {
-	flex: 1 1 auto;
-	display: grid;
-	grid-template-columns: minmax(200px, 300px) minmax(0, 1fr);
-	min-height: 0;
+	display: flex;
+	gap: 24px;
+	padding-top: 8px;
 }
 
 .volt-http-auth-type {
+	flex: 0 0 240px;
 	display: flex;
 	flex-direction: column;
-	align-items: flex-start;
-	gap: 10px;
-	padding: 2px 20px 0 4px;
-	border-right: 1px solid var(--volt-http-line);
+	gap: 8px;
+	min-width: 0;
 }
 
 .volt-http-auth-help {
 	color: var(--volt-http-muted);
 	font-size: 12px;
-	line-height: 1.5;
+	line-height: 18px;
 }
 
 .volt-http-auth-fields {
+	flex: 1 1 auto;
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
 	min-width: 0;
-	padding: 2px 4px 0 20px;
+	padding-top: 22px;
 }
 
 .volt-http-field {
-	display: grid;
-	grid-template-columns: 110px minmax(0, 1fr);
+	display: flex;
 	align-items: center;
-	gap: 8px;
-	max-width: 640px;
+	gap: 12px;
+	min-width: 0;
 }
 
-.volt-http-field label {
+.volt-http-field > label {
+	flex: 0 0 96px;
 	color: var(--volt-http-muted);
+	font-size: 12px;
 }
 
-.volt-http-field-input .monaco-inputbox > .ibwrapper > .input {
-	padding: 6px 8px;
+.volt-http-field-wrap {
+	flex: 1 1 auto;
+	display: flex;
+	min-width: 0;
+	max-width: 420px;
 }
 
-/* Divider (the sash sits on it) and the response */
+/* --- Response ---------------------------------------------------------------------------------- */
 
 .volt-http-divider {
 	flex: none;
@@ -665,7 +1837,7 @@
 }
 
 .volt-http-response {
-	flex: 1 1 0;
+	flex: 1 1 auto;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
@@ -676,10 +1848,10 @@
 	flex: none;
 	display: flex;
 	align-items: stretch;
+	justify-content: space-between;
 	gap: 16px;
-	height: 40px;
-	margin-top: 4px;
-	padding: 0 16px;
+	height: 38px;
+	padding: 0 var(--volt-http-pad);
 }
 
 .volt-http-res-title {
@@ -689,30 +1861,18 @@
 }
 
 .volt-http-res-meta {
+	flex: none;
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin-left: auto;
-	color: var(--volt-http-muted);
-	font-size: 12.5px;
-	white-space: nowrap;
-}
-
-.volt-http-meta-dot {
-	flex: none;
-	width: 3px;
-	height: 3px;
-	border-radius: 50%;
-	background: currentColor;
-	opacity: 0.6;
+	font-size: 12px;
 }
 
 .volt-http-pill {
-	padding: 3px 8px;
-	border-radius: 4px;
-	font-size: 12.5px;
+	padding: 2px 8px;
+	border-radius: 5px;
 	font-weight: 600;
-	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
 }
 
 .volt-http-pill.ok { color: var(--volt-http-get); background: color-mix(in srgb, var(--volt-http-get) 16%, transparent); }
@@ -720,152 +1880,149 @@
 .volt-http-pill.warn { color: var(--volt-http-post); background: color-mix(in srgb, var(--volt-http-post) 16%, transparent); }
 .volt-http-pill.error { color: var(--volt-http-delete); background: color-mix(in srgb, var(--volt-http-delete) 16%, transparent); }
 
+.volt-http-meta-dot {
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	background: var(--volt-http-muted);
+	opacity: 0.6;
+}
+
 .volt-http-metric {
-	font-variant-numeric: tabular-nums;
+	color: var(--volt-http-muted);
+	white-space: nowrap;
 }
 
 .volt-http-res-tools {
 	flex: none;
 	display: flex;
 	align-items: center;
-	gap: 2px;
-	padding: 8px 16px;
-}
-
-.monaco-workbench .volt-http-res-format .volt-dropdown {
-	height: 28px;
-	padding: 0 8px 0 10px;
-	border-radius: 4px;
-}
-
-.volt-http-spacer {
-	flex: 1 1 auto;
-}
-
-.monaco-workbench .volt-http-res-tools .volt-button.volt-http-icon-button {
-	width: 28px;
-	height: 28px;
-	padding: 0;
-	border-radius: 4px;
-}
-
-.monaco-workbench .volt-http-res-tools .volt-button.volt-http-icon-button.checked {
-	color: var(--vscode-inputOption-activeForeground, var(--vscode-foreground));
-	background: var(--vscode-inputOption-activeBackground);
-}
-
-.volt-http-tool-sep {
-	flex: none;
-	width: 1px;
-	height: 16px;
-	margin: 0 6px;
-	background: var(--volt-http-line);
-}
-
-.volt-http-code.response {
-	flex: 1 1 0;
-	min-height: 0;
-	margin-left: 6px;
-	border: 0;
+	gap: 4px;
+	height: 34px;
+	padding: 0 var(--volt-http-pad);
 }
 
 .volt-http-res-scroll {
-	flex: 1 1 0;
+	flex: 1 1 auto;
 	min-height: 0;
-	padding: 8px 16px 16px;
+	padding: 0 var(--volt-http-pad) 12px;
 	overflow: auto;
 }
 
-.volt-http-res-scroll .volt-http-table {
-	font-size: 12.5px;
+/* Sending, as in Postman: a line runs across the top of the response while the request is out. */
+.volt-http-progress {
+	flex: none;
+	position: relative;
+	height: 2px;
+	margin-top: -1px;
+	overflow: hidden;
+	background: color-mix(in srgb, var(--vscode-progressBar-background, var(--vscode-focusBorder)) 18%, transparent);
 }
 
-.volt-http-empty {
-	color: var(--volt-http-muted);
-	padding: 8px 0;
+@keyframes volt-http-progress {
+	0% { transform: translateX(-100%) scaleX(0.35); }
+	50% { transform: translateX(60%) scaleX(0.6); }
+	100% { transform: translateX(260%) scaleX(0.35); }
 }
 
-.volt-http-empty.center {
-	flex: 1 1 auto;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	min-height: 80px;
-	text-align: center;
+/* A box that slides: composited, never repainted. */
+.volt-http-progress-bar {
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: 40%;
+	transform-origin: left center;
+	background: var(--vscode-progressBar-background, var(--vscode-focusBorder));
+	animation: volt-http-progress 1.25s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-.volt-http-empty.response,
 .volt-http-waiting {
 	flex: 1 1 auto;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 12px;
-	padding: 16px;
+	gap: 6px;
 	color: var(--volt-http-muted);
-	text-align: center;
 }
 
-.volt-http-empty.response .codicon.codicon.codicon,
-.volt-http-waiting .codicon.codicon.codicon {
-	font-size: 28px;
-	opacity: 0.6;
+.volt-http-waiting-title {
+	color: var(--vscode-foreground);
+	font-size: 13px;
 }
 
-.volt-http-error {
-	padding: 4px 16px;
-	color: var(--vscode-errorForeground);
+.volt-http-waiting-time {
 	font-family: var(--monaco-monospace-font);
 	font-size: 12px;
-	white-space: pre-wrap;
-}
-
-/* Sidebar rows: VS Code lists, edge to edge; padding lives in the row. */
-.volt-http-view .volt-http-tree {
-	height: 100%;
-}
-
-.volt-http-view .monaco-list-row {
-	border-radius: 0;
-}
-
-.volt-http-row {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	height: 100%;
-	padding-right: 12px;
-	min-width: 0;
-}
-
-.volt-http-view .volt-http-row-icon {
-	flex: none;
-	display: inline-flex;
-	align-items: center;
-	font-size: 11px;
 	font-variant-numeric: tabular-nums;
 }
 
-.volt-http-view .volt-http-row-icon.status { min-width: 26px; font-family: var(--monaco-monospace-font); }
-.volt-http-view .volt-http-row-icon.ok { color: var(--volt-http-get); }
-.volt-http-view .volt-http-row-icon.info { color: var(--volt-http-put); }
-.volt-http-view .volt-http-row-icon.warn { color: var(--volt-http-post); }
-.volt-http-view .volt-http-row-icon.error { color: var(--volt-http-delete); }
+.volt-http-error {
+	margin: 4px var(--volt-http-pad);
+	padding: 12px 14px;
+	border: 1px solid color-mix(in srgb, var(--volt-http-delete) 40%, transparent);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--volt-http-delete) 8%, transparent);
+	user-select: text;
+}
 
-.volt-http-row-method {
-	flex: none;
-	min-width: 0;
+.volt-http-error-title {
+	margin-bottom: 4px;
+	font-weight: 600;
+}
+
+.volt-http-error-text {
+	color: var(--volt-http-muted);
 	font-family: var(--monaco-monospace-font);
-	font-size: 10.5px;
+	font-size: 12px;
+	line-height: 18px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.volt-http-tests {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	padding-bottom: 12px;
+	overflow: auto;
+}
+
+.volt-http-tests > .volt-http-sublabel,
+.volt-http-tests > .volt-http-console,
+.volt-http-tests > .volt-http-script-error {
+	margin-left: var(--volt-http-pad);
+	margin-right: var(--volt-http-pad);
+}
+
+.volt-http-test-list {
+	flex: none;
+}
+
+.volt-http-test-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 100%;
+	padding: 0 var(--volt-http-pad);
+	box-sizing: border-box;
+}
+
+.volt-http-test-badge {
+	flex: none;
+	width: 38px;
+	border-radius: 4px;
+	font-size: 10px;
 	font-weight: 700;
+	line-height: 16px;
+	text-align: center;
 }
 
-.volt-http-row-method:not(:empty) {
-	min-width: 44px;
-}
+.volt-http-test-badge.pass { color: var(--volt-http-get); background: color-mix(in srgb, var(--volt-http-get) 16%, transparent); }
+.volt-http-test-badge.fail { color: var(--volt-http-delete); background: color-mix(in srgb, var(--volt-http-delete) 16%, transparent); }
+.volt-http-test-badge.skip { color: var(--volt-http-muted); background: var(--volt-http-hover); }
 
-.volt-http-row-label {
+.volt-http-test-name {
 	flex: 0 1 auto;
 	min-width: 0;
 	overflow: hidden;
@@ -873,12 +2030,1713 @@
 	white-space: nowrap;
 }
 
-.volt-http-row-detail {
+.volt-http-test-error {
+	flex: 1 1 0;
+	min-width: 0;
+	color: var(--volt-http-delete);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-script-error {
+	display: flex;
+	gap: 8px;
+	margin-top: 4px;
+	margin-bottom: 6px;
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--volt-http-delete) 10%, transparent);
+	color: var(--volt-http-delete);
+	font-size: 12px;
+	line-height: 18px;
+	white-space: pre-wrap;
+	user-select: text;
+}
+
+.volt-http-console {
+	border: 1px solid var(--volt-http-line);
+	border-radius: 6px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 18px;
+	user-select: text;
+}
+
+.volt-http-console-line {
+	padding: 3px 10px;
+	border-top: 1px solid var(--volt-http-line);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.volt-http-console-line:first-child { border-top: 0; }
+.volt-http-console-line.warn { color: var(--volt-http-post); }
+.volt-http-console-line.error { color: var(--volt-http-delete); }
+
+.monaco-workbench .volt-http-page[data-tab="runs"] .volt-http-head-actions .volt-button-primary {
+	display: none;
+}
+
+/* --- Collection and environment pages ------------------------------------------------------ */
+
+.volt-http-page-body.overview,
+.volt-http-page-body.variables {
+	gap: 4px;
+}
+
+.volt-http-page-body > .volt-http-note {
+	flex: none;
+	padding: 4px 0 8px;
+}
+
+.volt-http-facts {
+	flex: none;
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 6px 20px;
+	padding: 6px 0 8px;
+	font-size: 13px;
+}
+
+.volt-http-fact {
+	display: contents;
+}
+
+.volt-http-fact-label {
+	color: var(--volt-http-muted);
+}
+
+.volt-http-fact .volt-http-link {
+	justify-self: start;
+	max-width: 100%;
+	font-size: 13px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-http-run-controls {
+	flex: none;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 16px;
+	padding: 6px 0;
+}
+
+.volt-http-run-field {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-run-field input {
+	width: 72px;
+	height: 26px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 6px;
+	outline: 0;
+	background: var(--vscode-input-background);
+	color: var(--vscode-foreground);
+	font-size: 12px;
+}
+
+.monaco-workbench .volt-http-run-controls .volt-button {
+	height: 28px;
+	padding: 0 14px;
+}
+
+.volt-http-run-summary {
+	flex: none;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 14px;
+	min-height: 30px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-run-summary .pass,
+.volt-http-result-tests.pass { color: var(--volt-http-get); }
+.volt-http-run-summary .fail,
+.volt-http-result-tests.fail { color: var(--volt-http-delete); }
+
+/* The list reaches both edges of the page; the hairline above it too. */
+.volt-http-run-list {
+	flex: none;
+	margin: 0 calc(-1 * var(--volt-http-pad)) -12px;
+	border-top: 1px solid var(--volt-http-line);
+}
+
+.volt-http-row.result {
+	padding: 0 var(--volt-http-pad);
+	gap: 10px;
+}
+
+.volt-http-result-tests {
+	flex: none;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+/* --- Launchpad: VS Code's welcome page, in small ---------------------------------------- */
+
+.volt-http-launchpad {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	padding: 24px;
+	box-sizing: border-box;
+	overflow: auto;
+}
+
+.volt-http-launchpad-column {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: 380px;
+}
+
+.volt-http-launchpad-head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 22px;
+}
+
+.volt-http-launchpad-icon {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 6px;
+	color: var(--vscode-foreground);
+	opacity: 0.85;
+}
+
+.volt-http-launchpad-titles {
+	min-width: 0;
+}
+
+.volt-http-launchpad-title {
+	font-size: 18px;
+	font-weight: 500;
+	line-height: 24px;
+	letter-spacing: -0.01em;
+}
+
+.volt-http-launchpad-text {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-http-launchpad-label {
+	margin: 0 0 4px;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	opacity: 0.8;
+}
+
+.volt-http-launchpad-links {
+	display: flex;
+	flex-direction: column;
+	margin: 0 -8px 20px;
+}
+
+.volt-http-launchpad-link {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 28px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--vscode-foreground) !important;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-http-launchpad-link:hover {
+	background: var(--volt-http-hover);
+}
+
+.volt-http-launchpad-link:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-http-launchpad-link-icon {
+	flex: none;
+	display: inline-flex;
+	justify-content: center;
+	width: 16px;
+	color: var(--vscode-textLink-foreground);
+}
+
+.volt-http-editor .volt-http-launchpad-link-icon .codicon[class*='codicon-'] {
+	font-size: 15px;
+}
+
+.volt-http-launchpad-link-label {
+	flex: none;
+	color: var(--vscode-textLink-foreground);
+}
+
+.volt-http-launchpad-link:hover .volt-http-launchpad-link-label {
+	color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+}
+
+.volt-http-launchpad-link-hint {
+	flex: 1 1 auto;
+	min-width: 0;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	opacity: 0.75;
+}
+
+.volt-http-launchpad-keys {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 2px;
+}
+
+.volt-http-launchpad-key-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-launchpad-caps {
+	display: inline-flex;
+	gap: 4px;
+}
+
+.volt-http-launchpad-caps kbd {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 20px;
+	height: 20px;
+	padding: 0 5px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-keybindingLabel-border, var(--volt-http-line));
+	border-bottom-color: var(--vscode-keybindingLabel-bottomBorder, var(--volt-http-line));
+	border-radius: 3px;
+	background: var(--vscode-keybindingLabel-background, transparent);
+	color: var(--vscode-keybindingLabel-foreground, var(--vscode-foreground));
+	font-family: inherit;
+	font-size: 11px;
+	line-height: 1;
+}
+
+.volt-http-client.compact .volt-http-launchpad-link-hint {
+	display: none;
+}
+
+/* --- Dialogs: an opaque card over the dimmed client ------------------------------------------ */
+
+.volt-http-modal-host {
+	display: none;
+	position: absolute;
+	inset: 0;
+	z-index: 40;
+	align-items: center;
+	justify-content: center;
+	padding: 16px;
+	box-sizing: border-box;
+	background: rgba(0, 0, 0, 0.45);
+}
+
+.volt-http-modal-host.shown {
+	display: flex;
+}
+
+.volt-http-modal {
+	display: flex;
+	flex-direction: column;
+	width: 520px;
+	max-width: 100%;
+	max-height: 100%;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 6px;
+	background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+	box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+	overflow: hidden;
+}
+
+.volt-http-modal.wide {
+	width: 680px;
+}
+
+.volt-http-modal-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	height: 44px;
+	padding: 0 10px 0 16px;
+	border-bottom: 1px solid var(--volt-http-line);
+	font-weight: 600;
+}
+
+.volt-http-modal-body {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-height: 0;
+	padding: 14px 16px;
+	overflow: auto;
+}
+
+.volt-http-modal-foot {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 16px;
+	border-top: 1px solid var(--volt-http-line);
+}
+
+.monaco-workbench .volt-http-modal-foot .volt-button {
+	height: 28px;
+	padding: 0 14px;
+}
+
+.volt-http-import-status {
+	min-height: 18px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-import-status.error {
+	color: var(--volt-http-delete);
+}
+
+/* --- Narrow: the right panel beside a chat ------------------------------------------------- */
+
+.volt-http-client.narrow {
+	--volt-http-pad: 12px;
+}
+
+.volt-http-client.narrow .volt-http-auth {
+	flex-direction: column;
+	gap: 12px;
+}
+
+.volt-http-client.narrow .volt-http-auth-type {
+	flex: none;
+}
+
+.volt-http-client.narrow .volt-http-auth-fields {
+	padding-top: 0;
+}
+
+.volt-http-client.narrow .volt-http-graphql {
+	flex-direction: column;
+}
+
+.volt-http-client.narrow .volt-http-kv.with-description .volt-http-tr {
+	grid-template-columns: 18px 30px minmax(0, var(--volt-http-key-col, 0.34fr)) minmax(0, var(--volt-http-value-col, 0.66fr)) 62px;
+}
+
+.volt-http-client.narrow .volt-http-kv.fixed.with-description .volt-http-tr {
+	grid-template-columns: minmax(0, var(--volt-http-key-col, 0.34fr)) minmax(0, var(--volt-http-value-col, 0.66fr));
+}
+
+.volt-http-client.narrow .volt-http-td.description {
+	display: none;
+}
+
+.volt-http-client.compact .volt-http-method {
+	width: 88px;
+}
+
+.monaco-workbench .volt-http-client.compact .volt-http-send .volt-button:not(.volt-http-send-more) {
+	padding: 0 14px;
+}
+
+.volt-http-client.compact .volt-http-kind,
+.volt-http-client.compact .volt-http-crumb,
+.volt-http-client.compact .volt-http-crumb-sep,
+.volt-http-client.compact .volt-http-metric:last-child,
+.volt-http-client.compact .volt-http-meta-dot:nth-last-child(2) {
+	display: none;
+}
+
+.volt-http-client.compact .volt-http-tabs,
+.volt-http-client.compact .volt-http-res-tabs {
+	gap: 14px;
+}
+
+.monaco-workbench .volt-http-client.compact .volt-http-env .volt-dropdown {
+	max-width: 120px;
+}
+
+/* --- The IDE sidebar's Requests and History views ------------------------------------------ */
+
+.volt-http-view .volt-http-tree {
+	height: 100%;
+}
+
+/* --- Kinds of request ------------------------------------------------------------------------ */
+
+.volt-http-kind:hover {
+	background: var(--volt-http-hover);
+}
+
+.volt-http-editor .volt-http-kind {
+	color: var(--vscode-textLink-foreground);
+}
+
+.volt-http-kind:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-http-editor,
+.volt-http-view {
+	--volt-http-graphql: #e535ab;
+	--volt-http-stream: var(--vscode-charts-blue, #4f8cff);
+	--volt-http-rpc: var(--vscode-charts-purple, #a371f7);
+}
+
+.volt-http-row-method[data-method="graphql"],
+.volt-http-method[data-method="graphql"],
+.volt-http-kind[data-method="graphql"],
+.volt-http-launchpad-kind[data-method="graphql"] .volt-http-launchpad-kind-icon { color: var(--volt-http-graphql); }
+.volt-http-row-method[data-method="ws"],
+.volt-http-row-method[data-method="socketio"],
+.volt-http-row-method[data-method="sse"],
+.volt-http-method[data-method="ws"],
+.volt-http-method[data-method="socketio"],
+.volt-http-method[data-method="sse"],
+.volt-http-kind[data-method="ws"],
+.volt-http-kind[data-method="socketio"],
+.volt-http-kind[data-method="sse"] { color: var(--volt-http-stream); }
+.volt-http-row-method[data-method="mqtt"],
+.volt-http-row-method[data-method="grpc"],
+.volt-http-method[data-method="mqtt"],
+.volt-http-method[data-method="grpc"],
+.volt-http-kind[data-method="mqtt"],
+.volt-http-kind[data-method="grpc"] { color: var(--volt-http-rpc); }
+.volt-http-row-method[data-method="mcp"],
+.volt-http-row-method[data-method="ai"],
+.volt-http-method[data-method="mcp"],
+.volt-http-method[data-method="ai"],
+.volt-http-kind[data-method="mcp"],
+.volt-http-kind[data-method="ai"] { color: var(--volt-http-post); }
+.volt-http-row-method[data-method="soap"],
+.volt-http-method[data-method="soap"],
+.volt-http-kind[data-method="soap"] { color: var(--volt-http-put); }
+
+/* Where a method would be: the kind, with its mark. */
+.volt-http-method.fixed {
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	width: auto;
+	min-width: 72px;
+	padding: 0 12px;
+	font-size: 12px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+	white-space: nowrap;
+}
+
+.volt-http-grpc-method {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 46%;
+	padding: 0 10px 0 12px;
+	border: 0;
+	border-left: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	background: transparent;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-http-grpc-method > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-grpc-method.unset > span {
+	color: var(--volt-http-muted);
+}
+
+.volt-http-grpc-method:hover {
+	background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
+.volt-http-grpc-method.loading {
+	opacity: 0.6;
+	cursor: progress;
+}
+
+/* Send's menu button: a chevron drawn with a 2px line. */
+.monaco-workbench .volt-http-send .volt-button.volt-http-send-more {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 30px;
+	padding: 0;
+}
+
+.volt-http-add-chat {
+	margin-right: 2px;
+}
+
+.volt-http-client.narrow .volt-http-add-chat > span,
+.volt-http-client.narrow .volt-http-save > span {
+	display: none;
+}
+
+/* --- Forms: a kind's settings, an AI request's prompt ---------------------------------------- */
+
+.volt-http-form {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	max-width: 760px;
+	padding: 12px var(--volt-http-pad);
+	overflow: auto;
+}
+
+.volt-http-form.ai {
+	flex: 1 1 auto;
+	min-height: 0;
+	padding-top: 4px;
+}
+
+.volt-http-form .volt-http-field > label {
+	flex: none;
+	width: 120px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-form .volt-http-field.top {
+	align-items: flex-start;
+}
+
+.volt-http-form .volt-http-field.top > label {
+	padding-top: 7px;
+}
+
+.volt-http-form .volt-http-field-wrap {
+	max-width: none;
+	flex: 1 1 auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 8px;
+	min-width: 0;
+}
+
+.volt-http-form .volt-http-field-wrap > .volt-http-field-box {
+	flex: 1 1 200px;
+	height: 30px;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 3px;
+	background: var(--vscode-input-background);
+}
+
+.volt-http-field-help {
+	flex: 1 0 100%;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 17px;
+}
+
+.volt-http-textarea,
+.volt-http-input {
+	flex: 1 1 auto;
+	box-sizing: border-box;
+	min-width: 0;
+	padding: 6px 10px;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 3px;
+	outline: 0;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font-size: 13px;
+	line-height: 19px;
+	resize: vertical;
+}
+
+.volt-http-input.short {
+	flex: none;
+	width: 140px;
+	height: 30px;
+}
+
+.volt-http-sublabel.inline {
+	padding: 0;
+	font-weight: 400;
+	letter-spacing: 0;
+	text-transform: none;
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* --- A connection's timeline ----------------------------------------------------------------- */
+
+.volt-http-stream {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.volt-http-stream-bar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 34px;
+	padding: 0 var(--volt-http-pad);
+	border-bottom: 1px solid var(--volt-http-line);
+}
+
+.volt-http-pill.idle {
+	color: var(--volt-http-muted);
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.volt-http-stream-bar .volt-http-pill {
+	font-size: 11px;
+}
+
+.volt-http-stream-counts {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-http-stream-filter {
+	flex: 0 1 200px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 80px;
+	height: 24px;
+	padding: 0 8px;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 3px;
+	background: var(--vscode-input-background);
+	color: var(--volt-http-muted);
+}
+
+.volt-http-stream-filter > input {
+	flex: 1 1 auto;
+	min-width: 0;
+	border: 0;
+	outline: 0;
+	background: transparent;
+	color: var(--vscode-input-foreground);
+	font-size: 12px;
+}
+
+/* Rows run edge to edge, square, like every list in Volt. */
+.volt-http-stream-list {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.volt-http-stream-list.hidden,
+.volt-http-stream-empty.hidden,
+.volt-http-composer-kept.hidden,
+.volt-http-sublabel.hidden,
+.volt-http-ai-preview.hidden {
+	display: none;
+}
+
+.volt-http-stream-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 26px;
+	padding: 0 var(--volt-http-pad);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-http-stream-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-stream-row.in .volt-http-stream-icon { color: var(--volt-http-get); }
+.volt-http-stream-row.out .volt-http-stream-icon { color: var(--volt-http-post); }
+.volt-http-stream-row.error .volt-http-stream-icon,
+.volt-http-stream-row.error .volt-http-stream-text { color: var(--volt-http-delete); }
+.volt-http-stream-row.info .volt-http-stream-text { color: var(--volt-http-muted); }
+
+.volt-http-stream-time {
+	flex: none;
+	color: var(--volt-http-muted);
+	font-family: var(--monaco-monospace-font);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-stream-target {
+	flex: none;
+	max-width: 34%;
+	padding: 0 6px;
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--volt-http-stream) 16%, transparent);
+	color: var(--volt-http-stream);
+	font-size: 11px;
+	line-height: 17px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-stream-target.none {
+	display: none;
+}
+
+.volt-http-stream-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	font-family: var(--monaco-monospace-font);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-stream-size {
+	flex: none;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-stream-detail {
+	flex: none;
+	display: none;
+	flex-direction: column;
+	height: 42%;
+	min-height: 90px;
+	border-top: 1px solid var(--volt-http-line);
+}
+
+.volt-http-stream.with-detail .volt-http-stream-detail {
+	display: flex;
+}
+
+.volt-http-stream-detail-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 var(--volt-http-pad);
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-stream-detail-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* --- The Message tab: the next message, and the ones sent on connect ------------------------- */
+
+.volt-http-composer {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	padding: 4px var(--volt-http-pad) 10px;
+}
+
+.volt-http-composer-row {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 30px;
+	padding-bottom: 6px;
+}
+
+.volt-http-composer-row.after {
+	padding: 8px var(--volt-http-pad) 10px;
+}
+
+.volt-http-composer-target {
+	flex: 0 1 280px;
+	display: flex;
+	height: 28px;
+	min-width: 120px;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 3px;
+	background: var(--vscode-input-background);
+}
+
+.monaco-workbench .volt-button.volt-http-composer-send {
+	border-radius: 3px;
+}
+
+.volt-http-composer-error {
+	flex: none;
+	color: var(--volt-http-delete);
+	font-size: 12px;
+}
+
+.volt-http-composer-error:not(:empty) {
+	padding-top: 6px;
+}
+
+.volt-http-composer-kept {
+	flex: none;
+	margin: 0 calc(-1 * var(--volt-http-pad));
+}
+
+.volt-http-stream-row.kept .volt-http-row-actions {
+	flex: none;
+	display: none;
+}
+
+.monaco-list-row:hover .volt-http-stream-row.kept .volt-http-row-actions,
+.monaco-list-row.focused .volt-http-stream-row.kept .volt-http-row-actions {
+	display: inline-flex;
+}
+
+/* --- Generate tests with a model -------------------------------------------------------------- */
+
+.volt-http-ai {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	box-sizing: border-box;
+	width: min(560px, 100% - 2 * var(--volt-http-pad));
+	margin: 28px auto 0;
+	padding: 16px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 6px;
+}
+
+.volt-http-ai.compact {
+	width: auto;
+	margin: 0 var(--volt-http-pad) 10px;
+	padding: 10px 12px;
+}
+
+.volt-http-ai-title {
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.volt-http-ai-text {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-http-ai-wish {
+	box-sizing: border-box;
+	width: 100%;
+	padding: 6px 10px;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 3px;
+	outline: 0;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font-size: 13px;
+	line-height: 19px;
+	resize: vertical;
+}
+
+.volt-http-ai-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+}
+
+.volt-http-editor .volt-http-ai-model {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 1 auto;
+	min-width: 0;
+	height: 26px;
+	padding: 0 8px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+	background: transparent;
+	font-size: 12px;
+	cursor: pointer;
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.volt-http-editor .volt-http-ai-model:hover {
+	background: var(--volt-http-hover);
+}
+
+.volt-http-ai-status {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 18px;
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}
+
+.volt-http-ai-status:empty {
+	display: none;
+}
+
+.volt-http-ai-status.error {
+	color: var(--volt-http-delete);
+}
+
+/* The button keeps its label whole; the model's name is what gives way in a narrow pane. */
+.volt-http-ai-row > .volt-button {
+	flex: none;
+	white-space: nowrap;
+}
+
+.volt-http-ai-preview {
+	max-height: 150px;
+	margin: 0;
+	padding: 8px 10px;
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+	color: var(--volt-http-muted);
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+	line-height: 17px;
+	white-space: pre-wrap;
+	overflow: auto;
+	user-select: text;
+}
+
+.volt-http-tests-note {
+	margin-top: 12px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	text-align: center;
+}
+
+.volt-http-tests-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 30px;
+	padding: 0 var(--volt-http-pad);
+}
+
+/* --- Launch: one button per kind --------------------------------------------------------------- */
+
+.volt-http-launchpad-kinds {
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	gap: 6px;
+	margin-bottom: 6px;
+}
+
+.volt-http-launchpad-kind {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+	padding: 12px 4px 10px;
+	border: 1px solid transparent;
+	border-radius: 4px;
+	background: transparent;
+	cursor: pointer;
+}
+
+.volt-http-launchpad-kind:hover {
+	border-color: var(--volt-http-line);
+	background: var(--volt-http-hover);
+}
+
+.volt-http-launchpad-kind:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-http-launchpad-kind-icon {
+	display: inline-flex;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-launchpad-kind:hover .volt-http-launchpad-kind-icon {
+	color: var(--vscode-foreground);
+}
+
+.volt-http-launchpad-kind-label {
+	max-width: 100%;
+	font-size: 11.5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-client.compact .volt-http-launchpad-kinds {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* --- Menus ---------------------------------------------------------------------------------------- */
+
+.volt-http-point-anchor {
+	position: fixed;
+	width: 1px;
+	height: 1px;
+	pointer-events: none;
+}
+
+.monaco-workbench .volt-menu.volt-http-menu .volt-http-menu-danger .volt-menu-label {
+	color: var(--volt-http-delete);
+}
+
+/* The picker's "auto" glyph is not shown here: the label says which model writes the tests. */
+.volt-http-ai-model .volt-auto-spark {
+	display: none;
+}
+
+/* --- Running tests: the links in the Scripts bar and Test Results, a play button per result ---- */
+
+.volt-http-run-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.volt-http-editor .volt-http-run-link .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-http-editor .volt-http-test-row .volt-http-test-run {
+	flex: none;
+	margin-left: auto;
+	width: 22px;
+	height: 22px;
+	opacity: 0;
+}
+
+.volt-http-test-list .monaco-list-row:hover .volt-http-test-run,
+.volt-http-test-list .monaco-list-row.focused .volt-http-test-run,
+.volt-http-test-list .monaco-list-row.selected .volt-http-test-run,
+.volt-http-test-run:focus-visible {
+	opacity: 1;
+}
+
+.volt-http-editor .volt-http-test-run .codicon[class*='codicon-'] {
+	font-size: 14px;
+	color: var(--volt-http-get);
+}
+
+/* A result that was just run again shows it once. */
+@keyframes volt-http-test-ran {
+	from { background: color-mix(in srgb, var(--vscode-focusBorder) 26%, transparent); }
+	to { background: transparent; }
+}
+
+.volt-http-test-row.ran {
+	animation: volt-http-test-ran 900ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-http-test-row.ran {
+		animation: none;
+	}
+}
+
+/* --- Generate tests for many requests ----------------------------------------------------------- */
+
+.volt-http-modal-body.bulk {
+	padding: 0;
+	gap: 0;
+	overflow: hidden;
+}
+
+.volt-http-bulk-section {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 14px 16px;
+}
+
+.volt-http-bulk-section.volt-http-bulk-options {
+	flex-direction: row;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 16px;
+}
+
+.volt-http-bulk-option {
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-http-bulk-count {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-bulk-list {
+	flex: none;
+	border-top: 1px solid var(--volt-http-line);
+	border-bottom: 1px solid var(--volt-http-line);
+}
+
+.volt-http-bulk-list .monaco-list-row {
+	border-radius: 0;
+	cursor: pointer;
+}
+
+.volt-http-bulk-empty {
+	padding: 18px 16px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-row.volt-http-bulk-row {
+	gap: 8px;
+	padding: 0 16px;
+	font-size: 13px;
+}
+
+.volt-http-bulk-row.collection .volt-http-row-label {
+	font-weight: 600;
+}
+
+.volt-http-bulk-row.blocked {
+	cursor: default;
+}
+
+.volt-http-bulk-row.blocked .volt-http-row-method,
+.volt-http-bulk-row.blocked .volt-http-row-label {
+	opacity: 0.5;
+}
+
+.volt-http-editor .volt-http-check.some .codicon[class*='codicon-'] {
+	opacity: 1;
+}
+
+.volt-http-bulk-state {
+	flex: 0 1 auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	max-width: 46%;
+	font-size: 11.5px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.volt-http-bulk-state > span:last-child {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-http-bulk-state.muted { color: var(--volt-http-muted); }
+.volt-http-bulk-state.ok { color: var(--volt-http-get); }
+.volt-http-bulk-state.error { color: var(--volt-http-delete); }
+
+.volt-http-editor .volt-http-bulk-state .codicon[class*='codicon-'] {
+	font-size: 13px;
+}
+
+.volt-http-bulk-status {
+	flex: 1 1 auto;
+	min-width: 0;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-bulk-status.error {
+	color: var(--volt-http-delete);
+}
+
+.volt-http-tests-ran {
+	flex: 0 1 auto;
+	min-width: 0;
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-tests-ran.pass { color: var(--volt-http-get); }
+.volt-http-tests-ran.fail { color: var(--volt-http-delete); }
+
+/* In the dialog's footer the model keeps its name; the summary beside it is what shortens. */
+.volt-http-editor .volt-http-modal-foot .volt-http-ai-model {
+	flex: none;
+	max-width: 50%;
+}
+
+/* --- The actions beside the script tabs and over the test results: small text buttons, not links --- */
+
+.volt-http-script-bar .volt-http-link,
+.volt-http-tests-head .volt-http-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 22px;
+	padding: 0 7px;
+	border-radius: 3px;
+	color: var(--vscode-foreground) !important;
+	font-size: 12px;
+	line-height: 22px;
+	opacity: 0.8;
+}
+
+.volt-http-script-bar .volt-http-link:hover,
+.volt-http-tests-head .volt-http-link:hover {
+	background: var(--volt-http-hover);
+	color: var(--vscode-foreground) !important;
+	text-decoration: none;
+	opacity: 1;
+}
+
+.volt-http-script-bar .volt-http-link:active,
+.volt-http-tests-head .volt-http-link:active {
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+/* The bars space their items for tabs and labels; buttons with their own padding sit closer. */
+.volt-http-script-bar .volt-http-link + .volt-http-link {
+	margin-left: -14px;
+}
+
+.volt-http-tests-head .volt-http-link + .volt-http-link {
+	margin-left: -8px;
+}
+
+.volt-http-script-bar .volt-http-link:last-child,
+.volt-http-tests-head .volt-http-link:last-child {
+	margin-right: -7px;
+}
+
+/* --- A secret's eye, and the variable list under a field ---------------------------------------- */
+
+.volt-http-field-eye {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--volt-http-muted);
+	cursor: pointer;
+}
+
+.volt-http-field-eye:hover {
+	color: var(--vscode-foreground);
+}
+
+.volt-http-field-eye.hidden {
+	display: none;
+}
+
+.volt-http-editor .volt-http-field-eye .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+/* Hung from the workbench, outside the client: the theme's own variables only. */
+.monaco-workbench .volt-http-suggest {
+	position: fixed;
+	z-index: 2600;
+	max-height: 216px;
+	padding: 4px 0;
+	box-sizing: border-box;
+	overflow-y: auto;
+	border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.3)));
+	border-radius: 3px;
+	background: var(--vscode-editorSuggestWidget-background, var(--vscode-editorWidget-background));
+	color: var(--vscode-editorSuggestWidget-foreground, var(--vscode-foreground));
+	box-shadow: 0 4px 14px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+	font-size: 12px;
+}
+
+.volt-http-suggest-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 26px;
+	padding: 0 10px;
+	box-sizing: border-box;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.volt-http-suggest-row:hover {
+	background: var(--vscode-list-hoverBackground);
+}
+
+.volt-http-suggest-row.active {
+	background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
+	color: var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-list-activeSelectionForeground));
+}
+
+.volt-http-suggest-name {
+	flex: none;
+	max-width: 55%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-family: var(--monaco-monospace-font);
+	color: var(--vscode-charts-yellow, #d29922);
+}
+
+.volt-http-suggest-row.active .volt-http-suggest-name {
+	color: inherit;
+}
+
+.volt-http-suggest-value {
 	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--volt-http-muted);
-	font-size: 11.5px;
+	opacity: 0.75;
 }
+
+.volt-http-suggest-source {
+	flex: none;
+	opacity: 0.55;
+	font-size: 11px;
+}
+
+/* --- Dragging a tab of the strip: where it lands, and the one in hand ---------------------------- */
+
+.volt-http-open-tab.dragging {
+	opacity: 0.45;
+}
+
+.volt-http-open-tab.drop-before {
+	box-shadow: inset 2px 0 0 var(--vscode-tab-dragAndDropBorder, var(--vscode-focusBorder));
+}
+
+.volt-http-open-tab.drop-after {
+	box-shadow: inset -2px 0 0 var(--vscode-tab-dragAndDropBorder, var(--vscode-focusBorder));
+}
+
+/* Six groups: the ones not in front are their icons only, a little narrower than before. */
+.volt-http-side-tab:not(.active) {
+	flex: 0 0 34px;
+	padding: 0;
+}
+
+/* --- The request tabs' Docs mark and the Cookies link at their right ----------------------------- */
+
+.volt-http-tab-icon {
+	display: inline-flex;
+	margin-right: 5px;
+}
+
+.volt-http-editor .volt-http-tab-icon .codicon[class*='codicon-'] {
+	font-size: 14px;
+}
+
+.volt-http-tabs > .volt-http-cookies-link {
+	flex: none;
+	align-self: center;
+	margin-left: auto;
+	padding-left: 12px;
+	font-weight: 600;
+}
+
+/* --- Script debugging: recorded stops under a script editor, one test's detail under Test Results --- */
+
+.volt-http-tab-body.with-breaks > .volt-http-code {
+	min-height: 120px;
+}
+
+.volt-http-breaks-host {
+	flex: none;
+	height: 240px;
+	margin-top: 8px;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.volt-http-test-detail-host {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	max-height: 60%;
+	min-height: 0;
+	margin-top: 8px;
+}
+
+/* --- Edit with AI: a short conversation under the URL bar that builds and changes the request --- */
+
+.monaco-workbench .volt-http-head-actions .volt-http-ai-edit-toggle.active {
+	color: var(--vscode-foreground);
+	background: color-mix(in srgb, var(--vscode-foreground) 18%, transparent);
+}
+
+.volt-http-ai-edit-host {
+	flex: none;
+	padding: 0 var(--volt-http-pad);
+}
+
+.volt-http-ai-edit-host:empty {
+	display: none;
+}
+
+.volt-http-ai-edit {
+	display: flex;
+	flex-direction: column;
+	margin: 5px 0 8px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 6px;
+	overflow: hidden;
+	background: var(--vscode-editor-background);
+}
+
+.volt-http-ai-edit-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 32px;
+	padding: 0 4px 0 10px;
+	border-bottom: 1px solid var(--volt-http-line);
+}
+
+.volt-http-ai-edit-icon {
+	display: inline-flex;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-ai-edit-title {
+	flex: none;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-http-ai-edit-head .volt-http-ai-model {
+	min-width: 0;
+}
+
+.volt-http-ai-edit-log {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 180px;
+	padding: 8px 10px;
+	overflow-y: auto;
+	font-size: 13px;
+	line-height: 19px;
+}
+
+.volt-http-ai-edit-hint {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-http-ai-edit-turn {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-width: 88%;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+}
+
+.volt-http-ai-edit-turn.user {
+	align-self: flex-end;
+	padding: 4px 8px;
+	border-radius: 3px;
+	background: var(--volt-http-hover);
+}
+
+.volt-http-ai-edit-turn.error .volt-http-ai-edit-text {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-http-ai-edit-meta {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	white-space: normal;
+}
+
+.volt-http-ai-edit-box {
+	display: flex;
+	align-items: flex-end;
+	gap: 8px;
+	padding: 8px 10px;
+	border-top: 1px solid var(--volt-http-line);
+}
+
+.volt-http-ai-edit-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 32px;
+	max-height: 120px;
+	box-sizing: border-box;
+	padding: 6px 8px;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 3px;
+	outline: 0;
+	resize: vertical;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font-family: inherit;
+	font-size: 13px;
+	line-height: 19px;
+}
+
+.volt-http-ai-edit-input::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--volt-http-muted));
+}
+
+.monaco-workbench .volt-http-ai-edit-send {
+	flex: none;
+}
+
+.volt-http-ai-edit > .volt-http-ai-status {
+	padding: 0 10px 8px;
+}
+
+.monaco-workbench .volt-http-head-actions .volt-http-ai-edit-toggle.icon-only {
+	justify-content: center;
+	width: 28px;
+	padding: 0;
+}
+
+/* --- A model's answer, rendered from Markdown (renderHttpAiAnswer) ------------------------------- */
+
+.volt-http-ai-answer.rendered {
+	white-space: normal;
+	font-size: 13px;
+	line-height: 20px;
+	user-select: text;
+}
+
+.volt-http-ai-answer.rendered > :first-child {
+	margin-top: 0;
+}
+
+.volt-http-ai-answer.rendered > :last-child {
+	margin-bottom: 0;
+}
+
+.volt-http-ai-answer.rendered p,
+.volt-http-ai-answer.rendered ul,
+.volt-http-ai-answer.rendered ol {
+	margin: 0 0 8px;
+}
+
+.volt-http-ai-answer.rendered ul,
+.volt-http-ai-answer.rendered ol {
+	padding-left: 20px;
+}
+
+.volt-http-ai-answer.rendered li + li {
+	margin-top: 2px;
+}
+
+.volt-http-ai-answer.rendered h1,
+.volt-http-ai-answer.rendered h2,
+.volt-http-ai-answer.rendered h3,
+.volt-http-ai-answer.rendered h4 {
+	margin: 12px 0 6px;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.volt-http-ai-answer.rendered strong {
+	font-weight: 600;
+}
+
+/* Finding titles arrive as *emphasis*: weight, not link colour, since they are not links. */
+.volt-http-ai-answer.rendered em {
+	font-style: normal;
+	font-weight: 600;
+}
+
+.volt-http-ai-answer.rendered code {
+	padding: 0 4px;
+	border-radius: 3px;
+	background: var(--vscode-textCodeBlock-background, var(--volt-http-hover));
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.volt-http-ai-answer.rendered pre {
+	margin: 0 0 8px;
+	padding: 8px 10px;
+	overflow: auto;
+	border-radius: 3px;
+	background: var(--vscode-textCodeBlock-background, var(--volt-http-hover));
+}
+
+.volt-http-ai-answer.rendered pre code {
+	padding: 0;
+	background: none;
+}
+
+.volt-http-ai-answer.rendered table {
+	margin: 0 0 8px;
+	border-collapse: collapse;
+}
+
+.volt-http-ai-answer.rendered th,
+.volt-http-ai-answer.rendered td {
+	padding: 3px 8px;
+	border: 1px solid var(--volt-http-line);
+	text-align: left;
+}
+

@@ -47,9 +47,8 @@ import { visibleSurfaceMenuItems } from '../../../voltAgent/browser/workspace/ag
 // The views and commands under test register themselves when imported, as in the window.
 import '../../../voltAgent/browser/ide/agentIdeSessionsView.js';
 import { HttpCodeLens, HttpRequestTabs } from '../../../voltHttp/browser/voltHttp.contribution.js';
-import { draftFromSpec, VOLT_HTTP_INPUT_ID, VoltHttpRequestInput, VoltHttpRequestInputSerializer } from '../../../voltHttp/browser/voltHttpEditor.js';
+import { VOLT_HTTP_INPUT_ID, VoltHttpClientInput, VoltHttpClientInputSerializer } from '../../../voltHttp/browser/voltHttpEditor.js';
 import { AgentIdeActivityInput, AgentIdeActivityTabs } from '../../../voltAgent/browser/ide/agentIdeActivityEditor.js';
-import { parseHttpFile } from '../../../../services/voltRuntime/common/ide/httpFile.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { HTTP_CLIENT_OFF, whileHttpClientOn } from '../../../voltHttp/browser/voltHttpFeature.js';
@@ -210,12 +209,12 @@ suite('Volt feature service: features without a module', () => {
 		const tabs = openTabs([VOLT_HTTP_INPUT_ID, 'workbench.editors.files.fileEditorInput']);
 		store.add(new HttpRequestTabs(features, tabs.service));
 		const instantiation = { invokeFunction: (fn: (accessor: unknown) => unknown) => fn({ getIfExists: () => features }) } as unknown as IInstantiationService;
-		const savedTab = new VoltHttpRequestInputSerializer().serialize(store.add(new VoltHttpRequestInput(draftFromSpec(parseHttpFile('GET http://localhost:1/health').requests[0]), undefined)))!;
+		const savedTab = new VoltHttpClientInputSerializer().serialize(store.add(new VoltHttpClientInput(URI.file('/ws'))))!;
 		const restore = () => {
-			const input = new VoltHttpRequestInputSerializer().deserialize(instantiation, savedTab);
+			const input = new VoltHttpClientInputSerializer().deserialize(instantiation, savedTab);
 			return input ? store.add(input) : undefined;
 		};
-		assert.ok(restore() instanceof VoltHttpRequestInput);
+		assert.ok(restore() instanceof VoltHttpClientInput);
 		const configuration = new TestConfigurationService();
 		const languageFeatures = new LanguageFeaturesService();
 		store.add(new HttpCodeLens(languageFeatures, features));
@@ -254,7 +253,7 @@ suite('Volt feature service: features without a module', () => {
 		assert.strictEqual(matches(palette('volt.http.newRequest')), true);
 		assert.strictEqual(languageFeatures.codeLensProvider.has(httpFile), true);
 		assert.deepStrictEqual(await http.invoke('send', { method: 'GET', url: 'http://localhost:1' }, ctx), { text: 'HTTP/1.1 200 OK' });
-		assert.ok(restore() instanceof VoltHttpRequestInput);
+		assert.ok(restore() instanceof VoltHttpClientInput);
 		assert.deepStrictEqual(tabs.closed, [VOLT_HTTP_INPUT_ID]);
 	});
 

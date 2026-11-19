@@ -1,0 +1,440 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Looking into a script's run (voltHttpScriptDebug.ts): a test result's detail, the breakpoints in
+ * the Scripts editor's gutter, and the panel of recorded stops with their variables.
+ */
+
+.volt-http-debug-detail,
+.volt-http-debug-breaks {
+	--volt-http-debug-line: var(--volt-http-line, var(--vscode-widget-border, rgba(128, 128, 128, 0.25)));
+	--volt-http-debug-muted: var(--volt-http-muted, var(--vscode-descriptionForeground));
+	box-sizing: border-box;
+	min-width: 0;
+	color: var(--vscode-foreground);
+	font-size: 12px;
+	background: var(--vscode-editor-background);
+	outline: none;
+}
+
+.volt-http-debug-muted {
+	flex: none;
+	color: var(--volt-http-debug-muted);
+	white-space: nowrap;
+}
+
+.volt-http-debug-spacer {
+	flex: 1 1 auto;
+	min-width: 4px;
+}
+
+.volt-http-debug-actions {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.volt-http-debug-actions .volt-http-icon-button:disabled {
+	opacity: 0.4;
+	cursor: default;
+	background: transparent;
+}
+
+.volt-http-debug-empty {
+	padding: 10px 12px;
+	color: var(--volt-http-debug-muted);
+}
+
+.volt-http-debug-empty.centered {
+	text-align: center;
+	padding: 24px 16px;
+}
+
+/* --- A test's detail ------------------------------------------------------------------------------ */
+
+.volt-http-debug-detail {
+	display: flex;
+	flex-direction: column;
+	max-height: 100%;
+	border-top: 1px solid var(--volt-http-debug-line);
+	border-bottom: 1px solid var(--volt-http-debug-line);
+	overflow: hidden;
+}
+
+.volt-http-debug-detail-head,
+.volt-http-debug-breaks-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 30px;
+	padding: 0 6px 0 12px;
+	border-bottom: 1px solid var(--volt-http-debug-line);
+}
+
+.volt-http-debug-detail-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 600;
+}
+
+.volt-http-debug-detail-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	padding: 10px 12px 12px;
+}
+
+.volt-http-debug-message {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	color: var(--vscode-errorForeground);
+	font-family: var(--monaco-monospace-font);
+	line-height: 18px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.volt-http-debug-message .codicon {
+	flex: none;
+	margin-top: 1px;
+}
+
+.volt-http-debug-line-link {
+	margin-top: 6px;
+	font-size: 12px;
+}
+
+.volt-http-debug-compare {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.volt-http-debug-side {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.volt-http-debug-side-label {
+	color: var(--volt-http-debug-muted);
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.volt-http-debug-code {
+	margin: 0;
+	padding: 6px 0;
+	max-height: 240px;
+	overflow: auto;
+	border: 1px solid var(--volt-http-debug-line);
+	border-radius: 3px;
+	background: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background));
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-http-debug-code-line {
+	display: block;
+	padding: 0 8px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.volt-http-debug-code-line.removed {
+	background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.15));
+}
+
+.volt-http-debug-code-line.added {
+	background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2));
+}
+
+.volt-http-debug-section {
+	margin: 12px 0 4px;
+}
+
+/* The assertions and console lines: lists running edge to edge through the body's side padding. */
+.volt-http-debug-rows {
+	margin: 0 -12px;
+}
+
+.volt-http-debug-rows .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-http-debug-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 100%;
+	padding: 0 12px;
+	min-width: 0;
+}
+
+.volt-http-debug-row-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-debug-row-text.code {
+	font-family: var(--monaco-monospace-font);
+}
+
+.volt-http-debug-tick {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+}
+
+/* Four classes: beats the workbench's `.monaco-workbench .codicon[...]` size. */
+.volt-http-debug-detail .volt-http-debug-rows .volt-http-debug-tick .codicon {
+	font-size: 14px;
+}
+
+.volt-http-debug-detail .volt-http-debug-rows .volt-http-debug-tick.pass .codicon {
+	color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+
+.volt-http-debug-detail .volt-http-debug-rows .volt-http-debug-tick.fail .codicon,
+.volt-http-debug-detail .volt-http-debug-rows .volt-http-debug-tick.error .codicon {
+	color: var(--vscode-testing-iconFailed, var(--vscode-errorForeground));
+}
+
+.volt-http-debug-detail .volt-http-debug-rows .volt-http-debug-tick.warn .codicon {
+	color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
+}
+
+.volt-http-debug-detail .volt-http-debug-rows .volt-http-debug-tick.info .codicon,
+.volt-http-debug-detail .volt-http-debug-rows .volt-http-debug-tick.log .codicon {
+	color: var(--volt-http-debug-muted);
+}
+
+/* --- Breakpoints in the Scripts editor -------------------------------------------------------------- */
+
+.monaco-editor .glyph-margin-widgets .cgmr.volt-http-debug-breakpoint {
+	color: var(--vscode-debugIcon-breakpointForeground, #e51400);
+	cursor: pointer;
+}
+
+.monaco-editor .glyph-margin-widgets .cgmr.volt-http-debug-breakpoint-hint {
+	color: var(--vscode-debugIcon-breakpointForeground, #e51400);
+	opacity: 0.35;
+	cursor: pointer;
+}
+
+.monaco-editor .glyph-margin-widgets .cgmr.volt-http-debug-stop-glyph {
+	color: var(--vscode-debugIcon-breakpointCurrentStackframeForeground, #ffcc00);
+}
+
+.monaco-editor .volt-http-debug-stop-line {
+	background: var(--vscode-editor-stackFrameHighlightBackground, rgba(255, 255, 0, 0.2));
+}
+
+/* --- The recorded stops -------------------------------------------------------------------------------- */
+
+.volt-http-debug-breaks {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	border-top: 1px solid var(--volt-http-debug-line);
+}
+
+.volt-http-debug-breaks:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.volt-http-debug-head-icon {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+}
+
+.volt-http-debug-breaks .volt-http-debug-breaks-head .volt-http-debug-head-icon .codicon {
+	font-size: 14px;
+	color: var(--vscode-debugIcon-breakpointCurrentStackframeForeground, #ffcc00);
+}
+
+.volt-http-debug-breaks-title {
+	flex: none;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.volt-http-debug-breaks-test {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-http-debug-muted);
+}
+
+.volt-http-debug-breaks-test:not(:empty)::before {
+	content: "\00b7";
+	margin-right: 8px;
+}
+
+.volt-http-debug-note {
+	flex: none;
+	padding: 4px 12px;
+	color: var(--volt-http-debug-muted);
+	font-size: 11px;
+	line-height: 14px;
+	border-bottom: 1px solid var(--volt-http-debug-line);
+}
+
+.volt-http-debug-breaks-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.volt-http-debug-breaks.wide .volt-http-debug-breaks-body {
+	flex-direction: row;
+}
+
+.volt-http-debug-stops {
+	flex: none;
+	min-width: 0;
+	border-bottom: 1px solid var(--volt-http-debug-line);
+}
+
+.volt-http-debug-breaks.wide .volt-http-debug-stops {
+	border-bottom: 0;
+	border-right: 1px solid var(--volt-http-debug-line);
+}
+
+.volt-http-debug-variables {
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+}
+
+.volt-http-debug-stops .monaco-list-row,
+.volt-http-debug-variables .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-http-debug-stop-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 100%;
+	padding: 0 12px;
+	min-width: 0;
+}
+
+.volt-http-debug-stop-order {
+	flex: none;
+	min-width: 18px;
+	color: var(--volt-http-debug-muted);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+.volt-http-debug-stop-line-label {
+	flex: none;
+	font-family: var(--monaco-monospace-font);
+	white-space: nowrap;
+}
+
+.volt-http-debug-stop-test {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-http-debug-muted);
+}
+
+.volt-http-debug-var-row {
+	display: flex;
+	align-items: center;
+	height: 100%;
+	min-width: 0;
+	padding-right: 6px;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.volt-http-debug-var-row.scope {
+	font-family: inherit;
+	font-weight: 600;
+}
+
+.volt-http-debug-var-name {
+	flex: none;
+	max-width: 50%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-debugTokenExpression-name, #c586c0);
+}
+
+.volt-http-debug-var-row.scope .volt-http-debug-var-name {
+	color: inherit;
+}
+
+.volt-http-debug-var-sep {
+	flex: none;
+	white-space: pre;
+}
+
+.volt-http-debug-var-value {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: pre;
+	color: var(--vscode-debugTokenExpression-value, var(--volt-http-debug-muted));
+}
+
+.volt-http-debug-var-value.string { color: var(--vscode-debugTokenExpression-string, #ce9178); }
+.volt-http-debug-var-value.number { color: var(--vscode-debugTokenExpression-number, #b5cea8); }
+.volt-http-debug-var-value.boolean { color: var(--vscode-debugTokenExpression-boolean, #4e94ce); }
+.volt-http-debug-var-value.plain { color: var(--volt-http-debug-muted); font-family: inherit; font-weight: 400; }
+.volt-http-debug-var-value.unset { color: var(--volt-http-debug-muted); font-style: italic; }
+
+.volt-http-debug-var-row .volt-http-icon-button.volt-http-debug-var-copy {
+	width: 20px;
+	height: 20px;
+	visibility: hidden;
+}
+
+.volt-http-debug-variables .monaco-list-row:hover .volt-http-debug-var-copy,
+.volt-http-debug-variables .monaco-list-row.focused .volt-http-debug-var-copy,
+.volt-http-debug-var-row .volt-http-icon-button.volt-http-debug-var-copy:focus-visible {
+	visibility: visible;
+}
+
+.volt-http-debug-variables .volt-http-debug-var-row .volt-http-debug-var-copy .codicon {
+	font-size: 13px;
+}
+
+/* Narrow: Expected above Actual. */
+.volt-http-debug-detail-body {
+	container: volt-http-debug-body / inline-size;
+}
+
+@container volt-http-debug-body (max-width: 520px) {
+	.volt-http-debug-compare {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}

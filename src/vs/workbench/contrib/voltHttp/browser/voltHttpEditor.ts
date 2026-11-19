@@ -5,329 +5,319 @@
 
 import './media/voltHttp.css';
 import { $, addDisposableListener, append, clearNode, Dimension, EventType } from '../../../../base/browser/dom.js';
-import { IInputBoxStyles, InputBox } from '../../../../base/browser/ui/inputbox/inputBox.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
-import { Orientation, Sash } from '../../../../base/browser/ui/sash/sash.js';
-import { Checkbox } from '../../../../base/browser/ui/toggle/toggle.js';
-import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
+import { Orientation, Sash, SashState } from '../../../../base/browser/ui/sash/sash.js';
+import { Separator, toAction } from '../../../../base/common/actions.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { Emitter } from '../../../../base/common/event.js';
-import { DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+import { isMacintosh } from '../../../../base/common/platform.js';
+import { DisposableStore, MutableDisposable } from '../../../../base/common/lifecycle.js';
 import { basename } from '../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { CodeEditorWidget } from '../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
-import { IEditorOptions as ICodeEditorOptions } from '../../../../editor/common/config/editorOptions.js';
-import { ITextModel } from '../../../../editor/common/model.js';
 import { ILanguageService } from '../../../../editor/common/languages/language.js';
 import { IModelService } from '../../../../editor/common/services/model.js';
 import { localize } from '../../../../nls.js';
 import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+import { IDialogService, IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { IFileService } from '../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
-import { defaultCheckboxStyles, defaultInputBoxStyles } from '../../../../platform/theme/browser/defaultStyles.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../../../common/editor.js';
 import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
-import { HTTP_METHODS, IHttpRequestSpec } from '../../../services/voltRuntime/common/ide/httpFile.js';
-import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
-import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
-import { showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
+import { IHttpRequestSpec } from '../../../services/voltRuntime/common/ide/httpFile.js';
+import { createVoltButton, voltButtonClasses } from '../../voltAgent/browser/chrome/voltButton.js';
+import { IVoltMenuSection, showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
+import { openInAgentTools } from '../../voltAgent/browser/workspace/agentSurfaceHost.js';
 import { IVoltFeatureService } from '../../voltCustomize/common/voltFeatures.js';
-import { HTTP_CLIENT_FEATURE_ID } from '../common/voltHttp.js';
+import { HTTP_SNIPPET_TARGETS, httpSnippet, HttpSnippetTarget } from '../common/httpCodegen.js';
+import { cloneHttp, emptyHttpRequest, findHttpItem, findHttpItemByPath, httpItemPath, httpRequestFromSpec, httpRequestLabel, IHttpFolder, IHttpItem, IHttpRequest, newHttpId, newHttpRequest } from '../common/httpCollection.js';
+import { HTTP_PROTOCOLS, HttpProtocol, httpRequestBadge, httpRequestBadgeKey } from '../common/httpProtocols.js';
+import { HTTP_ADD_TO_CHAT_COMMAND_ID, HTTP_CLIENT_FEATURE_ID } from '../common/voltHttp.js';
+import { IVoltHttpSessions } from './voltHttpSessions.js';
+import { httpDraftKey, IHttpEnvironmentEntry, IVoltHttpCollections } from './voltHttpCollections.js';
+import { HttpCollectionPage, HttpEnvironmentPage, IHttpCollectionTabState, IHttpEnvironmentTabState, IHttpPageHost } from './voltHttpPages.js';
+import { currentHttpRequest, HttpRequestView, IHttpRequestHost, IHttpRequestTabState, isHttpRequestDirty } from './voltHttpRequestView.js';
 import { IHttpExchange, IVoltHttpService } from './voltHttpService.js';
+import { HTTP_TOOLS, HttpSidebar, HttpSidebarView, IHttpSidebarHost } from './voltHttpSidebar.js';
+import { HttpToolKind, IHttpToolFiles, IHttpToolPage, IHttpToolPageHost, IHttpToolTabState } from './voltHttpToolPages.js';
+import { IVoltHttpAutomations } from './voltHttpAutomations.js';
+import { HttpAutomationPage } from './voltHttpAutomationPage.js';
+import { IVoltHttpPerformance } from './voltHttpPerformance.js';
+import { HttpPerformancePage } from './voltHttpPerformancePage.js';
+import { IVoltHttpSecurity } from './voltHttpSecurity.js';
+import { HttpSecurityPage } from './voltHttpSecurityPage.js';
+import { HttpCookiesView } from './voltHttpCookiesView.js';
+import { httpTestTargetsOf } from './voltHttpBulkTests.js';
+import { HttpBulkTestsView } from './voltHttpBulkTestsView.js';
+import { createHttpCheckIcon, createHttpCopyIcon, createHttpProtocolIcon, createHttpRequestIcon, createHttpSnippetIcon } from './voltHttpIcons.js';
+import { createHttpDropdown, createHttpIconButton, HTTP_MENU_CLASS, showHttpActionMenu, HttpVariableLookup } from './voltHttpWidgets.js';
+import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 
 export const VOLT_HTTP_EDITOR_ID = 'workbench.editor.voltHttpRequest';
 export const VOLT_HTTP_INPUT_ID = 'workbench.input.voltHttpRequest';
 
-type BodyMode = 'none' | 'json' | 'text' | 'xml' | 'form' | 'graphql';
-type AuthMode = 'none' | 'bearer' | 'basic' | 'apikey';
-type RequestTab = 'params' | 'headers' | 'body' | 'auth';
-type ResponseTab = 'body' | 'headers' | 'raw';
-type ResponseLanguage = 'json' | 'xml' | 'html' | 'javascript' | 'css' | 'plaintext';
+export type HttpClientTab =
+	| { readonly kind: 'request'; readonly state: IHttpRequestTabState }
+	| { readonly kind: 'collection'; readonly state: IHttpCollectionTabState }
+	| { readonly kind: 'environment'; readonly state: IHttpEnvironmentTabState }
+	| { readonly kind: 'tool'; readonly tool: HttpToolKind; readonly state: IHttpToolTabState };
 
-interface IKeyValue {
-	key: string;
-	value: string;
-	enabled: boolean;
+/** What something outside the client asks it to show (a CodeLens, the sidebar view, an agent's send). */
+export type HttpClientCommand =
+	| { readonly type: 'openRequest'; readonly collection: URI; readonly id?: string; readonly path?: readonly string[]; readonly line?: number; readonly name?: string; readonly send?: boolean; readonly exchange?: IHttpExchange }
+	| { readonly type: 'openUntitled'; readonly request?: IHttpRequest; readonly exchange?: IHttpExchange; readonly send?: boolean }
+	| { readonly type: 'openExchange'; readonly exchange: IHttpExchange }
+	| { readonly type: 'openCollection'; readonly collection: URI; readonly folderId?: string; readonly run?: boolean }
+	| { readonly type: 'import' };
+
+interface ISavedTab {
+	readonly kind: HttpClientTab['kind'];
+	readonly collection?: string;
+	readonly id?: string;
+	/** The item's names from the collection down: finds it again after a restart, when ids are new. */
+	readonly path?: readonly string[];
+	/** A request's unsaved edits (or the whole of one saved nowhere yet). */
+	readonly draft?: IHttpRequest;
+	readonly entryId?: string;
+	readonly name?: string;
+	/** An automation, performance test or security scan: which, and its file. */
+	readonly tool?: HttpToolKind;
+	readonly uri?: string;
 }
 
-/** What the request editor edits; compiled into an `.http` request on send and save. */
-export interface IHttpDraft {
-	name: string;
-	method: string;
-	url: string;
-	/** Query params unchecked in the Params table: out of the URL, kept for the table. */
-	disabledParams?: IKeyValue[];
-	headers: IKeyValue[];
-	bodyMode: BodyMode;
-	body: string;
-	form: IKeyValue[];
-	graphqlVariables: string;
-	auth: { mode: AuthMode; token: string; user: string; password: string; keyName: string; keyValue: string; keyIn: 'header' | 'query' };
+interface ISavedClient {
+	readonly root?: string;
+	readonly instance?: string;
+	readonly tabs: readonly ISavedTab[];
+	readonly active: number;
+	readonly sidebar: HttpSidebarView;
+	readonly sidebarWidth: number;
+	readonly sidebarHidden: boolean;
+	readonly ratio: number;
 }
 
-function emptyDraft(): IHttpDraft {
-	return { name: '', method: 'GET', url: '', headers: [], bodyMode: 'none', body: '', form: [], graphqlVariables: '', auth: { mode: 'none', token: '', user: '', password: '', keyName: 'X-API-Key', keyValue: '', keyIn: 'header' } };
+function requestTabState(collection: URI | undefined, id: string, untitled?: IHttpRequest): IHttpRequestTabState {
+	return { collection, id, ...(untitled ? { untitled } : {}), responseTab: 'body', scriptTab: 'test', pretty: true, wrap: true };
 }
 
-/** An `.http` request opened for editing: body mode and auth are read back from its headers. */
-export function draftFromSpec(spec: IHttpRequestSpec): IHttpDraft {
-	const draft = emptyDraft();
-	draft.name = spec.name ?? '';
-	draft.method = spec.method;
-	draft.url = spec.url;
-	const type = spec.headers.find(([key]) => key.toLowerCase() === 'content-type')?.[1] ?? '';
-	for (const [key, value] of spec.headers) {
-		const lower = key.toLowerCase();
-		if (lower === 'authorization' && /^bearer\s+/i.test(value)) {
-			draft.auth = { ...draft.auth, mode: 'bearer', token: value.replace(/^bearer\s+/i, '') };
-		} else if (lower === 'authorization' && /^basic\s+/i.test(value)) {
-			const [user, password] = value.replace(/^basic\s+/i, '').split(/\s+|:/);
-			draft.auth = { ...draft.auth, mode: 'basic', user: user ?? '', password: password ?? '' };
-		} else if (lower !== 'content-type' || !spec.body) {
-			draft.headers.push({ key, value, enabled: true });
-		}
-	}
-	if (spec.body) {
-		if (/graphql/i.test(type) || spec.headers.some(([key, value]) => key.toLowerCase() === 'x-request-type' && value === 'GraphQL')) {
-			draft.bodyMode = 'graphql';
-			const [query, variables] = spec.body.split(/\n\s*\n(?=\s*\{)/);
-			draft.body = query;
-			draft.graphqlVariables = variables ?? '';
-		} else if (/x-www-form-urlencoded/.test(type)) {
-			draft.bodyMode = 'form';
-			draft.form = spec.body.split('&').filter(Boolean).map(pair => {
-				const [key, value] = pair.split('=');
-				return { key: decodeURIComponent(key ?? ''), value: decodeURIComponent(value ?? ''), enabled: true };
-			});
-		} else {
-			draft.bodyMode = /json/.test(type) || /^\s*[[{]/.test(spec.body) ? 'json' : /xml/.test(type) ? 'xml' : 'text';
-			draft.body = spec.body;
-		}
-	}
-	return draft;
+function collectionTabState(collection: URI, folderId?: string): IHttpCollectionTabState {
+	return { collection, ...(folderId ? { folderId } : {}), tab: 'overview', scriptTab: 'preRequest', results: [], iterations: 1, delayMs: 0, stopOnFailure: false };
 }
 
-export function specFromDraft(draft: IHttpDraft, line = 0): IHttpRequestSpec {
-	const headers: [string, string][] = draft.headers.filter(item => item.enabled && item.key.trim()).map(item => [item.key.trim(), item.value]);
-	let url = draft.url.trim();
-	switch (draft.auth.mode) {
-		case 'bearer': headers.push(['Authorization', `Bearer ${draft.auth.token}`]); break;
-		case 'basic': headers.push(['Authorization', `Basic ${draft.auth.user}:${draft.auth.password}`]); break;
-		case 'apikey':
-			if (draft.auth.keyIn === 'header') {
-				headers.push([draft.auth.keyName, draft.auth.keyValue]);
-			} else {
-				url += `${url.includes('?') ? '&' : '?'}${encodeURIComponent(draft.auth.keyName)}=${encodeURIComponent(draft.auth.keyValue)}`;
-			}
-			break;
+function tabKey(tab: HttpClientTab): string {
+	switch (tab.kind) {
+		case 'request': return httpDraftKey(tab.state.collection, tab.state.id);
+		case 'collection': return `collection:${tab.state.collection.toString()}#${tab.state.folderId ?? ''}`;
+		case 'environment': return `environment:${tab.state.entryId}`;
+		case 'tool': return `tool:${tab.state.uri.toString()}`;
 	}
-	const hasType = headers.some(([key]) => key.toLowerCase() === 'content-type');
-	let body: string | undefined;
-	switch (draft.bodyMode) {
-		case 'json': body = draft.body; if (!hasType) { headers.push(['Content-Type', 'application/json']); } break;
-		case 'xml': body = draft.body; if (!hasType) { headers.push(['Content-Type', 'application/xml']); } break;
-		case 'text': body = draft.body; if (!hasType) { headers.push(['Content-Type', 'text/plain']); } break;
-		case 'form':
-			body = draft.form.filter(item => item.enabled && item.key.trim()).map(item => `${encodeURIComponent(item.key.trim())}=${encodeURIComponent(item.value)}`).join('&');
-			if (!hasType) { headers.push(['Content-Type', 'application/x-www-form-urlencoded']); }
-			break;
-		case 'graphql':
-			headers.push(['X-Request-Type', 'GraphQL']);
-			if (!hasType) { headers.push(['Content-Type', 'application/json']); }
-			body = draft.graphqlVariables.trim() ? `${draft.body.trim()}\n\n${draft.graphqlVariables.trim()}` : draft.body;
-			break;
-	}
-	return { ...(draft.name.trim() ? { name: draft.name.trim().replace(/\s+/g, '-') } : {}), method: draft.method, url, headers, ...(body !== undefined && body !== '' ? { body } : {}), line };
 }
 
-/** GraphQL bodies are sent as JSON `{ query, variables }`, the way REST Client sends them. */
-function wireSpec(spec: IHttpRequestSpec): IHttpRequestSpec {
-	if (!spec.headers.some(([key, value]) => key === 'X-Request-Type' && value === 'GraphQL') || !spec.body) {
-		return spec;
-	}
-	const [query, variables] = spec.body.split(/\n\s*\n(?=\s*\{)/);
-	let parsed: unknown;
-	try {
-		parsed = variables ? JSON.parse(variables) : undefined;
-	} catch {
-		parsed = undefined;
-	}
-	return { ...spec, headers: spec.headers.filter(([key]) => key !== 'X-Request-Type'), body: JSON.stringify({ query, ...(parsed ? { variables: parsed } : {}) }) };
-}
-
-/** The request as a shell command; `{{variables}}` are left for the reader to fill in. */
-export function curlFromSpec(spec: IHttpRequestSpec): string {
-	const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
-	const lines = [`curl${spec.method === 'GET' ? '' : ` -X ${spec.method}`} ${quote(spec.url)}`];
-	for (const [key, value] of spec.headers) {
-		lines.push(`-H ${quote(`${key}: ${value}`)}`);
-	}
-	if (spec.body) {
-		lines.push(`--data-raw ${quote(spec.body)}`);
-	}
-	return lines.join(' \\\n  ');
-}
-
-export class VoltHttpRequestInput extends EditorInput {
+/**
+ * A Volt Client tab: its open request tabs and layout, for one project. Opening the client again
+ * makes another one, as a terminal or browser tab does, each with tabs of its own; two projects
+ * never share environment or history, while the collections themselves (and unsaved edits to a
+ * request) live in `IVoltHttpCollections`, one per file, and show the same in every client that
+ * has them open.
+ */
+export class VoltHttpClientInput extends EditorInput {
 
 	static readonly TypeID = VOLT_HTTP_INPUT_ID;
 
 	readonly resource: URI;
-	private readonly _onDidChangeDraft = this._register(new Emitter<void>());
-	readonly onDidChangeDraft = this._onDidChangeDraft.event;
-	/** The exchange to show when the pane opens (a history entry, or a send started by CodeLens). */
-	pendingExchange: IHttpExchange | undefined;
-	sendOnOpen = false;
+	readonly tabs: HttpClientTab[] = [];
+	active = -1;
+	sidebar: HttpSidebarView = 'collections';
+	sidebarWidth = 260;
+	sidebarHidden = false;
+	requestRatio = 0.5;
+	/** Tabs read from storage, resolved against the collections once they are loaded. */
+	restore: readonly ISavedTab[] | undefined;
+	restoreActive = 0;
+	/** Set by the pane: saving the tabs reads their unsaved edits and name paths from it. */
+	collections: IVoltHttpCollections | undefined;
+	private readonly queue: HttpClientCommand[] = [];
+	private readonly _onDidRequest = this._register(new Emitter<void>());
+	readonly onDidRequest = this._onDidRequest.event;
 
-	constructor(
-		public draft: IHttpDraft,
-		public source: { uri: URI; line: number } | undefined,
-		id = generateUuid(),
-	) {
+	/** When the user last had this client in front: an agent's send or a CodeLens goes to the latest. */
+	shownAt = 0;
+
+	constructor(readonly root: URI | undefined, readonly instance: string = generateUuid().slice(0, 8)) {
 		super();
-		this.resource = URI.from({ scheme: 'volt-http', path: `/${id}` });
+		// Each client its own resource: a tab strip takes two editors with one resource for the same tab.
+		this.resource = URI.from({ scheme: 'volt-http', path: '/client', query: root?.toString() ?? '', fragment: instance });
 	}
 
-	override get typeId(): string { return VoltHttpRequestInput.TypeID; }
+	override get typeId(): string { return VoltHttpClientInput.TypeID; }
 	override get editorId(): string { return VOLT_HTTP_EDITOR_ID; }
 
 	override getName(): string {
-		if (this.draft.name.trim()) {
-			return this.draft.name.trim();
-		}
-		if (!this.draft.url.trim()) {
-			return localize('voltHttp.untitled', "New Request");
-		}
-		const path = this.draft.url.replace(/^[a-z]+:\/\/[^/]+/i, '').split('?')[0] || '/';
-		return `${this.draft.method} ${path}`;
+		return localize('voltHttp.clientName', "Volt Client");
 	}
 
 	override getDescription(): string | undefined {
-		return this.source ? basename(this.source.uri) : undefined;
+		return this.root ? basename(this.root) : undefined;
 	}
 
 	override getIcon(): ThemeIcon {
-		return Codicon.globe;
+		return Codicon.plug;
 	}
 
 	override matches(other: EditorInput | IUntypedEditorInput): boolean {
-		if (other instanceof VoltHttpRequestInput) {
-			return other === this || (!!this.source && !!other.source && other.source.uri.toString() === this.source.uri.toString() && other.source.line === this.source.line);
-		}
-		return super.matches(other);
+		return other instanceof VoltHttpClientInput ? other.instance === this.instance : super.matches(other);
 	}
 
-	update(draft: IHttpDraft): void {
-		this.draft = draft;
-		this._onDidChangeLabel.fire();
-		this._onDidChangeDraft.fire();
+	/** Asks the client to do something; it happens now when the client is on screen, else when it next shows. */
+	request(command: HttpClientCommand): void {
+		this.queue.push(command);
+		this._onDidRequest.fire();
 	}
 
-	setSource(source: { uri: URI; line: number }): void {
-		this.source = source;
-		this._onDidChangeLabel.fire();
+	takeCommands(): HttpClientCommand[] {
+		return this.queue.splice(0, this.queue.length);
 	}
 }
 
-export class VoltHttpRequestInputSerializer implements IEditorSerializer {
+export class VoltHttpClientInputSerializer implements IEditorSerializer {
 	canSerialize(): boolean {
 		return true;
 	}
+
 	serialize(input: EditorInput): string | undefined {
-		return input instanceof VoltHttpRequestInput ? JSON.stringify({ draft: input.draft, source: input.source ? { uri: input.source.uri.toString(), line: input.source.line } : undefined }) : undefined;
+		if (!(input instanceof VoltHttpClientInput)) {
+			return undefined;
+		}
+		const saved: ISavedClient = {
+			...(input.root ? { root: input.root.toString() } : {}),
+			instance: input.instance,
+			tabs: input.restore ?? input.tabs.map(tab => savedTab(tab, input.collections)),
+			active: input.restore ? input.restoreActive : input.active,
+			sidebar: input.sidebar,
+			sidebarWidth: input.sidebarWidth,
+			sidebarHidden: input.sidebarHidden,
+			ratio: input.requestRatio,
+		};
+		return JSON.stringify(saved);
 	}
+
 	deserialize(instantiationService: IInstantiationService, raw: string): EditorInput | undefined {
 		// A tab saved in a chat's tools comes back when that chat is shown: not while the HTTP client is off.
 		if (instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltFeatureService))?.isEnabled(HTTP_CLIENT_FEATURE_ID) === false) {
 			return undefined;
 		}
 		try {
-			const data = JSON.parse(raw) as { draft: IHttpDraft; source?: { uri: string; line: number } };
-			return new VoltHttpRequestInput({ ...emptyDraft(), ...data.draft }, data.source ? { uri: URI.parse(data.source.uri), line: data.source.line } : undefined);
+			const data = JSON.parse(raw) as Partial<ISavedClient> & { draft?: { method?: string; url?: string; name?: string }; source?: { uri: string; line: number } };
+			const input = new VoltHttpClientInput(data.root ? URI.parse(data.root) : undefined, typeof data.instance === 'string' && data.instance ? data.instance : undefined);
+			if (Array.isArray(data.tabs)) {
+				input.restore = data.tabs;
+				input.restoreActive = typeof data.active === 'number' ? data.active : 0;
+				input.sidebar = data.sidebar ?? 'collections';
+				input.sidebarWidth = typeof data.sidebarWidth === 'number' ? data.sidebarWidth : 260;
+				input.sidebarHidden = !!data.sidebarHidden;
+				input.requestRatio = typeof data.ratio === 'number' ? data.ratio : 0.5;
+			} else if (data.source) {
+				// A request tab of the client before it had collections: its request, by line.
+				input.request({ type: 'openRequest', collection: URI.parse(data.source.uri), line: data.source.line });
+			} else if (data.draft?.url) {
+				const request = emptyHttpRequest(data.draft.name ?? '', 'none');
+				request.method = data.draft.method ?? 'GET';
+				request.url = data.draft.url;
+				input.request({ type: 'openUntitled', request });
+			}
+			return input;
 		} catch {
 			return undefined;
 		}
 	}
 }
 
-const CODE_EDITOR_OPTIONS: ICodeEditorOptions = {
-	minimap: { enabled: false },
-	scrollBeyondLastLine: false,
-	lineNumbers: 'on',
-	lineNumbersMinChars: 3,
-	glyphMargin: false,
-	folding: true,
-	wordWrap: 'on',
-	renderLineHighlight: 'none',
-	overviewRulerLanes: 0,
-	hideCursorInOverviewRuler: true,
-	scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, alwaysConsumeMouseWheel: false },
-	fontSize: 12,
-	padding: { top: 6, bottom: 6 },
-	automaticLayout: false,
-	fixedOverflowWidgets: true,
-};
+function savedTab(tab: HttpClientTab, collections: IVoltHttpCollections | undefined): ISavedTab {
+	switch (tab.kind) {
+		case 'request': {
+			const state = tab.state;
+			const entry = state.collection ? collections?.get(state.collection) : undefined;
+			const draft = collections?.draftOf(httpDraftKey(state.collection, state.id)) ?? (state.collection ? undefined : state.untitled);
+			return { kind: 'request', ...(state.collection ? { collection: state.collection.toString() } : {}), id: state.id, ...(entry ? { path: httpItemPath(entry.collection, state.id) } : {}), ...(draft ? { draft } : {}) };
+		}
+		case 'collection': {
+			const entry = collections?.get(tab.state.collection);
+			return { kind: 'collection', collection: tab.state.collection.toString(), ...(tab.state.folderId ? { id: tab.state.folderId, ...(entry ? { path: httpItemPath(entry.collection, tab.state.folderId) } : {}) } : {}) };
+		}
+		case 'environment':
+			return { kind: 'environment', entryId: tab.state.entryId, name: tab.state.name };
+		case 'tool':
+			return { kind: 'tool', tool: tab.tool, uri: tab.state.uri.toString() };
+	}
+}
 
-/** Inputs inside the URL box and the key/value tables: the cell is the field, so no fill or border. */
-const FLAT_INPUT_STYLES: IInputBoxStyles = { ...defaultInputBoxStyles, inputBackground: 'transparent', inputBorder: 'transparent' };
-const CHECKBOX_STYLES = { ...defaultCheckboxStyles, size: 16 };
-
-/** The request pane's share of the space under the URL bar, and the least either pane keeps. */
-const DEFAULT_REQUEST_RATIO = 0.5;
-const MIN_PANE_HEIGHT = 120;
+const NARROW_WIDTH = 640;
+const MIN_SIDEBAR = 180;
+const MAX_SIDEBAR = 480;
 
 /**
- * The HTTP client's request editor, laid out like Postman: the request's file and name with the
- * environment and Save on top; the method and URL in one box beside a split Send; Params,
- * Authorization, Headers and Body tabs over bordered key/value tables (with Bulk Edit); a sash;
- * then the response (status, time, size; Body, Headers, Raw; format, wrap, find and copy). It
- * edits `.http` requests in place and saves back to the file, and its sends land in the same
- * history the agents' `ide http` capability uses.
+ * The HTTP client, laid out like Postman: Collections, Environments and History on the left; on
+ * the right a strip of open tabs with the environment picker, and under it the request (or a
+ * collection's or environment's page) in front. Below 640px the left side folds away behind its
+ * toggle and opens over the content.
  */
-export class VoltHttpRequestEditor extends EditorPane {
+export class VoltHttpClientEditor extends EditorPane {
 
 	static readonly ID = VOLT_HTTP_EDITOR_ID;
 
 	private root!: HTMLElement;
-	private crumbs!: HTMLElement;
-	private crumbFile!: HTMLElement;
-	private nameBox!: InputBox;
-	private headActions!: HTMLElement;
-	private bar!: HTMLElement;
-	private urlBox: InputBox | undefined;
-	private requestEl!: HTMLElement;
-	private tabsEl!: HTMLElement;
-	private tabBody!: HTMLElement;
-	private responseEl!: HTMLElement;
+	private sideHost!: HTMLElement;
+	private main!: HTMLElement;
+	private strip!: HTMLElement;
+	private tabList!: HTMLElement;
+	private stripActions!: HTMLElement;
+	private content!: HTMLElement;
+	private modalHost!: HTMLElement;
 	private sash!: Sash;
-	private requestRatio = DEFAULT_REQUEST_RATIO;
-	private requestTab: RequestTab = 'params';
-	private responseTab: ResponseTab = 'body';
-	/** Picked in the response's format dropdown; cleared with each new response. */
-	private responseLanguage: ResponseLanguage | undefined;
-	private responseWrap = true;
-	private bulkEdit = false;
-	/** Set while the Params table writes the URL, so the URL's change does not redraw that table. */
-	private syncingUrl = false;
-	private readonly headStore = this._register(new DisposableStore());
-	private readonly barStore = this._register(new DisposableStore());
-	private readonly tabStore = this._register(new DisposableStore());
-	private readonly responseStore = this._register(new DisposableStore());
+	private sidebar: HttpSidebar | undefined;
+	private readonly inputStore = this._register(new DisposableStore());
+	private readonly viewStore = this._register(new DisposableStore());
+	private readonly stripStore = this._register(new DisposableStore());
+	private readonly modal = this._register(new MutableDisposable<DisposableStore>());
 	private readonly menu = this._register(new MutableDisposable());
-	private readonly sending = this._register(new MutableDisposable<CancellationTokenSource>());
-	private readonly codeEditors = new Set<CodeEditorWidget>();
-	private exchange: IHttpExchange | undefined;
+	private requestView: HttpRequestView | undefined;
+	private page: HttpCollectionPage | HttpEnvironmentPage | IHttpToolPage | undefined;
+	/** The tab being dragged in the strip, and whether it was dropped on the strip (a reorder). */
+	private dragged: { tab: HttpClientTab; dropped: boolean } | undefined;
+	/** The tools whose files were listed for a restored tab's name. */
+	private readonly toolNamesAsked = new Set<HttpToolKind>();
 	private dimension: Dimension | undefined;
-	private sendButtonEl: HTMLElement | undefined;
-	private sendLabel: ((sending: boolean) => void) | undefined;
+	private narrow = false;
+	/** The variables of the tab in front, for colouring `{{names}}`. */
+	private variables: ReadonlyMap<string, { readonly value: string; readonly source: string }> | undefined;
+	/** The variables in reach of the tab in front, and the way to give one a new value (a field's hover card). */
+	private readonly variableLookup: HttpVariableLookup = Object.assign(() => this.variables, {
+		update: async (name: string, value: string) => {
+			const input = this.client;
+			const active = input?.tabs[input.active];
+			const collection = active?.kind === 'request' || active?.kind === 'collection' ? active.state.collection : undefined;
+			const done = await this.collections.setVariable(input?.root, collection, name, value);
+			await this.loadVariables();
+			return done;
+		},
+	});
+	private variablesFor = 0;
+	/** The snippet language picked last, offered first the next time. */
+	private snippetTarget: HttpSnippetTarget = 'curl';
 
 	constructor(
 		group: IEditorGroup,
@@ -336,827 +326,1239 @@ export class VoltHttpRequestEditor extends EditorPane {
 		@IStorageService storageService: IStorageService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
+		@ICommandService private readonly commandService: ICommandService,
+		@IVoltHttpSessions private readonly sessions: IVoltHttpSessions,
 		@IModelService private readonly modelService: IModelService,
 		@ILanguageService private readonly languageService: ILanguageService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
+		@IDialogService private readonly dialogService: IDialogService,
+		@IFileDialogService private readonly fileDialogService: IFileDialogService,
+		@IFileService private readonly fileService: IFileService,
+		@INotificationService private readonly notificationService: INotificationService,
+		@IEditorService private readonly editorService: IEditorService,
+		@IVoltHttpCollections private readonly collections: IVoltHttpCollections,
 		@IVoltHttpService private readonly http: IVoltHttpService,
+		@IVoltHttpAutomations private readonly automations: IVoltHttpAutomations,
+		@IVoltHttpPerformance private readonly performance: IVoltHttpPerformance,
+		@IVoltHttpSecurity private readonly security: IVoltHttpSecurity,
 	) {
-		super(VoltHttpRequestEditor.ID, group, telemetryService, themeService, storageService);
+		super(VoltHttpClientEditor.ID, group, telemetryService, themeService, storageService);
 	}
 
-	private get draft(): IHttpDraft {
-		return (this.input as VoltHttpRequestInput | undefined)?.draft ?? emptyDraft();
+	private toolFiles(kind: HttpToolKind): IHttpToolFiles {
+		return kind === 'automation' ? this.automations : kind === 'performance' ? this.performance : this.security;
 	}
 
-	private change(mutate: (draft: IHttpDraft) => void): void {
-		const input = this.input as VoltHttpRequestInput | undefined;
-		if (!input) {
-			return;
-		}
-		const next = structuredClone(input.draft);
-		mutate(next);
-		input.update(next);
-		this.renderTabStrip();
+	/** The chat this client sits beside, when it is in a chat's tools. */
+	private get chatId(): string | undefined {
+		return this.root.closest<HTMLElement>('.volt-agent-tools-part')?.dataset.sessionId;
+	}
+
+	private get client(): VoltHttpClientInput | undefined {
+		return this.input instanceof VoltHttpClientInput ? this.input : undefined;
 	}
 
 	protected override createEditor(parent: HTMLElement): void {
-		this.root = append(parent, $('.volt-http-editor'));
-
-		const head = append(this.root, $('.volt-http-head'));
-		this.crumbs = append(head, $('.volt-http-crumbs'));
-		append(this.crumbs, $('span.volt-http-kind')).textContent = 'HTTP';
-		this.crumbFile = append(this.crumbs, $('span.volt-http-crumb'));
-		append(this.crumbs, $('span.volt-http-crumb-sep')).textContent = '/';
-		this.nameBox = this._register(new InputBox(append(this.crumbs, $('.volt-http-name')), this.contextViewService, { placeholder: localize('voltHttp.namePlaceholder', "Untitled request"), ariaLabel: localize('voltHttp.name', "Request name"), inputBoxStyles: FLAT_INPUT_STYLES }));
-		this._register(this.nameBox.onDidChange(value => this.change(draft => draft.name = value)));
-		this.headActions = append(head, $('.volt-http-head-actions'));
-
-		this.bar = append(this.root, $('.volt-http-bar'));
-		this.bar.dataset.slot = 'bar';
-
-		this.requestEl = append(this.root, $('.volt-http-request'));
-		this.tabsEl = append(this.requestEl, $('.volt-http-tabs'));
-		this.tabsEl.setAttribute('role', 'tablist');
-		this.tabBody = append(this.requestEl, $('.volt-http-tab-body'));
-		append(this.root, $('.volt-http-divider'));
-		this.responseEl = append(this.root, $('.volt-http-response'));
-
-		this.sash = this._register(new Sash(this.root, { getHorizontalSashTop: () => this.requestEl.offsetTop + this.requestEl.offsetHeight }, { orientation: Orientation.HORIZONTAL }));
-		let startHeight = 0;
-		this._register(this.sash.onDidStart(() => startHeight = this.requestEl.offsetHeight));
+		this.root = append(parent, $('.volt-http-editor.volt-http-client'));
+		this.sideHost = append(this.root, $('.volt-http-side-host'));
+		this.main = append(this.root, $('.volt-http-main'));
+		this.strip = append(this.main, $('.volt-http-strip'));
+		const toggle = createHttpIconButton(this.strip, Codicon.layoutSidebarLeft, localize('voltHttp.toggleSidebar', "Collections, Environments and History"), () => this.toggleSidebar());
+		toggle.classList.add('volt-http-side-toggle');
+		this.tabList = append(this.strip, $('.volt-http-strip-tabs'));
+		this.tabList.setAttribute('role', 'tablist');
+		// Beside the tabs, not among them: it stays in reach however many are open.
+		const add = createHttpIconButton(this.strip, Codicon.add, localize('voltHttp.newRequestTab', "New Request"), button => this.showKindMenu(button));
+		add.classList.add('volt-http-strip-add');
+		this.stripActions = append(this.strip, $('.volt-http-strip-actions'));
+		this.content = append(this.main, $('.volt-http-content'));
+		this.modalHost = append(this.root, $('.volt-http-modal-host'));
+		this.sash = this._register(new Sash(this.root, { getVerticalSashLeft: () => this.sideHost.offsetWidth }, { orientation: Orientation.VERTICAL }));
+		let startWidth = 0;
+		this._register(this.sash.onDidStart(() => startWidth = this.sideHost.offsetWidth));
 		this._register(this.sash.onDidChange(event => {
-			const space = this.splitSpace();
-			if (space > 0) {
-				this.requestRatio = (startHeight + event.currentY - event.startY) / space;
-				this.layoutSplit();
+			const client = this.client;
+			if (client && !this.narrow) {
+				client.sidebarWidth = Math.max(MIN_SIDEBAR, Math.min(MAX_SIDEBAR, startWidth + event.currentX - event.startX));
+				this.layoutParts();
 			}
 		}));
 		this._register(this.sash.onDidReset(() => {
-			this.requestRatio = DEFAULT_REQUEST_RATIO;
-			this.layoutSplit();
+			if (this.client) {
+				this.client.sidebarWidth = 260;
+				this.layoutParts();
+			}
 		}));
-
-		this._register(this.http.onDidChangeEnvironment(() => this.renderHeadActions()));
-		this._register(this.http.onDidChangeIndex(() => this.renderHeadActions()));
+		// A file dropped anywhere on the client is imported.
+		this._register(addDisposableListener(this.root, EventType.DRAG_OVER, (event: DragEvent) => {
+			if (event.dataTransfer?.types.includes('Files')) {
+				event.preventDefault();
+			}
+		}));
+		this._register(addDisposableListener(this.root, EventType.DROP, (event: DragEvent) => {
+			const file = event.dataTransfer?.files[0];
+			if (file) {
+				event.preventDefault();
+				void file.text().then(text => this.importText(text, file.name));
+			}
+		}));
+		this._register(this.http.onDidChangeEnvironment(() => {
+			this.renderStripActions();
+			void this.loadVariables();
+		}));
+		this._register(this.collections.onDidChangeEnvironments(() => {
+			this.renderStripActions();
+			void this.loadVariables();
+		}));
+		this._register(this.collections.onDidChange(() => {
+			this.renderTabStrip();
+			void this.loadVariables();
+		}));
+		this._register(this.collections.onDidChangeDraft(() => this.renderTabStrip()));
+		for (const tool of HTTP_TOOLS) {
+			// A renamed or deleted file: its tab's label follows.
+			this._register(this.toolFiles(tool.kind).onDidChange(() => this.renderTabStrip()));
+		}
+		// The strip itself takes a dragged tab dropped after the last one.
+		this._register(addDisposableListener(this.tabList, EventType.DRAG_OVER, (event: DragEvent) => {
+			if (this.dragged) {
+				event.preventDefault();
+			}
+		}));
+		this._register(addDisposableListener(this.tabList, EventType.DROP, (event: DragEvent) => {
+			const dragged = this.dragged;
+			const input = this.client;
+			if (!dragged || !input || event.defaultPrevented) {
+				return;
+			}
+			event.preventDefault();
+			dragged.dropped = true;
+			this.moveTab(dragged.tab, input.tabs.length);
+		}));
 	}
 
-	override async setInput(input: VoltHttpRequestInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
+	override async setInput(input: VoltHttpClientInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
-		this.nameBox.value = input.draft.name;
-		this.renderCrumbs();
-		this.renderHeadActions();
-		this.renderBar();
-		this.renderTabs();
-		this.exchange = input.pendingExchange;
-		this.responseLanguage = undefined;
-		input.pendingExchange = undefined;
-		this.renderResponse();
-		this.layoutSplit();
-		if (input.sendOnOpen) {
-			input.sendOnOpen = false;
-			void this.send();
+		input.collections = this.collections;
+		input.shownAt = Date.now();
+		this.inputStore.clear();
+		this.viewStore.clear();
+		this.requestView = undefined;
+		this.page = undefined;
+		clearNode(this.sideHost);
+		const host: IHttpSidebarHost = {
+			root: input.root,
+			openRequest: (collection, id) => this.openRequest(collection, id),
+			openFolder: (collection, id) => this.openCollection(collection, id),
+			openCollection: collection => this.openCollection(collection),
+			openEnvironment: entry => this.openEnvironment(entry),
+			openExchange: exchange => this.openExchange(exchange),
+			newRequest: protocol => this.openUntitled(undefined, undefined, protocol),
+			showImport: () => this.showImport(),
+			exportCollection: collection => void this.exportCollection(collection),
+			run: (collection, folderId) => this.openCollection(collection, folderId, true),
+			generateTests: (collection, itemId) => this.showGenerateTests(collection, itemId),
+			revealFile: uri => this.revealFile(uri),
+			closeTabsOf: (collection, id) => this.closeTabsOf(collection, id),
+			sidebarViewChanged: view => input.sidebar = view,
+			toolFiles: kind => this.toolFiles(kind),
+			openTool: (kind, uri) => this.openTool(kind, uri),
+			closeToolTab: uri => {
+				const tab = input.tabs.find(item => item.kind === 'tool' && item.state.uri.toString() === uri.toString());
+				if (tab) {
+					this.removeTab(tab);
+				}
+			},
+		};
+		this.sidebar = this.inputStore.add(this.instantiationService.createInstance(HttpSidebar, this.sideHost, host));
+		if (input.sidebar !== 'collections') {
+			this.sidebar.show(input.sidebar);
 		}
+		this.inputStore.add(input.onDidRequest(() => void this.runCommands()));
+		this.renderStripActions();
+		this.layoutParts();
+		await this.restoreTabs(input);
+		if (token.isCancellationRequested || this.input !== input) {
+			return;
+		}
+		this.renderTabStrip();
+		this.showActive();
+		await this.runCommands();
 	}
 
 	override clearInput(): void {
-		this.cancelSend();
+		this.inputStore.clear();
+		this.viewStore.clear();
+		this.modal.clear();
+		this.requestView = undefined;
+		this.page = undefined;
+		this.sidebar = undefined;
 		super.clearInput();
 	}
 
-	/** The `.http` file the request lives in, then its editable name. */
-	private renderCrumbs(): void {
-		const source = (this.input as VoltHttpRequestInput | undefined)?.source;
-		this.crumbs.classList.toggle('no-source', !source);
-		this.crumbFile.textContent = source ? basename(source.uri) : '';
-		this.crumbFile.title = source ? source.uri.fsPath : '';
-	}
-
-	private renderHeadActions(): void {
-		this.headStore.clear();
-		clearNode(this.headActions);
-		const env = append(this.headActions, $('.volt-http-env'));
-		void this.http.environments().then(envs => {
-			if (this.headStore.isDisposed || !env.parentElement) {
-				return;
+	/** Tabs read from storage find their requests again: by id while the window lives, by name path after a restart. */
+	private async restoreTabs(input: VoltHttpClientInput): Promise<void> {
+		const saved = input.restore;
+		if (!saved) {
+			return;
+		}
+		await this.collections.collections(input.root);
+		if (!input.restore) {
+			return;
+		}
+		input.restore = undefined;
+		const itemOf = async (tab: ISavedTab): Promise<{ uri: URI; item: IHttpItem | undefined } | undefined> => {
+			if (!tab.collection) {
+				return undefined;
 			}
-			const names = Object.keys(envs);
-			createVoltDropdown<string>(env, this.contextViewService, {
-				options: [{ id: '', label: localize('voltHttp.noEnv', "No Environment") }, ...names.map(name => ({ id: name, label: name, description: localize('voltHttp.envVars', "{0} variables", Object.keys(envs[name]).length) }))],
-				value: this.http.environment && names.includes(this.http.environment) ? this.http.environment : '',
-				ariaLabel: localize('voltHttp.env', "Environment"),
-				leadingIcon: Codicon.symbolVariable,
-				align: 'right',
-				onChange: value => this.http.setEnvironment(value || undefined),
-			}, this.headStore);
-		});
-		const save = this.headStore.add(createVoltButton(this.headActions, 'ghost', { supportIcons: true, title: localize('voltHttp.saveTitle', "Save to .http file") }));
-		save.label = `$(save) ${localize('voltHttp.save', "Save")}`;
-		this.headStore.add(save.onDidClick(() => void this.save()));
-	}
-
-	/** The method and URL share one box; Send is split, its chevron holds the other ways to send. */
-	private renderBar(): void {
-		this.barStore.clear();
-		clearNode(this.bar);
-		const draft = this.draft;
-		const group = append(this.bar, $('.volt-http-urlgroup'));
-		const method = append(group, $('.volt-http-method'));
-		method.dataset.method = draft.method;
-		createVoltDropdown(method, this.contextViewService, {
-			options: HTTP_METHODS.map(id => ({ id, label: id })),
-			value: draft.method as typeof HTTP_METHODS[number],
-			ariaLabel: localize('voltHttp.method', "Method"),
-			width: 160,
-			align: 'left',
-			onChange: value => {
-				method.dataset.method = value;
-				this.change(next => next.method = value);
-			},
-		}, this.barStore);
-		this.urlBox = this.barStore.add(new InputBox(append(group, $('.volt-http-url')), this.contextViewService, { placeholder: localize('voltHttp.urlPlaceholder', "Enter URL or paste text, e.g. https://api.example.com/users/{{id}}"), ariaLabel: localize('voltHttp.url', "URL"), inputBoxStyles: FLAT_INPUT_STYLES }));
-		this.urlBox.value = draft.url;
-		this.barStore.add(this.urlBox.onDidChange(value => {
-			if (this.syncingUrl) {
-				return;
+			const uri = URI.parse(tab.collection);
+			const entry = await this.collections.load(uri);
+			if (!entry) {
+				return undefined;
 			}
-			this.change(next => next.url = value);
-			if (this.requestTab === 'params') {
-				this.renderTabBody();
-			}
-		}));
-		this.barStore.add(addDisposableListener(this.urlBox.inputElement, EventType.KEY_DOWN, (event: KeyboardEvent) => {
-			if (event.key === 'Enter') {
-				event.preventDefault();
-				void this.send();
-			}
-		}));
-
-		const split = append(this.bar, $('.volt-http-send'));
-		const send = this.barStore.add(createVoltButton(split, 'primary', { supportIcons: true }));
-		this.sendButtonEl = send.element;
-		this.sendLabel = sending => send.label = sending ? `$(debug-stop) ${localize('voltHttp.cancel', "Cancel")}` : localize('voltHttp.send', "Send");
-		this.sendLabel(!!this.sending.value);
-		this.barStore.add(send.onDidClick(() => this.sending.value ? this.cancelSend() : void this.send()));
-		const more = this.barStore.add(createVoltButton(split, 'primary', { supportIcons: true, title: localize('voltHttp.moreSend', "More actions") }));
-		more.element.classList.add('volt-http-send-more');
-		more.element.setAttribute('aria-haspopup', 'menu');
-		more.label = '$(chevron-down)';
-		this.barStore.add(more.onDidClick(() => this.showSendMenu(more.element)));
-	}
-
-	private showSendMenu(anchor: HTMLElement): void {
-		type Action = 'curl' | 'format' | 'clear';
-		const items: { id: Action; label: string; icon: ThemeIcon }[] = [
-			{ id: 'curl', label: localize('voltHttp.copyCurl', "Copy as cURL"), icon: Codicon.terminal },
-			...(this.draft.bodyMode === 'json' ? [{ id: 'format' as const, label: localize('voltHttp.beautify', "Beautify Body"), icon: Codicon.json }] : []),
-			...(this.exchange ? [{ id: 'clear' as const, label: localize('voltHttp.clearResponse', "Clear Response"), icon: Codicon.clearAll }] : []),
-		];
-		this.menu.value = showVoltMenu<Action>(this.contextViewService, {
-			anchor,
-			align: 'right',
-			ariaLabel: localize('voltHttp.moreSend', "More actions"),
-			sections: [{ id: 'send', items: items.map(item => ({ ...item, data: item.id })) }],
-			onPick: item => {
-				switch (item.data) {
-					case 'curl': void this.clipboardService.writeText(curlFromSpec(wireSpec(specFromDraft(this.draft)))); break;
-					case 'format': this.beautifyBody(); break;
-					case 'clear':
-						this.exchange = undefined;
-						this.renderResponse();
-						break;
+			return { uri, item: (tab.id ? findHttpItem(entry.collection, tab.id)?.item : undefined) ?? (tab.path ? findHttpItemByPath(entry.collection, tab.path) : undefined) };
+		};
+		for (const tab of saved) {
+			if (tab.kind === 'request') {
+				if (!tab.collection) {
+					if (tab.draft) {
+						const request = { ...tab.draft, id: tab.id ?? newHttpId() };
+						input.tabs.push({ kind: 'request', state: requestTabState(undefined, request.id, request) });
+					}
+					continue;
 				}
-			},
-		});
-	}
-
-	private renderTabs(): void {
-		this.renderTabStrip();
-		this.renderTabBody();
-	}
-
-	/** Postman's tab strip: a green dot on a tab that sends something, the header count in green. */
-	private renderTabStrip(): void {
-		clearNode(this.tabsEl);
-		const draft = this.draft;
-		const headers = draft.headers.filter(item => item.enabled && item.key).length;
-		const tabs: { id: RequestTab; label: string; dot?: boolean; count?: number }[] = [
-			{ id: 'params', label: localize('voltHttp.params', "Params"), dot: this.queryParams().length > 0 },
-			{ id: 'auth', label: localize('voltHttp.authorization', "Authorization"), dot: draft.auth.mode !== 'none' },
-			{ id: 'headers', label: localize('voltHttp.headers', "Headers"), count: headers || undefined },
-			{ id: 'body', label: localize('voltHttp.body', "Body"), dot: draft.bodyMode !== 'none' },
-		];
-		for (const { id, label, dot, count } of tabs) {
-			this.drawTab(this.tabsEl, label, id === this.requestTab, dot, count, () => {
-				this.requestTab = id;
-				this.renderTabs();
-			});
-		}
-	}
-
-	private drawTab(parent: HTMLElement, label: string, active: boolean, dot: boolean | undefined, count: number | undefined, select: () => void): void {
-		const tab = append(parent, $('button.volt-http-tab')) as HTMLButtonElement;
-		tab.type = 'button';
-		tab.classList.toggle('active', active);
-		tab.setAttribute('role', 'tab');
-		tab.setAttribute('aria-selected', String(active));
-		append(tab, $('span')).textContent = label;
-		if (count !== undefined) {
-			append(tab, $('span.volt-http-tab-count')).textContent = `(${count})`;
-		}
-		if (dot) {
-			append(tab, $('span.volt-http-tab-dot'));
-		}
-		tab.addEventListener('click', select);
-	}
-
-	private renderTabBody(): void {
-		this.tabStore.clear();
-		clearNode(this.tabBody);
-		const draft = this.draft;
-		switch (this.requestTab) {
-			case 'params':
-				this.renderKeyValues(this.tabBody, localize('voltHttp.queryParams', "Query Params"), [...this.queryParams().map(([key, value]) => ({ key, value, enabled: true })), ...draft.disabledParams ?? []], rows => this.setQueryParams(rows));
-				break;
-			case 'headers':
-				this.renderKeyValues(this.tabBody, localize('voltHttp.headers', "Headers"), draft.headers, rows => this.change(next => next.headers = rows));
-				break;
-			case 'body': this.renderBody(); break;
-			case 'auth': this.renderAuth(); break;
-		}
-		this.layoutEditors();
-	}
-
-	private queryParams(): [string, string][] {
-		const query = this.draft.url.split('?')[1]?.split('#')[0];
-		return query ? query.split('&').filter(Boolean).map(pair => {
-			const at = pair.indexOf('=');
-			return at < 0 ? [safeDecode(pair), ''] : [safeDecode(pair.slice(0, at)), safeDecode(pair.slice(at + 1))];
-		}) : [];
-	}
-
-	private setQueryParams(rows: IKeyValue[]): void {
-		const base = this.draft.url.split('?')[0];
-		const query = rows.filter(row => row.enabled && row.key).map(row => `${encodeParam(row.key)}${row.value ? `=${encodeParam(row.value)}` : ''}`).join('&');
-		const url = query ? `${base}?${query}` : base;
-		const disabled = rows.filter(row => !row.enabled && (row.key || row.value)).map(row => ({ ...row }));
-		this.change(next => {
-			next.url = url;
-			next.disabledParams = disabled.length ? disabled : undefined;
-		});
-		if (this.urlBox && this.urlBox.value !== url) {
-			this.syncingUrl = true;
-			try {
-				this.urlBox.value = url;
-			} finally {
-				this.syncingUrl = false;
+				const found = await itemOf(tab);
+				if (found?.item?.kind === 'request') {
+					input.tabs.push({ kind: 'request', state: requestTabState(found.uri, found.item.id) });
+					if (tab.draft) {
+						this.collections.setDraft(httpDraftKey(found.uri, found.item.id), { ...tab.draft, id: found.item.id });
+					}
+				}
+			} else if (tab.kind === 'collection') {
+				const found = await itemOf(tab);
+				if (found && (!tab.id || found.item?.kind === 'folder')) {
+					input.tabs.push({ kind: 'collection', state: collectionTabState(found.uri, found.item?.id) });
+				}
+			} else if (tab.kind === 'tool') {
+				if (tab.tool && tab.uri && await this.fileService.exists(URI.parse(tab.uri))) {
+					input.tabs.push({ kind: 'tool', tool: tab.tool, state: { uri: URI.parse(tab.uri), memory: {} } });
+				}
+			} else if (tab.entryId) {
+				input.tabs.push({ kind: 'environment', state: { entryId: tab.entryId, name: tab.name ?? '' } });
 			}
 		}
+		input.active = Math.min(input.restoreActive, input.tabs.length - 1);
+	}
+
+	private async runCommands(): Promise<void> {
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		for (const command of input.takeCommands()) {
+			switch (command.type) {
+				case 'openRequest': {
+					const entry = await this.collections.load(command.collection);
+					if (this.input !== input) {
+						return;
+					}
+					const requests = entry?.collection.items.filter((item): item is IHttpRequest => item.kind === 'request') ?? [];
+					const byPath = command.path && entry ? findHttpItemByPath(entry.collection, command.path) : undefined;
+					const id = command.id ?? (byPath?.kind === 'request' ? byPath.id : undefined) ?? (command.line !== undefined ? requests.find(item => item.line === command.line)?.id : undefined) ?? (command.name ? requests.find(item => item.name === command.name)?.id : undefined);
+					if (id) {
+						this.openRequest(command.collection, id, command.exchange);
+						if (command.send) {
+							void this.requestView?.send();
+						}
+					}
+					break;
+				}
+				case 'openUntitled':
+					this.openUntitled(command.request, command.exchange);
+					if (command.send) {
+						void this.requestView?.send();
+					}
+					break;
+				case 'openExchange': this.openExchange(command.exchange); break;
+				case 'openCollection':
+					await this.collections.load(command.collection);
+					if (this.input !== input) {
+						return;
+					}
+					this.openCollection(command.collection, command.folderId, command.run);
+					break;
+				case 'import': this.showImport(); break;
+			}
+		}
+	}
+
+	// --- Tabs --------------------------------------------------------------------------------------
+
+	private activate(tab: HttpClientTab): void {
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		const key = tabKey(tab);
+		let index = input.tabs.findIndex(item => tabKey(item) === key);
+		const added = index < 0;
+		if (added) {
+			input.tabs.push(tab);
+			index = input.tabs.length - 1;
+		}
+		const changed = input.active !== index || (!this.requestView && !this.page);
+		input.active = index;
+		if (added) {
+			this.renderTabStrip();
+		} else {
+			// Its element stays (a press on it may be the start of a drag): only the marks move.
+			this.markActiveTab();
+		}
+		if (changed) {
+			this.showActive();
+		}
+		if (this.narrow && this.root.classList.contains('side-open')) {
+			// Beside a chat the sidebar lies over the content: it steps aside for what was opened.
+			this.root.classList.remove('side-open');
+			this.layoutParts();
+		}
+	}
+
+	private openRequest(collection: URI, id: string, exchange?: IHttpExchange): void {
+		this.activate({ kind: 'request', state: requestTabState(collection, id) });
+		if (exchange) {
+			this.requestView?.showExchange(exchange);
+		}
+	}
+
+	private openUntitled(request?: IHttpRequest, exchange?: IHttpExchange, protocol: HttpProtocol = 'http'): void {
+		const untitled = request ? { ...cloneHttp(request), id: newHttpId() } : newHttpRequest(protocol, '', 'none');
+		this.activate({ kind: 'request', state: requestTabState(undefined, untitled.id, untitled) });
+		if (exchange) {
+			this.requestView?.showExchange(exchange);
+		}
+		this.requestView?.focus();
+	}
+
+	private openCollection(collection: URI, folderId?: string, run = false): void {
+		this.activate({ kind: 'collection', state: collectionTabState(collection, folderId) });
+		const tab = this.client?.tabs[this.client.active];
+		if (run && tab?.kind === 'collection') {
+			tab.state.tab = 'runs';
+			this.showActive();
+			if (this.page instanceof HttpCollectionPage) {
+				void this.page.run();
+			}
+		}
+	}
+
+	private openTool(kind: HttpToolKind, uri: URI): void {
+		this.activate({ kind: 'tool', tool: kind, state: { uri, memory: {} } });
+	}
+
+	private openEnvironment(entry: IHttpEnvironmentEntry): void {
+		this.activate({ kind: 'environment', state: { entryId: entry.id, name: entry.environment.name } });
+	}
+
+	/** A history entry: its request's tab when the request still exists, else a new request made from what was sent. */
+	private openExchange(exchange: IHttpExchange): void {
+		const source = exchange.request;
+		if (source) {
+			const uri = URI.parse(source.collection);
+			const entry = this.collections.get(uri);
+			if (entry && findHttpItem(entry.collection, source.id)?.item.kind === 'request') {
+				this.openRequest(uri, source.id, exchange);
+				return;
+			}
+		}
+		const spec: IHttpRequestSpec = { ...(exchange.name ? { name: exchange.name } : {}), method: exchange.method, ...(exchange.protocol ? { protocol: exchange.protocol } : {}), url: exchange.url, headers: exchange.headers, ...(exchange.body !== undefined ? { body: exchange.body } : {}), line: 0 };
+		this.openUntitled(httpRequestFromSpec(spec), exchange);
+	}
+
+	private closeTabsOf(collection: URI, id: string | undefined): void {
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		const uri = collection.toString();
+		const doomed = input.tabs.filter(tab => (tab.kind === 'request' || tab.kind === 'collection') && tab.state.collection?.toString() === uri && (!id || (tab.kind === 'request' ? tab.state.id === id : tab.state.folderId === id)));
+		for (const tab of doomed) {
+			this.removeTab(tab);
+		}
+	}
+
+	private removeTab(tab: HttpClientTab): void {
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		const index = input.tabs.indexOf(tab);
+		if (index < 0) {
+			return;
+		}
+		if (tab.kind === 'request') {
+			tab.state.sending?.cancel();
+			this.sessions.drop(httpDraftKey(tab.state.collection, tab.state.id));
+			this.collections.setDraft(httpDraftKey(tab.state.collection, tab.state.id), undefined);
+		} else if (tab.kind === 'collection') {
+			tab.state.running?.cancel();
+		}
+		const wasActive = input.active === index;
+		input.tabs.splice(index, 1);
+		if (input.active > index || input.active >= input.tabs.length) {
+			input.active = Math.max(-1, Math.min(input.active - 1, input.tabs.length - 1));
+			if (input.active < 0 && input.tabs.length) {
+				input.active = 0;
+			}
+		}
+		this.renderTabStrip();
+		if (wasActive) {
+			this.showActive();
+		}
+	}
+
+	/** Closing a request with unsaved edits asks first, as Postman does. */
+	private async closeTab(tab: HttpClientTab): Promise<void> {
+		if (tab.kind === 'request' && isHttpRequestDirty(this.collections, tab.state)) {
+			const request = currentHttpRequest(this.collections, tab.state);
+			const { result } = await this.dialogService.prompt<'save' | 'discard'>({
+				message: localize('voltHttp.closeDirty', "Save the changes to \"{0}\"?", request ? httpRequestLabel(request) : ''),
+				detail: localize('voltHttp.closeDirtyDetail', "Your changes are lost if you do not save them."),
+				buttons: [
+					{ label: localize('voltHttp.save', "Save"), run: () => 'save' as const },
+					{ label: localize('voltHttp.dontSave', "Don't Save"), run: () => 'discard' as const },
+				],
+				cancelButton: true,
+			});
+			if (!result) {
+				return;
+			}
+			if (result === 'save') {
+				if (!tab.state.collection) {
+					// Nowhere to save it yet: bring it in front and ask where.
+					this.activate(tab);
+					void this.requestView?.save();
+					return;
+				}
+				this.activate(tab);
+				await this.requestView?.save();
+			}
+		}
+		this.removeTab(tab);
+	}
+
+	private renderTabStrip(): void {
+		this.stripStore.clear();
+		clearNode(this.tabList);
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		input.tabs.forEach((tab, index) => {
+			const el = append(this.tabList, $('.volt-http-open-tab'));
+			el.setAttribute('role', 'tab');
+			el.setAttribute('aria-selected', String(index === input.active));
+			el.classList.toggle('active', index === input.active);
+			el.tabIndex = 0;
+			el.draggable = true;
+			let label: string;
+			let dirty = false;
+			if (tab.kind === 'request') {
+				const request = currentHttpRequest(this.collections, tab.state);
+				const method = append(el, $('span.volt-http-row-method'));
+				method.textContent = request ? httpRequestBadge(request) : '';
+				method.dataset.method = request ? httpRequestBadgeKey(request) : '';
+				label = request ? httpRequestLabel(request) : localize('voltHttp.tabGone', "Deleted request");
+				dirty = isHttpRequestDirty(this.collections, tab.state);
+				el.classList.toggle('gone', !request);
+			} else if (tab.kind === 'collection') {
+				const entry = this.collections.get(tab.state.collection);
+				const folder = tab.state.folderId && entry ? findHttpItem(entry.collection, tab.state.folderId)?.item : undefined;
+				append(el, $('span.volt-http-open-tab-icon')).appendChild(renderIcon(tab.state.folderId ? Codicon.folder : entry?.collection.format === 'http' ? Codicon.file : Codicon.library));
+				label = folder?.name ?? (entry?.collection.format === 'postman' ? entry.collection.name : basename(tab.state.collection));
+			} else if (tab.kind === 'tool') {
+				const tool = HTTP_TOOLS.find(item => item.kind === tab.tool)!;
+				append(el, $('span.volt-http-open-tab-icon')).appendChild(renderIcon(tool.icon));
+				const named = this.toolFiles(tab.tool).nameOf(tab.state.uri);
+				label = named ?? basename(tab.state.uri).replace(/\.volt-[a-z]+\.json$/i, '');
+				// A restored tab whose file nobody has read yet shows its file name: list the tool's files once, for their names.
+				if (named === undefined && !this.toolNamesAsked.has(tab.tool)) {
+					this.toolNamesAsked.add(tab.tool);
+					void this.toolFiles(tab.tool).list(this.client?.root).then(() => this.renderTabStrip(), () => undefined);
+				}
+			} else {
+				append(el, $('span.volt-http-open-tab-icon')).appendChild(renderIcon(Codicon.symbolVariable));
+				label = tab.state.name || localize('voltHttp.environment', "Environment");
+			}
+			append(el, $('span.volt-http-open-tab-label')).textContent = label;
+			setAgentTooltip(el, label);
+			const close = append(el, $('button.volt-http-open-tab-close')) as HTMLButtonElement;
+			close.type = 'button';
+			close.draggable = false;
+			setAgentTooltip(close, localize('voltHttp.closeTab', "Close"));
+			close.setAttribute('aria-label', localize('voltHttp.closeTab', "Close"));
+			close.classList.toggle('dirty', dirty);
+			close.appendChild(renderIcon(Codicon.close));
+			append(close, $('span.volt-http-dirty-dot'));
+			close.addEventListener('mousedown', event => event.stopPropagation());
+			close.addEventListener('click', event => {
+				event.stopPropagation();
+				void this.closeTab(tab);
+			});
+			// On the press, as VS Code's tabs: a click whose press and release land on different
+			// elements (the strip was redrawn in between) would never arrive.
+			el.addEventListener('mousedown', event => {
+				if (event.button === 0) {
+					this.activate(tab);
+				}
+			});
+			el.addEventListener('auxclick', event => {
+				if (event.button === 1) {
+					event.preventDefault();
+					void this.closeTab(tab);
+				}
+			});
+			el.addEventListener('keydown', event => {
+				if (event.key === 'Enter' || event.key === ' ') {
+					event.preventDefault();
+					this.activate(tab);
+				}
+			});
+			el.addEventListener('contextmenu', event => {
+				event.preventDefault();
+				this.menu.value = showHttpActionMenu(this.contextViewService, { x: event.clientX, y: event.clientY }, this.root, [
+					toAction({ id: 'close', label: localize('voltHttp.closeTab', "Close"), run: () => void this.closeTab(tab) }),
+					toAction({ id: 'closeOthers', label: localize('voltHttp.closeOthers', "Close Others"), run: async () => { for (const other of [...input.tabs]) { if (other !== tab) { await this.closeTab(other); } } } }),
+					toAction({ id: 'closeAll', label: localize('voltHttp.closeAll', "Close All"), run: async () => { for (const other of [...input.tabs]) { await this.closeTab(other); } } }),
+					new Separator(),
+					toAction({ id: 'moveOut', label: localize('voltHttp.moveToNewClient', "Move to a New Volt Client Tab"), run: () => this.tearOut(tab) }),
+				], localize('voltHttp.tabActions', "Tab actions"));
+			});
+			this.wireTabDrag(el, tab);
+			if (index === input.active) {
+				el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+			}
+		});
+		this.selectInSidebar();
+	}
+
+	/** The marks of the tab in front, on the tabs as they stand (no element is replaced). */
+	private markActiveTab(): void {
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		const tabs = this.tabList.children;
+		if (tabs.length !== input.tabs.length) {
+			this.renderTabStrip();
+			return;
+		}
+		for (let index = 0; index < tabs.length; index++) {
+			const el = tabs[index] as HTMLElement;
+			el.classList.toggle('active', index === input.active);
+			el.setAttribute('aria-selected', String(index === input.active));
+			if (index === input.active) {
+				el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+			}
+		}
+		this.selectInSidebar();
+	}
+
+	private selectInSidebar(): void {
+		const active = this.client?.tabs[this.client.active];
+		const inCollection = active?.kind === 'request' || active?.kind === 'collection' ? active : undefined;
+		this.sidebar?.select(inCollection?.state.collection, inCollection?.kind === 'request' ? inCollection.state.id : inCollection?.kind === 'collection' ? inCollection.state.folderId : undefined);
+		this.sidebar?.selectTool(active?.kind === 'tool' ? active.state.uri : undefined);
 	}
 
 	/**
-	 * A bordered key/value table (check, Key, Value, Bulk Edit); a blank row at the end always waits
-	 * for the next entry. Bulk Edit swaps the table for `key:value` lines, `//` in front of a disabled one.
+	 * A tab is dragged along the strip to reorder it, or out of the client (onto the panel's own
+	 * tabs, or anywhere beside it) to open it in a Volt Client tab of its own.
 	 */
-	private renderKeyValues(parent: HTMLElement, title: string | undefined, rows: readonly IKeyValue[], save: (rows: IKeyValue[]) => void): void {
-		const section = append(parent, $('.volt-http-section'));
-		const head = append(section, $('.volt-http-section-head'));
-		if (title) {
-			append(head, $('span.volt-http-section-title')).textContent = title;
-		}
-		const headActions = append(head, $('.volt-http-section-actions'));
-		const holder = append(section, $('.volt-http-kv'));
-		const store = this.tabStore.add(new DisposableStore());
-		const blank = (): IKeyValue => ({ key: '', value: '', enabled: true });
-		const working: IKeyValue[] = [...rows.map(row => ({ ...row })), blank()];
-		const commit = () => save(working.filter(row => row.key || row.value));
-		const toggleBulk = () => {
-			this.bulkEdit = !this.bulkEdit;
-			draw();
-		};
-		const draw = () => {
-			store.clear();
-			clearNode(holder);
-			clearNode(headActions);
-			section.classList.toggle('bulk', this.bulkEdit);
-			head.classList.toggle('hidden', !title && !this.bulkEdit);
-			if (this.bulkEdit) {
-				const link = append(headActions, $('button.volt-http-link')) as HTMLButtonElement;
-				link.type = 'button';
-				link.textContent = localize('voltHttp.keyValueEdit', "Key-Value Edit");
-				link.addEventListener('click', toggleBulk);
-				const text = working.filter(row => row.key || row.value).map(row => `${row.enabled ? '' : '//'}${row.key}:${row.value}`).join('\n');
-				const editor = this.createCodeEditor(append(holder, $('.volt-http-code.bulk')), text, 'plaintext', false, store);
-				editor.updateOptions({ lineNumbers: 'off', folding: false, padding: { top: 8, bottom: 8 } });
-				store.add(editor.onDidChangeModelContent(() => {
-					working.splice(0, working.length, ...parseBulk(editor.getValue()), blank());
-					commit();
-				}));
-				this.layoutEditors();
+	private wireTabDrag(el: HTMLElement, tab: HttpClientTab): void {
+		const clear = () => el.classList.remove('drop-before', 'drop-after');
+		el.addEventListener('dragstart', event => {
+			this.dragged = { tab, dropped: false };
+			event.dataTransfer?.setData('application/x-volt-http-tab', tabKey(tab));
+			if (event.dataTransfer) {
+				event.dataTransfer.effectAllowed = 'move';
+			}
+			el.classList.add('dragging');
+		});
+		el.addEventListener('dragover', event => {
+			if (!this.dragged || this.dragged.tab === tab) {
 				return;
 			}
-			const table = append(holder, $('.volt-http-table'));
-			table.setAttribute('role', 'table');
-			const filled = working.slice(0, -1);
-			const headRow = append(table, $('.volt-http-tr.head'));
-			headRow.setAttribute('role', 'row');
-			const allCell = append(headRow, $('.volt-http-td.check'));
-			let all: Checkbox | undefined;
-			if (filled.length) {
-				const toggleAll = all = store.add(new Checkbox(localize('voltHttp.toggleAll', "Enable all"), filled.every(row => row.enabled), CHECKBOX_STYLES));
-				allCell.appendChild(toggleAll.domNode);
-				store.add(toggleAll.onChange(() => {
-					for (const row of filled) {
-						row.enabled = toggleAll.checked;
-					}
-					commit();
-					draw();
-				}));
+			event.preventDefault();
+			const rect = el.getBoundingClientRect();
+			const before = event.clientX < rect.left + rect.width / 2;
+			el.classList.toggle('drop-before', before);
+			el.classList.toggle('drop-after', !before);
+		});
+		el.addEventListener('dragleave', clear);
+		el.addEventListener('drop', event => {
+			const dragged = this.dragged;
+			const input = this.client;
+			clear();
+			if (!dragged || !input || dragged.tab === tab) {
+				return;
 			}
-			append(headRow, $('.volt-http-td.label')).textContent = localize('voltHttp.key', "Key");
-			append(headRow, $('.volt-http-td.label')).textContent = localize('voltHttp.value', "Value");
-			const bulk = append(append(headRow, $('.volt-http-td.tail')), $('button.volt-http-link.muted')) as HTMLButtonElement;
-			bulk.type = 'button';
-			bulk.textContent = localize('voltHttp.bulkEdit', "Bulk Edit");
-			bulk.addEventListener('click', toggleBulk);
+			event.preventDefault();
+			dragged.dropped = true;
+			const rect = el.getBoundingClientRect();
+			const at = input.tabs.indexOf(tab) + (event.clientX < rect.left + rect.width / 2 ? 0 : 1);
+			this.moveTab(dragged.tab, at);
+		});
+		el.addEventListener('dragend', event => {
+			const dragged = this.dragged;
+			this.dragged = undefined;
+			el.classList.remove('dragging');
+			if (!dragged || dragged.dropped) {
+				return;
+			}
+			// Let go outside the client: the tab leaves it for a client of its own.
+			const rect = this.root.getBoundingClientRect();
+			const view = this.root.ownerDocument.defaultView;
+			const inWindow = !!view && event.clientX >= 0 && event.clientY >= 0 && event.clientX <= view.innerWidth && event.clientY <= view.innerHeight;
+			const outside = event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+			if (inWindow && outside && (event.clientX !== 0 || event.clientY !== 0)) {
+				this.tearOut(dragged.tab);
+			}
+		});
+	}
 
-			working.forEach((row, index) => {
-				const line = append(table, $('.volt-http-tr'));
-				line.setAttribute('role', 'row');
-				const last = index === working.length - 1;
-				line.classList.toggle('disabled', !row.enabled);
-				const checkCell = append(line, $('.volt-http-td.check'));
-				if (!last) {
-					const check = store.add(new Checkbox(localize('voltHttp.enabled', "Enabled"), row.enabled, CHECKBOX_STYLES));
-					checkCell.appendChild(check.domNode);
-					store.add(check.onChange(() => {
-						row.enabled = check.checked;
-						line.classList.toggle('disabled', !row.enabled);
-						commit();
-						if (all) {
-							all.checked = filled.every(item => item.enabled);
-						}
-					}));
+	/** Puts `tab` before the tab now at `at` (the end when `at` is the count). */
+	private moveTab(tab: HttpClientTab, at: number): void {
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		const from = input.tabs.indexOf(tab);
+		if (from < 0) {
+			return;
+		}
+		const front = input.tabs[input.active];
+		input.tabs.splice(from, 1);
+		input.tabs.splice(at > from ? at - 1 : at, 0, tab);
+		input.active = front ? input.tabs.indexOf(front) : input.active;
+		this.renderTabStrip();
+	}
+
+	/** Opens `tab` in a new Volt Client tab of the panel and takes it out of this one: its unsaved edits, response and connection go with it. */
+	private tearOut(tab: HttpClientTab): void {
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		const index = input.tabs.indexOf(tab);
+		if (index < 0) {
+			return;
+		}
+		const fresh = new VoltHttpClientInput(input.root);
+		fresh.tabs.push(tab);
+		fresh.active = 0;
+		fresh.sidebar = input.sidebar;
+		fresh.sidebarWidth = input.sidebarWidth;
+		fresh.sidebarHidden = input.sidebarHidden;
+		fresh.requestRatio = input.requestRatio;
+		const wasActive = input.active === index;
+		input.tabs.splice(index, 1);
+		if (input.active > index || input.active >= input.tabs.length) {
+			input.active = Math.max(input.tabs.length ? 0 : -1, Math.min(input.active - 1, input.tabs.length - 1));
+		}
+		this.renderTabStrip();
+		if (wasActive) {
+			this.showActive();
+		}
+		const inTools = openInAgentTools(fresh, this.chatId, { pinned: true });
+		if (!inTools) {
+			void this.editorService.openEditor(fresh, { pinned: true });
+		}
+	}
+
+	/** The kinds of request to start: HTTP, GraphQL, WebSocket and the rest, each with its mark. */
+	private showKindMenu(anchor: HTMLElement): void {
+		this.menu.value = showVoltMenu<HttpProtocol>(this.contextViewService, {
+			anchor,
+			className: HTTP_MENU_CLASS,
+			align: 'left',
+			width: 300,
+			maxListHeight: 640,
+			ariaLabel: localize('voltHttp.newRequestTab', "New Request"),
+			heading: { title: localize('voltHttp.newRequestKind', "New request") },
+			sections: [{ id: 'kinds', items: HTTP_PROTOCOLS.map(item => ({ id: item.id, label: item.label, subtitle: item.hint, icon: () => createHttpProtocolIcon(item.id), data: item.id })) }],
+			onPick: item => this.openUntitled(undefined, undefined, item.data),
+		});
+	}
+
+	/** The environment picker at the right of the strip: what `{{variables}}` resolve with. */
+	private renderStripActions(): void {
+		const input = this.client;
+		clearNode(this.stripActions);
+		if (!input) {
+			return;
+		}
+		const host = append(this.stripActions, $('.volt-http-env'));
+		const store = new DisposableStore();
+		this.inputStore.add(store);
+		void this.collections.environments(input.root).then(entries => {
+			if (!host.isConnected) {
+				store.dispose();
+				return;
+			}
+			const names = [...new Set(entries.filter(entry => !entry.globals && !entry.shared).map(entry => entry.environment.name))];
+			const current = this.http.environmentOf(input.root);
+			createHttpDropdown<string>(host, this.contextViewService, {
+				options: [{ id: '', label: localize('voltHttp.noEnv', "No Environment") }, ...names.map(name => ({ id: name, label: name }))],
+				value: current && names.includes(current) ? current : '',
+				ariaLabel: localize('voltHttp.env', "Environment"),
+				leadingIcon: Codicon.symbolVariable,
+				align: 'right',
+				onChange: value => this.http.setEnvironment(value || undefined, input.root),
+			}, store);
+		});
+	}
+
+	private async loadVariables(): Promise<void> {
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		const active = input.tabs[input.active];
+		const collection = active?.kind === 'request' || active?.kind === 'collection' ? active.state.collection : undefined;
+		const ticket = ++this.variablesFor;
+		const variables = await this.collections.variablesFor(input.root, collection);
+		if (ticket === this.variablesFor) {
+			this.variables = variables;
+			this.requestView?.refreshVariableColours();
+		}
+	}
+
+	private showActive(): void {
+		try {
+			this.viewStore.clear();
+		} catch (err) {
+			// A view that fails while it is taken down must not keep the next one from showing.
+			console.error(err);
+		}
+		this.requestView = undefined;
+		this.page = undefined;
+		clearNode(this.content);
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		const tab = input.tabs[input.active];
+		void this.loadVariables();
+		if (!tab) {
+			this.renderLaunchpad();
+			return;
+		}
+		const pageHost: IHttpPageHost = {
+			root: input.root,
+			variables: this.variableLookup,
+			tabChanged: () => this.renderTabStrip(),
+			openRequest: (collection, id, exchange) => this.openRequest(collection, id, exchange),
+			exportCollection: collection => void this.exportCollection(collection),
+			revealFile: uri => this.revealFile(uri),
+		};
+		if (tab.kind === 'request') {
+			const host: IHttpRequestHost = {
+				root: input.root,
+				variables: this.variableLookup,
+				tabChanged: () => this.renderTabStrip(),
+				saveAs: (request, anchor) => this.showSaveAs(tab.state, request, anchor),
+				addToChat: (label, value) => this.addToChat(label, value),
+				showSnippet: spec => this.showSnippet(spec),
+				showCookies: domain => this.showCookies(domain),
+				openCollection: collection => this.openCollection(collection),
+				openFolder: (collection, id) => this.openCollection(collection, id),
+				get requestRatio() { return input.requestRatio; },
+				set requestRatio(value: number) { input.requestRatio = Math.max(0.15, Math.min(0.85, value)); },
+			};
+			this.requestView = this.viewStore.add(this.instantiationService.createInstance(HttpRequestView, this.content, tab.state, host));
+		} else if (tab.kind === 'collection') {
+			this.page = this.viewStore.add(this.instantiationService.createInstance(HttpCollectionPage, this.content, tab.state, pageHost));
+		} else if (tab.kind === 'tool') {
+			const toolHost: IHttpToolPageHost = {
+				root: input.root,
+				variables: this.variableLookup,
+				tabChanged: () => this.renderTabStrip(),
+				openRequest: (collection, id, exchange) => this.openRequest(collection, id, exchange),
+				addToChat: (label, value) => this.addToChat(label, value),
+				revealFile: uri => this.revealFile(uri),
+			};
+			const page: IHttpToolPage = tab.tool === 'automation'
+				? this.instantiationService.createInstance(HttpAutomationPage, this.content, tab.state, toolHost)
+				: tab.tool === 'performance'
+					? this.instantiationService.createInstance(HttpPerformancePage, this.content, tab.state, toolHost)
+					: this.instantiationService.createInstance(HttpSecurityPage, this.content, tab.state, toolHost);
+			this.page = this.viewStore.add(page);
+		} else {
+			this.page = this.viewStore.add(this.instantiationService.createInstance(HttpEnvironmentPage, this.content, tab.state, pageHost));
+		}
+		this.layoutParts();
+	}
+
+	private addToChat(label: string, value: string): void {
+		void this.commandService.executeCommand(HTTP_ADD_TO_CHAT_COMMAND_ID, { label, value, chatId: this.chatId });
+	}
+
+	/**
+	 * No tab open. Laid out like VS Code's welcome page: a quiet title, a short Start list of
+	 * links, and the shortcuts worth knowing, in one left-aligned column in the middle.
+	 */
+	private renderLaunchpad(): void {
+		const pad = append(this.content, $('.volt-http-launchpad'));
+		const column = append(pad, $('.volt-http-launchpad-column'));
+
+		const head = append(column, $('.volt-http-launchpad-head'));
+		append(head, $('.volt-http-launchpad-icon')).appendChild(createHttpRequestIcon(22));
+		const titles = append(head, $('.volt-http-launchpad-titles'));
+		append(titles, $('.volt-http-launchpad-title')).textContent = localize('voltHttp.launchTitle', "Volt Client");
+		append(titles, $('.volt-http-launchpad-text')).textContent = localize('voltHttp.launchText', "Requests are files in this project, shared with its agents.");
+
+		// One button per kind of request, as Postman's launch row: its mark over its name.
+		append(column, $('.volt-http-launchpad-label')).textContent = localize('voltHttp.launchKinds', "New request");
+		const kinds = append(column, $('.volt-http-launchpad-kinds'));
+		for (const item of HTTP_PROTOCOLS) {
+			const button = append(kinds, $('button.volt-http-launchpad-kind')) as HTMLButtonElement;
+			button.type = 'button';
+			setAgentTooltip(button, `${item.label}: ${item.hint}`);
+			button.dataset.method = item.id;
+			append(button, $('span.volt-http-launchpad-kind-icon')).appendChild(createHttpProtocolIcon(item.id, 20));
+			append(button, $('span.volt-http-launchpad-kind-label')).textContent = item.id === 'sse' ? 'SSE' : item.id === 'ai' ? 'AI' : item.label;
+			button.addEventListener('click', () => this.openUntitled(undefined, undefined, item.id));
+		}
+
+		// The tests beside requests: a flow of requests, load, and a security scan.
+		append(column, $('.volt-http-launchpad-label')).textContent = localize('voltHttp.launchTests', "Test");
+		const tools = append(column, $('.volt-http-launchpad-links'));
+		for (const tool of HTTP_TOOLS) {
+			const button = append(tools, $('button.volt-http-launchpad-link')) as HTMLButtonElement;
+			button.type = 'button';
+			append(button, $('span.volt-http-launchpad-link-icon')).appendChild(renderIcon(tool.icon));
+			append(button, $('span.volt-http-launchpad-link-label')).textContent = localize('voltHttp.launchNewTool', "New {0}", tool.one);
+			append(button, $('span.volt-http-launchpad-link-hint')).textContent = tool.hint.charAt(0).toLowerCase() + tool.hint.slice(1);
+			button.addEventListener('click', () => void this.sidebar?.newTool(tool.kind));
+		}
+
+		append(column, $('.volt-http-launchpad-label')).textContent = localize('voltHttp.launchStart', "Start");
+		const start = append(column, $('.volt-http-launchpad-links'));
+		const link = (icon: () => Element, label: string, hint: string, run: () => void) => {
+			const button = append(start, $('button.volt-http-launchpad-link')) as HTMLButtonElement;
+			button.type = 'button';
+			append(button, $('span.volt-http-launchpad-link-icon')).appendChild(icon());
+			append(button, $('span.volt-http-launchpad-link-label')).textContent = label;
+			append(button, $('span.volt-http-launchpad-link-hint')).textContent = hint;
+			button.addEventListener('click', run);
+		};
+		link(() => renderIcon(Codicon.library), localize('voltHttp.launchNewCollection', "New Collection"), localize('voltHttp.launchNewCollectionHint', "folders, auth, variables, tests"), () => void this.sidebar?.newCollection('postman'));
+		link(() => renderIcon(Codicon.file), localize('voltHttp.launchNewHttp', "New .http File"), localize('voltHttp.launchNewHttpHint', "plain text requests"), () => void this.sidebar?.newCollection('http'));
+		link(() => renderIcon(Codicon.cloudDownload), localize('voltHttp.launchImport', "Import"), localize('voltHttp.launchImportHint', "Postman, OpenAPI, HAR, .http, or drop a file"), () => this.showImport());
+
+		append(column, $('.volt-http-launchpad-label')).textContent = localize('voltHttp.launchShortcuts', "Shortcuts");
+		const keys = append(column, $('.volt-http-launchpad-keys'));
+		const modifier = isMacintosh ? '\u2318' : 'Ctrl';
+		const shortcut = (label: string, ...caps: string[]) => {
+			const row = append(keys, $('.volt-http-launchpad-key-row'));
+			append(row, $('span')).textContent = label;
+			const group = append(row, $('span.volt-http-launchpad-caps'));
+			for (const cap of caps) {
+				append(group, $('kbd')).textContent = cap;
+			}
+		};
+		shortcut(localize('voltHttp.launchSend', "Send the request"), modifier, '\u21B5');
+		shortcut(localize('voltHttp.launchSave', "Save to its file"), modifier, 'S');
+		shortcut(localize('voltHttp.launchRename', "Rename in the sidebar"), 'F2');
+	}
+
+	// --- Dialogs -----------------------------------------------------------------------------------
+
+	private showModal(title: string, build: (body: HTMLElement, footer: HTMLElement, store: DisposableStore, close: () => void, headTools: HTMLElement) => void, wide = false): void {
+		const store = new DisposableStore();
+		this.modal.value = store;
+		clearNode(this.modalHost);
+		this.modalHost.classList.add('shown');
+		const close = () => {
+			if (this.modal.value === store) {
+				this.modal.clear();
+			}
+		};
+		store.add({ dispose: () => { clearNode(this.modalHost); this.modalHost.classList.remove('shown'); } });
+		const card = append(this.modalHost, $('.volt-http-modal'));
+		card.classList.toggle('wide', wide);
+		card.setAttribute('role', 'dialog');
+		card.setAttribute('aria-label', title);
+		const head = append(card, $('.volt-http-modal-head'));
+		append(head, $('span.volt-http-modal-title')).textContent = title;
+		// Between the title and the close button: a dialog's own controls (the snippet's language).
+		const headTools = append(head, $('.volt-http-modal-tools'));
+		createHttpIconButton(head, Codicon.close, localize('voltHttp.closeDialog', "Close"), close);
+		const body = append(card, $('.volt-http-modal-body'));
+		const footer = append(card, $('.volt-http-modal-foot'));
+		store.add(addDisposableListener(this.modalHost, EventType.MOUSE_DOWN, (event: MouseEvent) => {
+			if (event.target === this.modalHost) {
+				close();
+			}
+		}));
+		store.add(addDisposableListener(this.modalHost, EventType.KEY_DOWN, (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				event.stopPropagation();
+				close();
+			}
+		}));
+		build(body, footer, store, close, headTools);
+	}
+
+	/** "Generate tests" for many requests: every collection listed, with the named collection's, folder's or request's ticked. */
+	private showGenerateTests(collection?: URI, itemId?: string): void {
+		const entry = collection ? this.collections.get(collection) : undefined;
+		const preselect = entry ? httpTestTargetsOf(entry, itemId) : undefined;
+		this.showModal(localize('voltHttp.aiTitle', "Generate tests"), (body, footer, store, close) => {
+			store.add(this.instantiationService.createInstance(HttpBulkTestsView, body, footer, { root: this.client?.root, ...(preselect ? { preselect } : {}), close }));
+		}, true);
+	}
+
+	/** The project's cookie jar: what responses set and requests send back. */
+	private showCookies(domain?: string): void {
+		this.showModal(localize('voltHttp.cookiesTitle', "Cookies"), (body, footer, store, close) => {
+			store.add(this.instantiationService.createInstance(HttpCookiesView, body, footer, { root: this.client?.root, close, ...(domain ? { domain } : {}) }));
+		}, true);
+	}
+
+	private showImport(): void {
+		this.showModal(localize('voltHttp.import', "Import"), (body, footer, store, close) => {
+			append(body, $('.volt-http-note')).textContent = localize('voltHttp.importHelp', "Paste or drop a Postman collection or environment, an OpenAPI or Swagger document (JSON or YAML), a HAR file, .http requests or a cURL command. It is written into this project as a file.");
+			const area = append(body, $('textarea.volt-http-import')) as HTMLTextAreaElement;
+			area.spellcheck = false;
+			area.placeholder = localize('voltHttp.importPlaceholder', "Paste here, or drop a file");
+			area.setAttribute('aria-label', localize('voltHttp.import', "Import"));
+			let fileName: string | undefined;
+			const status = append(body, $('.volt-http-import-status'));
+			const read = async (file: File) => {
+				fileName = file.name;
+				area.value = await file.text();
+				status.textContent = file.name;
+			};
+			store.add(addDisposableListener(area, EventType.DROP, (event: DragEvent) => {
+				const file = event.dataTransfer?.files[0];
+				if (file) {
+					event.preventDefault();
+					event.stopPropagation();
+					void read(file);
 				}
-				const key = store.add(new InputBox(append(line, $('.volt-http-td.cell')), this.contextViewService, { placeholder: localize('voltHttp.key', "Key"), ariaLabel: localize('voltHttp.key', "Key"), inputBoxStyles: FLAT_INPUT_STYLES }));
-				key.value = row.key;
-				const value = store.add(new InputBox(append(line, $('.volt-http-td.cell')), this.contextViewService, { placeholder: localize('voltHttp.value', "Value"), ariaLabel: localize('voltHttp.value', "Value"), inputBoxStyles: FLAT_INPUT_STYLES }));
-				value.value = row.value;
-				const onEdit = () => {
-					row.key = key.value;
-					row.value = value.value;
-					commit();
-					if (last && (row.key || row.value)) {
-						working.push(blank());
-						const focusKey = key.hasFocus();
-						draw();
-						const inputs = holder.querySelectorAll<HTMLInputElement>('.volt-http-tr input.input');
-						inputs[index * 2 + (focusKey ? 0 : 1)]?.focus();
+			}));
+			const choose = store.add(createVoltButton(footer, 'secondary'));
+			choose.label = localize('voltHttp.chooseFile', "Choose File");
+			store.add(choose.onDidClick(async () => {
+				const picked = await this.fileDialogService.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false, title: localize('voltHttp.import', "Import"), filters: [{ name: localize('voltHttp.importFiles', "Collections and API descriptions"), extensions: ['json', 'yaml', 'yml', 'http', 'rest', 'har', 'txt'] }] });
+				if (picked?.[0]) {
+					fileName = basename(picked[0]);
+					area.value = (await this.fileService.readFile(picked[0])).value.toString();
+					status.textContent = fileName;
+				}
+			}));
+			append(footer, $('.volt-http-spacer'));
+			const cancel = store.add(createVoltButton(footer, 'ghost'));
+			cancel.label = localize('voltHttp.cancelDialog', "Cancel");
+			store.add(cancel.onDidClick(close));
+			const run = store.add(createVoltButton(footer, 'primary'));
+			run.label = localize('voltHttp.import', "Import");
+			store.add(run.onDidClick(async () => {
+				if (!area.value.trim()) {
+					area.focus();
+					return;
+				}
+				if (await this.importText(area.value, fileName, status)) {
+					close();
+				}
+			}));
+			setTimeout(() => area.focus(), 0);
+		});
+	}
+
+	private async importText(text: string, fileName?: string, status?: HTMLElement): Promise<boolean> {
+		const input = this.client;
+		if (!input) {
+			return false;
+		}
+		try {
+			const result = await this.collections.importText(input.root, text, fileName);
+			if (result.kind === 'unknown') {
+				if (status) {
+					status.textContent = result.message;
+					status.classList.add('error');
+				} else {
+					this.notificationService.warn(result.message);
+				}
+				return false;
+			}
+			if (result.kind === 'request' && result.request) {
+				this.openUntitled(result.request);
+			} else if (result.kind === 'collection' && result.uri) {
+				this.sidebar?.show('collections');
+				await this.collections.load(result.uri);
+				this.openCollection(result.uri);
+			} else if (result.kind === 'environment' && result.uri) {
+				this.sidebar?.show('environments');
+				const entry = (await this.collections.environments(input.root)).find(item => item.uri.toString() === result.uri!.toString());
+				if (entry) {
+					this.openEnvironment(entry);
+				}
+			}
+			this.notificationService.info(result.message);
+			return true;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (status) {
+				status.textContent = message;
+				status.classList.add('error');
+			} else {
+				this.notificationService.error(message);
+			}
+			return false;
+		}
+	}
+
+	private async exportCollection(collection: URI): Promise<void> {
+		const entry = this.collections.get(collection);
+		if (!entry) {
+			return;
+		}
+		this.showModal(localize('voltHttp.export', "Export"), (body, footer, store, close) => {
+			let format: 'postman' | 'http' = entry.collection.format === 'postman' ? 'postman' : 'http';
+			append(body, $('.volt-http-note')).textContent = localize('voltHttp.exportHelp', "Save \"{0}\" as a file for Postman, or as an .http file for REST Client and JetBrains IDEs.", entry.collection.format === 'postman' ? entry.collection.name : basename(collection));
+			const row = append(body, $('.volt-http-field'));
+			append(row, $('label')).textContent = localize('voltHttp.factFormat', "Format");
+			createHttpDropdown<'postman' | 'http'>(append(row, $('.volt-http-field-wrap')), this.contextViewService, {
+				options: [
+					{ id: 'postman', label: localize('voltHttp.formatPostman', "Postman collection v2.1"), description: localize('voltHttp.exportPostmanDesc', "Folders, auth, variables and scripts, importable in Postman") },
+					{ id: 'http', label: localize('voltHttp.formatHttp', ".http file"), description: localize('voltHttp.exportHttpDesc', "Plain text requests; folders become part of each request's name") },
+				],
+				value: format,
+				ariaLabel: localize('voltHttp.factFormat', "Format"),
+				align: 'left',
+				width: 340,
+				onChange: value => format = value,
+			}, store);
+			const copy = store.add(createVoltButton(footer, 'secondary'));
+			copy.label = localize('voltHttp.copyExport', "Copy");
+			store.add(copy.onDidClick(async () => {
+				await this.clipboardService.writeText(this.collections.exportText(collection, format));
+				close();
+			}));
+			append(footer, $('.volt-http-spacer'));
+			const cancel = store.add(createVoltButton(footer, 'ghost'));
+			cancel.label = localize('voltHttp.cancelDialog', "Cancel");
+			store.add(cancel.onDidClick(close));
+			const save = store.add(createVoltButton(footer, 'primary'));
+			save.label = localize('voltHttp.saveExport', "Save As");
+			store.add(save.onDidClick(async () => {
+				const stem = basename(collection).replace(/\.(?:postman_collection\.json|http|rest)$/i, '');
+				const folder = this.client?.root ?? await this.fileDialogService.defaultFilePath();
+				const target = await this.fileDialogService.showSaveDialog({ title: localize('voltHttp.export', "Export"), defaultUri: URI.joinPath(folder, `${stem}${format === 'postman' ? '.postman_collection.json' : '.http'}`) });
+				if (target) {
+					await this.fileService.writeFile(target, VSBuffer.fromString(this.collections.exportText(collection, format)));
+					close();
+				}
+			}));
+		});
+	}
+
+	private showSnippet(spec: IHttpRequestSpec): void {
+		this.showModal(localize('voltHttp.codeSnippet', "Code Snippet"), (body, footer, store, close, headTools) => {
+			let target: HttpSnippetTarget = this.snippetTarget;
+			body.classList.add('snippet');
+			const host = append(body, $('.volt-http-code.snippet'));
+			const editor = store.add(this.instantiationService.createInstance(CodeEditorWidget, host, {
+				minimap: { enabled: false }, scrollBeyondLastLine: false, lineNumbers: 'on', lineNumbersMinChars: 3, glyphMargin: false, folding: false, wordWrap: 'on', renderLineHighlight: 'none', overviewRulerLanes: 0, hideCursorInOverviewRuler: true, fontSize: 12, padding: { top: 10, bottom: 10 }, automaticLayout: true, readOnly: true, domReadOnly: true,
+				scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+			}, { isSimpleWidget: false }));
+			const show = () => {
+				const language = HTTP_SNIPPET_TARGETS.find(item => item.id === target)?.language ?? 'plaintext';
+				const model = this.modelService.createModel(httpSnippet(target, spec), this.languageService.createById(this.languageService.isRegisteredLanguageId(language) ? language : 'plaintext'), undefined);
+				const old = editor.getModel();
+				editor.setModel(model);
+				old?.dispose();
+			};
+			store.add({ dispose: () => editor.getModel()?.dispose() });
+			createHttpDropdown<HttpSnippetTarget>(append(headTools, $('.volt-http-snippet-language')), this.contextViewService, {
+				options: HTTP_SNIPPET_TARGETS.map(item => ({ id: item.id, label: item.label, icon: () => createHttpSnippetIcon(item.id) })),
+				value: target,
+				ariaLabel: localize('voltHttp.snippetLanguage', "Language"),
+				align: 'right',
+				width: 280,
+				searchFrom: 8,
+				onChange: value => {
+					target = this.snippetTarget = value;
+					show();
+				},
+			}, store);
+			show();
+			append(footer, $('.volt-http-spacer'));
+			const done = store.add(createVoltButton(footer, 'ghost'));
+			done.label = localize('voltHttp.closeDialog', "Close");
+			store.add(done.onDidClick(close));
+			// Copy answers the click itself: its icon turns into a check for a moment.
+			const copy = append(footer, $('button.volt-http-copy')) as HTMLButtonElement;
+			copy.type = 'button';
+			copy.classList.add(...voltButtonClasses('secondary'));
+			const icon = append(copy, $('span.volt-http-copy-icon'));
+			icon.appendChild(createHttpCopyIcon());
+			const label = append(copy, $('span'));
+			label.textContent = localize('voltHttp.copySnippet', "Copy");
+			let reset: ReturnType<typeof setTimeout> | undefined;
+			store.add({ dispose: () => clearTimeout(reset) });
+			copy.addEventListener('click', async () => {
+				await this.clipboardService.writeText(editor.getValue());
+				clearTimeout(reset);
+				copy.classList.add('copied');
+				icon.replaceChildren(createHttpCheckIcon());
+				label.textContent = localize('voltHttp.copied', "Copied");
+				reset = setTimeout(() => {
+					copy.classList.remove('copied');
+					icon.replaceChildren(createHttpCopyIcon());
+					label.textContent = localize('voltHttp.copySnippet', "Copy");
+				}, 1600);
+			});
+		}, true);
+	}
+
+	/** Where to keep a request saved nowhere yet: a collection, or one of its folders. */
+	private showSaveAs(state: IHttpRequestTabState, request: IHttpRequest, anchor: HTMLElement): void {
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		type Target = { uri: URI; parentId: string | undefined } | 'new-postman' | 'new-http';
+		const saveInto = async (uri: URI, parentId: string | undefined) => {
+			try {
+				const oldKey = httpDraftKey(undefined, state.id);
+				const named = { ...cloneHttp(request), name: request.name.trim() || httpRequestLabel(request) };
+				const id = await this.collections.addItem(uri, parentId, named);
+				this.collections.setDraft(oldKey, undefined);
+				state.collection = uri;
+				state.id = id;
+				state.untitled = undefined;
+				this.renderTabStrip();
+				this.showActive();
+			} catch (err) {
+				this.notificationService.error(err instanceof Error ? err.message : String(err));
+			}
+		};
+		void this.collections.collections(input.root).then(entries => {
+			const sections: IVoltMenuSection<Target>[] = entries.filter(entry => !entry.error).map(entry => {
+				const items: { id: string; label: string; icon: ThemeIcon; data: Target }[] = [{ id: entry.uri.toString(), label: entry.collection.format === 'postman' ? entry.collection.name : basename(entry.uri), icon: entry.collection.format === 'postman' ? Codicon.library : Codicon.file, data: { uri: entry.uri, parentId: undefined } }];
+				const walk = (folders: readonly IHttpItem[], prefix: string) => {
+					for (const item of folders) {
+						if (item.kind === 'folder') {
+							const folder: IHttpFolder = item;
+							items.push({ id: `${entry.uri.toString()}#${folder.id}`, label: `${prefix}${folder.name}`, icon: Codicon.folder, data: { uri: entry.uri, parentId: folder.id } });
+							walk(folder.items, `${prefix}${folder.name} / `);
+						}
 					}
 				};
-				store.add(key.onDidChange(onEdit));
-				store.add(value.onDidChange(onEdit));
-				const tail = append(line, $('.volt-http-td.tail'));
-				if (!last) {
-					const remove = append(tail, $('button.volt-http-kv-remove')) as HTMLButtonElement;
-					remove.type = 'button';
-					remove.title = localize('voltHttp.remove', "Remove");
-					remove.appendChild(renderIcon(Codicon.trash));
-					remove.setAttribute('aria-label', localize('voltHttp.remove', "Remove"));
-					remove.addEventListener('click', () => {
-						working.splice(index, 1);
-						commit();
-						draw();
-					});
-				}
+				walk(entry.collection.items, '');
+				return { id: entry.uri.toString(), items };
 			});
-		};
-		draw();
-	}
-
-	/** Postman's body picker: none, x-www-form-urlencoded, raw (with its format) and GraphQL. */
-	private renderBody(): void {
-		const draft = this.draft;
-		const modes = append(this.tabBody, $('.volt-http-modes'));
-		modes.setAttribute('role', 'radiogroup');
-		modes.setAttribute('aria-label', localize('voltHttp.bodyMode', "Body type"));
-		const raw = draft.bodyMode === 'json' || draft.bodyMode === 'text' || draft.bodyMode === 'xml';
-		const choices: { label: string; checked: boolean; mode: BodyMode; isRaw?: boolean }[] = [
-			{ label: localize('voltHttp.bodyNone', "none"), checked: draft.bodyMode === 'none', mode: 'none' },
-			{ label: 'x-www-form-urlencoded', checked: draft.bodyMode === 'form', mode: 'form' },
-			{ label: 'raw', checked: raw, mode: raw ? draft.bodyMode : 'json', isRaw: true },
-			{ label: 'GraphQL', checked: draft.bodyMode === 'graphql', mode: 'graphql' },
-		];
-		for (const { label, checked, mode, isRaw } of choices) {
-			const radio = append(modes, $('button.volt-http-radio')) as HTMLButtonElement;
-			radio.type = 'button';
-			radio.setAttribute('role', 'radio');
-			radio.setAttribute('aria-checked', String(checked));
-			radio.classList.toggle('checked', checked);
-			append(radio, $('span.volt-http-radio-dot'));
-			append(radio, $('span')).textContent = label;
-			radio.addEventListener('click', () => {
-				if (!checked) {
-					this.change(next => next.bodyMode = mode);
-					this.renderTabs();
-				}
+			sections.push({
+				id: 'new', items: [
+					{ id: 'new-postman', label: localize('voltHttp.saveNewCollection', "New Collection"), icon: Codicon.add, data: 'new-postman' },
+					{ id: 'new-http', label: localize('voltHttp.saveNewHttp', "New .http File"), icon: Codicon.add, data: 'new-http' },
+				],
 			});
-			if (isRaw && raw) {
-				const format = append(modes, $('.volt-http-raw-format'));
-				createVoltDropdown<BodyMode>(format, this.contextViewService, {
-					options: [{ id: 'json', label: 'JSON' }, { id: 'text', label: localize('voltHttp.bodyText', "Text") }, { id: 'xml', label: 'XML' }],
-					value: draft.bodyMode,
-					ariaLabel: localize('voltHttp.rawFormat', "Raw format"),
-					width: 160,
-					align: 'left',
-					onChange: value => {
-						this.change(next => next.bodyMode = value);
-						this.renderTabs();
-					},
-				}, this.tabStore);
-			}
-		}
-		if (draft.bodyMode === 'json') {
-			const beautify = append(modes, $('button.volt-http-link.end')) as HTMLButtonElement;
-			beautify.type = 'button';
-			beautify.textContent = localize('voltHttp.beautifyLink', "Beautify");
-			beautify.addEventListener('click', () => this.beautifyBody());
-		}
-		if (draft.bodyMode === 'none') {
-			append(this.tabBody, $('.volt-http-empty.center')).textContent = localize('voltHttp.noBody', "This request does not have a body");
-			return;
-		}
-		if (draft.bodyMode === 'form') {
-			this.renderKeyValues(this.tabBody, undefined, draft.form, rows => this.change(next => next.form = rows));
-			return;
-		}
-		if (draft.bodyMode === 'graphql') {
-			const split = append(this.tabBody, $('.volt-http-graphql'));
-			const queryPane = append(split, $('.volt-http-graphql-pane'));
-			append(queryPane, $('.volt-http-sublabel')).textContent = localize('voltHttp.query', "Query");
-			const query = this.createCodeEditor(append(queryPane, $('.volt-http-code')), draft.body, 'graphql', false, this.tabStore);
-			this.tabStore.add(query.onDidChangeModelContent(() => this.change(next => next.body = query.getValue())));
-			const variablesPane = append(split, $('.volt-http-graphql-pane'));
-			append(variablesPane, $('.volt-http-sublabel')).textContent = localize('voltHttp.variables', "GraphQL Variables");
-			const variables = this.createCodeEditor(append(variablesPane, $('.volt-http-code')), draft.graphqlVariables, 'json', false, this.tabStore);
-			this.tabStore.add(variables.onDidChangeModelContent(() => this.change(next => next.graphqlVariables = variables.getValue())));
-			return;
-		}
-		const language = draft.bodyMode === 'json' ? 'json' : draft.bodyMode === 'xml' ? 'xml' : 'plaintext';
-		const body = this.createCodeEditor(append(this.tabBody, $('.volt-http-code')), draft.body, language, false, this.tabStore);
-		body.getContainerDomNode().dataset.role = 'body';
-		this.tabStore.add(body.onDidChangeModelContent(() => this.change(next => next.body = body.getValue())));
-	}
-
-	private beautifyBody(): void {
-		const editor = [...this.codeEditors].find(item => item.getContainerDomNode().dataset.role === 'body');
-		try {
-			const pretty = JSON.stringify(JSON.parse(editor?.getValue() ?? this.draft.body), null, 2);
-			if (editor) {
-				editor.setValue(pretty);
-			} else {
-				this.change(next => next.body = pretty);
-			}
-		} catch { /* not valid JSON yet */ }
-	}
-
-	/** Postman's auth page: the type and what it does on the left, its fields on the right. */
-	private renderAuth(): void {
-		const auth = this.draft.auth;
-		const wrap = append(this.tabBody, $('.volt-http-auth'));
-		const side = append(wrap, $('.volt-http-auth-type'));
-		append(side, $('.volt-http-section-title')).textContent = localize('voltHttp.authType', "Auth Type");
-		createVoltDropdown<AuthMode>(append(side, $('.volt-http-auth-pick')), this.contextViewService, {
-			options: [
-				{ id: 'none', label: localize('voltHttp.authNone', "No Auth") },
-				{ id: 'bearer', label: localize('voltHttp.authBearer', "Bearer Token") },
-				{ id: 'basic', label: localize('voltHttp.authBasic', "Basic Auth") },
-				{ id: 'apikey', label: localize('voltHttp.authKey', "API Key") },
-			],
-			value: auth.mode,
-			ariaLabel: localize('voltHttp.authMode', "Auth type"),
-			width: 220,
-			align: 'left',
-			onChange: value => {
-				this.change(next => next.auth.mode = value);
-				this.renderTabs();
-			},
-		}, this.tabStore);
-		const help: Record<AuthMode, string> = {
-			none: localize('voltHttp.authNoneHelp', "This request does not use any authorization."),
-			bearer: localize('voltHttp.authBearerHelp', "The token is sent in the Authorization header as \"Bearer <token>\". Use {{variables}} to keep secrets in an environment."),
-			basic: localize('voltHttp.authBasicHelp', "The username and password are sent in the Authorization header."),
-			apikey: localize('voltHttp.authKeyHelp', "The key and value are sent as a request header or a query parameter."),
-		};
-		append(side, $('.volt-http-auth-help')).textContent = help[auth.mode];
-		const fields = append(wrap, $('.volt-http-auth-fields'));
-		const field = (label: string, value: string, update: (value: string, draft: IHttpDraft) => void, password = false) => {
-			const row = append(fields, $('.volt-http-field'));
-			append(row, $('label')).textContent = label;
-			const box = this.tabStore.add(new InputBox(append(row, $('.volt-http-field-input')), this.contextViewService, { type: password ? 'password' : 'text', placeholder: localize('voltHttp.varHint', "Value or {{variable}}"), ariaLabel: label, inputBoxStyles: defaultInputBoxStyles }));
-			box.value = value;
-			this.tabStore.add(box.onDidChange(next => this.change(draft => update(next, draft))));
-		};
-		switch (auth.mode) {
-			case 'none':
-				append(fields, $('.volt-http-empty.center')).textContent = localize('voltHttp.noAuth', "No authorization is sent.");
-				break;
-			case 'bearer':
-				field(localize('voltHttp.token', "Token"), auth.token, (value, draft) => draft.auth.token = value, true);
-				break;
-			case 'basic':
-				field(localize('voltHttp.user', "Username"), auth.user, (value, draft) => draft.auth.user = value);
-				field(localize('voltHttp.password', "Password"), auth.password, (value, draft) => draft.auth.password = value, true);
-				break;
-			case 'apikey': {
-				field(localize('voltHttp.keyName', "Key"), auth.keyName, (value, draft) => draft.auth.keyName = value);
-				field(localize('voltHttp.keyValue', "Value"), auth.keyValue, (value, draft) => draft.auth.keyValue = value, true);
-				const row = append(fields, $('.volt-http-field'));
-				append(row, $('label')).textContent = localize('voltHttp.addTo', "Add to");
-				createVoltDropdown<'header' | 'query'>(append(row, $('.volt-http-field-input')), this.contextViewService, {
-					options: [{ id: 'header', label: localize('voltHttp.inHeader', "Header") }, { id: 'query', label: localize('voltHttp.inQuery', "Query Params") }],
-					value: auth.keyIn,
-					ariaLabel: localize('voltHttp.addTo', "Add to"),
-					align: 'left',
-					onChange: value => this.change(draft => draft.auth.keyIn = value),
-				}, this.tabStore);
-				break;
-			}
-		}
-	}
-
-	private createCodeEditor(host: HTMLElement, value: string, language: string, readOnly: boolean, store: DisposableStore): CodeEditorWidget {
-		const editor = store.add(this.instantiationService.createInstance(CodeEditorWidget, host, { ...CODE_EDITOR_OPTIONS, readOnly, domReadOnly: readOnly }, { isSimpleWidget: false }));
-		const languageId = this.languageService.isRegisteredLanguageId(language) ? language : 'plaintext';
-		const model: ITextModel = store.add(this.modelService.createModel(value, this.languageService.createById(languageId), undefined));
-		editor.setModel(model);
-		this.codeEditors.add(editor);
-		store.add(toDisposable(() => this.codeEditors.delete(editor)));
-		return editor;
-	}
-
-	private cancelSend(): void {
-		const pending = this.sending.value;
-		if (!pending) {
-			return;
-		}
-		pending.cancel();
-		this.sending.clear();
-		this.root.classList.remove('sending');
-		this.sendLabel?.(false);
-		this.renderResponse();
-	}
-
-	private async send(): Promise<void> {
-		const input = this.input as VoltHttpRequestInput | undefined;
-		if (!input || !this.draft.url.trim()) {
-			this.urlBox?.focus();
-			return;
-		}
-		this.sending.value?.cancel();
-		const cancel = new CancellationTokenSource();
-		this.sending.value = cancel;
-		this.sendLabel?.(true);
-		this.root.classList.add('sending');
-		this.renderResponse();
-		try {
-			const spec = wireSpec(specFromDraft(this.draft, input.source?.line ?? 0));
-			const exchange = await this.http.send(spec, { ...(input.source ? { source: input.source.uri } : {}), token: cancel.token });
-			// A cancelled send that settles after a newer one started does not replace its response.
-			if (!this.sending.value || this.sending.value === cancel) {
-				this.exchange = exchange;
-				this.responseLanguage = undefined;
-			}
-		} finally {
-			if (this.sending.value === cancel) {
-				this.sending.clear();
-				this.root.classList.remove('sending');
-				this.sendLabel?.(false);
-				this.renderResponse();
-			}
-		}
-	}
-
-	private async save(): Promise<void> {
-		const input = this.input as VoltHttpRequestInput | undefined;
-		const target = input?.source?.uri ?? this.http.defaultFile();
-		if (!input || !target) {
-			return;
-		}
-		const line = await this.http.save(target, specFromDraft(this.draft), input.source?.line);
-		input.setSource({ uri: target, line });
-		this.renderCrumbs();
-	}
-
-	private renderResponse(): void {
-		this.responseStore.clear();
-		clearNode(this.responseEl);
-		const bar = append(this.responseEl, $('.volt-http-res-bar'));
-		const exchange = this.sending.value ? undefined : this.exchange;
-		const response = exchange?.response;
-		if (!response) {
-			append(bar, $('span.volt-http-res-title')).textContent = localize('voltHttp.response', "Response");
-			if (this.sending.value) {
-				const waiting = append(this.responseEl, $('.volt-http-waiting'));
-				waiting.appendChild(renderIcon(ThemeIcon.modify(Codicon.loading, 'spin')));
-				// allow-any-unicode-next-line
-				append(waiting, $('span')).textContent = localize('voltHttp.sending', "Sending request…");
-				return;
-			}
-			if (exchange) {
-				const meta = append(bar, $('.volt-http-res-meta'));
-				append(meta, $('span.volt-http-pill.error')).textContent = localize('voltHttp.failed', "Failed");
-				append(this.responseEl, $('.volt-http-error')).textContent = exchange.error ?? '';
-				return;
-			}
-			const empty = append(this.responseEl, $('.volt-http-empty.response'));
-			empty.appendChild(renderIcon(Codicon.send));
-			append(empty, $('span')).textContent = localize('voltHttp.hint', "Send the request to see the response. Enter in the URL sends it.");
-			return;
-		}
-
-		const tabs = append(bar, $('.volt-http-res-tabs'));
-		tabs.setAttribute('role', 'tablist');
-		const headerCount = Object.keys(response.headers).length;
-		const responseTabs: { id: ResponseTab; label: string; count?: number }[] = [
-			{ id: 'body', label: localize('voltHttp.resBody', "Body") },
-			{ id: 'headers', label: localize('voltHttp.resHeaders', "Headers"), count: headerCount },
-			{ id: 'raw', label: localize('voltHttp.resRaw', "Raw") },
-		];
-		for (const { id, label, count } of responseTabs) {
-			this.drawTab(tabs, label, id === this.responseTab, undefined, count, () => {
-				this.responseTab = id;
-				this.renderResponse();
-			});
-		}
-		const meta = append(bar, $('.volt-http-res-meta'));
-		const pill = append(meta, $('span.volt-http-pill'));
-		pill.classList.add(response.status >= 500 ? 'error' : response.status >= 400 ? 'warn' : response.status >= 300 ? 'info' : 'ok');
-		pill.textContent = `${response.status} ${response.statusText}`.trim();
-		append(meta, $('span.volt-http-meta-dot'));
-		const time = append(meta, $('span.volt-http-metric'));
-		time.textContent = formatDuration(response.durationMs);
-		time.title = localize('voltHttp.time', "Time");
-		append(meta, $('span.volt-http-meta-dot'));
-		const size = append(meta, $('span.volt-http-metric'));
-		size.textContent = formatBytes(response.size);
-		size.title = localize('voltHttp.size', "Size");
-
-		if (this.responseTab === 'headers') {
-			const scroll = append(this.responseEl, $('.volt-http-res-scroll'));
-			const table = append(scroll, $('.volt-http-table.readonly'));
-			table.setAttribute('role', 'table');
-			const headRow = append(table, $('.volt-http-tr.head'));
-			append(headRow, $('.volt-http-td.label')).textContent = localize('voltHttp.key', "Key");
-			append(headRow, $('.volt-http-td.label')).textContent = localize('voltHttp.value', "Value");
-			for (const [key, value] of Object.entries(response.headers)) {
-				const row = append(table, $('.volt-http-tr'));
-				row.setAttribute('role', 'row');
-				append(row, $('.volt-http-td.text')).textContent = key;
-				append(row, $('.volt-http-td.text')).textContent = value;
-			}
-			return;
-		}
-
-		const type = Object.entries(response.headers).find(([key]) => key.toLowerCase() === 'content-type')?.[1] ?? '';
-		const detected: ResponseLanguage = /json/.test(type) || /^\s*[[{]/.test(response.body) ? 'json' : /html/.test(type) ? 'html' : /xml/.test(type) ? 'xml' : /javascript/.test(type) ? 'javascript' : /css/.test(type) ? 'css' : 'plaintext';
-		let language: ResponseLanguage = this.responseTab === 'raw' ? 'plaintext' : this.responseLanguage ?? detected;
-		let text = response.body;
-		if (this.responseTab === 'raw') {
-			text = `HTTP ${response.status} ${response.statusText}\n${Object.entries(response.headers).map(([key, value]) => `${key}: ${value}`).join('\n')}\n\n${response.body}`;
-		} else if (language === 'json') {
-			try {
-				text = JSON.stringify(JSON.parse(text), null, 2);
-			} catch {
-				language = this.responseLanguage === 'json' ? 'json' : 'plaintext';
-			}
-		}
-
-		const tools = append(this.responseEl, $('.volt-http-res-tools'));
-		if (this.responseTab === 'body') {
-			const formats: { id: ResponseLanguage; label: string; icon: ThemeIcon }[] = [
-				{ id: 'json', label: 'JSON', icon: Codicon.json },
-				{ id: 'xml', label: 'XML', icon: Codicon.code },
-				{ id: 'html', label: 'HTML', icon: Codicon.code },
-				{ id: 'javascript', label: 'JavaScript', icon: Codicon.code },
-				{ id: 'css', label: 'CSS', icon: Codicon.code },
-				{ id: 'plaintext', label: localize('voltHttp.resText', "Text"), icon: Codicon.file },
-			];
-			createVoltDropdown<ResponseLanguage>(append(tools, $('.volt-http-res-format')), this.contextViewService, {
-				options: formats,
-				value: language,
-				ariaLabel: localize('voltHttp.resFormat', "Response format"),
-				width: 180,
-				align: 'left',
-				onChange: value => {
-					this.responseLanguage = value;
-					this.renderResponse();
+			this.menu.value = showVoltMenu<Target>(this.contextViewService, {
+				anchor,
+				className: HTTP_MENU_CLASS,
+				align: 'right',
+				width: 320,
+				ariaLabel: localize('voltHttp.saveTo', "Save to"),
+				heading: { title: localize('voltHttp.saveTo', "Save to") },
+				sections,
+				onPick: async item => {
+					const target = item.data;
+					if (target === 'new-postman' || target === 'new-http') {
+						try {
+							const uri = await this.collections.createCollection(input.root, target === 'new-postman' ? localize('voltHttp.newCollectionName', "New Collection") : 'requests', target === 'new-postman' ? 'postman' : 'http');
+							await saveInto(uri, undefined);
+						} catch (err) {
+							this.notificationService.error(err instanceof Error ? err.message : String(err));
+						}
+					} else {
+						await saveInto(target.uri, target.parentId);
+					}
 				},
-			}, this.responseStore);
-		}
-		append(tools, $('.volt-http-spacer'));
-		const wrap = this.responseStore.add(createVoltButton(tools, 'ghost', { supportIcons: true, title: localize('voltHttp.wrap', "Wrap lines") }));
-		wrap.label = '$(word-wrap)';
-		wrap.element.classList.add('volt-http-icon-button');
-		wrap.element.classList.toggle('checked', this.responseWrap);
-		wrap.element.setAttribute('aria-pressed', String(this.responseWrap));
-		const find = this.responseStore.add(createVoltButton(tools, 'ghost', { supportIcons: true, title: localize('voltHttp.find', "Find in response") }));
-		find.label = '$(search)';
-		find.element.classList.add('volt-http-icon-button');
-		append(tools, $('span.volt-http-tool-sep'));
-		const copy = this.responseStore.add(createVoltButton(tools, 'ghost', { supportIcons: true, title: localize('voltHttp.copy', "Copy response") }));
-		copy.label = '$(copy)';
-		copy.element.classList.add('volt-http-icon-button');
+			});
+		});
+	}
 
-		const editor = this.createCodeEditor(append(this.responseEl, $('.volt-http-code.response')), text, language, true, this.responseStore);
-		editor.updateOptions({ wordWrap: this.responseWrap ? 'on' : 'off' });
-		this.responseStore.add(wrap.onDidClick(() => {
-			this.responseWrap = !this.responseWrap;
-			editor.updateOptions({ wordWrap: this.responseWrap ? 'on' : 'off' });
-			wrap.element.classList.toggle('checked', this.responseWrap);
-			wrap.element.setAttribute('aria-pressed', String(this.responseWrap));
-		}));
-		this.responseStore.add(find.onDidClick(() => {
-			editor.focus();
-			void editor.getAction('actions.find')?.run();
-		}));
-		this.responseStore.add(copy.onDidClick(() => void this.clipboardService.writeText(editor.getValue())));
-		this.layoutEditors();
+	private revealFile(uri: URI): void {
+		void this.editorService.openEditor({ resource: uri, options: { pinned: true } });
+	}
+
+	// --- Layout ------------------------------------------------------------------------------------
+
+	private toggleSidebar(): void {
+		const input = this.client;
+		if (!input) {
+			return;
+		}
+		if (this.narrow) {
+			this.root.classList.toggle('side-open');
+		} else {
+			input.sidebarHidden = !input.sidebarHidden;
+		}
+		this.layoutParts();
 	}
 
 	override layout(dimension: Dimension): void {
 		this.dimension = dimension;
-		this.root.style.height = `${dimension.height}px`;
-		this.layoutSplit();
+		this.layoutParts();
 	}
 
-	/** The height the request and response share: everything under the URL bar but the divider. */
-	private splitSpace(): number {
-		if (!this.dimension) {
-			return 0;
-		}
-		return this.dimension.height - this.requestEl.offsetTop - 1;
-	}
-
-	private layoutSplit(): void {
-		const space = this.splitSpace();
-		if (space > 0) {
-			const min = Math.min(MIN_PANE_HEIGHT, space / 2);
-			const height = Math.round(Math.min(Math.max(space * this.requestRatio, min), space - min));
-			this.requestEl.style.height = `${height}px`;
-		}
-		this.layoutEditors();
-		this.sash.layout();
-	}
-
-	/** Code editors size to their hosts (flex boxes); they need explicit layouts. */
-	private layoutEditors(): void {
-		if (!this.dimension) {
+	private layoutParts(): void {
+		const dimension = this.dimension;
+		const input = this.client;
+		if (!dimension || !input) {
 			return;
 		}
-		for (const editor of this.codeEditors) {
-			const host = editor.getContainerDomNode();
-			editor.layout({ width: host.clientWidth, height: host.clientHeight });
+		this.root.style.height = `${dimension.height}px`;
+		this.root.style.width = `${dimension.width}px`;
+		const narrow = dimension.width < NARROW_WIDTH;
+		if (narrow !== this.narrow) {
+			this.narrow = narrow;
+			this.root.classList.remove('side-open');
+		}
+		this.root.classList.toggle('narrow', narrow);
+		this.root.classList.toggle('compact', dimension.width < 460);
+		const overlay = narrow && this.root.classList.contains('side-open');
+		const shown = narrow ? overlay : !input.sidebarHidden;
+		this.root.classList.toggle('side-hidden', !shown);
+		const sideWidth = shown ? (narrow ? Math.min(320, dimension.width - 48) : Math.min(input.sidebarWidth, Math.max(MIN_SIDEBAR, dimension.width - 360))) : 0;
+		this.sideHost.style.width = `${sideWidth}px`;
+		if (shown) {
+			this.sidebar?.layout(sideWidth, narrow ? dimension.height - this.strip.offsetHeight - 1 : dimension.height);
+		}
+		const mainWidth = narrow ? dimension.width : dimension.width - sideWidth;
+		this.main.style.width = `${mainWidth}px`;
+		const contentHeight = Math.max(0, dimension.height - this.strip.offsetHeight);
+		this.content.style.height = `${contentHeight}px`;
+		this.requestView?.layout(mainWidth, contentHeight);
+		this.page?.layout(mainWidth, contentHeight);
+		if (shown && !narrow) {
+			this.sash.state = SashState.Enabled;
+			this.sash.layout();
+		} else {
+			this.sash.state = SashState.Disabled;
 		}
 	}
 
 	override focus(): void {
 		super.focus();
-		(this.draft.url ? this.sendButtonEl : this.urlBox?.inputElement)?.focus();
-	}
-}
-
-/** Bulk Edit's lines: `key:value`, `//` in front of a disabled row. */
-function parseBulk(text: string): IKeyValue[] {
-	const rows: IKeyValue[] = [];
-	for (const raw of text.split(/\r?\n/)) {
-		const disabled = /^\s*\/\//.test(raw);
-		const line = disabled ? raw.replace(/^\s*\/\//, '') : raw;
-		if (!line.trim()) {
-			continue;
+		if (this.client) {
+			this.client.shownAt = Date.now();
 		}
-		const at = line.indexOf(':');
-		rows.push(at < 0 ? { key: line.trim(), value: '', enabled: !disabled } : { key: line.slice(0, at).trim(), value: line.slice(at + 1).trimStart(), enabled: !disabled });
+		this.requestView?.focus();
 	}
-	return rows;
-}
-
-function safeDecode(value: string): string {
-	try {
-		return decodeURIComponent(value);
-	} catch {
-		return value;
-	}
-}
-
-/** Keeps `{{variables}}` readable in the URL. */
-function encodeParam(value: string): string {
-	return value.split(/(\{\{[^}]*\}\})/).map(part => part.startsWith('{{') ? part : encodeURIComponent(part)).join('');
-}
-
-function formatBytes(bytes: number): string {
-	return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;
-}
-
-function formatDuration(ms: number): string {
-	return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${Math.round(ms)} ms`;
 }

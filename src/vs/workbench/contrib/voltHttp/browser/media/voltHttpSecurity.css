@@ -1,0 +1,846 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * A security scan's tab: the head (name, progress, Scan / Stop), then Setup, Findings and Report.
+ * Tokens are voltHttp.css's. Below 720px (`.narrow`, set by the page's layout) the findings list
+ * sits above the finding's detail and the two charts stack.
+ */
+
+.volt-http-sec {
+	/* Severity colours from the theme. Not charts-orange: some themes make it see-through. */
+	--volt-http-sec-critical: var(--vscode-charts-red, #f85149);
+	--volt-http-sec-high: color-mix(in srgb, var(--vscode-charts-red, #f85149) 55%, var(--vscode-charts-yellow, #d29922));
+	--volt-http-sec-medium: var(--vscode-charts-yellow, #d29922);
+	--volt-http-sec-low: var(--vscode-charts-blue, #4f8cff);
+	--volt-http-sec-info: var(--volt-http-muted);
+	font-size: 13px;
+}
+
+/* --- Head ---------------------------------------------------------------------------------- */
+
+.volt-http-sec-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 46px;
+	padding: 0 var(--volt-http-pad);
+	box-sizing: border-box;
+	/* One row at every width: in a tight head the quiet buttons are their icons (voltHttp.css). */
+	container: volt-http-head / inline-size;
+}
+
+.volt-http-sec-head-icon {
+	flex: none;
+	display: inline-flex;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-sec-name {
+	flex: 1 1 120px;
+	min-width: 60px;
+	height: 28px;
+	margin-left: -6px;
+	padding: 0 6px;
+	box-sizing: border-box;
+	border: 1px solid transparent;
+	border-radius: 3px;
+	outline: 0;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font-size: 14px;
+	font-weight: 600;
+	text-overflow: ellipsis;
+}
+
+.volt-http-sec-name:hover,
+.volt-http-sec-name:focus {
+	border-color: var(--volt-http-line);
+}
+
+.volt-http-sec-name:focus {
+	background: var(--vscode-input-background);
+}
+
+.volt-http-sec-progress {
+	flex: 0 1 auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+.volt-http-sec-progress > span:last-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-http-sec-progress.running {
+	color: var(--vscode-foreground);
+}
+
+.volt-http-sec-progress .error {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-http-sec-head-actions {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+}
+
+.monaco-workbench .volt-http-sec-head-actions .volt-button {
+	height: 28px;
+	padding: 0 10px;
+	font-size: 13px;
+}
+
+/* --- Body and sections ---------------------------------------------------------------------- */
+
+.volt-http-sec-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	padding: 14px var(--volt-http-pad) 32px;
+	box-sizing: border-box;
+	user-select: text;
+}
+
+.volt-http-sec-section {
+	margin-bottom: 24px;
+}
+
+.volt-http-sec-section-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 2px;
+}
+
+.volt-http-sec-section-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+}
+
+.volt-http-sec-section-hint {
+	margin-bottom: 8px;
+}
+
+.volt-http-input.volt-http-sec-description {
+	width: 100%;
+	margin-top: 6px;
+	font-size: 13px;
+}
+
+.volt-http-input.volt-http-sec-description:focus {
+	outline: 0;
+}
+
+.volt-http-sec-tree,
+.volt-http-sec-list {
+	border-top: 1px solid var(--volt-http-line);
+	border-bottom: 1px solid var(--volt-http-line);
+}
+
+.volt-http-sec-list.empty {
+	border: 0;
+}
+
+.volt-http-sec-empty {
+	padding: 10px 0;
+}
+
+/* --- Setup rows ----------------------------------------------------------------------------- */
+
+.volt-http-sec-target-row .volt-http-check {
+	margin-right: 4px;
+}
+
+.volt-http-sec-check-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 100%;
+	padding: 0 8px;
+	box-sizing: border-box;
+	min-width: 0;
+	/* The list sets the row's height as its line height: two lines of text need their own. */
+	line-height: 18px;
+}
+
+.volt-http-sec-check-row.category {
+	padding-top: 4px;
+}
+
+.volt-http-sec-check-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.volt-http-sec-check-line {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
+.volt-http-sec-check-title,
+.volt-http-sec-host {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-sec-check-row.category .volt-http-sec-check-title {
+	font-weight: 600;
+}
+
+.volt-http-sec-host {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.volt-http-sec-check-description {
+	margin-top: 1px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-sec-check-description:empty {
+	display: none;
+}
+
+.volt-http-sec-tag {
+	flex: none;
+	font-size: 11px;
+	color: var(--volt-http-muted);
+}
+
+.volt-http-sec-tag.active {
+	color: var(--vscode-charts-yellow, #d29922);
+	font-weight: 600;
+}
+
+.volt-http-sec-active {
+	padding-top: 4px;
+}
+
+.volt-http-sec-toggle,
+.volt-http-sec-rate {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 0;
+}
+
+.volt-http-sec-toggle-label {
+	cursor: pointer;
+	user-select: none;
+}
+
+.volt-http-sec-rate .volt-http-sec-toggle-label {
+	cursor: default;
+}
+
+.volt-http-sec-explain,
+.volt-http-sec-host-note {
+	margin: 2px 0 6px 24px;
+	max-width: 760px;
+}
+
+.volt-http-sec-active .volt-http-sublabel {
+	padding-top: 10px;
+}
+
+.volt-http-sec-warning {
+	display: none;
+	align-items: flex-start;
+	gap: 8px;
+	margin: 2px 0 6px 24px;
+	padding: 8px 10px;
+	max-width: 740px;
+	border: 1px solid color-mix(in srgb, var(--vscode-editorWarning-foreground, #d29922) 45%, transparent);
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #d29922) 8%, transparent);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-http-sec-warning.on {
+	display: flex;
+}
+
+.volt-http-sec-warning-icon {
+	flex: none;
+	display: inline-flex;
+	padding-top: 1px;
+	color: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+/* --- Findings: summary, charts ---------------------------------------------------------------- */
+
+.volt-http-sec-summary {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px 20px;
+	margin-bottom: 14px;
+}
+
+.volt-http-sec-empty-state {
+	padding: 16px 0;
+	max-width: 620px;
+}
+
+.volt-http-sec-empty-title {
+	margin-bottom: 4px;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.volt-http-sec-grade {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	cursor: default;
+}
+
+.volt-http-sec-grade-letter {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 38px;
+	height: 38px;
+	border-radius: 3px;
+	font-size: 22px;
+	font-weight: 700;
+	color: var(--volt-http-sec-grade);
+	background: color-mix(in srgb, var(--volt-http-sec-grade) 14%, transparent);
+}
+
+.volt-http-sec-grade[data-grade="A"],
+.volt-http-sec-grade[data-grade="B"] { --volt-http-sec-grade: var(--vscode-charts-green, #3fb950); }
+.volt-http-sec-grade[data-grade="C"],
+.volt-http-sec-grade[data-grade="D"] { --volt-http-sec-grade: var(--vscode-charts-yellow, #d29922); }
+.volt-http-sec-grade[data-grade="F"] { --volt-http-sec-grade: var(--vscode-charts-red, #f85149); }
+
+.volt-http-sec-grade-text {
+	display: flex;
+	flex-direction: column;
+	line-height: 17px;
+}
+
+.volt-http-sec-grade-score {
+	font-weight: 600;
+}
+
+.volt-http-sec-grade-caption {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-sec-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.volt-http-sec-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	padding: 0 9px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.volt-http-sec-chip:hover {
+	background: var(--volt-http-hover);
+}
+
+.volt-http-sec-chip.active {
+	border-color: var(--vscode-focusBorder);
+	background: var(--volt-http-hover);
+}
+
+.volt-http-sec-chip:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-http-sec-chip-count {
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-sec-chip-label {
+	color: var(--volt-http-muted);
+}
+
+.volt-http-sec-stats {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 14px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-sec-dot {
+	flex: none;
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--volt-http-sec-color, var(--volt-http-muted));
+}
+
+.volt-http-sec [data-severity="critical"] { --volt-http-sec-color: var(--volt-http-sec-critical); }
+.volt-http-sec [data-severity="high"] { --volt-http-sec-color: var(--volt-http-sec-high); }
+.volt-http-sec [data-severity="medium"] { --volt-http-sec-color: var(--volt-http-sec-medium); }
+.volt-http-sec [data-severity="low"] { --volt-http-sec-color: var(--volt-http-sec-low); }
+.volt-http-sec [data-severity="info"] { --volt-http-sec-color: var(--volt-http-sec-info); }
+
+.volt-http-sec-ai {
+	margin-bottom: 14px;
+	padding: 10px 12px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+}
+
+.volt-http-sec-ai.hidden {
+	display: none;
+}
+
+.volt-http-sec-ai-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 10px;
+}
+
+.volt-http-sec-ai-title {
+	font-weight: 600;
+}
+
+.monaco-workbench .volt-http-sec-ai-head .volt-button {
+	height: 26px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+.volt-http-sec-ai-text {
+	margin-top: 8px;
+	max-height: 480px;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	line-height: 1.5;
+}
+
+.volt-http-sec-ai-text:empty {
+	display: none;
+}
+
+.volt-http-sec-charts {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+	gap: 16px 32px;
+	margin-bottom: 16px;
+}
+
+.volt-http-sec-charts:empty {
+	display: none;
+}
+
+.volt-http-sec.narrow .volt-http-sec-charts {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.volt-http-sec-chart-title {
+	margin-bottom: 10px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.volt-http-sec-stack {
+	display: flex;
+	gap: 2px;
+	height: 12px;
+	border-radius: 3px;
+	overflow: hidden;
+}
+
+.volt-http-sec-stack.empty {
+	background: var(--volt-http-line);
+}
+
+.volt-http-sec-segment {
+	flex: 1 1 0;
+	min-width: 4px;
+	background: var(--volt-http-sec-color);
+}
+
+.volt-http-sec-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 14px;
+	margin-top: 10px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-sec-key {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-http-sec-key b {
+	color: var(--vscode-foreground);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-sec-bars {
+	display: flex;
+	flex-direction: column;
+}
+
+.volt-http-sec-bar-row {
+	display: grid;
+	grid-template-columns: 44px minmax(0, 1fr) minmax(48px, 32%) 24px;
+	align-items: center;
+	gap: 8px;
+	height: 21px;
+	font-size: 12px;
+}
+
+.volt-http-sec-bar-row.none {
+	color: var(--volt-http-muted);
+}
+
+.volt-http-sec-bar-id {
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-sec-bar-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-sec-bar-track {
+	display: flex;
+	align-items: center;
+	height: 8px;
+}
+
+.volt-http-sec-bar-row.none .volt-http-sec-bar-track {
+	height: 1px;
+	background: var(--volt-http-line);
+}
+
+.volt-http-sec-bar-fill {
+	height: 100%;
+	border-radius: 3px;
+	background: var(--volt-http-sec-color, var(--vscode-charts-blue, #4f8cff));
+}
+
+.volt-http-sec-bar-count {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.volt-http-sec-notes:empty {
+	display: none;
+}
+
+.volt-http-sec-notes {
+	margin-bottom: 12px;
+}
+
+.volt-http-sec-note {
+	padding: 2px 0;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.volt-http-sec-note.error {
+	color: var(--vscode-errorForeground);
+}
+
+/* --- Findings: list and detail ---------------------------------------------------------------- */
+
+.volt-http-sec-split {
+	display: flex;
+	align-items: flex-start;
+	gap: 24px;
+}
+
+.volt-http-sec.narrow .volt-http-sec-split {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 16px;
+}
+
+.volt-http-sec-list-column {
+	flex: 0 0 44%;
+	min-width: 0;
+}
+
+.volt-http-sec.narrow .volt-http-sec-list-column {
+	flex: none;
+}
+
+.volt-http-sec-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 32px;
+	flex-wrap: wrap;
+}
+
+.volt-http-sec-count {
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-sec-finding-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 100%;
+	padding: 0 8px;
+	box-sizing: border-box;
+	min-width: 0;
+}
+
+.volt-http-sec-finding-row.triaged {
+	opacity: 0.55;
+}
+
+.volt-http-sec-badge {
+	flex: none;
+	display: inline-block;
+	/* Fits "Critical" and "Medium", so every title in the findings list starts at the same x. */
+	min-width: 62px;
+	padding: 0 6px;
+	box-sizing: border-box;
+	border-radius: 3px;
+	color: var(--volt-http-sec-color);
+	background: color-mix(in srgb, var(--volt-http-sec-color) 16%, transparent);
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 18px;
+	text-align: center;
+}
+
+/* Two lines in a 44px list row: the row's line-height (44px) must not reach them. */
+.volt-http-sec-finding-main {
+	flex: 1 1 auto;
+	min-width: 0;
+	line-height: 18px;
+}
+
+.volt-http-sec-finding-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-http-sec-finding-meta {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.volt-http-sec-finding-path {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-family: var(--monaco-monospace-font);
+	font-size: 11.5px;
+}
+
+.volt-http-sec-finding-detail {
+	flex: none;
+	margin-left: auto;
+}
+
+.volt-http-sec-detail {
+	flex: 1 1 auto;
+	min-width: 0;
+	padding-top: 6px;
+}
+
+.volt-http-sec-detail.hidden {
+	display: none;
+}
+
+.volt-http-sec-detail-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.volt-http-sec-detail-title {
+	min-width: 0;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.volt-http-sec-detail-meta {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	margin-top: 6px;
+	min-width: 0;
+}
+
+.volt-http-sec-detail-url {
+	min-width: 0;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	word-break: break-all;
+}
+
+.volt-http-sec-detail-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 16px;
+	margin-top: 8px;
+	font-size: 12px;
+}
+
+.volt-http-sec-detail-facts .muted,
+.volt-http-sec-detail-text .muted {
+	color: var(--volt-http-muted);
+}
+
+.volt-http-sec-detail-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-top: 12px;
+}
+
+.monaco-workbench .volt-http-sec-detail-actions .volt-button {
+	height: 26px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+.volt-http-sec-resend {
+	margin-top: 6px;
+}
+
+.volt-http-sec-detail-block {
+	margin-top: 16px;
+}
+
+.volt-http-sec-detail-label,
+.volt-http-sec-pre-label {
+	margin-bottom: 4px;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.volt-http-sec-pre-label {
+	margin-top: 10px;
+	text-transform: none;
+	letter-spacing: 0;
+	font-size: 12px;
+}
+
+.volt-http-sec-detail-text {
+	line-height: 1.5;
+	word-break: break-word;
+}
+
+.volt-http-sec-code {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	word-break: break-all;
+}
+
+.volt-http-sec-pre {
+	margin: 0;
+	padding: 8px 10px;
+	max-height: 280px;
+	overflow: auto;
+	border-radius: 3px;
+	background: var(--vscode-textCodeBlock-background, var(--volt-http-hover));
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.volt-http-sec-mark {
+	border-radius: 2px;
+	background: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+	color: inherit;
+}
+
+/* --- Report ------------------------------------------------------------------------------------ */
+
+.volt-http-sec-report {
+	max-width: 960px;
+}
+
+.volt-http-sec-report-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 16px;
+}
+
+.volt-http-sec-report-label {
+	flex: none;
+	margin-right: 2px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+}
+
+.volt-http-sec-report-doc.volt-http-ai-answer.rendered h1 {
+	font-size: 16px;
+}
+
+.monaco-workbench .volt-http-sec-report-actions .volt-button {
+	height: 26px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
