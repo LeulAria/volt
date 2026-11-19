@@ -29,7 +29,12 @@ import { INotebookEditorModelResolverService } from '../../../notebook/common/no
 import { INotebookExecutionService } from '../../../notebook/common/notebookExecutionService.js';
 import { INotebookExecutionStateService } from '../../../notebook/common/notebookExecutionStateService.js';
 import { INotebookKernelService } from '../../../notebook/common/notebookKernelService.js';
+import { IVoltHttpAutomations } from '../../../voltHttp/browser/voltHttpAutomations.js';
+import { IVoltHttpCollections } from '../../../voltHttp/browser/voltHttpCollections.js';
+import { IVoltHttpPerformance } from '../../../voltHttp/browser/voltHttpPerformance.js';
+import { IVoltHttpSecurity } from '../../../voltHttp/browser/voltHttpSecurity.js';
 import { IVoltHttpService } from '../../../voltHttp/browser/voltHttpService.js';
+import { REVEAL_HTTP_COLLECTION_COMMAND_ID } from '../../../voltHttp/browser/voltHttpViews.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../../platform/instantiation/common/extensions.js';
 import { createDecorator, IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
@@ -214,7 +219,12 @@ export class AgentIdeService extends Disposable implements IAgentIdeService {
 			new DockerCapability(),
 			new KubernetesCapability(),
 			new CiCapability(),
-			instantiationService.invokeFunction(accessor => whileHttpClientOn(new HttpCapability(accessor.get(IVoltHttpService)), accessor.getIfExists(IVoltFeatureService))),
+			instantiationService.invokeFunction(accessor => {
+				const commands = accessor.get(ICommandService);
+				// What an agent changes or runs shows in the chat's HTTP client, without taking focus.
+				const tools = { automations: accessor.get(IVoltHttpAutomations), performance: accessor.get(IVoltHttpPerformance), security: accessor.get(IVoltHttpSecurity) };
+				return whileHttpClientOn(new HttpCapability(accessor.get(IVoltHttpService), accessor.get(IVoltHttpCollections), fileService, (uri, path, ctx) => void commands.executeCommand(REVEAL_HTTP_COLLECTION_COMMAND_ID, uri, path, ctx.chatId), tools), accessor.getIfExists(IVoltFeatureService));
+			}),
 			new DatabaseCapability(),
 			instantiationService.invokeFunction(accessor => {
 				const configuration = accessor.get(IConfigurationService);

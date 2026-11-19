@@ -139,7 +139,7 @@ const IDE_WORK: readonly (readonly [IdeWork, RegExp])[] = [
 	['tests', /(?<![-\w])(?:tests?|specs?|test suite|vitest|jest|pytest|mocha)\b(?!-)[^.?!]{0,60}\b(?:fail(?:s|ed|ing|ures?)?|break(?:s|ing)?|broken|red|pass(?:es|ed|ing)?|run(?:s|ning)?)\b|\b(?:fail(?:s|ed|ing)?|run|rerun)\b[^.?!]{0,40}(?<![-\w])(?:tests?|specs?|test suite)\b(?!-)/i],
 	['debug', /\b(?:debug(?:ger|ging)?|breakpoints?|step (?:through|into|over)|runtime values?|(?:inspect|watch) (?:the )?(?:values?|variables?|state|locals))\b/i],
 	['profile', /\b(?:slow(?:ness|er|est)?|too long|takes? (?:so |too |very )?long|profil(?:er|ing)|profile (?:it|this|that|the (?:script|app|code|function|server|query|build))|(?:cpu|heap|memory) profiles?|hot ?spots?|bottlenecks?|cpu (?:time|usage)|memory (?:leak|usage)|(?:speed|perf(?:ormance)?) (?:issue|problem)s?)\b/i],
-	['http', /\.(?:http|rest)\b|\bhttp (?:requests?|client)\b|\b(?:call|hit|request|query|send|log ?in to|test)\b[^.?!]{0,40}\b(?:endpoints?|(?:local |the )?api)\b/i],
+	['http', /\.(?:http|rest)\b|\bhttp (?:requests?|client)\b|\bcurl\b|\bpostman\b|\b(?:api|request|postman) collections?\b|\b(?:openapi|swagger)\b|\b(?:get|post|put|patch|delete) (?:request|to|https?:\/\/)|\b(?:call|hit|request|query|send|log ?in to|test)\b[^.?!]{0,40}\b(?:endpoints?|(?:local |the )?api)\b/i],
 	['docker', /\b(?:docker|containers?|docker-compose|compose (?:file|service|stack))\b/i],
 	['db', /\.(?:db|sqlite3?|db3)\b|\b(?:sqlite|postgres(?:ql)?|mysql|database|sql quer(?:y|ies))\b(?!\s+(?:schemas?|migrations?|columns?|models?|types?|layer|code|clients?|drivers?))/i],
 	['notebook', /\.ipynb\b|\b(?:jupyter|notebook)\b/i],
