@@ -487,13 +487,16 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 			'.claude/skills/y/SKILL.md', '.claude/skills/y/run.sh', '.gemini/commands/x.toml', '.gemini/extensions/x/gemini-extension.json', '.codex/hooks.json', '.cursor/mcp.json',
 			'.zed/tasks.json', '.helix/config.toml', '.nvimrc', '.exrc', '.husky/pre-commit', '.githooks/pre-commit', '.idea/workspace.xml', '.devcontainer/devcontainer.json',
 			'.volt/hooks.json', '.pre-commit-config.yaml', 'lefthook.yml',
+			// EXEC-LATER-2: every name lefthook and husky 4 read, and the CLI files that pre-approve commands or load code.
+			'lefthook-local.yml', 'lefthook.yaml', '.lefthook.toml', 'lefthook.json', '.lefthook-local.jsonc', '.config/lefthook.yml', '.config/lefthook-local.toml', '.huskyrc', '.huskyrc.json', 'husky.config.js',
+			'.cursor/cli.json', '.codex/rules/default.rules', '.pi/extensions/x.ts', '.pi/settings.json',
 		];
 		// A case-insensitive volume: another spelling is the same file.
 		const variants = ['.GIT/config', '.Git/hooks/pre-commit', '.git/HOOKS/pre-commit', '.git/INFO/attributes', '.git/OBJECTS/info/alternates', 'sub/.GIT/config', '.GITMODULES', '.VSCode/tasks.json',
-			'.ENVRC', '.MCP.json', '.CLAUDE/settings.json', '.Claude/skills/x/SKILL.md', '.GEMINI/settings.json', '.Codex/config.toml', '.Cursor/mcp.json', '.ZED/settings.json', '.HUSKY/pre-commit', '.VOLT/hooks.json', 'LEFTHOOK.yml'];
+			'.ENVRC', '.MCP.json', '.CLAUDE/settings.json', '.Claude/skills/x/SKILL.md', '.GEMINI/settings.json', '.Codex/config.toml', '.Cursor/mcp.json', '.ZED/settings.json', '.HUSKY/pre-commit', '.VOLT/hooks.json', 'LEFTHOOK.yml', 'Lefthook-Local.YML', '.Cursor/CLI.json'];
 		// By design writable: the build-entry guard shows changes to the build files before Volt runs them,
 		// CI runs remotely after a push the user makes, and the rest name no command (05-limitations item 42).
-		const writable = ['package.json', 'Makefile', '.npmrc', '.yarnrc.yml', '.github/workflows/ci.yml', '.gitattributes', '.lfsconfig', 'sub/.vscode/tasks.json', 'app.code-workspace', 'AGENTS.md'];
+		const writable = ['package.json', 'Makefile', '.npmrc', '.yarnrc.yml', '.github/workflows/ci.yml', '.gitattributes', '.lfsconfig', 'sub/.vscode/tasks.json', 'app.code-workspace', 'AGENTS.md', '.config/app.yml', '.cursor/rules/style.mdc'];
 		const before = new Set([...await fs.readdir(f.ws), ...(await fs.readdir(join(f.ws, 'sub'))).map(name => `sub/${name}`)]);
 		for (const target of existing) {
 			await fs.mkdir(join(f.ws, target, '..'), { recursive: true });
@@ -613,15 +616,28 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		const free = await canaryListener();
 		const port = free.port;
 		await free.close();
-		// With the network on the sandbox shares the host's loopback: squatting a port is the risk.
-		const open = await sh(agent(true), `${listen(0)}; ${listen(port)}`);
-		assert.ok(!open.stdout.includes('LISTENING'), `network on: ${open.stdout}`);
-		assert.ok(open.stderr.includes(`NOT-LISTENING-${port}: Operation not permitted`), `refused by the sandbox: ${open.stderr}`);
 		if (isMac) {
-			// Linux puts a network-off sandbox in its own namespace, where a listener reaches nothing outside.
-			const offline = await sh(agent(false), `${listen(0)}; ${listen(port)}`);
-			assert.ok(!offline.stdout.includes('LISTENING'), `network off: ${offline.stdout}`);
-			assert.ok(offline.stderr.includes(`NOT-LISTENING-${port}: Operation not permitted`), `refused by the sandbox: ${offline.stderr}`);
+			// On macOS the sandbox shares the host's loopback: squatting a port is the risk, network on or off.
+			for (const network of [true, false]) {
+				const result = await sh(agent(network), `${listen(0)}; ${listen(port)}`);
+				assert.ok(!result.stdout.includes('LISTENING'), `network ${network}: ${result.stdout}`);
+				assert.ok(result.stderr.includes(`NOT-LISTENING-${port}: Operation not permitted`), `refused by the sandbox: ${result.stderr}`);
+			}
+		} else {
+			// Linux: every agent launch has its own network namespace (its traffic goes through the broker
+			// route, network on or off), so a listener there is the sandbox's own: nothing on this machine
+			// reaches it. Checked from outside while it listens.
+			for (const network of [true, false]) {
+				const running = sh(agent(network), `${PERL} -MIO::Socket::INET -e '$s=IO::Socket::INET->new(Listen=>5, LocalAddr=>"0.0.0.0", LocalPort=>${port}, ReuseAddr=>1) or exit 0; print "LISTENING-${port}\n"; $|=1; sleep 3'`);
+				await new Promise(resolve => setTimeout(resolve, 1500));
+				const reached = await new Promise<boolean>(resolve => {
+					const socket = net.connect(port, '127.0.0.1');
+					socket.once('connect', () => { socket.destroy(); resolve(true); });
+					socket.once('error', () => resolve(false));
+				});
+				await running;
+				assert.ok(!reached, `network ${network}: a listener inside the sandbox was reachable from this machine`);
+			}
 		}
 		const granted = await sh(agent(true, 'claude-code', { listenPorts: [port] }), listen(port));
 		assert.ok(granted.stdout.includes(`LISTENING-${port}`), `a granted port works: ${granted.stderr}`);
@@ -642,6 +658,31 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		}
 		assert.ok(result.stdout.includes(`CARGO_HOME=${f.home}/.cargo`), 'toolchain locations pass');
 		assert.ok(result.stdout.includes(`HOME=${f.home}`), 'the real home folder');
+	});
+
+	macTest('ENV-INJECT-1: dyld variables in a launch\'s own environment (an MCP server\'s or a task\'s `env`) are never loaded by the launcher outside the sandbox', async () => {
+		// A library whose constructor writes outside the workspace: whatever loads it unsandboxed leaves the marker.
+		const source = join(f.ws, 'inject.c');
+		const library = join(f.ws, 'inject.dylib');
+		const marker = join(f.outside, 'pwned-preload');
+		await fs.writeFile(source, `#include <stdio.h>\n__attribute__((constructor)) static void pwn(void) { FILE *f = fopen("${marker}", "a"); if (f) { fputs("x", f); fclose(f); } }\n`);
+		const compiled = (() => { try { execFileSync('/usr/bin/cc', ['-dynamiclib', '-o', library, source], { stdio: 'ignore' }); return true; } catch { return false; } })();
+		try {
+			for (const policy of [workspace(), agent(false)]) {
+				// A library that does not exist makes dyld abort the program it is inserted into: before, the helper died and nothing ran.
+				for (const inserted of [join(f.ws, 'no-such.dylib'), ...(compiled ? [library] : [])]) {
+					const result = await sh(policy, 'env', { env: { DYLD_INSERT_LIBRARIES: inserted, DYLD_LIBRARY_PATH: f.ws, DYLD_FRAMEWORK_PATH: f.ws, PLAIN_SETTING: 'kept' } });
+					assert.strictEqual(result.exitCode, 0, `${policy.name}: ${result.stderr}`);
+					assert.ok(result.stdout.includes('PLAIN_SETTING=kept'), `${policy.name}: the rest of the launch's environment passes`);
+					assert.ok(!await exists(marker), `${policy.name}: the library ran outside the sandbox`);
+				}
+			}
+			await assertHostUnchanged();
+		} finally {
+			for (const path of [source, library, marker]) {
+				await fs.rm(path, { force: true });
+			}
+		}
 	});
 
 	// --- Git internals: `.git` is an allow list (B-03, INV-15) ------------------------------------
@@ -913,7 +954,8 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 					'ps -axww -o pid=,command= 2>/dev/null',
 					'ps -axwwE -o command= 2>/dev/null',
 				].join('; '));
-				assert.ok(!/STOPPED|SIGNALLED|CAN-SEE/.test(result.stdout), `${policy.name}: ${result.stdout}`);
+				// Whole lines: on Linux `ps` lists the sandbox's own shell, whose command line holds this script's text.
+				assert.ok(!/^(STOPPED|SIGNALLED|CAN-SEE)$/m.test(result.stdout), `${policy.name}: ${result.stdout}`);
 				assert.ok(!result.stdout.includes(secret), `${policy.name}: another process's command line or environment through ps`);
 				assert.strictEqual(victim.exitCode, null);
 				assert.strictEqual(victim.signalCode, null, `${policy.name}: the host process is untouched`);
@@ -1476,6 +1518,8 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 			'com.apple.coreservices.sharedfilelistd.xpc', 'com.apple.lsd.modifydb', 'com.apple.lsd.open', 'com.apple.coreservices.launchservicesd',
 			'com.apple.CoreServices.coreservicesd', 'com.apple.coreservices.appleevents', 'com.apple.cfprefsd.agent', 'com.apple.cfprefsd.daemon',
 			'com.apple.pasteboard.1', 'com.apple.windowserver.active',
+			// MACOS-OUT-3: Shortcuts (runs the user's shortcuts) and Spotlight (answers about every indexed file).
+			'com.apple.siri.VoiceShortcuts.xpc', 'com.apple.shortcuts.daemon', 'com.apple.WorkflowKit.BackgroundShortcutRunner', 'com.apple.metadata.mds', 'com.apple.metadata.mds.legacy',
 		];
 		// A control the agent legitimately reaches: user and group lookups. If this came back CLOSED the
 		// probe would be meaningless (every lookup failing), so the denials below would prove nothing.
@@ -1490,5 +1534,22 @@ suite('Volt sandbox security (adversarial, real processes)', function () {
 		}
 		await fs.rm(probe, { force: true });
 		await assertHostUnchanged();
+	});
+
+	macTest('MACOS-OUT-3: an agent cannot list or run the user\'s Shortcuts, nor ask Spotlight about files outside its sandbox', async function () {
+		if (!await exists('/usr/bin/shortcuts') || !await exists('/usr/bin/mdfind')) {
+			this.skip();
+		}
+		for (const network of [false, true]) {
+			const result = await sh(agent(network), [
+				'/usr/bin/shortcuts list >/dev/null 2>&1 && echo SHORTCUTS-REACHED',
+				'/usr/bin/shortcuts run volt-sbx-no-such-shortcut >/dev/null 2>&1; echo "shortcuts-run=$?"',
+				// Application bundles are indexed on every Mac: a count above zero is Spotlight answering.
+				`n=$(/usr/bin/mdfind -count 'kMDItemContentType == "com.apple.application-bundle"' 2>/dev/null); [ "\${n:-0}" -gt 0 ] && echo SPOTLIGHT-ANSWERED`,
+				`/usr/bin/mdfind -name readme.txt 2>/dev/null | head -1 | sed 's/^/SPOTLIGHT-NAME /'`,
+			].join('; '));
+			assert.ok(!/SHORTCUTS-REACHED|SPOTLIGHT-ANSWERED|SPOTLIGHT-NAME/.test(result.stdout), `network=${network}: ${result.stdout}`);
+			assert.ok(/shortcuts-run=[1-9]/.test(result.stdout), `no shortcut runs (network=${network}): ${result.stdout}`);
+		}
 	});
 });

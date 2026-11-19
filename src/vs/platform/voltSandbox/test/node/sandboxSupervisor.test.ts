@@ -212,7 +212,9 @@ suite('Volt sandbox supervisor (C5, real processes)', function () {
 		assert.strictEqual(supervisor.list().length, 0, 'a stopped host leaves the list');
 	});
 
-	test('DENY-HOST-1: what the sandbox refuses a running host is on its row (the window warns from it), without the runtime\'s own noise', async () => {
+	// macOS: the kernel logs each refusal and Volt reads them. Linux has no such report (05-limitations.md item 5,
+	// "No OS denial reports"): a refused operation there fails in the workload and the row has none.
+	(process.platform === 'darwin' ? test : test.skip)('DENY-HOST-1: what the sandbox refuses a running host is on its row (the window warns from it), without the runtime\'s own noise', async () => {
 		const supervisor = supervisorWith();
 		await fs.mkdir(join(home, '.ssh'), { recursive: true });
 		await fs.writeFile(join(home, '.ssh', 'id_ed25519'), 'CANARY-SSH\n');

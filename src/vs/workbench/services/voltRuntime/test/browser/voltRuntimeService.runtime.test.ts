@@ -685,6 +685,54 @@ suite('Agent runtime orchestration', () => {
 		assert.strictEqual(await service.restartAgent('never-used'), true, 'a chat with no agent yet has nothing to stop');
 	});
 
+	test('an agent that dies mid-turn after working is restarted on its own session and told to continue, not to start over', async () => {
+		const { service, internals, agent, ref, waitEnd } = await setup('agent');
+		agent.resumable = true;
+		agent.turns.push(async function* () {
+			yield { type: 'tool.start', callId: 'c1', name: 'Read', title: 'Read src/a.ts', kind: 'read' };
+			yield { type: 'tool.end', callId: 'c1', result: 'ok' };
+			// What the ACP provider reports when the process behind the adapter is killed (ADEMark C4).
+			yield { type: 'error', message: 'ACP session is not running: The connection to Claude was lost.', retryable: true };
+			yield { type: 'run.end', runId: 'x', reason: 'fail' };
+		});
+		const before = agent.starts.length;
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'fix the bug', mode: 'agent', providerRef: ref }))).reason, 'done');
+		const [died, again] = agent.promptHandles;
+		assert.notStrictEqual(again, died, 'a new agent process took the turn');
+		assert.ok(agent.disposed.includes(died), 'the dead one was let go');
+		const restart = agent.starts.slice(before).find(start => start.resumeSessionId);
+		assert.ok(restart, 'the restart resumed the session that had the turn\'s steps');
+		assert.strictEqual(agent.prompts[0].text, 'fix the bug');
+		assert.ok(agent.prompts[1].text.startsWith('[Volt] Your agent process died') && agent.prompts[1].text.includes('on the same session'), agent.prompts[1].text);
+		assert.ok(agent.prompts[1].text.endsWith('fix the bug'));
+		assert.strictEqual((internals.sessions as Map<string, { releasedAgent?: unknown }>).get('chat')!.releasedAgent, undefined, 'the session is the chat\'s live agent again');
+	});
+
+	test('an agent that dies before doing anything is restarted with the prompt as it was, in a new session', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		agent.resumable = true;
+		agent.turns.push(async function* () {
+			yield { type: 'error', message: 'ACP process exited (1)', retryable: true };
+			yield { type: 'run.end', runId: 'x', reason: 'fail' };
+		});
+		const before = agent.starts.length;
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'fix the bug', mode: 'agent', providerRef: ref }))).reason, 'done');
+		assert.ok(agent.starts.slice(before).every(start => !start.resumeSessionId), 'nothing to continue: a new session');
+		assert.deepStrictEqual(agent.prompts.map(prompt => prompt.text), ['fix the bug', 'fix the bug']);
+	});
+
+	test('an agent that cannot resume and dies after working is told in its new session what it had done', async () => {
+		const { service, agent, ref, waitEnd } = await setup('agent');
+		agent.turns.push(async function* () {
+			yield { type: 'tool.start', callId: 'c1', name: 'Read', title: 'Read src/a.ts', kind: 'read' };
+			yield { type: 'tool.end', callId: 'c1', result: 'ok' };
+			yield { type: 'error', message: 'ACP process exited (1)', retryable: true };
+			yield { type: 'run.end', runId: 'x', reason: 'fail' };
+		});
+		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'fix the bug', mode: 'agent', providerRef: ref }))).reason, 'done');
+		assert.ok(agent.prompts[1].text.includes('in a new session') && agent.prompts[1].text.includes('finished 1 tool call') && agent.prompts[1].text.endsWith('fix the bug'), agent.prompts[1].text);
+	});
+
 	test('an idle agent of a chat not in use stops after its grace and comes back with its session, no recap', async () => {
 		const { service, internals, agent, ref, waitEnd } = await setup('agent');
 		agent.resumable = true;

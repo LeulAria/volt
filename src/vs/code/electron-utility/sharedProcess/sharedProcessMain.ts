@@ -116,6 +116,7 @@ import { nodeSocketFactory } from '../../../platform/remote/node/nodeSocketFacto
 import { NativeEnvironmentService } from '../../../platform/environment/node/environmentService.js';
 import { SharedProcessRawConnection, SharedProcessLifecycle } from '../../../platform/sharedProcess/common/sharedProcess.js';
 import { getOSReleaseInfo } from '../../../base/node/osReleaseInfo.js';
+import { startQuietHeapReducer } from '../../../base/node/voltQuietHeapReducer.js';
 import { getDesktopEnvironment } from '../../../base/common/desktopEnvironmentInfo.js';
 import { getCodeDisplayProtocol, getDisplayProtocol } from '../../../base/node/osDisplayProtocolInfo.js';
 import { RequestService } from '../../../platform/request/electron-utility/requestService.js';
@@ -190,6 +191,9 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 			instantiationService.createInstance(UserDataProfilesCleaner),
 			instantiationService.createInstance(DefaultExtensionsInitializer)
 		));
+
+		// Volt: startup's heap garbage goes back once the shared process is quiet
+		this._register(startQuietHeapReducer());
 	}
 
 	private async initServices(): Promise<IInstantiationService> {

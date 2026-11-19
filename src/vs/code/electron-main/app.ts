@@ -5,6 +5,7 @@
 
 import { app, protocol, session, Session, systemPreferences, WebFrameMain } from 'electron';
 import { addUNCHostToAllowlist, disableUNCAccessRestrictions } from '../../base/node/unc.js';
+import { startQuietHeapReducer } from '../../base/node/voltQuietHeapReducer.js';
 import { validatedIpcMain } from '../../base/parts/ipc/electron-main/ipcMain.js';
 import { hostname, release } from 'os';
 import { VSBuffer } from '../../base/common/buffer.js';
@@ -791,6 +792,9 @@ export class CodeApplication extends Disposable {
 
 				// Eventually Post Open Window Tasks
 				this.eventuallyAfterWindowOpen();
+
+				// Volt: startup's heap garbage goes back once the main process is quiet
+				startQuietHeapReducer();
 			}, 2500));
 		}, 2500));
 		eventuallyPhaseScheduler.schedule();

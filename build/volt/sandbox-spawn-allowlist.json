@@ -496,14 +496,6 @@
 			"why": "The supervisor's own run of a prepared, confirmed sandbox (SandboxManager.run)."
 		},
 		{
-			"file": "src/vs/platform/voltSandbox/node/supervisor.ts",
-			"kind": "child_process",
-			"count": 2,
-			"owner": "sandbox",
-			"reason": "supervisor",
-			"why": "SandboxSupervisor starts a long-lived host from a prepared, confirmed sandbox (attest then go byte, F.4), and polls /bin/ps for its hosts' resource use and for reaping a crashed Volt's hosts (F.9, F.11)."
-		},
-		{
 			"file": "src/vs/platform/voltSandbox/node/sandboxPty.ts",
 			"kind": "child_process",
 			"count": 1,
@@ -528,12 +520,28 @@
 			"why": "The macOS sandbox backend: sandbox-exec probe, the kernel log stream, the watchdog and the tree kill, the verified volt-sandbox-helper (its probe, and the server that spawns workloads with TCC disclaimed and attests them from outside, H7), and /usr/bin/logger with a fixed argument: the random flush marker a one-shot run waits for in the log stream (no user input, never in a sandbox)."
 		},
 		{
+			"file": "src/vs/platform/voltSandbox/node/supervisor.ts",
+			"kind": "child_process",
+			"count": 2,
+			"owner": "sandbox",
+			"reason": "supervisor",
+			"why": "SandboxSupervisor starts a long-lived host from a prepared, confirmed sandbox (attest then go byte, F.4), and polls /bin/ps for its hosts' resource use and for reaping a crashed Volt's hosts (F.9, F.11)."
+		},
+		{
 			"file": "src/vs/platform/voltSpeech/electron-main/voltSpeechMainService.ts",
 			"kind": "child_process",
 			"count": 5,
 			"owner": "speech",
 			"reason": "user-action",
 			"why": "Dictation the user turned on: Volt's speech helper, built from its bundled source and run."
+		},
+		{
+			"file": "src/vs/platform/voltStdio/node/acpSharedHosts.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "stdio",
+			"reason": "supervisor",
+			"why": "Starts the shared ACP adapter host (acpSharedHostSource.ts) for chats with the same launch. The host runs outside every chat's sandbox and starts no process itself (child_process is replaced there): a chat's CLI and helper commands come back to the stdio service, which starts them through that chat's sandbox launch. Its own file access is checked in JavaScript against the chat's resolved policy, not by the OS (round 10 report 107, residuals)."
 		},
 		{
 			"file": "src/vs/platform/voltStdio/node/childLedger.ts",
@@ -550,6 +558,14 @@
 			"owner": "stdio",
 			"reason": "supervisor",
 			"why": "Runs every chat process and command with its ExecContext: a sandboxed chat's only through the sandbox launcher, refused without it (execRefusal)."
+		},
+		{
+			"file": "src/vs/platform/voltStorage/node/voltStorageService.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "storage",
+			"reason": "supervisor",
+			"why": "Measures disk use of Volt's own worktrees and checkouts with /usr/bin/du (through /usr/bin/nice): fixed program paths, an empty environment, paths Volt lists itself; nothing a chat wrote is run."
 		},
 		{
 			"file": "src/vs/platform/voltUsage/node/usageAccounts.ts",

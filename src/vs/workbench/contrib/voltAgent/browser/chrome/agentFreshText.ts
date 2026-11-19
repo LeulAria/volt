@@ -103,11 +103,51 @@ export class FreshTextTracker {
 	/** When the newest stretch of streamed text appeared, in any reply this tracker draws. */
 	private lastChunkAt = -Infinity;
 
+	/** The fades this tracker steps itself: each span with the timeline time its fade began at. */
+	private readonly driven = new Map<HTMLElement, number>();
+	private lastStep = NaN;
+
 	/**
 	 * `timelineNow` gives the document timeline's time of the frame being drawn; with it the spans'
 	 * colour steps share one clock ({@link alignedFadeDelay}). Without it each span steps on its own.
+	 *
+	 * With `onDidStartFade` the tracker's owner steps the fades ({@link step}) and the spans'
+	 * animations stay paused: the browser gives a running animation a main frame at every screen
+	 * refresh, colour change or not, and with a main frame begun at every refresh a key typed in the
+	 * composer always waits for the next one. `onDidStartFade` is called when a span starts to fade.
 	 */
-	constructor(private readonly timelineNow?: (document: Document) => number | undefined) { }
+	constructor(
+		private readonly timelineNow?: (document: Document) => number | undefined,
+		private readonly onDidStartFade?: () => void,
+	) { }
+
+	/**
+	 * Moves the fades to the frame at `timelineMs`: every span shows the colour of its fade's current
+	 * step (what its animation would show running), and a span whose fade is over is unwrapped. The
+	 * colours change once per step, in the first frame of it. False once no fade is left.
+	 */
+	step(timelineMs: number): boolean {
+		const step = Math.floor(timelineMs / FRESH_TEXT_STEP_MS);
+		if (step !== this.lastStep) {
+			this.lastStep = step;
+			for (const [span, start] of this.driven) {
+				const age = timelineMs - start;
+				if (age >= FRESH_TEXT_FADE_MS) {
+					// Also a span not in the document now (a chat kept aside): it would come back held mid-fade.
+					this.driven.delete(span);
+					span.replaceWith(...span.childNodes);
+				} else if (span.isConnected) {
+					span.style.animationDelay = `-${Math.round(age * 100) / 100}ms`;
+				}
+			}
+		}
+		return this.driven.size > 0;
+	}
+
+	/** Whether {@link step} has fades to move. */
+	get hasDrivenFades(): boolean {
+		return this.driven.size > 0;
+	}
 
 	/**
 	 * `roots` hold the reply's rendered text in reading order, all of it drawn in this frame. Text
@@ -172,10 +212,15 @@ export class FreshTextTracker {
 				.filter(chunk => chunk.start < offset && chunk.end > start)
 				.map(chunk => ({ start: Math.max(0, chunk.start - start), end: chunk.end - start, at: chunk.at }));
 			if (chunks.length) {
-				wrapFreshText(part.roots, chunks, now, this.timelineNow);
+				wrapFreshText(part.roots, chunks, now, this.timelineNow, this.onDidStartFade ? this.drive : undefined);
 			}
 		}
 	}
+
+	private readonly drive = (span: HTMLElement, startTimelineMs: number) => {
+		this.driven.set(span, startTimelineMs);
+		this.onDidStartFade?.();
+	};
 }
 
 /**
@@ -206,7 +251,7 @@ function commonPrefixLength(a: string, b: string): number {
 	return i;
 }
 
-function wrapFreshText(roots: readonly HTMLElement[], chunks: readonly IChunk[], now: number, timelineNow?: (document: Document) => number | undefined): void {
+function wrapFreshText(roots: readonly HTMLElement[], chunks: readonly IChunk[], now: number, timelineNow?: (document: Document) => number | undefined, drive?: (span: HTMLElement, startTimelineMs: number) => void): void {
 	const nodes: { node: Text; start: number }[] = [];
 	let offset = 0;
 	for (const root of roots) {
@@ -246,7 +291,13 @@ function wrapFreshText(roots: readonly HTMLElement[], chunks: readonly IChunk[],
 			span.style.animationDuration = `${FRESH_TEXT_FADE_MS}ms`;
 			span.style.animationTimingFunction = FRESH_TEXT_EASING;
 			const timeline = timelineNow?.(node.ownerDocument);
-			span.style.animationDelay = `-${timeline === undefined ? Math.max(0, Math.round(range.age)) : alignedFadeDelay(range.age, timeline)}ms`;
+			const delay = timeline === undefined ? Math.max(0, Math.round(range.age)) : alignedFadeDelay(range.age, timeline);
+			span.style.animationDelay = `-${delay}ms`;
+			if (drive && timeline !== undefined) {
+				// Held at its current step; the tracker's owner moves it on (FreshTextTracker.step).
+				span.style.animationPlayState = 'paused';
+				drive(span, timeline - delay);
+			}
 			fresh.replaceWith(span);
 			span.appendChild(fresh);
 		}

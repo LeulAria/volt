@@ -24,6 +24,15 @@ import { EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL } from '../../../platform/w
 	const preloadGlobals: IMainWindowSandboxGlobals = (window as any).vscode; // defined by preload.ts
 	const safeProcess = preloadGlobals.process;
 
+	//#region Volt: keys typed before the first screen
+
+	// What was typed since this document started, before it had a text box (the preload script keeps the characters):
+	// the composer's stand-in text area of the window's last screen takes them, so nothing typed while the window
+	// appears is lost and its first frame shows it.
+	const takeEarlyKeys = (): string => preloadGlobals.context.takeEarlyKeys?.() ?? '';
+
+	//#endregion
+
 	//#region Volt: launch window
 
 	// The launch window's page (src/bootstrap-window.ts) loads while the main process is still starting. In the built
@@ -34,27 +43,40 @@ import { EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL } from '../../../platform/w
 	if (window.location.hash === `#${EARLY_PAGE_FRAGMENT}`) {
 		const doc = window.document;
 		const builtProduct = !!doc.querySelector('link[rel="stylesheet"][href$="workbench.desktop.main.css"]');
-		if (builtProduct) {
-			const preload = doc.createElement('link');
-			preload.rel = 'modulepreload';
-			preload.href = new URL('../../../workbench/workbench.desktop.main.js', window.location.href).href;
-			doc.head.appendChild(preload);
-		}
+		// The workbench code is fetched and compiled ahead of the configuration, but after the picture's first frame:
+		// compiling it (tens of ms on this thread) before that frame kept the picture, and keys typed into it, waiting.
+		let preloading = false;
+		const preloadWorkbench = () => {
+			if (builtProduct && !preloading) {
+				preloading = true;
+				const preload = doc.createElement('link');
+				preload.rel = 'modulepreload';
+				preload.href = new URL('../../../workbench/workbench.desktop.main.js', window.location.href).href;
+				doc.head.appendChild(preload);
+			}
+		};
+		setTimeout(preloadWorkbench, 100); // at the latest (no picture yet, or no frames: a covered window)
 		preloadGlobals.ipcRenderer.invoke(EARLY_SNAPSHOT_CHANNEL).then((raw: unknown) => {
 			if (!builtProduct || configurationArrived || typeof raw !== 'string') {
+				preloadWorkbench();
 				return;
 			}
 			try {
 				const snapshot = JSON.parse(raw) as IVoltWindowSnapshot;
 				const before = new Set(doc.documentElement.classList);
-				if (canPaintVoltWindowSnapshot(snapshot, snapshot.key, window, undefined) && paintWindowSnapshot(doc, snapshot)) {
+				if (canPaintVoltWindowSnapshot(snapshot, snapshot.key, window, undefined) && paintWindowSnapshot(doc, snapshot, takeEarlyKeys)) {
 					launchSnapshot = { snapshot, htmlClasses: [...doc.documentElement.classList].filter(name => !before.has(name)) };
 					performance.mark('code/voltDidPaintWindowSnapshot');
 				}
 			} catch (error) {
 				console.error('[volt] could not paint the window snapshot', error);
 			}
-		}, () => { /* the main process no longer serves it: the configuration's picture is used */ });
+			if (launchSnapshot) {
+				requestAnimationFrame(() => setTimeout(preloadWorkbench, 0));
+			} else {
+				preloadWorkbench();
+			}
+		}, () => preloadWorkbench() /* the main process no longer serves it: the configuration's picture is used */);
 	}
 
 	/** Whether the picture the launch window painted is the one this configuration would paint; if not, it goes. */
@@ -396,7 +418,7 @@ import { EARLY_PAGE_FRAGMENT, EARLY_SNAPSHOT_CHANNEL } from '../../../platform/w
 		}
 		try {
 			const snapshot = JSON.parse(configuration.voltWindowSnapshot) as IVoltWindowSnapshot;
-			if (canPaintVoltWindowSnapshot(snapshot, voltWindowSnapshotKey(configuration), window, baseTheme) && paintWindowSnapshot(document, snapshot)) {
+			if (canPaintVoltWindowSnapshot(snapshot, voltWindowSnapshotKey(configuration), window, baseTheme) && paintWindowSnapshot(document, snapshot, takeEarlyKeys)) {
 				performance.mark('code/voltDidPaintWindowSnapshot');
 				return true;
 			}

@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { classifyProviderError, isAcpTurnRestartable, parseRetryAfter, retryDelayMs } from '../../../common/harness/sessionRetry.js';
+import { classifyProviderError, isAcpTurnRestartable, parseRetryAfter, restartedTurnText, retryDelayMs } from '../../../common/harness/sessionRetry.js';
 
 suite('Volt session retry', () => {
 
@@ -41,5 +41,22 @@ suite('Volt session retry', () => {
 		assert.ok(retryDelayMs(1) >= 400);
 		assert.ok(retryDelayMs(8) <= 30_000);
 		assert.strictEqual(retryDelayMs(1, 50_000), 30_000);
+	});
+	test('a turn sent again after its agent died says what was done, and a turn that had done nothing is sent as it was', () => {
+		// Nothing done yet: the same prompt, as before.
+		assert.strictEqual(restartedTurnText('fix the bug', true, undefined), 'fix the bug');
+		assert.strictEqual(restartedTurnText('fix the bug', false, { tools: 0, files: [] }), 'fix the bug');
+		// The same session again: its steps are above, it continues after them.
+		const resumed = restartedTurnText('fix the bug', true, { tools: 5, files: ['src/a.ts'] });
+		assert.ok(resumed.startsWith('[Volt] Your agent process died') && resumed.includes('on the same session') && resumed.includes('Do not redo finished steps'));
+		assert.ok(resumed.endsWith('\n\nfix the bug'), 'the request stays, byte for byte, at the end');
+		// A new session: it does not see its steps, so it is told what they were.
+		const fresh = restartedTurnText('fix the bug', false, { tools: 1, files: ['src/a.ts', 'src/b.ts'] });
+		assert.ok(fresh.includes('in a new session') && fresh.includes('finished 1 tool call and changed src/a.ts, src/b.ts.') && fresh.includes('before redoing anything'));
+		assert.ok(fresh.endsWith('\n\nfix the bug'));
+		const many = restartedTurnText('go', false, { tools: 30, files: Array.from({ length: 15 }, (_, i) => `f${i}.ts`) });
+		assert.ok(many.includes('30 tool calls') && many.includes('f11.ts and 3 more.') && !many.includes('f12.ts'));
+		// A command is never wrapped: the agent would not see it as one.
+		assert.strictEqual(restartedTurnText('/compact', true, { tools: 3, files: [] }), '/compact');
 	});
 });

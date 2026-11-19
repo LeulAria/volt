@@ -57,6 +57,31 @@ export function isAcpTurnRestartable(message: string): boolean {
 	return ACP_DEAD.test(trimmed) || ACP_INTERNAL.test(trimmed) || ACP_STALL.test(trimmed);
 }
 
+/** What a run had done when its agent process died: finished tool calls, and the files they changed. */
+export interface IRestartedTurnWork {
+	readonly tools: number;
+	readonly files: readonly string[];
+}
+
+/**
+ * The prompt a turn is sent again with after its agent process died and Volt restarted it. A turn
+ * that had done nothing yet gets the prompt as it was. One that had worked is told so: on the same
+ * session (`resumed`) its own steps are above and it continues after them; in a new session it does
+ * not see them, so it is told what was done and to check before redoing. Without this the restarted
+ * agent got the bare prompt in an empty session and did the whole turn again (ADEMark C4, round 10).
+ */
+export function restartedTurnText(text: string, resumed: boolean, work: IRestartedTurnWork | undefined): string {
+	if (!work || (work.tools <= 0 && !work.files.length) || text.trimStart().startsWith('/')) {
+		return text;
+	}
+	if (resumed) {
+		return `[Volt] Your agent process died part-way through the request below, and Volt restarted it on the same session: the steps you already took are above. Continue from where you stopped. Do not redo finished steps; if a tool call was cut off, check what it did (the file, git status, the command's output) before running it again.\n\n${text}`;
+	}
+	const shown = work.files.slice(0, 12);
+	const files = shown.length ? ` and changed ${shown.join(', ')}${work.files.length > shown.length ? ` and ${work.files.length - shown.length} more` : ''}` : '';
+	return `[Volt] Your agent process died part-way through the request below, and Volt restarted it in a new session, so your earlier steps are not above. Before it died you had finished ${work.tools} tool call${work.tools === 1 ? '' : 's'}${files}. Check what is already done (the files, git status) before redoing anything, then finish the request.\n\n${text}`;
+}
+
 export function retryDelayMs(attempt: number, retryAfterMs?: number): number {
 	if (retryAfterMs && retryAfterMs > 0) {
 		return Math.min(30_000, retryAfterMs);

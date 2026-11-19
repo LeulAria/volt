@@ -269,6 +269,124 @@ export let runAtThisOrScheduleAtNextAnimationFrame: (targetWindow: Window, runne
  */
 export let scheduleAtNextAnimationFrame: (targetWindow: Window, runner: () => void, priority?: number) => IDisposable;
 
+/**
+ * Volt: like {@link scheduleAtNextAnimationFrame} for work that repeats frame after frame (a
+ * streaming reply's paint, a scroll glide), but the frame is asked for some milliseconds after
+ * the screen's refresh instead of at it: as late as leaves `reserveMs` of the refresh interval
+ * for the frame's work, and never later than {@link FRAME_LATE_MAX_MS} or half the interval.
+ * The compositor sends one main frame per refresh interval, at once when it is asked inside an
+ * interval that has not had one yet. A frame asked for at every refresh therefore makes anything
+ * that happens later in the interval (a typed key) wait for the next refresh; a frame asked for
+ * a little later leaves that time open and still reaches the screen with the same refresh. Any
+ * earlier frame of the interval runs the runner too. While the window's refresh interval is not
+ * known, or it is too short for `reserveMs`, this is `scheduleAtNextAnimationFrame`.
+ */
+export let scheduleAtNextAnimationFrameLate: (targetWindow: Window, runner: () => void, priority?: number, reserveMs?: number) => IDisposable;
+
+/** The latest a late frame is asked for after the refresh. */
+export const FRAME_LATE_MAX_MS = 4;
+/** How long a measured refresh interval is trusted; then two frames in a row measure it again. */
+const FRAME_INTERVAL_MAX_AGE_MS = 2000;
+/** After this long without a frame the refresh phase is unknown: the next frame is asked for at once. */
+const FRAME_PHASE_MAX_AGE_MS = 100;
+/** A late frame must be done this long before the next refresh, or late frames pause. */
+export const FRAME_LATE_MARGIN_MS = 1.5;
+/** The pause after a late frame ran out of time: this long at first, doubling while it keeps happening. */
+const FRAME_LATE_PAUSE_MS = 500;
+const FRAME_LATE_PAUSE_MAX_MS = 8000;
+
+/**
+ * A window's refresh clock, from the times of its animation frames. Only two frames in a row
+ * where the second was asked for during the first (`chained`) measure the interval: frames asked
+ * for from timers can be any number of refreshes apart.
+ */
+export class FrameClock {
+
+	private lastTime: number | undefined;
+	private intervalMs: number | undefined;
+	private measuredAt = -Infinity;
+	/** A first measure that differs from the last known interval, waiting for a second one. */
+	private unconfirmed: number | undefined;
+	private pausedUntil = -Infinity;
+	private pauseMs = 0;
+
+	/** The refresh interval, while its last measure is fresh. */
+	interval(now: number): number | undefined {
+		return now - this.measuredAt <= FRAME_INTERVAL_MAX_AGE_MS ? this.intervalMs : undefined;
+	}
+
+	/** A frame ran with timestamp `time`; `chained` when it was asked for during the frame before. */
+	noteFrame(time: number, chained: boolean): void {
+		const last = this.lastTime;
+		this.lastTime = time;
+		if (!chained || last === undefined) {
+			this.unconfirmed = undefined;
+			return;
+		}
+		const delta = time - last;
+		// A hidden window skips refreshes: no measure of the screen.
+		if (delta < 1 || delta > 50) {
+			this.unconfirmed = undefined;
+			return;
+		}
+		const known = this.intervalMs;
+		if (known !== undefined && Math.abs(delta - known) < known * 0.25) {
+			// The interval known before, seen again.
+			this.intervalMs = known * 0.8 + delta * 0.2;
+			this.measuredAt = time;
+			this.unconfirmed = undefined;
+		} else if (known !== undefined && delta > known && this.interval(time) !== undefined) {
+			// Longer than a fresh measure: a refresh the busy window skipped.
+			this.unconfirmed = undefined;
+		} else if (this.unconfirmed !== undefined && Math.abs(delta - this.unconfirmed) < this.unconfirmed * 0.25) {
+			// Another interval (a first measure, another screen) counts once two measures in a row agree;
+			// the shorter one is taken: too short only asks for frames early, too long would skip refreshes.
+			this.intervalMs = Math.min(delta, this.unconfirmed);
+			this.measuredAt = time;
+			this.unconfirmed = undefined;
+		} else {
+			this.unconfirmed = delta;
+		}
+	}
+
+	/**
+	 * A frame asked for late had its main-thread work done at `doneAt`. When that is too close to
+	 * the next refresh ({@link FRAME_LATE_MARGIN_MS}) the frame may have missed it (a step of a glide
+	 * shown one refresh late): frames are asked for at the refresh again for a while, longer each
+	 * time it happens again soon. True when late frames were paused.
+	 */
+	noteLateFrameDone(frameTime: number, doneAt: number): boolean {
+		const interval = this.interval(doneAt);
+		if (interval === undefined || doneAt - frameTime <= interval - FRAME_LATE_MARGIN_MS) {
+			return false;
+		}
+		// Again soon after the last pause ended: the window is busy, stay out of the way for longer.
+		this.pauseMs = doneAt - this.pausedUntil < this.pauseMs ? Math.min(FRAME_LATE_PAUSE_MAX_MS, this.pauseMs * 2) : FRAME_LATE_PAUSE_MS;
+		this.pausedUntil = doneAt + this.pauseMs;
+		return true;
+	}
+
+	/**
+	 * How long to wait at `now` before asking for a frame in a refresh interval that has had none
+	 * yet, as late in it as leaves `reserveMs` for the frame's work (at most {@link FRAME_LATE_MAX_MS}
+	 * and half the interval after the refresh); `undefined` when the clock cannot say or the interval
+	 * leaves no room (ask now).
+	 */
+	lateDelay(now: number, reserveMs: number): number | undefined {
+		const interval = this.interval(now);
+		if (interval === undefined || this.lastTime === undefined || now - this.lastTime > FRAME_PHASE_MAX_AGE_MS || now < this.lastTime || now < this.pausedUntil) {
+			return undefined;
+		}
+		const late = Math.min(interval - reserveMs, interval / 2, FRAME_LATE_MAX_MS);
+		if (late <= 0) {
+			return undefined;
+		}
+		// The interval after the last frame's, or the one `now` is in when that is later.
+		const start = this.lastTime + Math.max(1, Math.floor((now - this.lastTime) / interval)) * interval;
+		return Math.max(0, start + late - now);
+	}
+}
+
 export function disposableWindowInterval(targetWindow: Window, handler: () => void | boolean /* stop interval */ | Promise<unknown>, interval: number, iterations?: number): IDisposable {
 	let iteration = 0;
 	const timer = targetWindow.setInterval(() => {
@@ -353,10 +471,64 @@ class AnimationFrameQueueItem implements IDisposable {
 	 */
 	const inAnimationFrameRunner = new Map<number /* window ID */, boolean>();
 
-	const animationFrameRunner = (targetWindowId: number) => {
+	/**
+	 * Volt: the runners scheduled late (scheduleAtNextAnimationFrameLate): they run in the window's
+	 * next animation frame, which their timer asks for unless something else does first.
+	 */
+	const LATE_QUEUE = new Map<number /* window ID */, AnimationFrameQueueItem[]>();
+	const lateTimers = new Map<number /* window ID */, { readonly handle: number; readonly dueAt: number; readonly targetWindow: Window }>();
+	const frameClocks = new Map<number /* window ID */, FrameClock>();
+	/** Whether the pending native frame was asked for during the frame before it. */
+	const animFrameChained = new Map<number /* window ID */, boolean>();
+	/** Whether the pending native frame was asked for by the late timer. */
+	const animFrameLate = new Map<number /* window ID */, boolean>();
+	/** Per window: a task posted from a late frame runs once the frame's main-thread work is done. */
+	const lateFrameDone = new Map<number /* window ID */, { readonly port: MessagePort; frameTime: number }>();
+
+	const clearLateTimer = (targetWindowId: number) => {
+		const timer = lateTimers.get(targetWindowId);
+		if (timer) {
+			timer.targetWindow.clearTimeout(timer.handle);
+			lateTimers.delete(targetWindowId);
+		}
+	};
+
+	const requestNativeFrame = (targetWindow: Window, targetWindowId: number) => {
+		if (!animFrameRequested.get(targetWindowId)) {
+			animFrameRequested.set(targetWindowId, true);
+			animFrameChained.set(targetWindowId, !!inAnimationFrameRunner.get(targetWindowId));
+			targetWindow.requestAnimationFrame(time => animationFrameRunner(targetWindowId, time));
+		}
+	};
+
+	const animationFrameRunner = (targetWindowId: number, frameTime?: number) => {
 		animFrameRequested.set(targetWindowId, false);
+		if (typeof frameTime === 'number') {
+			let clock = frameClocks.get(targetWindowId);
+			if (!clock) {
+				clock = new FrameClock();
+				frameClocks.set(targetWindowId, clock);
+			}
+			clock.noteFrame(frameTime, !!animFrameChained.get(targetWindowId));
+			if (animFrameLate.get(targetWindowId)) {
+				// Did this late frame leave time to spare? Checked after its style, layout and paint.
+				const done = lateFrameDone.get(targetWindowId);
+				if (done) {
+					done.frameTime = frameTime;
+					done.port.postMessage(0);
+				}
+			}
+		}
+		animFrameLate.set(targetWindowId, false);
 
 		const currentQueue = NEXT_QUEUE.get(targetWindowId) ?? [];
+		// Volt: this frame does the late runners' work too; their timer has nothing left to ask for.
+		const late = LATE_QUEUE.get(targetWindowId);
+		if (late?.length) {
+			currentQueue.push(...late);
+			late.length = 0;
+		}
+		clearLateTimer(targetWindowId);
 		CURRENT_QUEUE.set(targetWindowId, currentQueue);
 		NEXT_QUEUE.set(targetWindowId, []);
 
@@ -380,11 +552,49 @@ class AnimationFrameQueueItem implements IDisposable {
 		}
 		nextQueue.push(item);
 
-		if (!animFrameRequested.get(targetWindowId)) {
-			animFrameRequested.set(targetWindowId, true);
-			targetWindow.requestAnimationFrame(() => animationFrameRunner(targetWindowId));
-		}
+		requestNativeFrame(targetWindow, targetWindowId);
 
+		return item;
+	};
+
+	scheduleAtNextAnimationFrameLate = (targetWindow: Window, runner: () => void, priority: number = 0, reserveMs: number = Infinity) => {
+		const targetWindowId = getWindowId(targetWindow);
+		const now = targetWindow.performance.now();
+		const delay = !animFrameRequested.get(targetWindowId) ? frameClocks.get(targetWindowId)?.lateDelay(now, reserveMs) : undefined;
+		if (delay === undefined || delay < 0.5) {
+			return scheduleAtNextAnimationFrame(targetWindow, runner, priority);
+		}
+		const item = new AnimationFrameQueueItem(runner, priority);
+		let late = LATE_QUEUE.get(targetWindowId);
+		if (!late) {
+			late = [];
+			LATE_QUEUE.set(targetWindowId, late);
+		}
+		late.push(item);
+		// One timer per window, for the runner that wants its frame soonest.
+		const dueAt = now + delay;
+		const timer = lateTimers.get(targetWindowId);
+		if (!timer || dueAt < timer.dueAt - 0.5) {
+			clearLateTimer(targetWindowId);
+			const handle = targetWindow.setTimeout(() => {
+				lateTimers.delete(targetWindowId);
+				if (LATE_QUEUE.get(targetWindowId)?.length && !animFrameRequested.get(targetWindowId)) {
+					if (!lateFrameDone.has(targetWindowId)) {
+						const channel = new MessageChannel();
+						channel.port1.onmessage = () => {
+							const done = lateFrameDone.get(targetWindowId);
+							if (done) {
+								frameClocks.get(targetWindowId)?.noteLateFrameDone(done.frameTime, targetWindow.performance.now());
+							}
+						};
+						lateFrameDone.set(targetWindowId, { port: channel.port2, frameTime: 0 });
+					}
+					requestNativeFrame(targetWindow, targetWindowId);
+					animFrameLate.set(targetWindowId, true);
+				}
+			}, Math.round(delay));
+			lateTimers.set(targetWindowId, { handle, dueAt, targetWindow });
+		}
 		return item;
 	};
 

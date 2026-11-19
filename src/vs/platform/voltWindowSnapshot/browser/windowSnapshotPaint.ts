@@ -15,9 +15,13 @@ const INPUT_ATTRIBUTES = new Set(['placeholder', 'value', 'readonly', 'tabindex'
  * composer gets a real text area so keys typed now are kept for the composer that takes over.
  * The workbench underneath is invisible until {@link removeWindowSnapshot}.
  *
+ * `takeTyped` gives what was typed before this page could take keys (the preload script keeps those
+ * characters): they go after the draft in the composer's text area, so its first frame shows them and
+ * the composer that takes over gets them. Asked only when the text area is made.
+ *
  * Returns false when there is nothing to paint.
  */
-export function paintWindowSnapshot(doc: Document, snapshot: IVoltWindowSnapshot): boolean {
+export function paintWindowSnapshot(doc: Document, snapshot: IVoltWindowSnapshot, takeTyped?: () => string): boolean {
 	const root = buildNode(doc, snapshot.root, false);
 	if (!root || typeof root === 'string') {
 		return false;
@@ -48,7 +52,15 @@ export function paintWindowSnapshot(doc: Document, snapshot: IVoltWindowSnapshot
 		const input = doc.createElement('textarea');
 		input.id = VOLT_WINDOW_SNAPSHOT_INPUT_ID;
 		input.spellcheck = false;
-		input.value = composer.text;
+		let typed = '';
+		try {
+			typed = takeTyped?.() ?? '';
+		} catch {
+			// the keys typed so far are lost, as they were before they were kept
+		}
+		const text = composer.text + (typeof typed === 'string' ? typed : '');
+		input.value = text;
+		// The draft the snapshot showed: text that differs from it was typed (readSnapshotInput's `changed`).
 		input.dataset.draft = composer.text;
 		input.placeholder = composer.placeholder;
 		const [left, top, width, height] = composer.rect;
@@ -66,7 +78,7 @@ export function paintWindowSnapshot(doc: Document, snapshot: IVoltWindowSnapshot
 			}
 		});
 		input.focus();
-		input.setSelectionRange(composer.text.length, composer.text.length);
+		input.setSelectionRange(text.length, text.length);
 	}
 	return true;
 }

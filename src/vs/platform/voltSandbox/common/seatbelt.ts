@@ -70,6 +70,16 @@ const ESCAPE_SERVICES = [
 	'com.apple.lsd.modifydb',
 	'com.apple.lsd.open',
 	'com.apple.coreservices.launchservicesd',
+	// Shortcuts: `shortcuts run <name>` runs any of the user's shortcuts (shell scripts, messages,
+	// home automation) in Shortcuts' own process, with input the agent chooses.
+	'com.apple.siri.VoiceShortcuts.xpc',
+	'com.apple.shortcuts.daemon',
+	'com.apple.WorkflowKit.BackgroundShortcutRunner',
+	// Spotlight: `mdfind` answers from the index of the whole disk, the names of files the sandbox
+	// may not read and whether their text matches a query (a read of other projects and documents,
+	// one question at a time). Build tools find Xcode through xcode-select, not through Spotlight.
+	'com.apple.metadata.mds',
+	'com.apple.metadata.mds.legacy',
 ];
 
 /** DNS lookups outside the broker: denied unless the network is open (B-31, J.1 "DNS"). */
@@ -611,6 +621,18 @@ export function parseSeatbeltLogLine(line: string): ISeatbeltViolation | undefin
 		target,
 		tag: local ? match[5].slice(0, -SEATBELT_LOCAL_SUFFIX.length) : match[5],
 	};
+}
+
+/**
+ * The environment the launcher itself starts with. The launcher (Volt's helper, then
+ * `/usr/bin/sandbox-exec`) runs outside the sandbox until the profile is applied, and dyld acts on
+ * `DYLD_*` in any program that is not a platform binary: a `DYLD_INSERT_LIBRARIES` from a launch's
+ * own environment (an MCP server's `env` in a repository's config, a task's) would be loaded into
+ * the helper, unsandboxed. They are left out here. Nothing a workload had is lost: sandbox-exec is
+ * a platform binary, so dyld already removed every `DYLD_*` before the workload started.
+ */
+export function seatbeltLauncherEnv(env: Readonly<Record<string, string>>): Record<string, string> {
+	return Object.fromEntries(Object.entries(env).filter(([name]) => !name.startsWith('DYLD_')));
 }
 
 /** File descriptors of the launch protocol (F.5), in `extraStdio` order from fd 3. */

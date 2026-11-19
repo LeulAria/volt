@@ -132,7 +132,7 @@ import { AgentPool, ISpareRequest } from './agentPool.js';
 import { IWorktreeSpare, WorktreeSpares } from '../common/orchestration/worktreeSpares.js';
 import { RunTraceJournal } from './history/runTraceJournal.js';
 import { ProofCaseJournal } from './history/proofCases.js';
-import { isAcpTurnRestartable } from '../common/harness/sessionRetry.js';
+import { isAcpTurnRestartable, restartedTurnText } from '../common/harness/sessionRetry.js';
 import { TaskLifecycle } from '../common/harness/lifecycle.js';
 import { IToolCall, IToolContext, IToolResult, IVoltTool, toolSchemas } from '../common/tools/tool.js';
 import { deepseekKnobs, resolveApproval } from '../common/deepseek/approval.js';
@@ -277,6 +277,18 @@ export function resumeFields(released: { readonly providerId: string; readonly r
 		return {};
 	}
 	return { resumeSessionId: released.providerSessionId, ...(released.stateKey ? { resumeStateKey: released.stateKey } : {}) };
+}
+
+/**
+ * The session a turn's restart continues after its agent died mid-turn: the dead agent's own, when
+ * the turn had worked and the agent can resume (it has then seen every message of the chat, this
+ * turn's prompt included). Undefined: the restart starts a new session.
+ */
+export function restartResume(handle: IAgentSessionHandle | undefined, provider: Pick<IAgentProvider, 'id' | 'canResume'> | undefined, ref: string | undefined, cwd: string | undefined, worked: boolean, messages: number): { readonly providerId: string; readonly ref: string; readonly cwd: string | undefined; readonly providerSessionId: string; readonly stateKey?: string; readonly synced: number } | undefined {
+	if (!worked || !handle?.providerSessionId || !provider || !ref || !provider.canResume?.(handle)) {
+		return undefined;
+	}
+	return { providerId: provider.id, ref, cwd, providerSessionId: handle.providerSessionId, ...(handle.stateKey ? { stateKey: handle.stateKey } : {}), synced: messages };
 }
 
 /** How many of the chat's messages a newly bound agent has seen: those its resumed session saw, else none. */
@@ -1774,6 +1786,21 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		session.agentSynced = resumedSynced(session.releasedAgent, handle);
 		// The chat's agent is this one now: an older stopped session is never resumed over it.
 		session.releasedAgent = undefined;
+	}
+
+	/**
+	 * Lets go of an agent that died in the middle of `run`. When the run had already worked and the
+	 * agent can continue its session in a new process, the session is remembered like one Volt
+	 * stopped itself (`releasedAgent`): the restart resumes it, so the turn goes on after its own
+	 * steps instead of starting over from the prompt in an empty session. A turn that had done
+	 * nothing, or an agent that cannot resume, starts new as before.
+	 */
+	private dropDeadAgent(session: ISessionState, run: IRunState): void {
+		const handle = session.agentHandle;
+		const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
+		const released = restartResume(handle, provider, session.agentRef, session.agentCwd, !!this.runActivity(run), session.messages.length);
+		this.disposeSessionAgent(session);
+		session.releasedAgent = released;
 	}
 
 	/** Lets go of the chat's current agent, if any. */
@@ -5266,14 +5293,17 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					const images = this.modelImages(request.images);
 					// An agent with no /compact of its own writes a hand-off summary that replaces the history.
 					voltCompaction = isCompactCommand(request.text) && !(provider.supportsCommand?.(handle, 'compact') ?? false);
-					const text = voltCompaction ? agentCompactionPrompt(compactInstructions(request.text)) : request.text;
+					// Sent again after the agent died mid-turn: the restarted agent is told what it had done (see dropDeadAgent).
+					const work = attempt > 0 ? this.runActivity(run) : undefined;
+					const asked = work ? restartedTurnText(request.text, handle.resumed === true, { tools: work.tools.length, files: [...new Set(work.files.map(file => file.path))] }) : request.text;
+					const text = voltCompaction ? agentCompactionPrompt(compactInstructions(request.text)) : asked;
 					const first = await this.agentTurn(session, run, provider, handle, profile, item, { text: request.mode === 'plan' ? withPlanModeInstruction(text) : text, mode: request.mode, lead, ...(images ? { images } : {}), ...(request.resources?.length ? { resources: request.resources } : {}) }, attempt === 0);
 					if (first.kind === 'stale') {
 						return;
 					}
 					if (first.kind === 'restart') {
 						this.emit(session, run.runId, { type: 'retry', attempt: 2, delayMs: 0, message: 'Agent process died. Restarting and retrying.' });
-						this.disposeSessionAgent(session);
+						this.dropDeadAgent(session, run);
 						continue;
 					}
 					turns.push(first.assistant);
@@ -5327,7 +5357,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 					// A refused sandbox is never retried: a second spawn would be refused too, and none runs unconfined.
 					if (attempt === 0 && !token.isCancellationRequested && !isSandboxUnavailableError(err) && isAcpTurnRestartable(message) && this.isCurrent(session, run)) {
 						this.emit(session, run.runId, { type: 'retry', attempt: 2, delayMs: 0, message: 'Agent process died. Restarting and retrying.' });
-						this.disposeSessionAgent(session);
+						this.dropDeadAgent(session, run);
 						continue;
 					}
 					throw err;

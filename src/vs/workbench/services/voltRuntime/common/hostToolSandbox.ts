@@ -750,9 +750,14 @@ export function sandboxBrowserUrlRefusal(settings: IVoltSandboxSettings | undefi
 	return `${parsed.protocol} pages are not opened from a sandboxed chat`;
 }
 
-/** `localhost`, `*.localhost`, `0.0.0.0`, `::1` and 127/8 (a hostname, lower case, without brackets). */
+/**
+ * `localhost`, `*.localhost`, `0.0.0.0`, `::1` and 127/8 (a hostname, lower case, without brackets),
+ * also written as a fully qualified name: `localhost.` is the same machine, and read as "some other
+ * host" it passed the host rule on every port, around the per-port grant (B-16).
+ */
 export function isLoopbackHost(host: string): boolean {
-	return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '0.0.0.0' || /^127(\.\d{1,3}){3}$/.test(host);
+	const name = host.replace(/\.+$/, '');
+	return name === 'localhost' || name.endsWith('.localhost') || name === '::1' || name === '0.0.0.0' || /^127(\.\d{1,3}){3}$/.test(name);
 }
 
 /** What the model reads when a tool is refused for a sandboxed chat: what happened and what to do instead. `args`: the call's, for op-specific advice. */

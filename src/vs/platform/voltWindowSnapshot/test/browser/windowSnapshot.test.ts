@@ -165,6 +165,39 @@ suite('Volt window snapshot', () => {
 		assert.strictEqual(readSnapshotInput(doc), undefined);
 	});
 
+	test('LAUNCH-KEYS-1: keys typed before the snapshot was painted go after the draft, as typed text', () => {
+		const lines = doc.createElement('div');
+		lines.style.cssText = 'position:absolute;left:10px;top:200px;width:300px;height:20px';
+		const editor = doc.createElement('div');
+		editor.style.cssText = 'position:absolute;left:10px;top:200px;width:300px;height:20px';
+		root.appendChild(editor);
+		editor.appendChild(lines);
+
+		let asked = 0;
+		assert.ok(paintWindowSnapshot(doc, snapshotOf({ editor, linesElement: lines, text: 'draft ', placeholder: 'Ask' }), () => { asked++; return 'ade'; }));
+		const input = doc.getElementById(VOLT_WINDOW_SNAPSHOT_INPUT_ID) as HTMLTextAreaElement;
+		assert.strictEqual(asked, 1);
+		assert.strictEqual(input.value, 'draft ade');
+		// The caret after them; the text differs from the draft, so the composer that takes over takes it.
+		assert.deepStrictEqual(readSnapshotInput(doc), { text: 'draft ade', selectionStart: 9, selectionEnd: 9, changed: true, send: false, focused: doc.activeElement === input });
+		assert.ok(removeWindowSnapshot(doc));
+
+		// Nothing typed: the draft alone, unchanged. A source that fails loses those keys only.
+		assert.ok(paintWindowSnapshot(doc, snapshotOf({ editor, linesElement: lines, text: 'draft ', placeholder: 'Ask' }), () => ''));
+		assert.strictEqual(readSnapshotInput(doc)?.changed, false);
+		assert.ok(removeWindowSnapshot(doc));
+		assert.ok(paintWindowSnapshot(doc, snapshotOf({ editor, linesElement: lines, text: 'draft ', placeholder: 'Ask' }), () => { throw new Error('gone'); }));
+		assert.strictEqual(readSnapshotInput(doc)?.text, 'draft ');
+		assert.ok(removeWindowSnapshot(doc));
+
+		// A snapshot with no composer has no text area: the keys are not asked for (they stay with whoever keeps them).
+		asked = 0;
+		assert.ok(paintWindowSnapshot(doc, snapshotOf(), () => { asked++; return 'x'; }));
+		assert.strictEqual(asked, 0);
+		assert.strictEqual(readSnapshotInput(doc), undefined);
+		assert.ok(removeWindowSnapshot(doc));
+	});
+
 	test('a stored snapshot is data: scripts, handlers and frames in it are never built', () => {
 		const snapshot: IVoltWindowSnapshot = {
 			version: 1, key: 'k', width: 1, height: 1, devicePixelRatio: 1, baseTheme: 'vs-dark', css: '', htmlClass: '', bodyClass: '', savedAt: 0,

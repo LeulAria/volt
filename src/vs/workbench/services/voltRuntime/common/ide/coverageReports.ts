@@ -69,6 +69,85 @@ export function parseLcov(text: string): IFileCoverageSummary[] {
 	return out;
 }
 
+/** One file's coverage with what the Test Coverage view shows: every measured line's hits, and its functions. */
+export interface IFileCoverageDetail {
+	readonly path: string;
+	/** 1-based line to how many times it ran. */
+	readonly lines: ReadonlyMap<number, number>;
+	readonly functions: readonly { readonly name: string; readonly line: number; readonly hits: number }[];
+	readonly branches?: { readonly covered: number; readonly total: number };
+}
+
+/** LCOV with its function and branch records (jest, vitest, node --test, bun, pytest-cov, cargo-llvm-cov). */
+export function parseLcovDetailed(text: string): IFileCoverageDetail[] {
+	const out: IFileCoverageDetail[] = [];
+	let path: string | undefined;
+	let lines = new Map<number, number>();
+	let functions = new Map<string, { name: string; line: number; hits: number }>();
+	let branchesFound = 0;
+	let branchesHit = 0;
+	for (const raw of text.split('\n')) {
+		const line = raw.trim();
+		if (line.startsWith('SF:')) {
+			path = line.slice(3);
+			lines = new Map();
+			functions = new Map();
+			branchesFound = 0;
+			branchesHit = 0;
+		} else if (line.startsWith('DA:')) {
+			const [number, hits] = line.slice(3).split(',');
+			lines.set(Number(number), Number(hits));
+		} else if (line.startsWith('FN:')) {
+			// FN:<line>,<name>   or   FN:<line>,<end line>,<name>
+			const parts = line.slice(3).split(',');
+			const name = parts.slice(parts.length > 2 && /^\d+$/.test(parts[1]) ? 2 : 1).join(',');
+			functions.set(name, { name, line: Number(parts[0]), hits: functions.get(name)?.hits ?? 0 });
+		} else if (line.startsWith('FNDA:')) {
+			const comma = line.indexOf(',');
+			const name = line.slice(comma + 1);
+			const known = functions.get(name);
+			functions.set(name, { name, line: known?.line ?? 0, hits: Number(line.slice(5, comma)) });
+		} else if (line.startsWith('BRDA:')) {
+			branchesFound++;
+			const taken = line.slice(line.lastIndexOf(',') + 1);
+			if (taken !== '-' && Number(taken) > 0) {
+				branchesHit++;
+			}
+		} else if (line === 'end_of_record' && path) {
+			out.push({ path, lines, functions: [...functions.values()].filter(fn => fn.line > 0).sort((a, b) => a.line - b.line), ...(branchesFound ? { branches: { covered: branchesHit, total: branchesFound } } : {}) });
+			path = undefined;
+		}
+	}
+	return out;
+}
+
+/** Any coverage report Volt's runner asks for, with every line's hits: LCOV (with functions), `go test -coverprofile`, Cobertura XML. */
+export function parseCoverageDetailed(fileName: string, text: string): IFileCoverageDetail[] {
+	if (/lcov|\.info$/.test(fileName)) {
+		return parseLcovDetailed(text);
+	}
+	const byFile = new Map<string, Map<number, number>>();
+	const add = (file: string, line: number, hits: number) => {
+		const lines = byFile.get(file) ?? new Map<number, number>();
+		lines.set(line, Math.max(lines.get(line) ?? 0, hits));
+		byFile.set(file, lines);
+	};
+	if (fileName.endsWith('.xml')) {
+		for (const cls of text.matchAll(/<class\b[^>]*\bfilename="([^"]+)"[^>]*>([\s\S]*?)<\/class>/g)) {
+			for (const line of cls[2].matchAll(/<line\b[^>]*\bnumber="(\d+)"[^>]*\bhits="(\d+)"/g)) {
+				add(cls[1], Number(line[1]), Number(line[2]));
+			}
+		}
+	} else {
+		for (const match of text.matchAll(/^(.+?):(\d+)\.\d+,(\d+)\.\d+ \d+ (\d+)$/gm)) {
+			for (let line = Number(match[2]); line <= Number(match[3]); line++) {
+				add(match[1], line, Number(match[4]));
+			}
+		}
+	}
+	return [...byFile].map(([path, lines]) => ({ path, lines, functions: [] }));
+}
+
 /** Cobertura XML (coverage.py `coverage xml`, many JVM and .NET tools). */
 export function parseCobertura(text: string): IFileCoverageSummary[] {
 	const byFile = new Map<string, Map<number, number>>();

@@ -45,6 +45,19 @@ export class InputFirstGate implements IDisposable {
 	}
 }
 
+/**
+ * How much of a refresh interval a streaming chat keeps for its frame's work when it asks for the
+ * frame late (dom's scheduleAtNextAnimationFrameLate). A key typed before the frame is asked for
+ * gets its own frame at once and is on screen one refresh sooner than behind a frame asked for at
+ * the refresh. A frame that only moves the follow glide is small and can be asked for later than
+ * one that paints text: on a 120 Hz screen (8.3 ms) these leave the first 4 ms and 2.5 ms open.
+ * Both still reach the screen with the refresh they always did (measured on a 120 Hz panel: a
+ * main frame takes 1.7 ms at the median and 4.8 ms at the 99th percentile, and it is shown with
+ * the same refresh as long as it is done 9.8 ms after the refresh began).
+ */
+export const STREAM_FRAME_RESERVE_MS = 1000 / 120 - 4;
+export const STREAM_TEXT_FRAME_RESERVE_MS = 1000 / 120 - 2.5;
+
 /** How long a measured frame interval is trusted (the window can move to a screen with another rate). */
 const FRAME_INTERVAL_MAX_AGE_MS = 2000;
 
@@ -100,6 +113,19 @@ export class TextFrameClock implements IDisposable {
 		}
 		this.waited = 0;
 		return false;
+	}
+
+	/**
+	 * Called in a frame callback: how much of its interval the next frame needs
+	 * ({@link STREAM_FRAME_RESERVE_MS} unless it is a frame text is painted in, or the screen is not
+	 * measured yet).
+	 */
+	nextFrameReserveMs(): number {
+		const now = this.timelineNow();
+		if (now === undefined || this.frameMs === undefined) {
+			return STREAM_TEXT_FRAME_RESERVE_MS;
+		}
+		return isTextFrame(now + this.frameMs, this.frameMs, this.stepMs) ? STREAM_TEXT_FRAME_RESERVE_MS : STREAM_FRAME_RESERVE_MS;
 	}
 
 	/** The screen's frame interval: the time between two frames in a row, taken again every 2 s of use. */

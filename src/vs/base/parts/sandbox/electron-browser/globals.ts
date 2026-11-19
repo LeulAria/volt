@@ -113,6 +113,12 @@ export interface ISandboxContext {
 	 * Allows to await the resolution of the configuration object.
 	 */
 	resolveConfiguration(): Promise<ISandboxConfiguration>;
+
+	/**
+	 * Volt: the plain characters typed since the document started, before the page had a text box to
+	 * take them (the preload script keeps them). Taking them ends the keeping.
+	 */
+	takeEarlyKeys?(): string;
 }
 
 const vscodeGlobal = (globalThis as any).vscode;

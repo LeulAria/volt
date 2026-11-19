@@ -22,6 +22,12 @@ suite('Volt agent server: the heap is collected once the server is quiet (round 
 		assert.ok(program.indexOf('--expose-gc') > 0 && program.indexOf('--expose-gc') < program.indexOf('/out/main.js'));
 	});
 
+	test('the server runs with its young generation capped (a V8 option, before the entry; round 9)', () => {
+		const program = agentServerProgram('/electron', '/out/main.js', '/data', false, {});
+		const flag = program.findIndex(arg => arg.startsWith('--max-semi-space-size='));
+		assert.ok(flag > 0 && flag < program.indexOf('/out/main.js'));
+	});
+
 	test('once after startup, never during a run, once after the last of overlapping runs ends', async () => {
 		const events = store.add(new Emitter<IVoltEventEnvelope>());
 		let collected = 0;

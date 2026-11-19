@@ -59,6 +59,7 @@ suite('Volt code index: structure (tree-sitter)', function () {
 			'pkg/__init__.py': '',
 			'pkg/mod.py': 'MAX_SIZE = 3\n\ndef helper():\n    pass\n\nclass K:\n    def m(self):\n        return 1\n',
 			'pkg/use.py': 'from .mod import helper, K\nimport os\n',
+			'pkg/tax.go': 'package pkg\n\nimport "example.com/shop/tax"\n\nfunc Quote(v float64) float64 {\n\ttotal := tax.RoundCents(v * 2)\n\treturn tax.RoundCents(total)\n}\n',
 		};
 		for (const [path, text] of Object.entries(files)) {
 			await fs.writeFile(join(ws, path), text);
@@ -116,6 +117,11 @@ suite('Volt code index: structure (tree-sitter)', function () {
 		assert.strictEqual(same.kind === 'results' ? same.matches.length : -1, 0);
 		const python = await engine.structural({ root: ws, pattern: 'def $F(self): $$$', language: 'python', maxMatches: 20, waitMs: 30_000 });
 		assert.deepStrictEqual(python.kind === 'results' ? python.matches.map(match => `${match.path}:${match.line} ${match.vars?.F}`) : python, ['pkg/mod.py:7 m']);
+	});
+
+	test('structural search: a Go call pattern parses (statements live inside functions there)', async () => {
+		const go = await engine.structural({ root: ws, pattern: 'tax.RoundCents($X)', maxMatches: 20, waitMs: 30_000 });
+		assert.deepStrictEqual(go.kind === 'results' ? go.matches.map(match => `${match.path}:${match.line} ${match.vars?.X}`) : go, ['pkg/tax.go:6 v * 2', 'pkg/tax.go:7 total']);
 	});
 
 	test('structural search: where keeps matches whose binding fits a regex, excludes skip files, long bindings are cut to one line', async () => {

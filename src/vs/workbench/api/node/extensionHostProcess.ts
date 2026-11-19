@@ -13,6 +13,7 @@ import { Event } from '../../../base/common/event.js';
 import * as performance from '../../../base/common/performance.js';
 import { IURITransformer } from '../../../base/common/uriIpc.js';
 import { Promises } from '../../../base/node/pfs.js';
+import { startQuietHeapReducer } from '../../../base/node/voltQuietHeapReducer.js';
 import { IMessagePassingProtocol } from '../../../base/parts/ipc/common/ipc.js';
 import { BufferedEmitter, PersistentProtocol, ProtocolConstants } from '../../../base/parts/ipc/common/ipc.net.js';
 import { NodeSocket, WebSocketNodeSocket } from '../../../base/parts/ipc/node/ipc.net.js';
@@ -450,6 +451,9 @@ async function startExtensionHostProcess(): Promise<void> {
 
 	// rewrite onTerminate-function to be a proper shutdown
 	onTerminate = (reason: string) => extensionHostMain.terminate(reason);
+
+	// Volt: what activation left on the heap goes back once the extension host is quiet
+	startQuietHeapReducer();
 }
 
 startExtensionHostProcess().catch((err) => console.log(err));
