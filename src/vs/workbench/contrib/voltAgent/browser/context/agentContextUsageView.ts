@@ -33,7 +33,7 @@ import {
 	IContextUsageSnapshot,
 	overheadFromCustomizations,
 } from './agentContextUsage.js';
-import { WORKTREE_ICON_PATH } from '../chrome/accessIcons.js';
+import { WORKTREE_ICON_PATHS } from '../chrome/accessIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { formatCost } from '../usage/agentUsageFormat.js';
 import { buildSessionUsage, ISessionUsageMessage, ISessionUsageModelRef, ISessionUsageOptions, ISessionUsageSummary, sessionModelIds } from './agentSessionUsage.js';
@@ -700,9 +700,8 @@ function createLocalIcon(doc: Document): SVGSVGElement {
 
 /** The worktree mark the new chat's machine picker shows too. */
 function createWorktreeIcon(doc: Document): SVGSVGElement {
-	const svg = statusIcon(doc, [WORKTREE_ICON_PATH]);
+	const svg = statusIcon(doc, WORKTREE_ICON_PATHS);
 	svg.setAttribute('stroke-width', '1.5');
-	svg.style.transform = 'scaleX(-1)';
 	return svg;
 }
 

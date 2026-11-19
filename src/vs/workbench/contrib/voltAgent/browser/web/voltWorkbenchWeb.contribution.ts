@@ -46,6 +46,7 @@ import { IVoltSkillsDirectoryService, VOLT_SKILLS_DIRECTORY_CHANNEL_NAME } from 
 import { IVoltPullRequestService, VOLT_PULL_REQUEST_CHANNEL_NAME } from '../../../../../platform/voltPullRequests/common/voltPullRequests.js';
 import { IVoltRelayService } from '../../../../../platform/voltRelay/common/voltRelay.js';
 import { IVoltSpeechService } from '../../../../../platform/voltSpeech/common/voltSpeech.js';
+import { ILocalVoiceState, IVoltLocalVoiceService } from '../../../../../platform/voltLocalVoice/common/voltLocalVoice.js';
 import { IVoltStdioService, VOLT_STDIO_CHANNEL_NAME } from '../../../../../platform/voltStdio/common/voltStdio.js';
 import { IVoltStorageService, VOLT_STORAGE_CHANNEL_NAME } from '../../../../../platform/voltStorage/common/voltStorage.js';
 import { IVoltUsageService, VOLT_USAGE_CHANNEL_NAME } from '../../../../../platform/voltUsage/common/voltUsage.js';
@@ -232,6 +233,8 @@ function registerDesktopOnly<T>(id: ServiceIdentifier<T>, what: string, answers:
 registerDesktopOnly(IVoltAwakeService, localize('volt.web.awake', "Lid-Closed Mode"));
 // Dictation listens through the browser's own speech recognition.
 registerSingleton(IVoltSpeechService, WebSpeechService, InstantiationType.Delayed);
+// The downloadable voices run on the desktop app's machine; a browser tab reads with the browser's own.
+registerDesktopOnly(IVoltLocalVoiceService, localize('volt.web.localVoice', "Downloaded voices"), { getStates: (): Promise<ILocalVoiceState[]> => Promise.resolve([]), warm: (): Promise<void> => Promise.resolve() });
 registerDesktopOnly(IVoltBrowserService, localize('volt.web.browser', "The in-app browser"));
 registerDesktopOnly(IVoltExternalMcpService, localize('volt.web.externalMcp', "Connecting other agents"));
 

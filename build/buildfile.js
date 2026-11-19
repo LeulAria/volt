@@ -28,6 +28,7 @@ exports.workbenchDesktop = [
 	createModuleDescription('vs/platform/files/node/watcher/watcherMain'),
 	createModuleDescription('vs/platform/terminal/node/ptyHostMain'),
 	createModuleDescription('vs/platform/voltCodeIndex/node/codeIndexWorkerMain'),
+	createModuleDescription('vs/platform/voltLocalVoice/node/localVoiceWorkerMain'),
 	createModuleDescription('vs/workbench/api/node/extensionHostProcess'),
 	createModuleDescription('vs/workbench/workbench.desktop.main')
 ];

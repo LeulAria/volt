@@ -12,18 +12,24 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { localize } from '../../../../nls.js';
+import { DEFAULT_LOCAL_VOICES, ILocalVoice, IVoltLocalVoiceService, LOCAL_VOICES, pickLocalVoice, readyLocalVoiceModels } from '../../../../platform/voltLocalVoice/common/voltLocalVoice.js';
+import { IVoltSpeechService } from '../../../../platform/voltSpeech/common/voltSpeech.js';
 import { isVoiceProvider, IVoltVoiceCall, IVoltVoiceChatService, IVoltVoiceTurn, VoltVoiceProvider } from '../../../../platform/voltVoiceChat/common/voltVoiceChat.js';
 import { IVoltAgentWindowService } from '../../../services/voltPlugins/browser/voltAgentWindow.js';
 import { IAgentHistoryService } from '../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import { IAgentOrchestratorService } from '../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runtime.js';
+import { AGENT_READ_ALOUD_VOICE_SETTING } from '../../voltAgent/common/agentReadAloud.js';
 import { RealtimeEvent } from '../common/realtimeProtocol.js';
 import { greetingInstructions } from '../common/voiceAgent.js';
 import { IVoiceCallSettings, IVoiceSource, VoiceCallBrain } from '../common/voiceCallBrain.js';
 import {
 	OPEN_VOICE_CALL_TRANSCRIPT_COMMAND_ID, VOICE_CHAT_CUSTOM_URL_SETTING, VOICE_CHAT_LANGUAGE_SETTING, VOICE_CHAT_PROVIDER_SETTING, VOICE_CHAT_SPEED_SETTING, VOICE_CHAT_VOICE_SETTING, VoiceChatActiveContext,
 } from '../common/voltVoiceChat.js';
+import { IVoiceLine, LocalVoiceClient } from './localVoiceClient.js';
 import { RealtimeVoiceClient } from './realtimeVoiceClient.js';
 import { voiceLanguageLabel } from './voiceSettings.js';
 
@@ -71,7 +77,7 @@ export class VoiceCallService extends Disposable {
 
 	private _state: IVoiceCallState;
 	private readonly brain = this._register(new MutableDisposable<VoiceCallBrain>());
-	private readonly client = this._register(new MutableDisposable<RealtimeVoiceClient>());
+	private readonly client = this._register(new MutableDisposable<IVoiceLine>());
 	private readonly callStore = this._register(new DisposableStore());
 	private readonly activeKey: IContextKey<boolean>;
 	/** Calls by id, loaded per chat on demand. */
@@ -92,11 +98,35 @@ export class VoiceCallService extends Disposable {
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
 		@IVoltHostToolService private readonly hostTools: IVoltHostToolService,
 		@ICommandService private readonly commandService: ICommandService,
+		@IVoltSpeechService private readonly speechService: IVoltSpeechService,
+		@IVoltLocalVoiceService private readonly localVoiceService: IVoltLocalVoiceService,
+		@INotificationService private readonly notificationService: INotificationService,
 	) {
 		super();
 		this.activeKey = VoiceChatActiveContext.bindTo(contextKeyService);
 		this._state = { phase: 'idle', muted: false, settings: this.readSettings(), turns: [] };
 		this._register({ dispose: () => this.hangUp('window_closed') });
+		// The voice picked anywhere (Settings, the call's menu) is the one a call on this computer speaks with next.
+		this._register(this.configurationService.onDidChangeConfiguration(e => {
+			const client = this.client.value;
+			if (client instanceof LocalVoiceClient && e.affectsConfiguration(AGENT_READ_ALOUD_VOICE_SETTING)) {
+				client.setVoice(this.configurationService.getValue<string>(AGENT_READ_ALOUD_VOICE_SETTING) || undefined);
+			}
+		}));
+	}
+
+	/** The downloaded voices a call on this computer can speak with, and the one it does. */
+	async localVoices(): Promise<{ readonly voices: readonly ILocalVoice[]; readonly current: ILocalVoice | undefined }> {
+		const ready = readyLocalVoiceModels(await this.localVoiceService.getStates().catch(() => []));
+		return {
+			voices: LOCAL_VOICES.filter(voice => ready.includes(voice.model)),
+			current: pickLocalVoice(this.configurationService.getValue<string>(AGENT_READ_ALOUD_VOICE_SETTING) || undefined, ready),
+		};
+	}
+
+	/** Changes who speaks on this computer (calls and Read Aloud share the voice). */
+	async setLocalVoice(ref: string): Promise<void> {
+		await this.configurationService.updateValue(AGENT_READ_ALOUD_VOICE_SETTING, ref);
 	}
 
 	get state(): IVoiceCallState {
@@ -130,7 +160,7 @@ export class VoiceCallService extends Disposable {
 			await this.loadCalls(chatId);
 		}
 		const brain = this.brain.value = new VoiceCallBrain(callId, chatId, provider, settings.voice, {
-			speak: note => this.client.value?.addNote(note, true),
+			speak: (note, spoken) => this.client.value?.addNote(note, true, spoken),
 			onChat: id => {
 				this.setState({ chatId: id });
 				this.fireCalls(id);
@@ -145,20 +175,20 @@ export class VoiceCallService extends Disposable {
 				await this.loadCalls(id);
 				return this.callsFor(id);
 			},
-			startChat: async (text, source) => {
+			startChat: async (text, source, shown) => {
 				const target = this.agentWindow.chatPane(this._state.originKey) ?? this.agentWindow.chatPane();
 				if (!target?.sessionKey) {
 					return undefined;
 				}
-				target.submitPrompt(text, { text }, source);
+				target.submitPrompt(text, { text: shown }, source);
 				return target.sessionKey;
 			},
-			submitOnScreen: (id, text, source: IVoiceSource) => {
+			submitOnScreen: (id, text, source: IVoiceSource, shown) => {
 				const target = this.agentWindow.chatPane(id);
 				if (!target) {
 					return false;
 				}
-				target.submitPrompt(text, { text }, source);
+				target.submitPrompt(text, { text: shown }, source);
 				return true;
 			},
 		}, { orchestrator: this.orchestrator, runtime: this.runtime, history: this.history, hostTools: this.hostTools, logService: this.logService });
@@ -168,20 +198,35 @@ export class VoiceCallService extends Disposable {
 		this.fireCalls(chatId);
 
 		try {
-			const session = await this.voiceService.mint({ provider, url: this.configurationService.getValue<string>(VOICE_CHAT_CUSTOM_URL_SETTING) || undefined });
-			if (this._state.callId !== callId) {
-				return;
-			}
-			const client = this.client.value = new RealtimeVoiceClient(mainWindow);
-			this.callStore.clear();
-			this.callStore.add(client.onEvent(event => this.onEvent(event)));
-			this.callStore.add(client.onLevel(level => this._onLevel.fire(level)));
-			this.callStore.add(client.onDidChangeState(state => {
-				if (state !== 'closed') {
-					this.setState({ activity: state === 'connecting' ? undefined : state });
+			const watch = (client: IVoiceLine) => {
+				this.callStore.clear();
+				this.callStore.add(client.onEvent(event => this.onEvent(event)));
+				this.callStore.add(client.onLevel(level => this._onLevel.fire(level)));
+				this.callStore.add(client.onDidChangeState(state => {
+					if (state !== 'closed') {
+						this.setState({ activity: state === 'connecting' ? undefined : state });
+					}
+				}));
+			};
+			if (provider === 'local') {
+				// No socket and no key: dictation hears, the chat's agent answers, Read Aloud's voice speaks.
+				const client = this.client.value = new LocalVoiceClient(mainWindow, {
+					voice: this.configurationService.getValue<string>(AGENT_READ_ALOUD_VOICE_SETTING) || undefined,
+					speed: settings.speed,
+					locale: settings.language === 'auto' ? mainWindow.navigator.language || 'en-US' : settings.language,
+				}, this.speechService, this.localVoiceService, this.logService);
+				watch(client);
+				void this.offerNaturalVoice();
+				await client.connect();
+			} else {
+				const session = await this.voiceService.mint({ provider, url: this.configurationService.getValue<string>(VOICE_CHAT_CUSTOM_URL_SETTING) || undefined });
+				if (this._state.callId !== callId) {
+					return;
 				}
-			}));
-			await client.connect(session, await brain.sessionConfig(provider, settings, isWeb ? 'web' : 'desk', voiceLanguageLabel));
+				const client = this.client.value = new RealtimeVoiceClient(mainWindow);
+				watch(client);
+				await client.connect(session, await brain.sessionConfig(provider, settings, isWeb ? 'web' : 'desk', voiceLanguageLabel));
+			}
 			if (this._state.callId !== callId) {
 				return;
 			}
@@ -396,6 +441,28 @@ export class VoiceCallService extends Disposable {
 
 	//#endregion
 
+	/** A call on this computer without a downloaded voice speaks with the system's: offer the fast voices once per window. */
+	private offeredNaturalVoice = false;
+	private async offerNaturalVoice(): Promise<void> {
+		const states = await this.localVoiceService.getStates().catch(() => []);
+		const state = states.find(candidate => candidate.model === 'supertonic');
+		if (state?.status !== 'absent' || readyLocalVoiceModels(states).length || this.offeredNaturalVoice) {
+			return;
+		}
+		this.offeredNaturalVoice = true;
+		const megabytes = Math.round(state.totalBytes / 1_000_000);
+		this.notificationService.prompt(Severity.Info,
+			localize('voiceChat.naturalVoiceOffer', "This call speaks with your system's voice. Download the natural voice ({0} MB) for a far better one; the call switches to it when it is ready.", megabytes),
+			[{
+				label: localize('voiceChat.naturalVoiceDownload', "Download Natural Voice"),
+				run: () => void this.localVoiceService.install('supertonic').then(async () => {
+					// As the Settings download does: Read Aloud switches to the natural voice too.
+					await this.configurationService.updateValue(AGENT_READ_ALOUD_VOICE_SETTING, DEFAULT_LOCAL_VOICES.supertonic);
+					this.notificationService.info(localize('voiceChat.naturalVoiceReady', "The natural voice is ready. Voice chats and Read Aloud use it now."));
+				}, err => this.notificationService.error(localize('voiceChat.naturalVoiceFailed', "The natural voice could not be downloaded: {0}", err instanceof Error ? err.message : String(err)))),
+			}]);
+	}
+
 	private async pickProvider(): Promise<VoltVoiceProvider> {
 		const configured = this.configurationService.getValue<string>(VOICE_CHAT_PROVIDER_SETTING);
 		if (isVoiceProvider(configured)) {
@@ -403,9 +470,10 @@ export class VoiceCallService extends Disposable {
 		}
 		try {
 			const status = await this.voiceService.keyStatus();
-			return status.find(entry => entry.provider === 'xai' && entry.source)?.provider ?? status.find(entry => entry.provider === 'openai' && entry.source)?.provider ?? 'xai';
+			// Without a key the call stays on this computer instead of failing on a missing one.
+			return status.find(entry => entry.provider === 'xai' && entry.source)?.provider ?? status.find(entry => entry.provider === 'openai' && entry.source)?.provider ?? 'local';
 		} catch {
-			return 'xai';
+			return 'local';
 		}
 	}
 

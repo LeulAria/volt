@@ -11,11 +11,12 @@ export const VOLT_VOICE_CHAT_CHANNEL_NAME = 'voltVoiceChat';
 /**
  * Who hears and speaks in a voice chat. `xai` and `openai` are speech-to-speech realtime models
  * (one WebSocket, the model calls Volt's tools itself); `custom` is any server that speaks the same
- * realtime protocol (a local proxy, a test server).
+ * realtime protocol (a local proxy, a test server). `local` needs no key and no service: the
+ * computer's dictation hears, the chat's own agent answers, and Kokoro or a system voice speaks.
  */
-export type VoltVoiceProvider = 'xai' | 'openai' | 'custom';
+export type VoltVoiceProvider = 'xai' | 'openai' | 'custom' | 'local';
 
-export const VOLT_VOICE_PROVIDERS: readonly VoltVoiceProvider[] = ['xai', 'openai', 'custom'];
+export const VOLT_VOICE_PROVIDERS: readonly VoltVoiceProvider[] = ['xai', 'openai', 'custom', 'local'];
 
 export interface IVoltVoiceProviderInfo {
 	readonly id: VoltVoiceProvider;
@@ -50,6 +51,10 @@ export const VOLT_VOICE_PROVIDER_INFO: Readonly<Record<VoltVoiceProvider, IVoltV
 	},
 	custom: {
 		id: 'custom', label: 'Custom realtime server', url: '', model: '', envKeys: [], defaultVoice: 'ara', voices: XAI_VOICES,
+	},
+	// The voice is Read Aloud's (a downloaded Kokoro voice or a system voice), so it lists none of its own.
+	local: {
+		id: 'local', label: 'On this computer', url: '', model: '', envKeys: [], defaultVoice: '', voices: [],
 	},
 };
 
@@ -131,7 +136,7 @@ export interface IVoltVoiceChatService {
 
 /** Clamps a menu speed to what the provider accepts. */
 export function providerSpeed(provider: VoltVoiceProvider, speed: number): number {
-	const [min, max] = provider === 'openai' ? [0.25, 1.5] : [0.7, 1.5];
+	const [min, max] = provider === 'openai' ? [0.25, 1.5] : provider === 'local' ? [0.5, 2] : [0.7, 1.5];
 	return Math.min(max, Math.max(min, speed));
 }
 

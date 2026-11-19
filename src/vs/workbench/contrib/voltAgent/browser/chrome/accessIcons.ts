@@ -105,14 +105,20 @@ export function createThisMacIcon(): HTMLElement {
 	return svgIcon([{ d: 'M1 20H23M4 16H20C20.5523 16 21 15.5523 21 15V5C21 4.44772 20.5523 4 20 4H4C3.44772 4 3 4.44772 3 5V15C3 15.5523 3.44772 16 4 16Z' }], [], 'this-mac', '1.3');
 }
 
-/** Two tracks splitting off, mirrored so the branch leaves to the left: every Worktree chip and picker draws this. */
-export const WORKTREE_ICON_PATH = 'M6 7C6 8.10457 5.10457 9 4 9C2.89543 9 2 8.10457 2 7C2 5.89543 2.89543 5 4 5C5.10457 5 6 5.89543 6 7ZM6 7H18M18 7C18 8.10457 18.8954 9 20 9C21.1046 9 22 8.10457 22 7C22 5.89543 21.1046 5 20 5C18.8954 5 18 5.89543 18 7ZM18 17C18 18.1046 18.8954 19 20 19C21.1046 19 22 18.1046 22 17C22 15.8954 21.1046 15 20 15C18.8954 15 18 15.8954 18 17ZM18 17H12C10.8954 17 10 16.1046 10 15V10C10 8.34315 8.65685 7 7 7';
+/**
+ * One track that forks to the upper and lower right, each fork ending in an arrowhead: every
+ * Worktree chip and picker draws this. Drawn on a 16px grid; scaled ×1.5 to the 24px grid here.
+ */
+export const WORKTREE_ICON_PATHS: readonly string[] = [
+	'M3.75 11.25H12.75L20.25 3.75',
+	'M15.75 3.75H20.25V8.25',
+	'M12.75 11.25L20.25 18.75',
+	'M15.75 18.75H20.25V14.25',
+];
 
 /** The worktree mark on the new chat's machine picker, the same one the chat's status bar shows. */
 export function createWorktreeIcon(): HTMLElement {
-	const el = svgIcon([{ d: WORKTREE_ICON_PATH }], [], 'worktree', '1.2');
-	el.querySelector('svg')!.style.transform = 'scaleX(-1)';
-	return el;
+	return svgIcon(WORKTREE_ICON_PATHS.map(d => ({ d })), [], 'worktree', '1.5');
 }
 
 /** Volt Guard's shield, drawn on the card a sandbox refusal shows in the transcript. Square caps, as drawn. */

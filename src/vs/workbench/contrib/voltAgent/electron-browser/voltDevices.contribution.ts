@@ -17,6 +17,7 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME } from '../../../../platform/voltCapture/common/voltCapture.js';
 import { IVoltDevicesService, VOLT_DEVICES_CHANNEL_NAME } from '../../../../platform/voltDevices/common/voltDevices.js';
 import { IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME } from '../../../../platform/voltSpeech/common/voltSpeech.js';
+import { IVoltLocalVoiceService, VOLT_LOCAL_VOICE_CHANNEL_NAME } from '../../../../platform/voltLocalVoice/common/voltLocalVoice.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
@@ -52,6 +53,7 @@ registerMainProcessRemoteService(IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME)
 // The desktop engines can always try: `isAvailable` is answered here, not sent to a main process that has no such method.
 registerMainProcessRemoteService(IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME, { proxyOptions: { properties: new Map([['isAvailable', undefined]]) } });
 registerMainProcessRemoteService(IVoltVoiceChatService, VOLT_VOICE_CHAT_CHANNEL_NAME);
+registerMainProcessRemoteService(IVoltLocalVoiceService, VOLT_LOCAL_VOICE_CHANNEL_NAME);
 registerSingleton(IAgentDevicesService, AgentDevicesService, InstantiationType.Delayed);
 
 export const OPEN_DEVICE_PREVIEW_COMMAND_ID = 'volt.devices.openPreview';

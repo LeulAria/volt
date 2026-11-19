@@ -4,16 +4,20 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, append } from '../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../base/browser/window.js';
 import { localize } from '../../../../nls.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { IVoltLocalVoiceService, LOCAL_VOICES, LocalVoiceModelId, pickLocalVoice, readyLocalVoiceModels } from '../../../../platform/voltLocalVoice/common/voltLocalVoice.js';
 import { IVoltVoiceChatService, IVoltVoiceKeyStatus, VOLT_VOICE_PROVIDER_INFO, VoltVoiceProvider } from '../../../../platform/voltVoiceChat/common/voltVoiceChat.js';
+import { agentReadAloud, localVoiceDescription } from '../../voltAgent/browser/chat/agentReadAloud.js';
 import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
+import { AGENT_READ_ALOUD_VOICE_SETTING } from '../../voltAgent/common/agentReadAloud.js';
 import { IVoltSettingsPageKit } from '../../voltCustomize/browser/voltFeatureModules.js';
 import {
 	VOICE_CHAT_CUSTOM_URL_SETTING, VOICE_CHAT_ENABLED_SETTING, VOICE_CHAT_LANGUAGE_SETTING, VOICE_CHAT_PROVIDER_SETTING, VOICE_CHAT_SPEED_SETTING, VOICE_CHAT_SPEEDS, VOICE_CHAT_VOICE_SETTING,
@@ -23,11 +27,13 @@ import { setVoiceKey } from './voiceKey.js';
 import { VoicePreviewPlayer } from './voicePreview.js';
 
 let keyStatus: readonly IVoltVoiceKeyStatus[] | undefined;
+/** The speech models downloaded to this computer; read again when one arrives or goes. */
+let localReady: readonly LocalVoiceModelId[] | undefined;
 
 /**
- * Settings > Voice (Cursor's Voice tab, plus the provider and its key, which Cursor's own
- * backend hides): who hears and speaks, its API key, the default voice with a sample, speed,
- * language, and the composer button.
+ * Voice chat's rows on Settings > Voice (Cursor's Voice tab, plus the provider and its key, which
+ * Cursor's own backend hides): who hears and speaks, its API key, the voice with a sample, speed,
+ * language, and the composer button. A call on this computer picks among the downloaded voices.
  */
 export function renderVoiceSettingsPage(accessor: ServicesAccessor, kit: IVoltSettingsPageKit, preview: VoicePreviewPlayer): void {
 	const configuration = accessor.get(IConfigurationService);
@@ -35,6 +41,7 @@ export function renderVoiceSettingsPage(accessor: ServicesAccessor, kit: IVoltSe
 	const voiceService = accessor.get(IVoltVoiceChatService);
 	const quickInput = accessor.get(IQuickInputService);
 	const notifications = accessor.get(INotificationService);
+	const localVoices = accessor.get(IVoltLocalVoiceService);
 	const store = kit.store;
 	const set = (key: string, value: unknown) => void configuration.updateValue(key, value).then(() => kit.rerender());
 
@@ -48,19 +55,41 @@ export function renderVoiceSettingsPage(accessor: ServicesAccessor, kit: IVoltSe
 			}
 		}, () => undefined);
 	}
+	if (!localReady) {
+		void localVoices.getStates().then(states => {
+			localReady = readyLocalVoiceModels(states);
+			if (kit.isCurrent() && localReady.length) {
+				kit.rerender();
+			}
+		}, () => undefined);
+	}
+	store.add(localVoices.onDidChangeState(state => {
+		if ((state.status === 'ready') !== (localReady ?? []).includes(state.model) && (state.status === 'ready' || state.status === 'absent')) {
+			localReady = undefined;
+			kit.rerender();
+		}
+	}));
+	// The voice picked elsewhere (Read aloud's row, the call's menu, a download) shows here too.
+	store.add(configuration.onDidChangeConfiguration(e => {
+		if (e.affectsConfiguration(AGENT_READ_ALOUD_VOICE_SETTING) && kit.isCurrent()) {
+			kit.rerender();
+		}
+	}));
 	const configured = configuration.getValue<string>(VOICE_CHAT_PROVIDER_SETTING) || 'auto';
 	const statusOf = (provider: VoltVoiceProvider) => keyStatus?.find(entry => entry.provider === provider);
-	const effective: VoltVoiceProvider = configured === 'xai' || configured === 'openai' || configured === 'custom' ? configured : statusOf('openai')?.source && !statusOf('xai')?.source ? 'openai' : 'xai';
+	const effective: VoltVoiceProvider = configured === 'xai' || configured === 'openai' || configured === 'custom' || configured === 'local' ? configured
+		: statusOf('xai')?.source ? 'xai' : statusOf('openai')?.source ? 'openai' : keyStatus ? 'local' : 'xai';
 
-	kit.sectionLabel(localize('voiceChat.provider', "Provider"));
+	kit.sectionLabel(localize('voiceChat.section', "Voice chat"));
 	const providerGroup = kit.settingsGroup();
-	kit.settingRow(providerGroup, localize('voiceChat.providerTitle', "Voice Model"), localize('voiceChat.providerDesc', "The speech-to-speech model you talk to. Calls cost about $0.08 a minute on xAI."), host => {
+	kit.settingRow(providerGroup, localize('voiceChat.providerTitle', "Voice Model"), localize('voiceChat.providerDesc', "The speech-to-speech model you talk to. Calls cost about $0.08 a minute on xAI; on this computer they are free."), host => {
 		createVoltDropdown(host, contextView, {
 			options: [
-				{ id: 'auto', label: localize('voiceChat.auto', "Automatic"), description: localize('voiceChat.autoDesc', "xAI when it has a key, otherwise OpenAI") },
+				{ id: 'auto', label: localize('voiceChat.auto', "Automatic"), description: localize('voiceChat.autoDesc', "xAI or OpenAI when one has a key, otherwise this computer") },
 				{ id: 'xai', label: VOLT_VOICE_PROVIDER_INFO.xai.label, description: 'grok-voice-latest' },
 				{ id: 'openai', label: VOLT_VOICE_PROVIDER_INFO.openai.label, description: 'gpt-realtime' },
 				{ id: 'custom', label: VOLT_VOICE_PROVIDER_INFO.custom.label, description: localize('voiceChat.customDesc', "Any server that speaks the realtime protocol") },
+				{ id: 'local', label: localize('voiceChat.local', "On This Computer"), description: localize('voiceChat.localDesc2', "Dictation, the chat's agent and a voice on this computer; free, no key") },
 			],
 			value: configured,
 			ariaLabel: localize('voiceChat.providerTitle', "Voice Model"),
@@ -106,35 +135,68 @@ export function renderVoiceSettingsPage(accessor: ServicesAccessor, kit: IVoltSe
 		});
 	}
 
-	kit.sectionLabel(localize('voiceChat.voiceSection', "Voice"));
 	const group = kit.settingsGroup();
 	const voices = VOLT_VOICE_PROVIDER_INFO[effective === 'custom' ? 'xai' : effective].voices;
 	const currentVoice = configuration.getValue<string>(VOICE_CHAT_VOICE_SETTING) || VOLT_VOICE_PROVIDER_INFO[effective].defaultVoice;
 	const speed = Number(configuration.getValue(VOICE_CHAT_SPEED_SETTING)) || 1;
-	kit.settingRow(group, localize('voiceChat.agentVoice', "Agent Voice"), localize('voiceChat.agentVoiceDesc', "Default voice for voice chats. Changing the voice plays a short sample."), host => {
-		createVoltDropdown(host, contextView, {
-			options: voices.map(id => ({ id, label: voiceLabel(id) })),
-			value: voices.includes(currentVoice) ? currentVoice : voices[0],
-			ariaLabel: localize('voiceChat.agentVoice', "Agent Voice"),
-			onChange: id => {
-				set(VOICE_CHAT_VOICE_SETTING, id);
+	if (effective === 'local') {
+		renderLocalVoicePicker();
+	} else {
+		renderVoicePicker();
+	}
+	/** A call on this computer speaks with a downloaded voice (shared with Read Aloud), or the system's without one. */
+	function renderLocalVoicePicker(): void {
+		const ready = localReady ?? [];
+		const title = localize('voiceChat.agentVoice', "Agent Voice");
+		if (!ready.length) {
+			kit.settingRow(group, title, localize('voiceChat.localVoiceNone', "Calls on this computer speak with your system's voice. Download a voice under Voices on this computer, below, for one that sounds like a person."));
+			return;
+		}
+		const current = pickLocalVoice(configuration.getValue<string>(AGENT_READ_ALOUD_VOICE_SETTING) || undefined, ready);
+		const sample = (voice: string | undefined) => void agentReadAloud.read(mainWindow, 'settings-preview', localize('voiceChat.localSample', "Hi. This is how I sound on a call."), { voice, rate: speed, localVoices });
+		kit.settingRow(group, title, localize('voiceChat.localVoiceDesc2', "Who speaks in voice chats on this computer and reads replies aloud. Changing the voice plays a short sample."), host => {
+			createVoltDropdown(host, contextView, {
+				options: LOCAL_VOICES.filter(voice => ready.includes(voice.model)).map(voice => ({ id: voice.ref, label: voice.name, description: localVoiceDescription(voice) })),
+				value: current?.ref ?? '',
+				ariaLabel: title,
+				onChange: id => {
+					sample(id);
+					void configuration.updateValue(AGENT_READ_ALOUD_VOICE_SETTING, id);
+				},
+			}, store);
+			const play = createVoltButton(host, 'secondary', { supportIcons: true });
+			play.label = `$(play) ${localize('voiceChat.playSampleShort', "Play Sample")}`;
+			setAgentTooltip(play.element, localize('voiceChat.playSample', "Play voice sample"));
+			store.add(play);
+			store.add(play.onDidClick(() => sample(pickLocalVoice(configuration.getValue<string>(AGENT_READ_ALOUD_VOICE_SETTING) || undefined, ready)?.ref)));
+		});
+	}
+	function renderVoicePicker(): void {
+		kit.settingRow(group, localize('voiceChat.agentVoice', "Agent Voice"), localize('voiceChat.agentVoiceDesc', "Default voice for voice chats. Changing the voice plays a short sample."), host => {
+			createVoltDropdown(host, contextView, {
+				options: voices.map(id => ({ id, label: voiceLabel(id) })),
+				value: voices.includes(currentVoice) ? currentVoice : voices[0],
+				ariaLabel: localize('voiceChat.agentVoice', "Agent Voice"),
+				onChange: id => {
+					set(VOICE_CHAT_VOICE_SETTING, id);
+					if (effective !== 'custom') {
+						void preview.toggle(effective, id, speed).catch(err => notifications.error(err instanceof Error ? err.message : String(err)));
+					}
+				},
+			}, store);
+			const play = createVoltButton(host, 'secondary', { supportIcons: true });
+			const playLabel = () => preview.playing ? `$(debug-stop) ${localize('voiceChat.stopSampleShort', "Stop")}` : `$(play) ${localize('voiceChat.playSampleShort', "Play Sample")}`;
+			play.label = playLabel();
+			setAgentTooltip(play.element, localize('voiceChat.playSample', "Play voice sample"));
+			store.add(play);
+			store.add(play.onDidClick(() => {
 				if (effective !== 'custom') {
-					void preview.toggle(effective, id, speed).catch(err => notifications.error(err instanceof Error ? err.message : String(err)));
+					void preview.toggle(effective, currentVoice, speed).catch(err => notifications.error(err instanceof Error ? err.message : String(err)));
 				}
-			},
-		}, store);
-		const play = createVoltButton(host, 'secondary', { supportIcons: true });
-		const playLabel = () => preview.playing ? `$(debug-stop) ${localize('voiceChat.stopSampleShort', "Stop")}` : `$(play) ${localize('voiceChat.playSampleShort', "Play Sample")}`;
-		play.label = playLabel();
-		setAgentTooltip(play.element, localize('voiceChat.playSample', "Play voice sample"));
-		store.add(play);
-		store.add(play.onDidClick(() => {
-			if (effective !== 'custom') {
-				void preview.toggle(effective, currentVoice, speed).catch(err => notifications.error(err instanceof Error ? err.message : String(err)));
-			}
-		}));
-		store.add(preview.onDidChange(() => play.label = playLabel()));
-	});
+			}));
+			store.add(preview.onDidChange(() => play.label = playLabel()));
+		});
+	}
 	kit.settingRow(group, localize('voiceChat.speed', "Speed"), localize('voiceChat.speedDesc', "How quickly the voice speaks in voice chats."), host => {
 		createVoltDropdown(host, contextView, {
 			options: VOICE_CHAT_SPEEDS.map(value => ({ id: String(value), label: speedLabel(value) })),
