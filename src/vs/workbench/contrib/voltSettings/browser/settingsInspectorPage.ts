@@ -98,6 +98,10 @@ export class SettingsInspectorPage extends Disposable {
 	private readonly detail: HTMLElement;
 	private readonly detailScroll: DomScrollableElement;
 	private readonly detailStore = this._register(new DisposableStore());
+	/** Each listed subsection's block in the page, by row id, in order: where to scroll, and what is in view. */
+	private groupBlocks: { readonly id: string; readonly element: HTMLElement }[] = [];
+	/** Set while the page scrolls because a row was picked, so the list does not follow that scroll back. */
+	private scrollingToGroup = false;
 	private readonly onDidOpenPageEmitter = this._register(new Emitter<string>());
 	/** A page link was picked (click or arrow keys). */
 	readonly onDidOpenPage = this.onDidOpenPageEmitter.event;
@@ -188,6 +192,8 @@ export class SettingsInspectorPage extends Disposable {
 		}));
 		append(this.element, this.detailScroll.getDomNode());
 		this._register(attachPaneSash(this.element, pane, 'inspect'));
+		// The list follows the page: the subsection under the top of the page is the one lit.
+		this._register(this.detailScroll.onScroll(() => this.followScroll()));
 		const detailResize = new (getWindow(parent).ResizeObserver)(() => this.detailScroll.scanDomNode());
 		detailResize.observe(this.detail);
 		this._register(toDisposable(() => detailResize.disconnect()));
@@ -198,7 +204,7 @@ export class SettingsInspectorPage extends Disposable {
 			}
 			// Counts, the modified bars and the controls all show values: redraw both panes in place.
 			if (this.category.settings.some(entry => e.affectsConfiguration(entry.setting.key))) {
-				this.refresh(false);
+				this.refresh(true);
 			}
 		}));
 	}
@@ -328,75 +334,150 @@ export class SettingsInspectorPage extends Disposable {
 		this.activePage = undefined;
 		if (row.id !== this.pickedGroup.get(this.category.id) || leavingPage) {
 			this.pickedGroup.set(this.category.id, row.id);
-			this.renderDetail(false);
+			if (leavingPage || !this.groupBlocks.length) {
+				this.renderDetail(false);
+			} else {
+				this.scrollToGroup(row.id);
+			}
 		}
 		if (leavingPage) {
 			this.onDidPickGroupEmitter.fire();
 		}
 	}
 
-	/** Every setting of the picked subsection; its own subsections follow under their titles. */
+	/**
+	 * Every listed subsection, one after the other under its title, so scrolling runs on into the
+	 * next; the page opens at the picked one. Each one's own subsections follow under their titles.
+	 */
 	private renderDetail(keepScroll: boolean): void {
 		const scrollTop = keepScroll ? this.detailScroll.getScrollPosition().scrollTop : 0;
 		// A write redraws the page; the control that made it gets focus back.
 		const focusedKey = keepScroll ? (this.detail.ownerDocument.activeElement?.closest<HTMLElement>('[data-setting]')?.dataset.setting) : undefined;
 		this.detailStore.clear();
 		this.detail.replaceChildren();
-		const picked = this.category && this.pickedGroup.get(this.category.id);
-		const row = this.rows.find((candidate): candidate is Extract<ListRow, { kind: 'group' }> => candidate.kind === 'group' && candidate.id === picked);
-		if (!row) {
+		this.groupBlocks = [];
+		const rows = this.rows.filter((candidate): candidate is Extract<ListRow, { kind: 'group' }> => candidate.kind === 'group');
+		if (!rows.length || this.activePage !== undefined) {
 			this.detailScroll.scanDomNode();
 			return;
 		}
-
-		const head = append(this.detail, $('.volt-settings-inspect-page-head'));
-		const heading = append(head, $('.volt-settings-inspect-page-title'));
-		append(heading, $('h2.volt-settings-inspect-name')).textContent = row.group.label;
-		append(heading, $('span.count')).textContent = String(row.count);
 		const workspaceName = this.workspaceName();
 		if (!workspaceName) {
 			this.target = ConfigurationTarget.USER_LOCAL;
-		} else {
-			createVoltDropdown(head, this.contextViewService, {
-				options: [
-					{ id: 'user', label: localize('voltSettings.inspect.user', "User"), description: localize('voltSettings.inspect.userDesc', "Your settings, in every project."), icon: Codicon.account },
-					{ id: 'project', label: localize('voltSettings.inspect.project', "Project · {0}", workspaceName), description: localize('voltSettings.inspect.projectDesc', "Only this project; wins over your settings."), icon: Codicon.folder },
-				],
-				value: this.target === ConfigurationTarget.WORKSPACE ? 'project' : 'user',
-				ariaLabel: localize('voltSettings.inspect.scopeAria', "Settings to show"),
-				align: 'right',
-				onChange: id => {
-					this.target = id === 'project' ? ConfigurationTarget.WORKSPACE : ConfigurationTarget.USER_LOCAL;
-					this.renderDetail(true);
-				},
-			}, this.detailStore);
 		}
 
-		const renderGroup = (nodes: readonly (ISettingsCatalogSetting | ISettingsCatalogGroup)[], path: readonly string[]) => {
-			const settings = nodes.filter((node): node is ISettingsCatalogSetting => node.kind === 'setting' && this.keep(node));
-			if (settings.length) {
-				if (path.length) {
-					// allow-any-unicode-next-line
-					append(this.detail, $('.volt-settings-inspect-section')).textContent = path.join(' › ');
-				}
-				const card = append(this.detail, $('.volt-settings-group'));
-				for (const entry of settings) {
-					this.settingRow(card, entry, workspaceName);
-				}
+		for (const [index, row] of rows.entries()) {
+			const block = append(this.detail, $('.volt-settings-inspect-group-block'));
+			block.dataset.group = row.id;
+			this.groupBlocks.push({ id: row.id, element: block });
+			const head = append(block, $('.volt-settings-inspect-page-head'));
+			const heading = append(head, $('.volt-settings-inspect-page-title'));
+			append(heading, $('h2.volt-settings-inspect-name')).textContent = row.group.label;
+			append(heading, $('span.count')).textContent = String(row.count);
+			// Which settings show (yours or the project's) is one choice for the page: at its top.
+			if (index === 0 && workspaceName) {
+				createVoltDropdown(head, this.contextViewService, {
+					options: [
+						{ id: 'user', label: localize('voltSettings.inspect.user', "User"), description: localize('voltSettings.inspect.userDesc', "Your settings, in every project."), icon: Codicon.account },
+						{ id: 'project', label: localize('voltSettings.inspect.project', "Project · {0}", workspaceName), description: localize('voltSettings.inspect.projectDesc', "Only this project; wins over your settings."), icon: Codicon.folder },
+					],
+					value: this.target === ConfigurationTarget.WORKSPACE ? 'project' : 'user',
+					ariaLabel: localize('voltSettings.inspect.scopeAria', "Settings to show"),
+					align: 'right',
+					onChange: id => {
+						this.target = id === 'project' ? ConfigurationTarget.WORKSPACE : ConfigurationTarget.USER_LOCAL;
+						this.renderDetail(true);
+					},
+				}, this.detailStore);
 			}
-			for (const node of nodes) {
-				if (node.kind === 'group') {
-					renderGroup(node.children, [...path, node.label]);
+
+			const renderGroup = (nodes: readonly (ISettingsCatalogSetting | ISettingsCatalogGroup)[], path: readonly string[]) => {
+				const settings = nodes.filter((node): node is ISettingsCatalogSetting => node.kind === 'setting' && this.keep(node));
+				if (settings.length) {
+					if (path.length) {
+						// allow-any-unicode-next-line
+						append(block, $('.volt-settings-inspect-section')).textContent = path.join(' › ');
+					}
+					const card = append(block, $('.volt-settings-group'));
+					for (const entry of settings) {
+						this.settingRow(card, entry, workspaceName);
+					}
 				}
-			}
-		};
-		renderGroup(row.group.children, []);
+				for (const node of nodes) {
+					if (node.kind === 'group') {
+						renderGroup(node.children, [...path, node.label]);
+					}
+				}
+			};
+			renderGroup(row.group.children, []);
+		}
 
 		if (focusedKey) {
 			this.detail.querySelector<HTMLElement>(`[data-setting="${CSS.escape(focusedKey)}"]`)?.querySelector<HTMLElement>('input, button.volt-settings-toggle, .volt-dropdown, button')?.focus();
 		}
 		this.detailScroll.scanDomNode();
-		this.detailScroll.setScrollPosition({ scrollTop });
+		if (keepScroll) {
+			this.withoutFollowing(() => this.detailScroll.setScrollPosition({ scrollTop }));
+		} else {
+			const picked = this.category && this.pickedGroup.get(this.category.id);
+			this.scrollToGroup(picked ?? rows[0].id);
+		}
+	}
+
+	/** Brings a subsection's title to the top of the page (the first one: the very top). */
+	private scrollToGroup(id: string): void {
+		const index = this.groupBlocks.findIndex(block => block.id === id);
+		if (index < 0) {
+			return;
+		}
+		this.detailScroll.scanDomNode();
+		this.withoutFollowing(() => this.detailScroll.setScrollPosition({ scrollTop: index === 0 ? 0 : Math.max(0, this.groupBlocks[index].element.offsetTop - 16) }));
+	}
+
+	private withoutFollowing(scroll: () => void): void {
+		this.scrollingToGroup = true;
+		try {
+			scroll();
+		} finally {
+			this.scrollingToGroup = false;
+		}
+	}
+
+	/**
+	 * Lights the subsection in view: the last one whose title has reached the top of the page, or the
+	 * last one when the page is scrolled to its end (a short one there never reaches the top).
+	 */
+	private followScroll(): void {
+		if (this.scrollingToGroup || this.updating || !this.category || !this.groupBlocks.length || this.activePage !== undefined) {
+			return;
+		}
+		const { scrollTop, scrollHeight, height } = { ...this.detailScroll.getScrollPosition(), ...this.detailScroll.getScrollDimensions() };
+		let current = this.groupBlocks[0].id;
+		if (scrollTop + height >= scrollHeight - 2 && scrollTop > 0) {
+			current = this.groupBlocks[this.groupBlocks.length - 1].id;
+		} else {
+			for (const block of this.groupBlocks) {
+				if (block.element.offsetTop <= scrollTop + 24) {
+					current = block.id;
+				}
+			}
+		}
+		if (current === this.pickedGroup.get(this.category.id)) {
+			return;
+		}
+		this.pickedGroup.set(this.category.id, current);
+		const index = this.rows.findIndex(row => row.kind === 'group' && row.id === current);
+		if (index < 0) {
+			return;
+		}
+		this.updating = true;
+		try {
+			this.list.setFocus([index]);
+			this.list.setSelection([index]);
+			this.list.reveal(index);
+		} finally {
+			this.updating = false;
+		}
 	}
 
 	/** One setting: its title, description and control for the scope in view, and a reset when set there. */
