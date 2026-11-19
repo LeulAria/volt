@@ -302,7 +302,18 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	/**
 	 * One small tool-less call for generated text (commit messages, pull request descriptions):
 	 * the text generation model when one is set in Settings, else the chat's model, else the first
-	 * enabled one. The `git` slot tries the git text model first. Undefined when no model answered.
+	 * enabled one. The `git` slot tries the git text model first. With `ref`, that model or agent writes it
+	 * (an agent in its print mode, else in one text-only session). Undefined when no model answered.
 	 */
-	generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number; readonly slot?: 'title' | 'git' }): Promise<string | undefined>;
+	generateText(prompt: string, options?: IVoltGenerateTextOptions): Promise<string | undefined>;
+}
+
+export interface IVoltGenerateTextOptions {
+	readonly sessionId?: string;
+	readonly timeoutMs?: number;
+	readonly slot?: 'title' | 'git';
+	/** The catalog model or agent that writes the text, in place of the text generation model. */
+	readonly ref?: string;
+	/** What the writer is, when it is not naming a chat or writing git text. */
+	readonly systemPrompt?: string;
 }

@@ -109,4 +109,12 @@ suite('Volt chat title generation', () => {
 		assert.deepStrictEqual(titleCommandFor('cursor-acp', undefined, 'p', 'gpt-5')?.slice(-3), ['--model', 'gpt-5', 'p']);
 		assert.ok(!titleCommandFor('cursor-acp', undefined, 'p')?.includes('--model'));
 	});
+
+	test('a caller\'s system prompt replaces the title one: Claude takes it as its own, the others at the head of the prompt', () => {
+		const claude = titleCommandFor('claude-code', undefined, 'p', undefined, 'You write tests.') ?? [];
+		assert.strictEqual(claude[claude.indexOf('--system-prompt') + 1], 'You write tests.');
+		assert.strictEqual(claude.at(-1), 'p');
+		assert.strictEqual(titleCommandFor('codex', undefined, 'p', undefined, 'You write tests.')?.at(-1), 'You write tests.\n\np');
+		assert.strictEqual(titleCommandFor('cursor-acp', undefined, 'p', 'gpt-5', 'You write tests.')?.at(-1), 'You write tests.\n\np');
+	});
 });

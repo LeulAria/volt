@@ -17,7 +17,7 @@ import { VoltMode } from '../../voltRuntime/common/modes.js';
 import { IProviderProfile, IProviderProfileDraft } from '../../voltRuntime/common/profiles.js';
 import { IAgentDetectResult, IModelMessage, IVoltCatalogItem, IVoltProviderStatus } from '../../voltRuntime/common/providers.js';
 import type { IAgentQuestionRequest, IAgentQuestionResponse } from '../../voltRuntime/common/questions.js';
-import { IAgentPrewarmOptions, IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
+import { IAgentPrewarmOptions, IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltGenerateTextOptions, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../../voltRuntime/common/runtime.js';
 import type { IVoltMcpApprovalRecord } from '../../voltRuntime/common/harness/mcpApprovals.js';
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import type { VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
@@ -537,7 +537,7 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 		return this.client.call('runtime.revokeMcpApproval', realRoot, name);
 	}
 
-	generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number; readonly slot?: 'title' | 'git' }): Promise<string | undefined> {
+	generateText(prompt: string, options?: IVoltGenerateTextOptions): Promise<string | undefined> {
 		return this.client.call('runtime.generateText', prompt, options);
 	}
 
