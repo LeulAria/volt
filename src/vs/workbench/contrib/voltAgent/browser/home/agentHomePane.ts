@@ -617,6 +617,13 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		}
 		template.elementDisposables.add(this.host.bindSessionHover(template.container, session));
 		template.elementDisposables.add(addDisposableListener(template.container, 'mouseenter', () => this.fadeNameUnderActions(template)));
+		// A row drawn again under a still pointer (a click switches chats and redraws it) gets no mouseenter:
+		// fade its title now, or the buttons show over the full title.
+		template.elementDisposables.add(scheduleAtNextAnimationFrame(getWindow(template.container), () => {
+			if (template.container.isConnected && template.container.matches(':hover')) {
+				this.fadeNameUnderActions(template);
+			}
+		}));
 	}
 
 	/**

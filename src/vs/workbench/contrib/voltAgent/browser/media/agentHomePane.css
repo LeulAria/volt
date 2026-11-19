@@ -544,8 +544,18 @@
 	background: none !important;
 }
 
-.volt-agent-home-tree .monaco-list .monaco-list-row:has(.volt-agent-home-row.active-chat) {
-	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent) !important;
+/* The tint is a plate inside the row, like the PR list's: 6px in from the sides, 2px from its neighbours, 5px corners. */
+.volt-agent-home-tree .monaco-list-row > .monaco-tl-row {
+	position: relative;
+}
+
+.volt-agent-home-tree .monaco-list .monaco-list-row:has(.volt-agent-home-row.active-chat)::before {
+	content: '';
+	position: absolute;
+	inset: 2px 6px;
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	pointer-events: none;
 }
 
 .volt-agent-home-tree .monaco-list-row .volt-agent-home-row.active-chat > .name {
@@ -560,7 +570,8 @@
 	gap: var(--volt-look-sidebar-row-gap, 8px);
 	height: 100%;
 	min-width: 0;
-	padding: 0 8px 0 calc(var(--volt-home-level, 0) * var(--volt-home-indent));
+	/* 16px on the right: the times and badges stay 10px inside the active chat's plate (6px in from the edge). */
+	padding: 0 16px 0 calc(var(--volt-home-level, 0) * var(--volt-home-indent));
 	box-sizing: border-box;
 	color: inherit;
 	font-size: var(--volt-look-sidebar-font-size, 13px);
