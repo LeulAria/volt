@@ -18,6 +18,7 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { ILifecycleService } from '../../../../services/lifecycle/common/lifecycle.js';
+import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { ISecretStorageService } from '../../../../../platform/secrets/common/secrets.js';
 import { parsePullRequestUrl, prKey } from '../../../../../platform/voltPullRequests/common/voltPullRequestParse.js';
@@ -127,6 +128,14 @@ export interface IAgentPullRequestService {
 	unwatch(sessionId: string, key: string): void;
 	/** Syncs these pull requests (or every linked one) now. */
 	refresh(keys?: readonly string[]): Promise<void>;
+	/**
+	 * Reads a chat's pull requests again because the user is looking at them (the chat opened, its
+	 * row or chip was hovered), when the last read is older than `maxAgeMs`. A merged one is final;
+	 * reads already in flight are shared. Cheap to call often.
+	 */
+	revalidate(sessionId: string, maxAgeMs?: number): Promise<void>;
+	/** The same for pull requests by key (a hover card, a PR tab). */
+	revalidateKeys(keys: readonly string[], maxAgeMs?: number): Promise<void>;
 	/** The chat's branch was pushed: its pull requests read their new head now, and again a moment later. */
 	didPush(sessionId: string): void;
 	/** The folder a chat's agent works in. */
@@ -198,6 +207,8 @@ const ORIGIN_TTL_MS = 60_000;
 /** A remotes read that failed (git busy or briefly unavailable) is tried again this soon. */
 const ORIGIN_RETRY_MS = 5_000;
 const DETAIL_TTL_MS = 8_000;
+/** How old a read may be before looking at a chat (opening it, hovering its row) reads its pull requests again. */
+const REVALIDATE_MS = 10_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
 /**
  * A watched pull request whose fingerprint has not moved is still read in full this often: edits
@@ -280,6 +291,8 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 	private readonly known = new Map<string, IVoltPullRequest>();
 	/** Turns already scanned for pull request URLs, per chat. */
 	private readonly scannedTurns = new Map<string, string>();
+	/** Reads started by revalidate, by pull request key, so a hover and an open share one. */
+	private readonly revalidating = new Map<string, Promise<void>>();
 
 	constructor(
 		@IVoltPullRequestService public readonly api: IVoltPullRequestService,
@@ -391,6 +404,13 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		}));
 		this._register(new IntervalTimer()).cancelAndSet(() => void this.tick(false), TICK_MS);
 		void this.whenReady.then(() => this.tick(true));
+		// The chat on screen shows its pull requests: what it shows is read again when it opens.
+		this._register(onDidChangeShownAgentChat(() => {
+			const shown = shownAgentChat();
+			if (shown) {
+				void this.revalidate(shown);
+			}
+		}));
 	}
 
 	//#region Store
@@ -856,6 +876,53 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 			}
 		}
 		await this.readSummaries([...wanted.values()], true);
+	}
+
+	revalidate(sessionId: string, maxAgeMs = REVALIDATE_MS): Promise<void> {
+		return this.revalidateLinks(visibleLinks(this.chats.get(sessionId)), maxAgeMs);
+	}
+
+	revalidateKeys(keys: readonly string[], maxAgeMs = REVALIDATE_MS): Promise<void> {
+		const wanted = new Set(keys);
+		const links = new Map<string, IAgentPrLink>();
+		for (const list of this.chats.values()) {
+			for (const link of list) {
+				if (wanted.has(link.key) && link.source !== 'dismissed' && (link.syncedAt ?? 0) >= (links.get(link.key)?.syncedAt ?? -1)) {
+					links.set(link.key, link);
+				}
+			}
+		}
+		return this.revalidateLinks([...links.values()], maxAgeMs);
+	}
+
+	private async revalidateLinks(links: readonly IAgentPrLink[], maxAgeMs: number): Promise<void> {
+		if (!this.loaded || this._store.isDisposed) {
+			return;
+		}
+		const now = Date.now();
+		const pending: Promise<void>[] = [];
+		const due: IAgentPrLink[] = [];
+		for (const link of links) {
+			const inFlight = this.revalidating.get(link.key);
+			if (inFlight) {
+				pending.push(inFlight);
+			} else if (link.snapshot?.state !== 'merged' && now - (link.syncedAt ?? 0) > maxAgeMs && !due.some(other => other.key === link.key)) {
+				due.push(link);
+			}
+		}
+		if (due.length) {
+			// A user's look: it may spend the quota's reserve, as a click does.
+			const read = this.readSummaries(due, true).finally(() => {
+				for (const link of due) {
+					this.revalidating.delete(link.key);
+				}
+			});
+			for (const link of due) {
+				this.revalidating.set(link.key, read);
+			}
+			pending.push(read);
+		}
+		await Promise.all(pending);
 	}
 
 	private async tick(force: boolean): Promise<void> {

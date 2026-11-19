@@ -20,7 +20,11 @@ import { ITerminalService } from '../../../terminal/browser/terminal.js';
 import type { AgentEditor } from '../editor/agentEditor.js';
 import { AgentEditorInput, OPEN_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { openInAgentTools } from '../workspace/agentSurfaceHost.js';
-import { blockedReason, primaryAction, resolveMergeMethod } from '../../common/agentPullRequests.js';
+import { blockedReason, buildResolveConflictsPrompt, primaryAction, resolveMergeMethod } from '../../common/agentPullRequests.js';
+import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { newAgentChat } from '../workspace/agentPanels.js';
+import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { AgentPullRequestEditorInput, AgentPullRequestTarget } from './agentPullRequestEditorInput.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 
@@ -160,6 +164,30 @@ export async function composeInChat(accessor: ServicesAccessor, sessionId: strin
 	const existing = (input.draft ?? '').trim();
 	pane.prefillDraft(existing ? `${existing}\n\n${text}` : text, existing ? input.draftMentions : undefined);
 	return true;
+}
+
+/**
+ * Resolve Conflicts: a new chat in the pull request's project (the project of the chat it is linked
+ * to, else the one in front), linked to it so its pill follows, that is sent the prompt to merge the
+ * base in and resolve the conflicts. The chat where it came from keeps its own work. False when
+ * there is no project to start it in.
+ */
+export async function resolveConflictsInNewChat(accessor: ServicesAccessor, pr: Pick<IVoltPullRequest, 'key' | 'repo' | 'number' | 'url' | 'title' | 'headRefName' | 'baseRefName'>, fromSessionId?: string): Promise<boolean> {
+	const pullRequests = accessor.get(IAgentPullRequestService);
+	const sessionContext = accessor.get(IVoltSessionContextService);
+	const workspace = accessor.get(IAgentWorkspaceService);
+	const history = accessor.get(IAgentHistoryService);
+	const editorGroups = accessor.get(IEditorGroupsService);
+	const instantiation = accessor.get(IInstantiationService);
+	const linked = fromSessionId ?? pullRequests.sessionsFor(pr.key)[0];
+	const binding = linked ? sessionContext.bindingFor(linked) : undefined;
+	const project = (binding ? sessionContext.getProject(binding.projectId) : undefined) ?? sessionContext.activeProject;
+	if (!project || project.scratch) {
+		return false;
+	}
+	const input = await newAgentChat(sessionContext, workspace, history, editorGroups, instantiation, project.root, project.displayName);
+	await pullRequests.link(input.sessionId, { repo: pr.repo, number: pr.number, url: pr.url }, 'agent').catch(() => undefined);
+	return instantiation.invokeFunction(next => sendInChat(next, input.sessionId, buildResolveConflictsPrompt(pr)));
 }
 
 /**
