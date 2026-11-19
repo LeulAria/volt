@@ -814,7 +814,7 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			voltSurfaces: [
 				{
 					id: 'http',
-					label: 'HTTP Client',
+					label: 'Volt Client',
 				},
 			],
 			voltCapabilities: {
@@ -843,8 +843,8 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 			},
 			voltModule: {
 				feature: 'httpClient',
-				label: 'HTTP client',
-				description: 'Send and save requests in .http files and read the responses, from the right panel\'s + menu.',
+				label: 'Volt Client',
+				description: 'Send and save API requests (HTTP, GraphQL, WebSocket, gRPC and more) in .http files and Postman collections, from the right panel\'s + menu.',
 				category: 'tools',
 				icon: 'send',
 				order: 25,

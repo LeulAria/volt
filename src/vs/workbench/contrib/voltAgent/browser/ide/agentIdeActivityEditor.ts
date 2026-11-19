@@ -61,7 +61,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		[IDE_AUTO_OPEN_SETTING]: {
 			type: 'boolean',
 			default: true,
-			description: localize('voltIde.autoOpen', "When an agent uses the IDE (tests, debugger, git, notebooks, Docker, Kubernetes, CI, coverage, HTTP client...), open what it works on as a tab beside the chat. Closing a tab keeps it closed for that chat."),
+			description: localize('voltIde.autoOpen', "When an agent uses the IDE (tests, debugger, git, notebooks, Docker, Kubernetes, CI, coverage, Volt Client...), open what it works on as a tab beside the chat. Closing a tab keeps it closed for that chat."),
 		},
 	},
 });
@@ -104,7 +104,7 @@ function tabMeta(key: AgentIdeTabKey): ITabMeta {
 		case 'analyze': return { title: localize('voltIde.tab.analyze', "Static Analysis"), icon: Codicon.checklist, actions: [{ label: localize('voltIde.act.problems', "Problems"), icon: Codicon.warning, run: view(Markers.MARKERS_VIEW_ID) }] };
 		case 'profile': return { title: localize('voltIde.tab.profile', "Profiler"), icon: Codicon.dashboard, actions: [] };
 		case 'extensions': return { title: localize('voltIde.tab.extensions', "Extensions"), icon: Codicon.extensions, actions: [{ label: localize('voltIde.act.extensions', "Extensions View"), icon: Codicon.extensions, run: viewContainer('workbench.view.extensions') }] };
-		case 'http': return { title: localize('voltIde.tab.http', "HTTP Client"), icon: Codicon.send, actions: [] };
+		case 'http': return { title: localize('voltIde.tab.http', "Volt Client"), icon: Codicon.plug, actions: [] };
 		case 'notebook': return { title: localize('voltIde.tab.notebook', "Notebook"), icon: Codicon.notebook, actions: [] };
 		case 'db': return { title: localize('voltIde.tab.db', "Database"), icon: Codicon.database, actions: [] };
 	}

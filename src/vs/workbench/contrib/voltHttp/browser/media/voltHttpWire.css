@@ -1,0 +1,329 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* What goes on the wire: a request's Settings tab and the Cookies dialog. Tokens are voltHttp.css's. */
+
+/* --- Settings: a row per setting, its control at the right ------------------------------------ */
+
+/* Inside the request's tab body, which pads and scrolls. */
+.volt-http-set {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	container-type: inline-size;
+}
+
+.volt-http-set-row {
+	display: flex;
+	align-items: center;
+	gap: 24px;
+	padding: 11px 0;
+	border-bottom: 1px solid var(--volt-http-line);
+}
+
+.volt-http-set-row:last-child {
+	border-bottom: 0;
+}
+
+.volt-http-set-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.volt-http-set-head {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: 2px 10px;
+}
+
+.volt-http-set-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--vscode-foreground);
+}
+
+.volt-http-set-description {
+	margin-top: 3px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 17px;
+}
+
+.volt-http-link.volt-http-set-restore {
+	display: none;
+	font-size: 11px;
+}
+
+.volt-http-link.volt-http-set-restore.shown {
+	display: inline;
+}
+
+.volt-http-set-control {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	min-width: 96px;
+}
+
+.volt-http-set-control.checks {
+	flex-wrap: wrap;
+	gap: 6px 14px;
+}
+
+.volt-http-set-check {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	cursor: pointer;
+	user-select: none;
+}
+
+/* Text fields: the theme's input, 3px corners, no focus ring. */
+.volt-http-set-input {
+	width: 96px;
+	height: 28px;
+	margin: 0;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-input-border, var(--volt-http-line));
+	border-radius: 3px;
+	outline: 0;
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground, var(--vscode-foreground));
+	font-family: inherit;
+	font-size: 12px;
+}
+
+.volt-http-set-input:focus,
+.volt-http-set-input:focus-visible {
+	outline: 0;
+}
+
+.volt-http-set-input::placeholder {
+	color: var(--vscode-input-placeholderForeground, var(--volt-http-muted));
+	opacity: 0.7;
+}
+
+.volt-http-set-input.wide {
+	width: 260px;
+	font-family: var(--monaco-monospace-font);
+}
+
+/* The switch: a track and a knob in the theme's colours, ON / OFF beside it. */
+.volt-http-switch-state {
+	min-width: 24px;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-align: right;
+}
+
+.volt-http-switch {
+	position: relative;
+	flex: none;
+	width: 32px;
+	height: 18px;
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-checkbox-border, var(--volt-http-line));
+	border-radius: 9px;
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+	cursor: pointer;
+	transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.volt-http-switch-knob {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background: var(--vscode-foreground);
+	opacity: 0.75;
+	transition: transform 120ms ease;
+}
+
+.volt-http-switch.on {
+	border-color: var(--vscode-button-background);
+	background: var(--vscode-button-background);
+}
+
+.volt-http-switch.on .volt-http-switch-knob {
+	background: var(--vscode-button-foreground, #fff);
+	opacity: 1;
+	transform: translateX(14px);
+}
+
+.volt-http-switch:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+/* Narrow (the right panel beside a chat): the control goes under its text. */
+@container (max-width: 560px) {
+	.volt-http-set-row {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+	}
+
+	.volt-http-set-control {
+		justify-content: flex-start;
+		min-width: 0;
+		max-width: 100%;
+	}
+
+	.volt-http-set-control .volt-http-switch-state {
+		order: 1;
+		text-align: left;
+	}
+
+	.volt-http-set-input.wide {
+		width: 100%;
+		max-width: 320px;
+	}
+}
+
+/* --- Cookies dialog ---------------------------------------------------------------------------- */
+
+.volt-http-modal-body.volt-http-cookies {
+	padding: 0;
+	gap: 0;
+	overflow: hidden;
+}
+
+.volt-http-cookie-bar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 14px 16px;
+}
+
+.volt-http-cookie-intro {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	padding: 14px 16px 0;
+}
+
+.volt-http-set-input.volt-http-cookie-domain,
+.volt-http-set-input.volt-http-cookie-text {
+	flex: 1 1 auto;
+	width: auto;
+	min-width: 0;
+}
+
+.volt-http-set-input.volt-http-cookie-text {
+	font-family: var(--monaco-monospace-font);
+}
+
+.monaco-workbench .volt-http-cookie-bar .volt-button,
+.monaco-workbench .volt-http-cookie-row .volt-button {
+	flex: none;
+	width: auto;
+	height: 28px;
+	padding: 0 12px;
+}
+
+.volt-http-cookie-status {
+	display: none;
+	flex: none;
+	padding: 0 16px 10px;
+	color: var(--volt-http-delete);
+	font-size: 12px;
+	line-height: 17px;
+}
+
+.volt-http-cookie-status.shown {
+	display: block;
+}
+
+/* The list runs edge to edge under a hairline; its rows carry the side padding. */
+.volt-http-cookie-list {
+	flex: none;
+	border-top: 1px solid var(--volt-http-line);
+}
+
+.volt-http-cookie-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-http-cookie-hidden {
+	display: none !important;
+}
+
+.volt-http-row.volt-http-cookie-row {
+	gap: 8px;
+	padding: 0 12px 0 0;
+	font-size: 13px;
+}
+
+.volt-http-row.volt-http-cookie-row.allow {
+	padding-left: 16px;
+}
+
+.volt-http-cookie-row.domain .volt-http-row-label {
+	font-weight: 600;
+}
+
+.volt-http-cookie-row.add {
+	color: var(--vscode-textLink-foreground);
+	cursor: pointer;
+}
+
+.volt-http-cookie-row.add .volt-http-row-icon {
+	color: inherit;
+}
+
+.volt-http-cookie-name {
+	flex: none;
+	max-width: 34%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.volt-http-cookie-value {
+	flex: 0 1 auto;
+	min-width: 24px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-http-muted);
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+}
+
+.volt-http-cookie-attributes {
+	flex: 1 1 0;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--volt-http-muted);
+	font-size: 11px;
+	text-align: right;
+}
+
+.volt-http-cookie-empty {
+	flex: none;
+	padding: 18px 16px 22px;
+	border-top: 1px solid var(--volt-http-line);
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 18px;
+}

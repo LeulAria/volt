@@ -1334,7 +1334,10 @@ function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatc
 		append(line, $('span.volt-menu-detail')).textContent = item.detail;
 	}
 	if (text) {
-		append(text, $('span.volt-menu-subtitle')).textContent = item.subtitle!;
+		const subtitle = append(text, $('span.volt-menu-subtitle'));
+		subtitle.textContent = item.subtitle!;
+		// Cut short in a narrow menu: the whole line is a hover away.
+		subtitle.title = item.subtitle!;
 	} else {
 		append(host, $('span.volt-menu-spacer'));
 	}

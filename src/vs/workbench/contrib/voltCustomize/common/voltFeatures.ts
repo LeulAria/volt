@@ -268,8 +268,8 @@ export const VOLT_FEATURES_HAND_WRITTEN: readonly IVoltFeature[] = [
 		tools: PLAYGROUND_TOOL_NAMES,
 	},
 	{
-		id: 'httpClient', label: 'HTTP client', category: 'tools', icon: 'send', extensionId: 'volt.http-client',
-		description: 'Send and save requests in .http files and read the responses, from the right panel\'s + menu.',
+		id: 'httpClient', label: 'Volt Client', category: 'tools', icon: 'send', extensionId: 'volt.http-client',
+		description: 'Send and save API requests (HTTP, GraphQL, WebSocket, gRPC and more) in .http files and Postman collections, from the right panel\'s + menu.',
 		// Agents reach it through the Dev environment's ide gateway.
 		toolCapabilities: [`${IDE_GATEWAY_TOOL_NAME}.http`],
 		commands: ['volt.http.openInTools', 'volt.http.newRequest', 'volt.http.selectEnvironment', 'volt.http.refresh'],

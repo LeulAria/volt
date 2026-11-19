@@ -2011,6 +2011,9 @@ pre.volt-agent-searchable {
 	border: 1px solid var(--volt-table-border);
 	border-radius: 8px;
 	overflow: hidden;
+	/* Border inside the width: a frame 2px wider than its exchange loses its right edge to the
+	 * paint containment of off-screen-skipped exchanges (content-visibility). */
+	box-sizing: border-box;
 	width: 100%;
 	max-width: 100%;
 	min-width: 0;

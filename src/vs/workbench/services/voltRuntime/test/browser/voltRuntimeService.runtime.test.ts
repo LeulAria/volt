@@ -280,6 +280,46 @@ suite('Agent runtime orchestration', () => {
 		return { service, internals, model, agent, stdio, history, events, ref, waitEnd, ended, fileService, revokedMcpSessions };
 	}
 
+	test('generateText with a ref: an agent without a print mode answers in one text-only session, stopped afterwards', async () => {
+		const { service, agent, stdio, ref } = await setup('agent');
+		agent.turns.push(async function* () {
+			yield { type: 'text.delta', id: 't', delta: 'pm.test("ok", ' };
+			yield { type: 'text.delta', id: 't', delta: '() => {});' };
+		});
+		const text = await service.generateText('Write tests', { ref, systemPrompt: 'You write tests.' });
+		assert.strictEqual(text, 'pm.test("ok", () => {});');
+		assert.deepStrictEqual(agent.starts.map(start => [start.mode, start.modelId, start.textOnly?.systemPrompt, start.sessionId]), [['ask', 'm1', 'You write tests.', undefined]]);
+		// The fake agent takes no system prompt of the caller's: it leads the prompt instead.
+		assert.deepStrictEqual(agent.prompts.map(prompt => prompt.text), ['You write tests.\n\nWrite tests']);
+		assert.deepStrictEqual(agent.disposed, ['h1']);
+		assert.deepStrictEqual(stdio.execs.filter(exec => exec.id.startsWith('title-')), []);
+	});
+
+	test('generateText with a ref: an agent\'s error, or a ref that is not set up, gives no text', async () => {
+		const { service, agent, ref } = await setup('agent');
+		agent.turns.push(async function* () {
+			yield { type: 'text.delta', id: 't', delta: 'half' };
+			yield { type: 'error', message: 'not signed in' };
+		});
+		assert.strictEqual(await service.generateText('Write tests', { ref, systemPrompt: 'You write tests.' }), undefined);
+		assert.deepStrictEqual(agent.disposed, ['h1']);
+		assert.strictEqual(await service.generateText('Write tests', { ref: 'agent:nobody:m1', systemPrompt: 'You write tests.' }), undefined);
+		assert.strictEqual(agent.starts.length, 1, 'no other model stands in for the one asked for');
+	});
+
+	test('generateText with a ref: a CLI with a print mode runs the picked model on the caller\'s system prompt; a native model gets it as its system message', async () => {
+		const cli = await setup('agent');
+		cli.internals.profiles = cli.internals.profiles.map(profile => ({ ...profile, providerId: 'claude-code' }));
+		await cli.service.generateText('Write tests', { ref: cli.ref, systemPrompt: 'You write tests.' });
+		const [exec] = cli.stdio.execs.filter(candidate => candidate.id.startsWith('title-'));
+		assert.ok(exec.command.includes('You write tests.') && exec.command.includes('--model') && exec.command.includes('m1'), exec.command);
+		assert.deepStrictEqual(cli.agent.starts, []);
+
+		const native = await setup('model');
+		assert.strictEqual(await native.service.generateText('Write tests', { ref: native.ref, systemPrompt: 'You write tests.' }), 'ok');
+		assert.deepStrictEqual(native.model.requests.at(-1)?.messages.map(message => `${message.role}:${message.content}`), ['system:You write tests.', 'user:Write tests']);
+	});
+
 	test('a native run streams, ends done, keeps the reply and records its timings', async () => {
 		const { service, ref, waitEnd } = await setup('model');
 		const runId = await service.send('chat', { text: 'hi', mode: 'agent', providerRef: ref });

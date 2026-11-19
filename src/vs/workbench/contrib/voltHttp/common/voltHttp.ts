@@ -12,3 +12,5 @@
 export const HTTP_CLIENT_FEATURE_ID = 'httpClient';
 /** Its entry in the right panel's "+" menu (the manifest's `voltSurfaces` id). */
 export const HTTP_CLIENT_SURFACE_ID = 'http';
+/** Puts a request's reference into the chat beside the client (`{ label, value, chatId }`). */
+export const HTTP_ADD_TO_CHAT_COMMAND_ID = 'volt.http.addToChat';

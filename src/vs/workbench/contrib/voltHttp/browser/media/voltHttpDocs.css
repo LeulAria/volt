@@ -1,0 +1,451 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* The Docs tab (voltHttpDocsEditor.ts): a centred toolbar over rich text or its Markdown. Tokens are voltHttp.css's. */
+
+.volt-http-docs-editor {
+	position: relative;
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	min-width: 0;
+}
+
+.volt-http-docs-editor .hidden {
+	display: none !important;
+}
+
+/* --- Toolbar ------------------------------------------------------------------------------------ */
+
+.volt-http-docs-bar-row {
+	flex: none;
+	display: flex;
+	justify-content: center;
+	padding: 6px 0 10px;
+}
+
+.volt-http-docs-bar {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	width: 100%;
+	max-width: 760px;
+	min-width: 0;
+	box-sizing: border-box;
+	padding: 3px 4px;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+}
+
+.volt-http-docs-sep {
+	flex: none;
+	width: 1px;
+	height: 16px;
+	margin: 0 4px;
+	background: var(--volt-http-line);
+}
+
+.volt-http-docs-spacer {
+	flex: 1 1 auto;
+	min-width: 4px;
+}
+
+.volt-http-docs-bar .volt-http-icon-button {
+	border-radius: 3px;
+}
+
+.volt-http-docs-bar .volt-http-icon-button.volt-http-docs-button .codicon {
+	font-size: 15px;
+}
+
+.volt-http-docs-bar .volt-http-icon-button:disabled {
+	opacity: 0.4;
+	background: transparent;
+	color: var(--volt-http-muted);
+	cursor: default;
+}
+
+.volt-http-docs-more {
+	display: none;
+}
+
+.volt-http-docs-editor.narrow .volt-http-docs-bar .secondary {
+	display: none;
+}
+
+.volt-http-docs-editor.narrow .volt-http-docs-bar .volt-http-docs-more {
+	display: inline-flex;
+}
+
+/* In a narrow pane the two dropdowns give way (their labels ellipsize) so the toolbar stays inside its box. */
+.volt-http-docs-style,
+.volt-http-docs-mode {
+	flex: 0 1 auto;
+	display: flex;
+	min-width: 44px;
+}
+
+.monaco-workbench .volt-http-docs-bar .volt-dropdown {
+	min-width: 0;
+	max-width: 100%;
+}
+
+/* Narrow: the mode menu keeps only its icon (pencil = editor, markdown = source), leaving the room to the block style. */
+.volt-http-docs-editor.narrow .volt-http-docs-mode .volt-dropdown-label {
+	display: none;
+}
+
+.volt-http-docs-editor.narrow .volt-http-docs-mode {
+	flex: none;
+	min-width: 52px;
+}
+
+.volt-http-docs-editor.narrow .volt-http-docs-style {
+	min-width: 104px;
+}
+
+.monaco-workbench .volt-http-docs-bar .volt-dropdown {
+	height: 24px;
+	padding: 0 4px 0 8px;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--vscode-foreground);
+	font-size: 12px;
+}
+
+.monaco-workbench .volt-http-docs-bar .volt-dropdown:hover,
+.monaco-workbench .volt-http-docs-bar .volt-dropdown.open {
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.monaco-workbench .volt-http-docs-bar .volt-dropdown:disabled {
+	opacity: 0.45;
+	background: transparent;
+	cursor: default;
+}
+
+.monaco-workbench .volt-http-docs-bar .volt-http-docs-ai {
+	flex: none;
+	height: 24px;
+	padding: 0 8px;
+	gap: 4px;
+	border-radius: 3px;
+	font-size: 12px;
+	white-space: nowrap;
+}
+
+.monaco-workbench .volt-http-docs-bar .volt-http-docs-ai:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+.volt-http-docs-editor.narrow .volt-http-docs-ai-label {
+	display: none;
+}
+
+/* --- Status of "Write with AI" ------------------------------------------------------------------- */
+
+.volt-http-docs-status {
+	flex: none;
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	width: 100%;
+	max-width: 760px;
+	box-sizing: border-box;
+	margin: -4px auto 8px;
+	padding: 0 2px;
+	color: var(--volt-http-muted);
+	font-size: 12px;
+	line-height: 18px;
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}
+
+.volt-http-docs-status.error {
+	color: var(--volt-http-delete);
+}
+
+/* --- Rich text ----------------------------------------------------------------------------------- */
+
+.volt-http-docs-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	cursor: text;
+}
+
+.volt-http-docs-editor.markdown .volt-http-docs-body {
+	display: none;
+}
+
+.volt-http-docs-page {
+	position: relative;
+	max-width: 760px;
+	min-height: 100%;
+	margin: 0 auto;
+}
+
+.volt-http-docs-surface {
+	min-height: 120px;
+	padding: 2px 2px 32px;
+	outline: 0;
+	color: var(--vscode-foreground);
+	font-size: 13px;
+	line-height: 1.6;
+	overflow-wrap: break-word;
+	caret-color: var(--vscode-editorCursor-foreground, var(--vscode-foreground));
+}
+
+.volt-http-docs-surface > :first-child {
+	margin-top: 0;
+}
+
+.volt-http-docs-surface p {
+	margin: 0 0 8px;
+}
+
+.volt-http-docs-surface h1,
+.volt-http-docs-surface h2,
+.volt-http-docs-surface h3,
+.volt-http-docs-surface h4,
+.volt-http-docs-surface h5,
+.volt-http-docs-surface h6 {
+	margin: 18px 0 8px;
+	font-weight: 600;
+	line-height: 1.3;
+}
+
+.volt-http-docs-surface h1 { font-size: 20px; }
+.volt-http-docs-surface h2 { font-size: 17px; }
+.volt-http-docs-surface h3 { font-size: 15px; }
+.volt-http-docs-surface h4 { font-size: 13px; }
+.volt-http-docs-surface h5 { font-size: 12px; }
+.volt-http-docs-surface h6 { font-size: 12px; color: var(--volt-http-muted); }
+
+.volt-http-docs-surface strong,
+.volt-http-docs-surface b {
+	font-weight: 600;
+}
+
+.volt-http-docs-surface ul,
+.volt-http-docs-surface ol {
+	margin: 0 0 8px;
+	padding-left: 22px;
+}
+
+.volt-http-docs-surface li {
+	margin: 2px 0;
+}
+
+.volt-http-docs-surface li > ul,
+.volt-http-docs-surface li > ol,
+.volt-http-docs-surface ul > ul,
+.volt-http-docs-surface ol > ol,
+.volt-http-docs-surface ul > ol,
+.volt-http-docs-surface ol > ul {
+	margin: 0;
+}
+
+.volt-http-docs-surface li.task {
+	position: relative;
+	list-style: none;
+}
+
+.volt-http-docs-surface li.task::before {
+	content: "";
+	position: absolute;
+	left: -18px;
+	top: 0.4em;
+	box-sizing: border-box;
+	width: 11px;
+	height: 11px;
+	border: 1px solid var(--volt-http-muted);
+	border-radius: 3px;
+}
+
+.volt-http-docs-surface li.task[data-checked="true"]::before {
+	content: "\2713";
+	color: var(--vscode-foreground);
+	font-size: 9px;
+	line-height: 9px;
+	text-align: center;
+}
+
+.volt-http-docs-surface code,
+.volt-http-docs-surface pre {
+	font-family: var(--monaco-monospace-font);
+	font-size: 12px;
+	background: var(--vscode-textCodeBlock-background, color-mix(in srgb, var(--vscode-foreground) 7%, transparent));
+	border-radius: 3px;
+}
+
+.volt-http-docs-surface code {
+	padding: 1px 4px;
+}
+
+.volt-http-docs-surface pre {
+	margin: 0 0 10px;
+	padding: 10px 12px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	tab-size: 4;
+	overflow-wrap: anywhere;
+}
+
+.volt-http-docs-surface pre code {
+	padding: 0;
+	background: transparent;
+}
+
+/* A quote's 2px neutral bar: the one accepted left rule. */
+.volt-http-docs-surface blockquote {
+	margin: 0 0 8px;
+	padding: 0 0 0 12px;
+	border-left: 2px solid color-mix(in srgb, var(--vscode-foreground) 22%, transparent);
+	color: var(--volt-http-muted);
+}
+
+.volt-http-docs-surface blockquote > :last-child {
+	margin-bottom: 0;
+}
+
+.volt-http-docs-surface table {
+	margin: 0 0 10px;
+	max-width: 100%;
+	border-collapse: collapse;
+	font-size: 12px;
+}
+
+.volt-http-docs-surface th,
+.volt-http-docs-surface td {
+	min-width: 72px;
+	padding: 5px 10px;
+	border: 1px solid var(--volt-http-line);
+	text-align: left;
+	vertical-align: top;
+}
+
+.volt-http-docs-surface th {
+	font-weight: 600;
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+.volt-http-docs-surface hr {
+	margin: 14px 0;
+	border: 0;
+	border-top: 1px solid var(--volt-http-line);
+}
+
+.volt-http-docs-surface a {
+	color: var(--vscode-textLink-foreground);
+	text-decoration: none;
+}
+
+.volt-http-docs-surface a:hover {
+	text-decoration: underline;
+}
+
+.volt-http-docs-surface img {
+	max-width: 100%;
+	border-radius: 3px;
+	vertical-align: middle;
+}
+
+/* An image the window may not load shows as a small framed box. */
+.volt-http-docs-surface img:not([src]) {
+	display: inline-block;
+	width: 16px;
+	height: 16px;
+	border: 1px dashed var(--volt-http-line);
+}
+
+.volt-http-docs-empty {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	right: 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 10px;
+	color: var(--vscode-input-placeholderForeground, var(--volt-http-muted));
+	font-size: 13px;
+	line-height: 1.6;
+	pointer-events: none;
+}
+
+.volt-http-docs-empty .volt-http-link {
+	font-size: 13px;
+	line-height: inherit;
+	pointer-events: auto;
+}
+
+/* --- Markdown source ----------------------------------------------------------------------------- */
+
+.volt-http-docs-source {
+	display: none;
+}
+
+.volt-http-docs-editor.markdown .volt-http-docs-source {
+	display: block;
+	flex: 1 1 auto;
+	width: 100%;
+	max-width: 760px;
+	min-height: 0;
+	box-sizing: border-box;
+	margin: 0 auto;
+	border: 1px solid var(--volt-http-line);
+	border-radius: 3px;
+	overflow: hidden;
+}
+
+/* --- Link and image form ------------------------------------------------------------------------- */
+
+.volt-http-docs-popover {
+	position: absolute;
+	z-index: 20;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	box-sizing: border-box;
+	padding: 10px 12px;
+	border: 1px solid var(--vscode-editorWidget-border, var(--volt-http-line));
+	border-radius: 3px;
+	background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+	color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+	box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
+	font-size: 12px;
+}
+
+.volt-http-docs-popover-title {
+	font-weight: 600;
+}
+
+.volt-http-docs-popover-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.volt-http-docs-popover-field .volt-http-input {
+	height: 28px;
+	padding: 4px 8px;
+	font-size: 12px;
+	resize: none;
+}
+
+.volt-http-docs-popover-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding-top: 2px;
+}
+
+.monaco-workbench .volt-http-docs-popover .volt-button.volt-button-small {
+	height: 24px;
+	border-radius: 3px;
+}

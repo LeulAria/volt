@@ -93,6 +93,10 @@ const DEVICE_ICON_SHAPES: SvgIconShapes = [
 	['path', { d: 'M12 18h.01' }],
 ];
 
+/** A plug, for the HTTP client (drawn on a 48 grid: halved here, its line doubled to match). */
+const HTTP_ICON_SHAPES: SvgIconShapes = [
+	['path', { d: 'm37 22l-3 3l-11-11l3-3c1.5-1.5 7-4 11 0s1.5 9.5 0 11m5-16l-5 5M11 26l3-3l11 11l-3 3c-1.5 1.5-7 4-11 0s-1.5-9.5 0-11m12 6l4-4M6 42l5-5m5-12l4-4', transform: 'scale(0.5)', 'stroke-width': 3 }],
+];
 export const SIDE_CHAT_ICON_PATH = 'M7 7H15M7 11H11M5 3H19C20.1046 3 21 3.89543 21 5V15C21 16.1046 20.1046 17 19 17H16L12.3536 20.6464C12.1583 20.8417 11.8417 20.8417 11.6464 20.6464L8 17H5C3.89543 17 3 16.1046 3 15V5C3 3.89543 3.89543 3 5 3Z';
 
 /** Right-rail / tab-bar + menu rows that open an agent surface. */
@@ -209,8 +213,9 @@ export function agentSurfaceMenuItems(): readonly IAgentSurfaceMenuItem[] {
 		{
 			// The HTTP client: send and save requests (.http files), see responses.
 			id: 'http',
-			label: localize('voltAgent.surfaceMenu.http', "HTTP Client"),
-			icon: Codicon.send,
+			label: localize('voltAgent.surfaceMenu.http', "Volt Client"),
+			icon: Codicon.plug,
+			svgPath: HTTP_ICON_SHAPES,
 		},
 		{
 			id: 'sideChat',

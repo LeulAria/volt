@@ -147,6 +147,12 @@ import { VoltSkillsDirectoryMainService } from '../../platform/voltMarketplace/e
 import { IVoltFsBrowseService, VOLT_FS_BROWSE_CHANNEL_NAME } from '../../platform/voltFsBrowse/common/voltFsBrowse.js';
 import { VoltFsBrowseService } from '../../platform/voltFsBrowse/node/voltFsBrowseService.js';
 import { IVoltHttpTransport, VOLT_HTTP_TRANSPORT_CHANNEL_NAME } from '../../platform/voltHttp/common/voltHttpTransport.js';
+import { IVoltHttpStreams, VOLT_HTTP_STREAMS_CHANNEL_NAME } from '../../platform/voltHttp/common/voltHttpStreams.js';
+import { VoltHttpStreamsMainService } from '../../platform/voltHttp/electron-main/voltHttpStreamsMain.js';
+import { IVoltHttpLoad, VOLT_HTTP_LOAD_CHANNEL_NAME } from '../../platform/voltHttp/common/voltHttpLoad.js';
+import { VoltHttpLoadMainService } from '../../platform/voltHttp/electron-main/voltHttpLoadMain.js';
+import { IVoltHttpOAuth, VOLT_HTTP_OAUTH_CHANNEL_NAME } from '../../platform/voltHttp/common/voltHttpOAuth.js';
+import { VoltHttpOAuthMainService, isVoltHttpOAuthContents } from '../../platform/voltHttp/electron-main/voltHttpOAuthMain.js';
 import { VoltHttpTransportMainService } from '../../platform/voltHttp/electron-main/voltHttpTransportMain.js';
 import { RequestChannel } from '../../platform/request/common/requestIpc.js';
 import { IVoltBrowserService, VOLT_BROWSER_CHANNEL_NAME, VOLT_BROWSER_PARTITION } from '../../platform/voltBrowser/common/voltBrowser.js';
@@ -528,6 +534,11 @@ export class CodeApplication extends Disposable {
 			// browsers must be allowed to navigate or every page load aborts.
 			contents.on('will-navigate', event => {
 				if (contents.getType() === 'webview') {
+					return;
+				}
+
+				// Volt: the HTTP client's OAuth sign-in window (sandboxed, no preload, its own session) moves through the provider's pages
+				if (isVoltHttpOAuthContents(contents.id)) {
 					return;
 				}
 
@@ -1209,6 +1220,9 @@ export class CodeApplication extends Disposable {
 
 		// Volt HTTP client: requests leave from here, so no page CORS check applies
 		services.set(IVoltHttpTransport, new SyncDescriptor(VoltHttpTransportMainService, undefined, true));
+		services.set(IVoltHttpStreams, new SyncDescriptor(VoltHttpStreamsMainService, undefined, true));
+		services.set(IVoltHttpLoad, new SyncDescriptor(VoltHttpLoadMainService, undefined, true));
+		services.set(IVoltHttpOAuth, new SyncDescriptor(VoltHttpOAuthMainService, undefined, true));
 
 		// Volt in-app browser (session data, color scheme emulation)
 		services.set(IVoltBrowserService, new SyncDescriptor(VoltBrowserMainService, undefined, false /* proxied to other processes */));
@@ -1427,6 +1441,9 @@ export class CodeApplication extends Disposable {
 
 		// Volt HTTP client (the request editor's and agents' `ide http` sends)
 		mainProcessElectronServer.registerChannel(VOLT_HTTP_TRANSPORT_CHANNEL_NAME, new RequestChannel(accessor.get(IVoltHttpTransport) as VoltHttpTransportMainService));
+		mainProcessElectronServer.registerChannel(VOLT_HTTP_STREAMS_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltHttpStreams), disposables));
+		mainProcessElectronServer.registerChannel(VOLT_HTTP_LOAD_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltHttpLoad), disposables));
+		mainProcessElectronServer.registerChannel(VOLT_HTTP_OAUTH_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltHttpOAuth), disposables));
 
 		// Volt in-app browser
 		const voltBrowserChannel = ProxyChannel.fromService(accessor.get(IVoltBrowserService), disposables);

@@ -122,16 +122,18 @@ export function isNeutralTitle(title: string): boolean {
  * cheap print mode. Each one runs with no tools, no hooks and no saved session. `model` is a
  * model the user pinned for text generation; without one each CLI uses its cheapest default.
  */
-export function titleCommandFor(providerId: string, command: string | undefined, prompt: string, model?: string): readonly string[] | undefined {
+export function titleCommandFor(providerId: string, command: string | undefined, prompt: string, model?: string, systemPrompt?: string): readonly string[] | undefined {
+	// Only Claude takes a system prompt of the caller's; the others read it at the head of the prompt.
+	const led = systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
 	switch (providerId) {
 		case 'claude-code':
 			// Its own short system prompt: under Claude Code's agent prompt (~4.6k tokens) Haiku answered
 			// the message ("I couldn't run this...") instead of naming it.
-			return [command || 'claude', '-p', '--model', model || 'haiku', '--output-format', 'text', '--system-prompt', TITLE_SYSTEM_PROMPT, '--tools', '', '--disable-slash-commands', '--strict-mcp-config', '--no-session-persistence', '--settings', '{"disableAllHooks":true}', prompt];
+			return [command || 'claude', '-p', '--model', model || 'haiku', '--output-format', 'text', '--system-prompt', systemPrompt ?? TITLE_SYSTEM_PROMPT, '--tools', '', '--disable-slash-commands', '--strict-mcp-config', '--no-session-persistence', '--settings', '{"disableAllHooks":true}', prompt];
 		case 'codex':
-			return [command || 'codex', 'exec', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-c', 'model_reasoning_effort="low"', ...(model ? ['-m', model] : []), prompt];
+			return [command || 'codex', 'exec', '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-c', 'model_reasoning_effort="low"', ...(model ? ['-m', model] : []), led];
 		case 'cursor-acp':
-			return [command || 'cursor-agent', '-p', '--output-format', 'text', '--mode', 'ask', ...(model ? ['--model', model] : []), prompt];
+			return [command || 'cursor-agent', '-p', '--output-format', 'text', '--mode', 'ask', ...(model ? ['--model', model] : []), led];
 		default:
 			return undefined;
 	}

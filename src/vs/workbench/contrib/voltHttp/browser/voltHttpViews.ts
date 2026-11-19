@@ -32,6 +32,8 @@ export const VOLT_HTTP_REQUESTS_VIEW_ID = 'workbench.view.voltHttp.requests';
 export const VOLT_HTTP_HISTORY_VIEW_ID = 'workbench.view.voltHttp.history';
 export const OPEN_HTTP_REQUEST_COMMAND_ID = 'volt.http.openRequest';
 export const OPEN_HTTP_EXCHANGE_COMMAND_ID = 'volt.http.openExchange';
+/** Used by the agents' `ide http` capability to show what it changed (args: collection uri, request name path?, session id?). */
+export const REVEAL_HTTP_COLLECTION_COMMAND_ID = 'volt.http.revealCollection';
 
 const ROW_HEIGHT = 24;
 

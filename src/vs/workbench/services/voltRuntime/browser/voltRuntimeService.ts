@@ -48,7 +48,7 @@ import { IAgentDetectResult, IAgentMessage, IAgentProvider, IAgentSandboxStart, 
 import { DEFAULT_SANDBOX_SETTINGS, IVoltSandboxSettings, newChatSandboxDefaults, normalizeSandboxSettings, sandboxLaunchKey, sandboxWorkspaceRoots } from '../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isSandboxUnavailableError, sandboxRefusedMessage } from '../common/access/sandboxRefusal.js';
 import { cheapestReasoningLevel, resolveTabModel } from '../common/models/modelAccess.js';
-import { IAgentPrewarmOptions, IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
+import { IAgentPrewarmOptions, IAgentRuntimeService, IVoltAgentBackgroundTask, IVoltCompactionPlan, IVoltGenerateTextOptions, IVoltMcpApprovalRequest, IVoltMcpServerStatus, IVoltSeedMessage, IVoltSeedOptions, IVoltTaskModels } from '../common/runtime.js';
 import { countUserTurns, IVoltImageAttachment, IVoltSendRequest, IVoltSession } from '../common/session.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { IVoltStdioService, runGitThrough, VoltExecReason } from '../../../../platform/voltStdio/common/voltStdio.js';
@@ -1439,18 +1439,22 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * print mode. For a sandboxed chat (`sessionId`) the CLI runs in that chat's sandbox: the prompt
 	 * holds the chat's text, and the CLI reads state the chat's agent could have written.
 	 */
-	private async generateWith(item: IVoltCatalogItem | undefined, pinned: boolean, prompt: string, timeoutMs: number, maxChars: number, sessionId?: string): Promise<string | undefined> {
+	private async generateWith(item: IVoltCatalogItem | undefined, pinned: boolean, prompt: string, timeoutMs: number, maxChars: number, sessionId?: string, systemPrompt?: string): Promise<string | undefined> {
 		const profile = item ? this.profiles.find(p => p.id === item.profileId) : undefined;
 		if (item?.kind === 'model' && profile) {
-			return this.generateTitleWithModel(item, profile, prompt, pinned, timeoutMs, Math.max(400, Math.ceil(maxChars / 2)));
+			return this.generateTitleWithModel(item, profile, prompt, pinned, timeoutMs, Math.max(400, Math.ceil(maxChars / 2)), systemPrompt);
 		}
 		if (!profile) {
 			return undefined;
 		}
 		const definition = cliAgentDefinition(profile.providerId);
 		const command = profile.command && definition?.commands.includes(profile.command) ? profile.command : undefined;
+		if (item && systemPrompt && !titleCommandFor(profile.providerId, command, prompt)) {
+			// No print mode (Grok, OpenCode and the like): one text-only session of the agent writes it.
+			return this.generateWithAgentSession(item, profile, prompt, systemPrompt, timeoutMs);
+		}
 		const run = async (model: string | undefined) => {
-			const argv = titleCommandFor(profile.providerId, command, prompt, model);
+			const argv = titleCommandFor(profile.providerId, command, prompt, model, systemPrompt);
 			if (!argv) {
 				return undefined;
 			}
@@ -1472,22 +1476,72 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		return text === undefined && !pinned && chatModel ? run(chatModel) : text;
 	}
 
-	async generateText(prompt: string, options?: { readonly sessionId?: string; readonly timeoutMs?: number; readonly slot?: 'title' | 'git' }): Promise<string | undefined> {
+	async generateText(prompt: string, options?: IVoltGenerateTextOptions): Promise<string | undefined> {
 		const git = options?.slot === 'git' && this.taskModels.git ? this.catalog.find(item => item.ref === this.taskModels.git && item.enabled) : undefined;
 		const pinned = git ?? (this.taskModels.title ? this.catalog.find(item => item.ref === this.taskModels.title && item.enabled) : undefined);
 		const chatRef = options?.sessionId ? this.sessions.get(options.sessionId)?.providerRef : undefined;
-		const item = pinned
+		const asked = options?.ref ? this.catalog.find(candidate => candidate.ref === options.ref && candidate.enabled) : undefined;
+		if (options?.ref && !asked) {
+			return undefined;
+		}
+		const item = asked
+			?? pinned
 			?? (chatRef ? this.catalog.find(candidate => candidate.ref === chatRef && candidate.enabled) : undefined)
 			?? this.catalog.find(candidate => candidate.enabled);
 		try {
-			return await this.generateWith(item, !!pinned, prompt, options?.timeoutMs ?? GENERATED_TEXT_TIMEOUT_MS, 20_000, options?.sessionId);
+			// A model asked for by name runs as picked, like a pinned one.
+			return await this.generateWith(item, !!(asked ?? pinned), prompt, options?.timeoutMs ?? GENERATED_TEXT_TIMEOUT_MS, 20_000, options?.sessionId, options?.systemPrompt);
 		} catch (err) {
 			this.logService.trace('[volt runtime] text generation failed', err);
 			return undefined;
 		}
 	}
 
-	private async generateTitleWithModel(item: IVoltCatalogItem, profile: IProviderProfile, prompt: string, pinned: boolean, timeoutMs = TITLE_TIMEOUT_MS, maxOutputTokens = 400): Promise<string | undefined> {
+	/**
+	 * One answer from a text-only session of an agent: started for this prompt, read-only where the
+	 * agent keeps its tools, and stopped once it answered. Undefined when it failed or ran out of time.
+	 */
+	private async generateWithAgentSession(item: IVoltCatalogItem, profile: IProviderProfile, prompt: string, systemPrompt: string, timeoutMs: number): Promise<string | undefined> {
+		const provider = this.agentProviders.get(profile.providerId);
+		if (!provider) {
+			return undefined;
+		}
+		const ownPrompt = provider.takesSystemPrompt?.() === true;
+		const reasoning = cheapestReasoningLevel(item);
+		const source = new CancellationTokenSource();
+		const timer = setTimeout(() => source.cancel(), timeoutMs);
+		let handle: IAgentSessionHandle | undefined;
+		let text = '';
+		try {
+			handle = await provider.start({
+				mode: 'ask',
+				profile,
+				cwd: ownPrompt && !isWindows ? '/tmp' : this.workspace.getWorkspace().folders[0]?.uri.fsPath,
+				modelId: item.id === profile.providerId ? undefined : item.id,
+				options: reasoning ? { [MODEL_OPTION_REASONING]: reasoning } : {},
+				textOnly: { systemPrompt },
+			});
+			if (!ownPrompt) {
+				await provider.applyAccessPolicy?.(handle, compilePolicy({ overlay: modeOverlay('ask') }));
+			}
+			for await (const event of provider.send(handle, { text: ownPrompt ? prompt : `${systemPrompt}\n\n${prompt}`, mode: 'ask' }, profile, source.token)) {
+				if (event.type === 'text.delta' && event.delta) {
+					text += event.delta;
+				} else if (event.type === 'error') {
+					return undefined;
+				}
+			}
+			return source.token.isCancellationRequested ? undefined : text;
+		} finally {
+			clearTimeout(timer);
+			source.dispose();
+			if (handle) {
+				void provider.dispose(handle).catch(() => undefined);
+			}
+		}
+	}
+
+	private async generateTitleWithModel(item: IVoltCatalogItem, profile: IProviderProfile, prompt: string, pinned: boolean, timeoutMs = TITLE_TIMEOUT_MS, maxOutputTokens = 400, systemPrompt?: string): Promise<string | undefined> {
 		const provider = this.modelProviders.get(profile.providerId);
 		if (!provider) {
 			return undefined;
@@ -1502,7 +1556,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const timer = setTimeout(() => source.cancel(), timeoutMs);
 		let text = '';
 		try {
-			for await (const event of provider.stream({ modelId: item.id, profile, apiKey, options, messages: [{ role: 'user', content: prompt }], maxOutputTokens }, source.token)) {
+			for await (const event of provider.stream({ modelId: item.id, profile, apiKey, options, messages: [...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []), { role: 'user', content: prompt }], maxOutputTokens }, source.token)) {
 				if (event.type === 'text.delta' && event.delta) {
 					text += event.delta;
 				} else if (event.type === 'error') {

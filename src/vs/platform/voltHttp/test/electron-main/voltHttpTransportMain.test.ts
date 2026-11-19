@@ -14,7 +14,8 @@ import { TestConfigurationService } from '../../../configuration/test/common/tes
 import { INativeEnvironmentService } from '../../../environment/common/environment.js';
 import { NullLogService } from '../../../log/common/log.js';
 import { RequestChannel, RequestChannelClient } from '../../../request/common/requestIpc.js';
-import { INetClientRequest, NetRequestFunction, VoltHttpTransportMainService } from '../../electron-main/voltHttpTransportMain.js';
+import { VOLT_HTTP_VERSION_HEADER } from '../../common/voltHttpTransport.js';
+import { INetClientRequest, NetRequestFunction, VoltHttpTransportMainService, withCredentials } from '../../electron-main/voltHttpTransportMain.js';
 
 /**
  * Electron's `net.request` as far as the transport relies on it, on Node's `http`: with `redirect:
@@ -113,5 +114,33 @@ suite('Volt HTTP client transport (main process)', () => {
 		const followed = await client.request({ type: 'GET', url: `${api.base}/old`, followRedirects: 5, disableCache: true }, CancellationToken.None);
 		assert.strictEqual((await streamToBuffer(followed.stream)).toString(), 'should not be reached');
 		assert.deepStrictEqual(elsewhere.served.map(item => item.url), ['/internal']);
+	});
+
+	test('NTLM credentials answer the server\'s challenge once (DOMAIN\\user), never a proxy\'s', () => {
+		type LoginListener = (authInfo: { readonly isProxy: boolean }, callback: (username?: string, password?: string) => void) => void;
+		let login: LoginListener | undefined;
+		const fake: NetRequestFunction = () => ({
+			on: (event: string, listener: LoginListener) => {
+				if (event === 'login') {
+					login = listener;
+				}
+				return undefined;
+			},
+			abort: () => { },
+		}) as unknown as INetClientRequest;
+		withCredentials(fake, { username: 'ada', password: 'pw', domain: 'CORP' })({}, undefined);
+		const answers: (string | undefined)[][] = [];
+		login!({ isProxy: true }, (username, password) => answers.push([username, password]));
+		login!({ isProxy: false }, (username, password) => answers.push([username, password]));
+		login!({ isProxy: false }, (username, password) => answers.push([username, password]));
+		assert.deepStrictEqual(answers, [[undefined, undefined], ['CORP\\ada', 'pw'], [undefined, undefined]]);
+	});
+
+	test('the negotiated HTTP version comes back with the headers', async () => {
+		const api = await listen((_req, res) => res.end('ok'));
+		servers.push(api.server);
+		const context = await windowClient().request({ type: 'GET', url: `${api.base}/`, followRedirects: 0, disableCache: true }, CancellationToken.None);
+		assert.strictEqual(context.res.headers[VOLT_HTTP_VERSION_HEADER], '1.1');
+		await streamToBuffer(context.stream);
 	});
 });
