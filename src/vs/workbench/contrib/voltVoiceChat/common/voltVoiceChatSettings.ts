@@ -24,12 +24,13 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 		},
 		[VOICE_CHAT_PROVIDER_SETTING]: {
 			type: 'string',
-			enum: ['auto', 'xai', 'openai', 'custom'],
+			enum: ['auto', 'xai', 'openai', 'custom', 'local'],
 			enumDescriptions: [
-				localize('voiceChat.provider.auto', "xAI when it has a key, otherwise OpenAI."),
+				localize('voiceChat.provider.auto', "xAI when it has a key, then OpenAI, otherwise this computer."),
 				localize('voiceChat.provider.xai', "xAI's Grok Voice Agent API (grok-voice-latest)."),
 				localize('voiceChat.provider.openai', "OpenAI's Realtime API (gpt-realtime)."),
 				localize('voiceChat.provider.custom', "A server at the URL below that speaks the same realtime protocol."),
+				localize('voiceChat.provider.local', "This computer: dictation hears you, the chat's agent answers, and the Read Aloud voice speaks. Free and needs no key; you take turns."),
 			],
 			default: 'auto',
 			description: localize('voiceChat.provider', "Who hears and speaks in voice chats. The API key stays on this computer; each call gets a short-lived secret."),

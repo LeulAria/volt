@@ -109,6 +109,10 @@ export class ServerVoice extends Disposable {
 		const projectId = text(options.projectId);
 		const configured = this.configurationService.getValue<string>(VOICE_CHAT_PROVIDER_SETTING);
 		const provider: VoltVoiceProvider = isVoiceProvider(configured) ? configured : await this.autoProvider();
+		if (provider === 'local') {
+			// The computer's dictation and voices are in the desktop app; the phone's call needs a realtime model.
+			throw new Error('Voice chat on this computer works only in the desktop app. Add an xAI or OpenAI key in Volt Settings > Voice to talk from your phone.');
+		}
 		const speed = Number(this.configurationService.getValue(VOICE_CHAT_SPEED_SETTING));
 		const settings: IVoiceCallSettings = {
 			voice: text(options.voice) ?? (this.configurationService.getValue<string>(VOICE_CHAT_VOICE_SETTING) || 'ara'),

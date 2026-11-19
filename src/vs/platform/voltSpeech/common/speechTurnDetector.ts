@@ -53,6 +53,11 @@ export class SpeechTurnDetector {
 		return this.speechMs >= this.options.minSpeechMs;
 	}
 
+	/** Voice was heard in the current utterance and no pause long enough to end it has followed. */
+	get inSpeech(): boolean {
+		return this.speechMs > 0 && this.silenceMs < this.options.endSilenceMs;
+	}
+
 	/** Feeds one block of audio by its RMS level (0 to 1) and length. */
 	push(rms: number, durationMs: number): TurnDecision {
 		this.turnMs += durationMs;

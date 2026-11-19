@@ -1347,19 +1347,29 @@ function renderItem<T>(host: HTMLElement, item: IVoltMenuItem<T>, matches: IMatc
 	if (item.badge) {
 		append(host, $('span.volt-menu-badge')).textContent = item.badge;
 	}
-	if (item.action) {
-		// A span, not a button: the row is the list's, and its click handler tells the two apart.
-		const action = append(host, $('span.volt-menu-action'));
-		action.setAttribute('role', 'button');
-		action.setAttribute('aria-label', item.action.tooltip);
-		action.title = item.action.tooltip;
-		action.appendChild(renderIcon(item.action.icon));
+	const renderAction = () => {
+		if (item.action) {
+			// A span, not a button: the row is the list's, and its click handler tells the two apart.
+			const action = append(host, $('span.volt-menu-action'));
+			action.setAttribute('role', 'button');
+			action.setAttribute('aria-label', item.action.tooltip);
+			action.title = item.action.tooltip;
+			action.appendChild(renderIcon(item.action.icon));
+		}
+	};
+	// A row's check sits before its action, so the actions stay in one column down the list.
+	const checkFirst = !!item.action && !!item.checked && !item.submenu;
+	if (!checkFirst) {
+		renderAction();
 	}
 	const trailing = item.submenu ? Codicon.chevronRight : item.checked ? Codicon.check : item.trailingIcon;
 	if (trailing) {
 		const glyph = append(host, $('span.volt-menu-trailing'));
 		glyph.appendChild(typeof trailing === 'function' ? trailing() : renderIcon(trailing));
 		glyph.classList.toggle('on-hover', !!item.trailingOnHover && !item.submenu && !item.checked);
+	}
+	if (checkFirst) {
+		renderAction();
 	}
 	host.title = item.tooltip ?? '';
 }

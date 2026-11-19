@@ -448,6 +448,22 @@
 			"why": "Verifies a native helper's signature (codesign, Authenticode) and the running app's signer before Volt launches the helper (B-14)."
 		},
 		{
+			"file": "src/vs/platform/voltHttp/node/voltLoad.ts",
+			"kind": "new Worker",
+			"count": 1,
+			"owner": "http-client",
+			"reason": "user-action",
+			"why": "A load test the user started in Volt Client: the request generator runs in a worker thread made from its own source, off the main thread."
+		},
+		{
+			"file": "src/vs/platform/voltLocalVoice/electron-main/voltLocalVoiceMainService.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "local-voice",
+			"reason": "user-action",
+			"why": "A voice download the user asked for: the system's tar unpacks the checksum-verified runtime and model archives into ~/.volt/voices."
+		},
+		{
 			"file": "src/vs/platform/voltPullRequests/node/voltPullRequestService.ts",
 			"kind": "child_process",
 			"count": 1,
@@ -542,6 +558,14 @@
 			"owner": "stdio",
 			"reason": "supervisor",
 			"why": "Starts the shared ACP adapter host (acpSharedHostSource.ts) for chats with the same launch. The host runs outside every chat's sandbox and starts no process itself (child_process is replaced there): a chat's CLI and helper commands come back to the stdio service, which starts them through that chat's sandbox launch. Its own file access is checked in JavaScript against the chat's resolved policy, not by the OS (round 10 report 107, residuals)."
+		},
+		{
+			"file": "src/vs/platform/voltStorage/node/voltStorageService.ts",
+			"kind": "child_process",
+			"count": 1,
+			"owner": "storage",
+			"reason": "supervisor",
+			"why": "Settings > Storage sizes: /usr/bin/du over Volt's own folders, with fixed arguments."
 		},
 		{
 			"file": "src/vs/platform/voltStdio/node/childLedger.ts",

@@ -46,6 +46,9 @@ import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runti
 import { IPredictionSettings, IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
 import { IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
 import { AGENT_DEFAULT_MODEL_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING, AGENT_VOICE_DEFAULT_REALTIME_MODEL, AGENT_VOICE_ENDPOINT_SETTING, AGENT_VOICE_ENGINE_SETTING, AGENT_VOICE_MODEL_SETTING, AGENT_VOICE_REALTIME_MODEL_SETTING, AGENT_VOICE_REALTIME_MODELS, AgentVoiceEngine } from '../../voltAgent/common/agentComposerSettings.js';
+import { AGENT_READ_ALOUD_SPEED_SETTING, AGENT_READ_ALOUD_SPEEDS, AGENT_READ_ALOUD_VOICE_SETTING, clampReadAloudSpeed } from '../../voltAgent/common/agentReadAloud.js';
+import { agentReadAloud, canReadAloud, localVoiceDescription, localVoiceModelLabel, readAloudVoices } from '../../voltAgent/browser/chat/agentReadAloud.js';
+import { DEFAULT_LOCAL_VOICES, ILocalVoiceState, IVoltLocalVoiceService, LOCAL_VOICE_MODEL_IDS, LOCAL_VOICES, localVoice, LocalVoiceModelId, pickLocalVoice, readyLocalVoiceModels } from '../../../../platform/voltLocalVoice/common/voltLocalVoice.js';
 import { AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_KEEP_WORKING_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING } from '../../voltAgent/common/agentWorkflowSettings.js';
 import { AGENT_HOME_AUTO_SETTLE_DAYS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING } from '../../voltAgent/common/agentHomeSettings.js';
 import '../../voltAgent/common/agentAwakeSettings.js';
@@ -286,6 +289,7 @@ export class VoltSettingsEditor extends EditorPane {
 		@ILogService private readonly logService: ILogService,
 		@IVoltFeatureService private readonly features: IVoltFeatureService,
 		@IVoltFeatureModuleService private readonly modules: IVoltFeatureModuleService,
+		@IVoltLocalVoiceService private readonly localVoices: IVoltLocalVoiceService,
 	) {
 		super(VoltSettingsEditor.ID, group, telemetryService, themeService, storageService);
 		this.voltPages = this.voltPageLinks();
@@ -831,8 +835,10 @@ export class VoltSettingsEditor extends EditorPane {
 				this.renderTab();
 				break;
 			case 'codeIntelligence':
-			case 'voice':
 				pending = this.renderModulePage(this.section);
+				break;
+			case 'voice':
+				pending = this.renderVoice();
 				break;
 			case 'canvas':
 				this.renderCanvasScratch();
@@ -1378,7 +1384,7 @@ export class VoltSettingsEditor extends EditorPane {
 			{
 				// A server glyph: the generic brand's sparkle reads as Auto.
 				family: 'generic', label: endpoint, icon: () => renderIcon(Codicon.server), models: [option('endpoint', endpointModel, 'generic', endpoint,
-					localize('voltSettings.voiceEndpointOptionDesc2', "The OpenAI-compatible speech-to-text server set under Tab & Prediction > Voice, such as a local Whisper."))],
+					localize('voltSettings.voiceEndpointOptionDesc2', "The OpenAI-compatible speech-to-text server set under Voice > Dictation, such as a local Whisper."))],
 			},
 		];
 	}
@@ -1732,8 +1738,45 @@ export class VoltSettingsEditor extends EditorPane {
 				return clamped;
 			}, 100),
 		);
+	}
 
-		this.sectionLabel(localize('voltSettings.voice', "Voice"));
+	/**
+	 * Voice: everything Volt says and hears. Voice chat's rows come from its module (when the
+	 * feature is on); Read Aloud, the voices on this computer and dictation are the editor's own.
+	 */
+	private async renderVoice(): Promise<void> {
+		const generation = this.renderGeneration;
+		const store = this.renderStore;
+		this.pageHead(
+			localize('voltSettings.voice', "Voice"),
+			localize('voltSettings.voiceLead', "How Volt speaks and listens: voice chat with your agents, replies read aloud, the voices that run on this computer, and dictation."),
+		);
+		const part = await this.modules.part('settingsKitPage', 'voice').catch(() => undefined);
+		if (generation !== this.renderGeneration || this.section !== 'voice' || store.isDisposed) {
+			return;
+		}
+		part?.render(this.instantiationService, {
+			store,
+			// The page has its head already.
+			pageHead: () => { },
+			sectionLabel: label => this.sectionLabel(label),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+			stepper: (parent, valueText, unit, onCommit, step) => this.stepper(parent, valueText, unit, onCommit, step),
+			rerender: () => this.renderContent(),
+			isCurrent: () => this.section === 'voice',
+		});
+		this.readAloudRows();
+		this.localVoiceRows();
+		this.dictationRows();
+		this.scheduleScrollSync();
+	}
+
+	/** Dictation in the composer: who transcribes, the cleanup pass, a custom endpoint. */
+	private dictationRows(): void {
+		const settings = this.prediction.getSettings();
+		this.sectionLabel(localize('voltSettings.dictation', "Dictation"));
 		const voice = this.settingsGroup();
 		this.voiceModelRow(voice);
 		this.settingRow(
@@ -1747,6 +1790,209 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 		this.textSettingRow(voice, AGENT_VOICE_ENDPOINT_SETTING, localize('voltSettings.voiceEndpoint', "Transcription endpoint"), localize('voltSettings.voiceEndpointDesc', "Base URL of an OpenAI-compatible speech-to-text server for the custom endpoint, such as http://localhost:8000/v1."));
 		this.textSettingRow(voice, AGENT_VOICE_MODEL_SETTING, localize('voltSettings.voiceEndpointModel', "Endpoint model"), localize('voltSettings.voiceEndpointModelDesc', "The model name the custom endpoint takes, such as whisper-1."));
+	}
+
+	private readAloudOptions(): { voice: string | undefined; rate: number; localVoices: IVoltLocalVoiceService } {
+		return {
+			voice: this.configurationService.getValue<string>(AGENT_READ_ALOUD_VOICE_SETTING) || undefined,
+			rate: clampReadAloudSpeed(this.configurationService.getValue(AGENT_READ_ALOUD_SPEED_SETTING)),
+			localVoices: this.localVoices,
+		};
+	}
+
+	private playReadAloudSample(): void {
+		void agentReadAloud.read(getWindow(this.container), 'settings-preview', localize('voltSettings.readAloudSample', "This is how I sound when I read a reply to you."), this.readAloudOptions());
+	}
+
+	/** Read Aloud: which voice reads a reply (a system voice or a downloaded one), how fast, and a button to hear it. */
+	private readAloudRows(): void {
+		const win = getWindow(this.container);
+		if (!canReadAloud(win)) {
+			return;
+		}
+		this.sectionLabel(localize('voltSettings.readAloud', "Read aloud"));
+		const group = this.settingsGroup();
+		const store = this.renderStore;
+		const voiceLabel = localize('voltSettings.readAloudVoice', "Voice");
+		const picked = () => this.configurationService.getValue<string>(AGENT_READ_ALOUD_VOICE_SETTING) || '';
+		const pick = (voice: string) => this.configurationService.updateValue(AGENT_READ_ALOUD_VOICE_SETTING, voice);
+
+		// Drawn again when downloaded voices arrive or go.
+		let voiceHost: HTMLElement | undefined;
+		let ready: LocalVoiceModelId[] = [];
+		const drawVoices = async () => {
+			const host = voiceHost;
+			const voices = await readAloudVoices(win);
+			if (!host || store.isDisposed || !host.isConnected) {
+				return;
+			}
+			host.replaceChildren();
+			const current = picked();
+			const options: IVoltDropdownOption<string>[] = [{ id: '', label: localize('voltSettings.readAloudSystemVoice', "System default") }];
+			const seen = new Set<string>(['']);
+			for (const voice of LOCAL_VOICES) {
+				if (ready.includes(voice.model)) {
+					seen.add(voice.ref);
+					options.push({ id: voice.ref, label: voice.name, description: localVoiceDescription(voice) });
+				}
+			}
+			// The interface language's system voices, plus the picked one whatever it speaks.
+			const language = win.navigator.language.slice(0, 2).toLowerCase();
+			for (const candidate of [...voices].sort((a, b) => a.name.localeCompare(b.name))) {
+				if (seen.has(candidate.name) || (candidate.name !== current && !candidate.lang.toLowerCase().startsWith(language))) {
+					continue;
+				}
+				seen.add(candidate.name);
+				options.push({ id: candidate.name, label: candidate.name, description: candidate.lang });
+			}
+			// A downloaded voice whose model is gone reads with the system's voice, and shows as that.
+			if (current && !seen.has(current) && !localVoice(current)) {
+				seen.add(current);
+				options.push({ id: current, label: current });
+			}
+			this.dropdown(host, options, seen.has(current) ? current : '', voiceLabel, value => void pick(value).then(() => this.playReadAloudSample()));
+			const listen = append(host, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
+			const listenLabel = localize('voltSettings.readAloudPreview', "Play a sample");
+			listen.setAttribute('aria-label', listenLabel);
+			setAgentTooltip(listen, listenLabel);
+			listen.appendChild(renderIcon(Codicon.unmute));
+			store.add(addDisposableListener(listen, 'click', () => this.playReadAloudSample()));
+		};
+		this.settingRow(
+			group,
+			voiceLabel,
+			localize('voltSettings.readAloudVoiceDesc2', "Reads an agent's reply when you press Read Aloud under it, and speaks in voice chats on this computer. The system's voices need no download; the voices below sound far more like a person."),
+			host => {
+				voiceHost = host;
+				void drawVoices();
+			},
+		);
+		const refresh = () => this.localVoices.getStates().then(states => {
+			const next = readyLocalVoiceModels(states);
+			if (!store.isDisposed && next.join() !== ready.join()) {
+				ready = next;
+				void drawVoices();
+			}
+		}, () => undefined);
+		void refresh();
+		store.add(this.localVoices.onDidChangeState(state => {
+			if (state.status === 'ready' || state.status === 'absent') {
+				void refresh();
+			}
+		}));
+		// Picked elsewhere (the call's menu, the voice chat row): the dropdown follows.
+		store.add(this.configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(AGENT_READ_ALOUD_VOICE_SETTING)) {
+				void drawVoices();
+			}
+		}));
+		const speed = this.readAloudOptions().rate;
+		const speedLabel = localize('voltSettings.readAloudSpeed', "Speed");
+		const speedId = (value: number) => String(value);
+		const speeds = AGENT_READ_ALOUD_SPEEDS.includes(speed) ? AGENT_READ_ALOUD_SPEEDS : [...AGENT_READ_ALOUD_SPEEDS, speed].sort((a, b) => a - b);
+		this.settingRow(
+			group,
+			speedLabel,
+			localize('voltSettings.readAloudSpeedDesc', "How fast replies are read."),
+			host => this.dropdown(host, speeds.map(value => ({ id: speedId(value), label: `${value}×` })), speedId(speed), speedLabel, value => {
+				void this.configurationService.updateValue(AGENT_READ_ALOUD_SPEED_SETTING, Number(value));
+			}),
+		);
+	}
+
+	/** The voices that run on this computer: a download row per speech model, where they can run (the desktop app, a platform with a runtime). */
+	private localVoiceRows(): void {
+		const store = this.renderStore;
+		const megabytes = (bytes: number) => Math.round(bytes / 1_000_000);
+		const picked = () => this.configurationService.getValue<string>(AGENT_READ_ALOUD_VOICE_SETTING) || '';
+		const pick = (voice: string) => this.configurationService.updateValue(AGENT_READ_ALOUD_VOICE_SETTING, voice);
+		this.sectionLabel(localize('voltSettings.localVoicesSection', "Voices on this computer"));
+		const group = this.settingsGroup();
+		// The whole section (its title too) shows only where the voices can run.
+		const section = group.parentElement?.parentElement ?? group;
+		section.style.display = 'none';
+		const states = new Map<LocalVoiceModelId, ILocalVoiceState>();
+		const shows = new Map<LocalVoiceModelId, (state: ILocalVoiceState) => void>();
+		const readyModels = () => LOCAL_VOICE_MODEL_IDS.filter(model => states.get(model)?.status === 'ready');
+
+		for (const model of LOCAL_VOICE_MODEL_IDS) {
+			const count = LOCAL_VOICES.filter(voice => voice.model === model).length;
+			const row = this.settingRow(group, localVoiceModelLabel(model), undefined, host => {
+				host.classList.add('volt-settings-update-control');
+				const status = append(host, $('span.volt-settings-update-status'));
+				const button = store.add(createVoltButton(host));
+				shows.set(model, next => {
+					states.set(model, next);
+					if (next.status !== 'unsupported') {
+						section.style.display = '';
+					}
+					const desc = row.querySelector('.desc');
+					if (desc) {
+						desc.textContent = model === 'supertonic'
+							? localize('voltSettings.supertonicDesc', "Supertonic: {0} English voices that start speaking at once, even on a slow machine. A {1} MB download; what is read never leaves this computer.", count, megabytes(next.totalBytes))
+							: localize('voltSettings.kokoroDesc', "Kokoro: {0} English voices, American and British, with the most natural delivery. Slower: each sentence takes a second or more to prepare. A {1} MB download.", count, megabytes(next.totalBytes));
+					}
+					button.enabled = next.status !== 'installing';
+					switch (next.status) {
+						case 'downloading':
+							status.textContent = localize('voltSettings.localVoicesDownloading', "{0} of {1} MB", megabytes(next.receivedBytes ?? 0), megabytes(next.totalBytes));
+							button.label = localize('voltSettings.localVoicesCancel', "Cancel");
+							break;
+						case 'installing':
+							status.textContent = localize('voltSettings.localVoicesInstalling', "Unpacking");
+							button.label = localize('voltSettings.localVoicesCancel', "Cancel");
+							break;
+						case 'ready':
+							status.textContent = localize('voltSettings.localVoicesReady', "Downloaded");
+							button.label = localize('voltSettings.localVoicesRemove', "Remove");
+							break;
+						default:
+							status.textContent = next.error ?? '';
+							button.label = localize('voltSettings.localVoicesDownload', "Download");
+					}
+				});
+				store.add(button.onDidClick(() => {
+					switch (states.get(model)?.status) {
+						case 'absent':
+							// A download picks one of its voices and lets it speak: that is what was just asked for.
+							void this.localVoices.install(model).then(async () => {
+								if (localVoice(picked())?.model !== model) {
+									await pick(DEFAULT_LOCAL_VOICES[model]);
+								}
+								if (!store.isDisposed) {
+									this.playReadAloudSample();
+								}
+							}, () => undefined /* shown in the row */);
+							break;
+						case 'downloading':
+							void this.localVoices.cancelInstall(model);
+							break;
+						case 'ready':
+							agentReadAloud.stop();
+							void this.localVoices.remove(model).then(() => {
+								if (localVoice(picked())?.model === model) {
+									return pick(pickLocalVoice(undefined, readyModels().filter(id => id !== model))?.ref ?? '');
+								}
+								return undefined;
+							});
+							break;
+					}
+				}));
+			});
+			append(row.querySelector('.volt-settings-row-copy') ?? row, $('.desc'));
+		}
+		store.add(this.localVoices.onDidChangeState(state => shows.get(state.model)?.(state)));
+		void this.localVoices.getStates().then(all => {
+			if (store.isDisposed) {
+				return;
+			}
+			for (const state of all) {
+				if (!states.has(state.model)) {
+					shows.get(state.model)?.(state);
+				}
+			}
+			this.scheduleScrollSync();
+		}, () => undefined);
 	}
 
 	/** A text input bound to a string setting, saved when it changes. */

@@ -7,6 +7,7 @@ import { Codicon } from '../../../../base/common/codicons.js';
 import { localize } from '../../../../nls.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { VOLT_VOICE_PROVIDER_INFO, VOLT_VOICE_SPEEDS, VoltVoiceProvider } from '../../../../platform/voltVoiceChat/common/voltVoiceChat.js';
+import { createHomeSearchIcon } from '../../voltAgent/browser/home/agentHomeIcons.js';
 import { IVoltMenuHandle, IVoltMenuItem, showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
 
 /** The languages Cursor's voice chat offers (`auto` detects). */
@@ -53,27 +54,43 @@ export function showVoiceSettingsMenu(contextViewService: IContextViewService, o
 	readonly anchor: HTMLElement;
 	readonly provider: VoltVoiceProvider;
 	readonly value: IVoiceSettingsValue;
+	/** The voices to offer instead of the provider's own (a call on this computer: the downloaded voices). */
+	readonly voices?: readonly { readonly id: string; readonly label: string; readonly description?: string }[];
 	readonly playingPreview?: string;
 	readonly onChange: (next: Partial<IVoiceSettingsValue>) => void;
 	readonly onPreview: (voice: string) => void;
 	readonly onHide?: () => void;
 }): IVoltMenuHandle {
 	const { value } = options;
-	const voices = VOLT_VOICE_PROVIDER_INFO[options.provider].voices;
-	const voiceItems = (): IVoltMenuItem<VoicePick>[] => voices.map(id => ({
+	const voices = options.voices ?? VOLT_VOICE_PROVIDER_INFO[options.provider].voices.map(id => ({ id, label: voiceLabel(id), description: undefined }));
+	const labelOf = (id: string) => voices.find(voice => voice.id === id)?.label ?? voiceLabel(id);
+	const voiceItems = (): IVoltMenuItem<VoicePick>[] => voices.map(({ id, label, description }) => ({
 		id: `voice-${id}`,
-		label: voiceLabel(id),
+		label,
+		// `detail` clips at the end (a description clips at the start, as for a path); still searchable.
+		detail: description,
+		keywords: description,
 		checked: id === value.voice,
 		data: { kind: 'voice', id },
 		action: {
 			icon: options.playingPreview === id ? Codicon.debugPause : Codicon.play,
 			tooltip: options.playingPreview === id
-				? localize('voiceChat.stopPreview', "Stop the {0} preview", voiceLabel(id))
-				: localize('voiceChat.playPreview', "Play the {0} preview", voiceLabel(id)),
+				? localize('voiceChat.stopPreview', "Stop the {0} preview", label)
+				: localize('voiceChat.playPreview', "Play the {0} preview", label),
 			data: { kind: 'preview', id },
 			keepOpen: true,
 		},
 	}));
+	const voiceItem: IVoltMenuItem<VoicePick> = {
+		id: 'voice', label: localize('voiceChat.voice', "Voice"), detail: labelOf(value.voice), data: { kind: 'voice', id: value.voice },
+		submenu: {
+			search: { placeholder: localize('voiceChat.searchVoice', "Search…"), ariaLabel: localize('voiceChat.searchVoiceAria', "Search Voice"), icon: createHomeSearchIcon },
+			emptyMessage: localize('voiceChat.noMatches', "No matches"),
+			maxListHeight: 400,
+			width: options.voices ? 300 : 220,
+			sections: [{ id: 'voices', items: voiceItems() }],
+		},
+	};
 	return showVoltMenu<VoicePick>(contextViewService, {
 		anchor: options.anchor,
 		position: 'above',
@@ -85,16 +102,8 @@ export function showVoiceSettingsMenu(contextViewService: IContextViewService, o
 		sections: [{
 			id: 'settings',
 			items: [
-				{
-					id: 'voice', label: localize('voiceChat.voice', "Voice"), detail: voiceLabel(value.voice), data: { kind: 'voice', id: value.voice },
-					submenu: {
-						search: { placeholder: localize('voiceChat.searchVoice', "Search…"), ariaLabel: localize('voiceChat.searchVoiceAria', "Search Voice"), icon: true },
-						emptyMessage: localize('voiceChat.noMatches', "No matches"),
-						maxListHeight: 400,
-						width: 220,
-						sections: [{ id: 'voices', items: voiceItems() }],
-					},
-				},
+				// A call on this computer without a downloaded voice has none to pick (it speaks with the system's).
+				...voices.length ? [voiceItem] : [],
 				{
 					id: 'speed', label: localize('voiceChat.speed', "Speed"), detail: speedLabel(value.speed), data: { kind: 'speed', value: value.speed },
 					submenu: {
@@ -105,7 +114,7 @@ export function showVoiceSettingsMenu(contextViewService: IContextViewService, o
 				{
 					id: 'language', label: localize('voiceChat.language', "Language"), detail: voiceLanguageLabel(value.language), data: { kind: 'language', id: value.language },
 					submenu: {
-						search: { placeholder: localize('voiceChat.searchLanguage', "Search…"), ariaLabel: localize('voiceChat.searchLanguageAria', "Search Language"), icon: true },
+						search: { placeholder: localize('voiceChat.searchLanguage', "Search…"), ariaLabel: localize('voiceChat.searchLanguageAria', "Search Language"), icon: createHomeSearchIcon },
 						emptyMessage: localize('voiceChat.noMatches', "No matches"),
 						maxListHeight: 400,
 						width: 240,

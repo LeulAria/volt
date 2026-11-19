@@ -160,6 +160,9 @@ import { renderInlineMarkdown } from '../composer/agentInlineMarkdown.js';
 import { fillBrandLink, splitTextLinks } from '../blocks/agentLinkLogos.js';
 import { AgentPromptHistoryNavigator, IAgentPromptHistoryEntry, readStoredPrompts, rememberPrompt } from '../composer/agentPromptHistory.js';
 import { AGENT_PROMPT_HISTORY_SETTING } from '../../common/agentComposerSettings.js';
+import { AGENT_READ_ALOUD_SPEED_SETTING, AGENT_READ_ALOUD_VOICE_SETTING, clampReadAloudSpeed, speakableMarkdown } from '../../common/agentReadAloud.js';
+import { agentReadAloud, canReadAloud, readAloudSource, readAloudVoices } from '../chat/agentReadAloud.js';
+import { IVoltLocalVoiceService } from '../../../../../platform/voltLocalVoice/common/voltLocalVoice.js';
 import { AGENT_TOOL_DENSITY_SETTING, readToolDensity } from '../../common/agentAppearanceSettings.js';
 import { AgentComposerQueue, IAgentComposerQueueState, IAgentQueueEditContent, IAgentQueueEditSurface, IAgentQueueHost, queueRowActions, QueuePause } from '../composer/agentComposerQueue.js';
 import { AgentTasksCard } from '../composer/agentTasksCard.js';
@@ -290,27 +293,24 @@ function createStopIcon(): HTMLElement {
 	return el;
 }
 
-/** Cursor's "Start voice chat" glyph: seven rounded bars, tallest in the middle. */
+/** The "Start voice chat" glyph: six rounded bars on a 24px box, tallest third from the left. */
 function createWaveformIcon(): HTMLElement {
 	const el = $('span.volt-agent-svg-icon.waveform');
 	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
-	svg.setAttribute('viewBox', '0 0 16 16');
+	svg.setAttribute('viewBox', '0 0 24 24');
 	svg.setAttribute('width', '16');
 	svg.setAttribute('height', '16');
 	svg.setAttribute('aria-hidden', 'true');
-	// [x, height] of each bar on a 16px box.
-	const bars: readonly (readonly [number, number])[] = [[2, 3], [4.33, 7], [6.67, 5], [9, 11], [11.33, 5], [13.67, 7], [16, 3]];
-	for (const [x, h] of bars) {
-		const line = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'line');
-		const cx = String(x * 14 / 16 + 1);
-		line.setAttribute('x1', cx);
-		line.setAttribute('x2', cx);
-		line.setAttribute('y1', String(8 - h / 2));
-		line.setAttribute('y2', String(8 + h / 2));
-		line.setAttribute('stroke', 'currentColor');
-		line.setAttribute('stroke-width', '1.2');
-		line.setAttribute('stroke-linecap', 'round');
-		svg.appendChild(line);
+	svg.setAttribute('fill', 'none');
+	for (const d of ['M2 10v3', 'M6 6v11', 'M10 3v18', 'M14 8v7', 'M18 5v13', 'M22 10v3']) {
+		const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
+		path.setAttribute('d', d);
+		path.setAttribute('stroke', 'currentColor');
+		// 1.8 on the 24px box draws 1.2px at 16px, the weight of the mic and send icons.
+		path.setAttribute('stroke-width', '1.8');
+		path.setAttribute('stroke-linecap', 'round');
+		path.setAttribute('stroke-linejoin', 'round');
+		svg.appendChild(path);
 	}
 	el.appendChild(svg);
 	return el;
@@ -1189,6 +1189,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 		@IAgentChatForkService private readonly forkService: IAgentChatForkService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IVoltLocalVoiceService private readonly localVoices: IVoltLocalVoiceService,
 		@IAgentWorktreeSetupService private readonly worktreeSetup: IAgentWorktreeSetupService,
 		@IEditorService private readonly editorService: IEditorService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
@@ -6138,6 +6139,40 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			}));
 		}
 
+		// Read Aloud: the picked voice speaks the reply's prose; the same button stops it.
+		const win = getWindow(this.container);
+		const spoken = readAloudSource(message);
+		if (canReadAloud(win) && speakableMarkdown(spoken)) {
+			void readAloudVoices(win);
+			const readLabel = localize('voltAgent.readAloud', "Read Aloud");
+			const stopLabel = localize('voltAgent.stopReading', "Stop Reading");
+			const readButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
+			// The id outlives a redraw that rebuilds the message objects.
+			const readingKey = message.id ?? message;
+			const show = () => {
+				const reading = agentReadAloud.isReading(readingKey);
+				readButton.replaceChildren(renderIcon(reading ? Codicon.debugStop : Codicon.unmute));
+				readButton.setAttribute('aria-label', reading ? stopLabel : readLabel);
+				readButton.classList.toggle('reading', reading);
+				setAgentTooltip(readButton, reading ? stopLabel : readLabel);
+			};
+			show();
+			this.threadListeners.add(agentReadAloud.onDidChange(show));
+			const readOptions = () => ({
+				voice: this.configurationService.getValue<string>(AGENT_READ_ALOUD_VOICE_SETTING) || undefined,
+				rate: clampReadAloudSpeed(this.configurationService.getValue(AGENT_READ_ALOUD_SPEED_SETTING)),
+				localVoices: this.localVoices,
+				onError: (message: string) => this.notificationService.warn(localize('voltAgent.readAloudLocalFailed', "The downloaded voice could not read this: {0}", message)),
+			});
+			// A downloaded voice's engine loads while the pointer is on its way to the click.
+			this.threadListeners.add(addDisposableListener(readButton, 'pointerenter', () => agentReadAloud.warm(readOptions())));
+			this.threadListeners.add(addDisposableListener(readButton, 'click', e => {
+				e.preventDefault();
+				e.stopPropagation();
+				agentReadAloud.toggle(win, readingKey, spoken, readOptions());
+			}));
+		}
+
 		const rememberLabel = localize('voltAgent.rememberMessage', "Remember");
 		const rememberButton = append(footer, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
 		rememberButton.setAttribute('aria-label', rememberLabel);
@@ -9485,6 +9520,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.shownSessionId = undefined;
 			return;
 		}
+		if (sessionId !== undefined && sessionId !== this.shownSessionId) {
+			// A reply being read aloud belongs to the chat that was left: its Stop button is gone from view.
+			agentReadAloud.stop();
+		}
 		this.shownSessionId = sessionId;
 		setShownAgentChat(sessionId);
 	}
@@ -9828,6 +9867,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 
 	override dispose(): void {
 		this.publishShownChat(undefined);
+		agentReadAloud.stop();
 		for (const sessionId of [...this.stashedThreads.keys()]) {
 			this.dropStashedThread(sessionId);
 		}

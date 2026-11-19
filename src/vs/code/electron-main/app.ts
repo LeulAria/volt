@@ -183,6 +183,8 @@ import { IVoltCaptureService, VOLT_CAPTURE_CHANNEL_NAME } from '../../platform/v
 import { VoltCaptureMainService } from '../../platform/voltCapture/electron-main/voltCaptureMainService.js';
 import { IVoltSpeechService, VOLT_SPEECH_CHANNEL_NAME } from '../../platform/voltSpeech/common/voltSpeech.js';
 import { VoltSpeechMainService } from '../../platform/voltSpeech/electron-main/voltSpeechMainService.js';
+import { IVoltLocalVoiceService, VOLT_LOCAL_VOICE_CHANNEL_NAME } from '../../platform/voltLocalVoice/common/voltLocalVoice.js';
+import { VoltLocalVoiceMainService } from '../../platform/voltLocalVoice/electron-main/voltLocalVoiceMainService.js';
 import ErrorTelemetry from '../../platform/telemetry/electron-main/errorTelemetry.js';
 
 /**
@@ -1251,6 +1253,7 @@ export class CodeApplication extends Disposable {
 		services.set(IVoltDesktopService, new SyncDescriptor(VoltDesktopMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltCaptureService, new SyncDescriptor(VoltCaptureMainService, undefined, false /* proxied to other processes */));
 		services.set(IVoltSpeechService, new SyncDescriptor(VoltSpeechMainService, undefined, false /* proxied to other processes */));
+		services.set(IVoltLocalVoiceService, new SyncDescriptor(VoltLocalVoiceMainService, undefined, false /* proxied to other processes */));
 
 		// Volt app badge (chats that finished in the background)
 		services.set(IVoltBadgeService, new SyncDescriptor(VoltBadgeMainService, undefined, false /* proxied to other processes */));
@@ -1473,6 +1476,7 @@ export class CodeApplication extends Disposable {
 		mainProcessElectronServer.registerChannel(VOLT_DESKTOP_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltDesktopService), disposables));
 		mainProcessElectronServer.registerChannel(VOLT_CAPTURE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltCaptureService), disposables));
 		mainProcessElectronServer.registerChannel(VOLT_SPEECH_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltSpeechService), disposables));
+		mainProcessElectronServer.registerChannel(VOLT_LOCAL_VOICE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltLocalVoiceService), disposables));
 
 		// Volt app badge
 		mainProcessElectronServer.registerChannel(VOLT_BADGE_CHANNEL_NAME, ProxyChannel.fromService(accessor.get(IVoltBadgeService), disposables));

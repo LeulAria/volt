@@ -1319,6 +1319,11 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
+/* The reply being read aloud keeps its Stop button lit. */
+.volt-agent-footer-btn.reading {
+	color: var(--vscode-foreground);
+}
+
 .volt-agent-footer-btn:hover {
 	background: transparent;
 	color: var(--vscode-icon-foreground, var(--vscode-foreground));

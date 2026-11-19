@@ -151,6 +151,9 @@
 			"src/vs/workbench/services/voltRuntime/browser/queryCache.ts"
 		],
 		"voiceChat": [
+			"src/vs/workbench/contrib/voltAgent/browser/chat/agentReadAloud.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/home/agentHomeIcons.ts",
+			"src/vs/workbench/contrib/voltAgent/common/agentReadAloud.ts",
 			"src/vs/workbench/services/editor/common/editorGroupsService.ts",
 			"src/vs/workbench/services/editor/common/editorService.ts",
 			"src/vs/workbench/services/voltRuntime/common/history/agentHistory.ts",
