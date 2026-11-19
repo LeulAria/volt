@@ -104,6 +104,8 @@ export interface IAgentModelPickerHost {
 		set(ref: string | undefined): void;
 		readonly autoLabel: string;
 		readonly autoDescription: string;
+		/** The model the Auto row stands for; the trigger then names it instead of the Auto label. */
+		readonly autoRef?: () => string | undefined;
 	};
 	/**
 	 * Picks from these instead of the agent catalog (a Settings choice that is not an agent
@@ -358,7 +360,13 @@ export class AgentModelPicker extends Disposable {
 			return;
 		}
 		button.classList.remove('comparing');
-		const selected = this.selectedModel();
+		const followed = this.modelAuto ? this.host.binding?.autoRef?.() : undefined;
+		const selected = (followed ? this.catalog.find(option => option.ref === followed) : undefined) ?? this.selectedModel();
+		if (followed && selected) {
+			button.appendChild(createBrandIcon(selected.family, 13));
+			append(button, $('span.volt-agent-model-label')).textContent = splitModelDisplayName(selected.name).name;
+			return;
+		}
 		if (this.modelAuto) {
 			button.appendChild(createAutoSparkIcon());
 		} else if (selected) {

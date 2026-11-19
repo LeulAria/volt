@@ -723,6 +723,8 @@
 	right: 0;
 }
 
+/* The same fill at rest as under the pointer: whenever the button shows, it reads as a button. */
+.volt-agent-quick-open-actions > .volt-agent-dock-tune,
 .volt-agent-quick-open-actions > .volt-agent-dock-tune:hover,
 .volt-agent-quick-open-actions > .volt-agent-dock-tune.open,
 .monaco-workbench .volt-agent-quick-open-actions > .volt-agent-dock-tune:focus-visible {

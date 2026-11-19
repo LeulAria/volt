@@ -10,6 +10,7 @@ import { Codicon } from '../../../../../../base/common/codicons.js';
 import { DisposableStore, MutableDisposable } from '../../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../../base/common/themables.js';
 import { IContextViewService } from '../../../../../../platform/contextview/browser/contextView.js';
+import { createHomeSearchIcon } from '../../home/agentHomeIcons.js';
 import { showVoltMenu } from '../menu/voltMenu.js';
 
 export interface IVoltDropdownOption<T extends string> {
@@ -34,6 +35,8 @@ export interface IVoltDropdownOptions<T extends string> {
 	readonly width?: number;
 	/** A fixed glyph at the start of the trigger, whatever is picked (a filter's funnel). */
 	readonly leadingIcon?: IVoltDropdownOption<string>['icon'];
+	/** Extra classes on the menu, for a surface that draws its dropdowns its own way. */
+	readonly menuClassName?: string;
 }
 
 export interface IVoltDropdown<T extends string> {
@@ -79,13 +82,19 @@ export function createVoltDropdown<T extends string>(parent: HTMLElement, contex
 	store.add(addDisposableListener(element, EventType.CLICK, () => {
 		element.classList.add('open');
 		const searchFrom = options.searchFrom ?? 9;
+		// Choices that explain themselves need the room to say it: a narrow menu cuts every description short.
+		const width = options.width ?? Math.max(options.options.some(option => option.description) ? 420 : 220, element.offsetWidth);
+		// A menu wider than its button hangs from the button's left edge when the window has the room, so it opens over its own field.
+		const box = element.getBoundingClientRect();
+		const align = options.align ?? (width > box.width + 1 && box.left + width <= element.ownerDocument.documentElement.clientWidth - 8 ? 'left' : 'right');
 		menu.value = showVoltMenu<T>(contextViewService, {
 			anchor: element,
 			position: 'below',
-			align: options.align ?? 'right',
-			width: options.width ?? Math.max(220, element.offsetWidth),
+			align,
+			width,
 			ariaLabel: options.ariaLabel,
-			search: options.options.length >= searchFrom ? { placeholder: options.ariaLabel, icon: true } : undefined,
+			className: options.menuClassName,
+			search: options.options.length >= searchFrom ? { placeholder: options.ariaLabel, icon: () => createHomeSearchIcon() } : undefined,
 			sections: [{
 				id: 'options',
 				items: options.options.map(option => ({
