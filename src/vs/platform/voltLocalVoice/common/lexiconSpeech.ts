@@ -11,7 +11,7 @@
  * into known words, and what is left is read letter by letter.
  */
 
-const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+export const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
 const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
 const SCALES = ['', 'thousand', 'million', 'billion', 'trillion'];
 const ORDINALS: Record<string, string> = { one: 'first', two: 'second', three: 'third', five: 'fifth', eight: 'eighth', nine: 'ninth', twelve: 'twelfth' };
@@ -132,7 +132,7 @@ function yearWords(n: number): string[] {
 	return low === 0 ? [...high, 'hundred'] : low < 10 ? [...high, 'oh', ONES[low]] : [...high, ...below1000(low)];
 }
 
-function integerWords(digits: string, yearStyle: boolean): string[] {
+export function integerWords(digits: string, yearStyle: boolean): string[] {
 	// Past what a double counts exactly, and for codes with a leading zero: digit by digit.
 	if (digits.length > 15 || (digits.length > 1 && digits[0] === '0')) {
 		return [...digits].map(digit => ONES[Number(digit)]);
@@ -144,7 +144,7 @@ function integerWords(digits: string, yearStyle: boolean): string[] {
 	return cardinal(n);
 }
 
-function ordinal(words: string[]): string[] {
+export function ordinal(words: string[]): string[] {
 	const last = words[words.length - 1];
 	const said = ORDINALS[last] ?? (last.endsWith('y') ? `${last.slice(0, -1)}ieth` : `${last}th`);
 	return [...words.slice(0, -1), said];
