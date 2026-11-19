@@ -30,7 +30,9 @@ import { IInstantiationService, ServiceIdentifier } from '../../../../../platfor
 import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { IMarkerService } from '../../../../../platform/markers/common/markers.js';
+import { TestNotificationService } from '../../../../../platform/notification/test/common/testNotificationService.js';
 import { NullTelemetryService } from '../../../../../platform/telemetry/common/telemetryUtils.js';
+import { UriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentityService.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IHostGitRequest } from '../../../../../platform/voltGit/common/hostGit.js';
 import { IVoltExecFileRequest, IVoltExecRequest, IVoltExecResult, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
@@ -155,7 +157,10 @@ suite('Volt agent IDE tools in the sandbox', () => {
 		let debugStarts = 0;
 		const debug = { onDidEndSession: Event.None, startDebugging: async () => { debugStarts++; return true; }, getModel: () => ({ getSessions: () => [] }) } as unknown as IDebugService;
 		const environment = { cacheHome: URI.file('/cache') } as unknown as IEnvironmentService;
-		const create = () => store.add(new VoltTestController(testService, profiles, results, fileService, search, workspace, stdio.asService(), environment, new TestConfigurationService(), debug, new NullLogService(), instantiation));
+		const editors = { onDidVisibleEditorsChange: Event.None, visibleEditors: [] } as unknown as IEditorService;
+		const uriIdentity = new UriIdentityService(fileService);
+		store.add(toDisposable(() => uriIdentity.dispose()));
+		const create = () => store.add(new VoltTestController(testService, profiles, results, fileService, search, workspace, stdio.asService(), environment, new TestConfigurationService(), debug, new NullLogService(), instantiation, uriIdentity, new TestNotificationService(), editors));
 		/** Runs every Volt test with `profileId`, as the Testing service would: for the user, or for an agent that registered the run. */
 		const run = async (profileId: number, agent?: IAgentTestRun): Promise<LiveTestResult> => {
 			const rootId = new TestId([VOLT_TEST_CONTROLLER_ID]).toString();
