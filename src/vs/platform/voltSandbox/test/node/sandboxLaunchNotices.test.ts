@@ -19,14 +19,8 @@ suite('Volt sandbox launch notices', () => {
 		assert.deepStrictEqual(notices, { warnings: [], notes: [] });
 	});
 
-	test('a project in a privacy-protected folder gets one quiet note that says how to fix it', () => {
-		const { warnings, notes } = sandboxLaunchNotices(['process.tree', 'platform.tcc'], 'seatbelt', network('proxy'));
-		assert.deepStrictEqual(warnings, []);
-		assert.strictEqual(notes.length, 1);
-		assert.match(notes[0].title, /privacy permissions/);
-		assert.match(notes[0].detail, /Desktop, Documents, Downloads/);
-		assert.match(notes[0].detail, /move the project/);
-		assert.doesNotMatch(`${notes[0].title} ${notes[0].detail}`, /platform\.tcc/);
+	test('a project in a privacy-protected folder says nothing in the chat', () => {
+		assert.deepStrictEqual(sandboxLaunchNotices(['process.tree', 'platform.tcc'], 'seatbelt', network('proxy')), { warnings: [], notes: [] });
 	});
 
 	test('the Linux listening warning is only for bubblewrap on the host network with ports granted', () => {
