@@ -15,7 +15,7 @@ import { dedupeLineEcho, dedupePrefixOverlap, fitToLineSuffix, inlineEditForLine
 import { PredictionCache, predictionCacheKey, TypedThroughCache } from '../../common/prediction/predictionCache.js';
 import { fromClipboard, fromHarvestedPattern, fromNearbyLine, predictLocal } from '../../common/prediction/localPredictor.js';
 import { buildInlinePrompt, buildNextEditPrompt, CURSOR_MARKER, inlineWritingKind } from '../../common/prediction/predictionPrompt.js';
-import { cleanComposerCompletion, ComposerLanguageModel } from '../../common/prediction/composerPredictor.js';
+import { buildNextPromptPrompt, cleanComposerCompletion, cleanNextPrompt, ComposerLanguageModel } from '../../common/prediction/composerPredictor.js';
 
 suite('Volt prediction: context window', () => {
 
@@ -736,5 +736,28 @@ suite('Volt prediction: local predictor', () => {
 			modelVersionId: 1,
 		});
 		assert.strictEqual(result, ` console.log('process.env', process.env);`);
+	});
+
+	test('next message: the reply between the tags, its sentences kept, one short line', () => {
+		assert.strictEqual(cleanNextPrompt('<insert>nice. commit it and push</insert>'), 'nice. commit it and push');
+		assert.strictEqual(cleanNextPrompt('Sure!\n<insert>  run the tests again\nand then deploy</insert>'), 'run the tests again');
+		assert.strictEqual(cleanNextPrompt('<insert>"open a PR"</insert>'), 'open a PR');
+		assert.strictEqual(cleanNextPrompt('<insert></insert>'), undefined);
+		assert.strictEqual(cleanNextPrompt('<insert>Sure, here is the next message</insert>'), undefined);
+		const long = cleanNextPrompt(`<insert>${'word '.repeat(40)}</insert>`) ?? '';
+		assert.ok(long.length <= 90 && !long.endsWith(' '));
+	});
+
+	test('next message: never the prompt the user just sent', () => {
+		assert.strictEqual(cleanNextPrompt('<insert>Run the tests.</insert>', 'run the tests'), undefined);
+		assert.strictEqual(cleanNextPrompt('<insert>now commit it</insert>', 'run the tests'), 'now commit it');
+	});
+
+	test('next message: the prompt carries the conversation and what the agent did, and asks for tags', () => {
+		const [system, user] = buildNextPromptPrompt({ transcript: ['User: fix the login bug', 'Agent: Fixed it in auth.ts; tests pass.'], vocabulary: ['auth.ts'], activity: ['ran npm test (exit 0)'] });
+		assert.match(system.content as string, /next message a developer will send/);
+		assert.match(user.content as string, /Agent: Fixed it in auth\.ts/);
+		assert.match(user.content as string, /ran npm test \(exit 0\)/);
+		assert.match(user.content as string, /<insert>the developer's next message<\/insert>/);
 	});
 });
