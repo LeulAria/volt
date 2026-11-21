@@ -31,6 +31,8 @@ const i18n = require('./lib/i18n');
 const { getProductionDependencies } = require('./lib/dependencies');
 const { config } = require('./lib/electron');
 const createAsar = require('./lib/asar').createAsar;
+/** Loaded by the packaging tasks only: @electron/fuses is a build dependency other gulp tasks (watch, transpile) don't need. */
+const electronFuses = () => require('./lib/fuses');
 const minimist = require('minimist');
 const { compileBuildWithoutManglingTask, compileBuildWithManglingTask } = require('./gulpfile.compile');
 const { bundleMarketplaceExtensionsBuildTask, compileNonNativeExtensionsBuildTask, compileNativeExtensionsBuildTask, compileAllExtensionsBuildTask, compileExtensionMediaBuildTask, cleanExtensionsBuildTask } = require('./gulpfile.extensions');
@@ -323,7 +325,7 @@ function packageTask(platform, arch, sourceFolderName, destinationFolderName, op
 		let productJsonContents;
 		const productJsonStream = gulp.src(['product.json'], { base: '.' })
 			// `version` stays the VS Code engine version (extension compatibility); `voltVersion` is Volt's release.
-			.pipe(json({ commit, date: readISODate('out-build'), checksums, version: product.vscodeVersion || version, voltVersion: version, voltBuiltinManifestSha256 }))
+			.pipe(json({ commit, date: readISODate('out-build'), checksums, version: product.vscodeVersion || version, voltVersion: version, voltBuiltinManifestSha256, electronFuses: electronFuses().voltElectronFuses }))
 			.pipe(es.through(function (file) {
 				productJsonContents = file.contents.toString();
 				this.emit('data', file);
@@ -525,6 +527,15 @@ function patchWin32DependenciesTask(destinationFolderName) {
 }
 
 /**
+ * Flips Volt's Electron fuses (build/lib/fuses.ts) in the packaged build, before anything signs it.
+ */
+function flipFusesTask(platform, arch, destinationFolderName) {
+	const fn = () => electronFuses().flipVoltFuses(electronFuses().packagedElectronPath(path.join(path.dirname(root), destinationFolderName), platform, product), platform, arch);
+	fn.taskName = `flip-fuses-${platform}-${arch}`;
+	return fn;
+}
+
+/**
  * Bundles the non-native built-in extensions in several gulp processes at once, each taking a
  * share of them (VOLT_EXTENSIONS_SHARD). VOLT_EXTENSIONS_SHARDS sets the count (default: half the cores, at most 4).
  */
@@ -587,6 +598,8 @@ BUILD_TARGETS.forEach(buildTarget => {
 		if (platform === 'win32') {
 			packageTasks.push(patchWin32DependenciesTask(destinationFolderName));
 		}
+
+		packageTasks.push(flipFusesTask(platform, arch === 'armhf' ? 'arm' : arch, destinationFolderName));
 
 		const vscodeTaskCI = task.define(`vscode${dashed(platform)}${dashed(arch)}${dashed(minified)}-ci`, task.series(compileNativeExtensionsBuildTask, ...packageTasks));
 		gulp.task(vscodeTaskCI);
