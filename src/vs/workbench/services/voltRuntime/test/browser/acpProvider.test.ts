@@ -148,6 +148,11 @@ class FakeAgentStdio {
 		this.onDataEmitter.fire({ id: process, data: `${JSON.stringify(msg)}\n` });
 	}
 
+	/** The process is gone (killed, crashed). */
+	exit(process: string, code: number | null = null): void {
+		this.onExitEmitter.fire({ id: process, code });
+	}
+
 	update(process: string, update: Json): void {
 		this.send(process, { jsonrpc: '2.0', method: 'session/update', params: { sessionId: `acp-${process}`, update } });
 	}
@@ -219,6 +224,27 @@ suite('ACP provider supervision', () => {
 	async function finish(env: ReturnType<typeof setup>, handle: { id: string }) {
 		await env.provider.dispose(handle);
 	}
+
+	test('a resumable session whose process died mid-turn can still be resumed by the restart, and only by it', async () => {
+		const env = setup();
+		env.agent.capabilities = { ...env.agent.capabilities as object, sessionCapabilities: { resume: {} } };
+		const { handle, turn } = await startTurn(env);
+		assert.strictEqual(env.provider.canResume(handle), true, 'alive between turns it could be stopped and resumed');
+		env.agent.exit('p1', 137);
+		await turn.done;
+		assert.ok(kinds(turn.events).includes('error'), 'the turn failed with the process');
+		assert.strictEqual(env.provider.canResume(handle), false, 'a dead process is not something to stop and resume later');
+		assert.strictEqual(env.provider.canResume(handle, true), true, 'but the restart may continue the session it left on disk');
+		await env.provider.dispose(handle);
+		assert.strictEqual(env.provider.canResume(handle, true), false, 'the handle is forgotten once it is disposed');
+
+		// An agent with no session/resume is never offered.
+		const plain = setup();
+		const other = await startTurn(plain);
+		plain.agent.exit('p1', 137);
+		await other.turn.done;
+		assert.strictEqual(plain.provider.canResume(other.handle, true), false);
+	});
 
 	test('setup skips config writes the session already has (each costs cursor-agent ~2 s)', async () => {
 		const env = setup();

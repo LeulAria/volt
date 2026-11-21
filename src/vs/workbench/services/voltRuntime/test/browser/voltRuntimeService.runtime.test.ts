@@ -20,7 +20,7 @@ import { InMemoryFileSystemProvider } from '../../../../../platform/files/common
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { InMemoryStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IVoltExecRequest, IVoltExecResult, IVoltStdioService } from '../../../../../platform/voltStdio/common/voltStdio.js';
-import { AgentRuntimeService } from '../../browser/voltRuntimeService.js';
+import { AgentRuntimeService, parseRunningAgents, VOLT_RUNNING_AGENTS_STORAGE_KEY } from '../../browser/voltRuntimeService.js';
 import { DEFAULT_ACP_CAPABILITIES, DEFAULT_MODEL_CAPABILITIES } from '../../common/capabilities.js';
 import { LSP_ENABLED_SETTING } from '../../common/codeIntelligence.js';
 import { IWorkspaceSnapshot, WORKSPACE_SNAPSHOT_COMMAND_ID } from '../../common/harness/workspaceContext.js';
@@ -731,6 +731,51 @@ suite('Agent runtime orchestration', () => {
 		});
 		assert.strictEqual((await waitEnd(await service.send('chat', { text: 'fix the bug', mode: 'agent', providerRef: ref }))).reason, 'done');
 		assert.ok(agent.prompts[1].text.includes('in a new session') && agent.prompts[1].text.includes('finished 1 tool call') && agent.prompts[1].text.endsWith('fix the bug'), agent.prompts[1].text);
+	});
+
+	test('a turn the agent server died under is continued on its own agent session by the restarted server', async () => {
+		const { service, internals, agent, ref, waitEnd } = await setup('agent');
+		agent.resumable = true;
+		const storage = (internals as unknown as { storageService: { get(key: string, scope: number): string | undefined; store(key: string, value: string, scope: number, target: number): void } }).storageService;
+		const stored = () => parseRunningAgents(storage.get(VOLT_RUNNING_AGENTS_STORAGE_KEY, -1 /* StorageScope.APPLICATION */));
+		// While a turn runs, its agent session is on record; when it ends, the record goes.
+		let during: ReturnType<typeof stored> | undefined;
+		agent.turns.push(async function* (_message, _token) {
+			during = stored();
+			yield { type: 'text.delta', id: 't', delta: 'done' };
+			yield { type: 'run.end', runId: 'x', reason: 'done' };
+		});
+		await waitEnd(await service.send('chat', { text: 'one', mode: 'agent', providerRef: ref }));
+		const record = during?.get('chat');
+		assert.ok(record, 'the running turn\'s session was written down');
+		assert.strictEqual(record.synced, 1, 'it had seen the prompt');
+		assert.strictEqual(stored().size, 0, 'a finished turn leaves nothing to continue');
+
+		// The server died mid-turn: the record is still there when the next one starts, and a chat it
+		// names starts its agent again on that session.
+		storage.store(VOLT_RUNNING_AGENTS_STORAGE_KEY, JSON.stringify({ lost: { ...record, providerSessionId: 'p-lost', synced: 1 } }), -1, 1);
+		(internals as unknown as { runningAgents: undefined }).runningAgents = undefined;
+		const lost = service.getOrCreateSession('lost') as unknown as { releasedAgent?: { providerSessionId: string } };
+		assert.strictEqual(lost.releasedAgent?.providerSessionId, 'p-lost');
+		const before = agent.starts.length;
+		// waitEnd hears the 'chat' session only: this run is the lost chat's.
+		const lostEnds: string[] = [];
+		store.add(service.onEvent('lost', envelope => envelope.event.type === 'run.end' && lostEnds.push(envelope.runId)));
+		const lostRun = await service.send('lost', { text: 'go on', mode: 'agent', providerRef: ref });
+		await waitFor(() => lostEnds.includes(lostRun), 'the lost chat\'s continuation to end');
+		assert.strictEqual(agent.starts.slice(before).find(start => start.sessionId === 'lost')?.resumeSessionId, 'p-lost', 'the continuation resumed the session that holds the turn\'s steps');
+		assert.strictEqual(stored().size, 0);
+	});
+
+	test('the record of running turns ignores anything that is not one', () => {
+		assert.strictEqual(parseRunningAgents(undefined).size, 0);
+		assert.strictEqual(parseRunningAgents('not json').size, 0);
+		assert.strictEqual(parseRunningAgents('[1]').size, 0);
+		const parsed = parseRunningAgents(JSON.stringify({ a: { providerId: 'p', ref: 'r', providerSessionId: 's', synced: 2.7, stateKey: 'k' }, b: { providerId: 'p', ref: 'r', providerSessionId: '', synced: 1 }, c: { providerId: 'p', ref: 'r', providerSessionId: 's', synced: -1 }, d: null }));
+		assert.deepStrictEqual([...parsed], [['a', { providerId: 'p', ref: 'r', cwd: undefined, providerSessionId: 's', stateKey: 'k', synced: 2 }]]);
+		const many = parseRunningAgents(JSON.stringify(Object.fromEntries(Array.from({ length: 130 }, (_, i) => [`c${i}`, { providerId: 'p', ref: 'r', providerSessionId: `s${i}`, synced: 0 }]))));
+		assert.strictEqual(many.size, 100);
+		assert.ok(many.has('c129') && !many.has('c29'), 'the newest are kept');
 	});
 
 	test('an idle agent of a chat not in use stops after its grace and comes back with its session, no recap', async () => {
