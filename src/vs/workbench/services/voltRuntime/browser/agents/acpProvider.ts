@@ -106,6 +106,8 @@ interface IAcpSession {
 	children?: Map<string, IAcpChild>;
 	/** Tool calls that only control a native subagent (Claude's Agent call): their updates are not tool rows. */
 	subagentCalls?: Set<string>;
+	/** Subagents that ended between turns: the next turn reports their end, so their cards and chats settle. */
+	pendingSubagentEnds?: Extract<IVoltEvent, { type: 'subagent.completed' }>[];
 	/** Background work the agent started (Claude's `run_in_background` Bash), by task id. Outlives turns. */
 	backgroundTasks?: Map<string, IAcpBackgroundTask>;
 	/**
@@ -1622,6 +1624,11 @@ export class AcpAgentProvider implements IAgentProvider {
 		for (const notice of pendingNotices ?? []) {
 			this.pushNotice(live, turn, notice);
 		}
+		const pendingEnds = live.pendingSubagentEnds;
+		live.pendingSubagentEnds = undefined;
+		for (const end of pendingEnds ?? []) {
+			this.pushActivity(live, turn, end);
+		}
 		const cancel = token.onCancellationRequested(() => this.cancelTurn(live, turn, 'user'));
 		// Not awaited at the end: once `run.end` is out, a cancelled prompt may still be settling.
 		void this.runTurn(live, turn, msg, token)
@@ -1677,14 +1684,27 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		const turn = live.turn;
 		if (!turn || turn.ended) {
-			// A subagent can end between turns; the next turn must not wait on it.
-			const ended = (params as { update?: { sessionUpdate?: unknown; subagentSessionId?: unknown } } | undefined)?.update;
+			// A subagent can end between turns (a background one outlives the turn that launched it): the
+			// next turn must not wait on it, and reports its end so its card and chat settle.
+			const body = params as { sessionId?: unknown; update?: { sessionUpdate?: unknown; subagentSessionId?: unknown; state?: unknown } } | undefined;
+			const ended = body?.update;
 			if (ended?.sessionUpdate === 'subagent_state_update' && typeof ended.subagentSessionId === 'string') {
 				const child = live.children?.get(ended.subagentSessionId);
-				if (child) {
+				if (child && !child.ended) {
 					child.ended = true;
 					child.hold?.dispose();
 					child.hold = undefined;
+					(live.pendingSubagentEnds ??= []).push(subagentEndEvent(ended.subagentSessionId, child, ended.state));
+				}
+			} else if (typeof body?.sessionId === 'string' && body.sessionId !== (live.handle.providerSessionId ?? live.handle.id)) {
+				// A background child keeps writing between turns: its report is the text it ends with.
+				const child = live.children?.get(body.sessionId);
+				if (child && !child.ended) {
+					for (const event of this.mapUpdate(params)) {
+						if (event.type === 'text.delta' && event.delta) {
+							child.text += event.delta;
+						}
+					}
 				}
 			}
 			if (isChatPlanUpdate(params, live.handle.providerSessionId ?? live.handle.id)) {
@@ -1815,15 +1835,7 @@ export class AcpAgentProvider implements IAgentProvider {
 				child.ended = true;
 				child.hold?.dispose();
 				child.hold = undefined;
-				const state = String(update.state ?? 'completed');
-				const status = state === 'failed' ? 'failed' : state === 'cancelled' || state === 'disconnected' ? 'cancelled' : 'completed';
-				this.pushActivity(live, turn, {
-					type: 'subagent.completed',
-					childId: update.subagentSessionId,
-					status,
-					...(child.text.trim() ? { result: child.text.trim() } : {}),
-					...(status === 'failed' ? { error: `The subagent ${state}.` } : {}),
-				});
+				this.pushActivity(live, turn, subagentEndEvent(update.subagentSessionId, child, update.state));
 			}
 			return true;
 		}
@@ -2707,6 +2719,19 @@ function currentModeUpdate(params: unknown): string | undefined {
 	const body = params as { update?: { sessionUpdate?: string; currentModeId?: unknown } } | undefined;
 	const update = body?.update;
 	return update?.sessionUpdate === 'current_mode_update' && typeof update.currentModeId === 'string' ? update.currentModeId : undefined;
+}
+
+/** How a native subagent ended (`subagent_state_update`'s state), with its last words as its report. */
+function subagentEndEvent(childId: string, child: Pick<IAcpChild, 'text'>, rawState: unknown): Extract<IVoltEvent, { type: 'subagent.completed' }> {
+	const state = String(rawState ?? 'completed');
+	const status = state === 'failed' ? 'failed' : state === 'cancelled' || state === 'disconnected' ? 'cancelled' : 'completed';
+	return {
+		type: 'subagent.completed',
+		childId,
+		status,
+		...(child.text.trim() ? { result: child.text.trim() } : {}),
+		...(status === 'failed' ? { error: `The subagent ${state}.` } : {}),
+	};
 }
 
 /** The options a `config_option_update` lists, when it is the session's own (not a subagent's). */

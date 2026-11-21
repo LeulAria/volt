@@ -25,7 +25,7 @@ import { KeyCode } from '../../../../../base/common/keyCodes.js';
 import { disposableTimeout, raceTimeout, RunOnceScheduler } from '../../../../../base/common/async.js';
 import { DisposableMap, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename, dirname, isAbsolute } from '../../../../../base/common/path.js';
-import { joinPath } from '../../../../../base/common/resources.js';
+import { isEqual, joinPath } from '../../../../../base/common/resources.js';
 import { VSBuffer } from '../../../../../base/common/buffer.js';
 import { escapeRegExpCharacters } from '../../../../../base/common/strings.js';
 import { URI } from '../../../../../base/common/uri.js';
@@ -81,6 +81,7 @@ import { ACCESS_MODE_OPTIONS } from '../../../../services/voltRuntime/common/acc
 import { normalizeVoltMode, VoltMode } from '../../../../services/voltRuntime/common/modes.js';
 import { IAgentRuntimeService, type IVoltCompactionPlan } from '../../../../services/voltRuntime/common/runtime.js';
 import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
+import { readableModelLabel } from '../../../../services/voltRuntime/common/models/modelMeta.js';
 import { IAgentOrchestratorService, IOrchPrompt, IOrchQueueItem, IOrchSubmitResult, OrchDelivery, OrchEvent } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { AgentQueueOverlay } from '../../common/agentQueueOverlay.js';
 import { IAgentPromptHostOptions, IAgentThreadSourceHost, stashTurnDisplay } from '../orchestration/agentTurnHost.js';
@@ -120,6 +121,7 @@ import { IAgentCustomizeService, IAgentSlashItem } from '../customize/agentCusto
 import { AgentSkillHoverCard } from '../composer/agentSkillHoverCard.js';
 import { IAgentRunGroupService, IRunGroupModel, validateRunSelection } from '../../../../services/voltRuntime/common/runGroups/runGroups.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { ILayoutService } from '../../../../../platform/layout/browser/layoutService.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IVoltMemoryService, MEMORY_BODY_LIMIT, memoryDescriptionFromReply } from '../../../../services/voltRuntime/common/memory/voltMemory.js';
 import { OPEN_RUN_GROUP_COMMAND_ID } from '../runGroups/agentRunGroupCommands.js';
@@ -238,6 +240,8 @@ import { AgentTurnFilesTree } from './agentTurnFilesTree.js';
 import { fitImageStripToOneRow } from './agentMessageImageRow.js';
 import { DEFAULT_LABELS_CONTAINER, ResourceLabels } from '../../../../browser/labels.js';
 import { chooseFileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
+import type { IAgentRevertPreviewFile } from '../review/agentCheckpointService.js';
+import { showAgentRevertPreview } from '../review/agentRevertPreview.js';
 import { VOLT_FONT_FAMILY } from '../../common/agentTypography.js';
 import { RUN_DEVICE_PICK_NOTE, runDeviceIntent } from '../../common/agentRunTargets.js';
 import { IAgentRunService } from '../run/agentRunService.js';
@@ -496,7 +500,7 @@ function createForkIcon(): HTMLElement {
 	);
 }
 
-function createStrokeIcon(extraClass: string, paths: readonly string[]): HTMLElement {
+function createStrokeIcon(extraClass: string, paths: readonly string[], strokeWidth = '1.5'): HTMLElement {
 	const el = $(`span.volt-agent-svg-icon.${extraClass}`);
 	const svg = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
 	svg.setAttribute('viewBox', '0 0 24 24');
@@ -508,7 +512,7 @@ function createStrokeIcon(extraClass: string, paths: readonly string[]): HTMLEle
 		const path = el.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
 		path.setAttribute('d', d);
 		path.setAttribute('stroke', 'currentColor');
-		path.setAttribute('stroke-width', '1.5');
+		path.setAttribute('stroke-width', strokeWidth);
 		path.setAttribute('stroke-linecap', 'round');
 		path.setAttribute('stroke-linejoin', 'round');
 		svg.appendChild(path);
@@ -694,6 +698,7 @@ const REVERT_ON_EDIT_ALWAYS_KEY = 'voltAgent.checkpoint.revertOnEditAlways';
 /** Checkpoint commands registered by the checkpoint service; the UI hides itself while they are missing. */
 const CHECKPOINT_RESTORE_COMMAND = 'voltAgent.checkpoint.restore';
 const CHECKPOINT_HAS_CHANGES_COMMAND = 'voltAgent.checkpoint.hasChangesSince';
+const CHECKPOINT_REVERT_PREVIEW_COMMAND = 'voltAgent.checkpoint.revertPreview';
 
 /** A model picked in the composer gets its agent started this soon (stepping through models starts none). */
 const PREWARM_ON_MODEL_MS = 100;
@@ -1472,6 +1477,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			onMultitask: () => this.startMultitasking(),
 			onMultitaskPick: ids => this.setMultitaskPick(ids),
 			onPickModel: (id, anchor) => this.openQueuedModelMenu(id, anchor),
+			renderModel: (ref, button) => this.renderQueuedModel(ref, button),
 			onOpenAgent: view => this.openSubagent(view.key),
 			onStopAgent: view => this.stopSubagentNow(view),
 			onResumeAgent: view => this.resumeSubagent(view.key),
@@ -1558,6 +1564,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			multitaskInInput: true,
 			terminalRuns: this.terminalChips,
 			limitRun: this.limitChip,
+			readOnlyChat: () => !!this.container?.classList.contains('subagent-chat'),
 		}));
 		// Two cards of one look: the agent's to-dos, then its subagents.
 		this.tasksCard = this._register(new AgentTasksCard(() => this.layoutInputEditor(), target => target.kind === 'file'
@@ -4479,6 +4486,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			bubble.classList.remove('clamped');
 			const height = text.scrollHeight;
 			bubble.classList.toggle('clamped', wasClamped);
+			if (!height || !text.isConnected) {
+				// Not laid out (a hidden pane, a panel still opening): keep the guess from the text and
+				// measure on the next draw instead of caching "fits" and showing a long brief whole.
+				return;
+			}
 			const measured = { width: this.layoutWidth, text: message.text, multiline: height > 28, clamped: height > 22 * 2 + 1 };
 			this.promptClamps.set(message, measured);
 			applyClamp(measured.multiline, measured.clamped);
@@ -4517,77 +4529,58 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			}));
 		}
 		if (!readOnly && message.id) {
-			// One corner button (Cursor's restore glyph): the chat goes back to before this message, and
-			// the files too if the user picks Rewind and Revert Files. Drawn even while a run streams
-			// (hidden then, see syncStreamingClass): a settled message is not redrawn when the run ends.
+			// One corner button (Cursor's restore glyph): previews the file changes made since this
+			// message and reverts them if the user agrees. The chat stays as it is (editing the message
+			// rewinds it). Drawn even while a run streams (hidden then, see syncStreamingClass): a
+			// settled message is not redrawn when the run ends.
 			const turnId = message.id;
 			turn.classList.add('has-rewind');
 			const rewind = append(bubble, $('button.volt-agent-user-restore')) as HTMLButtonElement;
 			rewind.type = 'button';
-			rewind.setAttribute('aria-label', localize('voltAgent.rewind', "Rewind to Here"));
-			setAgentTooltip(rewind, localize('voltAgent.rewind.hintFiles', "Rewind the chat to before this message, and its file changes if you choose"));
+			rewind.setAttribute('aria-label', localize('voltAgent.revertSince', "Revert Changes Since This Message"));
+			setAgentTooltip(rewind, localize('voltAgent.revertSince.hint', "Revert the file changes made since this message"));
 			rewind.appendChild(renderIcon(Codicon.discard));
 			this.threadListeners.add(addDisposableListener(rewind, 'click', e => {
 				e.preventDefault();
 				e.stopPropagation();
-				void this.rewindTo(turnId);
+				void this.revertFilesSince(turnId);
 			}));
 		}
 	}
 
 	/**
-	 * T3's "Edit from here": the message and everything after it leave the chat and the agent's
-	 * context (the next send starts the agent fresh with the rest as a recap), and the message goes
-	 * back to the composer to edit and send again. Files stay as the agent left them unless the user
-	 * picks Revert Files too. Any unsent draft stays above the restored prompt.
+	 * The message's revert button: shows the file changes made since this message (the agent's
+	 * hunks, as diffs) and puts the files back as they were before it once the user agrees. The
+	 * chat and the composer are left alone.
 	 */
-	private async rewindTo(turnId: string): Promise<void> {
+	private async revertFilesSince(turnId: string): Promise<void> {
 		if (this.isStreaming() || this.isReadOnlyTaskChat()) {
 			return;
 		}
 		const sessionId = this.sessionKey;
 		const userTurn = this.userTurnOf(turnId);
-		const canRevert = hasCommand(CHECKPOINT_RESTORE_COMMAND) && hasCommand(CHECKPOINT_HAS_CHANGES_COMMAND)
-			&& await this.commandService.executeCommand<boolean>(CHECKPOINT_HAS_CHANGES_COMMAND, { sessionId, turnId, userTurn }).catch(() => false);
-		const { result } = await this.dialogService.prompt<'keep' | 'revert' | 'cancel'>({
-			message: localize('voltAgent.rewind.title', "Rewind the chat to before this message?"),
-			detail: canRevert
-				? localize('voltAgent.rewind.detailRevertable', "This message and everything after it are removed from the chat and the agent's context, and the message goes back to the composer. Files the agent changed since stay as they are, unless you revert them too.")
-				: localize('voltAgent.rewind.detail', "This message and everything after it are removed from the chat and the agent's context, and the message goes back to the composer. Files stay as they are."),
-			buttons: [
-				{ label: localize({ key: 'voltAgent.rewind.keep', comment: ['&& denotes a mnemonic'] }, "&&Rewind"), run: () => 'keep' },
-				...(canRevert ? [{ label: localize({ key: 'voltAgent.rewind.revert', comment: ['&& denotes a mnemonic'] }, "Rewind and Revert &&Files"), run: () => 'revert' as const }] : []),
-			],
-			cancelButton: { label: localize('voltAgent.rewind.cancel', "Cancel"), run: () => 'cancel' },
-		});
-		if (result === 'cancel' || this.sessionKey !== sessionId || this.isStreaming()) {
+		if (!hasCommand(CHECKPOINT_RESTORE_COMMAND) || !hasCommand(CHECKPOINT_REVERT_PREVIEW_COMMAND)) {
 			return;
 		}
-		if (result === 'revert') {
-			await this.commandService.executeCommand<boolean>(CHECKPOINT_RESTORE_COMMAND, { sessionId, turnId, userTurn }).catch(err => this.logService.warn('[volt agent] revert files failed', err));
-		}
-		const index = this.messages.findIndex(message => message.kind === 'user' && message.id === turnId);
-		const message = this.messages[index];
-		if (index < 0 || message?.kind !== 'user' || this.sessionKey !== sessionId) {
+		const files = await this.commandService.executeCommand<readonly IAgentRevertPreviewFile[]>(CHECKPOINT_REVERT_PREVIEW_COMMAND, { sessionId, turnId, userTurn })
+			.catch(err => { this.logService.warn('[volt agent] revert preview failed', err); return undefined; });
+		if (this.sessionKey !== sessionId || this.isStreaming()) {
 			return;
 		}
-		if (this.editingUserIndex !== undefined) {
-			this.cancelUserEdit(false);
+		if (!files) {
+			this.notificationService.info(localize('voltAgent.revertSince.noCheckpoint', "There is no checkpoint for this message. Checkpoints need the project to be a folder on this computer."));
+			return;
 		}
-		this.messages.splice(index);
-		if (this.input instanceof AgentEditorInput) {
-			this.input.recordTruncate(message);
+		if (!files.length) {
+			this.notificationService.info(localize('voltAgent.revertSince.none', "No files changed since this message."));
+			return;
 		}
-		this.runtime.truncateSession(sessionId, this.messages.filter(candidate => candidate.kind === 'user').length);
-		const draft = this.inputModel?.getValue().trim() ?? '';
-		const draftMentions = cloneDisplayMentions(this.mentionController?.displayMentions() ?? []);
-		this.setComposerContent(draft ? `${draft}\n\n${message.text}` : message.text, [...(draft ? draftMentions : []), ...(message.mentions ?? [])]);
-		if (message.mode) {
-			this.setMode(message.mode);
+		const layoutService = this.instantiationService.invokeFunction(accessor => accessor.get(ILayoutService));
+		const confirmed = await showAgentRevertPreview(this.instantiationService, layoutService, files);
+		if (!confirmed || this.sessionKey !== sessionId || this.isStreaming()) {
+			return;
 		}
-		this.renderThread(false);
-		this.syncComposerPlacement();
-		this.inputEditor?.focus();
+		await this.commandService.executeCommand<boolean>(CHECKPOINT_RESTORE_COMMAND, { sessionId, turnId, userTurn }).catch(err => this.logService.warn('[volt agent] revert files failed', err));
 	}
 
 	/**
@@ -6116,11 +6109,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			e.stopPropagation();
 			this.surfaceHost.openChanges('lastTurn');
 		}));
+		const turnId = this.userTurnIdBefore(message);
 		const rows = this.threadListeners.add(this.instantiationService.createInstance(
 			AgentTurnFilesTree,
 			append(card, $('.volt-agent-turn-files-rows')),
 			this.turnFileLabels,
-			(path: string) => void this.openWorkspaceFile(path),
+			(path: string) => void this.openTurnFileDiff(path, turnId),
 		));
 		const render = () => {
 			const tree = this.storageService.getBoolean(TURN_FILES_TREE_KEY, StorageScope.APPLICATION, false);
@@ -6136,7 +6130,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// The tool calls' counts are a guess (a replace-all edit reports one occurrence); the turn's
 		// snapshots have the real ones. Read once the card is on screen: an old chat has many cards.
 		let shown = files;
-		const turnId = this.userTurnIdBefore(message);
 		if (turnId) {
 			const sessionId = this.sessionKey;
 			const scope = agentTurnScope(turnId);
@@ -6377,6 +6370,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		return fast;
 	}
 
+	/** A row of a turn's "Files Changed" card: that turn's diff, scrolled to the file. No snapshot of it: the file itself. */
+	private async openTurnFileDiff(path: string, turnId: string | undefined): Promise<void> {
+		const resource = await this.resolveWorkspaceFile(path);
+		const sessionId = this.sessionKey;
+		const scope = turnId ? agentTurnScope(turnId) : 'lastTurn';
+		const item = resource && sessionId ? this.sessionChanges.getMultiDiffItems(sessionId, scope)
+			.find(item => isEqual(item.goToFileUri ?? item.modifiedUri ?? item.originalUri, resource)) : undefined;
+		if (item) {
+			this.surfaceHost.openChanges(scope, { original: item.originalUri, modified: item.modifiedUri });
+			return;
+		}
+		await this.openWorkspaceFile(path);
+	}
+
 	private async openWorkspaceFile(path: string, startLine?: number, endLine?: number): Promise<void> {
 		const preview = extractLocalPreviewUrl(path) ?? extractHttpUrl(path);
 		if (preview) {
@@ -6608,24 +6615,61 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.updateSendButton();
 	}
 
-	/** Configure: the model a picked queued message's agent runs with; the default follows this chat's model. */
+	/** The queued message the queue's model picker is bound to; the picker reads and sets its model. */
+	private queuedModelTarget: string | undefined;
+	private queuedModelPickerInstance: AgentModelPicker | undefined;
+	/** The rows wait while the picker is open: redrawing them would pull its anchor out from under it. */
+	private queuedModelPickerOpen = false;
+
+	/** The composer's model picker, bound to one queued message: its Default row follows this chat's model. */
+	private get queuedModelPicker(): AgentModelPicker {
+		this.queuedModelPickerInstance ??= this._register(this.instantiationService.createInstance(AgentModelPicker, {
+			binding: {
+				get: () => this.queuedItems.find(item => item.id === this.queuedModelTarget)?.prompt.modelRef,
+				set: ref => {
+					if (this.queuedModelTarget) {
+						this.setQueuedModel(this.queuedModelTarget, ref);
+					}
+				},
+				autoLabel: localize('voltAgent.queue.defaultModel', "Default model"),
+				autoDescription: localize('voltAgent.queue.defaultModelDesc', "The model this chat runs on"),
+			},
+			position: AnchorPosition.ABOVE,
+			// Effort or speed edited in the picker: the rows' triggers show it once it closes.
+			onDidChange: () => {
+				if (!this.queuedModelPickerOpen) {
+					this.syncQueueStack();
+				}
+			},
+			sandboxed: () => this.runtime.getSandboxSettings(this.sessionKey).level !== 'off',
+		}));
+		return this.queuedModelPickerInstance;
+	}
+
+	/** Configure: the model a picked queued message's agent runs with, from the composer's model picker. */
 	private openQueuedModelMenu(itemId: string, anchor: HTMLElement): void {
-		const current = this.queuedItems.find(item => item.id === itemId)?.prompt.modelRef;
-		showVoltMenu<string | undefined>(this.contextViewService, {
-			anchor,
-			position: 'above',
-			align: 'left',
-			width: 260,
-			ariaLabel: localize('voltAgent.queue.modelMenu', "Model for this queued message"),
-			sections: [{
-				id: 'models',
-				items: [
-					{ id: 'default', label: localize('voltAgent.queue.defaultModel', "Default model"), checked: !current, data: undefined },
-					...this.catalog.map(model => ({ id: model.ref, label: this.queuedModelLabel(model.ref) ?? model.ref, checked: model.ref === current, data: model.ref })),
-				],
-			}],
-			onPick: picked => this.setQueuedModel(itemId, picked.data),
+		this.queuedModelTarget = itemId;
+		this.queuedModelPickerOpen = true;
+		this.queuedModelPicker.show(anchor, () => {
+			this.queuedModelPickerOpen = false;
+			this.syncQueueStack();
 		});
+	}
+
+	/** A queued row's model trigger, drawn like the composer's: brand icon, name and effort. */
+	private renderQueuedModel(ref: string | undefined, button: HTMLElement): void {
+		const picker = this.queuedModelPicker;
+		const target = this.queuedModelTarget;
+		this.queuedModelTarget = this.queuedItems.find(item => item.prompt.modelRef === ref)?.id;
+		picker.syncCatalog();
+		if (ref && !picker.selectedModel()) {
+			// A model no longer in the catalog: its ref, as before.
+			append(button, $('span.volt-agent-model-label')).textContent = this.queuedModelLabel(ref) ?? ref;
+		} else {
+			picker.renderTrigger(button);
+		}
+		this.queuedModelTarget = target;
+		picker.syncCatalog();
 	}
 
 	private setQueuedModel(itemId: string, ref: string | undefined): void {
@@ -6646,7 +6690,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			return undefined;
 		}
 		const model = this.catalog.find(candidate => candidate.ref === ref);
-		return model ? [this.modelPicker.modelProviderLabel(model), splitModelDisplayName(model.name).name].filter(Boolean).join(' ') : ref;
+		// With its options (effort, speed), so a row redraws when they change in the picker.
+		return model ? this.modelPicker.modelTitle(model) : ref;
 	}
 
 	getPromptQueue(): readonly { id: string; text: string; display?: IAgentPromptDisplay }[] {
@@ -7142,6 +7187,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		// A side chat with no project of its own sends in its parent's project, not a new scratch folder.
 		this.surfaceHost.ensureSideChatProject();
+		this.endDictationForSend();
 		// A video just attached is still being cut into stills; send once they are ready.
 		const media = this.mentionController?.whenMediaReady();
 		if (media) {
@@ -7174,6 +7220,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		} finally {
 			this.submitting = false;
 		}
+	}
+
+	/** Sending ends a dictation: what it wrote so far goes out with the draft, and the mic stops. */
+	private endDictationForSend(): void {
+		if (!this.voiceDictation?.active) {
+			return;
+		}
+		if (this.dictatedText.writing) {
+			this.dictatedText.end(this.voiceDictation.partial);
+		}
+		this.voiceDictation.cancel();
 	}
 
 	/** Why this composer cannot send one prompt to several models now; undefined when it can. */
@@ -8048,7 +8105,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				void this.orchestrator.ensureThreadLoaded(parent).then(() => this.renderSubagentBar());
 			}
 		}
-		this.container.classList.toggle('subagent-chat', (!!task && !multitask) || harnessChat);
+		const wasReadOnly = this.container.classList.contains('subagent-chat');
+		if (wasReadOnly !== this.container.classList.toggle('subagent-chat', (!!task && !multitask) || harnessChat)) {
+			// The composer chips drop Commit & Push and the pull request in a read-only chat.
+			this.onDidChangeSubagentChip.fire();
+		}
 		// A read-only chat's access and branch pickers show the parent's settings and change nothing
 		// (agentSubagents.css dims them and turns off their pointer).
 		const lockPickers = (!!task && !multitask) || harnessChat;
@@ -8088,7 +8149,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// and names it only when it returns: until then, the parent's.
 		const parentModel = !view.modelLabel && task.source === 'harness' ? this.orchestrator.getThread(parentId)?.modelRef : undefined;
 		const parentItem = parentModel ? this.runtime.listCatalog().find(item => item.ref === parentModel) : undefined;
-		const modelLabel = view.modelLabel ?? parentItem?.label;
+		const modelLabel = view.modelLabel ?? readableModelLabel(parentItem?.label);
 		const providerId = view.modelLabel ? view.providerId : parentItem?.providerId;
 		if (multitask || !modelLabel) {
 			append(bar, $('span.label')).textContent = multitask
@@ -8107,6 +8168,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			: (live ? localize('voltAgent.subagentBar.readOnlyLive', "Read only · runs on its own") : localize('voltAgent.subagentBar.readOnlyDone', "Read only · reported to its parent"));
 		const elapsed = view.startedAt !== undefined ? formatOrchElapsed((view.endedAt ?? Date.now()) - view.startedAt) : undefined;
 		setAgentTooltip(bar, [view.modelLabel, [view.stateLabel, elapsed].filter(Boolean).join(' '), note].filter(Boolean).join(' · '));
+		if (view.state === 'queued') {
+			// Not started yet (a dependency still runs, or every slot is taken): say so, shimmering, until it starts.
+			const waiting = append(bar, $('span.state.waiting.volt-agent-activity-label.shimmer'));
+			waiting.textContent = view.detail ?? localize('voltAgent.subagentBar.waitingToStart', "Waiting to start");
+		}
 
 		type BarAction = 'stop' | 'resume' | 'restart' | 'parent';
 		const items: IVoltMenuItem<BarAction>[] = [];
@@ -8127,6 +8193,34 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		bar.classList.toggle('has-menu', items.length > 0);
 		const taskId = task.id;
+		// Stop (while it runs) and Resume (once stopped) sit on the bar itself, not only in its menu.
+		const inline = items.find(item => item.data === 'stop') ?? items.find(item => item.data === 'resume');
+		if (inline) {
+			const action = append(bar, $('span.volt-agent-subagent-bar-action'));
+			action.classList.add(inline.data);
+			action.setAttribute('role', 'button');
+			action.tabIndex = 0;
+			action.appendChild(renderIcon(inline.data === 'stop' ? Codicon.debugStop : Codicon.debugContinue));
+			append(action, $('span')).textContent = inline.label;
+			setAgentTooltip(action, inline.tooltip);
+			const run = (e: UIEvent) => {
+				e.preventDefault();
+				e.stopPropagation();
+				if (inline.data === 'stop') {
+					void (harness
+						? this.orchestrator.cancel(parentId, { cascade: 'turn' })
+						: this.orchestrator.dispatch({ type: 'task.cancel', taskId, reason: 'The user stopped it.' }));
+				} else {
+					this.resumeSubagent(taskId);
+				}
+			};
+			this.subagentBarStore.add(addDisposableListener(action, 'click', run));
+			this.subagentBarStore.add(addDisposableListener(action, 'keydown', e => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					run(e);
+				}
+			}));
+		}
 		this.subagentBarStore.add(addDisposableListener(bar, 'click', e => {
 			e.preventDefault();
 			e.stopPropagation();
@@ -9087,13 +9181,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			return;
 		}
 		this.composerQueue.setMode(this.currentMode);
-		this.composerQueue.setQueue(this.queuedItems.map(item => ({
-			id: item.id,
-			text: item.prompt.text,
-			preview: queuedPreview(item),
-			modelRef: item.prompt.modelRef,
-			modelLabel: this.queuedModelLabel(item.prompt.modelRef),
-		})));
+		if (!this.queuedModelPickerOpen) {
+			this.composerQueue.setQueue(this.queuedItems.map(item => ({
+				id: item.id,
+				text: item.prompt.text,
+				preview: queuedPreview(item),
+				modelRef: item.prompt.modelRef,
+				modelLabel: this.queuedModelLabel(item.prompt.modelRef),
+			})));
+		}
 		this.syncAgentViews();
 		this.composerQueue.setState(this.queueState());
 		this.updateInputPlaceholder();

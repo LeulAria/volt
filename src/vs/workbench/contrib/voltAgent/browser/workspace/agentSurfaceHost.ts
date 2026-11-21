@@ -865,11 +865,11 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	/** Without a scope, Source Control in the files sidebar; with one, that scope's diff as a tab. */
-	openChanges(scope?: AgentChangesScope): void {
+	openChanges(scope?: AgentChangesScope, reveal?: { readonly original: URI | undefined; readonly modified: URI | undefined }): void {
 		const owner = this.target();
 		if (scope) {
 			// A chat nested in another's tools (a subagent in its parent's panel) shows its own changes, not the host's.
-			void owner?.openChangesInTools(false, scope, this.sessionId);
+			void owner?.openChangesInTools(false, scope, this.sessionId, reveal);
 		} else {
 			owner?.showFilesSidebar('scm');
 		}
@@ -2348,11 +2348,11 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	/** One scope of the chat's changes (Review) as a diff tab. Source Control itself is in the files sidebar. */
-	private async openChangesInTools(preserveFocus: boolean, scope: AgentChangesScope, forSession?: string): Promise<void> {
+	private async openChangesInTools(preserveFocus: boolean, scope: AgentChangesScope, forSession?: string, reveal?: { readonly original: URI | undefined; readonly modified: URI | undefined }): Promise<void> {
 		const sessionId = forSession ?? this.sessionId;
 		const group = this.toolsGroup();
 		if (group && sessionId) {
-			await openAgentChangesDiff(this.instantiationService, group, sessionId, scope, preserveFocus);
+			await openAgentChangesDiff(this.instantiationService, group, sessionId, scope, preserveFocus, reveal);
 		}
 	}
 

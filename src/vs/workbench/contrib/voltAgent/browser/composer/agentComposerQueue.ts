@@ -14,6 +14,7 @@ import { groupSummary, isLiveSubagentState, ISubagentView, renderCursorCardRow, 
 import { ITasksCard } from '../chrome/agentTimeline.js';
 import { AgentTasksCard, closeOnOutsideClick } from './agentTasksCard.js';
 import { createQueueEditIcon, createQueueSendIcon } from '../home/agentHomeIcons.js';
+import { createSettingsIcon } from '../picker/agentModelPicker.js';
 import type { IAgentDisplayMention } from './agentMentions.js';
 
 export interface IQueuedPrompt {
@@ -35,8 +36,10 @@ export interface IAgentComposerQueueOptions {
 	 * turns off. Without it, Start Multitasking starts the whole queue at once (`onMultitask`).
 	 */
 	onMultitaskPick?(ids: readonly string[] | undefined): void;
-	/** Configure: the picked row's model, chosen from a menu anchored on its trigger. */
+	/** Configure: the picked row's model, chosen from the model picker anchored on its trigger. */
 	onPickModel?(id: string, anchor: HTMLElement): void;
+	/** Draws a row's model trigger like the composer's (brand icon, name, effort); undefined `modelRef` is the chat's default. */
+	renderModel?(modelRef: string | undefined, button: HTMLElement): void;
 	onReorder(ids: readonly string[]): void;
 	/** Load a queued prompt into the composer to change it (Cursor's "Edit queued message"). */
 	onEdit?(id: string): void;
@@ -210,8 +213,10 @@ export class AgentComposerQueue extends Disposable {
 	/** Start Multitasking is on: the rows are checkboxes; `unpicked` holds the ones unticked. */
 	private picking = false;
 	private readonly unpicked = new Set<string>();
-	/** Configure is on while multitasking: each picked row shows its model trigger. */
+	/** Configure is on while multitasking: each picked row shows its model trigger (without it, only on hover). */
 	private configuring = false;
+	/** A row's gear turned Configure on: its model picker opens once the rows are drawn again. */
+	private openModelFor: string | undefined;
 	/** True while a row is being dragged; re-renders are deferred until the drop lands. */
 	private dragging = false;
 	private renderPending = false;
@@ -721,11 +726,29 @@ export class AgentComposerQueue extends Disposable {
 			text.textContent = preview;
 			this.listeners.add(bindTruncatedHoverTooltip(text, preview));
 			const pickModel = this.options.onPickModel;
-			if (picking && this.configuring && pickModel && !this.unpicked.has(item.id)) {
-				const model = append(row, $('button.volt-agent-queue-model')) as HTMLButtonElement;
+			if (picking && pickModel && !this.unpicked.has(item.id)) {
+				// Configure shows every picked row's model; otherwise it shows on the hovered row.
+				const model = append(row, $('button.volt-agent-model.volt-agent-queue-model')) as HTMLButtonElement;
 				model.type = 'button';
-				model.textContent = item.modelLabel ?? localize('voltAgent.queue.defaultModel', "Default model");
-				setAgentTooltip(model, localize('voltAgent.queue.modelHint', "The model this message's agent runs with"));
+				model.classList.toggle('on-hover', !this.configuring);
+				model.setAttribute('aria-haspopup', 'dialog');
+				if (this.options.renderModel) {
+					this.options.renderModel(item.modelRef, model);
+				} else {
+					append(model, $('span.volt-agent-model-label')).textContent = item.modelLabel ?? localize('voltAgent.queue.defaultModel', "Default model");
+				}
+				model.appendChild(renderIcon(Codicon.chevronDown));
+				// No hover tooltip: it would sit over the picker this opens.
+				model.setAttribute('aria-label', localize('voltAgent.queue.modelAria', "Model this message's agent runs with: {0}", item.modelLabel ?? localize('voltAgent.queue.defaultModel', "Default model")));
+				if (this.openModelFor === item.id) {
+					this.openModelFor = undefined;
+					const targetWindow = model.ownerDocument.defaultView;
+					targetWindow?.setTimeout(() => {
+						if (model.isConnected) {
+							pickModel(item.id, model);
+						}
+					}, 0);
+				}
 				this.listeners.add(addDisposableListener(model, 'keydown', e => e.stopPropagation()));
 				this.listeners.add(addDisposableListener(model, 'click', e => {
 					e.preventDefault();
@@ -736,6 +759,18 @@ export class AgentComposerQueue extends Disposable {
 			const onEdit = this.options.onEdit;
 			const onSendNow = this.options.onSendNow;
 			const onSendToNewChat = this.options.onSendToNewChat;
+			if (!isEditing && !picking && this.options.onMultitaskPick && pickModel) {
+				// The gear: Start Multitasking with Configure on, and this row's model picker open.
+				this.appendRowAction(row, createSettingsIcon(), localize('voltAgent.queue.settingsHint', "Choose the model this message runs with, as its own agent (Start Multitasking)"), () => {
+					this.picking = true;
+					this.configuring = true;
+					this.unpicked.clear();
+					this.queueCollapsed = false;
+					this.openModelFor = item.id;
+					this.emitPick();
+					this.render();
+				}, 'settings', localize('voltAgent.queue.settings', "Model settings"));
+			}
 			if (!isEditing && onEdit) {
 				this.appendRowAction(row, createQueueEditIcon(), localize('voltAgent.queue.edit', "Edit queued message"), () => onEdit(item.id));
 			}

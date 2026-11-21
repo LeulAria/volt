@@ -229,6 +229,11 @@ export class VoltSpeechMainService extends Disposable implements IVoltSpeechServ
 
 	private async transcribeWithEndpoint(sessionId: string, session: IEndpointSession): Promise<void> {
 		const pcm = Buffer.concat(session.chunks);
+		// The composer only sends voice: no audio means nothing was said, and nothing is uploaded.
+		if (!pcm.byteLength) {
+			this._onDidEvent.fire({ sessionId, type: 'final', text: '' });
+			return;
+		}
 		try {
 			const form = new FormData();
 			form.append('file', new Blob([wavFromPcm16(pcm, VOLT_SPEECH_SAMPLE_RATE)], { type: 'audio/wav' }), 'dictation.wav');

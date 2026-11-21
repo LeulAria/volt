@@ -189,7 +189,8 @@ function rowDetail(task: IOrchTask): string | undefined {
 		return 'Volt restarted while it ran';
 	}
 	if (task.state === 'queued') {
-		return 'Waiting for a free slot';
+		// It needs others' results first (`after`), or every slot is taken.
+		return task.after?.length ? `Waiting for ${task.after.length === 1 ? 'the task' : `${task.after.length} tasks`} it depends on` : 'Waiting for a free slot';
 	}
 	if (isTerminalTaskState(task.state)) {
 		return orchHeadline(task.result) ?? task.activity;

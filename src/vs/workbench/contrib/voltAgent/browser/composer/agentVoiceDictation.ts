@@ -11,16 +11,22 @@ import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
-import { IVoltSpeechEndpoint, IVoltSpeechService, pcm16Bytes, rmsLevel, VOLT_SPEECH_SAMPLE_RATE } from '../../../../../platform/voltSpeech/common/voltSpeech.js';
+import { IVoltSpeechEndpoint, IVoltSpeechService, pcm16Bytes, rmsLevel, SpeechGate, VOLT_SPEECH_SAMPLE_RATE } from '../../../../../platform/voltSpeech/common/voltSpeech.js';
 import { IVoltPredictionService } from '../../../../services/voltRuntime/common/prediction.js';
+import { dictationNeedsCleanup } from '../../../../services/voltRuntime/common/prediction/dictationCleanup.js';
 import { AGENT_VOICE_ENDPOINT_SETTING, AGENT_VOICE_MODEL_SETTING } from '../../common/agentComposerSettings.js';
 
 export type AgentDictationState = 'idle' | 'starting' | 'listening' | 'transcribing';
 
 const AUDIO_BLOCK_FRAMES = 2048;
+const AUDIO_BLOCK_MS = AUDIO_BLOCK_FRAMES / VOLT_SPEECH_SAMPLE_RATE * 1000;
 const TRANSCRIBE_TIMEOUT_MS = 60_000;
 /** 32 ms at 16 kHz: four waveform bars per audio block. */
 const LEVEL_SLICE_FRAMES = 512;
+/** Pauses never end a dictation; two minutes without a word do. */
+const SILENCE_STOP_MS = 120_000;
+/** Blocks kept from before the voice starts (about a quarter second), so soft first syllables go through. */
+const PREROLL_BLOCKS = 2;
 
 interface IDictationAudio {
 	readonly stream: MediaStream;
@@ -34,6 +40,10 @@ interface IDictationSession {
 	readonly id: string;
 	/** Started with the shortcut: releasing the keys ends it. */
 	readonly holdToTalk: boolean;
+	/** Only voice (and a moment around it) reaches the recognizer; silence is never sent. */
+	readonly gate: SpeechGate;
+	/** The last silent blocks, sent ahead of the voice that follows them. */
+	readonly preroll: Float32Array[];
 	audio?: IDictationAudio;
 }
 
@@ -41,8 +51,9 @@ interface IDictationSession {
  * Dictation into the agent composer: the microphone at 16 kHz goes to the speech service in the
  * main process, which streams partial text back until a final transcript. The prediction model
  * then cleans the transcript up (punctuation, misheard names, spoken code, fillers) unless that is
- * turned off. Only one dictation runs at a time; `message` carries the last problem or the
- * "nothing heard" note while idle.
+ * turned off, or the transcript is clean already. Silence never reaches the recognizer or a model:
+ * pauses cost nothing, and two minutes without a word end the dictation. Only one dictation runs
+ * at a time; `message` carries the last problem or the "nothing heard" note while idle.
  */
 export class AgentVoiceDictation extends Disposable {
 
@@ -175,14 +186,12 @@ export class AgentVoiceDictation extends Disposable {
 
 	private async begin(holdToTalk: boolean): Promise<void> {
 		const generation = ++this.generation;
-		const session: IDictationSession = { id: generateUuid(), holdToTalk };
+		const session: IDictationSession = { id: generateUuid(), holdToTalk, gate: new SpeechGate(), preroll: [] };
 		this.session = session;
 		this.pendingStop = false;
 		this._partial = '';
 		this._level = 0;
 		this.setState('starting');
-		// The cleanup agent boots while the user speaks, so the first dictation is polished too.
-		this.prediction.warmUp();
 		try {
 			await this.speech.start({ sessionId: session.id, locale: navigator.language || 'en-US', endpoint: this.endpoint() });
 			if (generation !== this.generation) {
@@ -221,7 +230,8 @@ export class AgentVoiceDictation extends Disposable {
 	}
 
 	private onAudio(sessionId: string, samples: Float32Array): void {
-		if (this.session?.id !== sessionId || this._state !== 'listening') {
+		const session = this.session;
+		if (session?.id !== sessionId || this._state !== 'listening') {
 			return;
 		}
 		this._level = rmsLevel(samples);
@@ -231,6 +241,32 @@ export class AgentVoiceDictation extends Disposable {
 			slices.push(rmsLevel(samples.subarray(start, start + LEVEL_SLICE_FRAMES)));
 		}
 		this._onDidHear.fire(slices);
+		const heardBefore = session.gate.heardVoice;
+		const decision = session.gate.push(this._level, AUDIO_BLOCK_MS);
+		if (decision === 'silence') {
+			if (session.gate.silentMs >= SILENCE_STOP_MS) {
+				this.logService.trace('[voice] two minutes without a word: dictation ends');
+				this.stop();
+				return;
+			}
+			// The audio buffer is reused by the next callback.
+			session.preroll.push(samples.slice());
+			if (session.preroll.length > PREROLL_BLOCKS) {
+				session.preroll.shift();
+			}
+			return;
+		}
+		if (!heardBefore) {
+			// The cleanup agent boots once there is something to clean up, while the user speaks.
+			this.prediction.warmUp();
+		}
+		for (const block of session.preroll.splice(0)) {
+			this.pushAudio(sessionId, block);
+		}
+		this.pushAudio(sessionId, samples);
+	}
+
+	private pushAudio(sessionId: string, samples: Float32Array): void {
 		const pcm = encodeBase64(VSBuffer.wrap(pcm16Bytes(samples)));
 		this.speech.pushAudio(sessionId, pcm).catch(err => this.logService.warn('[voice] audio was not delivered', err));
 	}
@@ -260,7 +296,7 @@ export class AgentVoiceDictation extends Disposable {
 		}
 		this.clearTranscribeTimer();
 		this.closeAudio(session);
-		if (!text || !this.prediction.getSettings().voice) {
+		if (!text || !this.prediction.getSettings().voice || !dictationNeedsCleanup(text, this.textBefore?.())) {
 			this.settle(session, text);
 			return;
 		}

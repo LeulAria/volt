@@ -10804,9 +10804,18 @@ pre.volt-agent-searchable {
 	gap: 6px;
 }
 
-.volt-agent-composer-chip.comments .codicon {
-	font-size: 14px;
-	color: var(--vscode-textLink-foreground);
+/* The bubble glyph takes the chip's own text color. */
+.volt-agent-composer-chip.comments .volt-agent-svg-icon.comment {
+	display: inline-flex;
+	flex: none;
+	width: 14px;
+	height: 14px;
+	color: inherit;
+}
+
+.volt-agent-composer-chip.comments .volt-agent-svg-icon.comment svg {
+	width: 14px;
+	height: 14px;
 }
 
 /* "18 to multitask": Start Multitasking is on; Send starts the ticked queued messages. The × keeps them queued. */

@@ -18,7 +18,7 @@ import { cheapestReasoningLevel, formatPredictionError, IVoltModelAccess } from 
 import { IVoltModelOptions, MODEL_OPTION_REASONING, MODEL_PARAM_MAX_OUTPUT } from '../../common/models/modelOptions.js';
 import { DEFAULT_PREDICTION_SETTINGS, IComposerPredictionInput, IDictationInput, IEditPrediction, INextPromptInput, IPredictedEdit, IPredictionContext, IPredictionSettings, IVoltPredictionService, VOLT_PREDICTION_SETTINGS_STORAGE_KEY } from '../../common/prediction.js';
 import { buildComposerPrompt, buildNextPromptPrompt, cleanComposerCompletion, cleanNextPrompt } from '../../common/prediction/composerPredictor.js';
-import { buildDictationPrompt, cleanDictationReply, dictationReplyIsComplete } from '../../common/prediction/dictationCleanup.js';
+import { buildDictationPrompt, cleanDictationReply, dictationNeedsCleanup, dictationReplyIsComplete } from '../../common/prediction/dictationCleanup.js';
 import { meetsConfidence, orderEdits, samePath } from '../../common/prediction/editGraph.js';
 import { IParsedEdit, parseMultiEdit } from '../../common/prediction/multiEditParser.js';
 import { capLines, dedupeLineEcho, dedupePrefixOverlap, firstLineOnly, partialInsertText, postProcessInline, repliedLineBreakOnly, stripFences, stripSpecialTokens, trimToBlock } from '../../common/prediction/postProcess.js';
@@ -561,7 +561,8 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 	async polishDictation(input: IDictationInput, token: CancellationToken): Promise<string | undefined> {
 		const modelRef = this.modelAccess.resolveTabModelRef();
 		const transcript = input.transcript.trim();
-		if (!modelRef || !this.settings.voice || !transcript || this.backingOff()) {
+		// A clean transcript goes in as heard: no model call.
+		if (!modelRef || !this.settings.voice || !dictationNeedsCleanup(transcript, input.before) || this.backingOff()) {
 			return undefined;
 		}
 		const raw = await this.request(modelRef, 'voice', buildDictationPrompt(input), {

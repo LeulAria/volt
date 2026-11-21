@@ -72,6 +72,52 @@ export function rmsLevel(samples: Float32Array): number {
 	return Math.min(1, Math.sqrt(sum / samples.length));
 }
 
+/** What {@link SpeechGate} makes of one block of audio. */
+export type SpeechGateDecision = 'voice' | 'hangover' | 'silence';
+
+/** Voice is this many times louder than the room; quiet speakers still clear the floor. */
+const GATE_SPEECH_FACTOR = 3;
+const GATE_MIN_THRESHOLD = 0.006;
+const GATE_MAX_THRESHOLD = 0.08;
+/** Audio kept after the voice stops, so word endings and the pause between sentences go through. */
+const GATE_HANGOVER_MS = 1_000;
+
+/**
+ * Voice activity for dictation: an energy threshold over an adaptive noise floor. Only voice and a
+ * short hangover after it reach the recognizer, so silence costs nothing (no upload to a paid
+ * transcription endpoint, no recognizer time) and a dictation can sit through long pauses.
+ */
+export class SpeechGate {
+
+	private noiseFloor = 0.003;
+	private sinceVoiceMs = 0;
+	private _heardVoice = false;
+
+	/** Some block so far held voice, not only room noise. */
+	get heardVoice(): boolean {
+		return this._heardVoice;
+	}
+
+	/** How long no voice was heard: since the last voice, or since the start. */
+	get silentMs(): number {
+		return this.sinceVoiceMs;
+	}
+
+	push(rms: number, durationMs: number): SpeechGateDecision {
+		const threshold = Math.min(GATE_MAX_THRESHOLD, Math.max(GATE_MIN_THRESHOLD, this.noiseFloor * GATE_SPEECH_FACTOR));
+		if (rms >= threshold) {
+			this._heardVoice = true;
+			this.sinceVoiceMs = 0;
+			// A steady noise louder than the first guess still lifts the floor, slowly.
+			this.noiseFloor += (Math.min(rms, GATE_MAX_THRESHOLD) - this.noiseFloor) * 0.002;
+			return 'voice';
+		}
+		this.sinceVoiceMs += durationMs;
+		this.noiseFloor += (Math.min(rms, GATE_MAX_THRESHOLD) - this.noiseFloor) * 0.05;
+		return this._heardVoice && this.sinceVoiceMs <= GATE_HANGOVER_MS ? 'hangover' : 'silence';
+	}
+}
+
 /** A RIFF/WAVE file around 16-bit mono PCM, for uploads to a transcription endpoint. */
 export function wavFromPcm16(pcm: Uint8Array, sampleRate: number): Uint8Array<ArrayBuffer> {
 	const header = new DataView(new ArrayBuffer(44));

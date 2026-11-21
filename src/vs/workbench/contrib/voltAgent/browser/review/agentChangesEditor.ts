@@ -37,6 +37,7 @@ import { IViewDescriptorService } from '../../../../common/views.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
+import { IMultiDiffEditorOptions } from '../../../../../editor/browser/widget/multiDiffEditor/multiDiffEditorWidgetImpl.js';
 import { IMultiDiffEditorHeader, IMultiDiffEditorLook, setMultiDiffEditorLookProvider } from '../../../multiDiffEditor/browser/multiDiffEditor.js';
 import { MultiDiffEditorInput } from '../../../multiDiffEditor/browser/multiDiffEditorInput.js';
 import { VIEWLET_ID as SCM_VIEWLET_ID } from '../../../scm/common/scm.js';
@@ -235,23 +236,26 @@ export async function openAgentChangesDiff(
 	sessionId: string,
 	scope: AgentChangesScope,
 	preserveFocus?: boolean,
+	reveal?: { readonly original: URI | undefined; readonly modified: URI | undefined },
 ): Promise<void> {
 	const input = MultiDiffEditorInput.fromResourceMultiDiffEditorInput({
 		multiDiffSource: getAgentChangesSourceUri(sessionId, scope),
 		label: agentChangesScopeLabel(scope),
 	}, instantiationService);
+	// `reveal` scrolls the diff to one file (a row of a turn's "Files Changed" card).
+	const options: IMultiDiffEditorOptions = { pinned: true, preserveFocus, viewState: reveal ? { revealData: { resource: reveal } } : undefined };
 	// One Changes tab per chat: the scope (or commit) it shows now gives way to this one, in place.
 	const existing = group.editors.find(editor => isAgentChangesDiffFor(editor, sessionId));
 	if (existing) {
 		if (isEqual(existing.resource, input.resource)) {
 			input.dispose();
-			await group.openEditor(existing, { pinned: true, preserveFocus });
+			await group.openEditor(existing, options);
 			return;
 		}
-		await group.replaceEditors([{ editor: existing, replacement: input, options: { pinned: true, preserveFocus } }]);
+		await group.replaceEditors([{ editor: existing, replacement: input, options }]);
 		return;
 	}
-	await group.openEditor(input, { pinned: true, preserveFocus });
+	await group.openEditor(input, options);
 }
 
 /** `editor` is a diff of `sessionId`'s changes: a scope, or a commit picked from its header. */

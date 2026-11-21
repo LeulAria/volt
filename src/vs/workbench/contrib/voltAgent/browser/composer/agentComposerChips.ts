@@ -101,6 +101,8 @@ export interface IAgentComposerChipsOptions {
 	limitRun?: IAgentComposerTerminalRuns;
 	/** In a multitask agent's or subagent's chat: whose it is and how it runs ("Multitask · Running 50s", Stop), right after the limit. */
 	agentRun?: IAgentComposerTerminalRuns;
+	/** A subagent's read-only chat: no Commit & Push or pull request chip (its parent owns the branch). */
+	readOnlyChat?: () => boolean;
 	/** The commit review shrunk to a chip ("Draft Commits 4"), just before Commit. */
 	commitReview?: IAgentComposerTerminalRuns;
 	dock?: boolean;
@@ -139,6 +141,28 @@ function thinkingDotsMask(): string {
 		}
 	}
 	return `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84 10.5" fill="#000">${circles}</svg>`)}")`;
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** The comments chip's glyph: a round speech bubble with its tail at the bottom left, drawn with a hairline. */
+function createCommentIcon(): HTMLElement {
+	const el = $('span.volt-agent-svg-icon.comment');
+	const doc = el.ownerDocument;
+	const svg = doc.createElementNS(SVG_NS, 'svg');
+	svg.setAttribute('viewBox', '0 0 24 24');
+	svg.setAttribute('fill', 'none');
+	svg.setAttribute('stroke', 'currentColor');
+	svg.setAttribute('stroke-width', '1.5');
+	svg.setAttribute('stroke-linecap', 'round');
+	svg.setAttribute('stroke-linejoin', 'round');
+	svg.setAttribute('aria-hidden', 'true');
+	svg.setAttribute('focusable', 'false');
+	const path = doc.createElementNS(SVG_NS, 'path');
+	path.setAttribute('d', 'M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 14.663 3.04094 17.0829 4.73812 18.875L2.72681 21.1705C2.44361 21.4937 2.67314 22 3.10288 22H12Z');
+	svg.appendChild(path);
+	el.appendChild(svg);
+	return el;
 }
 
 /** A frame of the wave lasts this long (Cursor's DotGridLoader). */
@@ -309,7 +333,7 @@ export class AgentComposerChips extends Disposable {
 		// The dock shows its tab's comments itself.
 		this.commentsChip = append(this.element, $('button.volt-agent-composer-chip.comments.volt-browser-dock-chip.hidden')) as HTMLButtonElement;
 		this.commentsChip.type = 'button';
-		this.commentsChip.appendChild(renderIcon(Codicon.comment));
+		this.commentsChip.appendChild(createCommentIcon());
 		this.commentsLabelEl = append(this.commentsChip, $('span.volt-agent-composer-chip-label'));
 		setAgentTooltip(this.commentsChip, localize('voltAgent.commentsChip', "Browser comments that go with your next message"));
 		if (!options.dock) {
@@ -837,7 +861,8 @@ export class AgentComposerChips extends Disposable {
 	}
 
 	private render(): void {
-		const showPr = this.renderPullRequestChip();
+		const readOnly = !!this.options.readOnlyChat?.();
+		const showPr = this.renderPullRequestChip() && !readOnly;
 		// While it compacts, the Compact chip carries the run's status: no second "Compacting context" beside it.
 		const showStatus = this.hasStatus() && this.compactState !== 'running';
 		const showCompact = this.compactState !== 'hidden';
@@ -852,7 +877,7 @@ export class AgentComposerChips extends Disposable {
 		const showMultitaskChip = showMultitask && !this.options.multitaskInInput;
 		// Steps aside while Source Control shows this chat's changes in the right panel, and while the
 		// Changes chip is up: one git chip at a time, Changes first.
-		const showCommit = !showChanges && this.gitVisible && !this.newChat && !(this.sessionId && isAgentScmShown(this.sessionId));
+		const showCommit = !readOnly && !showChanges && this.gitVisible && !this.newChat && !(this.sessionId && isAgentScmShown(this.sessionId));
 		const showScroll = this.scrolledUp && !!this.options.onScrollToBottom;
 		this.updateScrollChip(showScroll);
 		// Before the row's visibility: a chip starting its exit keeps the row up until it is gone.

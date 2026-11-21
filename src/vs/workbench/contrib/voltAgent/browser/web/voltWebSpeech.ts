@@ -36,13 +36,21 @@ function recognitionConstructor(): SpeechRecognitionConstructor | undefined {
 	return win.isSecureContext === false ? undefined : win.SpeechRecognition ?? win.webkitSpeechRecognition;
 }
 
+/** A browser that ends listening this soon after a restart, this many times in a row, is not going to listen. */
+const QUICK_END_MS = 1_500;
+const MAX_QUICK_ENDS = 3;
+
 interface IRecognitionSession {
 	readonly recognition: ISpeechRecognition;
-	/** Text the browser has settled on, result by result. */
+	/** Text from earlier rounds: the browser ends a round after a pause and a new one goes on listening. */
+	committed: string;
+	/** Text the browser has settled on in this round, result by result. */
 	readonly finals: string[];
 	interim: string;
 	stopping: boolean;
 	ended: boolean;
+	roundStartedAt: number;
+	quickEnds: number;
 }
 
 export class WebSpeechService extends Disposable implements IVoltSpeechService {
@@ -67,9 +75,9 @@ export class WebSpeechService extends Disposable implements IVoltSpeechService {
 		recognition.lang = options.locale;
 		recognition.continuous = true;
 		recognition.interimResults = true;
-		const session: IRecognitionSession = { recognition, finals: [], interim: '', stopping: false, ended: false };
+		const session: IRecognitionSession = { recognition, committed: '', finals: [], interim: '', stopping: false, ended: false, roundStartedAt: Date.now(), quickEnds: 0 };
 		this.sessions.set(options.sessionId, session);
-		const text = () => [...session.finals, session.interim].join(' ').replace(/\s+/g, ' ').trim();
+		const text = () => [session.committed, ...session.finals, session.interim].join(' ').replace(/\s+/g, ' ').trim();
 		recognition.onresult = event => {
 			session.interim = '';
 			for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -109,7 +117,25 @@ export class WebSpeechService extends Disposable implements IVoltSpeechService {
 				if (this.sessions.get(options.sessionId) !== session) {
 					return;
 				}
-				// Asked to stop, or the browser stopped listening by itself: either way the transcript is in.
+				// The browser stops listening by itself after a pause: a new round goes on, keeping the
+				// text so far. Pauses end nothing; the composer stops after two minutes without a word.
+				if (!session.stopping && started) {
+					session.quickEnds = Date.now() - session.roundStartedAt < QUICK_END_MS ? session.quickEnds + 1 : 0;
+					if (session.quickEnds < MAX_QUICK_ENDS) {
+						session.committed = text();
+						session.finals.length = 0;
+						session.interim = '';
+						session.ended = false;
+						session.roundStartedAt = Date.now();
+						try {
+							recognition.start();
+							return;
+						} catch {
+							session.ended = true;
+						}
+					}
+				}
+				// Asked to stop, or the browser will not listen again: either way the transcript is in.
 				this.sessions.delete(options.sessionId);
 				this._onDidEvent.fire({ sessionId: options.sessionId, type: 'final', text: text() });
 			};

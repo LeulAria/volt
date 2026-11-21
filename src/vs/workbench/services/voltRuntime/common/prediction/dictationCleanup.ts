@@ -29,12 +29,46 @@ export const DICTATION_SYSTEM_PROMPT = [
 	...DICTATION_RULES,
 ].join('\n');
 
-/** Enough of the draft to see the sentence the dictation continues and the names around it. */
-const BEFORE_CHARS = 600;
+/** Enough of the draft to see the sentence the dictation continues and the names near it. */
+const BEFORE_CHARS = 280;
+
+const FILLERS = /\b(u+m+|u+h+|e+r+m*|h+m+|uhm|you know|i mean|kind of like|sort of like)\b/i;
+const CORRECTIONS = /\b(no wait|wait no|scratch that|actually|sorry|i meant|or rather|let me rephrase)\b/i;
+/** Spoken punctuation and code: the model turns these into symbols and names. */
+const SPOKEN_CODE = /\b(dot|dash|hyphen|underscore|slash|backslash|camel ?case|snake ?case|kebab ?case|pascal ?case|all caps|new ?line|new paragraph|comma|period|full stop|question mark|exclamation (mark|point)|colon|semicolon|(open|close|left|right) (paren|parenthesis|bracket|brace|curly|quote)|parentheses|quote|unquote|equals|plus sign|hashtag|at sign|tilde|back ?tick|asterisk|ampersand|pipe|arrow)\b/i;
+const REPEATED_WORD = /\b([\p{L}']+)\s+\1\b/iu;
+
+/**
+ * Whether a transcript needs the cleanup model at all. Recognizers that punctuate (Apple's, Whisper)
+ * already deliver most dictations clean; those go in as heard and cost no model call. Fillers,
+ * self-corrections, stutters, spoken code and unpunctuated or uncapitalized text still go to the model.
+ */
+export function dictationNeedsCleanup(transcript: string, before?: string): boolean {
+	const text = transcript.trim();
+	if (!text) {
+		return false;
+	}
+	if (FILLERS.test(text) || CORRECTIONS.test(text) || SPOKEN_CODE.test(text) || REPEATED_WORD.test(text)) {
+		return true;
+	}
+	const words = text.split(/\s+/).length;
+	// No punctuation in a sentence-long dictation: the recognizer did not punctuate (a browser's).
+	if (words >= 4 && !/[.?!,;:]/.test(text)) {
+		return true;
+	}
+	// A lowercase start is only right when it continues a sentence; a capital start mid-sentence is wrong too.
+	const continues = !!before?.trim() && !/[.?!:\n]\s*$/.test(before);
+	const first = /^\p{L}/u.exec(text)?.[0];
+	if (first && !continues && first === first.toLowerCase() && first !== first.toUpperCase()) {
+		return true;
+	}
+	return false;
+}
 
 export function buildDictationPrompt(input: IDictationInput): IModelMessage[] {
 	const blocks: string[] = [];
-	const before = input.before?.slice(-BEFORE_CHARS);
+	// From a word boundary: a word cut in half reads as a misspelled name.
+	const before = input.before && input.before.length > BEFORE_CHARS ? input.before.slice(-BEFORE_CHARS).replace(/^\S*\s/, '') : input.before;
 	if (before?.trim()) {
 		blocks.push(`## Text before the cursor\n${before}`);
 	}
