@@ -59,6 +59,7 @@ import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, is
 import { registerAgentHomeFooter } from './agentHomeFooter.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID, OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
+import { onDidChangeSendingAgentChats, sendingAgentChats } from '../editor/agentSendingChats.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { AGENT_USAGE_INPUT_ID } from '../../../voltUsage/common/voltUsage.js';
 import { AGENT_FOOTER_ACTIONS, AgentFooterAction, wireAgentFooterAction } from './agentHomeFooterActions.js';
@@ -123,6 +124,7 @@ import {
 	sessionStatusBadge,
 	sessionInProject,
 	sessionsWithOpenDrafts,
+	sessionsWithSendingChats,
 	shortProjectName,
 } from './agentHomeModel.js';
 import { AgentRepoResolver, dominantRepoOwner, IAgentRepoInfo, repoDisplayName } from './agentRepoInfo.js';
@@ -1370,6 +1372,8 @@ export class AgentHomePane extends Disposable {
 		this._register(this.workspaceService.onDidChangeWorkspaceFolders(() => this.scheduleRefresh()));
 		this._register(this.workspaceService.onDidChangeWorkbenchState(() => this.scheduleRefresh()));
 		this._register(this.history.onDidChange(() => this.scheduleRefresh()));
+		// A sent prompt moves its chat to Working on the next frame, not when the window is next idle.
+		this._register(onDidChangeSendingAgentChats(() => this.refreshNextFrame()));
 		this._register(this.cloud.onDidChange(() => this.scheduleRefresh()));
 		this.cloudAnchor = parent;
 		this.cloudMenu = instantiationService.createInstance(AgentCloudTaskMenu);
@@ -2944,6 +2948,16 @@ export class AgentHomePane extends Disposable {
 		}, REFRESH_IDLE_TIMEOUT_MS);
 	}
 
+	private refreshNextFrame(): void {
+		if (this._store.isDisposed) {
+			return;
+		}
+		this.refreshFrame.value = scheduleAtNextAnimationFrame(getWindow(this.element), () => {
+			this.refreshFrame.clear();
+			void this.refresh();
+		});
+	}
+
 	private scheduleRowsRerender(): void {
 		if (this.rowsFrame.value || this._store.isDisposed) {
 			return;
@@ -3078,10 +3092,11 @@ export class AgentHomePane extends Disposable {
 				this.history.pinSessionParent(id, parentId);
 			}
 		}
-		const sessions = sessionsWithOpenDrafts(
+		const listed = sessionsWithOpenDrafts(
 			this.history.list({ includeArchived: this.viewState.archived === 'show', inWindow: true }),
 			this.openDrafts(),
-		).map(session => !session.parentId && toolsParents.has(session.id) ? { ...session, parentId: toolsParents.get(session.id) } : session)
+		);
+		const sessions = sessionsWithSendingChats(listed, sendingAgentChats()).map(session => !session.parentId && toolsParents.has(session.id) ? { ...session, parentId: toolsParents.get(session.id) } : session)
 			.filter(session => !this.isSubagentSession(session))
 			.filter(session => !this.scoped || (!!scope && sessionInProject(session, scope.root) && matches(session)));
 		this.resolveRepos(folders, sessions);

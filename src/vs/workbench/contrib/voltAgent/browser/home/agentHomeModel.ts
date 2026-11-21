@@ -7,6 +7,7 @@ import { basename } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { deriveTitle } from '../../../../services/voltRuntime/common/history/agentHistoryLog.js';
 import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import type { IOrchState } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { canonicalProjectRoot, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
@@ -367,6 +368,36 @@ export function sessionsWithOpenDrafts(sessions: readonly IAgentSessionMeta[], o
 		});
 	}
 	return extras.length ? [...extras, ...sessions] : sessions as IAgentSessionMeta[];
+}
+
+/**
+ * Chats whose prompt is on its way to the orchestrator (`sending`: id → prompt) read as they will once
+ * the turn is recorded: running, attention and unread cleared, and a draft named by its prompt. So the
+ * row moves to Working on the keypress instead of after the agent server's answer.
+ */
+export function sessionsWithSendingChats(sessions: readonly IAgentSessionMeta[], sending: ReadonlyMap<string, string>, now = Date.now()): IAgentSessionMeta[] {
+	if (!sending.size) {
+		return sessions as IAgentSessionMeta[];
+	}
+	return sessions.map(session => {
+		const prompt = sending.get(session.id);
+		if (prompt === undefined) {
+			return session;
+		}
+		const draft = session.turnCount === 0;
+		const title = draft && !session.customTitle ? deriveTitle(prompt) || session.title : session.title;
+		return {
+			...session,
+			title,
+			status: 'running',
+			unread: undefined,
+			attention: undefined,
+			wokeAt: undefined,
+			hasDraft: false,
+			turnCount: draft ? 1 : session.turnCount,
+			updatedAt: Math.max(session.updatedAt, now),
+		};
+	});
 }
 
 /**

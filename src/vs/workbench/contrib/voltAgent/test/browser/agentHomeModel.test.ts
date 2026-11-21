@@ -35,6 +35,7 @@ import {
 	sessionInProject,
 	sessionInWorkingShelf,
 	sessionsWithOpenDrafts,
+	sessionsWithSendingChats,
 	sessionWorkState,
 	sortWorkingSessions,
 	uniqueHomeFolders,
@@ -474,6 +475,32 @@ suite('Agent home list model', () => {
 			session('file', { workspaceId: 'ws-app', workspaceFolder: '/tmp/app' }),
 		], view({ source: ['workspaceFile'] })));
 		assert.deepStrictEqual(projectLabels(onlyWorkspaces), ['app']);
+	});
+
+	test('a sent draft is Working from the keypress, titled by its prompt, before history records the turn', () => {
+		// After Enter the draft's text is cleared and the turn is not recorded yet: an untitled, empty chat.
+		const cleared = session('new', { title: '', turnCount: 0, hasDraft: false, status: 'idle', updatedAt: 10 });
+		const other = session('other', { status: 'done', unread: true, updatedAt: 5 });
+		const [sending, untouched] = sessionsWithSendingChats([cleared, other], new Map([['new', 'fix the login bug\nand add a test']]), 1_000);
+		assert.strictEqual(sending.title, 'Fix the login bug');
+		assert.strictEqual(sending.turnCount, 1);
+		assert.strictEqual(sending.status, 'running');
+		assert.strictEqual(sending.updatedAt, 1_000);
+		assert.ok(sessionInWorkingShelf(sending));
+		assert.strictEqual(sessionStatusBadge(sending, 1_000)?.kind, 'working');
+		assert.strictEqual(untouched, other);
+
+		// A follow-up in a chat that needed the user clears that and keeps the chat's own title.
+		const asked = session('asked', { title: 'Old title', turnCount: 3, status: 'done', attention: 'question', unread: true });
+		const [followUp] = sessionsWithSendingChats([asked], new Map([['asked', 'yes, go ahead']]), 1_000);
+		assert.strictEqual(followUp.title, 'Old title');
+		assert.strictEqual(followUp.turnCount, 3);
+		assert.strictEqual(followUp.attention, undefined);
+		assert.strictEqual(followUp.unread, undefined);
+		assert.ok(sessionInWorkingShelf(followUp));
+
+		const none = [cleared];
+		assert.strictEqual(sessionsWithSendingChats(none, new Map()), none);
 	});
 
 	test('open new chats show under their workspace as drafts until the first send', () => {
