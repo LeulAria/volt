@@ -72,6 +72,13 @@ export function boardDisplayTitle(board: Pick<IScratchBoardMeta, 'title'>): stri
 	return board.title.trim() || UNTITLED_BOARD_TITLE;
 }
 
+/** A default name ("Untitled board", "Untitled board 3", or none): nobody named the board yet. */
+export function isUntitledBoardTitle(title: string, base = UNTITLED_BOARD_TITLE): boolean {
+	const trimmed = title.trim().toLowerCase();
+	const lower = base.toLowerCase();
+	return !trimmed || trimmed === lower || (trimmed.startsWith(`${lower} `) && /^\d+$/.test(trimmed.slice(lower.length + 1)));
+}
+
 /** "Untitled board", then "Untitled board 2", ... for a new board's default name. */
 export function nextUntitledName(index: IScratchIndex, base = UNTITLED_BOARD_TITLE): string {
 	const taken = new Set(index.boards.filter(b => !b.deleted).map(b => b.title.trim().toLowerCase()));

@@ -34,8 +34,13 @@ export const NEW_AGENT_COMMAND_ID = 'workbench.action.newAgent';
 export const NEW_AGENT_TAB_COMMAND_ID = 'workbench.action.voltAgent.newAgentTab';
 export const REPLACE_AGENT_COMMAND_ID = 'workbench.action.voltAgent.replaceAgent';
 export const OPEN_AGENT_COMMAND_ID = 'workbench.action.voltAgent.openSession';
-/** Desktop only: a new window that lists the chat's project and shows the chat. */
+/**
+ * Desktop only: moves chats to a new window, which shows the first. Takes one chat id or an array
+ * of them; only those chats (and their side chats) move, the rest of their projects stay here.
+ */
 export const OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID = 'volt.agent.openChatInNewWindow';
+/** Desktop only: moves a project (its id) with every chat of it this window lists to a new window. */
+export const OPEN_PROJECT_IN_NEW_WINDOW_COMMAND_ID = 'volt.agent.openProjectInNewWindow';
 export const OPEN_AGENT_HISTORY_COMMAND_ID = 'workbench.action.voltAgent.showHistory';
 export const TOGGLE_AGENT_DRAWER_COMMAND_ID = 'workbench.action.voltAgent.toggleDrawer';
 export const EXPORT_AGENT_TRANSCRIPT_COMMAND_ID = 'workbench.action.voltAgent.exportTranscript';

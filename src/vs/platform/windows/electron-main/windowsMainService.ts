@@ -48,6 +48,7 @@ import { createEmptyWorkspaceIdentifier, getSingleFolderWorkspaceIdentifier, get
 import { IWorkspacesHistoryMainService } from '../../workspaces/electron-main/workspacesHistoryMainService.js';
 import { IWorkspacesManagementMainService } from '../../workspaces/electron-main/workspacesManagementMainService.js';
 import { ICodeWindow, UnloadReason } from '../../window/electron-main/window.js';
+import { FocusMode } from '../../native/common/native.js';
 import { IThemeMainService } from '../../theme/electron-main/themeMainService.js';
 import { IEditorOptions, ITextEditorOptions } from '../../editor/common/editor.js';
 import { IUserDataProfile } from '../../userDataProfile/common/userDataProfile.js';
@@ -298,6 +299,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		super();
 
 		this.windowsStateHandler = this._register(new WindowsStateHandler(this, stateService, this.lifecycleMainService, this.logService, this.configurationService));
+		this.voltWindowScopes.setWindowShower(scope => this.showVoltScopeWindow(scope));
 
 		this.registerListeners();
 	}
@@ -1618,7 +1620,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 				? this.voltScopes.get(options.switchFrom.id)
 				: options.spare
 					? this.voltWindowScopes.createScope(true)
-					: options.ownScope && !configuration.extensionDevelopmentPath && (this.voltWindowScopes.hasPreparedStart || this.getWindows().some(other => !this.voltScopes.has(other.id)))
+					: options.ownScope && !configuration.extensionDevelopmentPath && (this.voltWindowScopes.hasPreparedStart || this.hasVoltMainWindow())
 						? this.voltWindowScopes.createScope()
 						: undefined;
 
@@ -1961,7 +1963,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 
 		// With no main window open the new window is the main window, which has no scope
 		const scope = this.voltScopes.get(spare.id);
-		if (!scope || (!this.voltWindowScopes.hasPreparedStart && !this.getWindows().some(other => !this.voltScopes.has(other.id)))) {
+		if (!scope || (!this.voltWindowScopes.hasPreparedStart && !this.hasVoltMainWindow())) {
 			return undefined;
 		}
 
@@ -1979,11 +1981,50 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		return spare;
 	}
 
-	/** A scope ends with the last window in it; its chats and projects then show in the main window. */
+	/**
+	 * A scope ends with the last window in it; its chats and projects then show in the main window.
+	 * When the main window closes, the oldest window left becomes the main window, so no chat is
+	 * ever without a window that lists it.
+	 */
 	private releaseVoltScope(window: ICodeWindow): void {
-		if (this.voltScopes.delete(window.id)) {
-			this.voltWindowScopes.retainScopes(new Set(this.voltScopes.values()));
+		this.voltScopes.delete(window.id);
+		const live = [...this.voltScopes.entries()].sort(([a], [b]) => a - b).map(([, scope]) => scope);
+		const shown = this.getWindows();
+		this.voltWindowScopes.retainScopes([...new Set(live)], shown.some(other => !this.voltScopes.has(other.id)));
+	}
+
+	/** A window without a scope, or the scoped window that is the main window, is open. */
+	private hasVoltMainWindow(): boolean {
+		const scopes = this.voltWindowScopes.scopes;
+		return this.getWindows().some(other => {
+			const scope = this.voltScopes.get(other.id);
+			return !scope || !!scopes[scope]?.main;
+		});
+	}
+
+	/** Brings the window showing `scope` (undefined: the main window) to the front; its id. */
+	private showVoltScopeWindow(scope: string | undefined): number | undefined {
+		const scopes = this.voltWindowScopes.scopes;
+		const candidates = this.getWindows().filter(other => {
+			const own = this.voltScopes.get(other.id);
+			return scope !== undefined ? own === scope : !own || !!scopes[own]?.main;
+		});
+		// A project session parked in a browser window is switched to, not shown on its own.
+		const window = candidates.find(candidate => !candidate.isBackgrounded) ?? candidates[0];
+		if (!window) {
+			return undefined;
 		}
+		if (window.isBackgrounded) {
+			const front = this.getWindows().find(other => other.win === window.win && !other.isBackgrounded);
+			if (front) {
+				this.switchWorkspaceSession(front, window);
+			}
+		}
+		if (window.win?.isMinimized()) {
+			window.win.restore();
+		}
+		window.focus({ mode: FocusMode.Force });
+		return window.id;
 	}
 
 	getFocusedWindow(): ICodeWindow | undefined {

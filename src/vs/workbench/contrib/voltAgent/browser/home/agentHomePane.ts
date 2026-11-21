@@ -7,6 +7,8 @@ import '../media/agentHomePane.css';
 import '../media/agentPullRequests.css';
 import { $, addDisposableListener, append, EventHelper, getWindow, isHTMLElement, isKeyboardEvent, isMouseEvent, runWhenWindowIdle, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { Button } from '../../../../../base/browser/ui/button/button.js';
+import { Checkbox } from '../../../../../base/browser/ui/toggle/toggle.js';
 import { IDragAndDropData } from '../../../../../base/browser/dnd.js';
 import { IIdentityProvider, IListVirtualDelegate, ListDragOverEffectPosition, ListDragOverEffectType } from '../../../../../base/browser/ui/list/list.js';
 import { IListAccessibilityProvider } from '../../../../../base/browser/ui/list/listWidget.js';
@@ -42,6 +44,8 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { WorkbenchObjectTree } from '../../../../../platform/list/browser/listService.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+import { defaultCheckboxStyles } from '../../../../../platform/theme/browser/defaultStyles.js';
+import { createVoltButton } from '../chrome/voltButton.js';
 import { EditorsOrder } from '../../../../common/editor.js';
 import { GroupsOrder, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
@@ -57,7 +61,7 @@ import { createBrandIcon } from '../../../../services/voltRuntime/browser/provid
 import { canonicalProjectRoot, IVoltProjectRecord, IVoltSessionContextService, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IRecentFolder, IRecentWorkspace, IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../../../../platform/workspaces/common/workspaces.js';
 import { registerAgentHomeFooter } from './agentHomeFooter.js';
-import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID, OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID } from '../editor/agentEditorInput.js';
+import { AgentEditorInput, NEW_AGENT_COMMAND_ID, OPEN_AGENT_COMMAND_ID, OPEN_AGENT_CUSTOMIZE_COMMAND_ID, OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID, OPEN_PROJECT_IN_NEW_WINDOW_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { onDidChangeSendingAgentChats, sendingAgentChats } from '../editor/agentSendingChats.js';
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
@@ -142,8 +146,8 @@ import { lifecycleUndoLabel } from '../../common/agentLifecycleUndo.js';
 import { AGENT_LIFECYCLE_UNDO_COMMAND_ID, IAgentThreadLifecycleService } from './agentThreadLifecycle.js';
 
 const ROW_HEIGHT = 28;
-/** An agent tab with a second line (branch, pull request, model). */
-const TWO_LINE_ROW_HEIGHT = 46;
+/** An agent tab with a second line (branch, pull request, model). 6 + 16 + 2 + 14 + 6. */
+const TWO_LINE_ROW_HEIGHT = 48;
 /** How often ages, "Working 2m" and snooze countdowns are redrawn. */
 const CLOCK_TICK_MS = 30_000;
 /** Longest a list rebuild waits for an idle moment. */
@@ -152,10 +156,8 @@ const REFRESH_IDLE_TIMEOUT_MS = 120;
 const PRESS_OPEN_WINDOW_MS = 1_500;
 /** A row that reaches a still pointer by a scroll is not read ahead until the list has been still this long. */
 const READ_AHEAD_AFTER_SCROLL_MS = 150;
-/** How long the pointer rests on an agent tab before its details card opens. */
-const SESSION_HOVER_DELAY_MS = 500;
-/** Tallest the last message in a chat's hover card gets before it scrolls. */
-const LAST_MESSAGE_MAX_HEIGHT = 300;
+/** Tallest the last message in a chat's hover card gets before it scrolls. Six lines of 16px. */
+const LAST_MESSAGE_MAX_HEIGHT = 64;
 /** Longest last message the card holds; the rest is cut with an ellipsis. */
 const LAST_MESSAGE_MAX_CHARS = 6000;
 
@@ -244,6 +246,8 @@ const identityProvider: IIdentityProvider<AgentHomeElement> = {
 
 interface IHomeTemplate {
 	readonly container: HTMLElement;
+	/** Selection mode's checkbox at the row's start; the row's press toggles it. */
+	readonly checkbox: Checkbox;
 	readonly icon: HTMLElement;
 	readonly twist: HTMLElement;
 	/** The pull request at the end of a one-line row. */
@@ -267,18 +271,31 @@ interface IHomeTemplate {
 	readonly subPr: HTMLElement;
 	readonly subModel: HTMLElement;
 	readonly keybinding: HTMLElement;
+	/** The … on a project row: Open in New Window, Project Settings. */
+	readonly projectMore: HTMLButtonElement;
 	/** Project Settings, beside the + on a project row. */
 	readonly settings: HTMLButtonElement;
 	readonly add: HTMLButtonElement;
 	readonly elementDisposables: DisposableStore;
 }
 
+/** Colours come from the stylesheet (agentHomePane.css), not the widget's inline styles. */
+const SELECT_CHECKBOX_STYLES = {
+	...defaultCheckboxStyles,
+	checkboxBackground: undefined,
+	checkboxBorder: undefined,
+	checkboxForeground: undefined,
+	checkboxDisabledBackground: undefined,
+	checkboxDisabledForeground: undefined,
+	size: 14,
+};
+
 const ROW_STATE_CLASSES = [
 	'is-new', 'is-action', 'is-section', 'is-folder', 'is-bucket', 'is-group', 'is-session', 'is-more', 'is-empty',
 	'is-nested', 'is-flat', 'is-collapsible', 'current', 'unread', 'archived', 'pinned',
 	'status-needsAttention', 'status-working', 'status-draft', 'status-done',
 	'actions-cover-name', 'menu-open', 'renaming', 'active-chat', 'shelf-active', 'shelf-settled', 'shelf-snooze', 'group-working', 'group-settled', 'group-snooze', 'two-line',
-	'is-run-group', 'is-run-member', 'run-winner', 'run-discarded', 'no-glyph',
+	'is-run-group', 'is-run-member', 'run-winner', 'run-discarded', 'no-glyph', 'selecting',
 ];
 
 /** Settled chats are done with: one line each, their pull request at its end. */
@@ -311,6 +328,10 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 
 	renderTemplate(container: HTMLElement): IHomeTemplate {
 		container.classList.add('volt-agent-home-row');
+		// Shown only in selection mode. The press on the row toggles it, so the box itself takes no clicks or focus.
+		const checkbox = new Checkbox('', false, SELECT_CHECKBOX_STYLES);
+		checkbox.domNode.tabIndex = -1;
+		append(container, $('span.select-check')).appendChild(checkbox.domNode);
 		const icon = append(container, $('span.icon'));
 		const twist = append(icon, $('span.twist'));
 		twist.appendChild(renderIcon(Codicon.chevronDown));
@@ -340,13 +361,16 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		const more = append(actions, $('button.row-action.more')) as HTMLButtonElement;
 		more.tabIndex = -1;
 		const keybinding = append(container, $('span.keybinding'));
+		const projectMore = append(container, $('button.project-more')) as HTMLButtonElement;
+		projectMore.appendChild(renderIcon(Codicon.ellipsis));
+		projectMore.tabIndex = -1;
 		const settings = append(container, $('button.settings')) as HTMLButtonElement;
 		settings.appendChild(renderIcon(Codicon.settingsGear));
 		settings.tabIndex = -1;
 		const add = append(container, $('button.add')) as HTMLButtonElement;
 		add.appendChild(renderIcon(Codicon.add));
 		add.tabIndex = -1;
-		return { container, icon, twist, glyph, name, linePr, actions, snooze, settle, wake, pin, archive, more, badge, meta, sub, subBranch, subPr, subModel, keybinding, settings, add, elementDisposables: new DisposableStore() };
+		return { container, checkbox, icon, twist, glyph, name, linePr, actions, snooze, settle, wake, pin, archive, more, badge, meta, sub, subBranch, subPr, subModel, keybinding, projectMore, settings, add, elementDisposables: new DisposableStore() };
 	}
 
 	renderElement(node: ITreeNode<AgentHomeElement, void>, _index: number, template: IHomeTemplate): void {
@@ -361,6 +385,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.linePr.replaceChildren();
 		template.subModel.textContent = '';
 		template.keybinding.textContent = '';
+		template.projectMore.classList.add('hidden');
 		template.settings.classList.add('hidden');
 		template.add.classList.add('hidden');
 		template.container.classList.remove(...ROW_STATE_CLASSES);
@@ -407,6 +432,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			case 'more':
 				template.container.classList.add('is-more');
 				template.container.classList.toggle('is-nested', element.nested);
+				template.glyph.appendChild(renderIcon(Codicon.chevronDown));
 				template.name.textContent = localize('voltAgent.home.showMore', "Show more");
 				break;
 			case 'cloudHeader':
@@ -487,8 +513,27 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.glyph.appendChild(project.multi ? createHomeFoldersIcon() : createHomeFolderIcon());
 		const status = project.folder ? this.host.projectStatus(project.folder.uri) : undefined;
 		template.name.textContent = status ? `${project.label} · ${status}` : project.label;
-		this.renderProjectSettings(template, project.folder ? this.host.projectFor(project.folder.uri) : undefined);
+		const record = project.folder ? this.host.projectFor(project.folder.uri) : undefined;
+		this.renderProjectMore(template, record);
+		this.renderProjectSettings(template, record);
 		this.renderAdd(template, { type: 'folder', project });
+	}
+
+	/** … on project rows (hover-only via CSS): Open in New Window and Project Settings. Desktop only. */
+	private renderProjectMore(template: IHomeTemplate, project: IVoltProjectRecord | undefined): void {
+		if (!project || !this.host.canOpenProjectInNewWindow) {
+			return;
+		}
+		const button = template.projectMore;
+		button.classList.remove('hidden');
+		const label = localize('voltAgent.home.projectActions', "Project Actions");
+		button.setAttribute('aria-label', label);
+		setAgentTooltip(button, label);
+		template.elementDisposables.add(addDisposableListener(button, 'click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.host.openProjectMenu(button, template.container, project);
+		}));
 	}
 
 	/** Gear on project rows (hover-only via CSS): the same Project Settings as the row's context menu. */
@@ -559,6 +604,12 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 		template.container.classList.toggle('pinned', !!session.pinned);
 		template.container.dataset.chatId = session.id;
 		template.container.classList.toggle('active-chat', this.host.isShownChat(session.id));
+		// Selection mode: a checkbox before the title, and no hover buttons (agentHomePane.css).
+		const selecting = this.host.selecting;
+		template.container.classList.toggle('selecting', selecting);
+		if (selecting) {
+			template.checkbox.checked = this.host.isSelected(session.id);
+		}
 
 		// Agent tabs start at the title: no glyph slot. A flat row names its project on the second line;
 		// under a project the row steps in past the folder's icon instead (agentHomePane.css).
@@ -618,20 +669,22 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			return;
 		}
 		template.elementDisposables.add(this.host.bindSessionHover(template.container, session));
-		template.elementDisposables.add(addDisposableListener(template.container, 'mouseenter', () => {
-			this.fadeNameUnderActions(template);
-			// A row with a pull request reads it again when the pointer comes (it may have merged elsewhere).
-			if (this.host.prBadge(session.id)) {
-				this.host.revalidatePullRequests(session.id);
-			}
-		}));
-		// A row drawn again under a still pointer (a click switches chats and redraws it) gets no mouseenter:
-		// fade its title now, or the buttons show over the full title.
-		template.elementDisposables.add(scheduleAtNextAnimationFrame(getWindow(template.container), () => {
-			if (template.container.isConnected && template.container.matches(':hover')) {
+		if (!selecting) {
+			template.elementDisposables.add(addDisposableListener(template.container, 'mouseenter', () => {
 				this.fadeNameUnderActions(template);
-			}
-		}));
+				// A row with a pull request reads it again when the pointer comes (it may have merged elsewhere).
+				if (this.host.prBadge(session.id)) {
+					this.host.revalidatePullRequests(session.id);
+				}
+			}));
+			// A row drawn again under a still pointer (a click switches chats and redraws it) gets no mouseenter:
+			// fade its title now, or the buttons show over the full title.
+			template.elementDisposables.add(scheduleAtNextAnimationFrame(getWindow(template.container), () => {
+				if (template.container.isConnected && template.container.matches(':hover')) {
+					this.fadeNameUnderActions(template);
+				}
+			}));
+		}
 	}
 
 	/**
@@ -831,6 +884,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 
 	disposeTemplate(template: IHomeTemplate): void {
 		template.elementDisposables.dispose();
+		template.checkbox.dispose();
 	}
 }
 
@@ -1258,6 +1312,12 @@ export class AgentHomePane extends Disposable {
 	private readonly readingLastMessage = new Set<string>();
 	/** Draws the last message's markdown; made the first time a card shows one. */
 	private markdownRenderer: MarkdownRenderer | undefined;
+	/** Selection mode (Select Chats): the chats checked so far, in the order they were checked. None while not selecting. */
+	private selection: Set<string> | undefined;
+	/** "{n} selected", Open in New Window and Cancel, under the list while selecting. */
+	private readonly selectBar: HTMLElement;
+	private readonly selectCount: HTMLElement;
+	private readonly selectOpen: Button;
 
 	constructor(
 		parent: HTMLElement,
@@ -1351,6 +1411,19 @@ export class AgentHomePane extends Disposable {
 		this.nav = append(this.element, $('.volt-agent-home-nav'));
 		this.installNav();
 		this.treeContainer = append(this.element, $('.volt-agent-home-tree'));
+		// Between the list and the footer, so the footer stays where it is.
+		this.selectBar = append(this.element, $('.volt-agent-home-select-bar.hidden'));
+		this.selectBar.setAttribute('role', 'toolbar');
+		this.selectCount = append(this.selectBar, $('span.count'));
+		this.selectCount.setAttribute('aria-live', 'polite');
+		this.selectOpen = this._register(createVoltButton(this.selectBar, 'primary'));
+		this.selectOpen.label = localize('voltAgent.home.openInNewWindow', "Open in New Window");
+		this._register(this.selectOpen.onDidClick(() => this.openSelectedInNewWindow()));
+		const cancel = this._register(createVoltButton(this.selectBar, 'ghost'));
+		cancel.label = localize('voltAgent.home.cancelSelect', "Cancel");
+		this._register(cancel.onDidClick(() => this.stopSelecting()));
+		// Space checks the focused chat and Escape leaves selection mode; ahead of the list, which folds rows on Space.
+		this._register(addDisposableListener(this.element, 'keydown', e => this.onSelectionKey(e), true));
 		if (!this.scoped) {
 			this.installSettingsButton(keybindingService);
 		} else {
@@ -1452,7 +1525,7 @@ export class AgentHomePane extends Disposable {
 		// The arrows walk the chats: each one they land on shows, and the keyboard stays in the list.
 		store.add(tree.onDidChangeFocus(e => {
 			const element = e.elements[0];
-			if (element?.type === 'session' && isKeyboardEvent(e.browserEvent) && !this.isActiveChat(element.session.id)) {
+			if (element?.type === 'session' && isKeyboardEvent(e.browserEvent) && !this.selection && !this.isActiveChat(element.session.id)) {
 				this.showWhileBrowsing(element.session.id);
 			}
 		}));
@@ -1465,6 +1538,13 @@ export class AgentHomePane extends Disposable {
 				return;
 			}
 			if (this.isExpandToggleClick(tree, element, e.browserEvent)) {
+				return;
+			}
+			// Selecting, chats open nothing: the press toggled the row already, Enter toggles it here.
+			if (this.selection && (element.type === 'session' || element.type === 'runGroup')) {
+				if (element.type === 'session' && !element.runMember && isKeyboardEvent(e.browserEvent)) {
+					this.toggleSelected(element.session.id);
+				}
 				return;
 			}
 			const pressed = this.pressed;
@@ -1493,12 +1573,21 @@ export class AgentHomePane extends Disposable {
 		}));
 
 		store.add(tree.onContextMenu(e => {
-			if (e.element?.type !== 'session') {
+			const element = e.element;
+			const anchor = isHTMLElement(e.anchor) ? e.anchor : { x: e.anchor.posx, y: e.anchor.posy };
+			if (element?.type === 'session') {
+				e.browserEvent.preventDefault();
+				e.browserEvent.stopPropagation();
+				this.showSessionMenu(element.session, anchor);
 				return;
 			}
-			e.browserEvent.preventDefault();
-			e.browserEvent.stopPropagation();
-			this.showSessionMenu(e.element.session, isHTMLElement(e.anchor) ? e.anchor : { x: e.anchor.posx, y: e.anchor.posy });
+			// A project row: the same items as its … button.
+			const project = element?.type === 'folder' && element.project.folder ? this.projectFor(element.project.folder.uri) : undefined;
+			if (project) {
+				e.browserEvent.preventDefault();
+				e.browserEvent.stopPropagation();
+				this.showProjectContextMenu(project, anchor);
+			}
 		}));
 		return tree;
 	}
@@ -2229,6 +2318,181 @@ export class AgentHomePane extends Disposable {
 		void this.commandService.executeCommand(OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID, session.id);
 	}
 
+	/** Desktop registers Open Project in New Window, as it does Open in New Window. */
+	get canOpenProjectInNewWindow(): boolean {
+		return !!CommandsRegistry.getCommand(OPEN_PROJECT_IN_NEW_WINDOW_COMMAND_ID);
+	}
+
+	/** The project and all its chats move to a new window. */
+	openProjectInNewWindow(project: IVoltProjectRecord): void {
+		this.hover.hide();
+		void this.commandService.executeCommand(OPEN_PROJECT_IN_NEW_WINDOW_COMMAND_ID, project.id);
+	}
+
+	/** The … on a project row: the Volt menu, as on an agent tab. The row keeps its buttons while it is open. */
+	openProjectMenu(anchor: HTMLElement, row: HTMLElement, project: IVoltProjectRecord): void {
+		this.hover.hide();
+		row.classList.add('menu-open');
+		showVoltMenu<() => void>(this.contextViewService, {
+			anchor,
+			align: 'left',
+			gap: 4,
+			width: 260,
+			ariaLabel: localize('voltAgent.home.projectActions', "Project Actions"),
+			sections: [{
+				id: 'project',
+				items: [
+					...(this.canOpenProjectInNewWindow ? [{ id: 'openInNewWindow', label: localize('voltAgent.home.openInNewWindow', "Open in New Window"), icon: Codicon.linkExternal, data: () => this.openProjectInNewWindow(project) }] : []),
+					{ id: 'settings', label: localize('voltAgent.home.projectSettings', "Project Settings"), icon: Codicon.settingsGear, data: () => this.openProjectSettings(project) },
+				],
+			}],
+			onPick: picked => picked.data(),
+			onHide: () => row.classList.remove('menu-open'),
+		});
+	}
+
+	/** Right-click on a project row: the same items as its …. */
+	private showProjectContextMenu(project: IVoltProjectRecord, anchor: HTMLElement | { x: number; y: number }): void {
+		this.hover.hide();
+		const actions: IAction[] = [
+			...(this.canOpenProjectInNewWindow ? [
+				new Action('volt.home.openProjectInNewWindow', localize('voltAgent.home.openInNewWindow', "Open in New Window"), undefined, true, () => this.openProjectInNewWindow(project)),
+			] : []),
+			new Action('volt.home.projectSettings', localize('voltAgent.home.projectSettings', "Project Settings"), undefined, true, () => this.openProjectSettings(project)),
+		];
+		this.contextMenuService.showContextMenu({
+			getAnchor: () => anchor,
+			getActions: () => actions,
+		});
+	}
+
+	get selecting(): boolean {
+		return !!this.selection;
+	}
+
+	isSelected(sessionId: string): boolean {
+		return !!this.selection?.has(sessionId);
+	}
+
+	/** Select Chats: every chat row gets a checkbox, `session` already checked; a press toggles a row instead of opening it. */
+	startSelecting(session: IAgentSessionMeta): void {
+		this.hover.hide();
+		if (this.selection) {
+			this.selection.add(session.id);
+			this.rerenderSession(session.id);
+		} else {
+			this.selection = new Set([session.id]);
+			this.rerenderChatRows();
+		}
+		this.renderSelectBar();
+	}
+
+	toggleSelected(sessionId: string): void {
+		if (!this.selection) {
+			return;
+		}
+		if (!this.selection.delete(sessionId)) {
+			this.selection.add(sessionId);
+		}
+		this.rerenderSession(sessionId);
+		this.renderSelectBar();
+	}
+
+	stopSelecting(): void {
+		if (!this.selection) {
+			return;
+		}
+		// The bar goes away under a keyboard on its buttons; the list takes it back.
+		const hadKeyboard = this.selectBar.contains(getWindow(this.element).document.activeElement);
+		this.selection = undefined;
+		this.rerenderChatRows();
+		this.renderSelectBar();
+		if (hadKeyboard) {
+			this.focus();
+		}
+	}
+
+	/** Only the checked chats move to a new window, which shows the first one checked. */
+	private openSelectedInNewWindow(): void {
+		const ids = [...this.selection ?? []];
+		if (!ids.length) {
+			return;
+		}
+		this.stopSelecting();
+		void this.commandService.executeCommand(OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID, ids);
+	}
+
+	private renderSelectBar(): void {
+		const count = this.selection?.size ?? 0;
+		this.selectBar.classList.toggle('hidden', !this.selection);
+		this.selectCount.textContent = localize('voltAgent.home.selectedCount', "{0} selected", count);
+		this.selectOpen.enabled = count > 0;
+	}
+
+	/** Space toggles the focused chat; Escape leaves selection mode. Fields (a rename, the search) keep their keys. */
+	private onSelectionKey(e: KeyboardEvent): void {
+		if (!this.selection || e.isComposing || (isHTMLElement(e.target) && e.target.closest('input, textarea, [contenteditable="true"]'))) {
+			return;
+		}
+		if (e.key === 'Escape') {
+			EventHelper.stop(e, true);
+			this.stopSelecting();
+			return;
+		}
+		if (e.key === ' ' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+			const focused = this.focusedSession();
+			if (focused) {
+				EventHelper.stop(e, true);
+				this.toggleSelected(focused.id);
+			}
+		}
+	}
+
+	/** Checked chats that left the list (moved, archived, filtered out) drop out of the selection. */
+	private pruneSelection(nodes: readonly IAgentHomeNode[]): void {
+		const selection = this.selection;
+		if (!selection?.size) {
+			return;
+		}
+		const listed = new Set<string>();
+		const walk = (children: readonly IAgentHomeNode[]) => {
+			for (const node of children) {
+				if (node.element.type === 'session' && !node.element.runMember) {
+					listed.add(node.element.session.id);
+				}
+				if (node.children) {
+					walk(node.children);
+				}
+			}
+		};
+		walk(nodes);
+		for (const id of selection) {
+			if (!listed.has(id)) {
+				selection.delete(id);
+			}
+		}
+		this.renderSelectBar();
+	}
+
+	/** Draws every chat row again (selection mode on or off); `tree.rerender()` alone does not redraw rows. */
+	private rerenderChatRows(): void {
+		for (const pane of this.panes) {
+			const tree = pane.tree;
+			if (!tree) {
+				continue;
+			}
+			const walk = (node: ITreeNode<AgentHomeElement | null, void>) => {
+				for (const child of node.children) {
+					if (child.element?.type === 'session' && !child.element.runMember) {
+						tree.rerender(child.element);
+					}
+					walk(child);
+				}
+			};
+			walk(tree.getNode(null));
+		}
+	}
+
 	settle(session: IAgentSessionMeta): void {
 		this.hover.hide();
 		void this.lifecycle.setSettled(session.id, true);
@@ -2240,8 +2504,8 @@ export class AgentHomePane extends Disposable {
 	 */
 	openRowMenu(anchor: HTMLElement, row: HTMLElement, session: IAgentSessionMeta): void {
 		this.hover.hide();
-		const shortcut = (commandId: string) => this.keybindingService.lookupKeybinding(commandId)?.getLabel() ?? undefined;
-		const item = (id: string, label: string, icon: ThemeIcon | (() => HTMLElement), commandId: string, run: () => void, disabled = false): IVoltMenuItem<() => void> =>
+		const shortcut = (commandId: string | undefined) => commandId ? this.keybindingService.lookupKeybinding(commandId)?.getLabel() ?? undefined : undefined;
+		const item = (id: string, label: string, icon: ThemeIcon | (() => HTMLElement), commandId: string | undefined, run: () => void, disabled = false): IVoltMenuItem<() => void> =>
 			({ id, label, icon, keybinding: shortcut(commandId), disabled, data: run });
 		row.classList.add('menu-open');
 		showVoltMenu<() => void>(this.contextViewService, {
@@ -2249,13 +2513,17 @@ export class AgentHomePane extends Disposable {
 			// Opens toward the chat, from the … rightward; at the window's right edge (Related Chats) it flips.
 			align: 'left',
 			gap: 4,
-			width: 260,
+			// Wide enough for "Open Multiple Chats in New Window…" in full.
+			width: 300,
 			ariaLabel: localize('voltAgent.home.moreActions', "More Actions"),
 			sections: [
 				{
 					id: 'open',
 					items: [
-						...(this.canOpenInNewWindow ? [item('openInNewWindow', localize('voltAgent.home.openInNewWindow', "Open in New Window"), Codicon.linkExternal, OPEN_AGENT_CHAT_IN_NEW_WINDOW_FROM_LIST_COMMAND_ID, () => this.openInNewWindow(session))] : []),
+						...(this.canOpenInNewWindow ? [
+							item('openInNewWindow', localize('voltAgent.home.openInNewWindow', "Open in New Window"), Codicon.linkExternal, OPEN_AGENT_CHAT_IN_NEW_WINDOW_FROM_LIST_COMMAND_ID, () => this.openInNewWindow(session)),
+							item('select', localize('voltAgent.home.openMultipleInNewWindow', "Open Multiple Chats in New Window…"), Codicon.multipleWindows, undefined, () => this.startSelecting(session)),
+						] : []),
 						// A chat not sent yet has no stored title to rename.
 						item('rename', localize('voltAgent.home.rename', "Rename"), createQueueEditIcon, RENAME_AGENT_CHAT_COMMAND_ID, () => this.startRename(session), !this.history.get(session.id)),
 					],
@@ -2429,6 +2697,7 @@ export class AgentHomePane extends Disposable {
 			] : []),
 			...(this.canOpenInNewWindow ? [
 				new Action('volt.home.openInNewWindow', localize('voltAgent.home.openInNewWindow', "Open in New Window"), undefined, true, () => this.openInNewWindow(session)),
+				new Action('volt.home.select', localize('voltAgent.home.openMultipleInNewWindow', "Open Multiple Chats in New Window…"), undefined, true, () => this.startSelecting(session)),
 			] : []),
 			this.renameAction(session),
 			new Action('volt.home.pin', session.pinned ? localize('voltAgent.home.unpin', "Unpin") : localize('voltAgent.home.pin', "Pin"), undefined, !session.archived, () => this.lifecycle.setPinned(session.id, !session.pinned)),
@@ -2556,7 +2825,8 @@ export class AgentHomePane extends Disposable {
 		// without, it hides on leaving the row.
 		const interactive = () => (!!this.pullRequests && visibleLinks(this.pullRequests.links(session.id)).length > 0)
 			|| !!this.lastMessages.get(session.id)?.text;
-		return this.hover.bind(anchor, () => this.sessionHoverRows(session, anchor), { placement: this.scoped ? 'start' : 'end', variant: 'card', delay: SESSION_HOVER_DELAY_MS, interactive });
+		// At once, like the Previous agents cards.
+		return this.hover.bind(anchor, () => this.sessionHoverRows(session, anchor), { placement: this.scoped ? 'start' : 'end', variant: 'card', interactive });
 	}
 
 	/**
@@ -2595,6 +2865,8 @@ export class AgentHomePane extends Disposable {
 			label: localize('voltAgent.home.lastMessage', "Last message"),
 			separator: true,
 			render: parent => {
+				// The message scrolls, not the card: room under it stays in view (agentHomePane.css).
+				parent.classList.add('volt-agent-home-hover-message-block');
 				append(parent, $('.volt-agent-home-hover-message-label')).textContent = localize('voltAgent.home.lastMessage', "Last message");
 				const message = append(parent, $('.volt-agent-home-hover-message'));
 				message.style.maxHeight = `${LAST_MESSAGE_MAX_HEIGHT}px`;
@@ -2674,11 +2946,17 @@ export class AgentHomePane extends Disposable {
 
 	/** A plain left press on a chat row (not one of its buttons) opens it at once. */
 	private openOnPress(element: AgentHomeElement | null, event: MouseEvent): void {
+		// Selecting, a press on a chat toggles its checkbox (every press, however quick) and opens nothing.
+		if (this.selection) {
+			if (element?.type === 'session' && !element.runMember && event.button === 0 && !this.pressOnRowControl(event)) {
+				this.toggleSelected(element.session.id);
+			}
+			return;
+		}
 		if (element?.type !== 'session' || event.button !== 0 || event.detail > 1 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
 			return;
 		}
-		const target = event.target as Element | null;
-		if (typeof target?.closest !== 'function' || target.closest('button, a, input, .actions, .line-pr, .sub-pr')) {
+		if (this.pressOnRowControl(event)) {
 			return;
 		}
 		if (this.isActiveChat(element.session.id)) {
@@ -2689,6 +2967,12 @@ export class AgentHomePane extends Disposable {
 		// arrows still go on from here.
 		this.pressed = { element, at: Date.now() };
 		void this.openChat(element.session.id);
+	}
+
+	/** The press landed on one of the row's own controls (a button, the pull request), not the row. */
+	private pressOnRowControl(event: MouseEvent): boolean {
+		const target = event.target as Element | null;
+		return typeof target?.closest !== 'function' || !!target.closest('button, a, input, .actions, .line-pr, .sub-pr');
 	}
 
 	/** The Scratch board on screen, when chat `sessionId` belongs to it. */
@@ -3118,6 +3402,7 @@ export class AgentHomePane extends Disposable {
 		const reinsert = this.builtTwoLine !== undefined && this.builtTwoLine !== this.twoLine;
 		this.builtTwoLine = this.twoLine;
 		this.setPanes(tree, reinsert);
+		this.pruneSelection(tree);
 		this.revealActiveNewChat();
 		this.syncFilterButton();
 		this.layout();

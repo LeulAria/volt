@@ -35,7 +35,7 @@ import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/commo
 import { findAgentPanelGroup, MAX_BACKGROUND_AGENT_PANELS } from './agentPanels.js';
 import { VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { ensureAgentToolsPart, liveAgentToolsPart, onDidChangeAgentToolEditors, setBorrowedAgentBrowserResolver } from './agentSurfaceHost.js';
-import { hasSavedAgentTools } from './agentToolsEditorPart.js';
+import { hasSavedAgentTools, setAgentToolsLentOut } from './agentToolsEditorPart.js';
 
 /** Which chat each IDE tab came from, so it goes back to that chat's tools. */
 const OWNERS_KEY = 'volt.agent.ideOwners';
@@ -69,6 +69,9 @@ function setScope(scope: IAgentIdeScope | undefined): void {
 	currentScope = scope;
 	scopeEmitter.fire(scope);
 }
+
+// The tabs moved into the IDE's editor area are still the chats': their saved tabs are not emptied meanwhile.
+setAgentToolsLentOut(() => !!currentScope);
 
 /**
  * Agent layout and IDE layout are two views of the same chats:

@@ -13,6 +13,7 @@ import { darkModeColor } from '../../common/scratchBoard/scratchColor.js';
 import { Vec } from '../../common/scratchBoard/scratchMath.js';
 import { isLinear, SCRATCH_BACKGROUNDS, ScratchGrid, ScratchTheme } from '../../common/scratchBoard/scratchTypes.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
+import { IScratchBoardFiles } from './scratchBoardFiles.js';
 import type { IScratchCanvasHost, ScratchCanvas } from './scratchCanvas.js';
 import { scratchIcon, ScratchIconName } from './scratchIcons.js';
 
@@ -97,6 +98,7 @@ function show(accessor: ServicesAccessor, anchor: HTMLElement, sections: IVoltMe
 export function showScratchMainMenu(accessor: ServicesAccessor, canvas: ScratchCanvas, host: IScratchCanvasHost, anchor: HTMLElement): void {
 	menuDocument = canvas.element.ownerDocument;
 	const dialogService = accessor.get(IDialogService);
+	const files = accessor.get(IScratchBoardFiles);
 	const settings = canvas.scene?.settings;
 	const sections: IVoltMenuSection<Run>[] = [
 		{
@@ -112,7 +114,13 @@ export function showScratchMainMenu(accessor: ServicesAccessor, canvas: ScratchC
 				item('png', localize('voltScratch.exportPngMenu', "Export as PNG"), () => void canvas.exporter.exportImage(canvas, 'png'), { icon: icon('download'), keybinding: `${MOD}${SHIFT}E` }),
 				item('svg', localize('voltScratch.exportSvgMenu', "Export as SVG"), () => void canvas.exporter.exportImage(canvas, 'svg'), { icon: icon('download') }),
 				item('copy', localize('voltScratch.copyBoardPng', "Copy Board as PNG"), () => { canvas.select([]); void canvas.copySelectionAsPng(); }, { icon: icon('copy') }),
-				item('json', localize('voltScratch.saveFile', "Save Board File"), () => void canvas.exporter.exportJson(canvas), { icon: icon('file') }),
+				// A .scratch file in the project, kept up to date by later edits; opening it shows the board.
+				item('file', localize('voltScratch.saveAsFile', "Save as File"), () => {
+					const boardId = canvas.model?.id;
+					if (boardId) {
+						void files.saveAs(boardId);
+					}
+				}, { icon: icon('file') }),
 			],
 		},
 		{

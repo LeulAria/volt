@@ -50,11 +50,15 @@ export interface IScratchBoardService {
 	readonly _serviceBrand: undefined;
 	readonly whenReady: Promise<void>;
 	readonly onDidChangeIndex: Event<void>;
+	/** A board's content was saved after an edit here (its id). */
+	readonly onDidEditBoard: Event<string>;
 	readonly index: IScratchIndex;
 	getBoard(id: string): IScratchBoardMeta | undefined;
 	getFolder(id: string): IScratchFolder | undefined;
 	createBoard(options?: { readonly folderId?: string | null; readonly projectId?: string; readonly title?: string; readonly document?: Partial<Pick<IScratchBoardDocument, 'elements' | 'settings' | 'camera'>> }): Promise<string>;
 	renameBoard(id: string, title: string): void;
+	/** The `.scratch` project file the board is saved to (a URI string), or none. */
+	setBoardFile(id: string, file: string | undefined): void;
 	setBoardPinned(id: string, pinned: boolean): void;
 	setBoardArchived(id: string, archived: boolean): void;
 	moveBoard(id: string, folderId: string | null): void;
@@ -74,6 +78,8 @@ export interface IScratchBoardService {
 	readBoardDocument(id: string): Promise<IScratchBoardDocument | undefined>;
 	/** The board a chat was started from (its run outline is on it), if any. */
 	findBoardForSession(sessionId: string): Promise<string | undefined>;
+	/** Quitting waits for `work` (it ends in an edit, like a pasted image being stored). */
+	hold<T>(work: Promise<T>): Promise<T>;
 	listSnapshots(id: string): Promise<IScratchSnapshot[]>;
 	restoreSnapshot(id: string, name: string): Promise<boolean>;
 	flush(): Promise<void>;
@@ -88,6 +94,8 @@ const SNAPSHOTS_KEPT = 40;
 const DAY_MS = 86_400_000;
 const MAX_SAVE_RETRY_MS = 30_000;
 const MISSING_FILE_GRACE_MS = 2500;
+/** How long quitting waits for work that ends in an edit (an image being stored). */
+const PENDING_WAIT_MS = 3000;
 
 function isNotFound(err: unknown): boolean {
 	return err instanceof FileOperationError && err.fileOperationResult === FileOperationResult.FILE_NOT_FOUND;
@@ -121,6 +129,8 @@ interface IBoardStore {
 	backupBroken(file: URI, content: string, reason: string): Promise<URI | undefined>;
 	noteEdited(id: string, elements: readonly ScratchElement[]): void;
 	notifyUnreadable(id: string, backup: URI | undefined): void;
+	/** Copies of a board kept at a quit whose save did not land, oldest first; each is set aside once taken. */
+	takeUnsavedBackups(id: string): Promise<IScratchBoardDocument[]>;
 	/** Time between saved versions while editing (0: none); ten minutes when unset. */
 	snapshotEveryMs?(): number;
 }
@@ -263,12 +273,22 @@ export class ScratchBoardModel extends Disposable {
 				this.store.notifyUnreadable(this.id, backup);
 			}
 		}
+		// Edits whose save had not landed when Volt last quit (a forced quit, a crash, a disk error)
+		// were kept beside the boards: they come back into the board, and the next save writes them.
+		const recovered = this.readOnly || readFailed ? [] : await this.store.takeUnsavedBackups(this.id);
+		for (const backup of recovered) {
+			doc = mergeBoardDocuments(backup, doc);
+		}
 		this.revision = doc.revision;
 		this.updated = doc.updated;
 		this._camera = doc.camera;
 		this.scene.load(doc.elements, doc.settings, doc.runs, doc.deleted);
 		this.savedDirty = this.scene.dirtyVersion;
 		this.loaded = true;
+		if (recovered.length) {
+			this.savedDirty = -1;
+			this.saveScheduler.schedule();
+		}
 		if (readFailed) {
 			// Show what is on disk as soon as it can be read.
 			this.reloadScheduler.schedule(1000);
@@ -543,6 +563,10 @@ class ScratchBoardService extends Disposable implements IScratchBoardService {
 
 	private readonly _onDidChangeIndex = this._register(new Emitter<void>());
 	readonly onDidChangeIndex = this._onDidChangeIndex.event;
+	private readonly _onDidEditBoard = this._register(new Emitter<string>());
+	readonly onDidEditBoard = this._onDidEditBoard.event;
+	/** Work that ends in a board edit (an image being stored): quitting waits for it. */
+	private readonly pending = new Set<Promise<void>>();
 
 	private readonly storeApi: IBoardStore;
 
@@ -569,6 +593,7 @@ class ScratchBoardService extends Disposable implements IScratchBoardService {
 			backupBroken: (file, content, reason) => this.backupBroken(file, content, reason),
 			noteEdited: (id, elements) => this.noteEdited(id, elements),
 			notifyUnreadable: (id, backup) => this.notifyUnreadable(id, backup),
+			takeUnsavedBackups: id => this.takeUnsavedBackups(id),
 			snapshotEveryMs: () => readSnapshotMinutes(this.configurationService.getValue(SCRATCH_SNAPSHOT_MINUTES_SETTING)) * 60_000,
 		};
 		this.whenReady = this.init();
@@ -798,6 +823,7 @@ class ScratchBoardService extends Disposable implements IScratchBoardService {
 			// Content edits change `edited` only; `updated` is for the entry itself (title, pin...).
 			boards: this._index.boards.map(b => b.id === id ? { ...b, edited: Date.now(), excerpt, elementCount: elements.length } : b),
 		});
+		this._onDidEditBoard.fire(id);
 	}
 
 	async createBoard(options: { readonly folderId?: string | null; readonly projectId?: string; readonly title?: string; readonly document?: Partial<Pick<IScratchBoardDocument, 'elements' | 'settings' | 'camera'>> } = {}): Promise<string> {
@@ -826,6 +852,12 @@ class ScratchBoardService extends Disposable implements IScratchBoardService {
 
 	renameBoard(id: string, title: string): void {
 		this.setIndex(updateBoard(this._index, id, { title: title.trim() }));
+	}
+
+	setBoardFile(id: string, file: string | undefined): void {
+		if (this.getBoard(id)?.file !== file) {
+			this.setIndex(updateBoard(this._index, id, { file }));
+		}
 	}
 
 	setBoardPinned(id: string, pinned: boolean): void {
@@ -1102,14 +1134,60 @@ class ScratchBoardService extends Disposable implements IScratchBoardService {
 		}
 	}
 
-	/** Saves everything; edits that still could not be written are kept beside the boards. */
+	/**
+	 * Saves everything. Each board with unsaved edits is copied beside the boards first, so a forced
+	 * quit or crash mid-save still leaves its edits; the copy goes once the save landed, and one that
+	 * stays is merged back into the board when it next opens.
+	 */
 	private async flushForShutdown(): Promise<void> {
+		// An image still being stored lands first; one stuck behind something never holds up the quit.
+		await Promise.race([Promise.all([...this.pending]), timeout(PENDING_WAIT_MS)]);
+		const copies = new Map<string, URI | undefined>();
+		await Promise.all([...this.models].filter(([, entry]) => entry.model.hasUnsavedEdits).map(async ([id, entry]) => {
+			copies.set(id, await this.backupBroken(this.boardFile(id), serializeBoardDocument(entry.model.toDocument(), Date.now()), 'unsaved'));
+		}));
 		await this.flush();
 		for (const [id, entry] of this.models) {
+			const copy = copies.get(id);
 			if (entry.model.hasUnsavedEdits) {
-				await this.backupBroken(this.boardFile(id), serializeBoardDocument(entry.model.toDocument(), Date.now()), 'unsaved');
+				if (!copies.has(id)) {
+					await this.backupBroken(this.boardFile(id), serializeBoardDocument(entry.model.toDocument(), Date.now()), 'unsaved');
+				}
+			} else if (copy) {
+				await this.fileService.del(copy).catch(() => undefined);
 			}
 		}
+	}
+
+	hold<T>(work: Promise<T>): Promise<T> {
+		const done = work.then(() => undefined, () => undefined);
+		this.pending.add(done);
+		void done.finally(() => this.pending.delete(done));
+		return work;
+	}
+
+	/** `broken/<time>-unsaved-<id>.json`, oldest first, read and renamed `recovered` so they apply once. */
+	private async takeUnsavedBackups(id: string): Promise<IScratchBoardDocument[]> {
+		const folder = joinPath(this.root, 'broken');
+		const suffix = `-unsaved-${id}.json`;
+		let names: string[];
+		try {
+			names = ((await this.fileService.resolve(folder)).children ?? []).map(child => child.name).filter(name => name.endsWith(suffix) && /^\d+-/.test(name));
+		} catch {
+			return [];
+		}
+		const docs: IScratchBoardDocument[] = [];
+		for (const name of names.sort((a, b) => parseInt(a, 10) - parseInt(b, 10))) {
+			const file = joinPath(folder, name);
+			try {
+				docs.push(parseBoardDocument(JSON.parse((await this.fileService.readFile(file)).value.toString()), id).document);
+				await this.fileService.move(file, joinPath(folder, name.replace('-unsaved-', '-recovered-')), true);
+				this.logService.info(`[volt scratch] brought back unsaved edits of board ${id} from ${name}`);
+			} catch (err) {
+				this.logService.warn(`[volt scratch] could not bring back ${name}`, err);
+			}
+		}
+		return docs;
 	}
 
 	private async pruneTrash(): Promise<void> {

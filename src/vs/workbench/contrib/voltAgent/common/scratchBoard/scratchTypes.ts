@@ -318,6 +318,8 @@ export interface IScratchBoardMeta {
 	/** Short text from the board, for search and the row's subtitle. */
 	readonly excerpt?: string;
 	readonly elementCount?: number;
+	/** The `.scratch` file in a project the board is saved to (a URI): edits write it, opening it shows the board. */
+	readonly file?: string;
 }
 
 export interface IScratchIndex {

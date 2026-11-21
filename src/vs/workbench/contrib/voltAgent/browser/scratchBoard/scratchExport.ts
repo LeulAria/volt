@@ -373,23 +373,6 @@ export class ScratchExporter {
 		}
 	}
 
-	async exportJson(canvas: ScratchCanvas): Promise<void> {
-		const model = canvas.model;
-		if (!model) {
-			return;
-		}
-		const name = safeFileName(canvas.boardTitle || 'scratch');
-		const target = await this.fileDialogService.showSaveDialog({
-			title: localize('voltScratch.exportJson', "Save board file"),
-			defaultUri: joinPath(await this.pathService.userHome(), 'Downloads', `${name}.scratch.json`),
-			filters: [{ name: localize('voltScratch.boardFile', "Scratch board"), extensions: ['json'] }],
-		});
-		if (!target) {
-			return;
-		}
-		const doc = model.toDocument();
-		await this.fileService.writeFile(target, VSBuffer.fromString(JSON.stringify({ type: 'volt-scratch', version: 1, title: canvas.boardTitle, elements: doc.elements, settings: doc.settings }, null, '\t')));
-	}
 }
 
 function pathsSvg(specs: readonly IScratchPathSpec[]): string {
