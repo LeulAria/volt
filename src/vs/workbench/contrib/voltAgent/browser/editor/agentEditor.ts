@@ -11,7 +11,7 @@ import { isWeb } from '../../../../../base/common/platform.js';
 import type { IMouseWheelEvent } from '../../../../../base/browser/mouseEvent.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
-import { CancellationToken } from '../../../../../base/common/cancellation.js';
+import { CancellationToken, CancellationTokenSource } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import type { ISandboxDenial } from '../../../../../platform/voltSandbox/common/sandboxDenials.js';
 import { IVoltSandboxSettings, sandboxWorkspaceRoots, withAllowedDomain, withWritableRoot } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
@@ -49,6 +49,7 @@ import { CodeEditorWidget } from '../../../../../editor/browser/widget/codeEdito
 import { DropIntoEditorController } from '../../../../../editor/contrib/dropOrPasteInto/browser/dropIntoEditorController.js';
 import { InlineCompletionsController } from '../../../../../editor/contrib/inlineCompletions/browser/controller/inlineCompletionsController.js';
 import { IComposerPredictionContext, registerComposerContext } from '../../../../services/voltRuntime/common/prediction/composerContext.js';
+import { IVoltPredictionService } from '../../../../services/voltRuntime/common/prediction.js';
 import { EDITOR_FONT_DEFAULTS, IEditorOptions as ICodeEditorOptions } from '../../../../../editor/common/config/editorOptions.js';
 import { ITextModel } from '../../../../../editor/common/model.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
@@ -90,7 +91,7 @@ import { agentRow, dockModel, formatElapsed as formatOrchElapsed, isMultitaskTas
 import { orchTasksOf } from '../../../../services/voltRuntime/common/orchestration/orchestratorQueries.js';
 import { jobWakeEnd } from '../../../../services/voltRuntime/common/jobs/jobWatch.js';
 import { harnessSubagentChatId, harnessTaskOfChat, isHarnessSubagentChatId } from '../../../../services/voltRuntime/common/orchestration/harnessSubagents.js';
-import { createReportStackIcon, isLiveSubagentState, isResumableSubagent, isRetryableSubagentState, ISubagentView, renderCursorSubagentRow, resumeSubagentTask, retryHarnessSubagent, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView } from '../chrome/agentSubagents.js';
+import { createReportStackIcon, isLiveSubagentState, isResumableSubagent, isRetryableSubagentState, ISubagentCounts, ISubagentView, renderCursorSubagentRow, resumeSubagentTask, retryHarnessSubagent, subagentCounts, subagentCountsLabel, subagentStateIcon, subagentView } from '../chrome/agentSubagents.js';
 import type { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { type IAgentQuestionResponse, questionResponseText } from '../../../../services/voltRuntime/common/questions.js';
 import { AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -837,6 +838,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private jobWaitRows!: AgentJobWaitRows;
 	private threadEl!: HTMLElement;
 	private threadInner!: HTMLElement;
+	/** "3 subagents running" at the end of the transcript while this chat's own turn is over (see syncAgentsTail). */
+	private agentsTail: HTMLElement | undefined;
+	private liveAgentCounts: ISubagentCounts | undefined;
+	/** The predicted next message shown in the empty composer, and the chat it was predicted for. */
+	private nextPrompt: { readonly text: string; readonly session: string } | undefined;
+	private nextPromptEl: HTMLElement | undefined;
+	private readonly nextPromptRun = this._register(new MutableDisposable());
+	/** Whether the last streaming check saw a reply streaming: its end asks for the next message. */
+	private sawStreaming = false;
 	/** The latest prompt's turn, whose Stop shows while its run streams. */
 	private latestUserTurn: HTMLElement | undefined;
 	private threadScroll!: DomScrollableElement;
@@ -2460,7 +2470,90 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		this.placeholderEl.textContent = this.inputPlaceholderText();
 		const empty = !(this.inputModel?.getValue());
-		this.placeholderEl.classList.toggle('hidden', !empty);
+		// Typing replaces a suggested next message; another chat in this editor never shows this one's.
+		if (this.nextPrompt && (!empty || this.nextPrompt.session !== this.sessionKey)) {
+			this.clearNextPrompt();
+		}
+		this.placeholderEl.classList.toggle('hidden', !empty || !!this.nextPrompt);
+	}
+
+	// --- The next message, suggested when the agent is done -------------------------------------
+
+	/**
+	 * Once the agent's reply is done and nothing is typed, the prediction model guesses the user's
+	 * next message ("nice. commit it and push"); it shows in the empty composer with a Tab chip, even
+	 * before the composer is focused. Tab (or a click) takes it, typing replaces it.
+	 */
+	private requestNextPrompt(): void {
+		this.nextPromptRun.clear();
+		const session = this.sessionKey;
+		const last = this.messages.at(-1);
+		if (!last || last.kind !== 'agent' || this.hasDraft() || this.editingUserIndex !== undefined || this.container.classList.contains('subagent-chat')) {
+			return;
+		}
+		const prediction = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltPredictionService));
+		if (!prediction) {
+			return;
+		}
+		const lastPrompt = [...this.messages].reverse().find(message => message.kind === 'user')?.text;
+		const context = this.composerPredictionContext();
+		const cts = new CancellationTokenSource();
+		this.nextPromptRun.value = toDisposable(() => cts.dispose(true));
+		void prediction.predictNextPrompt({ transcript: context.transcript, vocabulary: context.vocabulary, activity: context.activity, lastPrompt }, cts.token).then(text => {
+			if (!text || cts.token.isCancellationRequested || this.sessionKey !== session || this.hasDraft() || this.isStreaming() || this.messages.at(-1) !== last) {
+				return;
+			}
+			this.showNextPrompt(text);
+		}, () => undefined);
+	}
+
+	private showNextPrompt(text: string): void {
+		if (!this.monacoHost) {
+			return;
+		}
+		this.nextPrompt = { text, session: this.sessionKey };
+		if (!this.nextPromptEl) {
+			// The placeholder's class too: it sits exactly where the placeholder does in every composer layout.
+			const el = this.nextPromptEl = append(this.monacoHost, $('.volt-agent-placeholder.volt-agent-next-prompt'));
+			// A click on the suggestion or its chip takes it; the composer keeps the focus it gets.
+			this._register(addDisposableListener(el, 'mousedown', e => {
+				e.preventDefault();
+				this.acceptNextPrompt();
+			}));
+			this._register(toDisposable(() => el.remove()));
+		}
+		const el = this.nextPromptEl;
+		el.replaceChildren();
+		append(el, $('span.volt-agent-next-prompt-text')).textContent = text;
+		const chip = append(el, $('span.volt-agent-next-prompt-key'));
+		chip.textContent = localize('voltAgent.nextPrompt.key', "Tab");
+		el.setAttribute('role', 'button');
+		el.setAttribute('aria-label', localize('voltAgent.nextPrompt.aria', "Suggested message: {0}. Press Tab to use it", text));
+		setAgentTooltip(el, localize('voltAgent.nextPrompt.tip', "A guess at your next message. Tab or click to use it; just type to write your own"));
+		el.classList.remove('hidden');
+		this.updateInputPlaceholder();
+	}
+
+	private clearNextPrompt(): void {
+		this.nextPromptRun.clear();
+		if (!this.nextPrompt) {
+			return;
+		}
+		this.nextPrompt = undefined;
+		this.nextPromptEl?.classList.add('hidden');
+		this.updateInputPlaceholder();
+	}
+
+	/** Puts the suggested message in the composer, ready to send or edit. False when none shows. */
+	private acceptNextPrompt(): boolean {
+		const next = this.nextPrompt;
+		if (!next || next.session !== this.sessionKey || this.hasDraft()) {
+			return false;
+		}
+		this.clearNextPrompt();
+		this.setComposerContent(next.text, undefined);
+		this.inputEditor?.focus();
+		return true;
 	}
 
 	private syncUnsavedState(): void {
@@ -3453,7 +3546,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 						this.renderingTail = true;
 						this.exchangeListeners = undefined;
 					}
-					exchange = append(this.threadInner, $('.volt-agent-exchange'));
+					exchange = this.appendExchange();
 					if (index === tailFrom) {
 						this.tailExchange = exchange;
 						this.tailFrom = tailFrom;
@@ -4068,7 +4161,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.tailTurns = new Map();
 			for (let k = 1; k < starts.length; k++) {
 				const last = k === starts.length - 1;
-				const element = append(this.threadInner, $('.volt-agent-exchange'));
+				const element = this.appendExchange();
 				this.renderingTail = last;
 				if (!last) {
 					this.exchangeListeners = this.settledListeners.add(new DisposableStore());
@@ -6833,8 +6926,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				}
 				e.preventDefault();
 				e.stopPropagation();
-				// Tab takes a predicted continuation when one shows; otherwise it switches to Plan.
-				if (!e.shiftKey && this.inputEditor && acceptGhostText(this.inputEditor)) {
+				// Tab takes the suggested next message or a predicted continuation when one shows; otherwise it switches to Plan.
+				if (!e.shiftKey && (this.acceptNextPrompt() || (this.inputEditor && acceptGhostText(this.inputEditor)))) {
 					return;
 				}
 				this.togglePlan();
@@ -6859,6 +6952,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 					e.stopPropagation();
 					this.setComposerContent(recalled.text, recalled.mentions);
 				}
+				return;
+			}
+			if (e.keyCode === KeyCode.Escape && this.nextPrompt && !this.hasDraft()) {
+				e.preventDefault();
+				e.stopPropagation();
+				this.clearNextPrompt();
 				return;
 			}
 			if (e.keyCode === KeyCode.Escape && this.voiceDictation.active) {
@@ -8121,11 +8220,62 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private syncAgentsChip(views: readonly ISubagentView[]): void {
 		const counts = subagentCounts(views);
 		const live = counts.multitask + counts.subagents;
+		this.liveAgentCounts = live ? counts : undefined;
+		this.syncAgentsTail();
 		if (!live) {
 			this.composerChips?.setAgents(undefined);
 			return;
 		}
 		this.composerChips?.setAgents({ label: subagentCountsLabel(counts), live, waiting: counts.waiting });
+	}
+
+	/** A new exchange goes in before the agents line, which stays the transcript's last row. */
+	private appendExchange(): HTMLElement {
+		const exchange = $('.volt-agent-exchange');
+		if (this.agentsTail?.parentElement === this.threadInner) {
+			this.threadInner.insertBefore(exchange, this.agentsTail);
+		} else {
+			this.threadInner.appendChild(exchange);
+		}
+		return exchange;
+	}
+
+	/**
+	 * The chat's own turn is over (stopped, failed or done) but its agents still run: the end of the
+	 * transcript says so, shimmering like a live status, so the chat never looks idle while work goes
+	 * on. A click lists the agents (as the composer's agents chip does).
+	 */
+	private syncAgentsTail(): void {
+		const counts = this.liveAgentCounts;
+		const show = !!counts && !!this.messages.length && !this.isStreaming();
+		if (!show) {
+			this.agentsTail?.remove();
+			return;
+		}
+		if (!this.agentsTail) {
+			const tail = this.agentsTail = $('button.volt-agent-agents-tail');
+			tail.setAttribute('type', 'button');
+			this._register(addDisposableListener(tail, 'click', e => {
+				e.preventDefault();
+				this.showAgentsMenu(tail);
+			}));
+			this._register(toDisposable(() => tail.remove()));
+		}
+		const tail = this.agentsTail;
+		const label = subagentCountsLabel(counts);
+		const waiting = counts.waiting ? localize('voltAgent.agentsTail.waiting', "{0} waiting on you", counts.waiting) : undefined;
+		const text = waiting ? `${label} \u00b7 ${waiting}` : label;
+		if (tail.dataset.text !== text) {
+			tail.dataset.text = text;
+			tail.replaceChildren();
+			tail.classList.toggle('waiting', !!waiting);
+			append(tail, $('span.volt-agent-activity-progress.shimmer')).textContent = text;
+			tail.setAttribute('aria-label', localize('voltAgent.agentsTail.aria', "{0}. Show them", text));
+			setAgentTooltip(tail, localize('voltAgent.agentsTail.tip', "Your agents are still working. Click to see them"));
+		}
+		if (tail.parentElement !== this.threadInner || tail !== this.threadInner.lastElementChild) {
+			this.threadInner.appendChild(tail);
+		}
 	}
 
 	/** The agents chip's list: this chat's multitask agents and subagents; a pick opens one beside the chat. */
@@ -8928,6 +9078,15 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private syncStreamingClass(): void {
 		const streaming = this.isStreaming();
 		this.threadInner.classList.toggle('streaming', streaming);
+		this.syncAgentsTail();
+		if (streaming !== this.sawStreaming) {
+			this.sawStreaming = streaming;
+			if (streaming) {
+				this.clearNextPrompt();
+			} else {
+				this.requestNextPrompt();
+			}
+		}
 		// A thread taken back from the stash still holds its own latest prompt.
 		if (!this.latestUserTurn || !this.threadInner.contains(this.latestUserTurn)) {
 			this.latestUserTurn = [...this.threadInner.querySelectorAll<HTMLElement>('.volt-agent-turn.user')].reverse().find(turn => !!turn.querySelector('.volt-agent-user-stop'));

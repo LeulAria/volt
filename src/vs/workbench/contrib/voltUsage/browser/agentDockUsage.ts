@@ -12,14 +12,15 @@ import { IVoltUsageLimitGroup, IVoltUsageService } from '../../../../platform/vo
 import { createBrandIcon } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { IVoltFeatureDockSection } from '../../voltCustomize/browser/voltFeatureModules.js';
 import { DockGroup } from '../../voltAgent/browser/chrome/agentDockSections.js';
-import { AgentUsageHoverCard, usageAccountRows } from './agentUsageHoverCard.js';
+import { ACCOUNT_NAMES, AgentUsageHoverCard, shortIn, usageAccountRows } from './agentUsageHoverCard.js';
 
 /** The bars refresh this often while they show (each read asks every provider for its limits). */
 const USAGE_REFRESH_MS = 5 * 60_000;
 
 /**
- * Usage in the side toolbar: a thin bar per account (its brand mark, then how much of its current
- * window is used), nothing else. Hovering the bars opens the full Usage limits card beside them.
+ * Usage in the side toolbar: per account its brand mark and name (the provider and plan, never the
+ * email), how much of its current window is used and when that resets, over a thin bar. Hovering
+ * opens the full Usage limits card beside them.
  */
 export class AgentDockUsage extends Disposable implements IVoltFeatureDockSection {
 
@@ -105,19 +106,37 @@ export class AgentDockUsage extends Disposable implements IVoltFeatureDockSectio
 		const rows = usageAccountRows(this.groups, this.accountsState);
 		this.bars.replaceChildren();
 		const labels: string[] = [];
-		for (const row of rows) {
+		// Names, not emails (the card shows emails only when asked); two accounts of one plan are told apart by number.
+		const names = rows.map(row => [ACCOUNT_NAMES[row.provider], row.plan].filter(Boolean).join(' '));
+		const seen = new Map<string, number>();
+		for (const [index, row] of rows.entries()) {
 			// The account's first window is its current one (Claude's session, Codex's 30 days, Grok's week).
 			const window = row.limits?.windows[0];
 			const passed = window?.resetsAt !== undefined && window.resetsAt <= now;
 			const used = window ? (passed ? 0 : Math.max(0, Math.round(window.usedPercent))) : undefined;
+			const count = (seen.get(names[index]) ?? 0) + 1;
+			seen.set(names[index], count);
+			const name = names.filter(item => item === names[index]).length > 1 ? `${names[index]} ${count}` : names[index];
 			const line = append(this.bars, $('.volt-agent-dock-usage-line'));
 			line.classList.toggle('active', row.active);
-			line.classList.toggle('high', used !== undefined && used >= 80);
+			line.classList.toggle('high', used !== undefined && used >= 80 && used < 100);
+			line.classList.toggle('full', used !== undefined && used >= 100);
 			line.classList.toggle('unknown', used === undefined);
-			line.appendChild(createBrandIcon(row.provider, 12));
+			const head = append(line, $('.volt-agent-dock-usage-head'));
+			head.appendChild(createBrandIcon(row.provider, 14));
+			append(head, $('span.volt-agent-dock-usage-name')).textContent = name;
+			const value = append(head, $('span.volt-agent-dock-usage-value'));
+			if (used === undefined) {
+				value.textContent = row.expired ? localize('voltAgent.dock.usageSignIn', "Sign in") : '\u2014';
+			} else {
+				append(value, $('span.volt-agent-dock-usage-percent')).textContent = `${used}%`;
+				if (window?.resetsAt !== undefined && !passed) {
+					append(value, $('span.volt-agent-dock-usage-reset')).textContent = shortIn(window.resetsAt - now);
+				}
+			}
 			const bar = append(line, $('span.volt-agent-dock-usage-bar'));
 			append(bar, $('span.volt-agent-dock-usage-fill')).style.width = `${Math.min(100, used ?? 0)}%`;
-			labels.push(used === undefined ? row.name : `${row.name}: ${used}%`);
+			labels.push(used === undefined ? name : `${name}: ${used}%`);
 		}
 		if (!rows.length) {
 			append(this.bars, $('.volt-agent-dock-usage-empty')).textContent = this.groups === undefined && !this.accountsState

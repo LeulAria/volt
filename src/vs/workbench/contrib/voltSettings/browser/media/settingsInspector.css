@@ -676,8 +676,15 @@
 }
 
 .volt-settings-inspect-detail {
+	/* Positioned: each subsection's offsetTop is measured from here (settingsInspectorPage.ts scrolls to them). */
+	position: relative;
 	max-width: 760px;
 	padding: 24px 32px 64px;
+}
+
+/* Every subsection on one page, one after the other; the list beside it follows the scroll. */
+.volt-settings-inspect-group-block + .volt-settings-inspect-group-block {
+	margin-top: 40px;
 }
 
 .volt-settings-inspect-placeholder {

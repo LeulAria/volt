@@ -4551,6 +4551,69 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
+/*
+ * The suggested next message (agentEditor.ts requestNextPrompt): where the placeholder sits, in its
+ * grey, then a soft Tab key chip. Clickable, unlike the placeholder; typing replaces it.
+ */
+.volt-agent-placeholder.volt-agent-next-prompt {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	pointer-events: auto;
+	cursor: pointer;
+	animation: volt-agent-next-prompt-in 160ms ease-out;
+}
+
+.volt-agent-placeholder.volt-agent-next-prompt.hidden {
+	display: none;
+}
+
+.volt-agent-next-prompt-text {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-next-prompt-key {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	height: 20px;
+	padding: 0 8px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 20px;
+	letter-spacing: 0.01em;
+}
+
+.volt-agent-placeholder.volt-agent-next-prompt:hover .volt-agent-next-prompt-text {
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+.volt-agent-placeholder.volt-agent-next-prompt:hover .volt-agent-next-prompt-key {
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+@keyframes volt-agent-next-prompt-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-placeholder.volt-agent-next-prompt {
+		animation: none;
+	}
+}
+
 .volt-agent-monaco .volt-agent-list-marker {
 	color: transparent !important;
 	font-size: 0 !important;

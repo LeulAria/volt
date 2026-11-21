@@ -70,7 +70,7 @@ import { AgentPullRequestCodeDiff, canShowInCodeDiff } from './agentPullRequestC
 import { openPullRequestDiff } from './agentPullRequestDiff.js';
 import { AgentPullRequestEditorInput } from './agentPullRequestEditorInput.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
-import { ago, avatar, checkIcon, composeInChat, iconSpan, MERGE_LABELS, openPullRequest, problemText, prStateIcon, sendInChat, signInWithGh, visibleChatSession } from './agentPullRequestUi.js';
+import { ago, avatar, checkIcon, composeInChat, iconSpan, MERGE_LABELS, openPullRequest, problemText, prStateIcon, resolveConflictsInNewChat, sendInChat, signInWithGh, visibleChatSession } from './agentPullRequestUi.js';
 import { renderPrCheckList, renderPrCommitList } from './agentPullRequestViewLists.js';
 import { openOnHost } from './agentPrLinks.js';
 
@@ -957,8 +957,8 @@ export class AgentPullRequestView extends Disposable {
 			return;
 		}
 		if (action === 'resolveConflicts') {
-			const resolve = this.button(parent, localize('voltPr.resolveConflicts', "Resolve Conflicts"), () => this.toAgent(buildResolveConflictsPrompt(pr)), 'danger', Codicon.warning);
-			setAgentTooltip(resolve, localize('voltPr.resolveTip', "Ask the chat's agent to merge {0} in and resolve the conflicts", pr.baseRefName));
+			const resolve = this.button(parent, localize('voltPr.resolveConflicts', "Resolve Conflicts"), () => this.resolveConflicts(pr), 'danger', Codicon.warning);
+			setAgentTooltip(resolve, localize('voltPr.resolveTipNewChat', "Start a new chat that merges {0} in and resolves the conflicts", pr.baseRefName));
 			return;
 		}
 		if (action === 'autoMergeArmed') {
@@ -2154,6 +2154,14 @@ export class AgentPullRequestView extends Disposable {
 		}
 		void this.instantiationService.invokeFunction(accessor => openPullRequestDiff(accessor, { repo: pr.repo, number: pr.number, folder }, pr.title, path, this.sessionId))
 			.catch(err => this.notificationService.error(localize('voltPr.diffFailed', "Could not open the diff: {0}", voltPrErrorMessage(err))));
+	}
+
+	/** A new chat, linked to the pull request, is sent the prompt to resolve its conflicts. */
+	private async resolveConflicts(pr: IVoltPullRequestDetail): Promise<void> {
+		const started = await this.instantiationService.invokeFunction(accessor => resolveConflictsInNewChat(accessor, pr, this.sessionId));
+		if (!started) {
+			await this.copy(buildResolveConflictsPrompt(pr), localize('voltPr.resolveCopied', "No project to start a chat in; the prompt to resolve the conflicts was copied."));
+		}
 	}
 
 	private async toAgent(prompt: string): Promise<void> {

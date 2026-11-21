@@ -5,13 +5,13 @@
 
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { localize } from '../../../../../nls.js';
-import { ILocalVoice, IVoltLocalVoiceService, LOCAL_VOICE_MODELS, localVoice, LocalVoiceModelId } from '../../../../../platform/voltLocalVoice/common/voltLocalVoice.js';
-import { localSpeechPieces, speakableMarkdown, splitSpeech } from '../../common/agentReadAloud.js';
+import { ILocalVoice, IVoltLocalVoiceService, LOCAL_VOICE_MODELS, localVoice, LocalVoiceModelId, pickLocalVoice, readyLocalVoiceModels } from '../../../../../platform/voltLocalVoice/common/voltLocalVoice.js';
+import { localSpeechPieces, READ_ALOUD_SYSTEM_VOICE, speakableMarkdown, splitSpeech } from '../../common/agentReadAloud.js';
 
 export interface IReadAloudOptions {
 	/**
-	 * A system voice's name, or a downloaded voice as `kokoro:<id>`; missing or unknown: the
-	 * system's default voice.
+	 * The voice setting as it is: a downloaded voice as `<model>:<id>`, a system voice's name, or
+	 * `system`. Missing: the first downloaded voice, as calls and Settings pick it (see {@link readAloudLocalVoice}).
 	 */
 	readonly voice?: string;
 	readonly rate?: number;
@@ -44,6 +44,19 @@ export function localVoiceDescription(voice: ILocalVoice): string {
 export function readAloudSource(message: { readonly text?: string; readonly segments?: readonly { readonly kind: string; readonly text?: string }[] }): string {
 	const prose = (message.segments ?? []).filter(segment => segment.kind === 'text' && segment.text).map(segment => segment.text);
 	return prose.length ? prose.join('\n\n') : message.text ?? '';
+}
+
+/**
+ * The downloaded voice that reads, for the voice setting: the one it names, else (when it names no
+ * system voice) the first downloaded one, which is what Settings and calls on this computer use.
+ * Undefined: a system voice reads.
+ */
+export async function readAloudLocalVoice(setting: string | undefined, service: IVoltLocalVoiceService): Promise<ILocalVoice | undefined> {
+	if (setting === READ_ALOUD_SYSTEM_VOICE || (setting && !localVoice(setting))) {
+		return undefined;
+	}
+	const ready = readyLocalVoiceModels(await service.getStates().catch(() => []));
+	return pickLocalVoice(setting, ready);
 }
 
 export function canReadAloud(win: Window): boolean {
@@ -104,10 +117,11 @@ class AgentReadAloud {
 	 * the click that follows is not the one that waits for the model to load.
 	 */
 	warm(options: IReadAloudOptions): void {
-		const local = options.localVoices ? localVoice(options.voice) : undefined;
-		if (local && !this.current) {
-			options.localVoices?.warm(local.ref)?.catch(() => undefined);
+		const service = options.localVoices;
+		if (!service || this.current) {
+			return;
 		}
+		void readAloudLocalVoice(options.voice, service).then(local => local ? service.warm(local.ref) : undefined).catch(() => undefined);
 	}
 
 	/** Starts reading `markdown`, or stops when `key` is what is being read. */
@@ -128,7 +142,10 @@ class AgentReadAloud {
 		const reading = { key, stop: () => { } };
 		this.current = reading;
 		this._onDidChange.fire();
-		const local = options.localVoices ? localVoice(options.voice) : undefined;
+		const local = options.localVoices ? await readAloudLocalVoice(options.voice, options.localVoices) : undefined;
+		if (this.current !== reading) {
+			return;
+		}
 		if (local && options.localVoices) {
 			const spoke = await this.readLocal(win, reading, text, local, options.localVoices, options);
 			if (spoke || this.current !== reading) {
@@ -186,11 +203,6 @@ class AgentReadAloud {
 	 * False when the engine failed before anything was heard, so another voice can read instead.
 	 */
 	private async readLocal(win: Window, reading: { readonly key: unknown; stop(): void }, text: string, voice: ILocalVoice, service: IVoltLocalVoiceService, options: IReadAloudOptions): Promise<boolean> {
-		// Picked on another machine, or removed since: the system's voices read, without a complaint.
-		const states = await service.getStates().catch(() => []);
-		if (states.find(state => state.model === voice.model)?.status !== 'ready') {
-			return this.current !== reading;
-		}
 		const sampleRate = LOCAL_VOICE_MODELS[voice.model].sampleRate;
 		const context = new (win as Window & typeof globalThis).AudioContext();
 		const end: { timer?: number } = {};

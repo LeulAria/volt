@@ -197,10 +197,8 @@ export interface ISandboxLaunchNote {
  * the chat stays quiet about them instead of warning at the top of every sandboxed chat.
  */
 const ACTIONABLE_PARTIAL: Partial<Record<SandboxDimension, ISandboxLaunchNote>> = {
-	'platform.tcc': {
-		title: 'Sandbox uses Volt\'s macOS privacy permissions here',
-		detail: 'This project is in Desktop, Documents, Downloads, iCloud Drive or on an external volume, which macOS opens only to apps you allowed. So the agent runs under Volt\'s privacy permissions (Files and Folders, and any others you gave Volt) instead of none of its own. The sandbox\'s file and network limits still apply. To run it with no privacy permissions, move the project to a folder outside those, such as ~/Projects.',
-	},
+	// 'platform.tcc' (a project in Desktop, Documents, ... runs under Volt's macOS privacy permissions) is
+	// not said in the chat: it showed at the top of most chats, and the Security page lists it.
 };
 
 /** The chat's warnings and notes for a launch with `unenforced` dimensions, on `backend`. */

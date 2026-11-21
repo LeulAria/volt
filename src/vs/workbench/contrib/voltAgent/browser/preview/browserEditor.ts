@@ -60,8 +60,6 @@ import { browserMenuExtras } from './browserMenuExtras.js';
 import { RecordingBadge } from '../capture/recordingBadge.js';
 import { sanitizeBrowserUrl } from './localPreview.js';
 
-const BROWSER_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-
 /** A comment's pin on the page. Its card's composer, once opened, maps each chip to what it points at. */
 interface IPinnedBrowserComment {
 	readonly commentId: string;
@@ -581,7 +579,13 @@ export class VoltBrowserView extends Disposable {
 	private deviceMode!: BrowserDeviceMode;
 	private loading = false;
 	private zoomFactor = 1;
-	private userAgent = BROWSER_USER_AGENT;
+	/**
+	 * A device preset's user agent, set on the page. Undefined: the page keeps Electron's own, untouched.
+	 * Google's sign-in refuses a user agent that claims to be Chrome without Chrome's other signals
+	 * ("This browser or app may not be secure"): a fixed Chrome/131 string was refused, the honest
+	 * `… Chrome/138… Electron/37…` one gets through (measured with Electron 37.6, 2026-11-19).
+	 */
+	private userAgent: string | undefined;
 	private devtoolsOpen = false;
 	/** DevTools docked under the page: a pane with its own webview that the page's DevTools draw into. */
 	private devtoolsPane: HTMLElement | undefined;
@@ -1487,7 +1491,9 @@ export class VoltBrowserView extends Disposable {
 		this.applyProfile(profile);
 		webview.setAttribute('partition', profile.partition);
 		webview.setAttribute('webpreferences', 'allowRunningInsecureContent, javascript=yes');
-		webview.setAttribute('useragent', this.userAgent);
+		if (this.userAgent) {
+			webview.setAttribute('useragent', this.userAgent);
+		}
 		webview.setAttribute('src', 'about:blank');
 
 		const on = (type: string, listener: (e: Event) => void) => {
@@ -2021,11 +2027,13 @@ export class VoltBrowserView extends Disposable {
 
 	/** Device presets send their own user agent; the page reloads so the site serves that version. */
 	private applyUserAgent(userAgent: string | undefined): void {
-		const next = userAgent ?? BROWSER_USER_AGENT;
-		if (next === this.userAgent) {
+		if (userAgent === this.userAgent) {
 			return;
 		}
-		this.userAgent = next;
+		// Back from a device: the page cannot drop an override, so it gets Electron's own user agent again
+		// (the window's: the same engine, version and tokens as the page's session).
+		const next = userAgent ?? getWindow(this.container).navigator.userAgent;
+		this.userAgent = userAgent;
 		const webview = this.webview;
 		if (!webview) {
 			return;

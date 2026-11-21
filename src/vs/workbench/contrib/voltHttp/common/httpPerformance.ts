@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { generateUuid } from '../../../../base/common/uuid.js';
+import { IHttpFlowCatalogRequest } from './httpAutomation.js';
 import { evaluateVoltLoadThresholds, IVoltLoadHistogramData, IVoltLoadProfile, IVoltLoadResult, IVoltLoadSample, IVoltLoadSpec, IVoltLoadTarget, IVoltLoadTargetResult, IVoltLoadThreshold, IVoltLoadVerdict, VOLT_LOAD_MAX_DURATION_SEC, VOLT_LOAD_MAX_USERS, VOLT_LOAD_METRICS, VOLT_LOAD_OPERATORS, VoltLoadErrorKind, VoltLoadHistogram, VoltLoadMetric, voltLoadMetrics, VoltLoadMetrics, VoltLoadMode, VoltLoadOperator, voltLoadPercentiles, VoltLoadProfileKind } from '../../../../platform/voltHttp/common/voltHttpLoad.js';
 
 /**
@@ -312,6 +313,116 @@ export function parseHttpPerfDefinition(definition: unknown, fallbackName: strin
 	const parsed = parseHttpPerfFile(JSON.stringify({ ...definition, volt: 'perf', confirmedHosts: [], runs: [] }), fallbackName);
 	const { confirmedHosts: _hosts, runs: _runs, ...rest } = parsed;
 	return rest;
+}
+
+// --- Set up with AI --------------------------------------------------------------------------------
+
+/** A saved request as a model setting up a test is told about it: no values, only names, methods, URLs and body field names. */
+export interface IHttpPerfCatalogRequest extends IHttpFlowCatalogRequest {
+	/** http, graphql, ws, sse, ... (`httpProtocols.ts`). */
+	readonly protocol: string;
+}
+
+export interface IHttpPerfCatalogCollection {
+	/** How a target's `ref.collection` names it: its file relative to the project. */
+	readonly collection: string;
+	readonly name: string;
+	readonly requests: readonly IHttpPerfCatalogRequest[];
+}
+
+const MAX_PERF_CATALOG_REQUESTS = 400;
+
+/** Who a model setting up a load test is. */
+export const HTTP_PERF_SETUP_SYSTEM_PROMPT = 'You are a performance engineer who sets up load tests of APIs. You reply with one JSON object, the test definition, and nothing else: no prose, no Markdown fences, no tool use, no questions.';
+
+/** The prompt that asks a model for a whole performance test over the project's saved requests; `existing` is where it starts from. */
+export function httpPerfSetupPrompt(catalog: readonly IHttpPerfCatalogCollection[], wish: string, existing?: Pick<IHttpPerfFile, 'name' | 'description' | 'mode' | 'targets' | 'load' | 'ws' | 'thresholds'>): string {
+	const lines: string[] = [];
+	let count = 0;
+	for (const collection of catalog) {
+		if (count >= MAX_PERF_CATALOG_REQUESTS) {
+			break;
+		}
+		lines.push(`Collection "${collection.name}" (ref.collection: ${JSON.stringify(collection.collection)})`);
+		for (const request of collection.requests) {
+			if (count++ >= MAX_PERF_CATALOG_REQUESTS) {
+				break;
+			}
+			lines.push(`  - path ${JSON.stringify(request.path)}: ${request.protocol === 'http' ? '' : `[${request.protocol}] `}${request.method} ${request.url}${request.bodyFields.length ? ` (body fields: ${request.bodyFields.join(', ')})` : ''}`);
+		}
+	}
+	const current = existing && (existing.targets.length || existing.description)
+		? JSON.stringify({ name: existing.name, description: existing.description, mode: existing.mode, targets: existing.targets.map(({ id: _id, ...target }) => target), load: existing.load, ...(existing.mode === 'ws' ? { ws: existing.ws } : {}), thresholds: existing.thresholds })
+		: undefined;
+	return [
+		'Set up a load test for Volt Client, as a performance engineer would: pick the endpoints the question is about, weight them as real traffic calls them, and choose a load profile, a number of virtual users, a duration and thresholds that answer the question asked.',
+		'',
+		'Rules:',
+		'- Answer with one JSON object only, the test definition: no prose, no Markdown fences.',
+		'- Prefer "ref" targets that point at the saved requests below (use their ref.collection and path exactly). Use "inline" targets only for URLs no saved request has, with {{baseUrl}}-style variables for hosts.',
+		'- Never write secrets, tokens or passwords: refer to environment variables such as {{token}}.',
+		`- Keep the load modest unless the request asks for more: at most ${VOLT_LOAD_MAX_USERS} users and ${VOLT_LOAD_MAX_DURATION_SEC} seconds.`,
+		'',
+		'The definition:',
+		'{',
+		'  "name": "a short name",',
+		'  "description": "one line: what the test checks",',
+		'  "mode": "http" | "ws" | "sse",   // http for request/response APIs (GraphQL, SOAP and MCP too); ws: each user holds a WebSocket; sse: each user follows an event stream',
+		'  "targets": [                     // ws and sse: one target',
+		'    { "name": "optional", "ref": { "collection": "...", "path": ["Folder", "Request"] }, "weight": 1 },',
+		'    { "name": "optional", "inline": { "method": "GET", "url": "{{baseUrl}}/items", "headers": [["Accept", "application/json"]], "body": "optional" }, "weight": 1 }',
+		'  ],',
+		'  "load": {',
+		'    "users": 10, "durationSec": 30,',
+		'    "profile": "fixed" | "rampUp" | "spike" | "peak",',
+		'    "baseUsers": 2, "startSec": 0, "rampUpSec": 10, "holdSec": 10, "rampDownSec": 5,   // optional, for the profiles below',
+		'    "rps": 0,              // optional cap on requests per second',
+		'    "warmupSec": 0,        // seconds of load before measuring starts',
+		'    "thinkMs": 0,          // pause of each user between sends',
+		'    "timeoutMs": 10000,',
+		'    "order": "weighted" | "sequence"',
+		'  },',
+		'  "ws": { "message": "sent by each connection, \"\" to only hold connections", "intervalMs": 1000, "expectReply": false },   // ws only',
+		'  "thresholds": [ { "metric": "p50" | "p95" | "p99" | "mean" | "max" | "errorRate" | "rps", "op": "lt" | "lte" | "gt" | "gte", "value": 500 } ]   // latencies in ms, errorRate in percent',
+		'}',
+		'Profiles: fixed keeps "users" from start to end. rampUp climbs from "baseUsers" to "users" over "rampUpSec", then holds. spike holds "baseUsers", climbs to "users" over "rampUpSec" at "startSec" and drops back over "rampDownSec". peak holds "baseUsers", climbs over "rampUpSec" at "startSec", holds "users" for "holdSec", and comes down over "rampDownSec".',
+		'',
+		catalog.length ? 'The project\'s saved requests:' : 'The project has no saved requests: use inline targets.',
+		...lines,
+		...(current ? ['', 'The test is set up like this now. Write the whole definition again: keep what is still right and change what the request below asks for. Yours replaces it.', current] : []),
+		'',
+		`What to test: ${wish.trim() || 'how the main endpoints hold up under a steady, realistic load.'}`,
+	].join('\n');
+}
+
+export interface IHttpPerfSetupParse {
+	readonly definition?: Omit<IHttpPerfFile, 'confirmedHosts' | 'runs'>;
+	readonly error?: string;
+}
+
+/** The test definition in a model's answer (fences and talk around it ignored), read with a file's checks. */
+export function parseHttpPerfSetupAnswer(answer: string, fallbackName = 'Performance test'): IHttpPerfSetupParse {
+	const text = answer.trim().replace(/^```[a-zA-Z]*\s*\n?/, '').replace(/\n?```\s*$/, '').trim();
+	const start = text.indexOf('{');
+	const end = text.lastIndexOf('}');
+	if (start < 0 || end <= start) {
+		return { error: answer.trim() ? 'The model did not answer with a test (no JSON in the answer).' : 'The model gave no answer.' };
+	}
+	let json: unknown;
+	try {
+		json = JSON.parse(text.slice(start, end + 1));
+	} catch {
+		return { error: 'The model\'s answer is not valid JSON.' };
+	}
+	try {
+		const definition = parseHttpPerfDefinition(json, fallbackName);
+		if (!definition.targets.length) {
+			return { error: 'The model\'s test has no targets.' };
+		}
+		return { definition };
+	} catch (err) {
+		return { error: err instanceof Error ? err.message : String(err) };
+	}
 }
 
 // --- Hosts ------------------------------------------------------------------------------------------

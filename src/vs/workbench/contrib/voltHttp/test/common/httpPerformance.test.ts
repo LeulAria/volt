@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IVoltLoadResult, IVoltLoadSample, VoltLoadHistogram } from '../../../../../platform/voltHttp/common/voltHttpLoad.js';
-import { addHttpPerfRun, compareHttpPerfRuns, downsampleHttpPerfSeries, emptyHttpPerfFile, HTTP_PERF_MAX_RUNS, httpPerfAnalysisPrompt, httpPerfDetail, httpPerfHistogramBins, httpPerfHostOf, httpPerfHostsToConfirm, httpPerfHtmlReport, httpPerfJsonReport, httpPerfLiveNumbers, httpPerfMarkdownReport, httpPerfRunText, httpPerfSpec, httpPerfStatusClasses, httpPerfUnresolved, IHttpPerfRun, isHttpPerfLocalHost, parseHttpPerfDefinition, parseHttpPerfFile, resolveHttpPerfText, serializeHttpPerfFile, summarizeHttpPerfRun } from '../../common/httpPerformance.js';
+import { addHttpPerfRun, compareHttpPerfRuns, downsampleHttpPerfSeries, emptyHttpPerfFile, HTTP_PERF_MAX_RUNS, httpPerfAnalysisPrompt, httpPerfDetail, httpPerfHistogramBins, httpPerfHostOf, httpPerfHostsToConfirm, httpPerfHtmlReport, httpPerfJsonReport, httpPerfLiveNumbers, httpPerfMarkdownReport, httpPerfRunText, httpPerfSpec, httpPerfSetupPrompt, httpPerfStatusClasses, httpPerfUnresolved, IHttpPerfRun, parseHttpPerfSetupAnswer, isHttpPerfLocalHost, parseHttpPerfDefinition, parseHttpPerfFile, resolveHttpPerfText, serializeHttpPerfFile, summarizeHttpPerfRun } from '../../common/httpPerformance.js';
 
 function sample(t: number, count: number, extra?: Partial<IVoltLoadSample>): IVoltLoadSample {
 	return { t, users: 10, count, errors: 0, mean: 20, p50: 18, p95: 40, p99: 60, bytesIn: count * 100, bytesOut: count * 50, ...extra };
@@ -244,5 +244,38 @@ suite('Volt Client performance tests: results', () => {
 		assert.strictEqual(numbers.p99, 90);
 		assert.strictEqual(numbers.errorRate, 5 / 400 * 100);
 		assert.strictEqual(numbers.peakUsers, 10);
+	});
+
+	test('set up with AI: the prompt lists saved requests without values and asks for the whole definition', () => {
+		const existing = { ...emptyHttpPerfFile('Checkout'), targets: [{ id: 't1', inline: { method: 'GET', url: 'http://localhost/a', headers: [] }, weight: 1 }] };
+		const prompt = httpPerfSetupPrompt([{ collection: 'api.postman.json', name: 'API', requests: [{ path: ['Orders', 'Create'], method: 'POST', url: '{{baseUrl}}/orders?token=', bodyFields: ['sku'], protocol: 'http' }, { path: ['Feed'], method: 'GET', url: 'ws://x/feed', bodyFields: [], protocol: 'ws' }] }], '200 users on checkout', existing);
+		assert.match(prompt, /ref\.collection: "api\.postman\.json"/);
+		assert.match(prompt, /path \["Orders","Create"\]: POST \{\{baseUrl\}\}\/orders\?token= \(body fields: sku\)/);
+		assert.match(prompt, /\[ws\] GET ws:\/\/x\/feed/);
+		assert.match(prompt, /Yours replaces it\./);
+		assert.doesNotMatch(prompt, /"id":"t1"/);
+		assert.match(prompt, /What to test: 200 users on checkout$/);
+	});
+
+	test('set up with AI: the answer is read with the checks of a file, fences and talk ignored', () => {
+		const answer = 'Here it is:\n```json\n{"name":"Checkout","description":"Can checkout take 200 users?","mode":"http","targets":[{"ref":{"collection":"api.postman.json","path":["Orders","Create"]},"weight":3},{"inline":{"method":"get","url":"{{baseUrl}}/health"},"weight":1}],"load":{"users":99999,"durationSec":60,"profile":"rampUp","rampUpSec":20},"thresholds":[{"metric":"p95","op":"lt","value":400},{"metric":"nope","op":"lt","value":1}],"confirmedHosts":["evil.example"],"runs":[1]}\n```';
+		const { definition, error } = parseHttpPerfSetupAnswer(answer);
+		assert.strictEqual(error, undefined);
+		assert.ok(definition);
+		assert.strictEqual(definition.targets.length, 2);
+		assert.deepStrictEqual(definition.targets[0].ref, { collection: 'api.postman.json', path: ['Orders', 'Create'] });
+		assert.strictEqual(definition.targets[1].inline?.method, 'GET');
+		assert.ok(definition.targets.every(target => target.id));
+		assert.strictEqual(definition.load.profile, 'rampUp');
+		assert.ok(definition.load.users <= 2000);
+		assert.deepStrictEqual(definition.thresholds, [{ metric: 'p95', op: 'lt', value: 400 }]);
+		assert.ok(!('confirmedHosts' in definition) && !('runs' in definition));
+	});
+
+	test('set up with AI: no JSON, bad JSON or no targets is an error', () => {
+		assert.ok(parseHttpPerfSetupAnswer('').error);
+		assert.ok(parseHttpPerfSetupAnswer('I cannot help with that').error);
+		assert.ok(parseHttpPerfSetupAnswer('{"name": ').error);
+		assert.match(parseHttpPerfSetupAnswer('{"name":"x","targets":[]}').error ?? '', /no targets/);
 	});
 });

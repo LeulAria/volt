@@ -545,17 +545,6 @@
 	cursor: pointer;
 }
 
-.volt-http-side-tab::before {
-	content: '';
-	position: absolute;
-	inset: 5px 0;
-	border-radius: 5px;
-}
-
-.volt-http-side-tab:hover::before {
-	background: var(--volt-http-hover);
-}
-
 .volt-http-side-tab:hover,
 .volt-http-side-tab.active {
 	color: var(--vscode-foreground) !important;
@@ -3466,12 +3455,6 @@
 
 .volt-http-open-tab.drop-after {
 	box-shadow: inset -2px 0 0 var(--vscode-tab-dragAndDropBorder, var(--vscode-focusBorder));
-}
-
-/* Six groups: the ones not in front are their icons only, a little narrower than before. */
-.volt-http-side-tab:not(.active) {
-	flex: 0 0 34px;
-	padding: 0;
 }
 
 /* --- The request tabs' Docs mark and the Cookies link at their right ----------------------------- */

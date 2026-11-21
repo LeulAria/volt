@@ -29,17 +29,24 @@ import { HTTP_PROTOCOLS, HttpProtocol, httpProtocolInfo, httpRequestBadge, httpR
 import { emptyHttpFolder, emptyHttpRequest, findHttpItem, httpRequestLabel, httpRequestsOf, IHttpFolder, IHttpItem, IHttpRequest } from '../common/httpCollection.js';
 import { IHttpCollectionEntry, IHttpEnvironmentEntry, IVoltHttpCollections } from './voltHttpCollections.js';
 import { IHttpExchange, IVoltHttpService } from './voltHttpService.js';
-import { createHttpProtocolIcon, createHttpSearchIcon } from './voltHttpIcons.js';
+import { createHttpAutomationIcon, createHttpProtocolIcon, createHttpSearchIcon, createHttpSecurityIcon } from './voltHttpIcons.js';
 import { HttpToolKind, IHttpToolFileEntry, IHttpToolFiles } from './voltHttpToolPages.js';
 import { createHttpIconButton, HTTP_MENU_CLASS, httpStatusClass, showHttpActionMenu } from './voltHttpWidgets.js';
 
 export type HttpSidebarView = 'collections' | 'automations' | 'performance' | 'security' | 'environments' | 'history';
 
 /** The sidebar groups that list a tool's files, and what each tool is called. */
-export const HTTP_TOOLS: readonly { readonly kind: HttpToolKind; readonly view: HttpSidebarView; readonly icon: ThemeIcon; readonly label: string; readonly one: string; readonly hint: string; readonly empty: string }[] = [
-	{ kind: 'automation', view: 'automations', icon: Codicon.checklist, label: localize('voltHttp.automations', "Automations"), one: localize('voltHttp.automation', "Automation"), hint: localize('voltHttp.automationHint', "Requests chained into an end-to-end test"), empty: localize('voltHttp.noAutomations', "No automations yet. An automation runs requests one after the other, passes values between them and checks each answer: an end-to-end test of your API.") },
+/** A tool's icon: a codicon, or a drawn one made at the size asked for. */
+export type HttpToolIcon = ThemeIcon | ((size?: number) => SVGElement);
+
+export function renderHttpToolIcon(icon: HttpToolIcon, size?: number): HTMLElement | SVGElement {
+	return typeof icon === 'function' ? icon(size) : renderIcon(icon);
+}
+
+export const HTTP_TOOLS: readonly { readonly kind: HttpToolKind; readonly view: HttpSidebarView; readonly icon: HttpToolIcon; readonly label: string; readonly one: string; readonly hint: string; readonly empty: string }[] = [
+	{ kind: 'automation', view: 'automations', icon: createHttpAutomationIcon, label: localize('voltHttp.automations', "Automations"), one: localize('voltHttp.automation', "Automation"), hint: localize('voltHttp.automationHint', "Requests chained into an end-to-end test"), empty: localize('voltHttp.noAutomations', "No automations yet. An automation runs requests one after the other, passes values between them and checks each answer: an end-to-end test of your API.") },
 	{ kind: 'performance', view: 'performance', icon: Codicon.dashboard, label: localize('voltHttp.performance', "Performance"), one: localize('voltHttp.performanceTest', "Performance Test"), hint: localize('voltHttp.performanceHint', "Load on a request, WebSocket or event stream"), empty: localize('voltHttp.noPerformance', "No performance tests yet. A performance test sends load to a request, a WebSocket or an event stream and measures throughput, latency and errors.") },
-	{ kind: 'security', view: 'security', icon: Codicon.shield, label: localize('voltHttp.security', "Security"), one: localize('voltHttp.securityScan', "Security Scan"), hint: localize('voltHttp.securityHint', "Checks your API's endpoints for common weaknesses"), empty: localize('voltHttp.noSecurity', "No security scans yet. A scan checks the endpoints of your collections for common API weaknesses and reports what it finds.") },
+	{ kind: 'security', view: 'security', icon: createHttpSecurityIcon, label: localize('voltHttp.security', "Security"), one: localize('voltHttp.securityScan', "Security Scan"), hint: localize('voltHttp.securityHint', "Checks your API's endpoints for common weaknesses"), empty: localize('voltHttp.noSecurity', "No security scans yet. A scan checks the endpoints of your collections for common API weaknesses and reports what it finds.") },
 ];
 
 function toolOfView(view: HttpSidebarView) {
@@ -218,7 +225,7 @@ export class HttpSidebar extends Disposable {
 	private renderTabs(): void {
 		clearNode(this.tabsEl);
 		this.tabsEl.setAttribute('role', 'tablist');
-		const tabs: { id: HttpSidebarView; label: string; icon: ThemeIcon }[] = [
+		const tabs: { id: HttpSidebarView; label: string; icon: HttpToolIcon }[] = [
 			{ id: 'collections', label: localize('voltHttp.collections', "Collections"), icon: Codicon.library },
 			...HTTP_TOOLS.map(tool => ({ id: tool.view, label: tool.label, icon: tool.icon })),
 			{ id: 'environments', label: localize('voltHttp.environments', "Environments"), icon: Codicon.symbolVariable },
@@ -234,7 +241,7 @@ export class HttpSidebar extends Disposable {
 			button.setAttribute('role', 'tab');
 			button.setAttribute('aria-selected', String(tab.id === this.view));
 			button.classList.toggle('active', tab.id === this.view);
-			button.appendChild(renderIcon(tab.icon));
+			button.appendChild(renderHttpToolIcon(tab.icon, 15));
 			button.addEventListener('click', () => {
 				if (this.view !== tab.id) {
 					this.show(tab.id);
@@ -820,7 +827,7 @@ export class HttpSidebar extends Disposable {
 				if (entry.running) {
 					append(template.lead, $('span.volt-http-spinner')).appendChild(renderIcon(Codicon.loading));
 				} else {
-					template.lead.appendChild(renderIcon(tool.icon));
+					template.lead.appendChild(renderHttpToolIcon(tool.icon));
 				}
 				template.method.textContent = '';
 				template.label.textContent = entry.name;

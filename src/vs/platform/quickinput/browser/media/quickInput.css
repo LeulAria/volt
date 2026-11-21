@@ -125,6 +125,29 @@
 	margin-top: 6px;
 }
 
+/*
+ * Volt: a multi-select's header lines up with its rows. The toggle-all box sits over the rows' boxes
+ * (12px in, centred on the filter line), the filter text starts where the rows' labels start (no
+ * magnifier, no inset), and the count and OK are one height, centred on the same line, 12px from the edge.
+ */
+.quick-input-widget .quick-input-header > .monaco-checkbox {
+	align-self: center;
+	/* The filter line has 4px under it (the box's padding): the same here keeps the box on its centre. */
+	margin: 0 0 4px 12px;
+}
+
+.quick-input-widget.show-checkboxes .quick-input-search-icon {
+	display: none;
+}
+
+.quick-input-widget.show-checkboxes .quick-input-box {
+	padding-left: 0;
+}
+
+.quick-input-widget.show-checkboxes .quick-input-box .monaco-inputbox > .ibwrapper > .input {
+	padding-left: 0;
+}
+
 .quick-input-filter {
 	flex-grow: 1;
 	display: flex;
@@ -186,31 +209,37 @@
 }
 
 .quick-input-count {
-	align-self: center;
 	position: absolute;
+	top: 0;
+	bottom: 4px;
 	right: 4px;
 	display: flex;
 	align-items: center;
 }
 
 .quick-input-count .monaco-count-badge {
-	vertical-align: middle;
-	padding: 2px 4px;
-	border-radius: 2px;
+	display: flex;
+	align-items: center;
+	box-sizing: border-box;
+	height: 23px;
+	padding: 0 8px;
+	border-radius: 3px;
 	min-height: auto;
 	line-height: normal;
 }
 
 .quick-input-action {
-	margin-left: 6px;
+	align-self: flex-start;
+	margin: 0 12px 0 4px;
 }
 
 .quick-input-action .monaco-text-button {
 	font-size: 11px;
-	padding: 0 6px;
+	padding: 0 10px;
 	display: flex;
-	height: 25px;
+	height: 23px;
 	align-items: center;
+	border-radius: 3px;
 }
 
 .quick-input-message {

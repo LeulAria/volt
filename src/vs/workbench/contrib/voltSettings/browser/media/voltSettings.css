@@ -203,6 +203,12 @@
 	-webkit-app-region: drag;
 }
 
+/* The top bar's back arrow is a phone's (back to the list); voltMobileWorkbench.css shows it there. On a
+ * desktop the sidebar's Back closes Settings, so this one stays hidden (the phone sheet is not loaded here). */
+.volt-settings-detail-back {
+	display: none;
+}
+
 .volt-settings-crumb {
 	min-width: 0;
 	overflow: hidden;

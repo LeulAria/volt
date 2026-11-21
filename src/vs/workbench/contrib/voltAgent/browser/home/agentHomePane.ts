@@ -616,7 +616,20 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			return;
 		}
 		template.elementDisposables.add(this.host.bindSessionHover(template.container, session));
-		template.elementDisposables.add(addDisposableListener(template.container, 'mouseenter', () => this.fadeNameUnderActions(template)));
+		template.elementDisposables.add(addDisposableListener(template.container, 'mouseenter', () => {
+			this.fadeNameUnderActions(template);
+			// A row with a pull request reads it again when the pointer comes (it may have merged elsewhere).
+			if (this.host.prBadge(session.id)) {
+				this.host.revalidatePullRequests(session.id);
+			}
+		}));
+		// A row drawn again under a still pointer (a click switches chats and redraws it) gets no mouseenter:
+		// fade its title now, or the buttons show over the full title.
+		template.elementDisposables.add(scheduleAtNextAnimationFrame(getWindow(template.container), () => {
+			if (template.container.isConnected && template.container.matches(':hover')) {
+				this.fadeNameUnderActions(template);
+			}
+		}));
 	}
 
 	/**
@@ -2098,6 +2111,11 @@ export class AgentHomePane extends Disposable {
 
 	prBadge(sessionId: string): IAgentPrBadge | undefined {
 		return this.pullRequests ? prBadge(this.pullRequests.links(sessionId)) : undefined;
+	}
+
+	/** Reads a chat's pull requests again when they are older than a few seconds; the row redraws when one changed. */
+	revalidatePullRequests(sessionId: string): void {
+		void this.pullRequests?.revalidate(sessionId);
 	}
 
 	/** A single pull request opens; a stack or several open the chat's current one (the view links the rest). */

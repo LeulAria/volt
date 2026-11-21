@@ -7,8 +7,15 @@ import { localize } from '../../../../nls.js';
 import { Extensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 
-/** The voice Read Aloud speaks with: a system voice's name, or a downloaded voice as `kokoro:<id>`. Empty: the system's default voice. */
+/**
+ * The voice Read Aloud and calls on this computer speak with: a downloaded voice as `<model>:<id>`,
+ * a system voice's name, or `system` for the system's default voice. Empty: the first downloaded
+ * voice there is (what Settings shows), else the system's default.
+ */
 export const AGENT_READ_ALOUD_VOICE_SETTING = 'volt.agent.readAloud.voice';
+
+/** The setting's value for "the system's default voice", chosen on purpose. */
+export const READ_ALOUD_SYSTEM_VOICE = 'system';
 
 /** Reading speed, 1 is the voice's normal pace. */
 export const AGENT_READ_ALOUD_SPEED_SETTING = 'volt.agent.readAloud.speed';
@@ -27,7 +34,7 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 		[AGENT_READ_ALOUD_VOICE_SETTING]: {
 			type: 'string',
 			default: '',
-			description: localize('voltAgent.readAloudVoice', "The voice that reads an agent's reply aloud: a system voice by name (such as Samantha), or a downloaded voice as kokoro:af_heart. Empty uses the system's default voice."),
+			description: localize('voltAgent.readAloudVoice2', "The voice that reads an agent's reply aloud and speaks in calls on this computer: a downloaded voice such as supertonic:f1, a system voice by name (such as Samantha), or system for the system's default voice. Empty uses the first downloaded voice, else the system's default."),
 		},
 		[AGENT_READ_ALOUD_SPEED_SETTING]: {
 			type: 'number',
