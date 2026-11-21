@@ -197,6 +197,7 @@ import { citationLabel, IAgentCitation } from '../composer/agentCitation.js';
 import { formatAgentSwitch, takeAgentSwitchStart } from './agentSwitchTiming.js';
 import { readFirstScreen } from './agentFirstScreen.js';
 import { setShownAgentChat, shownAgentChat } from './agentShownChat.js';
+import { clearAgentChatSending, markAgentChatSending } from './agentSendingChats.js';
 import { deferredHeadStart, keepExchangeHeights } from './agentThreadWindow.js';
 import { AgentTurnNav, IAgentTurnNavTurn, turnNavPreview } from './agentTurnNav.js';
 import { IAgentSessionChangesService } from '../review/agentSessionChangesService.js';
@@ -871,6 +872,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private sendButton!: HTMLButtonElement;
 	/** Turns shown on send, watched until the turn host adopts them (see `showPendingTurn`). */
 	private readonly pendingTurnWatches = this._register(new DisposableMap<string, DisposableStore>());
+	private readonly sendingWatches = this._register(new DisposableMap<string, DisposableStore>());
 	/** Pending turns the user stopped before the orchestrator took them: stopped once it does. */
 	private readonly stoppedPendingTurns = new Set<string>();
 
@@ -7797,13 +7799,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			: undefined;
 		sentAtOnce?.catch(() => undefined);
 		const pending = delivery !== 'queue' ? this.showPendingTurn(input, threadId, turnId, value, display, mode) : undefined;
+		// The Agents list moves the chat to Working now, not after the agent server's answer.
+		const turnsBeforeSend = pending ? this.history.get(threadId)?.turnCount ?? 0 : undefined;
+		if (pending) {
+			markAgentChatSending(threadId, display?.text ?? value);
+		}
+		let startedHere = false;
 		// Until the orchestrator answers (a round trip to the agent server), the prompt shows where it is going.
 		const shown = pending ? undefined : this.showPendingDelivery(threadId, turnId, display ? { ...prompt, display: { text: display.text } } : prompt, display, delivery);
 		this.submitsInFlight++;
 		const submitted = this.submitChain.then(async () => {
 			await broughtBack;
 			const result = await (sentAtOnce ?? this.orchestrator.submit(threadId, display ? { ...prompt, display: await frozen } : prompt, delivery, turnId));
-			pending?.settle(result.outcome === 'started');
+			startedHere = result.outcome === 'started';
+			pending?.settle(startedHere);
 			shown?.(result.outcome);
 			if (result.outcome === 'rejected') {
 				this.logService.warn(`[volt agent] the orchestrator did not take the prompt: ${result.reason ?? 'rejected'}`);
@@ -7815,9 +7824,36 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			shown?.(undefined);
 			this.logService.warn('[volt agent] sending the prompt failed', err);
 			return false;
-		}).finally(() => this.submitsInFlight--);
+		}).finally(() => {
+			this.submitsInFlight--;
+			if (turnsBeforeSend !== undefined) {
+				this.settleSending(threadId, turnsBeforeSend, startedHere);
+			}
+		});
 		this.submitChain = submitted.then(() => undefined);
 		return submitted;
+	}
+
+	/**
+	 * Ends a send's "sending" mark once the chat's record has the turn (the turn host records it after
+	 * the orchestrator starts it), or at once when the prompt did not start.
+	 */
+	private settleSending(threadId: string, turnsBefore: number, started: boolean): void {
+		const recorded = () => (this.history.get(threadId)?.turnCount ?? 0) > turnsBefore;
+		if (!started || recorded()) {
+			this.sendingWatches.deleteAndDispose(threadId);
+			clearAgentChatSending(threadId);
+			return;
+		}
+		const watch = new DisposableStore();
+		const done = () => {
+			this.sendingWatches.deleteAndDispose(threadId);
+			clearAgentChatSending(threadId);
+		};
+		watch.add(this.history.onDidChange(() => recorded() && done()));
+		watch.add(disposableTimeout(done, 30_000));
+		watch.add(toDisposable(() => clearAgentChatSending(threadId)));
+		this.sendingWatches.set(threadId, watch);
 	}
 
 	/**
