@@ -5,7 +5,7 @@
 
 import '../media/scratchBoard.css';
 import { $, addDisposableListener, append, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
-import { VSBuffer } from '../../../../../base/common/buffer.js';
+import { decodeBase64, encodeBase64, VSBuffer } from '../../../../../base/common/buffer.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IReference, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { isMacintosh } from '../../../../../base/common/platform.js';
@@ -25,6 +25,7 @@ import { ILifecycleService } from '../../../../services/lifecycle/common/lifecyc
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { bindingCandidateAt, boundConnectors, IBindingCandidate, IScratchRouteContext, portPosition, rebindConnector, retypeConnector, routeContext, withLegs } from '../../common/scratchBoard/scratchBinding.js';
 import { parseScratchClipboard, SCRATCH_CLIPBOARD_MIME, serializeScratchClipboard } from '../../common/scratchBoard/scratchClipboard.js';
+import { excalidrawImageFiles, excalidrawToScratch, IExcalidrawAsset, IExcalidrawScene, readExcalidrawScene } from '../../common/scratchBoard/scratchExcalidraw.js';
 import { darkModeColor } from '../../common/scratchBoard/scratchColor.js';
 import { mermaidToElements, readingOrder } from '../../common/scratchBoard/scratchDiagram.js';
 import { createCard, createDraw, createFrame, createIcon, createImage, createLabel, createLinear, createNote, createShape, createText, duplicateElements, newElementId, ScratchPatch } from '../../common/scratchBoard/scratchFactory.js';
@@ -40,7 +41,7 @@ import { SHAPE_DEFAULT_SIZE, SHAPE_PORTS } from '../../common/scratchBoard/scrat
 import { snapBounds, snapToGrid } from '../../common/scratchBoard/scratchSnapping.js';
 import { alignMany, distributeMany, flipMany, moveMany, ResizeHandle, RESIZE_HANDLE_POSITIONS, resizeMany, resizeSingle, rotateMany, selectionBounds } from '../../common/scratchBoard/scratchTransform.js';
 import {
-	hasLabel, IScratchAgentRun, IScratchBounds, IScratchElementBase, IScratchLabel, IScratchLinearElement, IScratchStyleDefaults, isBindable, isLinear, isRichText,
+	hasLabel, IScratchAgentRun, IScratchBounds, IScratchElementBase, IScratchLabel, IScratchLinearElement, IScratchStyleDefaults, IScratchTextElement, isBindable, isLinear, isRichText,
 	ScratchElement, ScratchPoint, ScratchPressurePoint, ScratchShapeKind, SCRATCH_FONT_SIZES, SCRATCH_GRID_SIZE,
 } from '../../common/scratchBoard/scratchTypes.js';
 import { IScratchAgentBridge } from './scratchAgentBridge.js';
@@ -55,7 +56,7 @@ import { ScratchLibrary } from './scratchLibrary.js';
 import { showScratchContextMenu, showScratchMainMenu } from './scratchMenus.js';
 import { ScratchMinimap, ScratchZoomBar } from './scratchMinimap.js';
 import { HANDLE_SIZE, IOverlayHandle, IOverlayInput, ROTATE_HANDLE_OFFSET, ScratchOverlay } from './scratchOverlay.js';
-import { appendPaths, ScratchRenderer } from './scratchRenderer.js';
+import { appendPaths, LABEL_PADDING, ScratchRenderer } from './scratchRenderer.js';
 import { markdownToRichHtml, plainTextAsRichHtml, sanitizeRichHtml } from './scratchRichText.js';
 import { ScratchRuns } from './scratchRuns.js';
 import { showScratchShortcuts } from './scratchShortcuts.js';
@@ -75,6 +76,11 @@ const MAX_ICON_SVG_LENGTH = 400_000;
 const MAX_PASTE_TEXT_LENGTH = 1_500_000;
 /** Room kept between text that grew and the edge of the frame it grew in. */
 const MEASURED_FRAME_PADDING = 32;
+/** Room around the selection in a frame made by "Wrap selection in frame". */
+const FRAME_WRAP_PADDING = 16;
+/** Room around a label (past the label's own padding) in a container made by "Wrap text in a container". */
+const CONTAINER_PADDING_X = 6;
+const CONTAINER_PADDING_Y = 2;
 
 export interface IScratchCanvasHost {
 	readonly boardTitle: () => string;
@@ -3001,6 +3007,147 @@ export class ScratchCanvas extends Disposable {
 		return !!this.copiedStyle;
 	}
 
+	/** A new frame hugging the selection, with the selection in it (frames themselves cannot go in one). */
+	wrapSelectionInFrame(): void {
+		const scene = this.actionScene();
+		const selected = this.selectedWithContents();
+		const b = selectionBounds(selected);
+		if (!scene || !b || selected.some(el => el.type === 'frame')) {
+			return;
+		}
+		const frame = createFrame({
+			x: b.minX - FRAME_WRAP_PADDING, y: b.minY - FRAME_WRAP_PADDING,
+			width: b.maxX - b.minX + FRAME_WRAP_PADDING * 2, height: b.maxY - b.minY + FRAME_WRAP_PADDING * 2,
+			name: this.nextFrameName(),
+		}, this.state.style);
+		scene.transact(localize('voltScratch.wrapInFrame', "Wrap selection in frame"), tx => {
+			// Under the lowest selected element, so the frame never covers what it holds.
+			tx.add(frame, Math.min(...selected.map(el => scene.indexOf(el.id))));
+			for (const el of selected) {
+				tx.update(el.id, { frameId: frame.id });
+			}
+		}, { selectionBefore: [...this.state.selection], selectionAfter: [frame.id] });
+		this.select([frame.id]);
+	}
+
+	/** The one selected frame's elements, selected (Excalidraw's "Select all elements in frame"). */
+	selectFrameContents(): void {
+		const scene = this.scene;
+		const frame = this.selectedElements().find(el => el.type === 'frame');
+		const contents = frame ? scene?.getElements().filter(el => el.frameId === frame.id && !el.locked) ?? [] : [];
+		if (contents.length) {
+			this.select(contents.map(el => el.id));
+		}
+	}
+
+	/** Takes the selection out of its frames, leaving them where they are. */
+	removeSelectionFromFrame(): void {
+		const patches = new Map<string, ScratchPatch>();
+		for (const el of this.selectedElements()) {
+			if (el.type !== 'frame' && el.frameId) {
+				patches.set(el.id, { frameId: null });
+			}
+		}
+		const scene = this.actionScene();
+		if (!scene || !patches.size) {
+			return;
+		}
+		scene.transact(localize('voltScratch.removeFromFrame', "Remove from frame"), tx => {
+			for (const [id, patch] of patches) {
+				tx.update(id, patch);
+			}
+		}, { selectionBefore: [...this.state.selection], selectionAfter: [...this.state.selection] });
+	}
+
+	/**
+	 * Each selected text becomes a rectangle with that text as its label, sized around it; arrows
+	 * attached to the text attach to the rectangle.
+	 */
+	wrapTextInContainer(): void {
+		const scene = this.actionScene();
+		const texts = this.selectedElements().filter((el): el is IScratchTextElement => el.type === 'text' && !el.locked);
+		if (!scene || !texts.length) {
+			return;
+		}
+		const replaced = new Map<string, string>();
+		const selectionAfter = [...this.state.selection].filter(id => !texts.some(t => t.id === id));
+		scene.transact(localize('voltScratch.wrapText', "Wrap text in a container"), tx => {
+			for (const text of texts) {
+				const padX = LABEL_PADDING + CONTAINER_PADDING_X, padY = LABEL_PADDING + CONTAINER_PADDING_Y;
+				const shape = createShape({
+					x: text.x - padX, y: text.y - padY, width: text.width + padX * 2, height: text.height + padY * 2,
+					angle: text.angle, stroke: text.stroke, fill: 'transparent', opacity: text.opacity,
+					groupIds: text.groupIds, frameId: text.frameId, link: text.link,
+					shape: 'rectangle',
+					label: createLabel(text.html, this.state.style, { fontFamily: text.fontFamily, fontSize: text.fontSize, textAlign: text.textAlign }),
+				}, this.state.style);
+				const index = scene.indexOf(text.id);
+				tx.remove(text.id);
+				tx.add(shape, index);
+				replaced.set(text.id, shape.id);
+				selectionAfter.push(shape.id);
+			}
+			for (const el of scene.getElements()) {
+				if (!isLinear(el)) {
+					continue;
+				}
+				const start = el.startBinding && replaced.get(el.startBinding.elementId);
+				const end = el.endBinding && replaced.get(el.endBinding.elementId);
+				if (start || end) {
+					tx.update(el.id, {
+						startBinding: start && el.startBinding ? { ...el.startBinding, elementId: start } : el.startBinding,
+						endBinding: end && el.endBinding ? { ...el.endBinding, elementId: end } : el.endBinding,
+					});
+				}
+			}
+			this.rebindAround(tx, new Set(replaced.values()));
+		}, { selectionBefore: [...this.state.selection], selectionAfter });
+		this.select(selectionAfter);
+	}
+
+	/** Whether "Copy to clipboard as text" has anything to copy. */
+	selectionHasText(): boolean {
+		return this.selectedWithContents().some(el => isRichText(el) || (hasLabel(el) && !!el.label) || el.type === 'frame');
+	}
+
+	/** The selection's words (Markdown), in reading order. */
+	async copySelectionAsText(): Promise<void> {
+		const text = clipboardWords(this.selectedWithContents()).trim();
+		if (!text) {
+			return;
+		}
+		await this.clipboardService.writeText(text);
+		this.notificationService.info(localize('voltScratch.copiedText', "Copied as text"));
+	}
+
+	/** The selection (or the board) as SVG markup, which design tools and boards paste as a picture. */
+	async copySelectionAsSvg(): Promise<void> {
+		const elements = this.selectedWithContents();
+		const rendered = await this.exporter.renderSvg(this, elements.length ? elements : [...(this.scene?.getElements() ?? [])]);
+		if (!rendered) {
+			return;
+		}
+		await this.clipboardService.writeText(rendered.svg);
+		this.notificationService.info(localize('voltScratch.copiedSvg', "Copied as SVG"));
+	}
+
+	/** Keeps the selection in the library ("Your library"), for every board, and opens it there. */
+	async addSelectionToLibrary(): Promise<void> {
+		const elements = this.selectedWithContents();
+		if (!elements.length) {
+			return;
+		}
+		const png = await this.exporter.renderPng(this, elements, { padding: 6, background: false, asShown: true, scale: 1, maxSide: 160 });
+		const thumbnail = png ? `data:image/png;base64,${encodeBase64(VSBuffer.wrap(new Uint8Array(await png.arrayBuffer())))}` : undefined;
+		const words = clipboardWords(elements).trim().split('\n')[0].replace(/[#*_`>~-]+/g, ' ').replace(/\s+/g, ' ').trim();
+		const name = words.slice(0, 40) || (elements.length === 1 ? this.kindLabel(elements[0]) : localize('voltScratch.lib.elements', "{0} elements", elements.length));
+		if (!this.library.addItem(elements, name, thumbnail)) {
+			this.notificationService.info(localize('voltScratch.lib.tooBig', "That selection is too big for the library. Save it as a board file instead."));
+			return;
+		}
+		this.library.show();
+	}
+
 	/** Shift+Cmd+> / <: the selected text one font size up or down (each element from its own size). */
 	stepFontSize(direction: 1 | -1): void {
 		const sizes = Object.values(SCRATCH_FONT_SIZES).sort((a, b) => a - b);
@@ -3504,6 +3651,12 @@ export class ScratchCanvas extends Disposable {
 			this.pasteElements(own);
 			return;
 		}
+		const excalidraw = readExcalidrawScene(data.getData('text/plain'))
+			?? data.types.filter(t => t.includes('excalidraw')).map(t => readExcalidrawScene(data.getData(t))).find(s => !!s);
+		if (excalidraw) {
+			void this.pasteExcalidraw(excalidraw, this.pasteTarget());
+			return;
+		}
 		const files = Array.from(data.files ?? []).filter(f => f.type.startsWith('image/'));
 		if (files.length) {
 			const at = this.pasteTarget();
@@ -3591,6 +3744,40 @@ export class ScratchCanvas extends Disposable {
 		this.insertElements(elements, at, localize('voltScratch.paste', "Paste"));
 	}
 
+	/**
+	 * Elements copied in Excalidraw (or read from a .excalidraw file) as the board's own. Its images
+	 * go into the board's assets first; ones whose pixels did not come along are left out.
+	 */
+	private async pasteExcalidraw(excalidraw: IExcalidrawScene, at: Vec): Promise<void> {
+		const scene = this.scene;
+		const assets = new Map<string, IExcalidrawAsset>();
+		for (const file of excalidrawImageFiles(excalidraw)) {
+			const comma = file.dataURL.indexOf(',');
+			if (!file.dataURL.slice(0, comma).endsWith(';base64')) {
+				continue;
+			}
+			try {
+				const bytes = decodeBase64(file.dataURL.slice(comma + 1)).buffer;
+				const size = await imageSize(new Blob([new Uint8Array(bytes)], { type: file.mimeType }));
+				assets.set(file.id, { assetId: await this.boards.putAsset(bytes, file.mimeType), mime: file.mimeType, width: size.width, height: size.height });
+			} catch {
+				// Unreadable image data: the image is left out.
+			}
+		}
+		if (assets.size && await this.whenIdle() !== scene) {
+			return;
+		}
+		const { elements, missingImages } = excalidrawToScratch(excalidraw, assets);
+		if (elements.length) {
+			this.pasteElements(elements, at);
+		}
+		if (missingImages) {
+			this.notificationService.info(missingImages === 1
+				? localize('voltScratch.excalidrawImageMissing', "One image was left out: Excalidraw did not put its picture on the clipboard.")
+				: localize('voltScratch.excalidrawImagesMissing', "{0} images were left out: Excalidraw did not put their pictures on the clipboard.", missingImages));
+		}
+	}
+
 	/** Pastes from the system clipboard (the context menu has no paste event to read). */
 	async pasteFromClipboard(at: Vec): Promise<void> {
 		const text = await this.clipboardService.readText();
@@ -3598,6 +3785,11 @@ export class ScratchCanvas extends Disposable {
 		const own = parseScratchClipboard(text) ?? (lastCopied && text === lastCopied.text ? lastCopied.elements : undefined);
 		if (own) {
 			this.pasteElements(own, at);
+			return;
+		}
+		const excalidraw = readExcalidrawScene(text);
+		if (excalidraw) {
+			await this.pasteExcalidraw(excalidraw, at);
 			return;
 		}
 		try {
@@ -3649,6 +3841,11 @@ export class ScratchCanvas extends Disposable {
 				offset += 24;
 				if (file.type.startsWith('image/')) {
 					await this.insertImageFile(file, at);
+				} else if (/\.excalidraw$/i.test(file.name)) {
+					const excalidraw = readExcalidrawScene(await file.text());
+					if (excalidraw) {
+						await this.pasteExcalidraw(excalidraw, at);
+					}
 				} else if (/\.(md|markdown|txt|mmd|mermaid)$/i.test(file.name) || file.type.startsWith('text/')) {
 					this.insertText(await file.text(), undefined, at);
 				}

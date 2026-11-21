@@ -6,7 +6,11 @@
 import { $, addDisposableListener, append, getWindow } from '../../../../../base/browser/dom.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
+import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
+import { parseScratchClipboard, serializeScratchClipboard } from '../../common/scratchBoard/scratchClipboard.js';
 import { mermaidToElements } from '../../common/scratchBoard/scratchDiagram.js';
 import { createCard, createFrame, createIcon, createLabel, createNote, createShape, createText, SCRATCH_CARD_FONT_SIZE } from '../../common/scratchBoard/scratchFactory.js';
 import { extractMermaidSource, parseMermaidFlowchart } from '../../common/scratchBoard/scratchMermaid.js';
@@ -15,6 +19,7 @@ import { SHAPE_DEFAULT_SIZE, SHAPE_KINDS } from '../../common/scratchBoard/scrat
 import { IScratchStyleDefaults, ScratchElement, ScratchShapeKind } from '../../common/scratchBoard/scratchTypes.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { voltButtonClasses } from '../chrome/voltButton.js';
+import { showVoltMenu } from '../ui/menu/voltMenu.js';
 import type { ScratchCanvas } from './scratchCanvas.js';
 import { iconSvgMarkup, scratchIcon, ScratchIconName, SHAPE_ICONS, SHAPE_LABELS } from './scratchIcons.js';
 import { iconDataUrl } from './scratchRenderer.js';
@@ -26,6 +31,35 @@ const ARIA_BATCH = 20;
 const ICON_RESULTS = 60;
 /** A search (and its icons) that takes longer than this is reported as unreachable. */
 const SEARCH_TIMEOUT_MS = 8000;
+
+/** What "Add to library" saved, for every board in the profile (images point at the shared assets folder). */
+const USER_LIBRARY_KEY = 'volt.scratchBoard.userLibrary';
+const USER_LIBRARY_MAX_ITEMS = 200;
+/** One item's elements as JSON; a bigger selection is refused rather than bloating profile storage. */
+const USER_LIBRARY_MAX_ITEM_LENGTH = 1_000_000;
+
+interface IUserLibraryItem {
+	readonly id: string;
+	readonly name: string;
+	/** The elements in the board's clipboard JSON, so they are read back validated like a paste. */
+	readonly clip: string;
+	/** A small PNG data URL drawn when the item was added. */
+	readonly thumbnail?: string;
+}
+
+function readUserLibrary(raw: string | undefined): IUserLibraryItem[] {
+	if (!raw) {
+		return [];
+	}
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		return Array.isArray(parsed) ? parsed.filter((item): item is IUserLibraryItem => !!item && typeof item === 'object'
+			&& typeof item.id === 'string' && typeof item.name === 'string' && typeof item.clip === 'string'
+			&& (item.thumbnail === undefined || (typeof item.thumbnail === 'string' && item.thumbnail.startsWith('data:image/png;base64,')))) : [];
+	} catch {
+		return [];
+	}
+}
 
 export const TABLE_TEMPLATE_HTML = '<table><thead><tr><th>Column</th><th>Column</th><th>Column</th></tr></thead><tbody><tr><td></td><td></td><td></td></tr><tr><td></td><td></td><td></td></tr></tbody></table>';
 export const CHECKLIST_TEMPLATE_HTML = '<h3>To do</h3><ul><li data-checked="false">First thing</li><li data-checked="false">Second thing</li><li data-checked="false">Third thing</li></ul>';
@@ -146,12 +180,24 @@ export class ScratchLibrary extends Disposable {
 	private iconResults: IAriaIcon[] = [];
 	private iconState: 'idle' | 'loading' | 'error' | 'done' = 'idle';
 	private open = false;
+	private userItems: IUserLibraryItem[];
 	private readonly _onDidChangeOpen = this._register(new Emitter<void>());
 	/** Opened or closed, from any of its ways (its X, Escape, the toolbar). */
 	readonly onDidChangeOpen: Event<void> = this._onDidChangeOpen.event;
 
-	constructor(parent: HTMLElement, private readonly canvas: ScratchCanvas) {
+	constructor(
+		parent: HTMLElement,
+		private readonly canvas: ScratchCanvas,
+		@IStorageService private readonly storageService: IStorageService,
+		@IContextViewService private readonly contextViewService: IContextViewService,
+	) {
 		super();
+		this.userItems = readUserLibrary(storageService.get(USER_LIBRARY_KEY, StorageScope.PROFILE));
+		// Items added from a board in another window show up here too.
+		this._register(storageService.onDidChangeValue(StorageScope.PROFILE, USER_LIBRARY_KEY, this._store)(() => {
+			this.userItems = readUserLibrary(storageService.get(USER_LIBRARY_KEY, StorageScope.PROFILE));
+			this.render();
+		}));
 		const doc = parent.ownerDocument;
 		this.element = append(parent, $('.sx-library.sx-panel.sx-chrome-item'));
 		this.element.setAttribute('role', 'complementary');
@@ -220,6 +266,52 @@ export class ScratchLibrary extends Disposable {
 		this.element.classList.remove('visible');
 		this.canvas.focus();
 		this._onDidChangeOpen.fire();
+	}
+
+	/**
+	 * "Add to library": keeps `elements` as one item, first in "Your library". False (with nothing
+	 * saved) when they are too big to keep.
+	 */
+	addItem(elements: readonly ScratchElement[], name: string, thumbnail: string | undefined): boolean {
+		const clip = serializeScratchClipboard(elements);
+		if (clip.length > USER_LIBRARY_MAX_ITEM_LENGTH) {
+			return false;
+		}
+		const item: IUserLibraryItem = { id: generateUuid(), name, clip, ...(thumbnail ? { thumbnail } : {}) };
+		this.saveUserItems([item, ...this.userItems].slice(0, USER_LIBRARY_MAX_ITEMS));
+		return true;
+	}
+
+	private removeItem(id: string): void {
+		this.saveUserItems(this.userItems.filter(item => item.id !== id));
+	}
+
+	private saveUserItems(items: IUserLibraryItem[]): void {
+		this.userItems = items;
+		if (items.length) {
+			this.storageService.store(USER_LIBRARY_KEY, JSON.stringify(items), StorageScope.PROFILE, StorageTarget.MACHINE);
+		} else {
+			this.storageService.remove(USER_LIBRARY_KEY, StorageScope.PROFILE);
+		}
+		this.render();
+	}
+
+	private showItemMenu(item: IUserLibraryItem, tile: HTMLElement): void {
+		showVoltMenu<() => void>(this.contextViewService, {
+			anchor: tile,
+			position: 'below',
+			align: 'left',
+			gap: 4,
+			width: 200,
+			ariaLabel: item.name,
+			sections: [{
+				id: 'item', items: [
+					{ id: 'insert', label: localize('voltScratch.lib.insertItem', "Add to Board"), data: () => this.insert(`user:${item.id}`), icon: () => scratchIcon(tile.ownerDocument, 'plus', { size: 16 }) },
+					{ id: 'remove', label: localize('voltScratch.lib.removeItem', "Remove from Library"), data: () => this.removeItem(item.id), icon: () => scratchIcon(tile.ownerDocument, 'trash-2', { size: 16 }), className: 'sx-menu-danger' },
+				],
+			}],
+			onPick: picked => picked.data(),
+		});
 	}
 
 	private onQuery(): void {
@@ -303,6 +395,38 @@ export class ScratchLibrary extends Disposable {
 		this.body.replaceChildren();
 		const q = this.query.toLowerCase();
 		const doc = this.body.ownerDocument;
+		const userItems = q ? this.userItems.filter(item => item.name.toLowerCase().includes(q)) : this.userItems;
+		if (userItems.length) {
+			append(this.body, $('.sx-library-section')).textContent = localize('voltScratch.lib.yours', "Your library");
+			const grid = append(this.body, $('.sx-library-grid'));
+			for (const item of userItems) {
+				const tile = append(grid, $('button.sx-library-tile.sx-library-user')) as HTMLButtonElement;
+				tile.type = 'button';
+				tile.draggable = true;
+				if (item.thumbnail) {
+					const img = append(tile, $('img.sx-library-thumb')) as HTMLImageElement;
+					img.alt = '';
+					img.draggable = false;
+					img.src = item.thumbnail;
+				} else {
+					tile.appendChild(scratchIcon(doc, 'shapes', { size: 22, strokeWidth: 1.5 }));
+				}
+				append(tile, $('span')).textContent = item.name;
+				tile.setAttribute('aria-label', item.name);
+				this.renderStore.add(addDisposableListener(tile, 'click', () => this.insert(`user:${item.id}`)));
+				this.renderStore.add(addDisposableListener(tile, 'contextmenu', e => {
+					e.preventDefault();
+					e.stopPropagation();
+					this.showItemMenu(item, tile);
+				}));
+				this.renderStore.add(addDisposableListener(tile, 'dragstart', e => {
+					e.dataTransfer?.setData(ScratchLibrary.DRAG_MIME, `user:${item.id}`);
+					if (e.dataTransfer) {
+						e.dataTransfer.effectAllowed = 'copy';
+					}
+				}));
+			}
+		}
 		for (const section of this.sections) {
 			const items = q ? section.items.filter(item => `${item.label} ${item.keywords}`.toLowerCase().includes(q)) : section.items;
 			if (!items.length) {
@@ -365,6 +489,10 @@ export class ScratchLibrary extends Disposable {
 	}
 
 	private build(id: string): ScratchElement[] | undefined {
+		if (id.startsWith('user:')) {
+			const item = this.userItems.find(i => i.id === id.slice(5));
+			return parseScratchClipboard(item?.clip);
+		}
 		if (id.startsWith('icon:')) {
 			const icon = this.icons.get(id.slice(5));
 			if (!icon?.svg) {
