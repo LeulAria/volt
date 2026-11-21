@@ -261,6 +261,20 @@ export function revealAgentSideChat(parentSessionId: string, chatSessionId: stri
 	return false;
 }
 
+/**
+ * Brings a side chat to the front of its group while its tab is in a right panel on screen with the
+ * tabs showing. Undefined when no panel on screen holds it, so the caller picks another chat.
+ */
+export function revealShownSideChat(chatSessionId: string): Promise<IEditorPane | undefined> | undefined {
+	for (const host of hosts) {
+		const pane = host.revealShownSideChat(chatSessionId);
+		if (pane) {
+			return pane;
+		}
+	}
+	return undefined;
+}
+
 /** Side chat tabs in live tools areas: side chat session id to the chat whose tools hold it. */
 export function agentSideChatParents(): Map<string, string> {
 	const parents = new Map<string, string>();
@@ -961,6 +975,16 @@ export class AgentSurfaceHost extends Disposable {
 		const input = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(chatSessionId));
 		this.bindSideChatProject(sessionId, chatSessionId);
 		return this.openInTools(input, false);
+	}
+
+	/** Brings a side chat already in this panel's tabs to the front, while the panel and its tabs show. */
+	revealShownSideChat(chatSessionId: string): Promise<IEditorPane | undefined> | undefined {
+		const entry = this.shown;
+		if (!entry || entry.sessionId !== this.sessionId || !this.announcedOpen || !this.canOpenTools() || !this.showsTabs(entry)) {
+			return undefined;
+		}
+		const existing = this.findInShown(editor => editor instanceof AgentEditorInput && editor.sessionId === chatSessionId);
+		return existing?.group.openEditor(existing.editor, { pinned: true });
 	}
 
 	//#endregion
@@ -2403,6 +2427,23 @@ export class AgentSurfaceHost extends Disposable {
 				return unknown;
 			}
 		}
+	}
+
+	/**
+	 * A side chat opened in another chat's tools sends in that chat's project. Without this, Send
+	 * makes a scratch folder (or runs with no folder) and the prompt never starts in the project.
+	 */
+	ensureSideChatProject(): void {
+		const sessionId = this.sessionId;
+		const owner = this.target();
+		if (!sessionId || !owner || owner === this) {
+			return;
+		}
+		const parentId = owner.currentSessionId;
+		if (!parentId || parentId === sessionId || this.sessionContext.bindingFor(sessionId)) {
+			return;
+		}
+		owner.bindSideChatProject(parentId, sessionId);
 	}
 
 	private bindSideChatProject(parentSessionId: string, chatSessionId: string): void {

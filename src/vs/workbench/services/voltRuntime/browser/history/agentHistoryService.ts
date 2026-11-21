@@ -20,6 +20,8 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { ILifecycleService } from '../../../lifecycle/common/lifecycle.js';
 import { IAgentWorktreeService } from '../../common/git/agentWorktree.js';
 import { IVoltWindowScopeService } from '../../../voltWindowScope/common/voltWindowScope.js';
+import { IVoltSessionContextService } from '../../common/sessionContext.js';
+import { workspaceForProject } from '../sessionContextService.js';
 import {
 	AGENT_HISTORY_FORMAT_VERSION,
 	AgentHistoryEntry,
@@ -59,6 +61,7 @@ import {
 	metaAfterEntry,
 	normalizeIndex,
 	parseAttachmentRef,
+	workspaceMetaFields,
 	searchSessions,
 	settleIndexAfterRestart,
 	deriveStatus,
@@ -184,18 +187,36 @@ class SessionHandle implements IAgentSessionHandle {
 			version: AGENT_HISTORY_FORMAT_VERSION,
 			id,
 			createdAt: service.get(id)?.createdAt ?? Date.now(),
-			workspace: service.pinnedWorkspace(id) ?? service.currentWorkspace,
+			workspace: service.projectWorkspace(id) ?? service.currentWorkspace,
 			...(service.sessionParent(id) ? { parentId: service.sessionParent(id) } : {}),
 			...(service.isSubagentSession(id) ? { subagent: true } : {}),
 		};
 	}
 
-	/** A new chat can be bound after the handle exists and before the first append. */
+	/**
+	 * A new chat can be bound after the handle exists and before the first append. A saved chat
+	 * keeps its project, except one saved without any (see {@link AgentHistoryService.projectWorkspace}).
+	 */
 	adoptWorkspace(workspace: IAgentSessionWorkspace): void {
-		if (this.materialized) {
+		if (!this.materialized) {
+			this.header = { ...this.header, workspace };
 			return;
 		}
+		// Not read yet: the load repairs the header.
+		if (this.transcript && !this.header.workspace.folders.length && workspace.folders.length) {
+			this.repairWorkspace(workspace);
+			void this.queue.run(() => this.rewrite()).catch(err => this.service.logService.warn(`[agent history] failed to save the project of ${this.logFile.toString()}`, err));
+		}
+	}
+
+	/** A chat saved without a project (Untitled) takes the one it runs in. The caller rewrites the log. */
+	private repairWorkspace(workspace: IAgentSessionWorkspace): void {
 		this.header = { ...this.header, workspace };
+		this.transcript = foldTranscript(this.header, this.entries);
+		const meta = this.meta;
+		if (meta) {
+			this.service.updateMeta({ ...meta, ...workspaceMetaFields(workspace) });
+		}
 	}
 
 	adoptParent(parentId: string, subagent: boolean): void {
@@ -250,7 +271,12 @@ class SessionHandle implements IAgentSessionHandle {
 			}
 		}
 		this.transcript = foldTranscript(this.header, this.entries);
-		if (this.materialized && this.damaged) {
+		const project = this.materialized && !this.header.workspace.folders.length ? this.service.projectWorkspace(this.id) : undefined;
+		const relabel = project?.folders.length ? project : undefined;
+		if (relabel) {
+			this.repairWorkspace(relabel);
+		}
+		if (this.materialized && (this.damaged || relabel)) {
 			// Runs outside the write queue on purpose: queued work awaits load()
 			// before touching the file, so nesting here would deadlock.
 			await this.rewrite().catch(err => this.service.logService.warn(`[agent history] repair failed for ${this.logFile.toString()}`, err));
@@ -650,6 +676,7 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		@ILogService public readonly logService: ILogService,
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@IVoltWindowScopeService private readonly windowScope: IVoltWindowScopeService,
+		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 	) {
 		super();
 		this.root = joinPath(environmentService.userRoamingDataHome, ROOT_DIR);
@@ -723,6 +750,15 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 		const settledFromLogs = await Promise.all(indexedRunning.filter(id => this.onDisk.has(id)).map(id => this.statusFromLog(id)));
 		if (settledFromLogs.some(Boolean)) {
 			rebuilt = true;
+		}
+		// Chats saved without their project are listed under it; their logs are fixed when next read.
+		for (const meta of this.sessions.values()) {
+			const project = meta.workspaceFolder ? undefined : this.projectWorkspace(meta.id);
+			if (project?.folders.length) {
+				this.sessions.set(meta.id, { ...meta, ...workspaceMetaFields(project) });
+				this.changedHere.add(meta.id);
+				this.scheduleIndexWrite();
+			}
 		}
 		if (rebuilt) {
 			// The whole index as read here, rebuilt entries added and vanished ones dropped.
@@ -967,6 +1003,24 @@ export class AgentHistoryService extends Disposable implements IAgentHistoryServ
 
 	pinnedWorkspace(id: string): IAgentSessionWorkspace | undefined {
 		return this.pinnedWorkspaces.get(id);
+	}
+
+	/**
+	 * The project a chat runs in: its pin, or else the project it is bound to. A pin is kept in
+	 * memory only, so on the agent server it is gone when the server restarts (or the window's
+	 * message is lost) before the chat's first write, and the window does not send it again for a
+	 * chat it already bound. Such chats were saved with the server's own folderless workspace and
+	 * listed as "Untitled" while they ran in a project. The binding is saved, so it still knows.
+	 */
+	projectWorkspace(id: string): IAgentSessionWorkspace | undefined {
+		const pinned = this.pinnedWorkspaces.get(id);
+		if (pinned?.folders.length) {
+			return pinned;
+		}
+		const binding = this.sessionContext.bindingFor(id);
+		const project = binding && this.sessionContext.getProject(binding.projectId);
+		// A chat without a project is pinned to its scratch folder under a workspace id of its own.
+		return project && !project.scratch ? workspaceForProject(project) : pinned;
 	}
 
 	pinSessionParent(id: string, parentId: string, options?: { readonly subagent?: boolean }): void {

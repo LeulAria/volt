@@ -462,8 +462,21 @@ export function claudeEditCheckHooks(): Record<string, unknown> {
 }
 
 /**
+ * How Claude Code's thinking reaches Volt. Recent models (Opus 5.5) default to `display: omitted`
+ * when Claude Code runs headless: thinking streams as empty deltas that the ACP adapter drops, so
+ * at high effort a long plan is minutes of silence. The idle watchdog took that for a stall and
+ * interrupted the turn every 6 minutes, throwing the thinking away each time (2026-11-05, a long
+ * prompt on Opus 5.5 Extra High never answered). Summaries stream as `agent_thought_chunk`s: the
+ * user sees the thinking and the watchdog sees activity. Claude Code maps `adaptive` to a thinking
+ * budget on models without adaptive thinking, and an explicit `alwaysThinkingEnabled: false` still
+ * turns thinking off.
+ */
+export const CLAUDE_THINKING = { type: 'adaptive', display: 'summarized' } as const;
+
+/**
  * `session/new` (and `session/resume`) `_meta` for a Claude Code session: the main agent's rules
- * appended to Claude Code's prompt, and a SubagentStart hook that hands every subagent its rules.
+ * appended to Claude Code's prompt, a SubagentStart hook that hands every subagent its rules, and
+ * streamed thinking summaries ({@link CLAUDE_THINKING}).
  * A Volt subagent's session (`subagent`) also starts lean (see {@link CLAUDE_SUBAGENT_SESSION_SETTINGS}),
  * and a read-only one on {@link CLAUDE_READONLY_SUBAGENT_PROMPT} with only Volt's MCP server
  * (`strictMcpConfig`: no user or claude.ai servers). Kept identical across sessions so a resumed
@@ -497,6 +510,7 @@ export function claudeWorkRulesMeta(model?: string, opts?: { readonly subagent?:
 					// Its MCP discovery is skipped: the plugin has no servers.
 					...(lazyTools ? { plugins: [{ type: 'local', path: lazyTools, skipMcpDiscovery: true }] } : {}),
 				}),
+				thinking: CLAUDE_THINKING,
 				settings: {
 					...(subagent ? CLAUDE_SUBAGENT_SESSION_SETTINGS : CLAUDE_MAIN_SESSION_SETTINGS),
 					hooks: {
