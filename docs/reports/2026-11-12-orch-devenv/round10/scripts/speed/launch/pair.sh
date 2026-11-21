@@ -1,14 +1,15 @@
 #!/bin/zsh
 # usage: pair.sh <outdir> <n> <test> <arm>...   interleave arms rep by rep (quitting the others first: they share CDP 9987).
-# Takes ~/.volt-r9/timing.lock (at a load of 14 or less) for at most 20 minutes at a time, then lets others in for a minute.
+# Takes ~/.volt-r9/timing.lock for at most 20 minutes at a time, then lets others in for a minute.
 # Each launch waits for the 1-minute load to be <= 14 (run.ts); its row records the load.
 cd ${0:A:h}
 . ../port.sh
 OUT=$1; N=$2; T=$3; shift 3; ARMS=($@)
 LOCK=~/.volt-r9/timing.lock
 load1() { sysctl -n vm.loadavg | tr -d '{}' | awk '{print $1}'; }
-# Waits for this area's instance to be free (~/.volt-r10/speed/busy), a 1-minute load of 14 or less and the lock.
-take() { until [ ! -e ~/.volt-r10/speed/busy ] && [ "$(echo "$(load1) <= 14" | bc)" = 1 ] && mkdir $LOCK 2>/dev/null; do sleep 2; done; echo "speed launch pair.sh pid $$ start $(date)" > $LOCK/owner; LT=$(date +%s); }
+# Waits for this area's instance to be free (~/.volt-r10/speed/busy) and the lock; each launch then waits for a
+# 1-minute load of 14 or less (run.ts), for at most ADE_LOAD_WAIT_S.
+take() { until [ ! -e ~/.volt-r10/speed/busy ] && mkdir $LOCK 2>/dev/null; do sleep 2; done; echo "speed launch pair.sh pid $$ start $(date)" > $LOCK/owner; LT=$(date +%s); }
 drop() { rm -rf $LOCK; }
 trap drop EXIT
 take

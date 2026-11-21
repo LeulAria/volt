@@ -1,0 +1,2 @@
+{"arm":"dev-yg-off","rep":1,"at":"2026-11-17T16:55:26.853Z","load":"11.82 11.98 8.21","underLoad":false,"idleS":30,"gapMs":400,"reader":false,"ok":true,"firstWordMs":794,"trace":{"agentSource":"pool","agentReadyMs":19,"promptMs":47,"firstTextMs":107}}
+{"arm":"dev-yg-off","rep":2,"at":"2026-11-17T16:56:01.916Z","load":"10.54 11.65 8.24","underLoad":false,"idleS":30,"gapMs":400,"reader":false,"ok":true,"firstWordMs":311,"trace":{"agentSource":"pool","agentReadyMs":5,"promptMs":39,"firstTextMs":92}}

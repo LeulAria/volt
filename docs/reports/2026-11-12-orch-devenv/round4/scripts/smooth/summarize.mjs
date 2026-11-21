@@ -51,7 +51,7 @@ if (existsSync(dir)) {
 	const files = readdirSync(dir).filter(f => f.endsWith('.json'));
 	const groups = new Map();
 	for (const f of files) {
-		const m = /^(before|after)-(small|medium|large)-h(\d+)-c\d+\.json$/.exec(f);
+		const m = /^(before|after)-(small|medium|large)-h(\d+)-c\d+(?:-r\d+)?\.json$/.exec(f);
 		const m2 = /^(before|after)-reload-medium-r\d+\.json$/.exec(f);
 		const s = JSON.parse(readFileSync(join(dir, f), 'utf8'));
 		if (m) {

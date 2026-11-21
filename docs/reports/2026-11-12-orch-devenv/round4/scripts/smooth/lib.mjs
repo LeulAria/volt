@@ -13,6 +13,8 @@ export const HOME = process.env.HOME;
 export const ARMS = {
 	before: '/Users/leularia/Desktop/VOLT/volt-e4-base',
 	after: '/Users/leularia/Desktop/VOLT/volt-e4-smooth',
+	// The after build on a copy of the before profile: tells a profile's own state from a change in the code.
+	swap: '/Users/leularia/Desktop/VOLT/volt-e4-smooth',
 };
 export const PORT = Number(process.env.SMOOTH_CDP ?? 9949);
 export const REPLAY = Number(process.env.SMOOTH_REPLAY ?? 18969);
