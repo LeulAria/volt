@@ -1,0 +1,194 @@
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
+index 0287e1c..f8637e1 100644
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebViewClient.java
+@@ -35,12 +35,66 @@ import com.reactnativecommunity.webview.events.TopShouldStartLoadWithRequestEven
+ import android.webkit.CookieManager;
+ import android.webkit.CookieSyncManager;
+ 
++import java.security.MessageDigest;
++import java.security.cert.CertificateFactory;
++import java.security.cert.X509Certificate;
++import java.io.ByteArrayInputStream;
++import java.util.Collections;
++import java.util.HashMap;
++import java.util.Locale;
++import java.util.Map;
+ import java.util.concurrent.atomic.AtomicReference;
+ 
+ public class RNCWebViewClient extends WebViewClient {
+     private static String TAG = "RNCWebViewClient";
+     protected static final int SHOULD_OVERRIDE_URL_LOADING_TIMEOUT = 250;
+ 
++    // Volt: `host:port` → base64url SHA-256 of the certificate DER that address must present.
++    private static volatile Map<String, String> pinnedCertificates = Collections.emptyMap();
++
++    /**
++     * Volt: a listed address is trusted only with its pinned leaf certificate (its SSL error is
++     * passed when the certificate matches); any other certificate error stays an error.
++     */
++    public static void setPinnedCertificates(@Nullable Map<String, String> pins) {
++        pinnedCertificates = pins == null ? Collections.<String, String>emptyMap() : Collections.unmodifiableMap(new HashMap<>(pins));
++    }
++
++    static boolean pinnedCertificateMatches(SslError error) {
++        Map<String, String> pins = pinnedCertificates;
++        if (pins.isEmpty() || error == null || error.getUrl() == null || error.getCertificate() == null) {
++            return false;
++        }
++        android.net.Uri uri = android.net.Uri.parse(error.getUrl());
++        String host = uri.getHost();
++        if (host == null || !("https".equalsIgnoreCase(uri.getScheme()) || "wss".equalsIgnoreCase(uri.getScheme()))) {
++            return false;
++        }
++        host = host.toLowerCase(Locale.ROOT).replace("[", "").replace("]", "");
++        int port = uri.getPort() == -1 ? 443 : uri.getPort();
++        String pin = pins.get(host + ":" + port);
++        if (pin == null) {
++            return false;
++        }
++        try {
++            X509Certificate leaf;
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++                leaf = error.getCertificate().getX509Certificate();
++            } else {
++                byte[] der = android.net.http.SslCertificate.saveState(error.getCertificate()).getByteArray("x509-certificate");
++                leaf = der == null ? null : (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(new ByteArrayInputStream(der));
++            }
++            if (leaf == null) {
++                return false;
++            }
++            byte[] actual = MessageDigest.getInstance("SHA-256").digest(leaf.getEncoded());
++            byte[] expected = android.util.Base64.decode(pin, android.util.Base64.URL_SAFE | android.util.Base64.NO_PADDING | android.util.Base64.NO_WRAP);
++            return expected.length == actual.length && MessageDigest.isEqual(actual, expected);
++        } catch (Exception e) {
++            return false;
++        }
++    }
++
+     protected boolean mLastLoadFailed = false;
+     protected RNCWebView.ProgressChangedFilter progressChangedFilter = null;
+     protected @Nullable RNCBasicAuthCredential basicAuthCredential = null;
+@@ -157,6 +211,11 @@ public class RNCWebViewClient extends WebViewClient {
+ 
+     @Override
+     public void onReceivedSslError(final WebView webView, final SslErrorHandler handler, final SslError error) {
++        // Volt: the address's pinned certificate is the only one it is trusted with.
++        if (pinnedCertificateMatches(error)) {
++            handler.proceed();
++            return;
++        }
+         // onReceivedSslError is called for most requests, per Android docs: https://developer.android.com/reference/android/webkit/WebViewClient#onReceivedSslError(android.webkit.WebView,%2520android.webkit.SslErrorHandler,%2520android.net.http.SslError)
+         // WebView.getUrl() will return the top-level window URL.
+         // If a top-level navigation triggers this error handler, the top-level URL will be the failing URL (not the URL of the currently-rendered page).
+diff --git a/node_modules/react-native-webview/apple/RNCWebViewImpl.h b/node_modules/react-native-webview/apple/RNCWebViewImpl.h
+index 1f6bbfd..9fc3cf8 100644
+--- a/node_modules/react-native-webview/apple/RNCWebViewImpl.h
++++ b/node_modules/react-native-webview/apple/RNCWebViewImpl.h
+@@ -141,6 +141,12 @@ shouldStartLoadForRequest:(NSMutableDictionary<NSString *, id> *)request
+ 
+ + (void)setClientAuthenticationCredential:(nullable NSURLCredential*)credential;
+ + (void)setCustomCertificatesForHost:(nullable NSDictionary *)certificates;
++/**
++ * Volt: `host:port` → base64url SHA-256 of the certificate DER that address must present. A
++ * listed address is trusted only with that leaf certificate; any other is refused. Addresses not
++ * listed keep the system's checks.
++ */
+++ (void)setPinnedCertificates:(nullable NSDictionary<NSString *, NSString *> *)pins;
+ - (void)postMessage:(NSString *_Nullable)message;
+ - (void)injectJavaScript:(NSString *_Nullable)script;
+ - (void)goForward;
+diff --git a/node_modules/react-native-webview/apple/RNCWebViewImpl.m b/node_modules/react-native-webview/apple/RNCWebViewImpl.m
+index 7f5c24d..0e27570 100644
+--- a/node_modules/react-native-webview/apple/RNCWebViewImpl.m
++++ b/node_modules/react-native-webview/apple/RNCWebViewImpl.m
+@@ -16,12 +16,58 @@
+ #endif // !TARGET_OS_OSX
+ 
+ #import "objc/runtime.h"
++#import <CommonCrypto/CommonDigest.h>
+ 
+ static NSTimer *keyboardTimer;
+ static NSString *const HistoryShimName = @"ReactNativeHistoryShim";
+ static NSString *const MessageHandlerName = @"ReactNativeWebView";
+ static NSURLCredential* clientAuthenticationCredential;
+ static NSDictionary* customCertificatesForHost;
++static NSDictionary<NSString *, NSString *> *pinnedCertificates;
++
++// Volt: whether the leaf certificate of `trust` hashes (SHA-256 of its DER) to `pin` (base64url).
++static BOOL RNCLeafCertificateMatchesPin(SecTrustRef trust, NSString *pin)
++{
++  if (trust == NULL || SecTrustGetCertificateCount(trust) < 1) {
++    return NO;
++  }
++  NSString *base64 = [[pin stringByReplacingOccurrencesOfString:@"-" withString:@"+"] stringByReplacingOccurrencesOfString:@"_" withString:@"/"];
++  while (base64.length % 4 != 0) {
++    base64 = [base64 stringByAppendingString:@"="];
++  }
++  NSData *expected = [[NSData alloc] initWithBase64EncodedString:base64 options:0];
++  if (expected.length != CC_SHA256_DIGEST_LENGTH) {
++    return NO;
++  }
++  SecCertificateRef leaf = NULL;
++  if (@available(iOS 15.0, macOS 12.0, *)) {
++    CFArrayRef chain = SecTrustCopyCertificateChain(trust);
++    if (chain != NULL && CFArrayGetCount(chain) > 0) {
++      leaf = (SecCertificateRef)CFRetain(CFArrayGetValueAtIndex(chain, 0));
++    }
++    if (chain != NULL) {
++      CFRelease(chain);
++    }
++  } else {
++    leaf = SecTrustGetCertificateAtIndex(trust, 0);
++    if (leaf != NULL) {
++      CFRetain(leaf);
++    }
++  }
++  if (leaf == NULL) {
++    return NO;
++  }
++  NSData *der = (NSData *)CFBridgingRelease(SecCertificateCopyData(leaf));
++  CFRelease(leaf);
++  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
++  CC_SHA256(der.bytes, (CC_LONG)der.length, digest);
++  const unsigned char *bytes = expected.bytes;
++  unsigned char diff = 0;
++  for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) {
++    diff |= digest[i] ^ bytes[i];
++  }
++  return diff == 0;
++}
+ 
+ NSString *const CUSTOM_SELECTOR = @"_CUSTOM_SELECTOR_";
+ 
+@@ -1149,10 +1195,30 @@ + (void)setCustomCertificatesForHost:(nullable NSDictionary*)certificates {
+   customCertificatesForHost = certificates;
+ }
+ 
+++ (void)setPinnedCertificates:(nullable NSDictionary<NSString *, NSString *> *)pins {
++  pinnedCertificates = [pins copy];
++}
++
+ - (void)                    webView:(WKWebView *)webView
+   didReceiveAuthenticationChallenge:(NSURLAuthenticationChallenge *)challenge
+                   completionHandler:(void (^)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential * _Nullable))completionHandler
+ {
++  // Volt: a pinned address (the challenge's own host and port, not the page's) is trusted only
++  // with its pinned leaf certificate; nothing else about it is consulted.
++  NSDictionary<NSString *, NSString *> *pins = pinnedCertificates;
++  if (pins.count > 0 && [[[challenge protectionSpace] authenticationMethod] isEqualToString:NSURLAuthenticationMethodServerTrust]) {
++    NSString *pinnedHost = [[[[challenge protectionSpace] host] lowercaseString] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"[]"]];
++    NSString *pin = pinnedHost ? pins[[NSString stringWithFormat:@"%@:%ld", pinnedHost, (long)[[challenge protectionSpace] port]]] : nil;
++    if (pin != nil) {
++      SecTrustRef trust = [[challenge protectionSpace] serverTrust];
++      if (RNCLeafCertificateMatchesPin(trust, pin)) {
++        completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:trust]);
++      } else {
++        completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, nil);
++      }
++      return;
++    }
++  }
+   NSString* host = nil;
+   if (webView.URL != nil) {
+     host = webView.URL.host;

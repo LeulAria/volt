@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { errorMessage, formatCode, normalizeBaseUrl, normalizeCode, type PairingTarget, parsePairingLink } from '@volt/client-core';
+import { errorMessage, formatCode, normalizeBaseUrl, normalizeCode, type PairingTarget, parsePairingLink, pinFingerprint } from '@volt/client-core';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
@@ -79,7 +79,7 @@ export default function Connect() {
 			return;
 		}
 		if (!address.trim()) {
-			setError('Type the computer\'s address in Address, like 192.168.1.20:47321.');
+			setError('Paste the pairing link from Volt on your computer (Copy Link in its Add Device window).');
 			return;
 		}
 		const baseUrl = link?.baseUrl ?? normalizeBaseUrl(address);
@@ -124,6 +124,12 @@ export default function Connect() {
 					</View>
 					<T variant="title1" weight="800" style={{ letterSpacing: -0.6 }}>Pair with this computer?</T>
 					<T variant="callout" color={p.fgTertiary}>A link asked to pair this phone with Volt at <T variant="callout" mono color={p.fg}>{host(pending)}</T>. Only continue if you opened it from your own computer.</T>
+					{pending.kind === 'code' && pending.pin ? (
+						<View style={{ gap: 4, padding: 12, borderRadius: 12, backgroundColor: p.fill }}>
+							<T variant="footnote" weight="600" color={p.fgTertiary}>Certificate SHA-256, as Volt's Add Device window shows it</T>
+							<T variant="small" mono color={p.fgSecondary} selectable>{pinFingerprint(pending.pin)}</T>
+						</View>
+					) : null}
 					{error ? <ErrorLine text={error} /> : null}
 					<View style={{ gap: 10, marginTop: 12 }}>
 						<Button label="Pair" variant="primary" size="lg" busy={busy} onPress={() => void pair(pending)} />
@@ -138,7 +144,7 @@ export default function Connect() {
 					<Animated.View entering={FadeIn.duration(220)} style={{ flex: 1, justifyContent: 'center', padding: 24, gap: 14 }}>
 						<VoltMark size={56} />
 						<T variant="title1" weight="800" style={{ letterSpacing: -0.6 }}>Connect to Volt</T>
-						<T variant="body" color={p.fgTertiary}>In Volt on your computer, run <T variant="body" weight="600" color={p.fgSecondary}>Pair a Phone or Browser…</T>. Enter the address and code it shows.</T>
+						<T variant="body" color={p.fgTertiary}>In Volt on your computer, run <T variant="body" weight="600" color={p.fgSecondary}>Pair a Phone or Browser…</T>. Paste the pairing link it shows: it carries your computer's certificate.</T>
 						{!manual && permission && !permission.granted ? (
 							<Tap haptics="light" onPress={() => void requestPermission()} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 14, backgroundColor: p.fill }}>
 								<Icon name="camera" size={18} color={p.fgSecondary} />
@@ -146,7 +152,7 @@ export default function Connect() {
 								<Icon name="chevronRight" size={14} color={p.fgQuaternary} />
 							</Tap>
 						) : null}
-						<Field label="Address" value={address} onChangeText={setAddress} placeholder="192.168.1.20:47321" keyboardType="url" />
+						<Field label="Pairing link or address" value={address} onChangeText={setAddress} placeholder="https://192.168.1.20:47823/pair#code=…" keyboardType="url" />
 						<Field label="Code" value={code} onChangeText={value => setCode(formatCode(value).slice(0, 9))} placeholder="ABCD-2345" mono large onSubmit={submitManual} />
 						{error ? <ErrorLine text={error} /> : null}
 						<Button label="Connect" variant="primary" size="lg" busy={busy} onPress={submitManual} style={{ marginTop: 8 }} />

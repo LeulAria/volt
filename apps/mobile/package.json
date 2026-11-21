@@ -16,7 +16,7 @@
 		"release:ios": "node scripts/releaseBuild.mjs ios",
 		"release:android": "node scripts/releaseBuild.mjs android",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
-		"postinstall": "npm --prefix ../mobile-widgets install --omit=peer --no-package-lock --no-audit --no-fund --loglevel=error"
+		"postinstall": "patch-package --error-on-fail && npm --prefix ../mobile-widgets install --omit=peer --no-package-lock --no-audit --no-fund --loglevel=error"
 	},
 	"dependencies": {
 		"@react-native-async-storage/async-storage": "2.2.0",
@@ -58,6 +58,7 @@
 	"devDependencies": {
 		"@expo/repack-app": "^0.10.4",
 		"@types/react": "~19.2.0",
+		"patch-package": "8.0.1",
 		"typescript": "~5.9.3"
 	}
 }

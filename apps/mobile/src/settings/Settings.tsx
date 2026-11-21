@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { ACCESS_MODES, DEFAULT_ACCESS_MODE, type IVoltPalette, VOLT_THEMES, DENSITY_PREVIEW_STEPS, DENSITY_PREVIEW_SUMMARY, type IEnvironmentDescriptor, modelLabel, providerName, RADIUS, routeLabel, TOOL_DENSITIES, TOOL_DENSITY_LABELS, type ToolDensity } from '@volt/client-core';
+import { ACCESS_MODES, DEFAULT_ACCESS_MODE, type IVoltPalette, VOLT_THEMES, DENSITY_PREVIEW_STEPS, DENSITY_PREVIEW_SUMMARY, type IEnvironmentDescriptor, modelLabel, pinFingerprint, providerName, RADIUS, routeLabel, TOOL_DENSITIES, TOOL_DENSITY_LABELS, type ToolDensity } from '@volt/client-core';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -126,6 +126,7 @@ function Connected() {
 		<>
 			<Group title={env.label}>
 				<ListRow icon="wifi" iconColor={color} label={text} detail={route ? `${routeLabel(route.kind)} · ${route.baseUrl.replace(/^https?:\/\//, '')}` : undefined} onPress={tone === 'ok' ? undefined : () => client.reconnect()} right={tone === 'ok' ? undefined : <T variant="small" weight="600" color={p.accent}>Retry</T>} />
+				{route?.pin ? <ListRow icon="lock" label="Certificate SHA-256" detail={pinFingerprint(route.pin)} /> : null}
 				{info ? <ListRow icon="server" label="Volt server" value={`v${info.serverVersion} · ${info.platform.os}`} /> : null}
 				<ListRow icon="phone" label="Devices" detail="Paired phones and browsers" chevron onPress={() => router.push('/settings/devices')} />
 				<ListRow icon="cpu" label="Models and providers" chevron onPress={() => router.push('/settings/models')} />
