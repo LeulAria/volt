@@ -143,7 +143,7 @@ import { AGENT_LIFECYCLE_UNDO_COMMAND_ID, IAgentThreadLifecycleService } from '.
 
 const ROW_HEIGHT = 28;
 /** An agent tab with a second line (branch, pull request, model). */
-const TWO_LINE_ROW_HEIGHT = 46;
+const TWO_LINE_ROW_HEIGHT = 50;
 /** How often ages, "Working 2m" and snooze countdowns are redrawn. */
 const CLOCK_TICK_MS = 30_000;
 /** Longest a list rebuild waits for an idle moment. */
