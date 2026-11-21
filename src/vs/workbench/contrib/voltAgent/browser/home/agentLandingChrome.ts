@@ -6,9 +6,10 @@
 import { $, addDisposableListener, append, EventHelper, getWindow } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { isMacintosh } from '../../../../../base/common/platform.js';
+import { isMacintosh, isWeb } from '../../../../../base/common/platform.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
+import { Schemas } from '../../../../../base/common/network.js';
 import { autorun } from '../../../../../base/common/observable.js';
 import { isEqual } from '../../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -34,6 +35,7 @@ import { IVoltProjectsService } from '../../../voltProjects/common/projects.js';
 import { createThisMacIcon, createWorktreeIcon } from '../chrome/accessIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { showAgentBranchMenu } from '../picker/agentBranchMenu.js';
+import { onDisk } from '../review/agentScmRepository.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../ui/menu/voltMenu.js';
 import { showAgentProjectMenu } from './agentHomeWorkspaceActions.js';
 import { landingWorkspaceName } from './agentLandingModel.js';
@@ -275,8 +277,11 @@ export class AgentLandingChrome extends Disposable {
 	private findRepository(): ISCMRepository | undefined {
 		const root = this.projectRoot();
 		if (root) {
+			// Compared as paths on the computer: in the browser workbench git names its repositories
+			// `vscode-remote:` while a project's root can be a `file:` path.
+			const target = onDisk(root);
 			for (const repository of this.scmService.repositories) {
-				if (repository.provider.rootUri && isEqual(repository.provider.rootUri, root)) {
+				if (repository.provider.rootUri && isEqual(onDisk(repository.provider.rootUri), target)) {
 					return repository;
 				}
 			}
@@ -307,11 +312,15 @@ export class AgentLandingChrome extends Disposable {
 	async refreshBranch(): Promise<void> {
 		const root = this.projectRoot();
 		const request = ++this.branchRequest;
-		if (!root || root.scheme !== 'file') {
+		// In the browser workbench the project is often the server's folder as a `vscode-remote:` URI, and
+		// git runs on that same server: read it by its path there. Leaving it unread would wipe the branch
+		// the SCM view gave the pill each time a run ends.
+		const folder = root && (root.scheme === Schemas.file || (isWeb && root.scheme === Schemas.vscodeRemote)) ? onDisk(root) : undefined;
+		if (!root || !folder) {
 			this.setBranch(root?.toString(), {});
 			return;
 		}
-		const branches = await this.gitService.listBranches({ repoRoot: root.fsPath }).catch(() => undefined);
+		const branches = await this.gitService.listBranches({ repoRoot: folder.fsPath }).catch(() => undefined);
 		if (request !== this.branchRequest) {
 			return;
 		}

@@ -44,6 +44,7 @@ import {
 } from './agentSessionChanges.js';
 import { IAgentEditsService, IAgentPendingFile } from './agentEditsService.js';
 import { IAgentCheckpointService, IAgentSnapshotChange } from './agentCheckpointService.js';
+import { onDisk } from './agentScmRepository.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 
 export const IAgentSessionChangesService = createDecorator<IAgentSessionChangesService>('voltAgentSessionChanges');
@@ -382,7 +383,9 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 		const roots = [this.sessionContext.rootFor(sessionId), ...this.workspaceContextService.getWorkspace().folders.map(folder => folder.uri)];
 		// The project's own form: /private/tmp/app is the project opened as /tmp/app.
 		const file = this.edits.canonicalUri(URI.file(path));
-		return roots.some(root => !!root && isEqualOrParent(file, root));
+		// Compared as paths on the computer: in the browser workbench the project is a `vscode-remote:`
+		// folder while agents write plain paths, and no file would count as the project's.
+		return roots.some(root => !!root && isEqualOrParent(file, onDisk(root)));
 	}
 
 	clearSession(sessionId: string): void {

@@ -87,12 +87,15 @@ export class GitHubPane extends Disposable {
 		}));
 		this.list.style(getListStyles({ listBackground: 'transparent', listFocusOutline: 'transparent', listInactiveFocusOutline: 'transparent' }));
 		this._register(addDisposableListener(this.listHost, 'mousedown', e => e.preventDefault()));
-		this._register(this.list.onMouseClick(e => {
-			if (e.index !== undefined) {
-				this.list.setFocus([e.index]);
-				this.activate(this.rows[e.index]);
+		const activate = (index: number | undefined) => {
+			if (index !== undefined) {
+				this.list.setFocus([index]);
+				this.activate(this.rows[index]);
 			}
-		}));
+		};
+		this._register(this.list.onMouseClick(e => activate(e.index)));
+		// A finger's tap: the list's Gesture cancels the click it would send.
+		this._register(this.list.onTap(e => activate(e.index)));
 		this._register(this.list.onDidScroll(e => {
 			if (e.scrollTop + e.height > e.scrollHeight - ROW_HEIGHT * 6) {
 				this.loadMore();

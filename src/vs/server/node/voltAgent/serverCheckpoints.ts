@@ -5,6 +5,7 @@
 
 import { watch as fsWatch } from 'fs';
 import { IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
+import { Schemas } from '../../../base/common/network.js';
 import { isMacintosh, isWindows } from '../../../base/common/platform.js';
 import { URI } from '../../../base/common/uri.js';
 import { AgentCheckpointService } from '../../../workbench/contrib/voltAgent/browser/review/agentCheckpointService.js';
@@ -92,6 +93,15 @@ export class ServerAgentCheckpointService extends AgentCheckpointService {
 		} catch {
 			// Unwatched: every turn takes a fresh snapshot, as before.
 		}
+	}
+
+	/**
+	 * The browser workbench this server serves names the server's own folders as `vscode-remote:`
+	 * URIs (its authority is this server's host:port), so a web chat's project is on this computer
+	 * too. A resolver's authority (`ssh-remote+host`) is another computer's.
+	 */
+	protected override isOnThisComputer(root: URI): boolean {
+		return super.isOnThisComputer(root) || (root.scheme === Schemas.vscodeRemote && !root.authority.includes('+'));
 	}
 
 	protected override isWatched(workTree: string, since: number): boolean {

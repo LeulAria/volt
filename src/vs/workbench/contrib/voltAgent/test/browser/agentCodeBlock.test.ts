@@ -8,7 +8,7 @@ import { mainWindow } from '../../../../../base/browser/window.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
-import { compactTokens, isLiveCodeFence, LiveCodeCard, renderCodeCard, runnableShellCommand } from '../../browser/blocks/agentCodeBlock.js';
+import { compactTokens, isLiveCodeFence, LiveCodeCard, renderCodeCard, resolveEditorLineHeight, runnableShellCommand } from '../../browser/blocks/agentCodeBlock.js';
 
 suite('Agent code cards: Run in terminal', () => {
 
@@ -112,5 +112,18 @@ suite('Agent code cards: a streaming fence grows in place', () => {
 		assert.strictEqual(rows()[0], removed, 'the settled row keeps its element');
 		assert.deepStrictEqual(rows().map(row => row.textContent), ['  const a = 1;', '  const a = 2;', '  done']);
 		assert.ok(rows()[2].classList.contains('context'));
+	});
+});
+
+suite('Agent code cards: line height', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('reads editor.lineHeight as the editor does: pixels, a multiple of the font size, or the default', () => {
+		assert.strictEqual(resolveEditorLineHeight(20, 12), 20, 'pixels');
+		assert.strictEqual(resolveEditorLineHeight(1.55, 12), 19, 'the phone default is a multiple, not 1.55px');
+		assert.strictEqual(resolveEditorLineHeight(0, 12), 18, '0 is 1.5 times the font size');
+		assert.strictEqual(resolveEditorLineHeight(undefined, 14), 21);
+		assert.strictEqual(resolveEditorLineHeight(0.2, 12), 8, 'never under the minimum');
 	});
 });

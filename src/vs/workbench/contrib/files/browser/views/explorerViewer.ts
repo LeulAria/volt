@@ -72,6 +72,7 @@ import { TreeFindMatchType, TreeFindMode } from '../../../../../base/browser/ui/
 import { isCancellationError } from '../../../../../base/common/errors.js';
 import { IContextKey, IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 import { CountBadge } from '../../../../../base/browser/ui/countBadge/countBadge.js';
+import { voltTouchRowHeight } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { listFilterMatchHighlight, listFilterMatchHighlightBorder } from '../../../../../platform/theme/common/colorRegistry.js';
 import { asCssVariable } from '../../../../../platform/theme/common/colorUtils.js';
 
@@ -80,7 +81,7 @@ export class ExplorerDelegate implements IListVirtualDelegate<ExplorerItem> {
 	static readonly ITEM_HEIGHT = 22;
 
 	getHeight(element: ExplorerItem): number {
-		return ExplorerDelegate.ITEM_HEIGHT;
+		return voltTouchRowHeight(ExplorerDelegate.ITEM_HEIGHT);
 	}
 
 	getTemplateId(element: ExplorerItem): string {

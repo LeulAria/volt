@@ -76,7 +76,8 @@
 		display: inline-flex;
 	}
 
-	.volt-agent-table-cell .volt-agent-table-cell-copy {
+	/* A tablet keeps each cell's copy at rest; a phone's cells are too narrow to share (Copy Table stays). */
+	.monaco-workbench:not(.volt-web-phone) .volt-agent-table-cell .volt-agent-table-cell-copy {
 		opacity: 1;
 		pointer-events: auto;
 	}
@@ -279,4 +280,39 @@
 
 .monaco-workbench.web.volt-web-phone .volt-agent-composer {
 	padding: 8px 14px max(8px, env(safe-area-inset-bottom));
+}
+
+/*
+ * Phone-wide tables keep their columns at reading width and scroll sideways in their frame, instead of
+ * squeezing every column until `(a: number, b: number)` stands one word per line.
+ */
+.monaco-workbench.web.volt-web-phone .volt-agent-markdown .volt-agent-table-wrap table {
+	width: max-content;
+	min-width: 100%;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-agent-markdown .volt-agent-table-wrap :is(th, td) {
+	max-width: 260px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-agent-table-cell .volt-agent-table-cell-copy {
+	display: none;
+}
+
+/*
+ * Approving from a phone is the job the phone is for: Skip, Always Run and Run are finger-sized (36px)
+ * and the ⏎ hint, a key the phone has no use for here, goes.
+ */
+.monaco-workbench.web.volt-web-phone .volt-approval-footer {
+	gap: 8px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-approval-btn {
+	height: 36px;
+	padding: 0 16px;
+	font-size: 14px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-approval-btn .volt-approval-kbd {
+	display: none;
 }

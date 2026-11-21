@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// The phone's bottom navigation: a row of destinations (Chat, Projects, Pull Requests, Terminal, More)
+// The phone's bottom navigation: a row of destinations (Chats, Pull Requests, New, Projects, More)
 // under the workbench, above the home indicator. Features add destinations through
 // `VoltMobileDestinations.register`; each says how to open itself and when it is the one on screen,
 // so the bar never needs to know about a feature to show it.
@@ -22,6 +22,8 @@ import { ILogService } from '../../../../../../platform/log/common/log.js';
 
 /** Shows the chat's editor on a phone: its open tabs, or the Explorer when it has none (the title bar's Editor button). */
 export const SHOW_MOBILE_EDITOR_COMMAND_ID = 'volt.mobile.showEditor';
+/** Opens the terminal over the whole phone screen, or closes it when it is open (More, the title bar's "…"). */
+export const TOGGLE_MOBILE_TERMINAL_COMMAND_ID = 'volt.mobile.toggleTerminal';
 
 /** An outline icon on a 24px grid: each shape is an SVG element name and its attributes (Lucide's paths). */
 export type VoltMobileStrokeIcon = readonly (readonly [tag: 'path' | 'rect' | 'circle', attributes: Readonly<Record<string, string>>])[];
@@ -36,6 +38,8 @@ export interface IVoltMobileDestination {
 	readonly order: number;
 	/** Listed only while this holds. */
 	readonly when?: ContextKeyExpression;
+	/** An action in the bar's middle rather than a place (New Chat): always bright, never the active tab. */
+	readonly primary?: boolean;
 	/** Brings the destination on screen. */
 	open(accessor: ServicesAccessor): void | Promise<void>;
 	/** Whether the workbench shows this destination now; the first active one in order is highlighted. */
@@ -74,8 +78,8 @@ class VoltMobileDestinationRegistry {
 
 export const VoltMobileDestinations = new VoltMobileDestinationRegistry();
 
-/** The bar's height, safe area excluded: with labels in portrait, icons only on a phone on its side. */
-const BAR_HEIGHT = 56;
+/** The bar's height, safe area excluded: icons only, a little lower on a phone on its side. */
+const BAR_HEIGHT = 48;
 const BAR_HEIGHT_LANDSCAPE = 44;
 
 export class VoltMobileNavigationBar extends Disposable {
@@ -148,12 +152,13 @@ export class VoltMobileNavigationBar extends Disposable {
 			const button = append(this.element, $('button.volt-mobile-nav-item')) as HTMLButtonElement;
 			button.type = 'button';
 			button.dataset.destination = destination.id;
+			button.classList.toggle('primary', !!destination.primary);
 			button.setAttribute('aria-label', destination.label);
 			// The ripple swells from the icon, round and wider than it (YouTube's bottom bar).
 			const indicator = append(button, $('span.volt-mobile-nav-indicator.volt-ripple-host.volt-ripple-round'));
-			indicator.dataset.rippleSize = '56';
+			indicator.dataset.rippleSize = destination.primary ? '48' : '56';
 			indicator.appendChild(destination.strokeIcon ? renderStrokeIcon(button.ownerDocument, destination.strokeIcon) : renderIcon(destination.icon));
-			append(button, $('span.volt-mobile-nav-label')).textContent = destination.label;
+			// Icons only: the tab on screen is the bright one; the name is the button's label for screen readers.
 			this.rendered.add(addDisposableListener(button, 'click', () => this.open(destination)));
 			this.buttons.set(destination.id, button);
 		}
@@ -163,8 +168,11 @@ export class VoltMobileNavigationBar extends Disposable {
 
 	private async open(destination: IVoltMobileDestination): Promise<void> {
 		voltHaptic('tick');
-		this.pending = destination.id;
-		this.setActive(destination.id);
+		// An action (New Chat) lights nothing: the place it opens lights its own tab once it is up.
+		if (!destination.primary) {
+			this.pending = destination.id;
+			this.setActive(destination.id);
+		}
 		try {
 			await this.instantiationService.invokeFunction(accessor => destination.open(accessor));
 		} catch (error) {
@@ -182,6 +190,9 @@ export class VoltMobileNavigationBar extends Disposable {
 			return;
 		}
 		const active = this.instantiationService.invokeFunction(accessor => this.shown.find(d => {
+			if (d.primary) {
+				return false;
+			}
 			try {
 				return d.isActive(accessor);
 			} catch {

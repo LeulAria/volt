@@ -819,7 +819,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 			session.loaded = undefined;
 			session.settled = undefined;
 		}
-		if (!root || root.scheme !== Schemas.file || !this.git.resolveSnapshotRepo) {
+		if (!root || !this.isOnThisComputer(root) || !this.git.resolveSnapshotRepo) {
 			return undefined;
 		}
 		let repo = this.repos.get(root.fsPath);
@@ -833,6 +833,11 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		session.repo = await repo;
 		session.folder = root;
 		return session.repo;
+	}
+
+	/** Whether git here can snapshot `root`: a folder of another computer (an SSH remote) is not. */
+	protected isOnThisComputer(root: URI): boolean {
+		return root.scheme === Schemas.file;
 	}
 
 	/** Where the chat's agent works: its worktree, its project, or the open folder. */

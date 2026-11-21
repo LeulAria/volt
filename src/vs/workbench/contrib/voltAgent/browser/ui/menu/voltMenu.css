@@ -544,6 +544,23 @@
 
 .volt-menu.in-sheet .volt-menu-search {
 	min-height: 44px;
+	padding: 0 20px;
+}
+
+/* A sheet's rows, section labels and notes share one 20px edge with the sheet's own lists (the model
+ * picker, the side toolbar): the popover's 10px left the text hugging the screen's edge. */
+.volt-menu.in-sheet :is(.volt-menu-row, .volt-menu-header, .volt-menu-message) {
+	padding-left: 20px;
+	padding-right: 20px;
+}
+
+.volt-menu.in-sheet .volt-menu-row {
+	gap: 14px;
+}
+
+.volt-menu-host.in-sheet .volt-menu-sheet-back {
+	height: 48px;
+	padding: 0 16px;
 }
 
 /* Shortcut hints mean nothing on a phone; the row keeps its room for the label. A prompt's "Change" stays. */
