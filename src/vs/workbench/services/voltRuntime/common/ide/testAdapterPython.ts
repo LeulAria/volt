@@ -14,7 +14,9 @@ const PYTHON_MARKERS = ['pyproject.toml', 'pytest.ini', 'setup.cfg', 'tox.ini', 
  */
 export function parsePythonTests(text: string): IStaticTest[] {
 	const roots: IStaticTest[] = [];
-	const stack: { node: IOpenTest; indent: number }[] = [];
+	// Every class and function opens a scope; only collected classes hold tests. Methods of other
+	// classes and functions nested in functions are not collected (pytest skips `class Helper:`).
+	const stack: { node: IOpenTest | undefined; indent: number }[] = [];
 	const lines = text.split('\n');
 	for (let index = 0; index < lines.length; index++) {
 		const line = lines[index];
@@ -27,16 +29,23 @@ export function parsePythonTests(text: string): IStaticTest[] {
 		}
 		const cls = /^(\s*)class\s+(\w+)\s*(?:\(([^)]*)\))?\s*:/.exec(line);
 		const fn = /^(\s*)(?:async\s+)?def\s+(test\w*)\s*\(/.exec(line);
-		const parent = stack.at(-1)?.node;
-		if (cls && (/^Test/.test(cls[2]) || /\bTestCase\b/.test(cls[3] ?? ''))) {
+		const scope = stack.at(-1);
+		const parent = scope?.node;
+		const collects = !scope || parent?.kind === 'suite';
+		if (cls && collects && (/^Test/.test(cls[2]) || /\bTestCase\b/.test(cls[3] ?? ''))) {
 			const node: IOpenTest = { name: cls[2], kind: 'suite', line: index + 1, endLine: index + 1, children: [], ...(/\bTestCase\b/.test(cls[3] ?? '') ? { flavor: 'unittest' } : {}) };
 			(parent?.children ?? roots).push(node);
 			stack.push({ node, indent });
-		} else if (fn && (!parent || parent.kind === 'suite')) {
-			(parent?.children ?? roots).push({ name: fn[2], kind: 'test', line: index + 1, endLine: index + 1, children: [] });
+		} else if (cls || /^\s*(?:async\s+)?def\s/.test(line)) {
+			if (fn && collects) {
+				(parent?.children ?? roots).push({ name: fn[2], kind: 'test', line: index + 1, endLine: index + 1, children: [] });
+			}
+			stack.push({ node: undefined, indent });
 		}
 		for (const open of stack) {
-			open.node.endLine = index + 1;
+			if (open.node) {
+				open.node.endLine = index + 1;
+			}
 		}
 	}
 	fillTestEnds(roots, lines.length);

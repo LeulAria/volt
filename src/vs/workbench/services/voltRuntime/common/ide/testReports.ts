@@ -133,7 +133,9 @@ export function parseExpectedActual(message: string): { expected?: string; actua
 	if (unittest) {
 		return pair(unittest[2], unittest[1]);
 	}
-	const pytest = /assert (.+?) == (.+?)$/m.exec(text);
+	// pytest's failure text quotes the source line (`>   assert f(x) == 11.0`) before the evaluated
+	// one (`E   assert 12.0 == 11.0`): the values are on the `E` line.
+	const pytest = /^E\s+assert (.+?) == (.+?)$/m.exec(text) ?? /assert (.+?) == (.+?)$/m.exec(text);
 	if (pytest) {
 		return pair(pytest[2], pytest[1]);
 	}
@@ -735,7 +737,8 @@ export function parseUnittestText(raw: string): ITestReport {
 		}
 	}
 	for (const block of text.split(/^={50,}$/m).slice(1)) {
-		const head = /^\s*(FAIL|ERROR): (\w+) \(([\w.]+)\)/.exec(block);
+		// A module that failed to import is named by its dotted path (`ERROR: tests.test_x (...)`).
+		const head = /^\s*(FAIL|ERROR): ([\w.]+) \(([\w.]+)\)/.exec(block);
 		if (!head) {
 			continue;
 		}
