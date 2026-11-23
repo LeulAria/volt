@@ -11,8 +11,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { AGENTS, detectAgents, parseAgentLine, runnerAgentEnv } from './agents.mjs';
+import { AGENTS, detectAgents, parseAgentLine, runnerAgentEnv, runnerAgentEnvParts } from './agents.mjs';
 import { LoadSampler } from './load.mjs';
+import { loadRunnerSandbox } from './sandbox.mjs';
 
 const VERSION = '0.1.0';
 
@@ -48,6 +49,7 @@ export class Runner {
 		await fsp.mkdir(this.config.dataDir, { recursive: true });
 		await fsp.mkdir(this.config.workDir, { recursive: true });
 		this.token = await this.ensureToken();
+		await this.loadSandbox();
 		this.agents = await detectAgents();
 		this.gitPush = await this.canPush();
 		this.log('agents', JSON.stringify(this.agents));
@@ -66,6 +68,26 @@ export class Runner {
 		for (const job of this.active.values()) {
 			job.abort('Runner stopped.');
 		}
+		await this.sandbox?.shutdown();
+	}
+
+	/**
+	 * Volt's OS sandbox for the agents (sandbox.mjs), where this machine has it. `config.sandbox`
+	 * (tests) is used as it is; `null` there means none. `VOLT_RUNNER_SANDBOX=required` without it
+	 * stops the runner here, before it claims a task.
+	 */
+	async loadSandbox() {
+		if (this.config.sandbox !== undefined) {
+			this.sandbox = this.config.sandbox ?? undefined;
+			return;
+		}
+		const loaded = await loadRunnerSandbox({ dataDir: this.config.dataDir, log: message => this.log(message) });
+		this.sandbox = loaded.sandbox;
+		this.sandboxReason = loaded.reason;
+		if (!this.sandbox && loaded.mode === 'required') {
+			throw new Error(`VOLT_RUNNER_SANDBOX=required, and Volt's sandbox is not available here: ${loaded.reason}.`);
+		}
+		this.log(this.sandbox ? `agents run in Volt's sandbox (${this.sandbox.detail})` : `agents run without Volt's sandbox: ${loaded.reason}`);
 	}
 
 	//#region Relay
@@ -137,6 +159,8 @@ export class Runner {
 				arch: os.arch(),
 				gitPush: this.gitPush,
 				labels: this.config.labels,
+				// The OS sandbox the agents run in (`seatbelt`, `bubblewrap`), or none: the container is the boundary.
+				sandbox: this.sandbox?.mechanism ?? null,
 			},
 			running: [...this.active.keys()],
 		});
@@ -297,17 +321,35 @@ export class Runner {
 		return base;
 	}
 
-	runAgent(task, agent, cwd, signal, events, state) {
-		const { args, env } = agent.command(task);
+	async runAgent(task, agent, cwd, signal, events, state) {
+		const sandboxed = !!this.sandbox;
+		const { args, env } = agent.command(task, { sandboxed });
+		// An allow list: the runner's own secrets (enrol key, relay token) never reach the agent.
+		const { base, credentials } = runnerAgentEnvParts(task.agent);
+		const own = { ...credentials, ...env, VOLT_CLOUD_TASK: task.id, CI: '1' };
+		const launch = sandboxed
+			? await this.sandbox.prepare({ taskId: task.id, agent: task.agent, binary: agent.binary(), args, checkout: cwd, hostEnv: base, env: own })
+			: undefined;
+		try {
+			return await this.spawnAgent(task, agent, launch, launch ? { command: launch.command, args: launch.args, cwd: launch.cwd, env: launch.env } : { command: agent.binary(), args, cwd, env: { ...runnerAgentEnv(task.agent), ...own } }, signal, events, state);
+		} finally {
+			launch?.dispose();
+		}
+	}
+
+	spawnAgent(task, agent, launch, spec, signal, events, state) {
 		return new Promise((resolve, reject) => {
-			const child = spawn(agent.binary(), args, {
-				cwd,
-				// An allow list: the runner's own secrets (enrol key, relay token) never reach the agent.
-				env: { ...runnerAgentEnv(task.agent), ...env, VOLT_CLOUD_TASK: task.id, CI: '1' },
-				stdio: ['pipe', 'pipe', 'pipe'],
+			const child = spawn(spec.command, spec.args, {
+				cwd: spec.cwd,
+				env: spec.env,
+				stdio: ['pipe', 'pipe', 'pipe', ...(launch?.extraStdio ?? [])],
 				detached: true,
 			});
 			const kill = () => {
+				if (launch) {
+					void launch.terminate(child).catch(() => undefined);
+					return;
+				}
 				try {
 					process.kill(-child.pid, 'SIGTERM');
 				} catch {
@@ -320,6 +362,22 @@ export class Runner {
 				state.error = `Stopped after ${Math.round(this.config.taskTimeoutMs / 60_000)} minutes.`;
 				kill();
 			}, this.config.taskTimeoutMs);
+			// In Volt's sandbox the agent waits until the sandbox is confirmed from outside; one that can't be is stopped, never run unconfined.
+			if (launch) {
+				launch.confirm(child).then(confirmed => {
+					if (confirmed.ok) {
+						events.push({ t: 'log', stream: 'system', text: `${agent.label} runs in Volt's sandbox (${this.sandbox.detail}): it writes only this checkout, temp and its own state, and reads no credentials and nothing else in this machine's home folder but its toolchains and its own config.` });
+					} else {
+						state.failed = true;
+						state.error = `Volt's sandbox could not be confirmed, so ${agent.label} did not run: ${confirmed.error}`;
+						kill();
+					}
+				}, err => {
+					state.failed = true;
+					state.error = `Volt's sandbox could not be confirmed, so ${agent.label} did not run: ${err?.message ?? err}`;
+					kill();
+				});
+			}
 			child.stdin.end(`${task.prompt}\n`);
 			let buffer = '';
 			child.stdout.on('data', chunk => {

@@ -18,7 +18,10 @@ export const AGENTS = {
 		label: 'Claude Code',
 		binary: () => process.env.VOLT_RUNNER_CLAUDE_BIN || 'claude',
 		credentials: () => !!(process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY || readTokenFile(process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE) || claudeCredentialsFile()),
-		/** The prompt goes on stdin, so its size or quoting never matters. */
+		/**
+		 * The prompt goes on stdin, so its size or quoting never matters. Claude Code has no OS sandbox
+		 * of its own; where the runner has Volt's sandbox (sandbox.mjs), that is what bounds `bypassPermissions`.
+		 */
 		command: task => ({
 			args: ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'bypassPermissions', ...(task.model ? ['--model', task.model] : [])],
 			env: claudeEnv(),
@@ -28,8 +31,8 @@ export const AGENTS = {
 		label: 'Codex',
 		binary: () => process.env.VOLT_RUNNER_CODEX_BIN || 'codex',
 		credentials: () => !!(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY || fs.existsSync(path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json'))),
-		command: task => ({
-			args: ['exec', '--json', '--skip-git-repo-check', ...codexSandboxArgs(), ...(task.model ? ['-m', task.model] : []), '-'],
+		command: (task, options = {}) => ({
+			args: ['exec', '--json', '--skip-git-repo-check', ...codexSandboxArgs(process.platform, process.env, options.sandboxed), ...(task.model ? ['-m', task.model] : []), '-'],
 			env: {},
 		}),
 	},
@@ -38,13 +41,19 @@ export const AGENTS = {
 /**
  * Codex's own OS sandbox for a task (B-06): on Linux and macOS it writes only the task's checkout
  * and temp (network kept on: tasks install packages), instead of running with the sandbox off.
+ * In Volt's sandbox (`sandboxed`, sandbox.mjs) Codex's own is off, as in a sandboxed Volt chat: Volt's
+ * encloses it, and a second Seatbelt inside the first can't start on macOS.
  * `VOLT_RUNNER_CODEX_SANDBOX=off` is the operator's explicit choice for a container whose kernel
  * cannot give Codex its sandbox (no Landlock); then the container is the only boundary. Windows has
  * no sandbox Codex or Volt can apply here, so it keeps Codex's sandbox off there, and the runner's
  * machine or container is the boundary. Claude Code has no OS sandbox of its own: it runs with
- * `bypassPermissions`, bounded by the container and the allow-listed environment (runnerAgentEnv).
+ * `bypassPermissions`, bounded by Volt's sandbox where the runner has it, else by the container and
+ * the allow-listed environment (runnerAgentEnv).
  */
-export function codexSandboxArgs(platform = process.platform, env = process.env) {
+export function codexSandboxArgs(platform = process.platform, env = process.env, sandboxed = false) {
+	if (sandboxed) {
+		return ['--sandbox', 'danger-full-access', '-c', 'approval_policy="never"'];
+	}
 	if (platform === 'win32' || env.VOLT_RUNNER_CODEX_SANDBOX === 'off') {
 		return ['--dangerously-bypass-approvals-and-sandbox'];
 	}
@@ -65,18 +74,32 @@ const AGENT_ENV = {
  * VOLT_RUNNER_* setting stay with the runner; one agent never gets another's credentials.
  */
 export function runnerAgentEnv(agent, hostEnv = process.env) {
-	const env = {};
-	for (const name of [...BASE_ENV, ...(AGENT_ENV[agent] ?? [])]) {
-		if (typeof hostEnv[name] === 'string') {
-			env[name] = hostEnv[name];
+	const { base, credentials } = runnerAgentEnvParts(agent, hostEnv);
+	return { ...base, ...credentials };
+}
+
+/**
+ * {@link runnerAgentEnv} in two parts: `base` (where things are, filtered again by Volt's sandbox
+ * profile when the agent runs in it) and `credentials` (the agent's own keys and config, which it
+ * needs and which the runner sets on purpose).
+ */
+export function runnerAgentEnvParts(agent, hostEnv = process.env) {
+	const pick = names => {
+		const out = {};
+		for (const name of names) {
+			if (typeof hostEnv[name] === 'string') {
+				out[name] = hostEnv[name];
+			}
 		}
-	}
+		return out;
+	};
+	const base = pick(BASE_ENV);
 	for (const [name, value] of Object.entries(hostEnv)) {
 		if (/^LC_[A-Z]+$/.test(name) && typeof value === 'string') {
-			env[name] = value;
+			base[name] = value;
 		}
 	}
-	return env;
+	return { base, credentials: pick(AGENT_ENV[agent] ?? []) };
 }
 
 function readTokenFile(file) {

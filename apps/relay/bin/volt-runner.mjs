@@ -24,6 +24,10 @@ Environment:
   VOLT_RUNNER_TIMEOUT_MIN   per task (default 30)
   VOLT_RUNNER_LABELS        comma separated, shown in Volt
   VOLT_RUNNER_GIT_PUSH=1    push result branches to the task's git remote
+  VOLT_RUNNER_SANDBOX       auto (default): run agents in Volt's OS sandbox where it loads
+                            (macOS, Linux with bubblewrap); required: refuse to start without
+                            it; off: never
+  VOLT_RUNNER_SANDBOX_OUT   a Volt build's out folder (default: this checkout's)
 Agent credentials stay on this machine: CLAUDE_CODE_OAUTH_TOKEN(_FILE) / ANTHROPIC_API_KEY for
 Claude Code, OPENAI_API_KEY or ~/.codex/auth.json for Codex.`);
 	process.exit(env.VOLT_RELAY_URL ? 0 : 1);
