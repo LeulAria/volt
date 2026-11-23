@@ -195,11 +195,16 @@ export class AgentLimitChip extends Disposable {
 			width: 320,
 			ariaLabel: localize('voltAgent.rescueChip.menu', "Restart"),
 			className: 'volt-agent-terminal-menu',
+			// Retry and stop are opposite answers: a divider between them, as between the git menu's groups.
 			sections: [{
 				id: 'rescue',
 				title: thread.rescue!.error,
 				items: [
 					{ id: 'now', label: localize('voltAgent.rescueChip.now', "Retry now"), subtitle: localize('voltAgent.rescueChip.nowDetail', "Restart the chat now instead of waiting"), icon: Codicon.debugContinue, data: 'now' },
+				],
+			}, {
+				id: 'rescueStop',
+				items: [
 					{ id: 'stop', label: localize('voltAgent.rescueChip.stop', "Stop retrying"), subtitle: localize('voltAgent.rescueChip.stopDetail', "The chat waits for you instead"), icon: Codicon.circleSlash, data: 'stop' },
 				],
 			}],
