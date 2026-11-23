@@ -2841,11 +2841,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	 * A chat with no project runs in a folder of its own, made on its first send. True while
 	 * that folder is being made; the send runs again once the chat is bound to it.
 	 */
-	private startInScratchFolder(): boolean {
+	private startInScratchFolder(agentText = this.readComposer().agentText, then: () => void = () => this.send()): boolean {
 		if (this.editingQueueHere || !agentSessionNeedsScratch(this.sessionContext, this.sessionKey, this.history.get(this.sessionKey), this.messages.length > 0)) {
 			return false;
 		}
-		const { agentText } = this.readComposer();
 		if (!agentText) {
 			return false;
 		}
@@ -2855,7 +2854,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.makingScratchFolder = false;
 			this.updateSendButton();
 			if (project && !this._store.isDisposed) {
-				this.send();
+				then();
 			}
 		});
 		return true;
@@ -6536,6 +6535,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.ensureInputEditor();
 		if (this.isStreaming()) {
 			this.enqueuePrompt(value, display);
+			return;
+		}
+		// A prompt sent from outside the composer (the browser's Message Volt, thread_send) into a chat
+		// with no project gets the chat's own folder first, as the composer's Send does: an agent needs
+		// an absolute working folder (LeulAria/volt#82).
+		if (this.startInScratchFolder(value, () => this.dispatchPrompt(value, display))) {
 			return;
 		}
 		this.dispatchPrompt(value, display);

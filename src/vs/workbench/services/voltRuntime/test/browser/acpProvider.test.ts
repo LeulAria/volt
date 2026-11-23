@@ -18,7 +18,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IAccessDecision } from '../../common/access/accessTypes.js';
 import { presetRules } from '../../common/access/accessPresets.js';
 import { compilePolicy } from '../../common/access/policyCompiler.js';
-import { AcpAgentProvider, acceptedMcpServers, configValueIsCurrent, isTitleFromLead, isVoltHostToolPermission } from '../../browser/agents/acpProvider.js';
+import { AcpAgentProvider, acceptedMcpServers, acpSessionCwd, configValueIsCurrent, isTitleFromLead, isVoltHostToolPermission } from '../../browser/agents/acpProvider.js';
 import { IVoltEvent } from '../../common/events.js';
 import { ACP_IDLE_TIMINGS } from '../../common/harness/acpStall.js';
 import { isAcpTurnRestartable } from '../../common/harness/sessionRetry.js';
@@ -1065,5 +1065,23 @@ suite('ACP permission prompts for Volt\'s own tools', () => {
 		for (const title of ['mcp__github__code_nav', 'code_nav', 'Bash', 'mcp__volt__code_action', 'mcp__volt__terminal_start', 'mcp__volt__app_open']) {
 			assert.strictEqual(isVoltHostToolPermission(prompt(title)), false, title);
 		}
+	});
+});
+
+suite('ACP session folder (LeulAria/volt#82)', () => {
+
+	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('a chat never opens a session on an empty or relative folder', () => {
+		const project = isWindows ? 'C:\\work\\app' : '/work/app';
+		assert.strictEqual(acpSessionCwd(project, false), project);
+		assert.strictEqual(acpSessionCwd('', false), undefined);
+		assert.strictEqual(acpSessionCwd(undefined, false), undefined);
+		assert.strictEqual(acpSessionCwd('relative/app', false), undefined);
+	});
+
+	test('neutral work with no folder runs in /tmp, never on an empty folder', () => {
+		assert.strictEqual(acpSessionCwd(undefined, true), isWindows ? undefined : '/tmp');
+		assert.strictEqual(acpSessionCwd('', true), isWindows ? undefined : '/tmp');
 	});
 });

@@ -33,6 +33,7 @@ import { IVoltExecContext, IVoltSandboxEvent, IVoltStdioService } from '../../..
 import { voltExec } from '../../common/execContext.js';
 import { codexSandboxValue, IVoltSandboxRequest, loopbackPort, sandboxLaunchKey, sandboxStrategy, SandboxStrategy } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { isMacintosh, isWindows } from '../../../../../base/common/platform.js';
+import { isAbsolute } from '../../../../../base/common/path.js';
 import { isVoltHostTool, IVoltHostToolService, IVoltMcpServer, SUBAGENT_HOST_TOOL_GROUPS, VoltHostToolGroup } from '../../common/hostTools.js';
 import { isVoltReadOnlyHostTool } from '../../common/hostToolSandbox.js';
 import { AgentQuestionDraft, cursorAskQuestionResult, elicitationResult, elicitationToQuestions, IAgentQuestionResponse, parseQuestionDraft } from '../../common/questions.js';
@@ -978,7 +979,12 @@ export class AcpAgentProvider implements IAgentProvider {
 		const step = () => steps.push(Date.now());
 		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
 		step();
-		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
+		const cwd = acpSessionCwd(req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath, !!req.textOnly);
+		if (!cwd) {
+			// ACP agents refuse a session without an absolute folder ("Invalid params: `cwd` must be an
+			// absolute path"): say what is missing instead (LeulAria/volt#82).
+			throw new Error('This chat has no project folder. Open a folder or start the chat in a project, then send again.');
+		}
 		const env = cliAgentDefinition(this.id)?.acpEnv;
 		const settings = req.sandbox?.settings;
 		if (settings && settings.level !== 'off' && sandboxStrategy(this.id, settings.level, this.sandboxPlatform()) === 'none') {
@@ -1060,11 +1066,11 @@ export class AcpAgentProvider implements IAgentProvider {
 					throw new Error('the agent cannot resume sessions');
 				}
 				const meta = this.sessionMeta(req, voltAsks, lazyToolsPlugin);
-				const resumed = await client.request<Partial<ISessionNewResponse>>('session/resume', { sessionId: resume, cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
+				const resumed = await client.request<Partial<ISessionNewResponse>>('session/resume', { sessionId: resume, cwd, mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 				created = { ...resumed, sessionId: resumed?.sessionId ?? resume };
 			} else {
 				const meta = this.sessionMeta(req, voltAsks, lazyToolsPlugin);
-				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
+				created = await client.request<ISessionNewResponse>('session/new', { cwd, mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 			}
 			step();
 		} catch (err) {
@@ -1556,7 +1562,7 @@ export class AcpAgentProvider implements IAgentProvider {
 			throw new Error(`${command} is not installed`);
 		}
 		const launch = await this.launchFor(profile, profile.args?.length ? [...profile.args] : [...this.defaultArgs]);
-		const cwd = profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
+		const cwd = acpSessionCwd(profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath, true);
 		// For no chat: Volt asks what the agent offers. What the CLI loads from its own state is the agent state overlay's (B-05).
 		const processId = await this.stdio.spawn({ command: launch.command, args: launch.args, cwd, ...voltExec('probe') });
 		const client = new AcpJsonRpcClient(this.stdio, processId);
@@ -2837,4 +2843,16 @@ function formatQuiet(ms: number): string {
 		return `${seconds} s`;
 	}
 	return `${Math.round(seconds / 60)} min`;
+}
+
+/**
+ * The folder an ACP session opens in: ACP requires an absolute path. `neutral` work (a text-only
+ * run, a probe) reads no project, so with no folder it runs in `/tmp`, as Volt's own prompts do;
+ * a chat with no absolute folder gets undefined and is refused with a reason.
+ */
+export function acpSessionCwd(cwd: string | undefined, neutral: boolean): string | undefined {
+	if (cwd && isAbsolute(cwd)) {
+		return cwd;
+	}
+	return neutral && !isWindows ? '/tmp' : undefined;
 }
