@@ -14,7 +14,8 @@ import { IVoltHostToolService } from '../../common/hostTools.js';
 import { IVoltTool } from '../../common/tools/tool.js';
 import { createBrowserTools } from './browserTool.js';
 import { createCodeIndexNav } from './codeIndexNav.js';
-import { createCodeTools, ICodeIntelHost } from './codeTools.js';
+import { CodeEditWriter, createCodeTools, ICodeIntelHost, ICodeNavIndex } from './codeTools.js';
+import { confineCodeIntel, ICodeIntelRules } from './codeIntelConfinement.js';
 import { withEditDiagnostics } from './editDiagnostics.js';
 import { createFileTools, IFileToolHost, IToolDocuments, writeComputedEdit } from './fileTools.js';
 import { fileToolSandbox } from './sandboxedFiles.js';
@@ -70,20 +71,43 @@ export function createBuiltinTools(services: IBuiltinToolServices): IVoltTool[] 
 		sandbox,
 	};
 	const codeIntel = services.codeIntel;
+	// A sandboxed chat's language-server and code-index answers are cut to what its sandbox may read, and a
+	// language-server edit is refused whole unless every file it changes is one the sandbox lets it write:
+	// the rule the MCP code tools other agents call apply (B-15, DEV-SBX-12, 13, 16), judged at each call.
+	const codeRules = (): ICodeIntelRules | undefined => {
+		const confined = sandbox();
+		return confined && {
+			readRefusal: path => confined.refusal(URI.file(path), 'read'),
+			writeRefusal: path => confined.refusal(URI.file(path), 'write'),
+		};
+	};
+	const nav = services.codeIndex ? createCodeIndexNav(services.codeIndex) : undefined;
+	// Language server edits are written like edit_file's: open buffers, ledger, change set (race-free for a sandboxed chat).
+	const writeEdit: CodeEditWriter = (change, ctx) => writeComputedEdit(files, change.uri, change.before, change.after, ctx);
+	const codeTools = (host: ICodeIntelHost, index: ICodeNavIndex | undefined) => createCodeTools(host, services.root, index, writeEdit);
+	const diagnosticsHost = (host: ICodeIntelHost): ICodeIntelHost => {
+		const rules = codeRules();
+		return rules ? confineCodeIntel(host, undefined, rules).host : host;
+	};
 	return [
 		// With language servers, writes answer with the file's errors (no extra diagnostics turn).
-		...createFileTools(files).map(tool => codeIntel && (tool.name === 'edit_file' || tool.name === 'write_file') ? withEditDiagnostics(tool, codeIntel, services.root) : tool),
+		...createFileTools(files).map(tool => codeIntel && (tool.name === 'edit_file' || tool.name === 'write_file') ? withEditDiagnostics(tool, () => diagnosticsHost(codeIntel), services.root) : tool),
 		...createSearchTools(services.search, services.root, () => {
 			const confined = sandbox();
 			return confined ? { readRefusal: path => confined.refusal(URI.file(path), 'read') } : undefined;
 		}),
-		...(services.codeIntel ? createCodeTools(
-			services.codeIntel,
-			services.root,
-			services.codeIndex ? createCodeIndexNav(services.codeIndex) : undefined,
-			// Language server edits are written like edit_file's: open buffers, ledger, change set.
-			(change, ctx) => writeComputedEdit(files, change.uri, change.before, change.after, ctx),
-		) : []),
+		...(codeIntel ? codeTools(codeIntel, nav).map((tool): IVoltTool => ({
+			...tool,
+			execute: (args, ctx) => {
+				const rules = codeRules();
+				if (!rules) {
+					return tool.execute(args, ctx);
+				}
+				const confined = confineCodeIntel(codeIntel, nav, rules);
+				const same = codeTools(confined.host, confined.nav).find(candidate => candidate.name === tool.name);
+				return same ? same.execute(args, ctx) : Promise.resolve({ callId: '', name: tool.name, kind: tool.kind, text: `${tool.name} is not available in this sandboxed chat.`, isError: true });
+			},
+		})) : []),
 		...createShellTools({ stdio: services.stdio, root: services.root, spillDir: services.spillDir, onLog: services.onLog, hostTools: services.hostTools, rtk: services.rtk, rtkExclusions: services.rtkExclusions, exec: services.exec }),
 		...createTerminalTools(services.hostTools),
 		...createIdeTools(services.hostTools),

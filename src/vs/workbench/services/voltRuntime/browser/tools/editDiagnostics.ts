@@ -20,12 +20,14 @@ const MAX_LISTED = 6;
  * language servers on the user's buffers: a type error shows in the edit's own result instead of
  * a turn later, and a clean file says so, so no separate `diagnostics` call is needed.
  */
-export function withEditDiagnostics(tool: IVoltTool, host: ICodeIntelHost, root: () => URI | undefined): IVoltTool {
+export function withEditDiagnostics(tool: IVoltTool, codeIntel: ICodeIntelHost | (() => ICodeIntelHost), root: () => URI | undefined): IVoltTool {
 	return {
 		...tool,
 		description: `${tool.description} The result ends with the errors the language server reports in the file after the write.`,
 		execute: async (args, ctx) => {
 			const result = await tool.execute(args, ctx);
+			// A function: the chat's host at this call (a sandboxed chat's answers only with files it may read).
+			const host = typeof codeIntel === 'function' ? codeIntel() : codeIntel;
 			const base = root();
 			const uri = resolveWorkspaceUri(base, pickString(args, 'path', 'file', 'file_path'));
 			if (result.isError || !uri || ctx.signal.aborted || !host.lspAllowed(uri)) {
