@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { findLastIdx } from '../../../../../base/common/arraysFind.js';
 import type { TestReportFormat } from './testAdapter.js';
 
 /** A source position in a failure's stack (path as the runner printed it: absolute or relative). */
@@ -281,7 +282,7 @@ export function parseXml(raw: string): IXmlNode {
 			top.text += match[1];
 		} else if (match[2]) {
 			// Close up to the matching open element; a stray close tag is ignored.
-			const index = stack.findLastIndex(node => node.name === match[2]);
+			const index = findLastIdx(stack, node => node.name === match[2]);
 			if (index > 0) {
 				stack.length = index;
 			}
@@ -340,7 +341,7 @@ function pytestRef(classname: string, name: string, file: string | undefined): I
 		moduleLength = file.replace(/\\/g, '/').replace(/\.py$/, '').split('/').length;
 	} else {
 		// Without the file attribute: the module ends at its test_ part, else where the class names start.
-		const testPart = parts.findLastIndex(part => /^test_|_test$/.test(part));
+		const testPart = findLastIdx(parts, part => /^test_|_test$/.test(part));
 		const firstClass = parts.findIndex(part => /^[A-Z]/.test(part));
 		moduleLength = testPart >= 0 ? testPart + 1 : firstClass >= 0 ? firstClass : parts.length;
 	}
