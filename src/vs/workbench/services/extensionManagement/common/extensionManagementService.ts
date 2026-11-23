@@ -30,7 +30,8 @@ import Severity from '../../../../base/common/severity.js';
 import { IUserDataSyncEnablementService, SyncResource } from '../../../../platform/userDataSync/common/userDataSync.js';
 import { Promises } from '../../../../base/common/async.js';
 import { IWorkspaceTrustRequestService, WorkspaceTrustRequestButton } from '../../../../platform/workspace/common/workspaceTrust.js';
-import { voltReviewInstall } from './voltInstallReview.js';
+import { voltApproveHeldUpdate, voltReviewInstall, voltWithHeldUpdateReview } from './voltInstallReview.js';
+import { parseHeldUpdate } from '../../../../platform/extensionManagement/common/voltExtensionLock.js';
 import { IExtensionManifestPropertiesService } from '../../extensions/common/extensionManifestPropertiesService.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
@@ -442,7 +443,8 @@ export class ExtensionManagementService extends CommontExtensionManagementServic
 		}
 
 		installOptions = { ...(installOptions || {}), isApplicationScoped: extension.isApplicationScoped };
-		return Promises.settled(servers.map(server => server.extensionManagementService.installFromGallery(gallery, installOptions))).then(([local]) => local);
+		// Volt (H.10): an update held for the user (publisher, signature, capabilities, code) is asked about, then applied only if approved.
+		return voltWithHeldUpdateReview(installOptions, options => Promises.settled(servers.map(server => server.extensionManagementService.installFromGallery(gallery, options))).then(([local]) => local));
 	}
 
 	async installGalleryExtensions(extensions: InstallExtensionInfo[]): Promise<InstallExtensionResult[]> {
@@ -507,6 +509,22 @@ export class ExtensionManagementService extends CommontExtensionManagementServic
 			for (const result of serverResults) {
 				results.set(result.identifier.id.toLowerCase(), result);
 			}
+			// Volt (H.10): updates held for the user are asked about one by one; approved ones are installed again.
+			for (const result of serverResults) {
+				const held = result.error && parseHeldUpdate(result.error);
+				const info = held && extensions.find(({ extension }) => extension.identifier.id.toLowerCase() === result.identifier.id.toLowerCase());
+				if (!held || !info) {
+					continue;
+				}
+				try {
+					const options = await voltApproveHeldUpdate(held, info.options);
+					for (const retried of await server.extensionManagementService.installGalleryExtensions([{ extension: info.extension, options }])) {
+						results.set(retried.identifier.id.toLowerCase(), retried);
+					}
+				} catch (error) {
+					results.set(result.identifier.id.toLowerCase(), { ...result, error });
+				}
+			}
 		}));
 
 		return [...results.values()];
@@ -546,7 +564,9 @@ export class ExtensionManagementService extends CommontExtensionManagementServic
 			}
 		}
 
-		return Promises.settled(servers.map(server => server.extensionManagementService.installFromGallery(gallery, installOptions))).then(([local]) => local);
+		// Volt (H.10): an update held for the user is asked about, then applied only if approved.
+		const targets = servers;
+		return voltWithHeldUpdateReview(installOptions, approved => Promises.settled(targets.map(server => server.extensionManagementService.installFromGallery(gallery, approved))).then(([local]) => local));
 	}
 
 	async getExtensions(locations: URI[]): Promise<IResourceExtension[]> {
