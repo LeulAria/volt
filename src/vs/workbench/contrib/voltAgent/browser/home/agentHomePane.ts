@@ -1544,10 +1544,12 @@ export class AgentHomePane extends Disposable {
 		// Between the list and the footer, so the footer stays where it is.
 		this.selectBar = append(this.element, $('.volt-agent-home-select-bar.hidden'));
 		this.selectBar.setAttribute('role', 'toolbar');
-		this.selectCount = append(this.selectBar, $('span.count'));
-		this.selectCount.setAttribute('aria-live', 'polite');
 		this.selectOpen = this._register(createVoltButton(this.selectBar, 'primary'));
-		this.selectOpen.label = localize('voltAgent.home.openInNewWindow', "Open in New Window");
+		// The count rides in the button as a round badge ahead of its label, not as text beside it.
+		this.selectOpen.element.classList.add('monaco-text-button');
+		this.selectCount = append(this.selectOpen.element, $('span.volt-agent-home-select-count'));
+		this.selectCount.setAttribute('aria-hidden', 'true');
+		append(this.selectOpen.element, $('span.volt-agent-home-select-label')).textContent = localize('voltAgent.home.openInNewWindow', "Open in New Window");
 		this._register(this.selectOpen.onDidClick(() => this.openSelectedInNewWindow()));
 		const cancel = this._register(createVoltButton(this.selectBar, 'ghost'));
 		cancel.label = localize('voltAgent.home.cancelSelect', "Cancel");
@@ -2607,7 +2609,8 @@ export class AgentHomePane extends Disposable {
 	private renderSelectBar(): void {
 		const count = this.selection?.size ?? 0;
 		this.selectBar.classList.toggle('hidden', !this.selection);
-		this.selectCount.textContent = localize('voltAgent.home.selectedCount', "{0} selected", count);
+		this.selectCount.textContent = String(count);
+		this.selectOpen.element.setAttribute('aria-label', localize('voltAgent.home.openSelectedInNewWindow', "Open {0} selected in New Window", count));
 		this.selectOpen.enabled = count > 0;
 	}
 
