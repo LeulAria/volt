@@ -98,12 +98,14 @@
 	}
 }
 
-/* Light themes: dark hairlines, and the halftone's white dots turned dark. */
+/* Light themes: dark hairlines, and the white ink of Halftone and Orbit turned dark. */
 .monaco-workbench.vs .volt-agent-chat-volt {
 	color: rgb(0 0 0 / 0.3);
 }
 
-.monaco-workbench.vs .volt-agent-chat-halftone {
+.monaco-workbench.vs .volt-agent-chat-halftone,
+.monaco-workbench.vs .volt-agent-chat-orbit,
+.monaco-workbench.vs .volt-agent-chat-orbit-still {
 	filter: invert(1);
 }
 
@@ -200,6 +202,19 @@
 
 .monaco-workbench.vs.volt-chat-backdrop-in-chats .volt-agent-editor.has-turns > .volt-agent-editor-main > .volt-agent-chat-backdrop::before {
 	background-color: rgb(255 255 255 / calc(var(--volt-chat-backdrop-dim, 0.4) + (1 - var(--volt-chat-backdrop-dim, 0.4)) * 0.6));
+}
+
+/*
+ * A drawn background (Orbit, Volt, Halftone) is ink on the window's own color, so the chat column is
+ * the same color as the sidebars beside it. Dim fades the ink toward that color instead of laying
+ * black (or white) over the whole column. After the rules above, dark and light, to win over them.
+ */
+.monaco-workbench.volt-chat-backdrop-live .volt-agent-chat-backdrop::before {
+	background-color: color-mix(in srgb, var(--volt-agent-window-bg-base, #141414) calc(var(--volt-chat-backdrop-dim, 0.4) * 100%), transparent);
+}
+
+.monaco-workbench.volt-chat-backdrop-live.volt-chat-backdrop-in-chats .volt-agent-editor.has-turns > .volt-agent-editor-main > .volt-agent-chat-backdrop::before {
+	background-color: color-mix(in srgb, var(--volt-agent-window-bg-base, #141414) calc((var(--volt-chat-backdrop-dim, 0.4) + (1 - var(--volt-chat-backdrop-dim, 0.4)) * 0.6) * 100%), transparent);
 }
 
 /* A photo goes nearly white, so the chat reads as a white theme: 1 - (1 - Dim) cubed, 91% at the default. */

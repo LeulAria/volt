@@ -28,7 +28,6 @@ const MAX_PIXEL_RATIO = 2;
 /** Held this long at rest before the canvas is traded for a picture (never during a launch's first frames). */
 const ORBIT_REST_DELAY_MS = 5_000;
 
-const BACKGROUND = '#060607';
 const INK = '#ffffff';
 const FONT = '"Geist Mono", ui-monospace, Menlo, monospace';
 
@@ -153,8 +152,8 @@ interface IPoint {
 export function drawAgentChatOrbit(context: CanvasRenderingContext2D, width: number, height: number, pixelRatio: number, seconds: number, keepClear: readonly IOrbitBox[] = []): void {
 	context.setTransform(1, 0, 0, 1, 0, 0);
 	context.globalAlpha = 1;
-	context.fillStyle = BACKGROUND;
-	context.fillRect(0, 0, context.canvas.width, context.canvas.height);
+	// No fill of its own: the backdrop under the canvas is the window's color, the same as the sidebars.
+	context.clearRect(0, 0, context.canvas.width, context.canvas.height);
 
 	const scale = Math.min(height / SCENE_HEIGHT, width / SCENE_WIDTH * MAX_SIDE_CROP);
 	const offsetX = (width - SCENE_WIDTH * scale) / 2;

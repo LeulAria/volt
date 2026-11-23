@@ -1,0 +1,481 @@
+{
+	"summary": {
+		"platform": "linux",
+		"release": "6.10.14-linuxkit",
+		"backend": "bubblewrap",
+		"when": "2026-11-17T17:58:43.023Z",
+		"load": 4.29,
+		"through": 0,
+		"gap": 5,
+		"blocked": 49,
+		"other": 0
+	},
+	"rows": [
+		{
+			"id": "race-symlink-write",
+			"cls": "symlink race",
+			"what": "swap a workspace folder with a symlink to an outside folder 3000x while writing through it",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-symlink-write",
+			"cls": "symlink race",
+			"what": "swap a workspace folder with a symlink to an outside folder 3000x while writing through it",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-symlink-write",
+			"cls": "symlink race",
+			"what": "swap a workspace folder with a symlink to an outside folder 3000x while writing through it",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-symlink-read",
+			"cls": "symlink race",
+			"what": "swap a readable workspace folder with a symlink to an outside folder 3000x while reading through it",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-symlink-read",
+			"cls": "symlink race",
+			"what": "swap a readable workspace folder with a symlink to an outside folder 3000x while reading through it",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-symlink-read",
+			"cls": "symlink race",
+			"what": "swap a readable workspace folder with a symlink to an outside folder 3000x while reading through it",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-rename-protected",
+			"cls": "rename race",
+			"what": "stage a folder, then rename it onto a protected name (.vscode, .husky, .claude/skills, .git/hooks)",
+			"arm": "workspace",
+			"outcome": "GAP",
+			"detail": "filesystem.protectNew (bubblewrap guards only names that exist at launch; reported as unenforced); unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-rename-protected",
+			"cls": "rename race",
+			"what": "stage a folder, then rename it onto a protected name (.vscode, .husky, .claude/skills, .git/hooks)",
+			"arm": "agent-off",
+			"outcome": "GAP",
+			"detail": "filesystem.protectNew (bubblewrap guards only names that exist at launch; reported as unenforced); unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-rename-protected",
+			"cls": "rename race",
+			"what": "stage a folder, then rename it onto a protected name (.vscode, .husky, .claude/skills, .git/hooks)",
+			"arm": "agent-on",
+			"outcome": "GAP",
+			"detail": "filesystem.protectNew (bubblewrap guards only names that exist at launch; reported as unenforced); unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-hardlink",
+			"cls": "hardlink race",
+			"what": "hard-link files it may not write (rc file, toolchain, outside file, git config) into the workspace in a loop while they are renamed",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-hardlink",
+			"cls": "hardlink race",
+			"what": "hard-link files it may not write (rc file, toolchain, outside file, git config) into the workspace in a loop while they are renamed",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "race-hardlink",
+			"cls": "hardlink race",
+			"what": "hard-link files it may not write (rc file, toolchain, outside file, git config) into the workspace in a loop while they are renamed",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "dotdot-git-alias",
+			"cls": "path alias",
+			"what": "reach git config and hooks through a writable git folder (objects/../config, refs/../hooks, //, /./)",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "dotdot-git-alias",
+			"cls": "path alias",
+			"what": "reach git config and hooks through a writable git folder (objects/../config, refs/../hooks, //, /./)",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "dotdot-git-alias",
+			"cls": "path alias",
+			"what": "reach git config and hooks through a writable git folder (objects/../config, refs/../hooks, //, /./)",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "git-bare-repo-subfolder",
+			"cls": "git config",
+			"what": "plant a bare repository in a subfolder (HEAD, objects, refs, a config with core.worktree = . and core.fsmonitor); Volt's git extension then runs `git rev-parse` and `git status` in the folder of a file opened there",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "planted: yes; git extension env: safe.bareRepository=explicit; a plain git in that folder runs the command (the user's own terminal: their git config decides); unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "git-bare-repo-subfolder",
+			"cls": "git config",
+			"what": "plant a bare repository in a subfolder (HEAD, objects, refs, a config with core.worktree = . and core.fsmonitor); Volt's git extension then runs `git rev-parse` and `git status` in the folder of a file opened there",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "planted: yes; git extension env: safe.bareRepository=explicit; a plain git in that folder runs the command (the user's own terminal: their git config decides); unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "git-bare-repo-subfolder",
+			"cls": "git config",
+			"what": "plant a bare repository in a subfolder (HEAD, objects, refs, a config with core.worktree = . and core.fsmonitor); Volt's git extension then runs `git rev-parse` and `git status` in the folder of a file opened there",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "planted: yes; git extension env: safe.bareRepository=explicit; a plain git in that folder runs the command (the user's own terminal: their git config decides); unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "git-config-keys",
+			"cls": "git config",
+			"what": "set core.fsmonitor / core.sshCommand / core.hooksPath / alias / include.path where the host git reads them (git config, config.lock rename, worktree config, GIT_CONFIG env files)",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "git-config-keys",
+			"cls": "git config",
+			"what": "set core.fsmonitor / core.sshCommand / core.hooksPath / alias / include.path where the host git reads them (git config, config.lock rename, worktree config, GIT_CONFIG env files)",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "git-config-keys",
+			"cls": "git config",
+			"what": "set core.fsmonitor / core.sshCommand / core.hooksPath / alias / include.path where the host git reads them (git config, config.lock rename, worktree config, GIT_CONFIG env files)",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "exec-later-workspace",
+			"cls": "exec later",
+			"what": "plant workspace files that a hook manager, git or Volt (for other, unsandboxed chats) runs or trusts later",
+			"arm": "workspace",
+			"outcome": "GAP",
+			"detail": "filesystem.protectNew (none of these names existed at launch); planted: lefthook-local.yml, lefthook.yaml, .lefthook.yaml, lefthook.toml, .lefthook.toml, lefthook.json, .lefthook.json, .config/lefthook.yml, .huskyrc, .huskyrc.json, .huskyrc.js, .lintstagedrc, .lintstagedrc.json, .volt/skills/x/SKILL.md, .volt/agents/x.md, .volt/commands/x.md, .volt/rules/x.md, .volt/workflows/x.yaml, .volt/flows/x.flow, .agents/skills/x/SKILL.md, .cursor/skills/x/SKILL.md, .cursor/rules/x.mdc, .cursor/commands/x.md, .cursor/agents/x.md, .cursor/cli.json, .cursor/environment.json, .codex/skills/x/SKILL.md, .codex/agents/x.md, .gemini/skills/x/SKILL.md, .gemini/agents/x.md, .gemini/GEMINI.md, .claude/CLAUDE.md, .claude/rules/x.md, .claude/output-styles/x.md, .claude/plugins/x/plugin.json, .claude/workflows/x.md, CLAUDE.md, AGENTS.md, .mise.toml, mise.toml, .tool-versions, .kimi/settings.json, .pi/settings.json, .grok/settings.json, .fx/settings.json, .muse/settings.json, .git/rebase-merge/git-rebase-todo, .git/sequencer/todo, .git/config.worktree; unenforced: filesystem.protectNew",
+			"informational": true
+		},
+		{
+			"id": "exec-later-workspace",
+			"cls": "exec later",
+			"what": "plant workspace files that a hook manager, git or Volt (for other, unsandboxed chats) runs or trusts later",
+			"arm": "agent-off",
+			"outcome": "GAP",
+			"detail": "filesystem.protectNew (none of these names existed at launch); planted: lefthook-local.yml, lefthook.yaml, .lefthook.yaml, lefthook.toml, .lefthook.toml, lefthook.json, .lefthook.json, .config/lefthook.yml, .huskyrc, .huskyrc.json, .huskyrc.js, .lintstagedrc, .lintstagedrc.json, .volt/skills/x/SKILL.md, .volt/agents/x.md, .volt/commands/x.md, .volt/rules/x.md, .volt/workflows/x.yaml, .volt/flows/x.flow, .agents/skills/x/SKILL.md, .cursor/skills/x/SKILL.md, .cursor/rules/x.mdc, .cursor/commands/x.md, .cursor/agents/x.md, .cursor/cli.json, .cursor/environment.json, .codex/skills/x/SKILL.md, .codex/agents/x.md, .gemini/skills/x/SKILL.md, .gemini/agents/x.md, .gemini/GEMINI.md, .claude/CLAUDE.md, .claude/rules/x.md, .claude/output-styles/x.md, .claude/plugins/x/plugin.json, .claude/workflows/x.md, CLAUDE.md, AGENTS.md, .mise.toml, mise.toml, .tool-versions, .kimi/settings.json, .pi/settings.json, .grok/settings.json, .fx/settings.json, .muse/settings.json, .git/rebase-merge/git-rebase-todo, .git/sequencer/todo, .git/config.worktree; unenforced: filesystem.protectNew",
+			"informational": true
+		},
+		{
+			"id": "persist-home",
+			"cls": "persistence",
+			"what": "write 67 persistence locations in the home folder (~/.claude, ~/.volt, rc files, LaunchAgents, tool configs, PATH folders)",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "planted: none; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "persist-home",
+			"cls": "persistence",
+			"what": "write 67 persistence locations in the home folder (~/.claude, ~/.volt, rc files, LaunchAgents, tool configs, PATH folders)",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "planted: none; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "persist-home",
+			"cls": "persistence",
+			"what": "write 67 persistence locations in the home folder (~/.claude, ~/.volt, rc files, LaunchAgents, tool configs, PATH folders)",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "planted: none; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "persist-other-chat-state",
+			"cls": "persistence",
+			"what": "read or change another chat's agent-state overlay (its CLI settings and hooks)",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "persist-other-chat-state",
+			"cls": "persistence",
+			"what": "read or change another chat's agent-state overlay (its CLI settings and hooks)",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "env-inherited-hooks",
+			"cls": "env injection",
+			"what": "loader, interpreter and git hooks in the host environment (NODE_OPTIONS, DYLD_*, LD_PRELOAD, BASH_ENV, PERL5OPT, GIT_SSH_COMMAND, GIT_CONFIG_*, proxies, IPC sockets) reach the sandboxed process",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "leaked: none; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "env-inherited-hooks",
+			"cls": "env injection",
+			"what": "loader, interpreter and git hooks in the host environment (NODE_OPTIONS, DYLD_*, LD_PRELOAD, BASH_ENV, PERL5OPT, GIT_SSH_COMMAND, GIT_CONFIG_*, proxies, IPC sockets) reach the sandboxed process",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "leaked: none; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "env-inherited-hooks",
+			"cls": "env injection",
+			"what": "loader, interpreter and git hooks in the host environment (NODE_OPTIONS, DYLD_*, LD_PRELOAD, BASH_ENV, PERL5OPT, GIT_SSH_COMMAND, GIT_CONFIG_*, proxies, IPC sockets) reach the sandboxed process",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "leaked: none; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "env-request-injection",
+			"cls": "env injection",
+			"what": "a launch request that sets DYLD_INSERT_LIBRARIES / LD_PRELOAD / NODE_OPTIONS / BASH_ENV: the launcher outside the sandbox must not load them",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "no C compiler here: only the shell and node hooks are tried; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "env-request-injection",
+			"cls": "env injection",
+			"what": "a launch request that sets DYLD_INSERT_LIBRARIES / LD_PRELOAD / NODE_OPTIONS / BASH_ENV: the launcher outside the sandbox must not load them",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "no C compiler here: only the shell and node hooks are tried; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "env-request-injection",
+			"cls": "env injection",
+			"what": "a launch request that sets DYLD_INSERT_LIBRARIES / LD_PRELOAD / NODE_OPTIONS / BASH_ENV: the launcher outside the sandbox must not load them",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "no C compiler here: only the shell and node hooks are tried; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "nested-sandbox-exec",
+			"cls": "nested sandbox",
+			"what": "run sandbox-exec with an allow-all profile (and a second volt-sandbox-helper) inside the sandbox to shed the rules",
+			"arm": "-",
+			"outcome": "n/a",
+			"detail": "darwin only"
+		},
+		{
+			"id": "nested-userns",
+			"cls": "nested sandbox",
+			"what": "a nested user and mount namespace (unshare, a second bwrap): remount protected binds read-write, unmount them, mount a fresh proc, chroot to /proc/1/root",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "nested-userns",
+			"cls": "nested sandbox",
+			"what": "a nested user and mount namespace (unshare, a second bwrap): remount protected binds read-write, unmount them, mount a fresh proc, chroot to /proc/1/root",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "nested-userns",
+			"cls": "nested sandbox",
+			"what": "a nested user and mount namespace (unshare, a second bwrap): remount protected binds read-write, unmount them, mount a fresh proc, chroot to /proc/1/root",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "proc-tricks",
+			"cls": "/proc",
+			"what": "/proc/1/environ, /proc/*/root and cwd, /proc/sys writes (core_pattern), sysrq, kcore, /sys/fs/cgroup, host pids",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "proc-tricks",
+			"cls": "/proc",
+			"what": "/proc/1/environ, /proc/*/root and cwd, /proc/sys writes (core_pattern), sysrq, kcore, /sys/fs/cgroup, host pids",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "proc-tricks",
+			"cls": "/proc",
+			"what": "/proc/1/environ, /proc/*/root and cwd, /proc/sys writes (core_pattern), sysrq, kcore, /sys/fs/cgroup, host pids",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "dev-tricks",
+			"cls": "/dev",
+			"what": "device files: other terminals, raw disks and memory, a new pty pair to write a host terminal, /dev/fd of inherited descriptors, shared memory",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "FDS:0 1 2 3 ; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "dev-tricks",
+			"cls": "/dev",
+			"what": "device files: other terminals, raw disks and memory, a new pty pair to write a host terminal, /dev/fd of inherited descriptors, shared memory",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "FDS:0 1 2 3 ; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "dev-tricks",
+			"cls": "/dev",
+			"what": "device files: other terminals, raw disks and memory, a new pty pair to write a host terminal, /dev/fd of inherited descriptors, shared memory",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "FDS:0 1 2 3 ; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "net-direct",
+			"cls": "network bypass",
+			"what": "around the proxy with the proxy variables cleared: loopback over IPv4 and IPv6, UDP, a raw public address, DNS (libc, dig, host, dscacheutil)",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "net-direct",
+			"cls": "network bypass",
+			"what": "around the proxy with the proxy variables cleared: loopback over IPv4 and IPv6, UDP, a raw public address, DNS (libc, dig, host, dscacheutil)",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "net-direct",
+			"cls": "network bypass",
+			"what": "around the proxy with the proxy variables cleared: loopback over IPv4 and IPv6, UDP, a raw public address, DNS (libc, dig, host, dscacheutil)",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "net-proxy-address-forms",
+			"cls": "network bypass",
+			"what": "through a proxy that allows every host: loopback in decimal, hex, octal, short, IPv6, IPv4-mapped, trailing-dot and unspecified forms, metadata and private ranges",
+			"arm": "proxy-any",
+			"outcome": "BLOCKED",
+			"detail": "every form refused (23 refusals); unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "net-proxy-rules",
+			"cls": "network bypass",
+			"what": "the agent route: CONNECT to a host outside the rules, to an allowed host on ports 22/25/80/8080/6379, without the token, with a wrong token; Host header naming an allowed host; a second request on a kept-alive connection; absolute-URI GET to a loopback service",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "registry.npmjs.org:443 200 Connection Established | evil.example:443 403 Forbidden | registry.npmjs.org:22 403 Forbidden | registry.npmjs.org:25 403 Forbidden | registry.npmjs.org:8080 403 Forbidden | registry.npmjs.org:6379 403 Forbidden | registry.npmjs.org:80 403 Forbidden | registry.npmjs.org.evil.example:443 403 Forbidden | evil.example@registry.npmjs.org:443 400 Bad Request | registry.npmjs.org%2eevil.example:443 400 Bad Request | REGISTRY.NPMJS.ORG.:443 200 Connection Established | NOTOKEN 407 | BADTOKEN 407 | HOSTHDR 403 | ABSURI-EVIL 400 | ABSURI-LOOP 403 | KEEPALIVE 403 | SMUGGLE 400 | resolved: registry.npmjs.org; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "net-listen",
+			"cls": "network bypass",
+			"what": "listen on a port nobody granted (a backdoor other processes or devices could connect to)",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "LISTEN 39553; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "net-listen",
+			"cls": "network bypass",
+			"what": "listen on a port nobody granted (a backdoor other processes or devices could connect to)",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "LISTEN 45945; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "net-listen",
+			"cls": "network bypass",
+			"what": "listen on a port nobody granted (a backdoor other processes or devices could connect to)",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "LISTEN 45717; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "unix-sockets",
+			"cls": "unix sockets",
+			"what": "connect to unix sockets: Docker's, the ssh agent's (SSH_AUTH_SOCK), one in a writable temp folder, one in the workspace, one outside, an abstract one (Linux)",
+			"arm": "workspace",
+			"outcome": "BLOCKED",
+			"detail": "none reached; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "unix-sockets",
+			"cls": "unix sockets",
+			"what": "connect to unix sockets: Docker's, the ssh agent's (SSH_AUTH_SOCK), one in a writable temp folder, one in the workspace, one outside, an abstract one (Linux)",
+			"arm": "agent-off",
+			"outcome": "BLOCKED",
+			"detail": "none reached; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "unix-sockets",
+			"cls": "unix sockets",
+			"what": "connect to unix sockets: Docker's, the ssh agent's (SSH_AUTH_SOCK), one in a writable temp folder, one in the workspace, one outside, an abstract one (Linux)",
+			"arm": "agent-on",
+			"outcome": "BLOCKED",
+			"detail": "none reached; unenforced: filesystem.protectNew"
+		},
+		{
+			"id": "mach-debugger",
+			"cls": "mach services",
+			"what": "attach a debugger to a process outside the sandbox (task port of a same-user process) and run code in it",
+			"arm": "-",
+			"outcome": "n/a",
+			"detail": "darwin only"
+		},
+		{
+			"id": "mach-run-elsewhere",
+			"cls": "mach services",
+			"what": "ask a service outside to run something: Simulator (simctl), Shortcuts, Spotlight (file names and contents of the whole disk), cron, osascript (open, launchctl and LaunchServices are MACOS-OUT-1/2 in the suite)",
+			"arm": "-",
+			"outcome": "n/a",
+			"detail": "darwin only"
+		},
+		{
+			"id": "mach-keychain",
+			"cls": "mach services",
+			"what": "ask securityd for a keychain item (a name that does not exist: only whether the search ran is read, no item)",
+			"arm": "-",
+			"outcome": "n/a",
+			"detail": "darwin only"
+		}
+	]
+}

@@ -12,6 +12,7 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolProvider, IVoltHostToolResult, IVoltVisualRef } from '../../../../services/voltRuntime/common/hostTools.js';
+import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { architectureToElements, IArchitectureSpec, parseArchitectureSpec } from '../../common/scratchBoard/scratchArchitecture.js';
 import { describePage, IPageSpec, pageToElements, parsePageSpec } from '../../common/scratchBoard/scratchPage.js';
 import { sketchIconNames, sketchToElements } from '../../common/scratchBoard/scratchSketch.js';
@@ -26,7 +27,9 @@ import { extractMermaidSource, parseMermaidFlowchart } from '../../common/scratc
 import { ScratchScene } from '../../common/scratchBoard/scratchScene.js';
 import { AGENT_DIAGRAM_STYLE, AGENT_SCRATCH_STYLE, IScratchAgentRun, IScratchBounds, isLinear, ScratchElement } from '../../common/scratchBoard/scratchTypes.js';
 import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
+import { agentSessionToolTabs, openInChatTools } from '../workspace/agentSurfaceHost.js';
 import { ScratchBoardEditor } from './scratchBoardEditor.js';
+import { ScratchBoardEditorInput } from './scratchBoardInput.js';
 import { fetchDiagramIcons, handTextMeasure } from './scratchDiagramIcons.js';
 import type { ScratchCanvas } from './scratchCanvas.js';
 import { ScratchExporter } from './scratchExport.js';
@@ -59,7 +62,7 @@ export const SCRATCH_TOOLS: readonly IVoltHostToolInfo[] = [
 		name: SCRATCH_READ_TOOL_NAME,
 		title: 'Read Scratch board',
 		group: 'visuals',
-		description: 'Read the user\'s Scratch board (Volt\'s whiteboard): its text in reading order, shapes and connectors as a Mermaid flowchart, frames, and every element with its id, kind and position. Without boardId it reads the board this chat was started from (else the one the user has open). Read before drawing when you need to know what is already there.',
+		description: 'Read the user\'s Scratch board (Volt\'s whiteboard): its text in reading order, shapes and connectors as a Mermaid flowchart, frames, and every element with its id, kind and position. Each chat has one board: without boardId it reads that one (the Scratch tab open beside the chat or on screen, else the one the chat drew on or was started from). Read before drawing when you need to know what is already there.',
 		inputSchema: {
 			type: 'object',
 			properties: {
@@ -75,6 +78,7 @@ export const SCRATCH_TOOLS: readonly IVoltHostToolInfo[] = [
 		description: [
 			'Draw on the user\'s Scratch board (Volt\'s whiteboard; agents draw in clean lines and the system font, like a figure in a paper), beside what they sent you: a diagram from a Mermaid flowchart (laid out automatically into shapes joined by connectors that stay attached when the user moves them), a hand-lettered page (a heading, a comparison table, takeaways), free-form drawings you compose yourself from the board\'s shapes, arrows, text, strokes and icons, sticky notes, and markdown cards (headings, lists, checklists, tables, code). The drawing also shows in the chat as a picture the user can open on the board.',
 			'Everything lands in one frame named `title`, placed next to the user\'s selection, as one step the user can undo. Use it whenever the user asks you to draw, sketch, diagram, map, plan or add something on the board (or the request came from the board and a picture answers it best); keep your chat reply short, the user sees the drawing on their board.',
+			'Each chat has one board: leave out boardId and the drawing goes there (the Scratch tab open beside the chat or on screen, else the one this chat drew on before); a chat\'s first drawing starts its board and opens it beside the chat. So "put it on the board", "add it to scratch" or "write it in the scratch we opened" all mean that board, with or without /scratch. Start another board (`newBoard`) only when the user asks for a new or separate one.',
 			'To redraw, fix or restyle something already on the board (yours, another chat\'s, or a frame the user selected and asked you to redraw), pass its frameId as `replace`: the new drawing takes its place, so the board does not end up with two versions. Draw beside it only when the user asks to keep the original.',
 			'Mermaid: `flowchart LR` or `flowchart TD` only. Node shapes: A[box] B(rounded) C([pill]) D{decision} E[(database)] F((circle)) G{{hexagon}} H[/input/] I[[subroutine]]. Edges: A --> B, A -.-> B (dotted), A ==> B (thick), A -->|label| B, A <--> B. Edges draw as right-angled elbows that keep apart and go round shapes; curve one only where a curve reads better: `linkStyle 4 interpolate basis`. `subgraph Name ... end` becomes a frame. Keep labels short (2-5 words, <br/> for a second line).',
 			'Sequences (an OAuth or request flow, a user journey) are flowcharts too: one node per step in order, with numbered edge labels ("1. redirect"), and the actors as subgraphs if it helps.',
@@ -246,7 +250,8 @@ export const SCRATCH_TOOLS: readonly IVoltHostToolInfo[] = [
 					items: { type: 'string' },
 				},
 				replace: { type: 'string', description: 'The frameId of a frame to redraw in place (from scratch_read, the context the user sent, or an earlier scratch_draw).' },
-				boardId: { type: 'string', description: 'Usually leave it out: the board this chat came from.' },
+				boardId: { type: 'string', description: 'Usually leave it out: the drawing goes on this chat\'s board. Pass one only for a board the user named or attached with @.' },
+				newBoard: { type: 'boolean', description: 'Start a new board for this chat and draw there; it becomes the chat\'s board. Only when the user asks for a new or separate board.' },
 			},
 			required: ['title'],
 		},
@@ -269,7 +274,8 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 		@IEditorService private readonly editorService: IEditorService,
 		@IScratchSessionLinks private readonly links: IScratchSessionLinks,
 		@IAgentHistoryService private readonly history: IAgentHistoryService,
-		@IInstantiationService instantiationService: IInstantiationService,
+		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super();
 		this.exporter = instantiationService.createInstance(ScratchExporter);
@@ -287,32 +293,100 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 		}
 	}
 
-	/** The board a call is about: the one named, else the one its chat was started from, else the one the user last opened. */
-	private async boardFor(args: Record<string, unknown>, call: IVoltHostToolCall | undefined, create = false): Promise<string> {
+	/**
+	 * The board a call is about. Each chat has one: the one named, else the Scratch tab open beside
+	 * the chat, else a board open on screen (the active tab first), else the one it drew on or was
+	 * started from. A drawing (`create`) in a chat with none, or with `newBoard`, starts the chat's
+	 * board. `started`: that board is new.
+	 */
+	private async boardFor(args: Record<string, unknown>, call: IVoltHostToolCall | undefined, create = false): Promise<{ readonly id: string; readonly started?: boolean }> {
 		await this.boards.whenReady;
 		if (typeof args.boardId === 'string' && args.boardId) {
 			if (!this.boards.getBoard(args.boardId)) {
 				throw new Error(`There is no Scratch board ${args.boardId}.`);
 			}
-			return args.boardId;
+			return { id: args.boardId };
 		}
-		const linked = call?.sessionId ? this.links.boardFor(call.sessionId) : undefined;
-		const fromChat = linked && this.boards.getBoard(linked) ? linked : call?.sessionId ? await this.boards.findBoardForSession(call.sessionId) : undefined;
-		if (fromChat) {
-			return fromChat;
+		const chatId = this.chatOf(call);
+		if (create && args.newBoard === true) {
+			return { id: await this.startBoard(chatId, args), started: true };
 		}
-		const index = this.boards.index;
-		const last = index.lastOpened && this.boards.getBoard(index.lastOpened) ? index.lastOpened : undefined;
-		const newest = [...index.boards].filter(b => !b.deleted && !b.archived).sort((a, b) => (b.edited || b.created) - (a.edited || a.created))[0]?.id;
-		const id = last ?? newest;
-		if (!id) {
-			// A chat can sketch before the user ever opened Scratch: its drawing starts their first board.
-			if (create) {
-				return this.boards.createBoard();
+		if (chatId) {
+			const candidates = [this.boardBesideChat(chatId), this.boardOnScreen(), this.links.boardFor(chatId)];
+			const id = candidates.find(candidate => this.usable(candidate)) ?? await this.boards.findBoardForSession(chatId);
+			if (id && this.usable(id)) {
+				// From now on this is the chat's board, also for its toolbar in Agents.
+				this.links.link(chatId, id);
+				return { id };
 			}
-			throw new Error('The user has no Scratch board yet. They can open one from the Scratch button beside New Chat.');
+		}
+		if (create) {
+			return { id: await this.startBoard(chatId, args), started: true };
+		}
+		const others = [...this.boards.index.boards].filter(b => !b.deleted && !b.archived).sort((a, b) => (b.edited || b.created) - (a.edited || a.created)).slice(0, 5);
+		throw new Error(`This chat has no Scratch board yet: scratch_draw starts one and opens it beside the chat.${others.length ? ` The user's other boards (pass a boardId only if they mean one of these): ${others.map(b => `"${boardDisplayTitle(b)}" (boardId ${b.id})`).join(', ')}.` : ''}`);
+	}
+
+	/** The chat a call came from (a warm spare agent runs under an alias of its chat's id). */
+	private chatOf(call: IVoltHostToolCall | undefined): string | undefined {
+		return call?.sessionId ? this.runtime.chatFor(call.sessionId) : undefined;
+	}
+
+	private usable(boardId: string | undefined): boardId is string {
+		const meta = boardId ? this.boards.getBoard(boardId) : undefined;
+		return !!meta && !meta.deleted && !meta.archived;
+	}
+
+	/** The board in the Scratch tab of the chat's right panel (a chat has at most one), shown or not. */
+	private boardBesideChat(chatId: string): string | undefined {
+		return this.scratchTabOf(chatId)?.boardId;
+	}
+
+	/** The board in a Scratch tab on screen: the active editor's first, else any visible one. */
+	private boardOnScreen(): string | undefined {
+		return [this.editorService.activeEditor, ...this.editorService.visibleEditors]
+			.find((input): input is ScratchBoardEditorInput => input instanceof ScratchBoardEditorInput && !!input.boardId)?.boardId;
+	}
+
+	private scratchTabOf(chatId: string): ScratchBoardEditorInput | undefined {
+		return agentSessionToolTabs(chatId)?.tabs.map(tab => tab.input).find((input): input is ScratchBoardEditorInput => input instanceof ScratchBoardEditorInput);
+	}
+
+	/** A new board for the chat, named after its first drawing, and linked to it. */
+	private async startBoard(chatId: string | undefined, args: Record<string, unknown>): Promise<string> {
+		const title = typeof args.title === 'string' ? args.title.trim().slice(0, 80) : '';
+		const id = await this.boards.createBoard(title ? { title } : {});
+		if (chatId) {
+			this.links.link(chatId, id);
 		}
 		return id;
+	}
+
+	/**
+	 * The chat's board comes up as the Scratch tab beside it, unless it already shows somewhere or
+	 * waits in that tab: in front when the chat is on screen, else behind its tabs for later. The
+	 * composer keeps the focus.
+	 */
+	private async openBesideChat(chatId: string, boardId: string, frameId: string): Promise<void> {
+		if (this.boardBesideChat(chatId) === boardId || this.onScreen(boardId)) {
+			return;
+		}
+		const input = this.scratchTabOf(chatId) ?? this.instantiationService.createInstance(ScratchBoardEditorInput);
+		input.boardId = boardId;
+		input.revealSessionId = chatId;
+		try {
+			const pane = await openInChatTools(input, chatId, { preserveFocus: true });
+			if (pane instanceof ScratchBoardEditor) {
+				await pane.openBoard(boardId);
+				pane.canvas?.bringIntoView([frameId]);
+			}
+		} catch {
+			// The drawing is on the board either way, and the chat's picture of it opens it.
+		}
+	}
+
+	private onScreen(boardId: string): boolean {
+		return this.editorService.visibleEditorPanes.some(pane => pane instanceof ScratchBoardEditor && pane.canvas?.model?.id === boardId);
 	}
 
 	private async read(args: Record<string, unknown>, call: IVoltHostToolCall | undefined): Promise<IVoltHostToolResult> {
@@ -321,7 +395,7 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			// Agents read before they draw: no board yet is an empty board (scratch_draw starts one), not an error.
 			return { text: 'The user has no Scratch board yet, so there is nothing on it. scratch_draw starts one.' };
 		}
-		const boardId = await this.boardFor(args, call);
+		const { id: boardId } = await this.boardFor(args, call);
 		const ref = await this.boards.acquireModel(boardId);
 		try {
 			const scene = ref.object.scene;
@@ -408,10 +482,11 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			warnings.push(...sketched.warnings);
 		}
 
-		const boardId = await this.boardFor(args, call, true);
-		// The chat drew here: its toolbar in Agents leads to this board.
-		if (call?.sessionId) {
-			this.links.link(call.sessionId, boardId);
+		const { id: boardId, started } = await this.boardFor(args, call, true);
+		const chatId = this.chatOf(call);
+		// The chat drew here: it is the chat's board now, and its toolbar in Agents leads to it.
+		if (chatId) {
+			this.links.link(chatId, boardId);
 		}
 		const ref = await this.boards.acquireModel(boardId);
 		try {
@@ -498,14 +573,14 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			// The frame, and everything in it, frames in frames included (a swimlane's steps sit in its lanes).
 			const removed = replaced ? withFrameContents(scene.getElements(), new Set([replaced.id])) : new Set<string>();
 			// A chat asked with nothing attached kept a free spot on the board: the drawing goes there.
-			const run = runOf(scene, call?.sessionId);
+			const run = runOf(scene, chatId);
 			const spot = !replaced && run && !run.elementIds.length ? run : undefined;
 			// In place stays in place while the new size fits there; a bigger drawing moves down past what it would cover.
 			const origin = replaced
 				? placeAt(scene, replaced.x, replaced.y, width, height, run?.id, removed)
 				: spot
 					? placeAt(scene, spot.bounds.x, spot.bounds.y, width, height, run?.id)
-					: placeBeside(scene, removed, anchorFor(scene, call?.sessionId), width, height, run?.id);
+					: placeBeside(scene, removed, anchorFor(scene, chatId), width, height, run?.id);
 			const dx = origin[0] + FRAME_PADDING - inner.minX;
 			const dy = origin[1] + FRAME_PADDING - inner.minY;
 			const frame = createFrame({ x: origin[0], y: origin[1], width, height, name: title }, style);
@@ -559,6 +634,9 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			});
 			await model.flush();
 			this.show(boardId, [frame.id]);
+			if (chatId) {
+				await this.openBesideChat(chatId, boardId, frame.id);
+			}
 			const image = await this.picture(scene, frame.id);
 
 			const sketched = new Set(sketchElements.map(el => el.id));
@@ -585,7 +663,7 @@ export class ScratchBoardToolProvider extends Disposable implements IVoltHostToo
 			// The picture goes in the chat too, with Open to see the drawing on its board.
 			const visual = image ? await this.publish(image, title, boardId, frame.id, replaced?.id) : undefined;
 			return {
-				text: `Drew "${title}" on the Scratch board "${boardTitle}" (${parts}), ${replaced ? 'in place of the earlier drawing' : spot ? 'in the free spot kept for it' : 'beside what the user sent'}. frameId ${frame.id}, boardId ${boardId}. ${check}${notices} ${image ? 'The image is the drawing as the user sees it: check it here (no screenshots or desktop tools needed). ' : ''}The user sees it on their board now${visual ? ' and as a picture in the chat' : ''}, and can undo it; to change it, call scratch_draw again with replace: "${frame.id}". Do not repeat the drawing in your reply.`,
+				text: `${started ? `Started this chat's Scratch board "${boardTitle}" and opened it beside the chat; later drawings in this chat go on it too. ` : ''}Drew "${title}" on the Scratch board "${boardTitle}" (${parts}), ${replaced ? 'in place of the earlier drawing' : spot ? 'in the free spot kept for it' : 'beside what the user sent'}. frameId ${frame.id}, boardId ${boardId}. ${check}${notices} ${image ? 'The image is the drawing as the user sees it: check it here (no screenshots or desktop tools needed). ' : ''}The user sees it on their board now${visual ? ' and as a picture in the chat' : ''}, and can undo it; to change it, call scratch_draw again with replace: "${frame.id}". Do not repeat the drawing in your reply.`,
 				...(image ? { image } : {}),
 				...(visual ? { visual } : {}),
 			};

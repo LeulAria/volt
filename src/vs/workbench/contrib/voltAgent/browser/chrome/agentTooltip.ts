@@ -46,6 +46,12 @@ export interface IAgentTooltipShowOptions {
 	variant?: AgentTooltipVariant;
 	/** Milliseconds the pointer must stay on the anchor before the tooltip appears. */
 	delay?: number;
+	/**
+	 * With `delay`: the wait applies only to the first anchor. While the tooltip is up, or just after
+	 * it hid ({@link WARM_WINDOW_MS}), the next anchor shows at once, so moving down a list reads
+	 * each row's card without waiting again.
+	 */
+	warm?: boolean;
 	/** A click anywhere on the tooltip runs this; it stays open while the pointer crosses to it. */
 	onClick?: () => void;
 	/**
@@ -101,11 +107,18 @@ export function formatAgentTooltipShortcut(shortcut: IAgentTooltipShortcut): str
 	return agentTooltipShortcutTokens(shortcut).join(' ');
 }
 
+/** How long after a tooltip hides the next `warm` anchor still shows at once. */
+const WARM_WINDOW_MS = 500;
+
 export class AgentTooltip extends Disposable {
 
 	readonly domNode: HTMLElement;
 
 	private showHandle: number | undefined;
+	/** When a tooltip on screen last hid: a `warm` anchor entered soon after shows at once. */
+	private hiddenAt = 0;
+	/** The pointer left the anchors' surface: the next `warm` anchor waits its delay again. */
+	private cold = false;
 	private showWindow: Window | undefined;
 	/**
 	 * The pending hide after the pointer left an anchor (room to reach a clickable card). One for
@@ -121,6 +134,8 @@ export class AgentTooltip extends Disposable {
 	private shownOptions: IAgentTooltipShowOptions | undefined;
 	/** Blocks drawn by card rows ({@link IAgentTooltipRow.render}). */
 	private readonly rendered = this._register(new DisposableStore());
+	/** Documents with the stray-pointer check ({@link watchPointer}). */
+	private readonly watchedDocuments = new WeakSet<Document>();
 
 	constructor() {
 		super();
@@ -153,6 +168,11 @@ export class AgentTooltip extends Disposable {
 	}
 
 	show(anchor: HTMLElement, rows: readonly IAgentTooltipRow[], options?: IAgentTooltipShowOptions): void {
+		// Nothing to say (the anchor's menu is open, say): no empty card.
+		if (!rows.length) {
+			this.hide();
+			return;
+		}
 		this.anchor = anchor;
 		this.shownOptions = options ?? {};
 		this.rendered.clear();
@@ -199,6 +219,7 @@ export class AgentTooltip extends Disposable {
 		}
 
 		const doc = getWindow(anchor).document;
+		this.watchPointer(doc);
 		const host = anchor.closest('.monaco-workbench') ?? doc.body;
 		if (this.domNode.parentElement !== host) {
 			host.appendChild(this.domNode);
@@ -257,7 +278,42 @@ export class AgentTooltip extends Disposable {
 		}
 	}
 
+	/**
+	 * An anchor hidden or moved under a still pointer (the composer toolbar laying out again)
+	 * never gets mouseleave, and its tooltip stayed up. Close a plain tooltip as soon as the
+	 * pointer is over anything else; ones the pointer may cross to keep their own delayed hide.
+	 */
+	private watchPointer(doc: Document): void {
+		if (this.watchedDocuments.has(doc)) {
+			return;
+		}
+		this.watchedDocuments.add(doc);
+		this._register(addDisposableListener(doc, 'mouseover', e => {
+			const anchor = this.anchor;
+			const shown = this.shownOptions;
+			if (!anchor || !shown || shown.variant === 'files' || shown.onClick || shown.interactive) {
+				return;
+			}
+			const target = e.target as Node | null;
+			if (target && (anchor.contains(target) || this.domNode.contains(target))) {
+				return;
+			}
+			this.hide();
+		}, true));
+	}
+
+	/**
+	 * The pointer left the surface whose anchors share this tooltip (a list): coming back, the first
+	 * `warm` anchor waits its full delay, however soon that is.
+	 */
+	cool(): void {
+		this.cold = true;
+	}
+
 	hide(): void {
+		if (!this.domNode.classList.contains('hidden')) {
+			this.hiddenAt = Date.now();
+		}
 		this.cancelScheduledShow();
 		this.anchor = undefined;
 		this.shownOptions = undefined;
@@ -289,15 +345,22 @@ export class AgentTooltip extends Disposable {
 		store.add(addDisposableListener(anchor, 'mouseenter', () => {
 			clearTimer();
 			this.cancelScheduledShow();
-			const delay = options?.delay ?? 0;
+			const warm = !!options?.warm && !this.cold && (!this.domNode.classList.contains('hidden') || Date.now() - this.hiddenAt < WARM_WINDOW_MS);
+			const delay = warm ? 0 : options?.delay ?? 0;
 			if (delay <= 0) {
+				this.cold = false;
 				this.show(anchor, getRows(), options);
 				return;
+			}
+			// A card still up from before the pointer left (its hide was pending) goes now: this row waits its turn.
+			if (options?.warm && !this.domNode.classList.contains('hidden')) {
+				this.hide();
 			}
 			this.anchor = anchor;
 			this.showWindow = win;
 			this.showHandle = win.setTimeout(() => {
 				this.showHandle = undefined;
+				this.cold = false;
 				this.show(anchor, getRows(), options);
 			}, delay);
 		}));

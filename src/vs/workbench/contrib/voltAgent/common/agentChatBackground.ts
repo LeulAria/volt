@@ -25,7 +25,7 @@ export const AGENT_CHAT_BACKGROUND_PIXELS_SETTING = `${AGENT_CHAT_BACKGROUND_SEC
 export const AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING = `${AGENT_CHAT_BACKGROUND_SECTION}.inConversations`;
 
 export const AGENT_CHAT_BACKGROUND_NONE = 'none';
-export const AGENT_CHAT_BACKGROUND_DEFAULT = 'orbit';
+export const AGENT_CHAT_BACKGROUND_DEFAULT = 'volt';
 export const AGENT_CHAT_BACKGROUND_DEFAULT_DIM = 55;
 export const AGENT_CHAT_BACKGROUND_MAX_DIM = 90;
 /** A drawn background is faint already: it takes this share of Dim (40% at the default). */

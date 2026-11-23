@@ -25,6 +25,7 @@ import { defaultInputBoxStyles } from '../../../../../platform/theme/browser/def
 import { boardDisplayTitle, organizeIndex } from '../../common/scratchBoard/scratchIndex.js';
 import { IScratchBoardMeta, IScratchFolder } from '../../common/scratchBoard/scratchTypes.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { IScratchBoardFiles } from './scratchBoardFiles.js';
 import { IScratchBoardService } from './scratchBoardService.js';
 import { scratchIcon, ScratchIconName } from './scratchIcons.js';
 
@@ -101,6 +102,7 @@ export class ScratchBoardSidebar extends Disposable {
 		@IContextViewService contextViewService: IContextViewService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IScratchBoardFiles private readonly files: IScratchBoardFiles,
 	) {
 		super();
 		this.element = append(parent, $('.sx-sidebar'));
@@ -441,6 +443,7 @@ export class ScratchBoardSidebar extends Disposable {
 						this.host.open(id);
 					}
 				}),
+				new Action('file', localize('voltScratch.saveAsFile', "Save as File"), undefined, true, async () => { await this.files.saveAs(b.id); }),
 				new Separator(),
 				new Action('send', localize('voltScratch.sendBoard', "Send to Agent"), undefined, true, async () => this.host.sendBoardToAgent(b.id)),
 				new Separator(),

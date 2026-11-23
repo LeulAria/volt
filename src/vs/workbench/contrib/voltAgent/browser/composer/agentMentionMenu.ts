@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, addDisposableListener, append, clearNode, EventHelper, getActiveElement, getDomNodePagePosition, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { GestureEvent } from '../../../../../base/browser/touch.js';
 import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { AnchorAlignment, AnchorPosition, IAnchor } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { HighlightedLabel } from '../../../../../base/browser/ui/highlightedlabel/highlightedLabel.js';
@@ -46,6 +47,8 @@ export interface IAgentMentionItemRow {
 	/** Right-aligned muted text: a key ("Esc"), an age ("3d") or a status ("Ready"). */
 	readonly trailing?: string;
 	readonly trailingTone?: 'error' | 'warning';
+	/** Hover text of the trailing status (why a server failed). */
+	readonly trailingTitle?: string;
 	/** Opens another list in place instead of adding context. */
 	readonly submenu?: boolean;
 	/** Not focused when the list opens (Back, Add this folder): Enter starts on the content. */
@@ -297,11 +300,20 @@ class MentionMenuView extends Disposable {
 	private readonly searchHost: HTMLElement;
 	private readonly searchInput: HTMLInputElement;
 	private search: IAgentMentionSearch | undefined;
+	/** Back, held above the list or tree so it stays put while they scroll. */
+	private readonly pinnedHost: HTMLElement;
+	private readonly pinnedStore = this._register(new DisposableStore());
+	private readonly pinnedRenderer = new ItemRenderer();
+	private pinnedHeight = 0;
+	/** Where the pointer last was over the panel: a scroll under a still pointer moves the highlight. */
+	private pointer: { readonly x: number; readonly y: number } | undefined;
+	private pointerFrame: number | undefined;
 	private readonly listHost: HTMLElement;
 	private readonly list: List<AgentMentionRow>;
 	private readonly treeHost: HTMLElement;
 	private readonly tree: AsyncDataTree<TreeInput, TreeElement>;
 	private rows: readonly AgentMentionRow[] = [];
+	private readonly rowElements = new WeakMap<HTMLElement, TreeElement>();
 	private treeContent: IAgentMentionTreeContent | undefined;
 	private mode: 'list' | 'tree' = 'list';
 
@@ -343,6 +355,7 @@ class MentionMenuView extends Disposable {
 			}
 		}));
 
+		this.pinnedHost = append(menu, $('.volt-agent-mention-pinned.hidden'));
 		this.listHost = append(menu, $('.volt-agent-mention-list'));
 		this.list = this._register(new List<AgentMentionRow>('VoltAgentMentions', this.listHost, new RowDelegate(), [
 			new ItemRenderer(),
@@ -371,15 +384,18 @@ class MentionMenuView extends Disposable {
 				this.list.setFocus([e.index]);
 			}
 		}));
-		this._register(this.list.onMouseClick(e => {
-			const row = e.index !== undefined ? this.rows[e.index] : undefined;
+		const runRow = (index: number | undefined) => {
+			const row = index !== undefined ? this.rows[index] : undefined;
 			if (row && (row.kind === 'item' || row.kind === 'file')) {
 				row.run();
 			}
-		}));
+		};
+		this._register(this.list.onMouseClick(e => runRow(e.index)));
+		// A finger's tap: the list's Gesture cancels the click it would send.
+		this._register(this.list.onTap(e => runRow(e.index)));
 
 		this.treeHost = append(menu, $('.volt-agent-mention-tree'));
-		const rowElements = new WeakMap<HTMLElement, TreeElement>();
+		const rowElements = this.rowElements;
 		this.tree = this._register(new AsyncDataTree<TreeInput, TreeElement>('VoltAgentMentionFiles', this.treeHost, new TreeDelegate(), [
 			new TreeRowRenderer(new ItemRenderer(), rowElements),
 			new TreeRowRenderer(new FileRenderer(labels, open, false), rowElements),
@@ -416,23 +432,93 @@ class MentionMenuView extends Disposable {
 				this.tree.setFocus([element]);
 			}
 		}));
-		this._register(this.tree.onMouseClick(e => {
-			const element = e.element ?? undefined;
-			// The arrow opens and closes a folder (the tree handles that); the rest of a row picks it.
-			if (e.target === TreeMouseEventTarget.Twistie) {
-				return;
-			}
+		const pickElement = (element: TreeElement | undefined) => {
 			if (element?.kind === 'entry') {
 				this.treeContent?.pick(element);
 			} else if (element && (element.kind === 'item' || element.kind === 'file')) {
 				element.run();
 			}
+		};
+		this._register(this.tree.onMouseClick(e => {
+			// The arrow opens and closes a folder (the tree handles that); the rest of a row picks it.
+			if (e.target === TreeMouseEventTarget.Twistie) {
+				return;
+			}
+			pickElement(e.element ?? undefined);
+		}));
+		// A finger's tap (the tree's Gesture cancels the click). A tap event names the tree as its
+		// target, so the arrow is found from the point the finger first touched.
+		this._register(this.tree.onTap(e => {
+			const initial = (e.browserEvent as GestureEvent).initialTarget;
+			if (isHTMLElement(initial) && initial.closest('.monaco-tl-twistie')) {
+				return;
+			}
+			pickElement(e.element ?? undefined);
 		}));
 		this._register(this.tree.onDidChangeContentHeight(() => {
 			if (this.mode === 'tree') {
 				this.layoutTree();
 			}
 		}));
+		// Like the explorer's :hover: rows sliding under a still pointer take the highlight as they
+		// pass, however fast the wheel turns (the pointer sends no move while the list scrolls).
+		for (const host of [this.listHost, this.treeHost]) {
+			this._register(addDisposableListener(host, 'mousemove', e => this.pointer = { x: e.clientX, y: e.clientY }));
+			this._register(addDisposableListener(host, 'mouseleave', () => this.pointer = undefined));
+		}
+		this._register(this.list.onDidScroll(() => this.followPointer()));
+		this._register(this.tree.onDidScroll(() => this.followPointer()));
+		this._register(toDisposable(() => {
+			if (this.pointerFrame !== undefined) {
+				getWindow(menu).cancelAnimationFrame(this.pointerFrame);
+			}
+		}));
+	}
+
+	/** After a scroll has painted, highlights the row now under the pointer. */
+	private followPointer(): void {
+		const window = getWindow(this.listHost);
+		if (!this.pointer || this.pointerFrame !== undefined) {
+			return;
+		}
+		this.pointerFrame = window.requestAnimationFrame(() => {
+			this.pointerFrame = undefined;
+			const pointer = this.pointer;
+			const target = pointer ? window.document.elementFromPoint(pointer.x, pointer.y) : null;
+			if (!isHTMLElement(target)) {
+				return;
+			}
+			if (this.mode === 'list') {
+				const row = target.closest<HTMLElement>('.monaco-list-row');
+				const index = row && this.listHost.contains(row) ? Number(row.getAttribute('data-index')) : NaN;
+				if (!isNaN(index) && isNavigable(this.rows[index]) && this.list.getFocus()[0] !== index) {
+					this.list.setFocus([index]);
+				}
+				return;
+			}
+			const contents = target.closest<HTMLElement>('.monaco-tl-contents');
+			const element = contents && this.treeHost.contains(contents) ? this.rowElements.get(contents) : undefined;
+			if (element && isNavigable(element) && this.tree.getFocus()[0] !== element) {
+				this.tree.setFocus([element]);
+			}
+		});
+	}
+
+	/** Draws Back (and any other pinned row) above the scrolling part. */
+	private renderPinned(rows: readonly AgentMentionRow[]): void {
+		this.pinnedStore.clear();
+		clearNode(this.pinnedHost);
+		this.pinnedHost.classList.toggle('hidden', !rows.length);
+		for (const row of rows) {
+			const wrap = append(this.pinnedHost, $('.volt-agent-mention-pinned-row'));
+			wrap.setAttribute('role', 'button');
+			wrap.setAttribute('aria-label', ariaLabelOf(row) ?? '');
+			this.pinnedRenderer.renderElement(row, 0, this.pinnedRenderer.renderTemplate(wrap));
+			if (row.kind === 'item') {
+				this.pinnedStore.add(addDisposableListener(wrap, 'click', () => row.run()));
+			}
+		}
+		this.pinnedHeight = rows.reduce((sum, row) => sum + heightOf(row), 0);
 	}
 
 	get searchFocused(): boolean {
@@ -472,12 +558,15 @@ class MentionMenuView extends Disposable {
 			this.mode = 'list';
 			this.treeHost.style.display = 'none';
 			this.listHost.style.display = '';
-			this.rows = content.rows;
-			this.list.splice(0, this.list.length, [...content.rows]);
-			const height = Math.min(MAX_HEIGHT, content.rows.reduce((sum, row) => sum + heightOf(row), 0));
+			// A leading Back stays above the rows instead of scrolling away with them.
+			const pinned = content.rows[0]?.kind === 'item' && content.rows[0].id === 'back' ? [content.rows[0]] : [];
+			this.renderPinned(pinned);
+			const rows = this.rows = content.rows.slice(pinned.length);
+			this.list.splice(0, this.list.length, [...rows]);
+			const height = Math.min(MAX_HEIGHT - this.pinnedHeight, rows.reduce((sum, row) => sum + heightOf(row), 0));
 			this.listHost.style.height = `${height}px`;
 			this.list.layout(height, this.width);
-			const first = firstPick(content.rows);
+			const first = firstPick(rows);
 			this.list.setFocus(first >= 0 ? [first] : []);
 			if (first >= 0) {
 				this.list.reveal(first);
@@ -490,6 +579,7 @@ class MentionMenuView extends Disposable {
 		this.treeHost.style.display = '';
 		const previous = this.treeContent;
 		this.treeContent = content.tree;
+		this.renderPinned(content.tree.top);
 		// Same project: keep the open folders and only refresh the rows around them.
 		const refresh = previous?.root.toString() === content.tree.root.toString()
 			? this.tree.updateChildren(TREE_ROOT, false)
@@ -591,7 +681,7 @@ class MentionMenuView extends Disposable {
 	}
 
 	private layoutTree(): void {
-		const height = Math.min(MAX_HEIGHT, this.tree.contentHeight);
+		const height = Math.min(MAX_HEIGHT - this.pinnedHeight, this.tree.contentHeight);
 		this.treeHost.style.height = `${height}px`;
 		this.tree.layout(height, this.width);
 		this.relayout();
@@ -642,7 +732,8 @@ class TreeDataSource implements IAsyncDataSource<TreeInput, TreeElement> {
 		}
 		if (element === TREE_ROOT) {
 			const entries = await this.entries(content, content.root);
-			return [...content.top, ...entries, ...content.bottom];
+			// The top rows (Back) are pinned above the tree, not scrolled in it.
+			return [...entries, ...content.bottom];
 		}
 		return element.kind === 'entry' ? this.entries(content, element.resource) : [];
 	}
@@ -714,6 +805,9 @@ class ItemRenderer implements IListRenderer<TreeElement, HTMLElement> {
 			trailing.textContent = element.trailing;
 			if (element.trailingTone) {
 				trailing.classList.add(element.trailingTone);
+			}
+			if (element.trailingTitle) {
+				trailing.title = element.trailingTitle;
 			}
 		}
 		if (element.submenu) {

@@ -427,7 +427,7 @@ function renderFlyout(
 			});
 			return;
 		case 'show': {
-			const first: AgentHomeShowField[] = ['status', 'updated', 'environment', 'pr'];
+			const first: AgentHomeShowField[] = ['status', 'summary', 'updated', 'environment', 'pr'];
 			const second: AgentHomeShowField[] = ['workspace', 'branch', 'model', 'machine'];
 			for (const field of first) {
 				appendCheckRow(flyout, {
@@ -679,6 +679,7 @@ function showLabel(field: AgentHomeShowField): string {
 		case 'branch': return localize('voltAgent.home.filter.branch', "Branch");
 		case 'machine': return localize('voltAgent.home.filter.machine', "Machine");
 		case 'model': return localize('voltAgent.home.filter.model', "Model");
+		case 'summary': return localize('voltAgent.home.filter.summary', "Summary");
 		default: {
 			const unexpected: never = field;
 			return unexpected;
@@ -696,6 +697,7 @@ function showIcon(field: AgentHomeShowField): ThemeIcon {
 		case 'branch': return Codicon.gitBranch;
 		case 'machine': return Codicon.deviceDesktop;
 		case 'model': return Codicon.sparkle;
+		case 'summary': return Codicon.note;
 		default: {
 			const unexpected: never = field;
 			return unexpected;

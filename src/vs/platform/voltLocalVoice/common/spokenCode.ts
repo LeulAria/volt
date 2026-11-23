@@ -7,8 +7,11 @@
  * An agent's reply as a developer would say it out loud. A speech model reads `README.md`,
  * `src/vs/agentEditor.ts`, `v1.2.3` or `a && b` letter by letter or not at all; a person says
  * "readme dot M D", "agent editor dot T S", "version one point two point three", "a and b".
- * Plain prose passes through unchanged.
+ * Numbers, dates and ranges are written out in words too: a speech model reading digits guesses,
+ * and "17 Oct" or "147" came out as "octo de" and "144 in". Plain prose passes through unchanged.
  */
+
+import { integerWords, ONES, ordinal } from './lexiconSpeech.js';
 
 /** How a file extension is said: letters for the ones nobody pronounces, the word for the rest. */
 const EXTENSIONS: Record<string, string> = {
@@ -30,6 +33,40 @@ const SHOUTED_WORDS: Record<string, string> = {
 const UNITS: Record<string, string> = {
 	ms: 'milliseconds', s: 'seconds', KB: 'kilobytes', kB: 'kilobytes', MB: 'megabytes', GB: 'gigabytes', TB: 'terabytes', px: 'pixels', fps: 'frames per second', Hz: 'hertz', kHz: 'kilohertz', x: 'times',
 };
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTH_SHORT: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11 };
+const MONTH_NAME = '(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)';
+
+/** Shorthand developers write and say in full. */
+const SHORTHAND: Record<string, string> = { e2e: 'end to end', a11y: 'accessibility', i18n: 'internationalization', l10n: 'localization', k8s: 'Kubernetes' };
+
+function monthIndex(name: string): number {
+	return MONTH_SHORT[name.slice(0, name.toLowerCase().startsWith('sept') ? 4 : 3).toLowerCase()];
+}
+
+/** "October seventeenth", and the year after it when there is one: "October seventeenth, twenty twenty six". */
+function sayDate(month: number, day: string, year?: string): string {
+	const said = `${MONTHS[month]} ${ordinal(integerWords(String(Number(day)), false)).join(' ')}`;
+	return year ? `${said}, ${integerWords(year, true).join(' ')}` : said;
+}
+
+/** `2026-10-17` as a date, when its month and day are real ones. */
+function isoDate(year: string, month: string, day: string): string | undefined {
+	const m = Number(month);
+	const d = Number(day);
+	return m >= 1 && m <= 12 && d >= 1 && d <= 31 ? sayDate(m - 1, day, year) : undefined;
+}
+
+/** A number in words: `147` "one hundred forty seven", `2026` "twenty twenty six", `3.5` "three point five". */
+function sayNumber(written: string): string {
+	const [whole, fraction] = written.split('.');
+	const words = integerWords(whole, !fraction);
+	if (fraction) {
+		words.push('point', ...[...fraction].map(digit => ONES[Number(digit)]));
+	}
+	return words.join(' ');
+}
 
 const ABBREVIATIONS: readonly [RegExp, string][] = [
 	[/\be\.g\.,?/gi, 'for example,'],
@@ -55,6 +92,23 @@ function splitName(name: string): string {
 	return words.split(' ').map(word => SHOUTED_WORDS[word] ?? (split && /^[A-Z][a-z]+$/.test(word) ? word.toLowerCase() : word)).join(' ');
 }
 
+/**
+ * A file's base name: `09-GAP-STATUS-2026-10-17` as "gap status October seventeenth, twenty twenty
+ * six". The sort number in front is not said; a name in capitals reads as words, not letters.
+ */
+function sayBaseName(name: string): string {
+	let base = name.replace(/^\d{1,3}[-_](?=[A-Za-z])/, '');
+	// `GAP-STATUS` or `MAX_RETRY` reads as words; a lone `API` stays initials. Numbers do not count.
+	const named = base.split(/[-_]+/).filter(word => word && !/^\d+$/.test(word));
+	const shouted = named.length > 1 && named.every(word => !/[a-z]/.test(word));
+	base = base.replace(/(^|[-_])(\d{4})[-_](\d{2})[-_](\d{2})(?=$|[-_])/g, (match, lead: string, year: string, month: string, day: string) => {
+		const date = isoDate(year, month, day);
+		return date ? `${lead}${date.replace(/,/g, '')}` : match;
+	});
+	const words = base.split(/[-_]+/).filter(Boolean);
+	return words.map(word => shouted && /^[A-Z]{2,}$/.test(word) ? word.toLowerCase() : splitName(word)).join(' ');
+}
+
 /** `agentEditor.test.ts` as "agent editor dot test dot T S"; `.gitignore` as "dot gitignore". */
 function sayFile(name: string): string {
 	const parts = name.split('.');
@@ -64,7 +118,7 @@ function sayFile(name: string): string {
 			continue;
 		}
 		if (index === 0) {
-			said.push(splitName(part.replace(/-/g, ' ')));
+			said.push(sayBaseName(part));
 		} else {
 			said.push(`dot ${EXTENSIONS[part.toLowerCase()] ?? splitName(part.replace(/-/g, ' '))}`);
 		}
@@ -114,6 +168,14 @@ export function spokenCode(text: string): string {
 	for (const [pattern, words] of ABBREVIATIONS) {
 		said = said.replace(pattern, words);
 	}
+	said = said.replace(/\b(e2e|a11y|i18n|l10n|k8s)\b/gi, word => SHORTHAND[word.toLowerCase()]);
+	// Dates, before their digits and dashes are read as anything else.
+	said = said.replace(/(?<![\w./-])(\d{4})-(\d{2})-(\d{2})(?![\w/-]|\.\w)/g, (match, year: string, month: string, day: string) => isoDate(year, month, day) ?? match);
+	said = said.replace(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH_NAME}\\.?(?:\\s+(\\d{4}))?\\b`, 'g'), (_match, day: string, month: string, year: string | undefined) => sayDate(monthIndex(month), day, year));
+	said = said.replace(new RegExp(`\\b${MONTH_NAME}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?!:)(?:,?\\s+(\\d{4})\\b)?`, 'g'), (_match, month: string, day: string, year: string | undefined) => sayDate(monthIndex(month), day, year));
+	// `DEC-006` as "DEC six" (the model reads capitals as initials itself); `006` en dash `008` as "six to eight".
+	said = said.replace(/\b([A-Z]{2,4})-0*(\d+)\b/g, (_match, letters: string, digits: string) => `${letters} ${digits || '0'}`);
+	said = said.replace(/(\d)\s?[\u2013\u2014]\s?0*(\d)/g, '$1 to $2');
 	// Operators, before the names around them are touched.
 	said = said
 		.replace(/\s(?:=>|->)\s/g, ' to ')
@@ -166,6 +228,19 @@ export function spokenCode(text: string): string {
 		}
 		return token;
 	});
+	// Numbers in words, last: everything above may have left digits (`1 point 2`, `9 0 3 1`, `about 56`).
+	// A number written with commas is a count, never a year: `1,200` "one thousand two hundred".
+	said = said.replace(/(?<![$\d])\b\d{1,3}(?:,\d{3})+\b(?!\.\d)/g, number => integerWords(number.replace(/,/g, ''), false).join(' '));
+	said = said.replace(/\$\d{1,3}(?:,\d{3})+/g, number => number.replace(/,/g, ''));
+	// Money as it is said: `$3.50` "three dollars and fifty cents", `$5` "five dollars".
+	said = said.replace(/\$(\d+)(?:\.(\d{1,2}))?(?![\d.]*\d)/g, (_match, whole: string, fraction: string | undefined) => {
+		const cents = fraction ? Number(fraction.padEnd(2, '0')) : 0;
+		const dollars = `${integerWords(whole, false).join(' ')} ${whole === '1' ? 'dollar' : 'dollars'}`;
+		return cents ? `${dollars} and ${integerWords(String(cents), false).join(' ')} ${cents === 1 ? 'cent' : 'cents'}` : dollars;
+	});
+	said = said.replace(/(\d)\s?%/g, '$1 percent');
+	said = said.replace(/\b(\d+)(st|nd|rd|th)\b/gi, (_match, digits: string) => ordinal(integerWords(digits, false)).join(' '));
+	said = said.replace(/(?<![\w.])(\d+(?:\.\d+)?)(?![\w]|\.\d)/g, number => sayNumber(number));
 	// What is left of markup and code punctuation.
 	said = said.replace(/[*_|\\<>{}[\]^~]+/g, ' ').replace(/\s+([,.;:!?])/g, '$1').replace(/,(?:\s*,)+/g, ',').replace(/,\s*([.;:!?])/g, '$1').replace(/([.!?]),/g, '$1').replace(/^[\s,]+/, '').replace(/[ \t]{2,}/g, ' ');
 	return said.trim();

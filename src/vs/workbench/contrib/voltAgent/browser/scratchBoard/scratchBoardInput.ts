@@ -13,6 +13,8 @@ import { IInstantiationService } from '../../../../../platform/instantiation/com
 import { registerIcon } from '../../../../../platform/theme/common/iconRegistry.js';
 import { EditorInputCapabilities, IEditorSerializer, IUntypedEditorInput } from '../../../../common/editor.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
+import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
+import { IScratchBoardService } from './scratchBoardService.js';
 
 export const OPEN_SCRATCH_BOARD_COMMAND_ID = 'workbench.action.voltScratchBoard.open';
 export const NEW_SCRATCH_BOARD_COMMAND_ID = 'workbench.action.voltScratchBoard.new';
@@ -26,7 +28,7 @@ const ScratchBoardIcon = registerIcon('volt-scratch-board-label-icon', Codicon.n
 export const SCRATCH_BOARD_EDITOR_ID = 'workbench.editor.voltScratchBoard';
 export const SCRATCH_BOARD_INPUT_ID = 'workbench.input.voltScratchBoard';
 
-/** The Scratch page: one tab for every board; the board it shows lives on the input. */
+/** The Scratch page: one tab for every board; the board it shows lives on the input, and names the tab. */
 export class ScratchBoardEditorInput extends EditorInput {
 
 	static readonly TypeID = SCRATCH_BOARD_INPUT_ID;
@@ -41,6 +43,15 @@ export class ScratchBoardEditorInput extends EditorInput {
 	/** A chat whose drawing comes into view the first time the tab shows (a tab added behind others). */
 	revealSessionId: string | undefined;
 
+	private name: string;
+
+	constructor(@IScratchBoardService private readonly boards: IScratchBoardService) {
+		super();
+		this.name = this.boardName();
+		// A rename (by hand or the generated title) shows in the tab.
+		this._register(boards.onDidChangeIndex(() => this.syncName()));
+	}
+
 	private _boardId: string | undefined;
 	get boardId(): string | undefined {
 		return this._boardId;
@@ -49,6 +60,20 @@ export class ScratchBoardEditorInput extends EditorInput {
 		if (this._boardId !== boardId) {
 			this._boardId = boardId;
 			this._onDidChangeBoard.fire();
+			this.syncName();
+		}
+	}
+
+	private boardName(): string {
+		const meta = this._boardId ? this.boards.getBoard(this._boardId) : undefined;
+		return meta && !meta.deleted ? boardDisplayTitle(meta) : localize('voltScratch.tab', "Scratch");
+	}
+
+	private syncName(): void {
+		const name = this.boardName();
+		if (name !== this.name) {
+			this.name = name;
+			this._onDidChangeLabel.fire();
 		}
 	}
 
@@ -65,7 +90,7 @@ export class ScratchBoardEditorInput extends EditorInput {
 	}
 
 	override getName(): string {
-		return localize('voltScratch.tab', "Scratch");
+		return this.name;
 	}
 
 	/** The notebook, as in the + menu; without it the tab falls back to a file icon. */

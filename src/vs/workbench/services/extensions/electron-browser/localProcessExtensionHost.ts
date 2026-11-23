@@ -10,6 +10,7 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 import * as objects from '../../../../base/common/objects.js';
 import * as platform from '../../../../base/common/platform.js';
+import { isInspectorFusedOff } from '../../../../base/common/product.js';
 import { removeDangerousEnvVariables } from '../../../../base/common/processes.js';
 import { StopWatch } from '../../../../base/common/stopwatch.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -289,7 +290,16 @@ export class NativeLocalProcessExtensionHost implements IExtensionHost {
 		this._toDispose.add(this._extensionHostProcess.onExit(({ code, signal }) => this._onExtHostProcessExit(code, signal)));
 
 		// Notify debugger that we are ready to attach to the process if we run a development extension
-		if (portNumber) {
+		if (portNumber && isInspectorFusedOff(this._productService)) {
+			// Release builds flip EnableNodeCliInspectArguments off (build/lib/fuses.ts): no inspector will listen.
+			this._logService.warn(`[LocalProcessExtensionHost]: --inspect-extensions ignored, the Node inspector is fused off in this build`);
+			if (this._isExtensionDevHost && this._isExtensionDevDebug) {
+				this._notificationService.notify({
+					severity: Severity.Warning,
+					message: nls.localize('extensionDebugFusedOff', "This build of {0} can't attach a debugger to extensions: the Node inspector is turned off in release builds. Use a development build to debug extensions.", this._productService.nameLong),
+				});
+			}
+		} else if (portNumber) {
 			if (this._isExtensionDevHost && this._isExtensionDevDebug && this._environmentService.debugExtensionHost.debugId) {
 				this._extensionHostDebugService.attachSession(this._environmentService.debugExtensionHost.debugId, portNumber);
 			}
@@ -568,7 +578,8 @@ export class NativeLocalProcessExtensionHost implements IExtensionHost {
 			return true;
 		}
 
-		if (!this._extensionHostProcess) {
+		// With the inspector fused off, SIGUSR1 terminates the extension host instead of opening a port.
+		if (!this._extensionHostProcess || isInspectorFusedOff(this._productService)) {
 			return false;
 		}
 

@@ -39,7 +39,7 @@ import { showVoltMenu } from '../ui/menu/voltMenu.js';
 import { agentToolsSessionOnScreen } from '../workspace/agentSurfaceHost.js';
 import { IAgentPullRequestService } from './agentPullRequestService.js';
 import { onDidChangePullRequestsViewSession, pullRequestsViewSession } from './agentPullRequestsViewState.js';
-import { ago, avatar, checkIcon, composeInChat, iconSpan, openPullRequest, problemText, prStateIcon, signInWithGh } from './agentPullRequestUi.js';
+import { ago, avatar, checkIcon, iconSpan, openPullRequest, problemText, prStateIcon, resolveConflictsInNewChat, signInWithGh } from './agentPullRequestUi.js';
 
 const SORT_KEY = 'volt.pullRequests.sort';
 const STATE_KEY = 'volt.pullRequests.state';
@@ -732,15 +732,14 @@ export class AgentPullRequestsViewPane extends ViewPane {
 		return button;
 	}
 
-	/** Conflicts: the chat on screen gets the resolve-conflicts prompt, as the pull request's own Resolve Conflicts does. */
+	/** Conflicts: a new chat is sent the resolve-conflicts prompt, as the pull request's own Resolve Conflicts does. */
 	private hoverFixConflicts(row: HTMLElement, pr: IVoltPullRequest): void {
 		const button = this.hoverButton(row, Codicon.warning, localize('voltPr.fixConflictsShort', "Fix Conflicts"), 'conflicts');
 		this.renderStore.add(addDisposableListener(button, 'click', async e => {
 			EventHelper.stop(e, true);
 			const prompt = buildResolveConflictsPrompt(pr);
-			const sessionId = this.sessionId();
-			const composed = !!sessionId && await this.instantiationService.invokeFunction(accessor => composeInChat(accessor, sessionId, prompt));
-			if (!composed) {
+			const started = await this.instantiationService.invokeFunction(accessor => resolveConflictsInNewChat(accessor, pr, this.sessionId()));
+			if (!started) {
 				await this.clipboardService.writeText(prompt);
 				this.notificationService.info(localize('voltPr.fixConflictsCopied', "No chat is open for #{0}; the prompt to fix its conflicts was copied.", pr.number));
 			}

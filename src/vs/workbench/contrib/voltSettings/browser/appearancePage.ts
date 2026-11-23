@@ -28,7 +28,6 @@ import { IWorkbenchColorTheme, IWorkbenchThemeService, ThemeSettings } from '../
 import { AGENT_CODE_WRAP_SETTING, AGENT_THEMED_DIFFS_SETTING, AGENT_TOOL_DENSITIES, AGENT_TOOL_DENSITY_SETTING, AgentToolDensity, readToolDensity, VOLT_REDUCE_TRANSPARENCY_SETTING, VOLT_TINT_HUE_SETTING, VOLT_TINT_INTENSITY_SETTING, VOLT_UI_FONT_FAMILY_SETTING, VOLT_WINDOW_TRANSPARENCY_SETTING } from '../../voltAgent/common/agentAppearanceSettings.js';
 import { AGENT_CHAT_BACKGROUND_DEFAULT_DIM, AGENT_CHAT_BACKGROUND_DIM_SETTING, AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING, AGENT_CHAT_BACKGROUND_MAX_DIM, AGENT_CHAT_BACKGROUND_NONE, AGENT_CHAT_BACKGROUND_PIXELS_SETTING, AGENT_CHAT_BACKGROUND_PRESETS, AGENT_CHAT_BACKGROUND_SETTING, AgentChatBackground, agentChatBackgroundDim, agentChatDrawing, resolveAgentChatBackground } from '../../voltAgent/common/agentChatBackground.js';
 import { agentChatBackgroundPresetUrl, agentChatBackgroundResource, chooseAgentChatBackground, importedAgentChatBackground, loadAgentChatBackground } from '../../voltAgent/browser/chat/agentChatBackground.js';
-import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 import { mixTint, tintAmount, tintColor } from '../common/voltTint.js';
 import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
@@ -241,36 +240,231 @@ export class AppearancePage {
 	//#region Chat Background
 
 	/**
-	 * The picture behind the chat (agentChatBackground.ts): a gallery of the built-in pictures and
-	 * your own, a button to choose your own, how much black lies over it, the pixel grid, and
-	 * whether it stays behind chats with messages.
+	 * The picture behind the chat (agentChatBackground.ts): a gallery of None, Custom (your own
+	 * picture, or a tile to upload one) and the built-in pictures, how much black lies over it,
+	 * the pixel grid, and whether it stays behind chats with messages.
 	 */
 	renderChatBackground(kit: ISettingsPageKit): void {
 		kit.sectionLabel(localize('voltSettings.chatBackground', "Chat Background"));
 		const group = kit.settingsGroup();
-		const row = kit.settingRow(
-			group,
-			localize('voltSettings.chatBackgroundPicture', "Picture"),
-			localize('voltSettings.chatBackgroundPictureDesc', "Shown behind a new chat in the agent window."),
-		);
-		row.classList.add('volt-appearance-backdrop-row');
-		const gallery = append(row, $('.volt-appearance-backdrops'));
-		gallery.setAttribute('role', 'radiogroup');
-		gallery.setAttribute('aria-label', localize('voltSettings.chatBackground', "Chat Background"));
 		let dim = this.configuration.getValue<number>(AGENT_CHAT_BACKGROUND_DIM_SETTING) ?? AGENT_CHAT_BACKGROUND_DEFAULT_DIM;
-		const tiles: { readonly background: AgentChatBackground; readonly element: HTMLElement }[] = [];
-		// Each picture's thumbnail under the black the chat lays over it, live while Dim is dragged.
+		const customLabel = localize('voltSettings.chatBackgroundCustom', "Custom");
+		const customDescription = localize('voltSettings.chatBackgroundOwnDesc', "PNG, JPEG, WebP, GIF or BMP. Volt keeps a copy, so you can move or delete the original.");
+		const pixels = () => this.configuration.getValue<boolean>(AGENT_CHAT_BACKGROUND_PIXELS_SETTING) !== false;
+
+		// What is in use, and your own picture (the one in use, else the last one chosen, so you can switch back to it).
+		let state: { readonly current: AgentChatBackground; readonly custom: string | undefined; readonly customUrl: string | undefined } = { current: { kind: 'none' }, custom: undefined, customUrl: undefined };
+		// Thumbnails under the black the chat lays over them, live while Dim is dragged: the row's and the popover's.
+		const dimmed: { readonly background: AgentChatBackground; readonly element: HTMLElement }[] = [];
 		const paintDim = () => {
-			for (const tile of tiles) {
+			for (const tile of dimmed) {
 				tile.element.style.setProperty('--volt-chat-backdrop-dim', String(agentChatBackgroundDim(dim, tile.background)));
 			}
 		};
-		const drawStore = this.store.add(new DisposableStore());
+		const paintThumb = (thumb: HTMLElement, background: AgentChatBackground, thumbnail: string | undefined) => {
+			thumb.replaceChildren();
+			thumb.className = 'thumb volt-appearance-thumb';
+			thumb.style.removeProperty('background-image');
+			if (thumbnail) {
+				thumb.classList.add('picture');
+				// A drawn background takes the plain veil; a photo goes nearly white in light themes (agentChatBackground.css).
+				thumb.classList.toggle('drawn', !!agentChatDrawing(background));
+				thumb.style.backgroundImage = `url('${CSS.escape(thumbnail)}')`;
+			} else {
+				thumb.appendChild(renderIcon(Codicon.circleSlash));
+			}
+		};
+		const thumbnailOf = (background: AgentChatBackground) => background.kind === 'preset'
+			? agentChatBackgroundPresetUrl(background.preset, true)
+			: background.kind === 'file' ? state.customUrl : undefined;
+		const labelOf = (background: AgentChatBackground) => background.kind === 'preset'
+			? background.preset.label
+			: background.kind === 'file' ? customLabel : localize('voltSettings.chatBackgroundNone', "None");
+
+		// The row shows the picture in use; a click opens every choice in a popover.
+		let trigger: HTMLButtonElement | undefined;
+		let triggerThumb: HTMLElement | undefined;
+		let triggerName: HTMLElement | undefined;
+		kit.settingRow(
+			group,
+			localize('voltSettings.chatBackgroundPicture', "Picture"),
+			localize('voltSettings.chatBackgroundPictureDesc', "Shown behind a new chat in the agent window."),
+			host => {
+				trigger = append(host, $('button.volt-appearance-backdrop-trigger')) as HTMLButtonElement;
+				trigger.type = 'button';
+				trigger.setAttribute('aria-haspopup', 'dialog');
+				trigger.setAttribute('aria-expanded', 'false');
+				triggerThumb = append(trigger, $('span.thumb'));
+				triggerName = append(trigger, $('span.name'));
+				append(trigger, $('span.chevron')).appendChild(renderIcon(Codicon.chevronDown));
+			},
+		);
+		const renderTrigger = () => {
+			if (!trigger || !triggerThumb || !triggerName) {
+				return;
+			}
+			const { current } = state;
+			paintThumb(triggerThumb, current, thumbnailOf(current));
+			triggerThumb.classList.toggle('pixels', pixels());
+			triggerName.textContent = labelOf(current);
+			trigger.setAttribute('aria-label', localize('voltSettings.chatBackgroundPictureIs', "Chat background: {0}", labelOf(current)));
+			dimmed.splice(0, dimmed.length, ...dimmed.filter(tile => tile.element !== triggerThumb), { background: current, element: triggerThumb });
+			paintDim();
+		};
+
+		// The popover: None, Custom (your picture, or a tile to upload one) and the built-in pictures.
+		let gallery: HTMLElement | undefined;
+		const tiles: HTMLElement[] = [];
+		const galleryStore = this.store.add(new DisposableStore());
+		const hide = () => {
+			if (gallery) {
+				this.contextView.hideContextView();
+			}
+		};
+		const chooseOwn = () => {
+			const window = getWindow(trigger ?? undefined);
+			hide();
+			void this.instantiationService.invokeFunction(accessor => chooseAgentChatBackground(accessor, window));
+		};
+		const renderGallery = () => {
+			if (!gallery) {
+				return;
+			}
+			galleryStore.clear();
+			gallery.replaceChildren();
+			gallery.classList.toggle('pixels', pixels());
+			tiles.length = 0;
+			dimmed.splice(0, dimmed.length, ...dimmed.filter(tile => tile.element === triggerThumb));
+			const { current, custom, customUrl } = state;
+			// Each tile sits in a cell, so a tile's own action (Replace on Custom) is a button beside it, not inside it.
+			const cell = () => append(gallery!, $('.volt-appearance-backdrop-cell'));
+			const choice = (background: AgentChatBackground, description: string | undefined, selected: boolean, value: string, host = cell()) => {
+				const label = labelOf(background);
+				const tile = append(host, $('button.volt-appearance-backdrop')) as HTMLButtonElement;
+				tile.type = 'button';
+				tile.setAttribute('role', 'radio');
+				tile.setAttribute('aria-checked', String(selected));
+				tile.setAttribute('aria-label', description ? `${label}, ${description}` : label);
+				tile.tabIndex = selected ? 0 : -1;
+				tile.classList.toggle('selected', selected);
+				const thumb = append(tile, $('span.thumb'));
+				paintThumb(thumb, background, thumbnailOf(background));
+				if (selected) {
+					append(thumb, $('span.check')).appendChild(renderIcon(Codicon.check));
+				}
+				append(tile, $('span.label')).textContent = label;
+				setAgentTooltip(tile, description);
+				galleryStore.add(addDisposableListener(tile, 'click', () => {
+					hide();
+					void this.configuration.updateValue(AGENT_CHAT_BACKGROUND_SETTING, value);
+				}));
+				tiles.push(tile);
+				dimmed.push({ background, element: thumb });
+			};
+			choice({ kind: 'none' }, undefined, current.kind === 'none', AGENT_CHAT_BACKGROUND_NONE);
+			// Custom, next to None: your own picture (Replace swaps it), or a tile to add one.
+			if (custom && customUrl) {
+				const host = cell();
+				choice({ kind: 'file', location: custom }, customDescription, current.kind === 'file', custom, host);
+				const replace = append(host, $('button.volt-appearance-backdrop-replace')) as HTMLButtonElement;
+				replace.type = 'button';
+				replace.tabIndex = -1;
+				replace.setAttribute('aria-label', localize('voltSettings.chatBackgroundReplace', "Replace Custom Picture"));
+				replace.appendChild(renderIcon(Codicon.edit));
+				append(replace, $('span')).textContent = localize('voltSettings.chatBackgroundReplaceShort', "Replace");
+				galleryStore.add(addDisposableListener(replace, 'click', chooseOwn));
+			} else {
+				const add = append(cell(), $('button.volt-appearance-backdrop.add')) as HTMLButtonElement;
+				add.type = 'button';
+				add.tabIndex = -1;
+				add.setAttribute('aria-label', localize('voltSettings.chatBackgroundAdd', "Add a custom picture, {0}", customDescription));
+				const thumb = append(add, $('span.thumb'));
+				thumb.appendChild(renderIcon(Codicon.add));
+				append(thumb, $('span.hint')).textContent = localize('voltSettings.chatBackgroundUpload', "Upload");
+				append(add, $('span.label')).textContent = customLabel;
+				setAgentTooltip(add, customDescription);
+				galleryStore.add(addDisposableListener(add, 'click', chooseOwn));
+				tiles.push(add);
+			}
+			for (const preset of AGENT_CHAT_BACKGROUND_PRESETS) {
+				choice({ kind: 'preset', preset }, preset.description, current.kind === 'preset' && current.preset.id === preset.id, preset.id);
+			}
+			// A file that could not be read selects no tile: Tab still reaches the gallery.
+			if (!tiles.some(tile => tile.tabIndex === 0)) {
+				tiles[0].tabIndex = 0;
+			}
+			paintDim();
+		};
+		const open = () => {
+			if (!trigger || gallery) {
+				hide();
+				return;
+			}
+			const anchor = trigger;
+			this.contextView.showContextView({
+				getAnchor: () => anchor,
+				anchorAlignment: AnchorAlignment.RIGHT,
+				anchorPosition: AnchorPosition.BELOW,
+				render: container => {
+					const store = new DisposableStore();
+					const panel = append(container, $('.volt-appearance-backdrop-popover'));
+					gallery = append(panel, $('.volt-appearance-backdrops'));
+					gallery.setAttribute('role', 'radiogroup');
+					gallery.setAttribute('aria-label', localize('voltSettings.chatBackground', "Chat Background"));
+					renderGallery();
+					anchor.classList.add('open');
+					anchor.setAttribute('aria-expanded', 'true');
+					// Escape closes it wherever the keyboard is (the trigger keeps it after a click).
+					store.add(addDisposableListener(getWindow(anchor).document, 'keydown', e => {
+						const event = new StandardKeyboardEvent(e);
+						if (event.equals(KeyCode.Escape)) {
+							event.preventDefault();
+							event.stopPropagation();
+							hide();
+							anchor.focus();
+						}
+					}, true));
+					// Arrow keys move along the gallery, as in any radio group; the pick waits for Enter or a click.
+					store.add(addDisposableListener(panel, 'keydown', e => {
+						const event = new StandardKeyboardEvent(e);
+						const step = event.equals(KeyCode.RightArrow) || event.equals(KeyCode.DownArrow) ? 1 : event.equals(KeyCode.LeftArrow) || event.equals(KeyCode.UpArrow) ? -1 : 0;
+						const index = tiles.findIndex(tile => tile === e.target);
+						if (!step || index < 0) {
+							return;
+						}
+						event.preventDefault();
+						tiles[(index + step + tiles.length) % tiles.length].focus();
+					}));
+					// A press anywhere else closes it (the trigger's own click toggles it).
+					store.add(addDisposableListener(getWindow(anchor).document, 'pointerdown', e => {
+						const target = e.target as Node | null;
+						if (target && !panel.contains(target) && !anchor.contains(target)) {
+							hide();
+						}
+					}, true));
+					(tiles.find(tile => tile.tabIndex === 0) ?? tiles[0])?.focus();
+					return toDisposable(() => {
+						store.dispose();
+						galleryStore.clear();
+						gallery = undefined;
+						tiles.length = 0;
+						dimmed.splice(0, dimmed.length, ...dimmed.filter(tile => tile.element === triggerThumb));
+						anchor.classList.remove('open');
+						anchor.setAttribute('aria-expanded', 'false');
+					});
+				},
+			});
+		};
+		if (trigger) {
+			this.store.add(addDisposableListener(trigger, 'click', open));
+		}
+		this.store.add(toDisposable(hide));
+
+		const urlStore = this.store.add(new DisposableStore());
 		let generation = 0;
-		const draw = async () => {
-			const drawn = ++generation;
+		const load = async () => {
+			const loaded = ++generation;
 			const current = resolveAgentChatBackground(this.configuration.getValue(AGENT_CHAT_BACKGROUND_SETTING));
-			// Your own picture: the one in use, else the last one chosen, so you can switch back to it.
 			const custom = current.kind === 'file' ? current.location : await importedAgentChatBackground(this.files, this.environment);
 			let customUrl: string | undefined;
 			if (custom) {
@@ -280,82 +474,33 @@ export class AppearancePage {
 					customUrl = undefined;
 				}
 			}
-			if (drawn !== generation || this.store.isDisposed) {
+			if (loaded !== generation || this.store.isDisposed) {
 				if (customUrl) {
 					URL.revokeObjectURL(customUrl);
 				}
 				return;
 			}
-			drawStore.clear();
+			urlStore.clear();
 			if (customUrl) {
 				const url = customUrl;
-				drawStore.add(toDisposable(() => URL.revokeObjectURL(url)));
+				urlStore.add(toDisposable(() => URL.revokeObjectURL(url)));
 			}
-			gallery.replaceChildren();
-			tiles.length = 0;
-			const choice = (background: AgentChatBackground, label: string, description: string | undefined, thumbnail: string | undefined, selected: boolean, value: string) => {
-				const tile = append(gallery, $('button.volt-appearance-backdrop')) as HTMLButtonElement;
-				tile.type = 'button';
-				tile.setAttribute('role', 'radio');
-				tile.setAttribute('aria-checked', String(selected));
-				tile.setAttribute('aria-label', description ? `${label}, ${description}` : label);
-				tile.tabIndex = selected ? 0 : -1;
-				tile.classList.toggle('selected', selected);
-				const thumb = append(tile, $('span.thumb'));
-				if (thumbnail) {
-					thumb.classList.add('picture');
-					// A drawn background takes the plain veil; a photo goes nearly white in light themes (agentChatBackground.css).
-					thumb.classList.toggle('drawn', !!agentChatDrawing(background));
-					thumb.style.backgroundImage = `url('${CSS.escape(thumbnail)}')`;
-				} else {
-					thumb.appendChild(renderIcon(Codicon.circleSlash));
-				}
-				append(tile, $('span.label')).textContent = label;
-				setAgentTooltip(tile, description);
-				drawStore.add(addDisposableListener(tile, 'click', () => void this.configuration.updateValue(AGENT_CHAT_BACKGROUND_SETTING, value)));
-				tiles.push({ background, element: tile });
-			};
-			choice({ kind: 'none' }, localize('voltSettings.chatBackgroundNone', "None"), undefined, undefined, current.kind === 'none', AGENT_CHAT_BACKGROUND_NONE);
-			for (const preset of AGENT_CHAT_BACKGROUND_PRESETS) {
-				choice({ kind: 'preset', preset }, preset.label, preset.description, agentChatBackgroundPresetUrl(preset, true), current.kind === 'preset' && current.preset.id === preset.id, preset.id);
-			}
-			if (custom && customUrl) {
-				choice({ kind: 'file', location: custom }, localize('voltSettings.chatBackgroundCustom', "Your Picture"), undefined, customUrl, current.kind === 'file', custom);
-			}
-			// A file that could not be read selects no tile: Tab still reaches the gallery.
-			if (!tiles.some(tile => tile.element.tabIndex === 0)) {
-				tiles[0].element.tabIndex = 0;
-			}
-			paintDim();
+			state = { current, custom, customUrl };
+			renderTrigger();
+			renderGallery();
 		};
-		// Arrow keys move along the gallery, as in any radio group; the pick waits for Enter or a click.
-		this.store.add(addDisposableListener(gallery, 'keydown', e => {
-			const event = new StandardKeyboardEvent(e);
-			const step = event.equals(KeyCode.RightArrow) || event.equals(KeyCode.DownArrow) ? 1 : event.equals(KeyCode.LeftArrow) || event.equals(KeyCode.UpArrow) ? -1 : 0;
-			const index = tiles.findIndex(tile => tile.element === e.target);
-			if (!step || index < 0) {
-				return;
-			}
-			event.preventDefault();
-			tiles[(index + step + tiles.length) % tiles.length].element.focus();
-		}));
 		this.store.add(this.configuration.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(AGENT_CHAT_BACKGROUND_SETTING)) {
-				void draw();
+				void load();
+			}
+			// The photos' thumbnails show the pixel grid the chat lays over them while it is on.
+			if (e.affectsConfiguration(AGENT_CHAT_BACKGROUND_PIXELS_SETTING)) {
+				renderTrigger();
+				gallery?.classList.toggle('pixels', pixels());
 			}
 		}));
-		void draw();
+		void load();
 
-		kit.settingRow(
-			group,
-			localize('voltSettings.chatBackgroundOwn', "Your Own Picture"),
-			localize('voltSettings.chatBackgroundOwnDesc', "PNG, JPEG, WebP, GIF or BMP. Volt keeps a copy, so you can move or delete the original."),
-			host => {
-				const choose = this.store.add(createVoltButton(host, 'secondary'));
-				choose.label = localize('voltSettings.chatBackgroundChoose', "Choose Image");
-				this.store.add(choose.onDidClick(() => void this.instantiationService.invokeFunction(accessor => chooseAgentChatBackground(accessor, getWindow(host)))));
-			},
-		);
 		kit.settingRow(
 			group,
 			localize('voltSettings.chatBackgroundDim', "Dim"),
@@ -374,7 +519,7 @@ export class AppearancePage {
 			},
 		);
 		this.syncedToggleRow(kit, group, localize('voltSettings.chatBackgroundPixels', "Pixel Grid"), localize('voltSettings.chatBackgroundPixelsDesc', "See a photo through a grid of square pixels (drawn backgrounds go without it)"), AGENT_CHAT_BACKGROUND_PIXELS_SETTING, true);
-		this.syncedToggleRow(kit, group, localize('voltSettings.chatBackgroundInChats', "Behind Conversations"), localize('voltSettings.chatBackgroundInChatsDesc', "Keep the picture, darker, behind chats that have messages"), AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING, false);
+		this.syncedToggleRow(kit, group, localize('voltSettings.chatBackgroundInChats', "Behind Conversations"), localize('voltSettings.chatBackgroundInChatsDesc', "Keep the picture, darker, behind chats that have messages"), AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING, true);
 	}
 
 	//#endregion

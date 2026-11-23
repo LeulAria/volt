@@ -598,6 +598,8 @@ class FileBarWidget extends Disposable implements IOverlayWidget {
 	private readonly fileNav: HTMLElement;
 	private readonly keepKeys: HTMLElement;
 	private position: IOverlayWidgetPosition | null = null;
+	/** The space the bar was last fitted to; undefined after its text changes. */
+	private fittedSpace: number | undefined;
 
 	constructor(
 		private readonly editor: ICodeEditor,
@@ -667,15 +669,32 @@ class FileBarWidget extends Disposable implements IOverlayWidget {
 		this.fileNav.classList.toggle('hidden', files.total <= 1);
 		this.fileCountEl.textContent = localize('voltAgent.edits.fileCount', "{0} of {1} Files", files.index + 1, files.total);
 		this.keepKeys.textContent = keyLabel(this.keybindingService, KEEP_FILE_ID);
+		this.fittedSpace = undefined;
 		this.layout();
 	}
 
-	/** Bottom centre of the text, above the horizontal scrollbar. */
+	/**
+	 * Bottom centre of the text, above the horizontal scrollbar. In a narrow editor the bar drops
+	 * the change counter, then the file counter, so Undo File and Keep File are never cut off.
+	 */
 	layout(): void {
-		const { contentLeft, contentWidth, verticalScrollbarWidth, height, horizontalScrollbarHeight } = this.editor.getLayoutInfo();
+		const { contentLeft, contentWidth, verticalScrollbarWidth, width: editorWidth, height, horizontalScrollbarHeight } = this.editor.getLayoutInfo();
+		const space = editorWidth - verticalScrollbarWidth - 16;
+		// Layout runs on every scroll: measure again only when the space or the text changed.
+		if (space !== this.fittedSpace) {
+			this.fittedSpace = space;
+			this.domNode.classList.remove('compact', 'tight');
+			for (const level of ['compact', 'tight']) {
+				if (getTotalWidth(this.domNode) <= space) {
+					break;
+				}
+				this.domNode.classList.add(level);
+			}
+		}
 		const width = getTotalWidth(this.domNode);
 		const barHeight = this.domNode.offsetHeight || 32;
-		const left = contentLeft + Math.max(0, (contentWidth - verticalScrollbarWidth - width) / 2);
+		const centred = contentLeft + (contentWidth - verticalScrollbarWidth - width) / 2;
+		const left = Math.max(8, Math.min(centred, editorWidth - verticalScrollbarWidth - width - 8));
 		const top = Math.max(0, height - horizontalScrollbarHeight - barHeight - 16);
 		this.position = { preference: { top, left }, stackOridinal: 2 };
 		this.editor.layoutOverlayWidget(this);

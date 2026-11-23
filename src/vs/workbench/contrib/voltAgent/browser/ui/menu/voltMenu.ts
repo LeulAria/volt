@@ -180,6 +180,8 @@ const SEPARATOR_HEIGHT = 1;
 const MAX_LIST_HEIGHT = 360;
 /** Space kept between a menu and the window's top or bottom edge. */
 const WINDOW_MARGIN = 8;
+/** Space between a menu and its trigger when the caller names none, above or below alike. */
+const DEFAULT_ANCHOR_GAP = 6;
 /** A list squeezed below this many px flips to the roomier side instead (when that side has more). */
 const MIN_FIT_HEIGHT = 160;
 const ASYNC_DEBOUNCE_MS = 80;
@@ -215,7 +217,7 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 	};
 	const anchorRect = () => {
 		const covered = options.above?.();
-		const gap = options.gap ?? 0;
+		const gap = options.gap ?? DEFAULT_ANCHOR_GAP;
 		const page = getDomNodePagePosition(options.anchor);
 		const top = covered ? Math.min(page.top, getDomNodePagePosition(covered).top) : page.top;
 		return { x: page.left, y: top - gap, width: page.width, height: page.top + page.height - top + gap * 2 };
@@ -233,9 +235,6 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 		getAnchor: () => {
 			// Read on every layout (a resize, the composer moving): refit the list to the room first.
 			widget?.fit();
-			if (options.gap === undefined && !options.above?.()) {
-				return options.anchor;
-			}
 			// Grow the anchor by the gap so the menu keeps its distance whichever side it lands on,
 			// and up over whatever sits on top of it so the menu opens above that too.
 			return anchorRect();
@@ -264,9 +263,8 @@ export function showVoltMenu<T>(contextViewService: IContextViewService, options
 				}
 			}));
 			const host = append(container, $('.volt-menu-host'));
-			if (options.gap !== undefined) {
-				host.style.marginTop = '0';
-			}
+			// The gap is in the anchor rect, on whichever side the menu lands.
+			host.style.marginTop = '0';
 			store.add(toDisposable(() => host.remove()));
 			widget = store.add(new VoltMenuWidget<T>(host, options, {
 				hide,
@@ -566,17 +564,16 @@ class VoltMenuWidget<T> extends Disposable {
 				this.hoverFlyout();
 			}
 		}));
-		this._register(this.list.onMouseClick(e => {
-			if (e.index === undefined) {
+		const activate = (index: number | undefined, target: EventTarget | null | undefined) => {
+			if (index === undefined) {
 				return;
 			}
-			const row = this.rows[e.index];
+			const row = this.rows[index];
 			if (row?.kind === 'header' && row.collapsible) {
 				this.toggleSection(row.id);
 			} else if (row?.kind === 'destination') {
 				void this.changeDestination();
 			} else if (row?.kind === 'item') {
-				const target = e.browserEvent.target;
 				const action = row.item.action;
 				if (action && isHTMLElement(target) && target.closest('.volt-menu-action')) {
 					void this.pick({ ...row.item, submenu: undefined, prompt: undefined, data: action.data, keepOpen: action.keepOpen ?? row.item.keepOpen });
@@ -584,7 +581,10 @@ class VoltMenuWidget<T> extends Disposable {
 				}
 				void this.pick(row.item);
 			}
-		}));
+		};
+		this._register(this.list.onMouseClick(e => activate(e.index, e.browserEvent.target)));
+		// A finger's tap: the list's Gesture cancels the click it would send, so a sheet's rows only lit up.
+		this._register(this.list.onTap(e => activate(e.index, e.browserEvent.initialTarget)));
 		// Clicking a row must not pull focus out of the search field.
 		this._register(addDisposableListener(this.listHost, 'mousedown', e => e.preventDefault()));
 

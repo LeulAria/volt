@@ -18,7 +18,7 @@ class NativeVoltWindowScopeService extends VoltWindowScopeService {
 		@INativeWorkbenchEnvironmentService environmentService: INativeWorkbenchEnvironmentService,
 		@IVoltWindowScopesService host: IVoltWindowScopesService,
 	) {
-		super(environmentService.window.voltScope, environmentService.window.voltScopes, host);
+		super(environmentService.window.voltScope, environmentService.window.voltScopes, host, environmentService.window.id);
 	}
 }
 

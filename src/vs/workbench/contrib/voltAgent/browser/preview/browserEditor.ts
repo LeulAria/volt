@@ -45,6 +45,7 @@ import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/ru
 import { ISandboxBrowserRules, sandboxBrowserPartition } from '../../../../../platform/voltBrowser/common/sandboxBrowser.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { BATCH_EDITS_STORAGE_KEY, IVoltAnnotationItem, VoltAnnotationsSendButton } from '../chrome/voltAnnotations.js';
+import { IVoltCommentItem, VoltCommentsPane } from '../chrome/voltCommentsPane.js';
 import { BrowserAgentComposer } from './browserComposer.js';
 import { OPEN_AGENT_SIDE_PANEL_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
@@ -59,8 +60,6 @@ import { BrowserMenuEntry, showBrowserMenu } from './browserMenu.js';
 import { browserMenuExtras } from './browserMenuExtras.js';
 import { RecordingBadge } from '../capture/recordingBadge.js';
 import { sanitizeBrowserUrl } from './localPreview.js';
-
-const BROWSER_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 /** A comment's pin on the page. Its card's composer, once opened, maps each chip to what it points at. */
 interface IPinnedBrowserComment {
@@ -527,6 +526,8 @@ const LOCAL_SERVER_RETRIES = 40;
 const LOCAL_SERVER_RETRY_MS = 750;
 /** Docked DevTools: the height the user dragged them to, and the room each side keeps. */
 const DEVTOOLS_HEIGHT_STORAGE_KEY = 'volt.browser.devtools.height';
+/** Whether sent comments keep their numbered pin on the page (off: the comments drawer still lists them). */
+const SHOW_SENT_PINS_STORAGE_KEY = 'volt.browser.showSentPins';
 const DEVTOOLS_DEFAULT_HEIGHT = 260;
 const DEVTOOLS_MIN_HEIGHT = 120;
 const DEVTOOLS_MIN_PAGE_HEIGHT = 120;
@@ -581,7 +582,13 @@ export class VoltBrowserView extends Disposable {
 	private deviceMode!: BrowserDeviceMode;
 	private loading = false;
 	private zoomFactor = 1;
-	private userAgent = BROWSER_USER_AGENT;
+	/**
+	 * A device preset's user agent, set on the page. Undefined: the page keeps Electron's own, untouched.
+	 * Google's sign-in refuses a user agent that claims to be Chrome without Chrome's other signals
+	 * ("This browser or app may not be secure"): a fixed Chrome/131 string was refused, the honest
+	 * `… Chrome/138… Electron/37…` one gets through (measured with Electron 37.6, 2026-11-19).
+	 */
+	private userAgent: string | undefined;
 	private devtoolsOpen = false;
 	/** DevTools docked under the page: a pane with its own webview that the page's DevTools draw into. */
 	private devtoolsPane: HTMLElement | undefined;
@@ -607,6 +614,13 @@ export class VoltBrowserView extends Disposable {
 	/** Area pictures already shown in their composer as an image: the message sends that one, not a second copy. */
 	private readonly picturesInComposer = new WeakSet<IBrowserCommentRef>();
 	private annotationsButton!: VoltAnnotationsSendButton;
+	/** The toolbar's comments button: opens the drawer with every comment of this tab (open, sent, resolved). */
+	private commentsButton!: HTMLButtonElement;
+	private commentsDrawer: VoltCommentsPane | undefined;
+	/** "Sent Pins": sent comments keep their pin on the page (remembered across tabs and restarts). */
+	private showSentPins: boolean;
+	/** A sent comment opened from the drawer while sent pins are hidden: its pin shows until it folds back. */
+	private revealedSentId: string | undefined;
 	private composer: BrowserAgentComposer | undefined;
 	private dock: BrowserAgentDock | undefined;
 	private errorEl!: HTMLElement;
@@ -690,6 +704,7 @@ export class VoltBrowserView extends Disposable {
 	) {
 		super();
 		this.batchEdits = storageService.getBoolean(BATCH_EDITS_STORAGE_KEY, StorageScope.PROFILE, false);
+		this.showSentPins = storageService.getBoolean(SHOW_SENT_PINS_STORAGE_KEY, StorageScope.PROFILE, false);
 		this.element = $('.volt-browser-view.parked');
 		this._register(addDisposableListener(this.element, 'pointerdown', () => this._onDidFocus.fire(), true));
 		this._register(addDisposableListener(this.element, 'focusin', () => this._onDidFocus.fire()));
@@ -952,6 +967,9 @@ export class VoltBrowserView extends Disposable {
 				}
 			},
 		}));
+		this.commentsButton = this.actionButton(actions, 'comments.hidden', localize('voltBrowser.comments', "Comments"), () => this.toggleCommentsDrawer());
+		this.commentsButton.appendChild(createAriaIcon(ARIA_ICONS.messageSquareText));
+		append(this.commentsButton, $('span.volt-browser-comments-count'));
 		this.designButton = this.actionButton(actions, 'design', localize('voltBrowser.design', "Design"), () => this.setDesignMode(!this.designMode));
 		setAgentTooltip(this.designButton, localize('voltBrowser.designMode', "Design Mode"), formatAgentTooltipShortcut({ meta: true, shift: true, key: 'D' }));
 		// Pressing the button must not take focus from the page: its open dropdown or menu would close.
@@ -1487,7 +1505,9 @@ export class VoltBrowserView extends Disposable {
 		this.applyProfile(profile);
 		webview.setAttribute('partition', profile.partition);
 		webview.setAttribute('webpreferences', 'allowRunningInsecureContent, javascript=yes');
-		webview.setAttribute('useragent', this.userAgent);
+		if (this.userAgent) {
+			webview.setAttribute('useragent', this.userAgent);
+		}
 		webview.setAttribute('src', 'about:blank');
 
 		const on = (type: string, listener: (e: Event) => void) => {
@@ -1982,6 +2002,7 @@ export class VoltBrowserView extends Disposable {
 			},
 			{ kind: 'separator' },
 			...extras.agents,
+			{ kind: 'toggle', label: localize('voltBrowser.menu.comments', "Show Comments"), checked: !!this.commentsDrawer, run: show => this.toggleCommentsDrawer(show) },
 			{ kind: 'toggle', label: localize('voltBrowser.menu.bookmarkBar', "Show Bookmark Bar"), checked: this.history.showBookmarkBar, run: show => { this.history.showBookmarkBar = show; } },
 			{ kind: 'separator' },
 			{ kind: 'header', label: localize('voltBrowser.menu.profile', "Profile: Default") },
@@ -2021,11 +2042,13 @@ export class VoltBrowserView extends Disposable {
 
 	/** Device presets send their own user agent; the page reloads so the site serves that version. */
 	private applyUserAgent(userAgent: string | undefined): void {
-		const next = userAgent ?? BROWSER_USER_AGENT;
-		if (next === this.userAgent) {
+		if (userAgent === this.userAgent) {
 			return;
 		}
-		this.userAgent = next;
+		// Back from a device: the page cannot drop an override, so it gets Electron's own user agent again
+		// (the window's: the same engine, version and tokens as the page's session).
+		const next = userAgent ?? getWindow(this.container).navigator.userAgent;
+		this.userAgent = userAgent;
 		const webview = this.webview;
 		if (!webview) {
 			return;
@@ -2508,6 +2531,8 @@ export class VoltBrowserView extends Disposable {
 		}
 		this.pagePointer = on;
 		this.overlay?.classList.toggle('page-pointer', on);
+		// Fn held: the pins, outlines, draft and design frame step aside (CSS only, so all of it is kept) until it is released.
+		this.container?.classList.toggle('fn-peek', on);
 		if (on) {
 			this.drawing = undefined;
 			this.drawBox?.classList.add('hidden');
@@ -3123,12 +3148,109 @@ export class VoltBrowserView extends Disposable {
 	private renderComments(): void {
 		this.annotationsButton.setCount(this.annotationItems().length);
 		this.syncPins();
+		this.syncCommentsDrawer();
+	}
+
+	private commentItems(): IVoltCommentItem[] {
+		return this.commentStore.list({ viewId: this.viewId }).map(comment => ({
+			id: comment.id,
+			number: comment.number,
+			where: comment.refs.map(ref => ref.label).join(', ') || comment.url,
+			text: comment.text || comment.refs.map(ref => ref.snippet ?? '').filter(Boolean).join(' · '),
+			status: comment.status,
+			picked: comment.picked,
+		}));
+	}
+
+	/** The toolbar button shows while the tab has comments (or the drawer is open); the drawer lists them. */
+	private syncCommentsDrawer(): void {
+		const items = this.commentItems();
+		const live = items.filter(item => item.status !== 'resolved').length;
+		this.commentsButton.classList.toggle('hidden', !items.length && !this.commentsDrawer);
+		this.commentsButton.classList.toggle('active', !!this.commentsDrawer);
+		const count = this.commentsButton.querySelector('.volt-browser-comments-count');
+		if (count) {
+			count.textContent = live ? String(live) : '';
+		}
+		this.commentsDrawer?.setItems(items);
+	}
+
+	private toggleCommentsDrawer(show = !this.commentsDrawer): void {
+		if (!show) {
+			const drawer = this.commentsDrawer;
+			this.commentsDrawer = undefined;
+			drawer?.element.parentElement?.remove();
+			drawer?.dispose();
+			this.syncCommentsDrawer();
+			return;
+		}
+		if (this.commentsDrawer) {
+			return;
+		}
+		const host = append(this.stage, $('.volt-browser-comments-drawer'));
+		// Clicks in the drawer are not picks on the page.
+		this._register(addDisposableListener(host, 'pointerdown', e => e.stopPropagation()));
+		const drawer = this.commentsDrawer = this.instantiationService.createInstance(VoltCommentsPane, host, {
+			listId: 'voltBrowserComments',
+			title: localize('voltBrowser.commentsTitle', "Comments"),
+			onOpen: id => this.revealComment(id),
+			onSend: ids => void this.waitForCaptures().then(() => this.sendComments(ids)),
+			onSetStatus: (id, status) => this.commentStore.update(id, { status }),
+			onDelete: id => this.commentStore.remove(id),
+			onArchiveResolved: () => this.commentStore.archiveResolved({ viewId: this.viewId }),
+			onPick: (id, picked) => this.commentStore.update(id, { picked }),
+			onResolveSent: () => this.commentStore.resolveSent({ viewId: this.viewId }),
+			onClose: () => this.toggleCommentsDrawer(false),
+			sentPins: { shown: () => this.showSentPins, set: show => this.setShowSentPins(show) },
+		});
+		this._register(drawer.onDidChangeHeight(() => this.layoutCommentsDrawer()));
+		this.syncCommentsDrawer();
+		this.layoutCommentsDrawer();
+	}
+
+	private layoutCommentsDrawer(): void {
+		const drawer = this.commentsDrawer;
+		const host = drawer?.element.parentElement;
+		if (drawer && host) {
+			drawer.fill(host.clientHeight, host.clientWidth);
+		}
+	}
+
+	private setShowSentPins(show: boolean): void {
+		if (this.showSentPins === show) {
+			return;
+		}
+		this.showSentPins = show;
+		this.storageService.store(SHOW_SENT_PINS_STORAGE_KEY, show, StorageScope.PROFILE, StorageTarget.USER);
+		this.syncPins();
+		this.syncCommentsDrawer();
+	}
+
+	/** Right-click on a pin: what to do with that comment. */
+	private showPinMenu(pin: IPinnedBrowserComment): void {
+		const comment = this.commentStore.get(pin.commentId);
+		if (!comment) {
+			return;
+		}
+		const entries: BrowserMenuEntry[] = [
+			comment.status === 'resolved'
+				? { kind: 'item', label: localize('voltBrowser.pin.reopen', "Reopen"), run: () => this.commentStore.update(comment.id, { status: 'open' }) }
+				: { kind: 'item', label: localize('voltBrowser.pin.resolve', "Resolve"), run: () => this.commentStore.update(comment.id, { status: 'resolved' }) },
+			{ kind: 'item', label: localize('voltBrowser.pin.delete', "Delete"), run: () => this.commentStore.remove(comment.id) },
+			{ kind: 'separator' },
+			{ kind: 'toggle', label: localize('voltBrowser.pin.sentPins', "Keep Sent Pins on the Page"), checked: this.showSentPins, run: show => this.setShowSentPins(show) },
+			{ kind: 'item', label: localize('voltBrowser.pin.all', "Show All Comments"), run: () => this.toggleCommentsDrawer(true) },
+		];
+		showBrowserMenu(this.contextViewService, pin.card.element, entries);
 	}
 
 	/** Pins for this page's annotations: batched ones with their outlines, sent ones as the number alone. */
 	private syncPins(): void {
 		const page = this.commentPage(this.browserInput()?.url);
-		const shown = this.commentStore.list({ viewId: this.viewId }).filter(comment => this.commentPage(comment.url) === page && comment.status !== 'resolved');
+		// Sent comments keep a pin only with "Sent Pins" on (or while one is opened from the drawer); the drawer lists them all.
+		const shown = this.commentStore.list({ viewId: this.viewId }).filter(comment => this.commentPage(comment.url) === page
+			&& comment.status !== 'resolved'
+			&& (comment.status !== 'sent' || this.showSentPins || comment.id === this.revealedSentId || this.pins.get(comment.id)?.card.expanded));
 		for (const [id, pin] of this.pins) {
 			if (!shown.some(comment => comment.id === id)) {
 				this.disposePin(pin);
@@ -3187,6 +3309,11 @@ export class VoltBrowserView extends Disposable {
 		}, () => card.expanded);
 		pin = { commentId: comment.id, card, refs: new Map(), markIds: [], bounds: { ...comment.refs[0]?.bounds ?? { x: 8, y: 8, w: 0, h: 0 } }, drag };
 		this.pins.set(comment.id, pin);
+		card.element.addEventListener('contextmenu', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.showPinMenu(pin);
+		});
 		this.overlay.appendChild(card.element);
 		getWindow(card.element).requestAnimationFrame(() => this.placeComment(pin));
 		return pin;
@@ -3227,6 +3354,11 @@ export class VoltBrowserView extends Disposable {
 
 	/** A row in the list was clicked: its page's pin opens (other pages' comments just stay listed). */
 	private revealComment(id: string): void {
+		if (!this.pins.has(id) && this.commentStore.get(id)?.status === 'sent') {
+			// Sent pins are hidden: this one shows until it folds back.
+			this.revealedSentId = id;
+			this.syncPins();
+		}
 		const pin = this.pins.get(id);
 		if (pin) {
 			this.openComment(pin);
@@ -3249,10 +3381,19 @@ export class VoltBrowserView extends Disposable {
 		const wasOpen = pin.card.expanded;
 		pin.card.collapse();
 		pin.moved = undefined;
+		const revealed = this.revealedSentId === pin.commentId;
+		if (revealed) {
+			this.revealedSentId = undefined;
+		}
 		if (wasOpen) {
 			this.savePin(pin);
 		}
-		this.placeComment(pin);
+		if (revealed) {
+			// Opened from the drawer while sent pins are hidden: folded back, it leaves the page again.
+			this.syncPins();
+		} else {
+			this.placeComment(pin);
+		}
 		this.syncDockBlocked();
 	}
 
@@ -3864,6 +4005,7 @@ export class VoltBrowserView extends Disposable {
 		for (const pin of this.pins.values()) {
 			this.placeComment(pin);
 		}
+		this.layoutCommentsDrawer();
 		this.dock?.layout();
 	}
 
@@ -4145,6 +4287,9 @@ const ARIA_ICONS = {
 	globe: {
 		circles: [{ cx: '12', cy: '12', r: '9.5' }],
 		paths: ['M12 2.5a14 14 0 0 0 0 19 14 14 0 0 0 0-19', 'M2.5 12h19'],
+	},
+	messageSquareText: {
+		paths: ['M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z', 'M13 8H7', 'M17 12H7'],
 	},
 	ellipsis: {
 		circles: [

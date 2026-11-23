@@ -61,7 +61,7 @@ const openingRepositories = new WeakMap<ICommandService, Map<string, Promise<unk
  * The path on the computer: in the browser workbench Git runs on the server and registers its
  * repositories as `vscode-remote:` URIs, while chats name their folders as `file:` paths.
  */
-function onDisk(uri: URI): URI {
+export function onDisk(uri: URI): URI {
 	return uri.scheme === Schemas.vscodeRemote ? uri.with({ scheme: Schemas.file, authority: '' }) : uri;
 }
 

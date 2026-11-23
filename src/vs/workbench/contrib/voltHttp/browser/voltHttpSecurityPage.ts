@@ -35,7 +35,7 @@ import { httpDraftKey, IVoltHttpCollections } from './voltHttpCollections.js';
 import { httpSecurityCountsText, IHttpSecurityScanState, IVoltHttpSecurity } from './voltHttpSecurity.js';
 import { IHttpToolPage, IHttpToolPageHost, IHttpToolTabState } from './voltHttpToolPages.js';
 import { createHttpAiModelButton, httpAiModelRef } from './voltHttpAiModel.js';
-import { createHttpAgentIcon, createHttpChatIcon } from './voltHttpIcons.js';
+import { createHttpAgentIcon, createHttpChatIcon, createHttpSecurityIcon } from './voltHttpIcons.js';
 import { createHttpCheck, createHttpDropdown, createHttpIconButton, decorateHttpHeadButton, renderHttpAiAnswer, renderHttpTabs, showHttpActionMenu } from './voltHttpWidgets.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
 
@@ -264,7 +264,7 @@ export class HttpSecurityPage extends Disposable implements IHttpToolPage {
 		this.element = append(parent, $('.volt-http-page.volt-http-sec'));
 
 		const head = append(this.element, $('.volt-http-sec-head'));
-		append(head, $('span.volt-http-sec-head-icon')).appendChild(renderIcon(Codicon.shield));
+		append(head, $('span.volt-http-sec-head-icon')).appendChild(createHttpSecurityIcon());
 		this.nameInput = append(head, $('input.volt-http-sec-name')) as HTMLInputElement;
 		this.nameInput.type = 'text';
 		this.nameInput.spellcheck = false;

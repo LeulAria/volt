@@ -1,0 +1,5 @@
+152a153,156
+>     if (process.env.REPLAY_DUMP) {
+>       const messages = (body as { messages?: unknown[] } | null)?.messages ?? [];
+>       appendFileSync(process.env.REPLAY_DUMP, `${JSON.stringify({ t: Date.now(), path, n: messages.length, last: messages.slice(-2) })}\n`);
+>     }

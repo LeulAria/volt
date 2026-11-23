@@ -30,7 +30,7 @@ suite('agentChatBackground', () => {
 		assert.deepStrictEqual(resolveAgentChatBackground('  '), { kind: 'none' });
 		// Not a string (a broken settings.json): the default picture.
 		const fallback = resolveAgentChatBackground(42);
-		assert.strictEqual(fallback.kind === 'preset' && fallback.preset.id, 'orbit');
+		assert.strictEqual(fallback.kind === 'preset' && fallback.preset.id, 'volt');
 	});
 
 	test('Orbit, Volt and Halftone are drawn live; pictures and files are not', () => {

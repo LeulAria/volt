@@ -88,11 +88,11 @@ function actionItem(action: AgentPlusMenuAction, modelName: string | undefined):
 		case 'video':
 			return { id: action, label: localize('voltAgent.plusVideo', "Video"), keywords: 'screen recording movie clip attach trim', icon: createVideoIcon, data };
 		case 'openFile':
-			return { id: action, label: localize('voltAgent.plusOpenFile', "Open File"), keywords: 'open file editor', icon: Codicon.file, data };
+			return { id: action, label: localize('voltAgent.plusOpenFile', "Open File"), keywords: 'open file editor', icon: createOpenFileIcon, data };
 		case 'terminal':
-			return { id: action, label: localize('voltAgent.plusTerminal', "Terminal"), keywords: 'shell', icon: Codicon.terminal, data };
+			return { id: action, label: localize('voltAgent.plusTerminal', "Terminal"), keywords: 'shell', icon: createTerminalIcon, data };
 		case 'browser':
-			return { id: action, label: localize('voltAgent.plusBrowser', "Browser"), keywords: 'preview', icon: Codicon.globe, data };
+			return { id: action, label: localize('voltAgent.plusBrowser', "Browser"), keywords: 'preview', icon: createGlobeIcon, data };
 		case 'model':
 			return { id: action, label: localize('voltAgent.plusModel', "Model"), detail: modelName, icon: createCubeIcon, data };
 		case 'mcp':
@@ -102,22 +102,39 @@ function actionItem(action: AgentPlusMenuAction, modelName: string | undefined):
 	}
 }
 
-/** Aria Icons lucide:folder: files and folders from the project. */
+/** Basicons folder-file: files and folders from the project. */
 function createFolderIcon(): HTMLElement {
-	return createStrokeIcon('folder', ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z']);
+	return createStrokeIcon('folder', ['M4 21h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-9L9.297 3.445A1 1 0 0 0 8.465 3H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z']);
 }
 
-/** Aria Icons lucide:file-up: a file uploaded from the computer. */
+/** Basicons upload-share-upload: a file uploaded from the computer. */
 function createUploadFileIcon(): HTMLElement {
-	return createStrokeIcon('upload', ['M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z', 'M14 2v5a1 1 0 0 0 1 1h5', 'M12 12v6', 'M15 15l-3-3-3 3']);
+	return createStrokeIcon('upload', ['M17 12h1a3 3 0 0 1 3 3v3a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-3a3 3 0 0 1 3-3h1', 'M8 7l4-4 4 4', 'M12 3v12']);
 }
 
+/** Basicons image-photo-picture. */
 function createImageIcon(): HTMLElement {
-	return createStrokeIcon('image', ['M4 6.5a2.5 2.5 0 0 1 2.5-2.5h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z', 'M4.5 16.5l4.3-4.3a1.5 1.5 0 0 1 2.1 0l5.6 5.6', 'M14 14.5l1.3-1.3a1.5 1.5 0 0 1 2.1 0l2.1 2.1', 'M15.5 8.5h.01']);
+	return createStrokeIcon('image', ['M5 21l9.586-9.586a2 2 0 0 1 2.828 0L21 15', 'M5 21h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z', 'M10 8.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z']);
 }
 
+/** Basicons video-camera. */
 function createVideoIcon(): HTMLElement {
-	return createStrokeIcon('video', ['M3.5 7.5A2.5 2.5 0 0 1 6 5h8a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 14 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z', 'M16.5 10.2l3.2-2.1a.8.8 0 0 1 1.3.7v6.4a.8.8 0 0 1-1.3.7l-3.2-2.1']);
+	return createStrokeIcon('video', ['M16.118 12L22 7.333v9.334L16.118 12Z', 'M16.118 12V7.333A2.343 2.343 0 0 0 13.765 5H4.353A2.343 2.343 0 0 0 2 7.333v9.334A2.343 2.343 0 0 0 4.353 19h9.412a2.343 2.343 0 0 0 2.353-2.333V12Z']);
+}
+
+/** Basicons paper-file: a file opened in the editor. */
+function createOpenFileIcon(): HTMLElement {
+	return createStrokeIcon('open-file', ['M13.5 2.505V8.5h5.995', 'M18 22H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h6.172a2 2 0 0 1 1.414.586l5.828 5.828A2 2 0 0 1 20 9.828V20a2 2 0 0 1-2 2Z']);
+}
+
+/** Basicons terminal-code-dev. */
+function createTerminalIcon(): HTMLElement {
+	return createStrokeIcon('terminal', ['M6 3h12a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Z', 'M7 8.5l3.864 3.682L7 15.5', 'M12 16h5']);
+}
+
+/** Basicons globe-world-earth: the in-app browser. */
+function createGlobeIcon(): HTMLElement {
+	return createStrokeIcon('globe', ['M22 12a10 10 0 0 1-20 0 10 10 0 0 1 20 0Z', 'M2 12h20', 'M12 22c2.474-2.525 4-6.186 4-10s-1.526-7.475-4-10', 'M12 22c-2.474-2.525-4-6.186-4-10s1.526-7.475 4-10']);
 }
 
 function createCubeIcon(): HTMLElement {

@@ -67,6 +67,21 @@ suite('Browser comment store', () => {
 		assert.strictEqual(comments.add(init('third')).number, 3);
 	});
 
+	test('resolving sent comments leaves open ones and other tabs alone; archiving then drops them', () => {
+		const comments = store.add(new VoltBrowserComments());
+		const sent = comments.add(init('tighter padding'));
+		comments.take({ viewId: 'tab-1' });
+		const open = comments.add(init('bigger title'));
+		const elsewhere = comments.add(init('elsewhere', 'tab-2'));
+		comments.take({ viewId: 'tab-2' });
+		comments.resolveSent({ viewId: 'tab-1' });
+		assert.strictEqual(comments.get(sent.id)?.status, 'resolved');
+		assert.strictEqual(comments.get(open.id)?.status, 'open');
+		assert.strictEqual(comments.get(elsewhere.id)?.status, 'sent');
+		comments.archiveResolved({ viewId: 'tab-1' });
+		assert.deepStrictEqual(comments.list({ viewId: 'tab-1' }).map(comment => comment.id), [open.id]);
+	});
+
 	test('canvas: archiving marks resolved comments and leaves the rest', () => {
 		const doc = {
 			id: 'c', title: 'T', version: 1, frames: [], links: [], createdAt: 1, updatedAt: 1,

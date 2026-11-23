@@ -462,3 +462,76 @@ function dedupeEcho(text: string, draft: string): string {
 	}
 	return text;
 }
+
+// --- The next message, before anything is typed ---------------------------------------------------
+
+/** Who writes the next message: the user's likely reply to what the agent just did. */
+export const NEXT_PROMPT_SYSTEM_PROMPT = [
+	'You suggest the next message a developer will send to an AI coding agent, right after the agent finished its reply.',
+	'Read the conversation and what the agent did, then write the short message the developer most likely sends next: approve and move on, ask for the obvious next step, or point at what is still wrong.',
+	'Write as the developer: their language, tone and casing, usually lowercase and terse, at most 12 words, one line. Use names from the chat when they fit.',
+	'Never answer for the agent, never ask the developer anything, never repeat the last message the developer sent.',
+	'Put the message between <insert> and </insert>. Nothing outside the tags is used. If no next message is likely, reply <insert></insert>.',
+	'Examples of the kind of message: <insert>looks good, open a PR</insert>; <insert>run the tests again</insert>; <insert>the login page still flickers on refresh</insert>.',
+].join(' ');
+
+/** Longest suggestion shown in the empty composer. */
+const NEXT_PROMPT_MAX_CHARS = 90;
+
+/** The prompt that asks for the developer's next message, from the chat (no draft: the composer is empty). */
+export function buildNextPromptPrompt(input: Omit<IComposerPromptInput, 'draft' | 'after'>): IModelMessage[] {
+	const blocks: string[] = [];
+	const transcript: string[] = [];
+	let used = 0;
+	for (let i = input.transcript.length - 1; i >= 0; i--) {
+		const message = input.transcript[i];
+		if (used + message.length > COMPOSER_CONTEXT_CHARS) {
+			break;
+		}
+		transcript.unshift(message);
+		used += message.length;
+	}
+	if (transcript.length) {
+		blocks.push(`## Conversation so far (oldest first; the last reply just finished)\n${transcript.join('\n---\n')}`);
+	}
+	if (input.vocabulary.length) {
+		blocks.push(`## Names in this chat\n${input.vocabulary.slice(0, 40).join(', ')}`);
+	}
+	if (input.activity?.length) {
+		blocks.push(`## What the agent did in its last reply\n${input.activity.slice(-8).join('\n')}`);
+	}
+	blocks.push('Reply with <insert>the developer\'s next message</insert> only.');
+	return [
+		{ role: 'system', content: NEXT_PROMPT_SYSTEM_PROMPT, ephemeral: true },
+		{ role: 'user', content: blocks.join('\n\n'), ephemeral: true },
+	];
+}
+
+/**
+ * A model reply turned into the suggested next message: one line, trimmed, short. Undefined when
+ * nothing usable is left, or when it only repeats `lastPrompt`.
+ */
+export function cleanNextPrompt(raw: string, lastPrompt = ''): string | undefined {
+	const reply = stripSpecialTokens(raw.replace(/\r\n/g, '\n'));
+	let text = stripSpecialTokens(stripFences(taggedInsert(reply) ?? reply));
+	if (isToolCallJunk(text)) {
+		return undefined;
+	}
+	text = text.split(COMPOSER_CURSOR).join('').replace(/<br\s*\/?>/gi, '\n').replace(/^\n+/, '');
+	// One line, its own sentences kept (`nice. commit it and push`).
+	const newline = text.indexOf('\n');
+	text = (newline >= 0 ? text.slice(0, newline) : text).trim().replace(/\s+/g, ' ');
+	// allow-any-unicode-next-line
+	text = text.replace(/^["'`\u201c]+/, '').replace(/["'`\u201d]+$/, '').trim();
+	if (text.length < 2 || META_REPLY.test(text)) {
+		return undefined;
+	}
+	if (normalizePrompt(text) === normalizePrompt(lastPrompt)) {
+		return undefined;
+	}
+	return clipAtWord(text, NEXT_PROMPT_MAX_CHARS).trim() || undefined;
+}
+
+function normalizePrompt(text: string): string {
+	return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}

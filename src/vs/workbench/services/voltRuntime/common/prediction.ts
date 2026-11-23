@@ -148,6 +148,15 @@ export interface IComposerPredictionInput {
 	readonly activity?: readonly string[];
 }
 
+/** What a next-message suggestion is built from: the chat, nothing typed. */
+export interface INextPromptInput {
+	readonly transcript: readonly string[];
+	readonly vocabulary: readonly string[];
+	readonly activity?: readonly string[];
+	/** The last message the user sent: never suggested again. */
+	readonly lastPrompt?: string;
+}
+
 /** What a dictation cleanup is built from. */
 export interface IDictationInput {
 	/** What speech recognition heard. */
@@ -201,6 +210,13 @@ export interface IVoltPredictionService {
 
 	/** A composer continuation already known for `input`, without a model call. */
 	peekComposer(input: IComposerPredictionInput): string | undefined;
+
+	/**
+	 * The message the user most likely sends next, for an empty composer once the agent's reply is
+	 * done (shown as a suggestion that Tab takes). Undefined when none is likely, the composer's ghost
+	 * text is off, or the model fails.
+	 */
+	predictNextPrompt(input: INextPromptInput, token: CancellationToken): Promise<string | undefined>;
 
 	/** Next-edit prediction: a structured edit near (or after) the cursor, plus follow-ups. */
 	predictNextEdit(ctx: IPredictionContext, token: CancellationToken): Promise<IEditPrediction | undefined>;

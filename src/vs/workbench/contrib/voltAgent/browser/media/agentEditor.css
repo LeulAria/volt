@@ -298,6 +298,25 @@
 	background: var(--vscode-foreground);
 }
 
+/* A condensed window leaves little room left of the transcript: each tick is a 3px dot (lit while
+ * its message is on screen), and the one under the pointer stretches back into its line. */
+.volt-agent-turn-nav.compact .tick .line {
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	transition: width 120ms ease, height 120ms ease, border-radius 120ms ease, background-color 120ms ease;
+}
+
+.volt-agent-turn-nav.compact .tick.in-view .line {
+	width: 3px;
+}
+
+.volt-agent-turn-nav.compact .tick.hovered .line {
+	width: 12px;
+	height: 1.5px;
+	border-radius: 1px;
+}
+
 .volt-agent-turn-nav .arrow {
 	height: 16px;
 	border-radius: 4px;
@@ -4551,6 +4570,69 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
+/*
+ * The suggested next message (agentEditor.ts requestNextPrompt): where the placeholder sits, in its
+ * grey, then a soft Tab key chip. Clickable, unlike the placeholder; typing replaces it.
+ */
+.volt-agent-placeholder.volt-agent-next-prompt {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	pointer-events: auto;
+	cursor: pointer;
+	animation: volt-agent-next-prompt-in 160ms ease-out;
+}
+
+.volt-agent-placeholder.volt-agent-next-prompt.hidden {
+	display: none;
+}
+
+.volt-agent-next-prompt-text {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-agent-next-prompt-key {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	height: 20px;
+	padding: 0 8px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+	font-size: 12px;
+	font-weight: 500;
+	line-height: 20px;
+	letter-spacing: 0.01em;
+}
+
+.volt-agent-placeholder.volt-agent-next-prompt:hover .volt-agent-next-prompt-text {
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
+}
+
+.volt-agent-placeholder.volt-agent-next-prompt:hover .volt-agent-next-prompt-key {
+	background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent);
+}
+
+@keyframes volt-agent-next-prompt-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-placeholder.volt-agent-next-prompt {
+		animation: none;
+	}
+}
+
 .volt-agent-monaco .volt-agent-list-marker {
 	color: transparent !important;
 	font-size: 0 !important;
@@ -5071,6 +5153,22 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-toolbar.compact-model-icon .volt-agent-model.comparing {
+	padding: 0 5px;
+}
+
+/* The follow-up composer's model button is 28px tall with a 10px / 5px text inset, which pushed the
+ * mark right of centre: icon only, it is a 28px circle with the mark dead centre. */
+.volt-agent-input-box.follow-up:not(.multiline) .volt-agent-toolbar.compact-model-icon .volt-agent-model {
+	padding: 0;
+	gap: 0;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline) .volt-agent-toolbar.compact-model-icon .volt-agent-model:not(.comparing) {
+	width: 28px !important;
+	min-width: 28px;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline) .volt-agent-toolbar.compact-model-icon .volt-agent-model.comparing {
 	padding: 0 5px;
 }
 
@@ -6324,7 +6422,7 @@ pre.volt-agent-searchable {
 .volt-agent-picker-section {
 	display: flex;
 	flex-direction: column;
-	padding: 4px 0;
+	padding: 0;
 }
 
 .volt-agent-picker-section + .volt-agent-picker-section {
@@ -8898,6 +8996,26 @@ pre.volt-agent-searchable {
 	display: none;
 }
 
+/* Back, pinned above the list or tree: it stays while they scroll. Hover gives it the rows' highlight. */
+.volt-agent-mention-pinned {
+	flex: none;
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+}
+
+.volt-agent-mention-pinned.hidden {
+	display: none;
+}
+
+.volt-agent-mention-pinned-row > .volt-menu-row {
+	height: 30px;
+	align-items: center;
+}
+
+.volt-agent-mention-pinned-row:hover {
+	background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
+	color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+}
+
 /* Tree: entries sit after the twistie like the explorer; Back, Recent and dividers stay flush. */
 .volt-agent-mention-tree .volt-agent-mention-file:not(.flush) {
 	padding-left: 0;
@@ -10741,9 +10859,18 @@ pre.volt-agent-searchable {
 	gap: 6px;
 }
 
-.volt-agent-composer-chip.comments .codicon {
-	font-size: 14px;
-	color: var(--vscode-textLink-foreground);
+/* The bubble glyph takes the chip's own text color. */
+.volt-agent-composer-chip.comments .volt-agent-svg-icon.comment {
+	display: inline-flex;
+	flex: none;
+	width: 14px;
+	height: 14px;
+	color: inherit;
+}
+
+.volt-agent-composer-chip.comments .volt-agent-svg-icon.comment svg {
+	width: 14px;
+	height: 14px;
 }
 
 /* "18 to multitask": Start Multitasking is on; Send starts the ticked queued messages. The × keeps them queued. */

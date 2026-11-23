@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { buildDictationPrompt, cleanDictationReply, DICTATION_SYSTEM_PROMPT, dictationReplyIsComplete } from '../../common/prediction/dictationCleanup.js';
+import { buildDictationPrompt, cleanDictationReply, DICTATION_SYSTEM_PROMPT, dictationNeedsCleanup, dictationReplyIsComplete } from '../../common/prediction/dictationCleanup.js';
 import { isPredictorTask, PREDICTOR_SKILL, predictorPrimer, predictorRequest, PredictorTask } from '../../common/prediction/predictorSkill.js';
 
 suite('Volt prediction: the predictor agent skill', () => {
@@ -83,5 +83,24 @@ suite('Volt prediction: dictation cleanup', () => {
 
 	test('an answer to the transcript is not a cleanup', () => {
 		assert.strictEqual(cleanDictationReply(`<text>${'Two plus two is four. '.repeat(10)}</text>`, 'what is two plus two'), undefined);
+	});
+
+	test('a clean, punctuated transcript skips the model; fillers, corrections and spoken code do not', () => {
+		assert.strictEqual(dictationNeedsCleanup('Fix the failing test in the voice file, then run it again.'), false);
+		assert.strictEqual(dictationNeedsCleanup('Ship it.'), false);
+		assert.strictEqual(dictationNeedsCleanup('   '), false);
+		assert.strictEqual(dictationNeedsCleanup('Um, fix the test.'), true);
+		assert.strictEqual(dictationNeedsCleanup('Fix the test, no wait, the build.'), true);
+		assert.strictEqual(dictationNeedsCleanup('Open agent editor dot ts.'), true);
+		assert.strictEqual(dictationNeedsCleanup('Fix the the test.'), true);
+		assert.strictEqual(dictationNeedsCleanup('fix the failing test in the voice file'), true, 'a browser recognizer leaves it unpunctuated');
+		assert.strictEqual(dictationNeedsCleanup('then run it.'), true, 'a lowercase start that starts a sentence');
+		assert.strictEqual(dictationNeedsCleanup('then run it.', 'Fix the test and'), false, 'a lowercase start that continues one');
+	});
+
+	test('the context before the cursor is cut at a word boundary', () => {
+		const user = buildDictationPrompt({ transcript: 'run it', before: `${'word '.repeat(200)}tail` })[1].content as string;
+		assert.ok(/## Text before the cursor\nword /.test(user));
+		assert.ok(user.length < 400);
 	});
 });

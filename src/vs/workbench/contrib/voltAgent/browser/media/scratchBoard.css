@@ -2281,6 +2281,14 @@
 	transform: scale(0.97);
 }
 
+.sx-library-thumb {
+	display: block;
+	min-height: 0;
+	max-width: 100%;
+	max-height: 36px;
+	object-fit: contain;
+}
+
 .sx-library-tile > span {
 	max-width: 100%;
 	overflow: hidden;
@@ -2589,6 +2597,12 @@
 
 .sx-menu-anchor {
 	pointer-events: none;
+}
+
+/* Delete and Remove: red like Excalidraw's. The menu lives in the context view, outside the board's variables. */
+.volt-menu-row.sx-menu-danger:not(.disabled) .volt-menu-label,
+.volt-menu-row.sx-menu-danger:not(.disabled) .volt-menu-icon {
+	color: var(--vscode-errorForeground);
 }
 
 @media (prefers-reduced-motion: reduce) {

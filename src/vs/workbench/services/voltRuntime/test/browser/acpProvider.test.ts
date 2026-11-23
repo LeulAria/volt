@@ -148,6 +148,11 @@ class FakeAgentStdio {
 		this.onDataEmitter.fire({ id: process, data: `${JSON.stringify(msg)}\n` });
 	}
 
+	/** The process is gone (killed, crashed). */
+	exit(process: string, code: number | null = null): void {
+		this.onExitEmitter.fire({ id: process, code });
+	}
+
 	update(process: string, update: Json): void {
 		this.send(process, { jsonrpc: '2.0', method: 'session/update', params: { sessionId: `acp-${process}`, update } });
 	}
@@ -219,6 +224,27 @@ suite('ACP provider supervision', () => {
 	async function finish(env: ReturnType<typeof setup>, handle: { id: string }) {
 		await env.provider.dispose(handle);
 	}
+
+	test('a resumable session whose process died mid-turn can still be resumed by the restart, and only by it', async () => {
+		const env = setup();
+		env.agent.capabilities = { ...env.agent.capabilities as object, sessionCapabilities: { resume: {} } };
+		const { handle, turn } = await startTurn(env);
+		assert.strictEqual(env.provider.canResume(handle), true, 'alive between turns it could be stopped and resumed');
+		env.agent.exit('p1', 137);
+		await turn.done;
+		assert.ok(kinds(turn.events).includes('error'), 'the turn failed with the process');
+		assert.strictEqual(env.provider.canResume(handle), false, 'a dead process is not something to stop and resume later');
+		assert.strictEqual(env.provider.canResume(handle, true), true, 'but the restart may continue the session it left on disk');
+		await env.provider.dispose(handle);
+		assert.strictEqual(env.provider.canResume(handle, true), false, 'the handle is forgotten once it is disposed');
+
+		// An agent with no session/resume is never offered.
+		const plain = setup();
+		const other = await startTurn(plain);
+		plain.agent.exit('p1', 137);
+		await other.turn.done;
+		assert.strictEqual(plain.provider.canResume(other.handle, true), false);
+	});
 
 	test('setup skips config writes the session already has (each costs cursor-agent ~2 s)', async () => {
 		const env = setup();
@@ -665,6 +691,29 @@ suite('ACP provider supervision', () => {
 		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
 		await turn.done;
 		await finish(env, handle);
+	});
+
+	test('native subagents: a background subagent that ends between turns reports its end, with its report, in the next turn', async () => {
+		const env = setup();
+		const first = await startTurn(env, 'start the background helper');
+		const notify = (sessionId: string, update: Json) => env.agent.send('p1', { jsonrpc: '2.0', method: 'session/update', params: { sessionId, update } });
+		notify('acp-p1', { sessionUpdate: 'subagent_spawned', subagentSessionId: 'af4e', name: 'Resume H7', task: 'Harden the backend', capabilities: {} });
+		await settle();
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await first.turn.done;
+		// The child keeps working after its launching turn, then Claude reports its end between turns.
+		notify('af4e', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '9 files changed.' } });
+		notify('acp-p1', { sessionUpdate: 'subagent_state_update', subagentSessionId: 'af4e', state: 'completed' });
+		await settle();
+		const cts = store.add(new CancellationTokenSource());
+		const second = collect(env.provider.send(first.handle, { text: 'next', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		env.agent.answerPrompt(1, { stopReason: 'end_turn' });
+		await second.done;
+		assert.deepStrictEqual(kinds(second.events), ['subagent.completed', 'run.end:done']);
+		const done = second.events[0] as Extract<IVoltEvent, { type: 'subagent.completed' }>;
+		assert.deepStrictEqual([done.childId, done.status, done.result], ['af4e', 'completed', '9 files changed.']);
+		await finish(env, first.handle);
 	});
 
 	test('a task list that changed between turns opens the next turn, so the Tasks card is not left on the old one', async () => {

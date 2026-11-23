@@ -1,0 +1,38 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* The message's revert preview: the changes since the message as diff cards, in the opaque .volt-modal panel. */
+
+.volt-revert-preview-files {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 0 20px 12px;
+}
+
+.volt-revert-preview-file {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.volt-revert-preview-note {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	padding: 0 2px;
+}
+
+.volt-revert-preview-foot {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	flex-shrink: 0;
+	padding: 12px 20px 16px;
+	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}

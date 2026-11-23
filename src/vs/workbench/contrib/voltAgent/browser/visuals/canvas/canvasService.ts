@@ -14,11 +14,12 @@ import { IClipboardService } from '../../../../../../platform/clipboard/common/c
 import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
 import { ICommandService } from '../../../../../../platform/commands/common/commands.js';
 import { IEnvironmentService } from '../../../../../../platform/environment/common/environment.js';
-import { IFileService } from '../../../../../../platform/files/common/files.js';
+import { FileSystemProviderCapabilities, IFileService } from '../../../../../../platform/files/common/files.js';
 import { createDecorator } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../../platform/notification/common/notification.js';
 import { IThemeService } from '../../../../../../platform/theme/common/themeService.js';
+import { ILifecycleService } from '../../../../../services/lifecycle/common/lifecycle.js';
 import { IPageChannelPort, registerPageChannel, setPageContext } from '../agentVisualBridge.js';
 import { CANVAS_FRAME_THEME_SETTING, readCanvasFrameTheme } from '../../../common/canvasScratchSettings.js';
 import { themeKind } from '../visualTheme.js';
@@ -48,6 +49,8 @@ export interface IVoltCanvasService {
 	readonly _serviceBrand: undefined;
 	readonly onDidChange: Event<ICanvasChange>;
 	create(input: ICanvasCreate, chat: string | undefined): Promise<ICanvasDoc>;
+	/** Puts a first design on a canvas that has no frames yet (one opened empty from the + menu); undefined when it has frames. */
+	fillEmpty(id: string, input: ICanvasCreate): Promise<ICanvasDoc | undefined>;
 	/** A canvas from memory or disk. */
 	get(id: string): Promise<ICanvasDoc | undefined>;
 	/** The canvas a chat made last (for calls that leave out the id). */
@@ -234,6 +237,12 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 	/** The chat view a canvas was last seen in: its prompts go there (the tab has no composer). */
 	private readonly chatPorts = new Map<string, IPageChannelPort>();
 	private readonly saves = new Map<string, ReturnType<typeof setTimeout>>();
+	/** Each canvas's writes run one after another, so an older copy never lands last. */
+	private readonly writes = new Map<string, Promise<void>>();
+	private readonly versionWrites = new Set<Promise<void>>();
+	/** What this window last wrote per canvas: a change on disk that differs came from another window. */
+	private readonly lastWritten = new Map<string, string>();
+	private readonly atomic: boolean;
 	private readonly agents = new Map<string, ICanvasAgentPort>();
 	/** Prompts for a canvas whose agent is still opening (its tab was just asked for). */
 	private readonly waiting = new Map<string, { text: string; send: boolean }[]>();
@@ -249,20 +258,65 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 		@INotificationService private readonly notificationService: INotificationService,
 		@ILogService private readonly logService: ILogService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@ILifecycleService lifecycleService: ILifecycleService,
 	) {
 		super();
 		this.folder = joinPath(environmentService.userRoamingDataHome, 'agentSessions', 'canvases');
+		this.atomic = fileService.hasCapability(this.folder, FileSystemProviderCapabilities.FileAtomicWrite);
 		this._register(registerPageChannel('canvas', (port, payload) => this.handle(port, payload)));
-		this._register(toDisposable(() => {
-			for (const [id, timer] of this.saves) {
-				clearTimeout(timer);
-				const doc = this.docs.get(id);
-				if (doc) {
-					void this.write(doc);
+		// Quit, closing the window and reload wait for the saves still pending: nothing on a canvas is lost.
+		this._register(lifecycleService.onWillShutdown(e => e.join(this.flushSaves(), { id: 'voltCanvases', label: localize('voltCanvas.saving', "Saving design canvases") })));
+		this._register(toDisposable(() => void this.flushSaves()));
+		// Another window changed a canvas this one holds: take its copy rather than write over it later.
+		this._register(fileService.watch(this.folder));
+		this._register(fileService.onDidFilesChange(e => {
+			if (e.gotAdded() || e.gotDeleted()) {
+				// A canvas made or removed elsewhere: the Designs list reads the folder again.
+				this.index = undefined;
+			}
+			for (const id of this.docs.keys()) {
+				if (e.contains(this.fileOf(id))) {
+					void this.reloadFromDisk(id);
 				}
 			}
-			this.saves.clear();
 		}));
+	}
+
+	/** Writes every pending save now and waits for every write under way. */
+	private async flushSaves(): Promise<void> {
+		for (const [id, timer] of this.saves) {
+			clearTimeout(timer);
+			const doc = this.docs.get(id);
+			if (doc) {
+				void this.write(doc);
+			}
+		}
+		this.saves.clear();
+		await Promise.all([...this.writes.values(), ...this.versionWrites]);
+	}
+
+	private async reloadFromDisk(id: string): Promise<void> {
+		if (this.saves.has(id) || this.writes.has(id)) {
+			// Ours is about to be written; the next change event compares again.
+			return;
+		}
+		try {
+			const text = (await this.fileService.readFile(this.fileOf(id))).value.toString();
+			const current = this.docs.get(id);
+			// Nothing of ours is pending, so a copy that differs from what this window holds is newer.
+			if (!current || text === this.lastWritten.get(id) || text === JSON.stringify(current) || this.saves.has(id) || this.writes.has(id)) {
+				return;
+			}
+			const doc = JSON.parse(text) as ICanvasDoc;
+			if (doc?.id === id && Array.isArray(doc.frames) && doc.version >= current.version) {
+				this.lastWritten.set(id, text);
+				this.remember(doc);
+				this.broadcast(doc, 'doc', 'agent');
+				this._onDidChange.fire({ id, doc, kind: 'doc', origin: 'agent' });
+			}
+		} catch {
+			// Half-written or gone: the next change event reads it again.
+		}
 	}
 
 	//#region Documents
@@ -286,6 +340,22 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 		void this.writeVersion(doc);
 		void this.index?.then(index => index.set(doc.id, chat));
 		this._onDidChange.fire({ id: doc.id, doc, kind: 'doc', origin: 'agent' });
+		return doc;
+	}
+
+	async fillEmpty(id: string, input: ICanvasCreate): Promise<ICanvasDoc | undefined> {
+		const existing = await this.get(id);
+		if (!existing || existing.frames.length) {
+			return undefined;
+		}
+		// Same id and version: the tab already open on it shows the design, and nothing pointed at the empty one.
+		const doc: ICanvasDoc = { ...existing, ...input, id, version: existing.version, comments: existing.comments, updatedAt: Date.now() };
+		this.commit(doc, 'doc', 'agent');
+		await this.write(doc);
+		void this.writeVersion(doc);
+		if (doc.chat) {
+			this.latest.set(doc.chat, id);
+		}
 		return doc;
 	}
 
@@ -419,14 +489,15 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 		if (id) {
 			return this.get(id);
 		}
-		// Not made in this window's lifetime: the newest one this chat made, from memory.
+		// Not made in this window's lifetime: the newest one this chat made, from memory, else from disk
+		// (after a restart nothing is in memory until a view loads it).
 		let best: ICanvasDoc | undefined;
 		for (const doc of this.docs.values()) {
 			if (doc.chat === chat && (!best || doc.updatedAt > best.updatedAt)) {
 				best = doc;
 			}
 		}
-		return best;
+		return best ?? (chat ? (await this.listFor(chat))[0] : undefined);
 	}
 
 	async update(id: string, args: Record<string, unknown>): Promise<ICanvasUpdateResult | { readonly error: string }> {
@@ -490,12 +561,22 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 	}
 
 	/** Keeps the canvas as this agent change left it, for the chat's history (comments are not kept). */
-	private async writeVersion(doc: ICanvasDoc): Promise<void> {
-		try {
-			await this.fileService.writeFile(this.versionOf(doc.id, doc.version), VSBuffer.fromString(JSON.stringify({ ...doc, comments: [] })));
-		} catch (err) {
-			this.logService.warn(`[volt canvas] could not keep ${doc.id} v${doc.version}`, err);
-		}
+	private writeVersion(doc: ICanvasDoc): Promise<void> {
+		const run = (async () => {
+			try {
+				await this.fileService.writeFile(this.versionOf(doc.id, doc.version), VSBuffer.fromString(JSON.stringify({ ...doc, comments: [] })), this.writeOptions());
+			} catch (err) {
+				this.logService.warn(`[volt canvas] could not keep ${doc.id} v${doc.version}`, err);
+			}
+		})();
+		this.versionWrites.add(run);
+		void run.finally(() => this.versionWrites.delete(run));
+		return run;
+	}
+
+	/** Through a temporary file and a rename: a crash or kill mid-write leaves the old copy, never half of one. */
+	private writeOptions() {
+		return this.atomic ? { atomic: { postfix: '.vsctmp' } } as const : undefined;
 	}
 
 	private scheduleSave(id: string): void {
@@ -512,12 +593,23 @@ export class VoltCanvasService extends Disposable implements IVoltCanvasService 
 		}, 600));
 	}
 
-	private async write(doc: ICanvasDoc): Promise<void> {
-		try {
-			await this.fileService.writeFile(this.fileOf(doc.id), VSBuffer.fromString(JSON.stringify(doc)));
-		} catch (err) {
-			this.logService.warn(`[volt canvas] could not save ${doc.id}`, err);
-		}
+	private write(doc: ICanvasDoc): Promise<void> {
+		const run = (this.writes.get(doc.id) ?? Promise.resolve()).then(async () => {
+			const content = JSON.stringify(doc);
+			try {
+				await this.fileService.writeFile(this.fileOf(doc.id), VSBuffer.fromString(content), this.writeOptions());
+				this.lastWritten.set(doc.id, content);
+			} catch (err) {
+				this.logService.warn(`[volt canvas] could not save ${doc.id}`, err);
+			}
+		});
+		this.writes.set(doc.id, run);
+		void run.finally(() => {
+			if (this.writes.get(doc.id) === run) {
+				this.writes.delete(doc.id);
+			}
+		});
+		return run;
 	}
 
 	//#endregion

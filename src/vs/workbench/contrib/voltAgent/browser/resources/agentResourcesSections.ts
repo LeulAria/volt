@@ -190,14 +190,14 @@ class ServerRenderer implements IListRenderer<IServerRow, IServerTemplate> {
 			switch (row.status?.state) {
 				case 'ready': state = localize('agentResources.server.ready', "Connected"); tone = 'ok'; break;
 				case 'connecting': state = localize('agentResources.server.connecting', "Connecting"); tone = 'muted'; break;
-				case 'error': state = localize('agentResources.server.error', "Error"); tone = 'error'; break;
+				case 'error': state = row.status?.needsAuth ? localize('agentResources.server.needsAuth', "Needs sign-in") : localize('agentResources.server.error', "Error"); tone = row.status?.needsAuth ? 'warning' : 'error'; break;
 				default: state = localize('agentResources.server.idle', "On first run"); tone = 'muted';
 			}
 		}
 		template.state.textContent = state;
 		template.state.className = `volt-ares-row-source volt-ares-server-state ${tone}`;
 		template.dot.className = `volt-ares-tile-status ${row.voltLoads && !server.disabled ? row.status?.state ?? 'idle' : 'off'}`;
-		setAgentTooltip(template.state, row.voltLoads ? undefined : localize('agentResources.server.notVoltTitle', "Volt connects .mcp.json, .cursor/mcp.json, .vscode/mcp.json and .volt/mcp.json in the project, and ~/.cursor/mcp.json and ~/.volt/mcp.json. This file is read by {0}.", (agentResourceReaders(item) ?? [item.ecosystem]).map(reader => AGENT_RESOURCE_ECOSYSTEM_LABELS[reader]).join(', ')));
+		setAgentTooltip(template.state, row.voltLoads ? (row.status?.state === 'error' ? row.status.error : undefined) : localize('agentResources.server.notVoltTitle', "Volt connects .mcp.json, .cursor/mcp.json, .vscode/mcp.json and .volt/mcp.json in the project, and ~/.cursor/mcp.json and ~/.volt/mcp.json. This file is read by {0}.", (agentResourceReaders(item) ?? [item.ecosystem]).map(reader => AGENT_RESOURCE_ECOSYSTEM_LABELS[reader]).join(', ')));
 	}
 
 	disposeTemplate(): void { }

@@ -31,7 +31,12 @@ await sleep(1500);
 await send('What is two plus two? Reply with only the digit.', async () => /\b4\b/.test(await text()));
 const idleFrom = new Date().toISOString();
 await sleep(45_000);
-// A is the second row of the chat list now (B is the most recent).
+// A is the second row of the chat list now (B is the most recent). The sidebar may be closed (chain4's first try found no rows).
+const visibleRows = () => c.evaluate(`[...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && e.getAttribute('aria-label')).length`);
+if (await visibleRows() === 0) {
+	await c.evaluate(`[...document.querySelectorAll('[aria-label]')].find(e => e.offsetParent && /^Toggle Primary Side Bar/.test(e.getAttribute('aria-label')))?.click()`);
+	for (let i = 0; i < 20 && await visibleRows() === 0; i++) { await sleep(500); }
+}
 const pt = await c.evaluate(`(() => { const e = [...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent && /code word|PELICAN|Remember/i.test(e.getAttribute('aria-label') || ''))[0]; if (!e) { return null; } const r = e.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
 if (!pt) { throw new Error('chat A not in the list: ' + JSON.stringify(await c.evaluate(`[...document.querySelectorAll('.monaco-list-row')].filter(e => e.offsetParent).map(e => e.getAttribute('aria-label')).slice(0, 12)`))); }
 await c.click(pt[0], pt[1]);

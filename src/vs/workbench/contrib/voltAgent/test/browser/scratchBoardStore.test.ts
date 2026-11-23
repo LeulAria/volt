@@ -16,7 +16,7 @@ import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { ScratchBoardModel } from '../../browser/scratchBoard/scratchBoardService.js';
 import { emptyBoardDocument, parseBoardDocument, serializeBoardDocument } from '../../common/scratchBoard/scratchDocument.js';
 import { createShape } from '../../common/scratchBoard/scratchFactory.js';
-import { ScratchElement } from '../../common/scratchBoard/scratchTypes.js';
+import { IScratchBoardDocument, ScratchElement } from '../../common/scratchBoard/scratchTypes.js';
 
 type BoardStore = ConstructorParameters<typeof ScratchBoardModel>[1];
 
@@ -43,6 +43,8 @@ suite('Scratch board store', () => {
 		const file = joinPath(ROOT, 'boards', `${BOARD}.json`);
 		await fileService.writeFile(file, VSBuffer.fromString(serializeBoardDocument(emptyBoardDocument(BOARD, 1), 1)));
 		const backups: string[] = [];
+		/** Copies a quit left behind, handed to the next board that opens (once). */
+		const unsaved: IScratchBoardDocument[] = [];
 		const makeStore = (files: IFileService = fileService): BoardStore => ({
 			fileService: files,
 			logService: new NullLogService(),
@@ -52,6 +54,7 @@ suite('Scratch board store', () => {
 			backupBroken: async (_target, content, reason) => { backups.push(reason); return joinPath(ROOT, 'broken', `${backups.length}.json`); },
 			noteEdited: () => { },
 			notifyUnreadable: () => { },
+			takeUnsavedBackups: async () => unsaved.splice(0),
 		});
 		const open = async (files?: IFileService) => {
 			const model = disposables.add(new ScratchBoardModel(BOARD, makeStore(files)));
@@ -59,10 +62,24 @@ suite('Scratch board store', () => {
 			return model;
 		};
 		const onDisk = async () => parseBoardDocument(JSON.parse((await fileService.readFile(file)).value.toString()), BOARD).document;
-		return { fileService, file, open, onDisk, backups };
+		return { fileService, file, open, onDisk, backups, unsaved };
 	}
 
 	const ids = (elements: readonly ScratchElement[]) => elements.map(e => e.id).sort();
+
+	test('edits a quit could not save come back when the board opens, and are written', async () => {
+		const { open, onDisk, unsaved } = await setup();
+		const a = await open();
+		a.scene.transact('add', tx => tx.add(shape('a1')));
+		await a.flush();
+		// The last session's copy holds a1 and an element whose save never landed.
+		unsaved.push({ ...emptyBoardDocument(BOARD, 5), elements: [shape('a1'), shape('lost1', 200)], updated: Date.now() });
+		const b = await open();
+		assert.deepStrictEqual(ids(b.scene.getElements()), ['a1', 'lost1']);
+		assert.strictEqual(b.hasUnsavedEdits, true, 'the recovered edits still have to reach the board file');
+		assert.strictEqual(await b.flush(), true);
+		assert.deepStrictEqual(ids((await onDisk()).elements), ['a1', 'lost1']);
+	});
 
 	test('two windows editing at once both keep their elements', async () => {
 		const { open, onDisk } = await setup();

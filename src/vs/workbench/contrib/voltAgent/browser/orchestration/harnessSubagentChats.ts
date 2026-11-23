@@ -114,6 +114,14 @@ export class HarnessSubagentChats extends Disposable {
 				const mirror = this.mirrors.get(taskId);
 				if (mirror && !mirror.native) {
 					this.followTask(mirror);
+				} else if (mirror) {
+					// A native subagent whose task settled without its own end (Volt settled it after the
+					// harness's end report was lost): its chat ends with the task, never "working" forever.
+					const task = this.orchestrator.getTask(taskId);
+					if (task && isTerminalTaskState(task.state)) {
+						const end: MirrorEnd = task.state === 'completed' ? 'done' : task.state === 'failed' ? 'fail' : 'abort';
+						this.finish(mirror, end, end === 'fail' ? task.error : task.result);
+					}
 				}
 			}
 		}));

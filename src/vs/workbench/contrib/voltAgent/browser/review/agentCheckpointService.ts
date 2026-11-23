@@ -32,6 +32,22 @@ export const CHECKPOINT_RESTORE_COMMAND_ID = 'voltAgent.checkpoint.restore';
 export const CHECKPOINT_HAS_CHANGES_COMMAND_ID = 'voltAgent.checkpoint.hasChangesSince';
 export const CHECKPOINT_PREVIEW_COMMAND_ID = 'voltAgent.checkpoint.preview';
 export const CHECKPOINT_REDO_COMMAND_ID = 'voltAgent.checkpoint.redo';
+export const CHECKPOINT_REVERT_PREVIEW_COMMAND_ID = 'voltAgent.checkpoint.revertPreview';
+
+/** One file a restore would change, with its text before the message and now (for the revert preview's diff). */
+export interface IAgentRevertPreviewFile {
+	readonly uri: URI;
+	readonly path: string;
+	/** What the agent did to the file since the message; the revert undoes it. */
+	readonly kind: 'added' | 'modified' | 'deleted';
+	readonly binary: boolean;
+	/** Edited after the agent too (by the user or another chat). */
+	readonly editedSince: boolean;
+	/** The text before the message; undefined when the file did not exist or could not be read. */
+	readonly original?: string;
+	/** The text now; undefined when the file is gone or could not be read. */
+	readonly current?: string;
+}
 
 /**
  * A user turn: the transcript's turn id (`IAgentUserMessage.id`, known once the UI called
@@ -819,7 +835,7 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 			session.loaded = undefined;
 			session.settled = undefined;
 		}
-		if (!root || root.scheme !== Schemas.file || !this.git.resolveSnapshotRepo) {
+		if (!root || !this.isOnThisComputer(root) || !this.git.resolveSnapshotRepo) {
 			return undefined;
 		}
 		let repo = this.repos.get(root.fsPath);
@@ -833,6 +849,11 @@ export class AgentCheckpointService extends Disposable implements IAgentCheckpoi
 		session.repo = await repo;
 		session.folder = root;
 		return session.repo;
+	}
+
+	/** Whether git here can snapshot `root`: a folder of another computer (an SSH remote) is not. */
+	protected isOnThisComputer(root: URI): boolean {
+		return root.scheme === Schemas.file;
 	}
 
 	/** Where the chat's agent works: its worktree, its project, or the open folder. */

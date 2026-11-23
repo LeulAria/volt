@@ -11,6 +11,7 @@ import { DisposableStore, toDisposable } from '../../../../../base/common/lifecy
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { readableModelLabel } from '../../../../services/voltRuntime/common/models/modelMeta.js';
 import { buildTaskPrompt, modeForTaskRole, newTaskId } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import type { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { formatElapsed, IOrchAgentRow, OrchAgentRowState } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
@@ -201,7 +202,7 @@ export function subagentView(row: IOrchAgentRow, providerFor: (modelRef: string 
 	return {
 		key: row.taskId,
 		title: row.title,
-		...(row.modelLabel ? { modelLabel: row.modelLabel } : {}),
+		...(row.modelLabel ? { modelLabel: readableModelLabel(row.modelLabel) } : {}),
 		...(providerFor(row.modelRef) ? { providerId: providerFor(row.modelRef) } : {}),
 		...(kindLabel ? { kindLabel } : {}),
 		state: row.state,
@@ -691,3 +692,4 @@ export function renderCursorCardRow(parent: HTMLElement, view: ISubagentView, op
 }
 
 //#endregion
+

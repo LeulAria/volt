@@ -15,6 +15,8 @@ import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contex
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService, Severity } from '../../../../../platform/notification/common/notification.js';
+import { IFileService } from '../../../../../platform/files/common/files.js';
+import { IVoltGitService } from '../../../../../platform/voltGit/common/voltGit.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { COPY_PATH_COMMAND_ID } from '../../../files/browser/fileConstants.js';
 import { MultiDiffEditor } from '../../../multiDiffEditor/browser/multiDiffEditor.js';
@@ -29,9 +31,12 @@ import {
 	CHECKPOINT_PREVIEW_COMMAND_ID,
 	CHECKPOINT_REDO_COMMAND_ID,
 	CHECKPOINT_RESTORE_COMMAND_ID,
+	CHECKPOINT_REVERT_PREVIEW_COMMAND_ID,
 	IAgentCheckpointService,
 	IAgentRestorePreview,
 	IAgentRestoreResult,
+	IAgentRevertPreviewFile,
+	IAgentSnapshotChange,
 } from './agentCheckpointService.js';
 
 const AGENT_CHANGE_FILE = ContextKeyExpr.equals('voltAgentChangesFile', true);
@@ -225,6 +230,53 @@ CommandsRegistry.registerCommand(CHECKPOINT_HAS_CHANGES_COMMAND_ID, async (acces
 	const ref = await turnRef(checkpoints, args);
 	const preview = ref === undefined ? undefined : await checkpoints.previewRestore(args!.sessionId, ref).catch(() => undefined);
 	return !!preview?.files.some(file => file.action !== 'none');
+}, 'internal');
+
+/**
+ * `{ sessionId, turnId?, userTurn? }` → IAgentRevertPreviewFile[] | undefined: every file a restore to
+ * before that message would change, with its text then and now, for the revert preview. undefined
+ * when the message has no checkpoint.
+ */
+CommandsRegistry.registerCommand(CHECKPOINT_REVERT_PREVIEW_COMMAND_ID, async (accessor, args: ICheckpointArgs | undefined): Promise<readonly IAgentRevertPreviewFile[] | undefined> => {
+	const checkpoints = accessor.get(IAgentCheckpointService);
+	const git = accessor.get(IVoltGitService);
+	const files = accessor.get(IFileService);
+	const ref = await turnRef(checkpoints, args);
+	const preview = ref === undefined ? undefined : await checkpoints.previewRestore(args!.sessionId, ref).catch(() => undefined);
+	if (!preview) {
+		return undefined;
+	}
+	const changed = preview.files.filter(file => file.action !== 'none');
+	if (!changed.length) {
+		return [];
+	}
+	// Each file's text before the message: the old side of the first turn from there on that changed it.
+	const all = checkpoints.getCheckpoints(args!.sessionId);
+	const start = all.findIndex(checkpoint => checkpoint.turnId === preview.checkpoint.turnId);
+	const firstChange = new Map<string, IAgentSnapshotChange>();
+	for (const checkpoint of start < 0 ? [] : all.slice(start)) {
+		if (!checkpoint.after || checkpoint.after === checkpoint.before) {
+			continue;
+		}
+		const turnChanges = await checkpoints.getChanges(args!.sessionId, { turnId: checkpoint.turnId }).catch(() => [] as readonly IAgentSnapshotChange[]);
+		for (const change of turnChanges) {
+			if (!firstChange.has(change.path)) {
+				firstChange.set(change.path, change);
+			}
+		}
+	}
+	return Promise.all(changed.map(async (file): Promise<IAgentRevertPreviewFile> => {
+		const kind = file.action === 'delete' ? 'added' : file.action === 'create' ? 'deleted' : 'modified';
+		if (file.binary) {
+			return { uri: file.uri, path: file.path, kind, binary: true, editedSince: file.editedSince };
+		}
+		const change = firstChange.get(file.path);
+		const original = kind === 'added' ? undefined : change?.oldBlob
+			? await git.readBlob({ repoRoot: change.repoRoot, sha: change.oldBlob, path: change.oldPath ?? change.path }).then(buffer => buffer.toString(), () => undefined)
+			: undefined;
+		const current = kind === 'deleted' ? undefined : await files.readFile(file.uri).then(content => content.value.toString(), () => undefined);
+		return { uri: file.uri, path: file.path, kind, binary: false, editedSince: file.editedSince, original, current };
+	}));
 }, 'internal');
 
 /**

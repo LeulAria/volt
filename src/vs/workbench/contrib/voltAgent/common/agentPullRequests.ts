@@ -881,6 +881,7 @@ export function buildResolveConflictsPrompt(pr: Pick<IVoltPullRequest, 'number' 
 		prContext(pr),
 		'',
 		`Fetch ${pr.baseRefName}, merge or rebase it into ${pr.headRefName}, resolve every conflict keeping both sides' intent, run the tests, and push.`,
+		`If ${pr.headRefName} is already checked out in another worktree (git worktree list), do the work in that worktree; never switch the branch of a checkout another chat is using.`,
 	].join('\n');
 }
 

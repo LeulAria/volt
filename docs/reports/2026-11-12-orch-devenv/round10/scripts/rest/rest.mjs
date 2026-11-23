@@ -4,14 +4,21 @@
 //   A6  = delta(user+sys CPU) / wall of the app group, % of one core; wakeups/s = delta(idle + irq wakeups) / wall
 // Variants: front (focus emulated over CDP, as the frontmost app's page), covered (ADEMark's own `cover` panel over the
 // window for the sample), rest-20 (A10's 20-thread sample, no settle).
-//   node rest.mjs <arm> [variant=front] [settle s=90] [window s=60]     rows -> ../../data/rest/rest.jsonl
-import { execFile, execFileSync, execSync } from 'child_process';
+// One run of this script keeps ONE CDP session with focus emulated for all its samples: turning the emulation on is a
+// focus event, and a focus event starts Volt's warm agent (an adapter and Claude CLIs for 30 s). ADEMark's app gets its
+// focus at launch, before the settle; so the first sample needs a settle of 60 s or more and later ones reuse the session.
+//   node rest.mjs <arm> <step> [step ...]     rows -> ../../data/rest/rest.jsonl
+//   step = <variant>:<settle s>[:<window s=60>]  (front | covered | rest-20)   or   seed:<n>  (n more seeded threads)
+//   e.g. node rest.mjs r8 front:90 covered:0 seed:15 rest-20:0
+import { execFile, execFileSync, execSync, spawnSync } from 'child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { DATA, load, mem, sleep, UD, cdp, waitCalm, profileProcesses } from './lib.mjs';
 import { role } from './roles.mjs';
 
-const [arm = 'dev', variant = 'front', settleArg = '90', windowArg = '60'] = process.argv.slice(2);
+const [arm = 'dev', ...steps] = process.argv.slice(2);
+if (!steps.length) { steps.push('front:90'); }
+const here = new URL('.', import.meta.url).pathname;
 const NATIVE = process.env.SPEED_NATIVE ?? `${process.env.HOME}/.volt-r3/speed/native/bin/ademark-native`;
 const WINLIST = `${process.env.HOME}/.volt-r10/rest/tools/winlist`;
 mkdirSync(join(DATA, 'raw'), { recursive: true });
@@ -24,6 +31,20 @@ const winOnScreen = () => { try { return execFileSync(WINLIST, { encoding: 'utf8
 const c = await cdp();
 const emulateFocus = process.env.REST_NO_FOCUS !== '1';
 await c.send('Emulation.setFocusEmulationEnabled', { enabled: emulateFocus });
+for (const step of steps) {
+	const [variant, settleArg = '0', windowArg = '60'] = step.split(':');
+	if (variant === 'seed') {
+		await waitCalm();
+		const r = spawnSync(process.execPath, [join(here, 'seed.mjs'), settleArg], { encoding: 'utf8' });
+		if (r.status !== 0) { console.error(`seed ${settleArg} failed: ${(r.stdout + r.stderr).slice(-300)}`); process.exitCode = 1; break; }
+		continue;
+	}
+	await sample(variant, settleArg, windowArg);
+}
+try { await c.send('Emulation.setFocusEmulationEnabled', { enabled: false }); } catch { }
+c.close();
+
+async function sample(variant, settleArg, windowArg) {
 await sleep(Number(settleArg) * 1000);
 const gate = Number(settleArg) > 0 || variant === 'covered' ? await waitCalm() : { calm: parseFloat(load()) <= 14, waitedS: 0 };
 // Roots: main, plus every process started with this profile that is no child of main (a reused agent server).
@@ -45,16 +66,13 @@ const stateDuring = await c.evaluate('JSON.stringify({vis: document.visibilitySt
 const loadAvg = load();
 const memStart = mem();
 const cmds = new Map(ps());
-const summary = JSON.parse(execFileSync(NATIVE, ['sample', '--rules', rules, '--hz', '4', '--duration-s', windowArg, '--csv', csv], { encoding: 'utf8' }));
+// Asynchronous: the CDP session (and its focus emulation) must stay served while the sampler runs.
+const summary = JSON.parse(await new Promise((res, rej) => execFile(NATIVE, ['sample', '--rules', rules, '--hz', '4', '--duration-s', windowArg, '--csv', csv], { encoding: 'utf8', maxBuffer: 64 << 20 }, (err, out) => err ? rej(err) : res(out))));
 const coverResult = cover ? await cover : undefined;
 for (const [p, l] of ps()) { if (!cmds.has(p)) { cmds.set(p, l); } }
-let domNodes, threads;
-try {
-	domNodes = await c.evaluate('document.getElementsByTagName("*").length');
-	await c.send('Emulation.setFocusEmulationEnabled', { enabled: false });
-} catch { }
-c.close();
-
+let domNodes;
+try { domNodes = await c.evaluate('document.getElementsByTagName("*").length'); } catch { }
+// Agent processes alive in the window (a warm spare, a chat's CLI before its 20 s stop).
 const lines = readFileSync(csv, 'utf8').trim().split('\n');
 const header = lines.shift().split(',');
 const idx = name => header.indexOf(name);
@@ -98,3 +116,4 @@ row.swapGrewMiB = row.memEnd.swapUsedMiB - row.mem.swapUsedMiB;
 appendFileSync(join(DATA, 'rest.jsonl'), JSON.stringify(row) + '\n');
 console.log(JSON.stringify({ arm, variant, appMiB: row.appMedianMiB, agentsMiB: row.agentsMedianMiB, processes: row.processes, cpuApp: row.cpuAppPct, wakeups: row.wakeupsApp, cpuAgents: row.cpuAgentsPct, load: loadAvg, calm: gate.calm, onScreen, stateDuring, cover: coverResult?.error ? 'ERR ' + coverResult.error.slice(0, 80) : coverResult ? 'ok' : undefined }));
 console.log(Object.entries(byRole).sort((a, b) => b[1].mib - a[1].mib).map(([k, v]) => `${k.padEnd(48)} n=${v.n} ${String(v.mib).padStart(6)} MiB  cpu ${v.cpuPct.toFixed(3)}%  wk ${v.wakeups}/s`).join('\n'));
+}

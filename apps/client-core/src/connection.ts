@@ -73,6 +73,8 @@ export interface ICallOptions {
 }
 
 const OPEN = 1;
+/** WebSocket's "TLS handshake failed" (never sent on the wire): what a pinned socket reports for a certificate that doesn't match. */
+const TLS_HANDSHAKE_FAILED = 1015;
 const HEARTBEAT_EVERY_MS = 15_000;
 /** Silence after which a ping goes out; twice that and the socket is replaced. */
 const SILENCE_PING_MS = 25_000;
@@ -413,6 +415,11 @@ export class VoltConnection {
 				return;
 			case CloseCode.BadHello:
 				this.block({ code: 'BadHello', message: 'Volt refused this app\'s greeting. Update the app.' });
+				return;
+			case TLS_HANDSHAKE_FAILED:
+				// The pinned transport refused the server's certificate. Retried: the address may
+				// belong to another machine for a while (DHCP), but never trusted with another key.
+				this.scheduleRetry({ code: 'PinMismatch', message: 'That address answered with a different certificate than the one this device paired with. If Volt on your computer was reinstalled, pair again.' });
 				return;
 			case CloseCode.Overflow:
 				// The server cut us off for falling behind: resume right away.

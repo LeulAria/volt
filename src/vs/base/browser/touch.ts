@@ -291,6 +291,11 @@ export class Gesture extends Disposable {
 			for (const [_, target] of targets) {
 				target.dispatchEvent(event);
 				this.dispatched = true;
+				// A long press shows one context menu, like a right click: an inner target that took it
+				// (a list row) keeps the part around it from opening its own on top.
+				if (event.type === EventType.Contextmenu && event.defaultPrevented) {
+					break;
+				}
 			}
 		}
 	}

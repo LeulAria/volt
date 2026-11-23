@@ -34,8 +34,13 @@ export const NEW_AGENT_COMMAND_ID = 'workbench.action.newAgent';
 export const NEW_AGENT_TAB_COMMAND_ID = 'workbench.action.voltAgent.newAgentTab';
 export const REPLACE_AGENT_COMMAND_ID = 'workbench.action.voltAgent.replaceAgent';
 export const OPEN_AGENT_COMMAND_ID = 'workbench.action.voltAgent.openSession';
-/** Desktop only: a new window that lists the chat's project and shows the chat. */
+/**
+ * Desktop only: moves chats to a new window, which shows the first. Takes one chat id or an array
+ * of them; only those chats (and their side chats) move, the rest of their projects stay here.
+ */
 export const OPEN_AGENT_IN_NEW_WINDOW_COMMAND_ID = 'volt.agent.openChatInNewWindow';
+/** Desktop only: moves a project (its id) with every chat of it this window lists to a new window. */
+export const OPEN_PROJECT_IN_NEW_WINDOW_COMMAND_ID = 'volt.agent.openProjectInNewWindow';
 export const OPEN_AGENT_HISTORY_COMMAND_ID = 'workbench.action.voltAgent.showHistory';
 export const TOGGLE_AGENT_DRAWER_COMMAND_ID = 'workbench.action.voltAgent.toggleDrawer';
 export const EXPORT_AGENT_TRANSCRIPT_COMMAND_ID = 'workbench.action.voltAgent.exportTranscript';
@@ -59,6 +64,8 @@ export const AGENT_EDITOR_LINE_NUMBERS_SETTING = 'volt.agent.editor.lineNumbers'
  * alone (beside the chat's log), so a crash loses at most this much of a reply that was streaming.
  */
 const PARTIAL_SNAPSHOT_INTERVAL_MS = 10_000;
+/** How often a streaming reply tells the chat lists what the agent is doing now (nothing is written to disk). */
+const LIVE_SUMMARY_INTERVAL_MS = 1_000;
 
 /**
  * One saved turn as the model saw it, added to `transcript`: the prompt, then what the reply said
@@ -184,6 +191,8 @@ export class AgentEditorInput extends EditorInput {
 	private lastDraftSignature: string | undefined;
 	private recordChain: Promise<void> = Promise.resolve();
 	private partialTimer: ReturnType<typeof setTimeout> | undefined;
+	private lastLiveSummaryAt = 0;
+	private liveSummaryTimer: ReturnType<typeof setTimeout> | undefined;
 	private draftTimer: ReturnType<typeof setTimeout> | undefined;
 	/** Reduces and records this chat's run events, whether or not a panel shows it. */
 	private _controller: IAgentSessionControl;
@@ -499,6 +508,14 @@ export class AgentEditorInput extends EditorInput {
 			this._controller.forwardRecord({ kind: 'assistant', message, final, status });
 			return;
 		}
+		if (final) {
+			if (this.liveSummaryTimer !== undefined) {
+				clearTimeout(this.liveSummaryTimer);
+				this.liveSummaryTimer = undefined;
+			}
+		} else {
+			this.noteLiveSummary(message, turn, plainText);
+		}
 		if (this.partialTimer !== undefined) {
 			clearTimeout(this.partialTimer);
 			this.partialTimer = undefined;
@@ -522,6 +539,26 @@ export class AgentEditorInput extends EditorInput {
 		// dropped, the chat's record would read "running" after its turn ended.
 		const frozen = this.codec.freezeAssistant(message).catch(() => undefined);
 		this.sequence(async () => handle.appendAssistant({ turn, final, status, text: plainText, summary, message: await frozen }));
+	}
+
+	/**
+	 * Tells the chat lists what the streaming reply says the agent is doing, at most once per
+	 * {@link LIVE_SUMMARY_INTERVAL_MS}. The last change inside a window is sent when the window ends,
+	 * so a line said just before a long tool call is not lost.
+	 */
+	private noteLiveSummary(message: IAgentAssistantMessage, turn: string, plainText: string): void {
+		const elapsed = Date.now() - this.lastLiveSummaryAt;
+		if (elapsed < LIVE_SUMMARY_INTERVAL_MS) {
+			this.liveSummaryTimer ??= setTimeout(() => {
+				this.liveSummaryTimer = undefined;
+				if (message.activity?.streaming) {
+					this.noteLiveSummary(message, turn, plainText);
+				}
+			}, LIVE_SUMMARY_INTERVAL_MS - elapsed);
+			return;
+		}
+		this.lastLiveSummaryAt = Date.now();
+		this.history.noteLiveSummary?.(turn, assistantSummary(message, plainText));
 	}
 
 	/** Records are appended in call order even though freezing is asynchronous. */

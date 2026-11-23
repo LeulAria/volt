@@ -36,6 +36,10 @@ export class AgentDictationText {
 			return;
 		}
 		let range: IRange | undefined = this.written?.getRange(0) ?? undefined;
+		// The caret follows the dictation only while it sits at its end: typing elsewhere in the draft
+		// while dictating keeps its own caret instead of being pulled to the transcript on every partial.
+		const caret = editor.getPosition();
+		const follow = !range || !caret || (caret.lineNumber === range.endLineNumber && caret.column === range.endColumn);
 		if (!range) {
 			const pos = editor.getPosition() ?? model.getFullModelRange().getEndPosition();
 			range = { startLineNumber: pos.lineNumber, startColumn: pos.column, endLineNumber: pos.lineNumber, endColumn: pos.column };
@@ -53,7 +57,9 @@ export class AgentDictationText {
 			range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column },
 			options: { description: 'volt-dictation', stickiness: TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
 		}]);
-		editor.setPosition(end);
+		if (follow) {
+			editor.setPosition(end);
+		}
 		this.shown = text;
 	}
 

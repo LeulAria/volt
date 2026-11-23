@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { AgentHistoryCodec } from '../../browser/history/agentHistoryCodec.js';
+import { AgentHistoryCodec, assistantSummary, summaryProse } from '../../browser/history/agentHistoryCodec.js';
 import type { IAgentAssistantMessage, IAgentUserMessage } from '../../browser/editor/agentEditor.js';
 
 function codec(): AgentHistoryCodec {
@@ -92,5 +92,21 @@ suite('Agent history codec', () => {
 		assert.deepStrictEqual(thawed?.steers?.map(steer => steer.text), ['like this image.png', 'and keep going']);
 		assert.deepStrictEqual(Array.from(thawed?.steers?.[0].mentions?.[0].image?.bytes ?? []), Array.from(bytes));
 		assert.strictEqual(thawed?.steers?.[1].mentions, undefined);
+	});
+
+	test('a reply\'s summary is the agent\'s own words: its latest line while it works, its final message once done', () => {
+		const reply = (extra: Partial<IAgentAssistantMessage>): IAgentAssistantMessage => ({ kind: 'agent', title: '', steps: [], segments: [], blockState: {}, ...extra });
+		const edit = { kind: 'activity' as const, item: { kind: 'edit', label: 'Edited', path: '/p/login.ts' } as never };
+		const live = reply({
+			activity: { status: 'Editing login.ts', expanded: false, streaming: true, items: [] },
+			segments: [{ kind: 'text', text: 'I\'ll read the code first.\n\nNow the **fix** in `login.ts`.' }, edit],
+		});
+		assert.strictEqual(assistantSummary(live, ''), 'Now the fix in login.ts.');
+		assert.strictEqual(assistantSummary(reply({ activity: { status: 'Running tests', expanded: false, streaming: true, items: [] } }), ''), 'Running tests', 'nothing said yet: the live status');
+		const done = reply({ outcome: 'done', segments: [{ kind: 'text', text: 'Looking.' }, edit, { kind: 'text', text: '## Done\n\nFixed the [login bug](https://x.test/1).\n\n```ts\nconst a = 1;\n```\n\n- Tests pass' }] });
+		assert.strictEqual(assistantSummary(done, ''), 'Done \u00b7 Fixed the login bug. \u00b7 Tests pass');
+		assert.strictEqual(assistantSummary(reply({ outcome: 'done', segments: [edit] }), ''), 'Edited login.ts', 'no prose: the files it touched');
+		assert.strictEqual(assistantSummary(reply({ outcome: 'failed', failure: { message: 'Connection reset' }, segments: [{ kind: 'text', text: 'Hm.' }] }), ''), 'Connection reset');
+		assert.strictEqual(summaryProse('| a | b |\n|---|---|'), undefined);
 	});
 });

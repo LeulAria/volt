@@ -139,6 +139,9 @@ export const TITLE_BAR_SETTINGS = [
 	TitleBarSetting.CUSTOM_TITLE_BAR_VISIBILITY,
 ];
 
+/** Set once the agent list's saved width gave way to the narrower default (see primeLayoutMode). */
+const AGENT_SIDEBAR_NARROW_DEFAULT_KEY = 'volt.agent.sidebar.narrowDefault';
+
 const DEFAULT_EMPTY_WINDOW_DIMENSIONS = new Dimension(DEFAULT_EMPTY_WINDOW_SIZE.width, DEFAULT_EMPTY_WINDOW_SIZE.height);
 const DEFAULT_WORKSPACE_WINDOW_DIMENSIONS = new Dimension(DEFAULT_WORKSPACE_WINDOW_SIZE.width, DEFAULT_WORKSPACE_WINDOW_SIZE.height);
 
@@ -844,10 +847,16 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		// The rail has one width; the list's own width stays saved for when it opens again.
 		const rail = this.storageService.getBoolean(AGENT_SIDEBAR_RAIL_KEY, StorageScope.PROFILE, false);
 		this.mainContainer.classList.toggle(AGENT_SIDEBAR_RAIL_CLASS, rail);
-		// 400 is the stock secondary side bar default nobody chose: the agent list opens narrower.
+		// 400 is the stock secondary side bar default nobody chose, and 300 and 240 the agent list's
+		// old defaults: the agent list opens at its own. Widths saved before the narrower default (mostly the
+		// old one, capped to the window) give way to it once; a width dragged after that is kept.
 		const storedWidth = this.stateModel.getInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE);
+		const narrowed = this.storageService.getBoolean(AGENT_SIDEBAR_NARROW_DEFAULT_KEY, StorageScope.PROFILE, false);
+		if (!narrowed) {
+			this.storageService.store(AGENT_SIDEBAR_NARROW_DEFAULT_KEY, true, StorageScope.PROFILE, StorageTarget.MACHINE);
+		}
 		const openWidth = rail ? AGENT_SIDEBAR_RAIL_WIDTH : agentStartupSidebarWidth(
-			storedWidth === 400 ? AuxiliaryBarPart.AGENT_OPEN_WIDTH : storedWidth,
+			storedWidth === 400 || AuxiliaryBarPart.AGENT_PREVIOUS_OPEN_WIDTHS.includes(storedWidth) || (!narrowed && storedWidth > AuxiliaryBarPart.AGENT_OPEN_WIDTH) ? AuxiliaryBarPart.AGENT_OPEN_WIDTH : storedWidth,
 			false,
 			{
 				min: AuxiliaryBarPart.AGENT_MIN_WIDTH,
@@ -860,9 +869,8 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		this.stateModel.setRuntimeValue(LayoutStateKeys.STATUSBAR_HIDDEN, true);
 		this.stateModel.setRuntimeValue(LayoutStateKeys.SIDEBAR_POSITON, Position.RIGHT);
 		this.stateModel.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_HIDDEN, hideLeftSidebar);
-		if (!hideLeftSidebar) {
-			this.stateModel.setInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE, openWidth);
-		}
+		// Also while hidden: it is the width the list opens at.
+		this.stateModel.setInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE, openWidth);
 		const commandCenterVisible = this.configurationService.getValue<boolean>(LayoutSettings.COMMAND_CENTER) !== false;
 		stampLayoutModeChrome(
 			this.mainContainer,

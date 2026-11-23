@@ -19,6 +19,8 @@ import { IContextViewService } from '../../../../../platform/contextview/browser
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IWorkbenchLayoutService, Parts } from '../../../../services/layout/browser/layoutService.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
+import { TOGGLE_MOBILE_TERMINAL_COMMAND_ID } from './mobile/voltMobileNavigation.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 
 /** The width below which the window lays out for a phone (agentSurfaceHost.ts lays the tools over the chat below it too). */
 const PHONE_QUERY = '(max-width: 600px)';
@@ -27,10 +29,29 @@ const TOUCH_QUERY = '(hover: none)';
 /** How far a finger moves left on the open drawer before it closes. */
 const SWIPE_CLOSE_DISTANCE = 56;
 
-/** Title bar controls a phone moves into the "…" menu (hidden by voltWorkbenchWeb.css), in menu order. */
-const OVERFLOW_CONTROLS: readonly { readonly selector: string; readonly icon: ThemeIcon }[] = [
+interface IOverflowControl {
+	readonly selector: string;
+	readonly icon: ThemeIcon;
+	/** The row's name when the control's own label says less on a phone. */
+	readonly label?: (control: HTMLElement) => string;
+	/** Runs instead of clicking the control (a phone opens it its own way). */
+	readonly command?: string;
+}
+
+/**
+ * Title bar controls a phone moves into the "…" menu (hidden by voltWorkbenchWeb.css), in menu order:
+ * the chat's search, its open tabs and files (the right panel), the terminal, and the IDE layout.
+ */
+const OVERFLOW_CONTROLS: readonly IOverflowControl[] = [
 	{ selector: '.volt-agent-primary-header-search', icon: Codicon.search },
-	{ selector: '.volt-agent-bottom-panel-toggle', icon: Codicon.terminal },
+	{ selector: '.volt-agent-right-panel-toggle', icon: Codicon.layoutSidebarRight, label: () => localize('voltWeb.openTabs', "Open Tabs") },
+	{ selector: '.volt-agent-files-panel-toggle', icon: Codicon.files, label: () => localize('voltWeb.files', "Files") },
+	{
+		selector: '.volt-agent-bottom-panel-toggle',
+		icon: Codicon.terminal,
+		label: control => control.getAttribute('aria-expanded') === 'true' ? localize('voltWeb.closeTerminal', "Close Terminal") : localize('voltWeb.terminal', "Terminal"),
+		command: TOGGLE_MOBILE_TERMINAL_COMMAND_ID,
+	},
 	{ selector: '.volt-agent-switch-to-ide', icon: Codicon.code },
 ];
 
@@ -43,6 +64,7 @@ class VoltWebTouchContribution extends Disposable implements IWorkbenchContribut
 	constructor(
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 		const root = layoutService.mainContainer;
@@ -83,12 +105,14 @@ class VoltWebTouchContribution extends Disposable implements IWorkbenchContribut
 
 	private showMore(): void {
 		const titlebar = this.layoutService.mainContainer.querySelector<HTMLElement>('.part.titlebar');
-		const items: IVoltMenuItem<HTMLElement>[] = [];
-		for (const { selector, icon } of OVERFLOW_CONTROLS) {
+		const items: IVoltMenuItem<{ readonly control: HTMLElement; readonly command?: string }>[] = [];
+		const phone = this.layoutService.mainContainer.classList.contains('volt-mobile-phone');
+		for (const { selector, icon, label: labelFor, command } of OVERFLOW_CONTROLS) {
 			const control = titlebar?.querySelector<HTMLElement>(selector);
-			const label = control?.getAttribute('aria-label');
-			if (control && label) {
-				items.push({ id: selector, label, icon, disabled: control.classList.contains('is-disabled') || control.hasAttribute('disabled'), data: control });
+			const own = control?.getAttribute('aria-label');
+			if (control && own) {
+				const label = labelFor?.(control) ?? own;
+				items.push({ id: selector, label, icon, disabled: control.classList.contains('is-disabled') || control.hasAttribute('disabled'), data: { control, command: phone ? command : undefined } });
 			}
 		}
 		if (!items.length) {
@@ -99,7 +123,7 @@ class VoltWebTouchContribution extends Disposable implements IWorkbenchContribut
 			align: 'right',
 			ariaLabel: localize('voltWeb.titlebarMore', "More Actions"),
 			sections: [{ id: 'titlebar', items }],
-			onPick: item => item.data.click(),
+			onPick: item => item.data.command ? void this.commandService.executeCommand(item.data.command) : item.data.control.click(),
 		});
 	}
 

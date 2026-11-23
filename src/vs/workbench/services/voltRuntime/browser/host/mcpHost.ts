@@ -116,6 +116,8 @@ export class McpHost extends Disposable {
 	private readonly sandboxedChats = new Set<string>();
 	/** Settled connection attempts, by the same key as {@link connections}. */
 	private readonly settled = new Map<string, IMcpConnection | undefined>();
+	/** Why a settled attempt failed, by the same key, for the status hover. */
+	private readonly failures = new Map<string, IMcpFailure>();
 	/**
 	 * Project servers that passed the gate, by the same key, with the approval they run under. A
 	 * project server's connection starts only while its key is here (checked again at the spawn).
@@ -197,7 +199,8 @@ export class McpHost extends Disposable {
 			if (keys.some(key => !this.settled.has(key))) {
 				return { name: config.name, scope, state: 'connecting' as const, ...extra };
 			}
-			return { name: config.name, scope, state: 'error' as const, ...extra };
+			const failure = keys.map(key => this.failures.get(key)).find(Boolean);
+			return { name: config.name, scope, state: 'error' as const, ...extra, ...(failure ? { error: failure.message, ...(failure.needsAuth ? { needsAuth: true } : {}) } : {}) };
 		});
 	}
 
@@ -419,12 +422,16 @@ export class McpHost extends Disposable {
 				connection?.dispose();
 				this.connections.delete(key);
 				this.settled.delete(key);
+				this.failures.delete(key);
 				return this.connection(config, root, scope, chat);
 			});
 		}
 		const value = withTimeout(config.kind === 'stdio' ? this.connectStdio(config, root, partition) : this.connectHttp(config), CONNECT_TIMEOUT_MS)
 			.catch(err => {
 				this.logService.warn(`[volt mcp] ${config.name} is unavailable`, err);
+				if (this.connections.get(key)?.value === value) {
+					this.failures.set(key, describeFailure(config, err));
+				}
 				if (partition && isSandboxRefusal(err)) {
 					// Shown in the chat (typed by the step that refused); never started another way.
 					const list = this.refusals.get(partition.chat.id) ?? [];
@@ -576,6 +583,10 @@ export class McpHost extends Disposable {
 			}
 			const body = (await streamToBuffer(ctx.stream)).toString();
 			const status = ctx.res.statusCode ?? 0;
+			const challenge = ctx.res.headers['www-authenticate'];
+			if (status === 401 || (status === 403 && challenge)) {
+				throw new McpAuthRequiredError(config, status);
+			}
 			if (status >= 400) {
 				throw new Error(`HTTP ${status}: ${body.slice(0, 300)}`);
 			}
@@ -623,6 +634,7 @@ export class McpHost extends Disposable {
 		const entry = this.connections.get(key);
 		this.connections.delete(key);
 		this.settled.delete(key);
+		this.failures.delete(key);
 		void entry?.value.then(connection => connection?.dispose());
 	}
 
@@ -667,6 +679,7 @@ export class McpHost extends Disposable {
 				connection?.dispose();
 				this.connections.delete(key);
 				this.settled.delete(key);
+				this.failures.delete(key);
 			}
 		}
 	}
@@ -677,9 +690,56 @@ export class McpHost extends Disposable {
 		}
 		this.connections.clear();
 		this.settled.clear();
+		this.failures.clear();
 		this.approvedProject.clear();
 		this.refusals.clear();
 		this.sandboxedChats.clear();
+	}
+}
+
+interface IMcpFailure {
+	readonly message: string;
+	readonly needsAuth: boolean;
+}
+
+/** An HTTP server answered 401 (or 403 with a challenge): it wants a sign-in, it is not broken. */
+class McpAuthRequiredError extends Error {
+	constructor(config: Extract<McpServerConfig, { kind: 'http' }>, status: number) {
+		const hasToken = Object.keys(config.headers ?? {}).some(header => header.toLowerCase() === 'authorization');
+		super(hasToken
+			? `${config.name} turned down the Authorization header in its MCP config (HTTP ${status}). The token may have expired; replace it.`
+			: `${config.name} asks you to sign in (OAuth, HTTP ${status}). Volt cannot sign in to MCP servers yet; put an access token in an Authorization header of this server's MCP config to use it here.`);
+		this.name = 'McpAuthRequiredError';
+	}
+}
+
+/** What the status hover says about a failed start: the server's own words, made readable for common network failures. */
+function describeFailure(config: McpServerConfig, err: unknown): IMcpFailure {
+	if (err instanceof McpAuthRequiredError) {
+		return { message: err.message, needsAuth: true };
+	}
+	const raw = err instanceof Error ? err.message : String(err);
+	const host = config.kind === 'http' ? hostOf(config.url) : undefined;
+	if (/CERT_DATE_INVALID|CERT_HAS_EXPIRED|certificate has expired/i.test(raw)) {
+		return { message: `The TLS certificate of ${host ?? config.name} has expired, so Volt will not connect to it. Its owner has to renew it.`, needsAuth: false };
+	}
+	if (/CERT_|certificate|SSL|TLS/i.test(raw)) {
+		return { message: `Volt does not trust the TLS certificate of ${host ?? config.name}: ${raw}`, needsAuth: false };
+	}
+	if (/ENOTFOUND|NAME_NOT_RESOLVED/i.test(raw)) {
+		return { message: `${host ?? config.name} could not be found (DNS): ${raw}`, needsAuth: false };
+	}
+	if (/^timed out after/.test(raw)) {
+		return { message: `${config.name} did not finish starting within ${CONNECT_TIMEOUT_MS / 1000} seconds.`, needsAuth: false };
+	}
+	return { message: raw, needsAuth: false };
+}
+
+function hostOf(url: string): string | undefined {
+	try {
+		return new URL(url).host;
+	} catch {
+		return undefined;
 	}
 }
 

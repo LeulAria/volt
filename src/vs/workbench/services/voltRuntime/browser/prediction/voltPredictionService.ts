@@ -16,9 +16,9 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { URI } from '../../../../../base/common/uri.js';
 import { cheapestReasoningLevel, formatPredictionError, IVoltModelAccess } from '../../common/models/modelAccess.js';
 import { IVoltModelOptions, MODEL_OPTION_REASONING, MODEL_PARAM_MAX_OUTPUT } from '../../common/models/modelOptions.js';
-import { DEFAULT_PREDICTION_SETTINGS, IComposerPredictionInput, IDictationInput, IEditPrediction, IPredictedEdit, IPredictionContext, IPredictionSettings, IVoltPredictionService, VOLT_PREDICTION_SETTINGS_STORAGE_KEY } from '../../common/prediction.js';
-import { buildComposerPrompt, cleanComposerCompletion } from '../../common/prediction/composerPredictor.js';
-import { buildDictationPrompt, cleanDictationReply, dictationReplyIsComplete } from '../../common/prediction/dictationCleanup.js';
+import { DEFAULT_PREDICTION_SETTINGS, IComposerPredictionInput, IDictationInput, IEditPrediction, INextPromptInput, IPredictedEdit, IPredictionContext, IPredictionSettings, IVoltPredictionService, VOLT_PREDICTION_SETTINGS_STORAGE_KEY } from '../../common/prediction.js';
+import { buildComposerPrompt, buildNextPromptPrompt, cleanComposerCompletion, cleanNextPrompt } from '../../common/prediction/composerPredictor.js';
+import { buildDictationPrompt, cleanDictationReply, dictationNeedsCleanup, dictationReplyIsComplete } from '../../common/prediction/dictationCleanup.js';
 import { meetsConfidence, orderEdits, samePath } from '../../common/prediction/editGraph.js';
 import { IParsedEdit, parseMultiEdit } from '../../common/prediction/multiEditParser.js';
 import { capLines, dedupeLineEcho, dedupePrefixOverlap, firstLineOnly, partialInsertText, postProcessInline, repliedLineBreakOnly, stripFences, stripSpecialTokens, trimToBlock } from '../../common/prediction/postProcess.js';
@@ -43,6 +43,8 @@ const NES_MAX_OUTPUT_TOKENS = 2_048;
 /** The composer predicts the rest of a sentence: a handful of words. */
 const COMPOSER_MAX_OUTPUT_TOKENS = 48;
 const COMPOSER_TIMEOUT_MS = 8_000;
+/** A next message is one short line. */
+const NEXT_PROMPT_MAX_OUTPUT_TOKENS = 40;
 /** Dictation waits on its cleanup: past this, the transcript goes in as it was heard. */
 const DICTATION_TIMEOUT_MS = 4_000;
 const DICTATION_MAX_OUTPUT_TOKENS = 1_024;
@@ -457,6 +459,20 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 		return flight;
 	}
 
+	async predictNextPrompt(input: INextPromptInput, token: CancellationToken): Promise<string | undefined> {
+		const modelRef = this.modelAccess.resolveTabModelRef();
+		if (!modelRef || !this.settings.enabled || !this.settings.composer || !input.transcript.length || this.backingOff()) {
+			return undefined;
+		}
+		const raw = await this.request(modelRef, 'composer', buildNextPromptPrompt(input), {
+			timeoutMs: modelRef.startsWith('agent:') ? AGENT_TAB_TIMEOUT_MS : COMPOSER_TIMEOUT_MS,
+			pauseMs: 0,
+			options: this.tabOptions(modelRef, NEXT_PROMPT_MAX_OUTPUT_TOKENS),
+			enough: text => text.includes('</insert>'),
+		}, token);
+		return raw === undefined || token.isCancellationRequested ? undefined : cleanNextPrompt(raw, input.lastPrompt);
+	}
+
 	// --- next-edit / multi-edit ---------------------------------------------------------------
 
 	async predictNextEdit(ctx: IPredictionContext, token: CancellationToken): Promise<IEditPrediction | undefined> {
@@ -545,7 +561,8 @@ export class VoltPredictionService extends Disposable implements IVoltPrediction
 	async polishDictation(input: IDictationInput, token: CancellationToken): Promise<string | undefined> {
 		const modelRef = this.modelAccess.resolveTabModelRef();
 		const transcript = input.transcript.trim();
-		if (!modelRef || !this.settings.voice || !transcript || this.backingOff()) {
+		// A clean transcript goes in as heard: no model call.
+		if (!modelRef || !this.settings.voice || !dictationNeedsCleanup(transcript, input.before) || this.backingOff()) {
 			return undefined;
 		}
 		const raw = await this.request(modelRef, 'voice', buildDictationPrompt(input), {

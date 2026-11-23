@@ -55,7 +55,13 @@ export class AgentPullRequestHoverCard extends Disposable {
 			this.clearTimers();
 			this.card.remove();
 		}));
-		this._register(addDisposableListener(anchor, 'mouseenter', () => this.scheduleShow()));
+		this._register(addDisposableListener(anchor, 'mouseenter', () => {
+			// What the card shows is read again on the way in (merged in a browser, say); the card follows the read.
+			const sessionId = this.getSessionId();
+			const link = this.getLink();
+			void (sessionId ? this.pullRequests.revalidate(sessionId) : link ? this.pullRequests.revalidateKeys([link.key]) : undefined);
+			this.scheduleShow();
+		}));
 		this._register(addDisposableListener(anchor, 'mouseleave', () => this.scheduleHide()));
 		// Clicking the chip opens the pull request: the card would cover where it goes.
 		this._register(addDisposableListener(anchor, 'mousedown', () => this.hide()));

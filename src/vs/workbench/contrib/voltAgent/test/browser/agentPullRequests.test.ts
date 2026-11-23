@@ -16,6 +16,7 @@ import {
 	buildBranchNamePrompt,
 	buildFixThreadPrompt,
 	buildPrCommentsPrompt,
+	buildResolveConflictsPrompt,
 	buildWatchMessage,
 	changedPullRequestsInOutput,
 	collectRemarks,
@@ -566,5 +567,12 @@ suite('Volt agent pull requests', () => {
 		assert.ok(prompt.trimEnd().endsWith('tell me what you did for each comment.'));
 		assert.ok(buildPrCommentsPrompt(pull, [comments[2]]).startsWith('Address my comment on pull request #7.'));
 		assert.strictEqual(prCommentsDisplay(pull, comments), '#7 \u00b7 feature/7 \u2192 main\n1. src/a.ts, lines 3-5: Rename this\n2. src/b.md, line 9: Uses ``` inside\n3. Add a changelog entry');
+	});
+
+	test('the resolve-conflicts prompt, sent to a new chat, works where the branch is already checked out', () => {
+		const prompt = buildResolveConflictsPrompt(detail(7));
+		assert.ok(prompt.startsWith('Pull request #7 has merge conflicts with main. Resolve them.'));
+		assert.ok(prompt.includes('merge or rebase it into feature/7'));
+		assert.ok(prompt.includes('checked out in another worktree (git worktree list), do the work in that worktree'));
 	});
 });

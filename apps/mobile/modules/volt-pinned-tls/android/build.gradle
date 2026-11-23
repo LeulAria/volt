@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.voltadk.pinnedtls'
+version = '1.0.0'
+
+android {
+  namespace "com.voltadk.pinnedtls"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+    consumerProguardFiles 'proguard-rules.pro'
+  }
+}
+
+dependencies {
+  // React Native's own HTTP client (the same version it ships).
+  implementation 'com.squareup.okhttp3:okhttp:4.9.2'
+}

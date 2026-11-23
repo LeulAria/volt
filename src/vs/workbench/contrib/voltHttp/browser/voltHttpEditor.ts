@@ -52,7 +52,7 @@ import { httpDraftKey, IHttpEnvironmentEntry, IVoltHttpCollections } from './vol
 import { HttpCollectionPage, HttpEnvironmentPage, IHttpCollectionTabState, IHttpEnvironmentTabState, IHttpPageHost } from './voltHttpPages.js';
 import { currentHttpRequest, HttpRequestView, IHttpRequestHost, IHttpRequestTabState, isHttpRequestDirty } from './voltHttpRequestView.js';
 import { IHttpExchange, IVoltHttpService } from './voltHttpService.js';
-import { HTTP_TOOLS, HttpSidebar, HttpSidebarView, IHttpSidebarHost } from './voltHttpSidebar.js';
+import { HTTP_TOOLS, renderHttpToolIcon, HttpSidebar, HttpSidebarView, IHttpSidebarHost } from './voltHttpSidebar.js';
 import { HttpToolKind, IHttpToolFiles, IHttpToolPage, IHttpToolPageHost, IHttpToolTabState } from './voltHttpToolPages.js';
 import { IVoltHttpAutomations } from './voltHttpAutomations.js';
 import { HttpAutomationPage } from './voltHttpAutomationPage.js';
@@ -368,7 +368,7 @@ export class VoltHttpClientEditor extends EditorPane {
 		this.tabList = append(this.strip, $('.volt-http-strip-tabs'));
 		this.tabList.setAttribute('role', 'tablist');
 		// Beside the tabs, not among them: it stays in reach however many are open.
-		const add = createHttpIconButton(this.strip, Codicon.add, localize('voltHttp.newRequestTab', "New Request"), button => this.showKindMenu(button));
+		const add = createHttpIconButton(this.strip, Codicon.add, localize('voltHttp.newTab', "New"), button => this.showKindMenu(button));
 		add.classList.add('volt-http-strip-add');
 		this.stripActions = append(this.strip, $('.volt-http-strip-actions'));
 		this.content = append(this.main, $('.volt-http-content'));
@@ -778,7 +778,7 @@ export class VoltHttpClientEditor extends EditorPane {
 				label = folder?.name ?? (entry?.collection.format === 'postman' ? entry.collection.name : basename(tab.state.collection));
 			} else if (tab.kind === 'tool') {
 				const tool = HTTP_TOOLS.find(item => item.kind === tab.tool)!;
-				append(el, $('span.volt-http-open-tab-icon')).appendChild(renderIcon(tool.icon));
+				append(el, $('span.volt-http-open-tab-icon')).appendChild(renderHttpToolIcon(tool.icon));
 				const named = this.toolFiles(tab.tool).nameOf(tab.state.uri);
 				label = named ?? basename(tab.state.uri).replace(/\.volt-[a-z]+\.json$/i, '');
 				// A restored tab whose file nobody has read yet shows its file name: list the tool's files once, for their names.
@@ -976,18 +976,30 @@ export class VoltHttpClientEditor extends EditorPane {
 		}
 	}
 
-	/** The kinds of request to start: HTTP, GraphQL, WebSocket and the rest, each with its mark. */
+	/** What the strip's + starts: a request of any kind (HTTP, GraphQL, WebSocket and the rest), or a test of the API. */
 	private showKindMenu(anchor: HTMLElement): void {
-		this.menu.value = showVoltMenu<HttpProtocol>(this.contextViewService, {
+		type New = { readonly request: HttpProtocol } | { readonly tool: HttpToolKind };
+		const pick = (value: New) => value;
+		this.menu.value = showVoltMenu<New>(this.contextViewService, {
 			anchor,
 			className: HTTP_MENU_CLASS,
 			align: 'left',
-			width: 300,
-			maxListHeight: 640,
-			ariaLabel: localize('voltHttp.newRequestTab', "New Request"),
-			heading: { title: localize('voltHttp.newRequestKind', "New request") },
-			sections: [{ id: 'kinds', items: HTTP_PROTOCOLS.map(item => ({ id: item.id, label: item.label, subtitle: item.hint, icon: () => createHttpProtocolIcon(item.id), data: item.id })) }],
-			onPick: item => this.openUntitled(undefined, undefined, item.data),
+			// Wide enough that every kind's hint shows whole.
+			width: 340,
+			maxListHeight: 760,
+			ariaLabel: localize('voltHttp.newTab', "New"),
+			sections: [
+				{ id: 'kinds', title: localize('voltHttp.newRequestKind', "New request"), items: HTTP_PROTOCOLS.map(item => ({ id: item.id, label: item.label, subtitle: item.hint, icon: () => createHttpProtocolIcon(item.id), data: pick({ request: item.id }) })) },
+				{ id: 'tools', title: localize('voltHttp.newTestKind', "New test"), items: HTTP_TOOLS.map(tool => ({ id: `tool-${tool.kind}`, label: tool.one, subtitle: tool.hint, icon: tool.icon, data: pick({ tool: tool.kind }) })) },
+			],
+			onPick: item => {
+				const picked = item.data;
+				if ('tool' in picked) {
+					void this.sidebar?.newTool(picked.tool);
+				} else {
+					this.openUntitled(undefined, undefined, picked.request);
+				}
+			},
 		});
 	}
 
@@ -1137,7 +1149,7 @@ export class VoltHttpClientEditor extends EditorPane {
 		for (const tool of HTTP_TOOLS) {
 			const button = append(tools, $('button.volt-http-launchpad-link')) as HTMLButtonElement;
 			button.type = 'button';
-			append(button, $('span.volt-http-launchpad-link-icon')).appendChild(renderIcon(tool.icon));
+			append(button, $('span.volt-http-launchpad-link-icon')).appendChild(renderHttpToolIcon(tool.icon));
 			append(button, $('span.volt-http-launchpad-link-label')).textContent = localize('voltHttp.launchNewTool', "New {0}", tool.one);
 			append(button, $('span.volt-http-launchpad-link-hint')).textContent = tool.hint.charAt(0).toLowerCase() + tool.hint.slice(1);
 			button.addEventListener('click', () => void this.sidebar?.newTool(tool.kind));

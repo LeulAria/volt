@@ -11,3 +11,9 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 *.orig.*
+
+# Local Expo modules keep their native sources (the ios/ and android/ rules above are for prebuild output).
+!/modules/*/ios/
+!/modules/*/android/
+/modules/*/android/build/
+/modules/*/android/.gradle/

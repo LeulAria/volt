@@ -14,11 +14,13 @@ import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
 import { IFileDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IFileService } from '../../../../../platform/files/common/files.js';
+import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { createStrokeIcon } from '../chrome/agentModeIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { closeMediaDialog, decodeImage, imageExtension, trackMediaDialog } from './agentImageAttachments.js';
 import { VOLT_FONT_FAMILY } from '../../common/agentTypography.js';
+import { IVoltImageClipboardService } from '../../common/voltImageClipboard.js';
 
 export interface IAgentImageViewerImage {
 	/** The file name (`image.png`). */
@@ -39,15 +41,43 @@ export interface IAgentImageViewerOptions {
 	readonly onDidClose?: () => void;
 }
 
-type Tool = 'select' | 'arrow' | 'rect' | 'pen' | 'text' | 'crop';
+/** Marks drawn by dragging a box. Highlight and pixelate fill it; rectangle and ellipse outline it. */
+type BoxKind = 'rect' | 'ellipse' | 'highlight' | 'redact';
+/** Marks drawn by dragging from one point to another. */
+type SegmentKind = 'arrow' | 'line';
+/** The tools behind the shapes menu. */
+type ShapeTool = 'rect' | 'ellipse' | 'line' | 'highlight' | 'redact' | 'step';
+type Tool = 'select' | 'arrow' | ShapeTool | 'pen' | 'text' | 'crop';
 
 interface IPoint { readonly x: number; readonly y: number }
 
 type Shape =
-	| { readonly kind: 'arrow'; readonly color: string; readonly width: number; readonly from: IPoint; readonly to: IPoint }
-	| { readonly kind: 'rect'; readonly color: string; readonly width: number; readonly from: IPoint; readonly to: IPoint }
+	| { readonly kind: SegmentKind; readonly color: string; readonly width: number; readonly from: IPoint; readonly to: IPoint }
+	| { readonly kind: BoxKind; readonly color: string; readonly width: number; readonly from: IPoint; readonly to: IPoint }
 	| { readonly kind: 'pen'; readonly color: string; readonly width: number; readonly points: readonly IPoint[] }
-	| { readonly kind: 'text'; readonly color: string; readonly size: number; readonly weight: number; readonly at: IPoint; readonly text: string };
+	| { readonly kind: 'text'; readonly color: string; readonly size: number; readonly weight: number; readonly at: IPoint; readonly text: string }
+	/** A numbered badge for step-by-step callouts; `size` is its radius. */
+	| { readonly kind: 'step'; readonly color: string; readonly size: number; readonly at: IPoint; readonly n: number };
+
+type SegmentShape = Shape & { kind: SegmentKind };
+type BoxShape = Shape & { kind: BoxKind };
+
+function isSegment(shape: Shape): shape is SegmentShape {
+	return shape.kind === 'arrow' || shape.kind === 'line';
+}
+
+function isBox(shape: Shape): shape is BoxShape {
+	return shape.kind === 'rect' || shape.kind === 'ellipse' || shape.kind === 'highlight' || shape.kind === 'redact';
+}
+
+/** Marks drawn with a line width (the stroke menu restyles them). */
+function hasStroke(shape: Shape): shape is Exclude<Shape, { kind: 'text' | 'step' }> {
+	return shape.kind !== 'text' && shape.kind !== 'step';
+}
+
+const SEGMENT_TOOLS: ReadonlySet<Tool> = new Set<Tool>(['arrow', 'line']);
+const BOX_TOOLS: ReadonlySet<Tool> = new Set<Tool>(['rect', 'ellipse', 'highlight', 'redact']);
+const SHAPE_TOOLS: ReadonlySet<Tool> = new Set<Tool>(['rect', 'ellipse', 'line', 'highlight', 'redact', 'step']);
 
 /** The open text box; its style follows the menus until it becomes a mark. */
 interface ITextEditor {
@@ -81,14 +111,23 @@ const HANDLE_CURSORS: Record<Handle, string> = {
 const HANDLE_RADIUS = 4.5;
 const SELECTION_PAD = 6;
 
-const COLORS = ['#ff453a', '#ff9f0a', '#ffd60a', '#30d158', '#0a84ff', '#bf5af2', '#ffffff', '#111111'] as const;
-/** Line widths as multiples of the image-relative default; `preview` is the CSS px the menu draws. */
-const STROKES = [
-	{ scale: 0.5, preview: 1.5, label: localize('voltAgent.strokeThin', "Thin") },
-	{ scale: 1, preview: 2.5, label: localize('voltAgent.strokeMedium', "Medium") },
-	{ scale: 2, preview: 4, label: localize('voltAgent.strokeThick', "Thick") },
-	{ scale: 3, preview: 6, label: localize('voltAgent.strokeHeavy', "Extra thick") },
+const COLORS = [
+	'#ff453a', '#ff9f0a', '#ffd60a', '#30d158', '#64d2ff', '#0a84ff',
+	'#5e5ce6', '#bf5af2', '#ff375f', '#ffffff', '#8e8e93', '#111111',
 ] as const;
+/** Line widths in image px. The default is the preset nearest an image-relative width. */
+const STROKE_PRESETS = [1, 2, 3, 4, 6, 8, 10, 12, 16, 20, 24, 32] as const;
+const MAX_STROKE = 200;
+/** The widest line a stroke row draws, in CSS px; wider strokes are capped so the menu stays compact. */
+const MAX_STROKE_PREVIEW = 12;
+const SHAPES: readonly { readonly tool: ShapeTool; readonly label: string; readonly key: string }[] = [
+	{ tool: 'rect', label: localize('voltAgent.toolRect', "Rectangle"), key: 'R' },
+	{ tool: 'ellipse', label: localize('voltAgent.toolEllipse', "Ellipse"), key: 'O' },
+	{ tool: 'line', label: localize('voltAgent.toolLine', "Line"), key: 'L' },
+	{ tool: 'highlight', label: localize('voltAgent.toolHighlight', "Highlight"), key: 'H' },
+	{ tool: 'redact', label: localize('voltAgent.toolRedact', "Pixelate"), key: 'B' },
+	{ tool: 'step', label: localize('voltAgent.toolStep', "Numbered step"), key: 'N' },
+];
 /** Word-style text sizes; DEFAULT_TEXT_POINTS is the image-relative default and the rest scale from it. */
 const TEXT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72] as const;
 const DEFAULT_TEXT_POINTS = 16;
@@ -106,6 +145,12 @@ const TOOL_ICONS = {
 	select: ['M8.12673 19.9859L3.13506 5.01093C2.74861 3.85158 3.85158 2.74861 5.01093 3.13506L19.9859 8.12673C21.2966 8.5636 21.3504 10.3975 20.0677 10.9106L14.117 13.2909C13.7402 13.4416 13.4416 13.7402 13.2909 14.117L10.9106 20.0677C10.3975 21.3504 8.5636 21.2966 8.12673 19.9859Z'],
 	arrow: ['M13 5h6v6', 'M19 5 5 19'],
 	rect: ['M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'],
+	ellipse: ['M12 5c4.97 0 9 3.134 9 7s-4.03 7-9 7-9-3.134-9-7 4.03-7 9-7z'],
+	line: ['M5 19 19 5'],
+	highlight: ['m9 11-6 6v3h9l3-3', 'm22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4'],
+	redact: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M3 9h18', 'M3 15h18', 'M9 3v18', 'M15 3v18'],
+	step: ['M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18z', 'M10.5 9.5 12.5 8v8'],
+	trash: ['M3 6h18', 'M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6', 'M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2', 'M10 11v6', 'M14 11v6'],
 	pen: ['M13 21h8', 'm15 5 4 4', 'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z'],
 	text: ['M12 4v16', 'M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2', 'M9 20h6'],
 	crop: ['M6 2v14a2 2 0 0 0 2 2h14', 'M18 22V8a2 2 0 0 0-2-2H2'],
@@ -149,6 +194,18 @@ export class AgentImageViewer extends Disposable {
 	private palette: HTMLElement | undefined;
 	private strokeButton: HTMLButtonElement | undefined;
 	private strokeMenu: HTMLElement | undefined;
+	private strokeLabel: HTMLElement | undefined;
+	private strokeInput: HTMLInputElement | undefined;
+	private customColorInput: HTMLInputElement | undefined;
+	/** The shapes menu: its button shows the last shape picked, and draws it when pressed. */
+	private shapeButton: HTMLButtonElement | undefined;
+	private shapeIcon: HTMLElement | undefined;
+	private shapeMenu: HTMLElement | undefined;
+	private shapeTool: ShapeTool = 'rect';
+	private clearButton: HTMLButtonElement | undefined;
+	private copyButton: HTMLButtonElement | undefined;
+	private copiedTimer: ReturnType<typeof setTimeout> | undefined;
+	private dimsEl: HTMLElement | undefined;
 	/** Crop and rotate; text swaps them for the size and weight menus. */
 	private imageToolSet: HTMLElement | undefined;
 	private textToolSet: HTMLElement | undefined;
@@ -168,7 +225,8 @@ export class AgentImageViewer extends Disposable {
 	private readonly redoStack: IMarkupState[] = [];
 	private tool: Tool = 'select';
 	private color: string = COLORS[0];
-	private strokeScale: number = 1;
+	/** The picked line width in image px; unset follows the image's size. */
+	private strokePx: number | undefined;
 	private textPoints: number = DEFAULT_TEXT_POINTS;
 	private textWeight: number = 600;
 	/** CSS px per image px; `fit` follows the stage size. */
@@ -189,6 +247,7 @@ export class AgentImageViewer extends Disposable {
 		@IFileDialogService private readonly fileDialogService: IFileDialogService,
 		@IFileService private readonly fileService: IFileService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@IInstantiationService private readonly instantiationService: IInstantiationService,
 	) {
 		super();
 		this.images = options.images.slice();
@@ -209,7 +268,9 @@ export class AgentImageViewer extends Disposable {
 			this.prevButton = this.iconButton(titleRow, Codicon.chevronLeft, localize('voltAgent.imagePrev', "Previous image"), () => this.go(-1));
 			this.nextButton = this.iconButton(titleRow, Codicon.chevronRight, localize('voltAgent.imageNext', "Next image"), () => this.go(1));
 		}
-		this.titleEl = append(titleRow, $('span.volt-agent-image-viewer-title'));
+		const titleText = append(titleRow, $('.volt-agent-image-viewer-title-text'));
+		this.titleEl = append(titleText, $('span.volt-agent-image-viewer-title'));
+		this.dimsEl = append(titleText, $('span.volt-agent-image-viewer-dims'));
 
 		if (editable) {
 			this.renderTools(append(head, $('.volt-agent-image-viewer-tools')));
@@ -222,7 +283,8 @@ export class AgentImageViewer extends Disposable {
 		setAgentTooltip(this.zoomLabel, localize('voltAgent.imageFit', "Fit to window"), formatShortcut('0'));
 		this._register(addDisposableListener(this.zoomLabel, EventType.CLICK, () => this.setZoom('fit')));
 		this.iconButton(actions, Codicon.zoomIn, localize('voltAgent.imageZoomIn', "Zoom in"), () => this.zoomBy(1.25), formatShortcut('='));
-		this.iconButton(actions, Codicon.copy, localize('voltAgent.imageCopy', "Copy image"), () => void this.copy());
+		append(actions, $('span.volt-agent-image-viewer-action-sep'));
+		this.copyButton = this.iconButton(actions, Codicon.copy, localize('voltAgent.imageCopy', "Copy image"), () => void this.copy(), formatShortcut('C'));
 		this.iconButton(actions, Codicon.desktopDownload, localize('voltAgent.imageDownload', "Save image as…"), () => void this.download());
 		if (editable) {
 			const done = append(actions, $('button.volt-agent-image-viewer-done')) as HTMLButtonElement;
@@ -334,7 +396,36 @@ export class AgentImageViewer extends Disposable {
 
 		newGroup();
 		tool('arrow', createStrokeIcon('image-tool-arrow', TOOL_ICONS.arrow), localize('voltAgent.toolArrow', "Arrow"), 'A');
-		tool('rect', createStrokeIcon('image-tool-rect', TOOL_ICONS.rect), localize('voltAgent.toolRect', "Rectangle"), 'R');
+
+		// Shapes: the button draws the last shape picked; its chevron opens the list.
+		const shapes = append(group, $('.volt-agent-image-dropdown.volt-agent-image-shape-split'));
+		this.shapeButton = append(shapes, $('button.volt-agent-image-tool.volt-agent-image-shape-main')) as HTMLButtonElement;
+		this.shapeButton.type = 'button';
+		this.shapeIcon = append(this.shapeButton, $('span.volt-agent-image-shape-icon'));
+		this._register(addDisposableListener(this.shapeButton, EventType.CLICK, () => this.setTool(this.shapeTool)));
+		const shapeChevron = append(shapes, $('button.volt-agent-image-tool.volt-agent-image-shape-more')) as HTMLButtonElement;
+		shapeChevron.type = 'button';
+		shapeChevron.setAttribute('aria-label', localize('voltAgent.toolShapes', "Shapes"));
+		shapeChevron.setAttribute('aria-haspopup', 'true');
+		shapeChevron.appendChild(createStrokeIcon('image-tool-chevron', TOOL_ICONS.chevron));
+		setAgentTooltip(shapeChevron, localize('voltAgent.toolShapes', "Shapes"));
+		keepFocus(shapeChevron);
+		this.shapeMenu = append(shapes, $('.volt-agent-image-popup.volt-agent-image-shapes.hidden'));
+		this.popups.push(this.shapeMenu);
+		append(this.shapeMenu, $('.volt-agent-image-popup-title')).textContent = localize('voltAgent.toolShapes', "Shapes");
+		this._register(addDisposableListener(shapeChevron, EventType.CLICK, e => {
+			e.stopPropagation();
+			this.closePopups(shapes);
+			this.shapeMenu?.classList.toggle('hidden');
+		}));
+		for (const shape of SHAPES) {
+			const row = option(this.shapeMenu, 'volt-agent-image-menu-item.volt-agent-image-shape', shape.label, () => this.setTool(shape.tool));
+			row.dataset.tool = shape.tool;
+			row.appendChild(createStrokeIcon(`image-tool-${shape.tool}`, TOOL_ICONS[shape.tool]));
+			append(row, $('span.volt-agent-image-menu-label')).textContent = shape.label;
+			append(row, $('kbd.volt-agent-image-menu-key')).textContent = shape.key;
+		}
+
 		tool('pen', createStrokeIcon('image-tool-pen', TOOL_ICONS.pen), localize('voltAgent.toolPen', "Draw"), 'P');
 		tool('text', createStrokeIcon('image-tool-text', TOOL_ICONS.text), localize('voltAgent.toolText', "Text"), 'T');
 
@@ -379,32 +470,132 @@ export class AgentImageViewer extends Disposable {
 		this.colorButton = colorMenu.button;
 		this.palette = colorMenu.popup;
 		append(this.colorButton, $('span.volt-agent-image-color-dot'));
+		append(this.palette, $('.volt-agent-image-popup-title')).textContent = localize('voltAgent.toolColor', "Color");
+		const swatches = append(this.palette, $('.volt-agent-image-swatches'));
 		for (const color of COLORS) {
-			const swatch = option(this.palette, 'volt-agent-image-swatch', color, () => this.setColor(color));
+			const swatch = option(swatches, 'volt-agent-image-swatch', color, () => this.setColor(color));
 			swatch.style.setProperty('--swatch', color);
 			swatch.dataset.color = color;
 		}
+		// Any other color: the system color picker, behind a rainbow swatch.
+		const custom = append(this.palette, $('label.volt-agent-image-custom-color'));
+		this.customColorInput = append(custom, $('input.volt-agent-image-custom-color-input')) as HTMLInputElement;
+		this.customColorInput.type = 'color';
+		this.customColorInput.setAttribute('aria-label', localize('voltAgent.toolCustomColor', "Custom color"));
+		append(custom, $('span.volt-agent-image-custom-color-swatch'));
+		append(custom, $('span.volt-agent-image-menu-label')).textContent = localize('voltAgent.toolCustomColor', "Custom color");
+		const customValue = append(custom, $('span.volt-agent-image-custom-color-value'));
+		this._register(addDisposableListener(this.customColorInput, 'input', () => {
+			const value = this.customColorInput!.value;
+			customValue.textContent = value.toUpperCase();
+			this.setColor(value);
+		}));
 
 		// Lines take a stroke width; text has no stroke, so the button hides while text is active.
 		const strokeMenu = dropdown(localize('voltAgent.toolStroke', "Stroke width"), 'volt-agent-image-strokes');
 		this.strokeButton = strokeMenu.button;
 		this.strokeMenu = strokeMenu.popup;
+		this.strokeButton.classList.add('labeled', 'stroke');
 		append(this.strokeButton, $('span.volt-agent-image-stroke-line'));
-		for (const stroke of STROKES) {
-			const row = option(this.strokeMenu, 'volt-agent-image-menu-item.volt-agent-image-stroke', stroke.label, () => this.setStroke(stroke.scale));
-			row.style.setProperty('--stroke', `${stroke.preview}px`);
-			row.dataset.scale = String(stroke.scale);
+		this.strokeLabel = append(this.strokeButton, $('span.volt-agent-image-tool-label.stroke'));
+		this.strokeButton.appendChild(createStrokeIcon('image-tool-chevron', TOOL_ICONS.chevron));
+		append(this.strokeMenu, $('.volt-agent-image-popup-title')).textContent = localize('voltAgent.toolStroke', "Stroke width");
+		const strokeList = append(this.strokeMenu, $('.volt-agent-image-stroke-list'));
+		for (const px of STROKE_PRESETS) {
+			const label = localize('voltAgent.strokePx', "{0}px", px);
+			const row = option(strokeList, 'volt-agent-image-menu-item.volt-agent-image-stroke', label, () => this.setStroke(px));
+			row.style.setProperty('--stroke', `${Math.min(px, MAX_STROKE_PREVIEW)}px`);
+			row.dataset.px = String(px);
 			append(row, $('span.volt-agent-image-stroke-line'));
-			setAgentTooltip(row, stroke.label);
+			append(row, $('span.volt-agent-image-stroke-value')).textContent = label;
 		}
+		// Any other width, typed in.
+		const customStroke = append(this.strokeMenu, $('.volt-agent-image-stroke-custom'));
+		append(customStroke, $('span.volt-agent-image-menu-label')).textContent = localize('voltAgent.strokeCustom', "Custom");
+		const field = append(customStroke, $('.volt-agent-image-stroke-field'));
+		this.strokeInput = append(field, $('input.volt-agent-image-stroke-input')) as HTMLInputElement;
+		this.strokeInput.type = 'number';
+		this.strokeInput.min = '1';
+		this.strokeInput.max = String(MAX_STROKE);
+		this.strokeInput.step = '1';
+		this.strokeInput.setAttribute('aria-label', localize('voltAgent.strokeCustomLabel', "Custom stroke width in pixels"));
+		append(field, $('span.volt-agent-image-stroke-unit')).textContent = 'px';
+		const applyCustom = (close: boolean) => {
+			const value = Math.round(Number(this.strokeInput!.value));
+			if (Number.isFinite(value) && value >= 1) {
+				this.setStroke(Math.min(MAX_STROKE, value));
+			}
+			if (close) {
+				this.closePopups();
+				this.overlay.focus();
+			}
+		};
+		this._register(addDisposableListener(this.strokeInput, EventType.KEY_DOWN, e => {
+			// Typing a width must not switch tools.
+			e.stopPropagation();
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				applyCustom(true);
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				this.closePopups();
+				this.overlay.focus();
+			}
+		}));
+		this._register(addDisposableListener(this.strokeInput, 'change', () => applyCustom(false)));
 
-		// Undo and redo stand on their own, outside any pill.
+		// Undo, redo and clear stand on their own, outside any pill.
 		group = append(parent, $('.volt-agent-image-tool-history'));
 		this.undoButton = action(createStrokeIcon('image-tool-undo', TOOL_ICONS.undo), localize('voltAgent.toolUndo', "Undo"), () => this.undo(), formatShortcut('Z'));
 		this.redoButton = action(createStrokeIcon('image-tool-redo', TOOL_ICONS.redo), localize('voltAgent.toolRedo', "Redo"), () => this.redo(), formatShortcut('Shift+Z'));
+		this.clearButton = action(createStrokeIcon('image-tool-trash', TOOL_ICONS.trash), localize('voltAgent.toolClear', "Remove all marks"), () => this.clearMarks());
 		this.setColor(this.color);
-		this.setStroke(this.strokeScale);
+		this.syncShapeButton();
+		this.syncStrokeMenu();
 		this.syncTextStyleMenu();
+	}
+
+	/** The shapes button shows the shape it draws. */
+	private syncShapeButton(): void {
+		if (!this.shapeButton || !this.shapeIcon) {
+			return;
+		}
+		const shape = SHAPES.find(item => item.tool === this.shapeTool) ?? SHAPES[0];
+		clearNode(this.shapeIcon);
+		this.shapeIcon.appendChild(createStrokeIcon(`image-tool-${shape.tool}`, TOOL_ICONS[shape.tool]));
+		this.shapeButton.setAttribute('aria-label', shape.label);
+		setAgentTooltip(this.shapeButton, shape.label, shape.key);
+		const active = SHAPE_TOOLS.has(this.tool);
+		this.shapeButton.parentElement?.classList.toggle('active', active);
+		this.shapeButton.classList.toggle('active', active);
+		this.shapeButton.setAttribute('aria-pressed', String(active));
+		this.shapeMenu?.querySelectorAll<HTMLElement>('.volt-agent-image-shape').forEach(row => {
+			const current = row.dataset.tool === this.shapeTool;
+			row.classList.toggle('active', current);
+			row.setAttribute('aria-pressed', String(current));
+		});
+	}
+
+	/** The stroke button and menu show the width new lines (or the selected line) get. */
+	private syncStrokeMenu(): void {
+		const selected = this.selected && hasStroke(this.selected) ? this.selected : undefined;
+		const px = selected?.width ?? this.strokeWidth();
+		this.strokeButton?.style.setProperty('--stroke', `${Math.max(1.5, Math.min(px / 2, 6))}px`);
+		if (this.strokeLabel) {
+			this.strokeLabel.textContent = localize('voltAgent.strokePx', "{0}px", px);
+		}
+		let matched = false;
+		this.strokeMenu?.querySelectorAll<HTMLElement>('.volt-agent-image-stroke').forEach(row => {
+			const active = Number(row.dataset.px) === px;
+			matched ||= active;
+			row.classList.toggle('active', active);
+			row.setAttribute('aria-pressed', String(active));
+		});
+		if (this.strokeInput && this.strokeInput.ownerDocument.activeElement !== this.strokeInput) {
+			this.strokeInput.value = matched ? '' : String(px);
+			this.strokeInput.placeholder = String(px);
+		}
+		this.strokeInput?.parentElement?.classList.toggle('active', !matched);
 	}
 
 	/** Text gets the size and weight menu where lines get the stroke menu. */
@@ -440,6 +631,11 @@ export class AgentImageViewer extends Disposable {
 		const image = this.images[this.index];
 		this.titleEl.textContent = image?.title ?? '';
 		setAgentTooltip(this.titleEl, image?.name);
+		if (this.dimsEl) {
+			const base = this.state?.base;
+			const count = this.images.length > 1 ? localize('voltAgent.imageCount', "{0} of {1}", this.index + 1, this.images.length) : undefined;
+			this.dimsEl.textContent = [base ? `${base.width} × ${base.height}` : undefined, count].filter(Boolean).join('  ·  ');
+		}
 		this.zoomLabel.textContent = `${Math.round(this.scale * 100)}%`;
 		if (this.prevButton && this.nextButton) {
 			this.prevButton.disabled = this.index === 0;
@@ -449,6 +645,11 @@ export class AgentImageViewer extends Disposable {
 			this.undoButton.disabled = !this.undoStack.length;
 			this.redoButton.disabled = !this.redoStack.length;
 		}
+		if (this.clearButton) {
+			this.clearButton.disabled = !this.state?.shapes.length;
+		}
+		this.syncShapeButton();
+		this.syncStrokeMenu();
 		for (const [id, button] of this.toolButtons) {
 			button.classList.toggle('active', id === this.tool);
 			button.setAttribute('aria-pressed', String(id === this.tool));
@@ -470,6 +671,9 @@ export class AgentImageViewer extends Disposable {
 			this.crop = undefined;
 		}
 		this.tool = tool;
+		if (SHAPE_TOOLS.has(tool)) {
+			this.shapeTool = tool as ShapeTool;
+		}
 		if (tool !== 'select') {
 			this.selected = undefined;
 		}
@@ -493,22 +697,24 @@ export class AgentImageViewer extends Disposable {
 		}
 	}
 
-	private setStroke(scale: number): void {
-		this.strokeScale = scale;
-		const preview = STROKES.find(stroke => stroke.scale === scale)?.preview ?? STROKES[1].preview;
-		this.strokeButton?.style.setProperty('--stroke', `${preview}px`);
-		this.strokeMenu?.querySelectorAll<HTMLElement>('.volt-agent-image-stroke').forEach(row => {
-			const active = Number(row.dataset.scale) === scale;
-			row.classList.toggle('active', active);
-			row.setAttribute('aria-pressed', String(active));
-		});
-		// Restyle the selected line, as with color; text has its own menu.
-		const width = this.strokeWidth();
-		if (this.selected && this.selected.kind !== 'text' && this.state && this.selected.width !== width) {
-			const restyled: Shape = { ...this.selected, width };
+	private setStroke(px: number): void {
+		this.strokePx = px;
+		// Restyle the selected line, as with color; text and steps have their own size.
+		if (this.selected && hasStroke(this.selected) && this.state && this.selected.width !== px) {
+			const restyled: Shape = { ...this.selected, width: px };
 			this.replaceShape(this.selected, restyled);
 			this.selected = restyled;
 		}
+		this.syncStrokeMenu();
+	}
+
+	private clearMarks(): void {
+		this.commitText();
+		if (!this.state?.shapes.length) {
+			return;
+		}
+		this.selected = undefined;
+		this.commit({ base: this.state.base, shapes: [] });
 	}
 
 	/** Sets the size or weight for new text and for the text being edited or selected; the other setting is left alone. */
@@ -654,11 +860,60 @@ export class AgentImageViewer extends Disposable {
 			if (!png) {
 				return;
 			}
-			const blob = new Blob([png as Uint8Array<ArrayBuffer>], { type: 'image/png' });
-			await getWindow(this.overlay).navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+			await this.writePngToClipboard(png);
+			this.showCopied();
 		} catch (err) {
-			this.notificationService.warn(localize('voltAgent.imageCopyFailed', "Couldn't copy the image: {0}", String(err)));
+			this.notificationService.warn(localize('voltAgent.imageCopyFailed', "Couldn't copy the image: {0}", err instanceof Error ? err.message : String(err)));
 		}
+	}
+
+	/**
+	 * The workbench page may not write images itself (Electron denies `navigator.clipboard.write`
+	 * to it), so the desktop app's main process writes the PNG; the web clipboard is the fallback.
+	 */
+	private async writePngToClipboard(png: Uint8Array): Promise<void> {
+		let imageClipboard: IVoltImageClipboardService | undefined;
+		try {
+			imageClipboard = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltImageClipboardService));
+		} catch {
+			// Not in the desktop app.
+		}
+		if (imageClipboard) {
+			try {
+				await imageClipboard.writePng(VSBuffer.wrap(png));
+				return;
+			} catch {
+				// Try the web clipboard.
+			}
+		}
+		const win = getWindow(this.overlay) as Window & typeof globalThis;
+		const blob = new Blob([png as Uint8Array<ArrayBuffer>], { type: 'image/png' });
+		await win.navigator.clipboard.write([new win.ClipboardItem({ 'image/png': blob })]);
+	}
+
+	/** The copy button turns into a check for a moment. */
+	private showCopied(): void {
+		const button = this.copyButton;
+		if (!button || this.closed) {
+			return;
+		}
+		clearNode(button);
+		button.appendChild(renderIcon(Codicon.check));
+		button.classList.add('copied');
+		setAgentTooltip(button, localize('voltAgent.imageCopied', "Copied"));
+		if (this.copiedTimer) {
+			clearTimeout(this.copiedTimer);
+		}
+		this.copiedTimer = setTimeout(() => {
+			this.copiedTimer = undefined;
+			if (this.closed) {
+				return;
+			}
+			clearNode(button);
+			button.appendChild(renderIcon(Codicon.copy));
+			button.classList.remove('copied');
+			setAgentTooltip(button, localize('voltAgent.imageCopy', "Copy image"), formatShortcut('C'));
+		}, 1500);
 	}
 
 	private async download(): Promise<void> {
@@ -707,6 +962,9 @@ export class AgentImageViewer extends Disposable {
 			return;
 		}
 		this.closed = true;
+		if (this.copiedTimer) {
+			clearTimeout(this.copiedTimer);
+		}
 		this.overlay.remove();
 		super.dispose();
 		for (const listener of this.closeListeners) {
@@ -765,13 +1023,13 @@ export class AgentImageViewer extends Disposable {
 		ctx.clearRect(0, 0, width, height);
 		ctx.drawImage(state.base, 0, 0);
 		for (const shape of state.shapes) {
-			drawShape(ctx, shape);
+			drawShape(ctx, shape, state.base);
 		}
 		if (!chrome) {
 			return;
 		}
 		if (this.draft) {
-			drawShape(ctx, this.draft);
+			drawShape(ctx, this.draft, state.base);
 		}
 		const px = 1 / this.scale;
 		if (this.selected) {
@@ -806,10 +1064,31 @@ export class AgentImageViewer extends Disposable {
 
 	//#region Editing
 
+	/** The picked width, or the preset nearest one that reads well at the image's size. */
 	private strokeWidth(): number {
+		if (this.strokePx !== undefined) {
+			return this.strokePx;
+		}
 		const base = this.state?.base;
 		const medium = base ? Math.max(3, Math.round(Math.max(base.width, base.height) / 260)) : 4;
-		return Math.max(1, Math.round(medium * this.strokeScale));
+		return STROKE_PRESETS.reduce((best, px) => Math.abs(px - medium) < Math.abs(best - medium) ? px : best, STROKE_PRESETS[0]);
+	}
+
+	/** A numbered step's radius in image px: big enough to read at the image's size. */
+	private stepRadius(): number {
+		const base = this.state?.base;
+		return base ? Math.max(12, Math.round(Math.max(base.width, base.height) / 90)) : 14;
+	}
+
+	/** The next free step number on the image. */
+	private nextStep(): number {
+		let max = 0;
+		for (const shape of this.state?.shapes ?? []) {
+			if (shape.kind === 'step') {
+				max = Math.max(max, shape.n);
+			}
+		}
+		return max + 1;
 	}
 
 	/** Image px for a menu size; the default size grows with the image so text reads at any resolution. */
@@ -956,11 +1235,11 @@ export class AgentImageViewer extends Disposable {
 			if (handle) {
 				return { shape: selected, handle: handle.handle };
 			}
-			if (shapeContains(ctx, selected, p, 8 * px) || (selected.kind !== 'arrow' && selected.kind !== 'rect' && boxContains(selectionBox(ctx, selected, px), p))) {
+			if (shapeContains(ctx, selected, p, 8 * px) || (!isSegment(selected) && boxContains(selectionBox(ctx, selected, px), p))) {
 				return { shape: selected };
 			}
 		}
-		if (this.tool === 'select' || this.tool === 'arrow' || this.tool === 'rect') {
+		if (this.tool === 'select' || this.tool === 'step' || SEGMENT_TOOLS.has(this.tool) || BOX_TOOLS.has(this.tool)) {
 			const hit = this.hitTest(p);
 			return hit ? { shape: hit } : undefined;
 		}
@@ -998,10 +1277,21 @@ export class AgentImageViewer extends Disposable {
 			case 'select':
 				return;
 			case 'arrow':
+			case 'line':
 			case 'rect':
+			case 'ellipse':
+			case 'highlight':
+			case 'redact':
 				this.draft = { kind: this.tool, color: this.color, width: this.strokeWidth(), from: p, to: p };
 				this.drag = { start: p, moved: false };
 				break;
+			case 'step': {
+				// A click drops the next number; it comes out selected so it can be dragged into place.
+				const step: Shape = { kind: 'step', color: this.color, size: this.stepRadius(), at: p, n: this.nextStep() };
+				this.selected = step;
+				this.commit({ base: this.state.base, shapes: [...this.state.shapes, step] });
+				return;
+			}
 			case 'pen':
 				this.draft = { kind: 'pen', color: this.color, width: this.strokeWidth(), points: [p] };
 				this.drag = { start: p, moved: false };
@@ -1051,9 +1341,13 @@ export class AgentImageViewer extends Disposable {
 		}
 		switch (this.tool) {
 			case 'arrow':
+			case 'line':
 			case 'rect':
-				if (this.draft && (this.draft.kind === 'arrow' || this.draft.kind === 'rect')) {
-					this.draft = { ...this.draft, to: e.shiftKey ? constrain(this.draft.kind, this.draft.from, p) : p };
+			case 'ellipse':
+			case 'highlight':
+			case 'redact':
+				if (this.draft && (isSegment(this.draft) || isBox(this.draft))) {
+					this.draft = { ...this.draft, to: e.shiftKey ? constrain(isBox(this.draft), this.draft.from, p) : p };
 				}
 				break;
 			case 'pen':
@@ -1344,7 +1638,7 @@ export class AgentImageViewer extends Disposable {
 			this.rotate();
 			return;
 		}
-		const tools: Record<string, Tool> = { v: 'select', a: 'arrow', r: 'rect', p: 'pen', t: 'text', c: 'crop' };
+		const tools: Record<string, Tool> = { v: 'select', a: 'arrow', r: 'rect', o: 'ellipse', l: 'line', h: 'highlight', b: 'redact', n: 'step', p: 'pen', t: 'text', c: 'crop' };
 		const tool = !e.shiftKey ? tools[key] : undefined;
 		if (tool) {
 			handled();
@@ -1376,11 +1670,11 @@ function inflate(rect: IRect, by: number): IRect {
 	return { x: rect.x - by, y: rect.y - by, w: rect.w + by * 2, h: rect.h + by * 2 };
 }
 
-/** Shift-drag: arrows snap to 45 degrees, boxes to squares. */
-function constrain(kind: 'arrow' | 'rect', from: IPoint, to: IPoint): IPoint {
+/** Shift-drag: lines and arrows snap to 45 degrees, boxes to squares (and ellipses to circles). */
+function constrain(square: boolean, from: IPoint, to: IPoint): IPoint {
 	const dx = to.x - from.x;
 	const dy = to.y - from.y;
-	if (kind === 'rect') {
+	if (square) {
 		const side = Math.max(Math.abs(dx), Math.abs(dy));
 		return { x: from.x + Math.sign(dx || 1) * side, y: from.y + Math.sign(dy || 1) * side };
 	}
@@ -1392,11 +1686,16 @@ function constrain(kind: 'arrow' | 'rect', from: IPoint, to: IPoint): IPoint {
 function mapShape(shape: Shape, map: (p: IPoint) => IPoint): Shape {
 	switch (shape.kind) {
 		case 'arrow':
+		case 'line':
 		case 'rect':
+		case 'ellipse':
+		case 'highlight':
+		case 'redact':
 			return { ...shape, from: map(shape.from), to: map(shape.to) };
 		case 'pen':
 			return { ...shape, points: shape.points.map(map) };
 		case 'text':
+		case 'step':
 			return { ...shape, at: map(shape.at) };
 	}
 }
@@ -1412,8 +1711,15 @@ function textLines(shape: Shape & { kind: 'text' }): string[] {
 function shapeBounds(ctx: CanvasRenderingContext2D, shape: Shape): IRect {
 	switch (shape.kind) {
 		case 'arrow':
+		case 'line':
 		case 'rect':
+		case 'ellipse':
 			return inflate(normalizeRect(shape.from, shape.to), shape.width / 2);
+		case 'highlight':
+		case 'redact':
+			return normalizeRect(shape.from, shape.to);
+		case 'step':
+			return { x: shape.at.x - shape.size, y: shape.at.y - shape.size, w: shape.size * 2, h: shape.size * 2 };
 		case 'pen': {
 			let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 			for (const p of shape.points) {
@@ -1435,18 +1741,18 @@ function shapeBounds(ctx: CanvasRenderingContext2D, shape: Shape): IRect {
 	}
 }
 
-/** The dashed box drawn around a selected pen or text mark; its corners carry the handles. */
+/** The box a selected mark's handles sit on: a box mark's own edges, or a dashed box around pen, text and steps. */
 function selectionBox(ctx: CanvasRenderingContext2D, shape: Shape, px: number): IRect {
-	return shape.kind === 'rect' ? normalizeRect(shape.from, shape.to) : inflate(shapeBounds(ctx, shape), SELECTION_PAD * px);
+	return isBox(shape) ? normalizeRect(shape.from, shape.to) : inflate(shapeBounds(ctx, shape), SELECTION_PAD * px);
 }
 
 function boxContains(box: IRect, p: IPoint): boolean {
 	return p.x >= box.x && p.x <= box.x + box.w && p.y >= box.y && p.y <= box.y + box.h;
 }
 
-/** Arrows are held by their ends, boxes by corners and edges, pen and text by the corners of their selection box. */
+/** Lines and arrows are held by their ends, boxes by corners and edges, pen, text and steps by the corners of their selection box. */
 function shapeHandles(ctx: CanvasRenderingContext2D, shape: Shape, px: number): { readonly handle: Handle; readonly at: IPoint }[] {
-	if (shape.kind === 'arrow') {
+	if (isSegment(shape)) {
 		return [{ handle: 'from', at: shape.from }, { handle: 'to', at: shape.to }];
 	}
 	const b = selectionBox(ctx, shape, px);
@@ -1457,7 +1763,7 @@ function shapeHandles(ctx: CanvasRenderingContext2D, shape: Shape, px: number): 
 		{ handle: 'se', at: { x: right, y: bottom } },
 		{ handle: 'sw', at: { x: left, y: bottom } },
 	];
-	if (shape.kind !== 'rect') {
+	if (!isBox(shape)) {
 		return corners;
 	}
 	const midX = left + b.w / 2, midY = top + b.h / 2;
@@ -1477,14 +1783,31 @@ function shapeHandles(ctx: CanvasRenderingContext2D, shape: Shape, px: number): 
  */
 function resizeShape(ctx: CanvasRenderingContext2D, origin: Shape, handle: Handle, delta: IPoint, shift: boolean): Shape {
 	switch (origin.kind) {
-		case 'arrow': {
+		case 'arrow':
+		case 'line': {
 			const end = handle === 'from' ? origin.from : origin.to;
 			const target = { x: end.x + delta.x, y: end.y + delta.y };
 			return handle === 'from'
-				? { ...origin, from: shift ? constrain('arrow', origin.to, target) : target }
-				: { ...origin, to: shift ? constrain('arrow', origin.from, target) : target };
+				? { ...origin, from: shift ? constrain(false, origin.to, target) : target }
+				: { ...origin, to: shift ? constrain(false, origin.from, target) : target };
 		}
-		case 'rect': {
+		case 'step': {
+			// Grows from the opposite corner, keeping round.
+			const box = shapeBounds(ctx, origin);
+			const anchor = { x: handle.includes('w') ? box.x + box.w : box.x, y: handle.includes('n') ? box.y + box.h : box.y };
+			const corner = { x: handle.includes('w') ? box.x : box.x + box.w, y: handle.includes('n') ? box.y : box.y + box.h };
+			const s = Math.max(
+				(corner.x + delta.x - anchor.x) / (corner.x - anchor.x || 1),
+				(corner.y + delta.y - anchor.y) / (corner.y - anchor.y || 1),
+			);
+			const size = Math.max(6, Math.round(origin.size * s));
+			const k = size / origin.size;
+			return { ...origin, size, at: { x: anchor.x + (origin.at.x - anchor.x) * k, y: anchor.y + (origin.at.y - anchor.y) * k } };
+		}
+		case 'rect':
+		case 'ellipse':
+		case 'highlight':
+		case 'redact': {
 			const r = normalizeRect(origin.from, origin.to);
 			const target = {
 				x: (handle.includes('w') ? r.x : handle.includes('e') ? r.x + r.w : r.x + r.w / 2) + delta.x,
@@ -1492,7 +1815,7 @@ function resizeShape(ctx: CanvasRenderingContext2D, origin: Shape, handle: Handl
 			};
 			if (shift && handle.length === 2) {
 				const anchor = { x: handle.includes('w') ? r.x + r.w : r.x, y: handle.includes('n') ? r.y + r.h : r.y };
-				return { ...origin, from: anchor, to: constrain('rect', anchor, target) };
+				return { ...origin, from: anchor, to: constrain(true, anchor, target) };
 			}
 			const left = handle.includes('w') ? target.x : r.x;
 			const right = handle.includes('e') ? target.x : r.x + r.w;
@@ -1525,10 +1848,10 @@ function resizeShape(ctx: CanvasRenderingContext2D, origin: Shape, handle: Handl
 	}
 }
 
-/** Pen and text get a dashed box; every selected mark gets round handles. */
+/** Pen, text, steps and ellipses get a dashed box; every selected mark gets round handles. */
 function paintSelection(ctx: CanvasRenderingContext2D, shape: Shape, px: number): void {
 	ctx.save();
-	if (shape.kind === 'pen' || shape.kind === 'text') {
+	if (shape.kind === 'pen' || shape.kind === 'text' || shape.kind === 'step' || shape.kind === 'ellipse') {
 		const box = selectionBox(ctx, shape, px);
 		ctx.setLineDash([5 * px, 4 * px]);
 		ctx.lineWidth = 1.5 * px;
@@ -1564,7 +1887,26 @@ function distanceToSegment(p: IPoint, a: IPoint, b: IPoint): number {
 function shapeContains(ctx: CanvasRenderingContext2D, shape: Shape, p: IPoint, tolerance: number): boolean {
 	switch (shape.kind) {
 		case 'arrow':
+		case 'line':
 			return distanceToSegment(p, shape.from, shape.to) <= shape.width + tolerance;
+		case 'highlight':
+		case 'redact':
+			return boxContains(inflate(normalizeRect(shape.from, shape.to), tolerance / 2), p);
+		case 'step':
+			return Math.hypot(p.x - shape.at.x, p.y - shape.at.y) <= shape.size + tolerance / 2;
+		case 'ellipse': {
+			// Distance from the outline, measured along the ray from the center.
+			const r = normalizeRect(shape.from, shape.to);
+			const rx = Math.max(r.w / 2, 1), ry = Math.max(r.h / 2, 1);
+			const cx = r.x + rx, cy = r.y + ry;
+			const dx = p.x - cx, dy = p.y - cy;
+			const d = Math.hypot(dx / rx, dy / ry);
+			if (d === 0) {
+				return false;
+			}
+			const onEdge = { x: cx + dx / d, y: cy + dy / d };
+			return Math.hypot(p.x - onEdge.x, p.y - onEdge.y) <= shape.width + tolerance;
+		}
 		case 'rect': {
 			const r = normalizeRect(shape.from, shape.to);
 			const edges: [IPoint, IPoint][] = [
@@ -1596,7 +1938,15 @@ function haloFor(color: string): string {
 	return luminance > 0.6 ? 'rgba(0, 0, 0, 0.45)' : 'rgba(255, 255, 255, 0.55)';
 }
 
-function drawShape(ctx: CanvasRenderingContext2D, shape: Shape): void {
+/** Black or white, whichever reads on `color`. */
+function contrastText(color: string): string {
+	const value = parseInt(color.slice(1), 16);
+	const luminance = (0.299 * ((value >> 16) & 255) + 0.587 * ((value >> 8) & 255) + 0.114 * (value & 255)) / 255;
+	return luminance > 0.6 ? '#111111' : '#ffffff';
+}
+
+/** `base` is the image under the marks; pixelate samples it. */
+function drawShape(ctx: CanvasRenderingContext2D, shape: Shape, base: HTMLCanvasElement): void {
 	ctx.save();
 	ctx.lineCap = 'round';
 	ctx.lineJoin = 'round';
@@ -1604,6 +1954,73 @@ function drawShape(ctx: CanvasRenderingContext2D, shape: Shape): void {
 	ctx.fillStyle = shape.color;
 	ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
 	switch (shape.kind) {
+		case 'line': {
+			ctx.shadowBlur = shape.width;
+			ctx.lineWidth = shape.width;
+			ctx.beginPath();
+			ctx.moveTo(shape.from.x, shape.from.y);
+			ctx.lineTo(shape.to.x, shape.to.y);
+			ctx.stroke();
+			break;
+		}
+		case 'ellipse': {
+			const r = normalizeRect(shape.from, shape.to);
+			ctx.shadowBlur = shape.width;
+			ctx.lineWidth = shape.width;
+			ctx.beginPath();
+			ctx.ellipse(r.x + r.w / 2, r.y + r.h / 2, r.w / 2, r.h / 2, 0, 0, Math.PI * 2);
+			ctx.stroke();
+			break;
+		}
+		case 'highlight': {
+			// A marker over the image: the text under it stays readable.
+			const r = normalizeRect(shape.from, shape.to);
+			ctx.shadowColor = 'transparent';
+			ctx.globalAlpha = 0.38;
+			ctx.beginPath();
+			ctx.roundRect(r.x, r.y, r.w, r.h, Math.min(shape.width, r.w / 2, r.h / 2));
+			ctx.fill();
+			break;
+		}
+		case 'redact': {
+			// Pixelate the image under the box: draw it tiny, then back up without smoothing.
+			const r = clampRect(normalizeRect(shape.from, shape.to), base);
+			if (!r || r.w < 1 || r.h < 1) {
+				break;
+			}
+			const cell = Math.max(6, Math.round(Math.max(base.width, base.height) / 120));
+			const small = base.ownerDocument.createElement('canvas');
+			small.width = Math.max(1, Math.ceil(r.w / cell));
+			small.height = Math.max(1, Math.ceil(r.h / cell));
+			const smallCtx = small.getContext('2d');
+			if (!smallCtx) {
+				break;
+			}
+			smallCtx.drawImage(base, r.x, r.y, r.w, r.h, 0, 0, small.width, small.height);
+			ctx.shadowColor = 'transparent';
+			ctx.imageSmoothingEnabled = false;
+			ctx.drawImage(small, 0, 0, small.width, small.height, r.x, r.y, r.w, r.h);
+			break;
+		}
+		case 'step': {
+			const { at, size } = shape;
+			ctx.shadowBlur = size * 0.35;
+			ctx.beginPath();
+			ctx.arc(at.x, at.y, size, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.shadowColor = 'transparent';
+			ctx.lineWidth = Math.max(1.5, size * 0.12);
+			// A ring sets the badge off the image: white, or dark around a light badge.
+			ctx.strokeStyle = contrastText(shape.color) === '#111111' ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.9)';
+			ctx.stroke();
+			const label = String(shape.n);
+			ctx.fillStyle = contrastText(shape.color);
+			ctx.font = textFont(size * (label.length > 2 ? 0.8 : label.length > 1 ? 1 : 1.15), 700);
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.fillText(label, at.x, at.y + size * 0.06);
+			break;
+		}
 		case 'arrow': {
 			const { from, to, width } = shape;
 			const angle = Math.atan2(to.y - from.y, to.x - from.x);

@@ -98,20 +98,89 @@
 	border-bottom: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
 }
 
-/* The chat's last message in its hover card (agentHomePane.ts sets the max height). */
+/* The chat's last message in its hover card (agentHomePane.ts sets the max height).
+ * A small regular caption in the secondary tone; the message under it is the quieter body text. */
 .volt-agent-home-hover-message-label {
-	margin-bottom: 4px;
+	margin: 0 0 4px;
+	/* Room under the hairline, so the heading does not sit on it. */
+	padding-top: 6px;
 	font-size: 11px;
-	opacity: 0.6;
+	font-weight: 500;
+	line-height: 16px;
+	letter-spacing: 0;
+	color: color-mix(in srgb, currentColor 70%, transparent);
+}
+
+/* The chat's summary in its hover card, above the last message: two 16px lines, then an ellipsis. */
+.volt-agent-home-hover-summary {
+	display: -webkit-box;
+	overflow: hidden;
+	overflow-wrap: anywhere;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 16px;
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-home-hover-summary.tone-input {
+	color: color-mix(in srgb, color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 50%, var(--vscode-charts-purple, #b180d7)) 82%, var(--vscode-foreground));
+}
+
+.volt-agent-home-hover-summary.tone-failed {
+	color: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 82%, var(--vscode-foreground));
+}
+
+/* The last message ends the card. It gives way when the card reaches its height, so the card never
+ * scrolls; its own text scrolls instead, and the card's last 4px stay empty under it. */
+.volt-agent-tooltip.card > .volt-agent-tooltip-card-block.volt-agent-home-hover-message-block {
+	display: flex;
+	flex-direction: column;
+	flex: 0 1 auto;
+	min-height: 0;
+	/* With the card's 10px padding, 4px of room below (a last block otherwise runs to the edge). */
+	margin-bottom: -6px;
 }
 
 .volt-agent-home-hover-message {
 	/* Room under the last line, so it does not sit on the card's edge. */
 	padding-bottom: 4px;
+	flex: 0 1 auto;
+	min-height: 0;
 	overflow-y: auto;
 	overflow-wrap: anywhere;
+	/* Ten 16px lines: enough of the reply to read it without opening the chat. Beats a hover
+	 * card still carrying an older inline cap until the script reloads. */
+	max-height: 160px !important;
+	color: color-mix(in srgb, currentColor 62%, transparent);
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 16px;
 	user-select: text;
 	-webkit-user-select: text;
+}
+
+/* The chat's 14/22 body is too tall for a preview. Keep links and code in their own colours. */
+.volt-agent-home-hover-message .volt-agent-markdown,
+.volt-agent-home-hover-message .volt-agent-markdown p,
+.volt-agent-home-hover-message .volt-agent-markdown li {
+	font-size: 12px;
+	line-height: 16px;
+	color: inherit;
+}
+
+.volt-agent-home-hover-message .volt-agent-markdown p {
+	margin: 0 0 6px;
+}
+
+.volt-agent-home-hover-message .volt-agent-markdown :is(h1, h2, h3, h4, h5, h6) {
+	margin: 0 0 4px;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 600;
+	color: color-mix(in srgb, currentColor 82%, transparent);
 }
 
 /* The chat's markdown, tightened for a card: no gap above the first block or below the last. */
@@ -238,11 +307,28 @@
 	height: 100%;
 }
 
-/* Group headers: pane headers in the group-row look, lined up with the rows (7px inset plus the 8px twistie). */
+/* Group headers: pane headers in the group-row look, their chevron 4px from the sidebar's edge. */
+/* Group headers are VS Code section headers: a band across the whole sidebar width, ruled off by
+ * hairlines while open. The band and lines are drawn on the pane header itself (not the row inside it) so
+ * they run edge to edge, and as inset shadows so the header keeps its height. */
 .volt-agent-home-tree .monaco-pane-view .pane > .pane-header.volt-agent-home-pane-header {
-	padding-left: 15px;
-	background: none;
+	--volt-home-group-rule: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	padding-left: 4px;
+	border-top: none !important;
+	/* !important: the pane view sets the theme's header background inline. */
+	background: color-mix(in srgb, var(--vscode-foreground) 2%, transparent) !important;
+	box-shadow: none;
 	outline-offset: -1px;
+}
+
+/* Only an open header is ruled off, above and below, so chats scrolling under it are cut off
+ * cleanly. A folded header has no lines. */
+.volt-agent-home-tree .monaco-pane-view .pane > .pane-header.volt-agent-home-pane-header.expanded {
+	/* !important: the pane view sets the theme's header background inline. */
+	background: color-mix(in srgb, var(--vscode-foreground) 3.5%, transparent) !important;
+	box-shadow:
+		inset 0 1px 0 var(--volt-home-group-rule),
+		inset 0 -1px 0 var(--volt-home-group-rule);
 }
 
 .volt-agent-home-tree .monaco-pane-view .pane > .pane-header.volt-agent-home-pane-header:focus:not(:focus-visible) {
@@ -432,21 +518,18 @@
 	to { opacity: 1; transform: none; }
 }
 
-/* Home list only: default monaco scrollbar is 10px; rest at 6px, grow on hover.
- * Gutter stays at hover width so thumb growth does not shift row text. */
+/* Home list only: default monaco scrollbar is 10px; here an 8px track with a 4px thumb. */
 .volt-agent-home-tree .monaco-scrollable-element > .scrollbar.vertical {
 	width: 8px !important;
 }
 
+/* 4px wide in the 6px between a row's plate and the sidebar's edge, so 2px stay clear between
+ * the two; it keeps that width under the pointer (the 8px track around it still takes the press). */
 .volt-agent-home-tree .monaco-scrollable-element > .scrollbar.vertical > .slider {
-	width: 6px !important;
+	width: 4px !important;
 	left: auto !important;
 	right: 0 !important;
-	transition: width 140ms ease;
-}
-
-.volt-agent-home-tree .monaco-scrollable-element > .scrollbar.vertical:hover > .slider {
-	width: 8px !important;
+	border-radius: 2px;
 }
 
 .volt-agent-home-tree .monaco-list,
@@ -533,8 +616,9 @@
 	box-shadow: none !important;
 }
 
-/* No solid row fills: the sidebar is see-through. Hover and list selection paint nothing; the chat on
- * screen gets a faint tint (.active-chat, set once its transcript is drawn), so clicking elsewhere keeps it. */
+/* The row itself paints nothing. Its fill is a rounded plate 3px in from each side, like the pull
+ * request list: the hover color under the pointer, and a faint tint on the chat on screen
+ * (.active-chat, set once its transcript is drawn), so clicking elsewhere keeps it. */
 .volt-agent-home-tree .monaco-list-row,
 .volt-agent-home-tree .monaco-list-row:hover,
 .volt-agent-home-tree .monaco-list-row.selected,
@@ -544,8 +628,18 @@
 	background: none !important;
 }
 
-.volt-agent-home-tree .monaco-list .monaco-list-row:has(.volt-agent-home-row.active-chat) {
-	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent) !important;
+/* The tint is a plate inside the row, like the PR list's: 6px in from the sides, 2px from its neighbours, 6px corners, a flat tint with no edge. */
+.volt-agent-home-tree .monaco-list-row > .monaco-tl-row {
+	position: relative;
+}
+
+.volt-agent-home-tree .monaco-list .monaco-list-row:has(.volt-agent-home-row.active-chat)::before {
+	content: '';
+	position: absolute;
+	inset: 2px 6px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	pointer-events: none;
 }
 
 .volt-agent-home-tree .monaco-list-row .volt-agent-home-row.active-chat > .name {
@@ -560,7 +654,9 @@
 	gap: var(--volt-look-sidebar-row-gap, 8px);
 	height: 100%;
 	min-width: 0;
-	padding: 0 8px 0 calc(var(--volt-home-level, 0) * var(--volt-home-indent));
+	/* 21px on the right: the times and badges sit 15px inside the active chat's plate (6px in from the
+	 * edge), the same as the title on its left. */
+	padding: 0 21px 0 calc(var(--volt-home-level, 0) * var(--volt-home-indent));
 	box-sizing: border-box;
 	color: inherit;
 	font-size: var(--volt-look-sidebar-font-size, 13px);
@@ -669,6 +765,7 @@
 }
 
 .volt-agent-home-row > .add,
+.volt-agent-home-row > .project-more,
 .volt-agent-home-row > .settings {
 	display: flex;
 	align-items: center;
@@ -692,7 +789,8 @@
 	opacity: 1;
 }
 
-/* Project Settings sits right before the +. */
+/* The project's … and Project Settings sit right before the +. */
+.volt-agent-home-row > .project-more,
 .volt-agent-home-row > .settings {
 	margin-right: 0;
 }
@@ -703,29 +801,44 @@
 	font-size: 14px;
 }
 
+.volt-agent-home-row.is-folder > .project-more .codicon {
+	font-size: 14px;
+}
+
 .volt-agent-home-row > .add.hidden,
+.volt-agent-home-row > .project-more.hidden,
 .volt-agent-home-row > .settings.hidden {
 	display: none;
 }
 
-/* Folder + and gear: keep the slot so the label does not jump; show only on row hover. Group + stays visible. */
+/* Folder …, gear and +: keep the slot so the label does not jump; show only on row hover. Group + stays visible. */
 .volt-agent-home-row.is-folder > .add:not(.hidden),
+.volt-agent-home-row.is-folder > .project-more:not(.hidden),
 .volt-agent-home-row.is-folder > .settings:not(.hidden) {
 	opacity: 0;
 }
 
 .monaco-list-row:hover .volt-agent-home-row.is-folder > .add:not(.hidden),
+.monaco-list-row:hover .volt-agent-home-row.is-folder > .project-more:not(.hidden),
 .monaco-list-row:hover .volt-agent-home-row.is-folder > .settings:not(.hidden) {
 	opacity: 0.7;
 }
 
 .monaco-list-row:hover .volt-agent-home-row.is-folder > .add:not(.hidden):hover,
+.monaco-list-row:hover .volt-agent-home-row.is-folder > .project-more:not(.hidden):hover,
 .monaco-list-row:hover .volt-agent-home-row.is-folder > .settings:not(.hidden):hover,
 .monaco-list-row:hover .volt-agent-home-row.is-group > .add:not(.hidden):hover,
+.volt-agent-home-row.is-folder.menu-open > .project-more:not(.hidden),
 .volt-agent-home-row > .add:not(.hidden):focus-visible,
 .volt-agent-home-row > .settings:not(.hidden):focus-visible {
 	background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
 	opacity: 1;
+}
+
+/* The project's … menu is open: its row keeps the buttons after the pointer leaves for the menu. */
+.volt-agent-home-row.is-folder.menu-open > .add:not(.hidden),
+.volt-agent-home-row.is-folder.menu-open > .settings:not(.hidden) {
+	opacity: 0.7;
 }
 
 .volt-agent-home-row.is-section {
@@ -744,6 +857,13 @@
 	color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground));
 }
 
+/* An open header's label is a step brighter than a folded one, still quieter than the chat titles. */
+.volt-agent-home-tree .pane-header.expanded > .volt-agent-home-row.is-group,
+.volt-agent-home-tree .pane-header.expanded > .volt-agent-home-row.is-group > .name {
+	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+	opacity: 1;
+}
+
 .volt-agent-home-row.is-section > .name,
 .volt-agent-home-row.is-group > .name {
 	flex: 1;
@@ -753,13 +873,68 @@
 /* Workspaces list titles share one size, slightly under New Chat / Search. */
 .volt-agent-home-row.is-folder,
 .volt-agent-home-row.is-bucket,
-.volt-agent-home-row.is-session,
 .volt-agent-home-row.is-folder > .name,
-.volt-agent-home-row.is-bucket > .name,
-.volt-agent-home-row.is-session > .name {
+.volt-agent-home-row.is-bucket > .name {
 	font-size: 12px;
 	font-weight: 400 !important;
 	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+}
+
+/* Agent tabs, on a 4px grid. A two-line tab is 48px: 6 above, the 18px title line, 2, the 16px detail
+ * line, 6 below. Three tones: the title (82%, full on hover or when shown), the details (50%) and the
+ * age (45%). The title starts on the group label's column (28px), and the right end keeps 9px inside
+ * the hover plate, so ages, badges and model icons share one right edge. */
+.volt-agent-home-row.is-session {
+	padding-right: 12px;
+}
+
+/* Rows start after the list row's 7px inset and the 8px twistie: 15 + 3 = 18, on the group chevron's
+ * drawn edge and 12px inside the plate, the same as the 12px the row keeps on its right. */
+.volt-agent-home-row.is-session.is-flat {
+	padding-left: 3px;
+}
+
+/* The model's brand mark before the title: 14px on the 18px title line, 6px from the title (the row's 8px gap less 2). */
+.volt-agent-home-row > .model-mark {
+	display: none;
+}
+
+.volt-agent-home-row.is-session > .model-mark:not(:empty) {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 18px;
+	margin-right: -2px;
+}
+
+.volt-agent-home-row.is-session > .model-mark > .volt-brand-icon {
+	display: flex;
+}
+
+.volt-agent-home-row.is-session.renaming > .model-mark,
+.volt-agent-home-row.is-session.selecting > .model-mark {
+	display: none;
+}
+
+.volt-agent-home-row.is-session > .name {
+	font-size: 13px;
+	font-weight: 400 !important;
+	line-height: 18px;
+	letter-spacing: 0;
+	color: color-mix(in srgb, var(--vscode-foreground) 82%, transparent);
+}
+
+.volt-agent-home-row.is-session > .meta {
+	height: 18px;
+	font-size: 11px;
+	font-weight: 400;
+	line-height: 18px;
+	letter-spacing: 0;
+	font-variant-numeric: tabular-nums;
+	opacity: 1;
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
 }
 
 .volt-agent-home-tree .monaco-list-row.selected .volt-agent-home-row.is-folder,
@@ -872,8 +1047,14 @@
 	padding-left: calc(var(--volt-home-level, 0) * var(--volt-home-indent) + 10px);
 }
 
-.volt-agent-home-row.is-more.is-nested > .icon {
-	display: none;
+/* Show more under a flat group: its chevron starts on the titles' column (18px, as .is-session.is-flat),
+ * then 6px, then the label. */
+.volt-agent-home-row.is-more:not(.is-nested) {
+	padding-left: 3px;
+}
+
+.volt-agent-home-row.is-more {
+	gap: 6px;
 }
 
 /* Unread on a flat row (no glyph slot to hold the dot): a blue dot at the title's end, before the age. */
@@ -903,8 +1084,9 @@
 
 .volt-agent-home-row.is-session.two-line {
 	flex-wrap: wrap;
+	align-items: center;
 	align-content: center;
-	row-gap: 3px;
+	row-gap: 2px;
 }
 
 .volt-agent-home-row.is-session.two-line > .icon,
@@ -918,7 +1100,7 @@
 .volt-agent-home-row.is-session.two-line > .sub {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 8px;
 	order: 99;
 	flex-basis: 100%;
 	min-width: 0;
@@ -926,18 +1108,21 @@
 	/* Under the title: past the 16px glyph and the 8px gap. */
 	padding-left: 24px;
 	box-sizing: border-box;
-	font-size: 11.5px;
+	font-size: 12px;
+	font-weight: 400;
 	line-height: 16px;
+	letter-spacing: 0;
 	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
 	overflow: hidden;
 }
 
+/* Icon, 4, text: the folder and branch glyphs keep the same 4px from their words. */
 .volt-agent-home-row.is-session.two-line > .sub > .sub-branch {
 	display: inline-flex;
 	align-items: center;
-	gap: 3px;
+	gap: 4px;
 	min-width: 0;
-	max-width: 60%;
+	max-width: 75%;
 	overflow: hidden;
 }
 
@@ -946,12 +1131,15 @@
 	padding-left: 0;
 }
 
-/* The project ahead of the branch on flat rows (folder icon, bold name cut to 8 characters in code). */
+/* The project ahead of the branch on flat rows (folder icon, bold name cut to 8 characters in code):
+ * the one strong word on the line, so a tab's project is found at a glance. 8px to the branch. */
 .volt-agent-home-row.is-session.two-line > .sub > .sub-branch > .sub-project {
 	flex: none;
-	margin-right: 3px;
+	margin-right: 4px;
 	font-weight: 600;
+	letter-spacing: 0;
 	white-space: nowrap;
+	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
 }
 
 .volt-agent-home-row.is-session.two-line > .sub > .sub-branch:empty,
@@ -959,12 +1147,17 @@
 	display: none;
 }
 
-/* Second-line glyphs (branch on chat and run rows) sit a step under the 11.5px text, centered on it. */
+/* Second-line glyphs share a 12px box, centered on the 16px line, a step quieter than the words. */
 .volt-agent-home-row.is-session.two-line > .sub .codicon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	flex: none;
-	font-size: 11px;
-	line-height: 1;
-	opacity: 0.8;
+	width: 12px;
+	height: 12px;
+	font-size: 12px;
+	line-height: 12px;
+	opacity: 0.85;
 }
 
 .volt-agent-home-row.is-session.two-line > .sub .sub-text {
@@ -990,7 +1183,7 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	opacity: 0.9;
+	opacity: 1;
 }
 
 .volt-agent-home-row.is-session.two-line > .sub > .sub-model > .volt-brand-icon {
@@ -1001,9 +1194,187 @@
 	color: color-mix(in srgb, var(--vscode-foreground) 62%, transparent);
 }
 
-/* The hover actions sit on the first line. */
+/* An agent tab with a summary, on a 4px grid. Three groups, each further from the next than its own
+ * lines are from each other, so a row reads as one block and the list as separate rows:
+ * 10 above, the 18px title, 4, the 16px summary (one line, cut with an ellipsis), 6, the 16px
+ * details, 10 below: 80px, and neighbours' text is 20px apart. Tones step down with
+ * the reading order: title 92% medium, summary 56 to 78% by state, details 40%, their glyphs 30%. */
+.volt-agent-home-row.is-session.has-summary.two-line {
+	row-gap: 4px;
+}
+
+.volt-agent-home-row.is-session.has-summary.two-line > .sub {
+	margin-top: 2px;
+}
+
+.volt-agent-home-row > .summary {
+	display: none;
+}
+
+.volt-agent-home-tree .monaco-list-row .volt-agent-home-row.is-session.has-summary > .name {
+	font-weight: 500 !important;
+	color: color-mix(in srgb, var(--vscode-foreground) 92%, transparent);
+	transition: color 120ms ease-out;
+}
+
+.volt-agent-home-row.is-session.has-summary > .summary {
+	display: block;
+	order: 98;
+	flex-basis: 100%;
+	min-width: 0;
+	height: 16px;
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 16px;
+	letter-spacing: 0;
+	color: color-mix(in srgb, var(--vscode-foreground) 56%, transparent);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* The details line steps back a size under a summary, so the row reads title, summary, details. The
+ * project is no longer bold: under a summary it is a detail, not a second title. */
+.volt-agent-home-row.is-session.has-summary.two-line > .sub {
+	gap: 10px;
+	font-size: 11px;
+	color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+}
+
+.volt-agent-home-row.is-session.has-summary.two-line > .sub > .sub-branch > .sub-project {
+	font-weight: 500;
+	color: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+}
+
+.volt-agent-home-row.is-session.has-summary.two-line > .sub .codicon {
+	opacity: 0.75;
+}
+
+.volt-agent-home-row.is-session.has-summary.two-line.active-chat > .sub {
+	color: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+}
+
+/* The age ends the details line, in tabular figures so a column of ages lines up on the right edge. */
+.volt-agent-home-row.is-session.two-line > .sub > .sub-age {
+	flex: none;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	color: color-mix(in srgb, var(--vscode-foreground) 40%, transparent);
+}
+
+.volt-agent-home-row.is-session.two-line > .sub > .sub-age:empty {
+	display: none;
+}
+
+.volt-agent-home-row.is-session.two-line.shelf-snooze > .sub > .sub-age {
+	color: var(--vscode-charts-blue, #3794ff);
+}
+
+/* The status keeps to its words: a long one ("Resumes Nov 26, 12:24 AM") gives way to the title first. */
+.volt-agent-home-row.is-session.has-summary > .status-badge {
+	max-width: 46%;
+}
+
+/* The prompt just sent (quoted in agentHomePane.ts), until the agent says what it is doing. */
+.volt-agent-home-row.is-session > .summary.tone-ask {
+	color: color-mix(in srgb, var(--vscode-foreground) 50%, transparent);
+}
+
+/* The agent's own words while it works: the brightest summary in the list. */
+.volt-agent-home-row.is-session > .summary.tone-live {
+	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+}
+
+/* A reply not looked at yet reads stronger than one that was. */
+.volt-agent-home-row.is-session > .summary.tone-done {
+	color: color-mix(in srgb, var(--vscode-foreground) 72%, transparent);
+}
+
+.volt-agent-home-row.is-session > .summary.tone-seen,
+.volt-agent-home-row.is-session > .summary.tone-paused {
+	color: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+}
+
+.volt-agent-home-row.is-session > .summary.tone-input {
+	color: color-mix(in srgb, color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 50%, var(--vscode-charts-purple, #b180d7)) 82%, var(--vscode-foreground));
+}
+
+.volt-agent-home-row.is-session > .summary.tone-failed {
+	color: color-mix(in srgb, var(--vscode-errorForeground, #f14c4c) 82%, var(--vscode-foreground));
+}
+
+.volt-agent-home-tree .monaco-list-row:hover .volt-agent-home-row.is-session > .summary.tone-seen,
+.volt-agent-home-tree .monaco-list-row:hover .volt-agent-home-row.is-session > .summary.tone-paused,
+.volt-agent-home-tree .monaco-list-row:hover .volt-agent-home-row.is-session > .summary.tone-ask,
+.volt-agent-home-row.is-session.active-chat > .summary.tone-seen,
+.volt-agent-home-row.is-session.active-chat > .summary.tone-paused {
+	color: color-mix(in srgb, var(--vscode-foreground) 70%, transparent);
+}
+
+/* A new summary rises into place once (opacity and transform only: the compositor runs it). */
+.volt-agent-home-row.is-session.summary-swap > .summary {
+	animation: volt-agent-home-summary-swap 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes volt-agent-home-summary-swap {
+	from { opacity: 0; transform: translateY(3px); }
+	to { opacity: 1; transform: none; }
+}
+
+/* The run just ended: its badge lands with a small overshoot, once. */
+.volt-agent-home-row.is-session.run-ended > .status-badge {
+	animation: volt-agent-home-run-ended 520ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+	transform-origin: right center;
+}
+
+@keyframes volt-agent-home-run-ended {
+	from { opacity: 0; transform: scale(0.82); }
+	to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-home-row.is-session.summary-swap > .summary,
+	.volt-agent-home-row.is-session.run-ended > .status-badge {
+		animation: none;
+	}
+}
+
+/* Queued prompts and subagents at work: quiet counts before the model, in the working ring's blue. */
+.volt-agent-home-row.is-session.two-line > .sub > .sub-load {
+	display: inline-flex;
+	flex: none;
+	align-items: center;
+	gap: 8px;
+}
+
+.volt-agent-home-row.is-session.two-line > .sub > .sub-load:empty {
+	display: none;
+}
+
+.volt-agent-home-row.is-session.two-line > .sub > .sub-load > .load-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	color: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 78%, var(--vscode-foreground));
+}
+
+/* The hover buttons center on the title line: 10 + 18 / 2. */
+.volt-agent-home-row.is-session.has-summary > .actions,
+.volt-agent-home-row.is-session.has-summary.two-line > .actions {
+	top: 19px;
+}
+
+/* The hover actions sit on the title line (6 + 18 / 2 = 15px down), their right end on the row's
+ * right edge. A one-line row centers them. */
+.volt-agent-home-row.is-session > .actions {
+	right: 12px;
+}
+
 .volt-agent-home-row.is-session.two-line > .actions {
-	top: 14px;
+	top: 15px;
 }
 
 /* Snooze / Settle float over the row's right end on hover, so the badge, age and title never move.
@@ -1025,7 +1396,8 @@
 	gap: 2px;
 }
 
-.monaco-list-row:hover .volt-agent-home-row.is-session.actions-cover-name > .name {
+.monaco-list-row:hover .volt-agent-home-row.is-session.actions-cover-name > .name,
+.volt-agent-home-row.is-session.actions-cover-name.menu-open > .name {
 	mask-image: linear-gradient(to right, #000 calc(100% - var(--volt-home-name-cover) - 16px), transparent calc(100% - var(--volt-home-name-cover)));
 }
 
@@ -1092,9 +1464,15 @@
 	background: transparent !important;
 }
 
-.volt-agent-home-row.is-more > .icon,
 .volt-agent-home-row.is-empty > .icon {
 	visibility: hidden;
+}
+
+/* Show more leads with a 14px chevron in the label's color (it brightens with the label on hover). */
+.volt-agent-home-row.is-more > .icon .codicon {
+	font-size: 14px;
+	color: inherit;
+	opacity: 1;
 }
 
 /* Filter / sort menu */
@@ -2115,7 +2493,7 @@ html.volt-layout-agent-window body {
 }
 
 .volt-agent-home-row.is-session.two-line > .name > .rename-input {
-	height: 18px;
+	height: 16px;
 }
 
 /* Status badge after the age: one empty span on every row; only active agent tabs that are not idle fill it. */
@@ -2131,7 +2509,7 @@ html.volt-layout-agent-window body {
 	gap: 4px;
 	max-width: 50%;
 	height: 16px;
-	font-size: 12px;
+	font-size: 11px;
 	line-height: 16px;
 	white-space: nowrap;
 	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
@@ -2177,7 +2555,11 @@ html.volt-layout-agent-window body {
 .monaco-list-row:hover .volt-agent-home-row.is-session > .status-badge,
 .monaco-list-row:hover .volt-agent-home-row.is-session > .meta,
 .monaco-list-row:hover .volt-agent-home-row.is-session > .line-pr,
-.monaco-list-row:hover .volt-agent-home-row.is-session > .unread-dot {
+.monaco-list-row:hover .volt-agent-home-row.is-session > .unread-dot,
+.volt-agent-home-row.is-session.menu-open > .status-badge,
+.volt-agent-home-row.is-session.menu-open > .meta,
+.volt-agent-home-row.is-session.menu-open > .line-pr,
+.volt-agent-home-row.is-session.menu-open > .unread-dot {
 	visibility: hidden;
 }
 
@@ -2254,6 +2636,33 @@ html.volt-layout-agent-window body {
 
 .volt-agent-home-row.is-group > .meta {
 	display: none;
+}
+
+/* The group's icon at the header's right end, in line with the chat rows' right edge. Open
+ * headers show it a step brighter, as their label. */
+.volt-agent-home-row.is-group > .group-mark {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	margin-left: 6px;
+	/* Pulls back into the row's right padding so the icon ends where the chat rows' statuses end. */
+	margin-right: -9px;
+	opacity: 0.55;
+}
+
+.volt-agent-home-row.is-group > .group-mark.hidden {
+	display: none;
+}
+
+.volt-agent-home-row.is-group > .group-mark .volt-agent-svg-icon {
+	display: flex;
+}
+
+.volt-agent-home-tree .pane-header.expanded > .volt-agent-home-row.is-group > .group-mark {
+	opacity: 0.85;
 }
 
 /* Snoozed tabs sit back until hovered; the countdown is blue, and hover swaps it for the bell. */
@@ -2500,4 +2909,118 @@ html.volt-layout-agent-window body {
 
 .volt-agent-activity-item .codicon {
 	font-size: calc(var(--volt-activity-width) / 2) !important;
+}
+
+/* Select Chats: a checkbox before every chat's title (the row's press toggles it, so the box takes no
+ * pointer), and no hover buttons while selecting. VS Code's Checkbox, in the theme's checkbox and button colours. */
+.volt-agent-home-row > .select-check {
+	display: none;
+}
+
+.volt-agent-home-row.is-session.selecting > .select-check {
+	display: flex;
+	flex: none;
+	align-items: center;
+	height: 18px;
+	pointer-events: none;
+}
+
+.volt-agent-home-row.is-session.selecting > .select-check > .monaco-checkbox.monaco-custom-toggle {
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	float: none;
+	width: 14px;
+	height: 14px;
+	margin: 0;
+	padding: 0;
+	border: 1px solid var(--vscode-checkbox-border, color-mix(in srgb, var(--vscode-foreground) 40%, transparent));
+	border-radius: 3px;
+	background: transparent;
+	color: var(--vscode-button-foreground);
+}
+
+/* Checked: a filled box with a dark tick (the editor's background), which reads on the button
+ * color in dark and light themes alike. */
+.volt-agent-home-row.is-session.selecting > .select-check > .monaco-checkbox.monaco-custom-toggle.checked {
+	border-color: var(--vscode-button-background);
+	background: var(--vscode-button-background);
+	color: var(--vscode-editor-background);
+}
+
+.volt-agent-home-row.is-session.selecting > .select-check > .monaco-checkbox.codicon::before {
+	font-size: 12px;
+	line-height: 1;
+}
+
+.monaco-list-row .volt-agent-home-row.is-session.selecting > .actions {
+	display: none;
+}
+
+/* A two-line chat's second line starts under its title, past the checkbox and the row's gap. */
+.volt-agent-home-row.is-session.no-glyph.two-line.selecting > .sub {
+	padding-left: calc(14px + var(--volt-look-sidebar-row-gap, 8px));
+}
+
+/* "{n} selected", Open in New Window and Cancel: under the list, above the footer, while selecting. */
+.volt-agent-home-select-bar {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	height: 40px;
+	padding: 0 8px;
+	box-sizing: border-box;
+	border-top: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
+}
+
+.volt-agent-home-select-bar.hidden {
+	display: none;
+}
+
+/* The selected count, a round badge at the start of the primary button. */
+.monaco-workbench .volt-agent-home-select-bar .volt-agent-home-select-count {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	box-sizing: border-box;
+	border-radius: 8px;
+	background: color-mix(in srgb, currentColor 18%, transparent);
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+	font-variant-numeric: tabular-nums;
+}
+
+.monaco-workbench .volt-agent-home-select-bar .volt-agent-home-select-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.monaco-workbench .volt-agent-home-select-bar > .volt-button.volt-button {
+	flex: none;
+	width: auto;
+	height: 26px;
+	padding: 0 10px;
+	font-size: 12px;
+	line-height: 26px;
+}
+
+/* In a narrow sidebar the primary label gives way first; the count badge stays. */
+.monaco-workbench .volt-agent-home-select-bar > .volt-button.volt-button-primary {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 0 10px 0 5px;
 }

@@ -184,9 +184,9 @@ function isChatToolsHost(host: AgentSurfaceHost): boolean {
 	return !isPseudoToolsSession(host.currentSessionId);
 }
 
-export function openAgentToolsPanel(): void {
+export function openAgentToolsPanel(byUser = true): void {
 	for (const host of hosts) {
-		if (isChatToolsHost(host) && host.openToolsPanel()) {
+		if (isChatToolsHost(host) && host.openToolsPanel(byUser)) {
 			return;
 		}
 	}
@@ -259,6 +259,20 @@ export function revealAgentSideChat(parentSessionId: string, chatSessionId: stri
 		}
 	}
 	return false;
+}
+
+/**
+ * Brings a side chat to the front of its group while its tab is in a right panel on screen with the
+ * tabs showing. Undefined when no panel on screen holds it, so the caller picks another chat.
+ */
+export function revealShownSideChat(chatSessionId: string): Promise<IEditorPane | undefined> | undefined {
+	for (const host of hosts) {
+		const pane = host.revealShownSideChat(chatSessionId);
+		if (pane) {
+			return pane;
+		}
+	}
+	return undefined;
 }
 
 /** Side chat tabs in live tools areas: side chat session id to the chat whose tools hold it. */
@@ -384,9 +398,10 @@ export function revealAgentToolEditor(editor: EditorInput): boolean {
 	const located = toolGroupFor(editor);
 	const host = (located && [...hosts].find(candidate => candidate.showsSession(located.entry.sessionId)))
 		?? [...hosts].find(candidate => candidate.canOpenTools() && isChatToolsHost(candidate));
-	const opened = host?.openToolsPanel() ?? false;
+	// Showing a tab is not the user opening the panel: it closes again with its last tab.
+	const opened = host?.openToolsPanel(false) ?? false;
 	if (!opened) {
-		openAgentToolsPanel();
+		openAgentToolsPanel(false);
 	}
 	if (!located) {
 		return opened;
@@ -502,6 +517,12 @@ export class AgentSurfaceHost extends Disposable {
 	private tabsHidden = false;
 	/** The panel stays open with no tab (its empty area lists what can open) until it is closed or the chat changes. */
 	private keepOpen = false;
+	/**
+	 * The user opened the right panel itself (Cmd+L, Open Right Panel): closing its last tab then
+	 * leaves it open on its list. A panel that a tab brought up (Show File, a link) closes with its
+	 * last tab.
+	 */
+	private openedByUser = false;
 	/** How the tools are drawn: beside the chat, floating over it (a preview), or across the whole window. */
 	private presentation: BrowserPresentation = 'split';
 	private readonly closePanelButton: HTMLButtonElement;
@@ -695,10 +716,11 @@ export class AgentSurfaceHost extends Disposable {
 		return !this.disposed && !this.nested() && !!this.sessionId && this.isOnScreen();
 	}
 
-	openToolsPanel(): boolean {
+	openToolsPanel(byUser = true): boolean {
 		if (this.disposed || this.nested() || !this.isOnScreen() || !this.sessionId) {
 			return false;
 		}
+		this.openedByUser ||= byUser;
 		if (!this.shown?.part.groups.some(candidate => candidate.count > 0)) {
 			this.keepOpen = true;
 		}
@@ -714,6 +736,7 @@ export class AgentSurfaceHost extends Disposable {
 	 */
 	private closeTabs(): void {
 		this.keepOpen = false;
+		this.openedByUser = false;
 		if (this.filesSidebarOpen() && this.presentation === 'split') {
 			this.tabsHidden = true;
 		} else {
@@ -745,6 +768,7 @@ export class AgentSurfaceHost extends Disposable {
 			this.toolsHidden = false;
 			this.tabsHidden = false;
 			this.keepOpen = false;
+			this.openedByUser = false;
 			this.setPresentation('split', false);
 			this.hidePart();
 			this.sessionId = sessionId;
@@ -851,11 +875,11 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	/** Without a scope, Source Control in the files sidebar; with one, that scope's diff as a tab. */
-	openChanges(scope?: AgentChangesScope): void {
+	openChanges(scope?: AgentChangesScope, reveal?: { readonly original: URI | undefined; readonly modified: URI | undefined }): void {
 		const owner = this.target();
 		if (scope) {
 			// A chat nested in another's tools (a subagent in its parent's panel) shows its own changes, not the host's.
-			void owner?.openChangesInTools(false, scope, this.sessionId);
+			void owner?.openChangesInTools(false, scope, this.sessionId, reveal);
 		} else {
 			owner?.showFilesSidebar('scm');
 		}
@@ -961,6 +985,16 @@ export class AgentSurfaceHost extends Disposable {
 		const input = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.uriForSession(chatSessionId));
 		this.bindSideChatProject(sessionId, chatSessionId);
 		return this.openInTools(input, false);
+	}
+
+	/** Brings a side chat already in this panel's tabs to the front, while the panel and its tabs show. */
+	revealShownSideChat(chatSessionId: string): Promise<IEditorPane | undefined> | undefined {
+		const entry = this.shown;
+		if (!entry || entry.sessionId !== this.sessionId || !this.announcedOpen || !this.canOpenTools() || !this.showsTabs(entry)) {
+			return undefined;
+		}
+		const existing = this.findInShown(editor => editor instanceof AgentEditorInput && editor.sessionId === chatSessionId);
+		return existing?.group.openEditor(existing.editor, { pinned: true });
 	}
 
 	//#endregion
@@ -1277,9 +1311,10 @@ export class AgentSurfaceHost extends Disposable {
 	/** Whether the shown area has a tab to show, and the user has not closed it. */
 	private hasTools(): boolean {
 		const entry = this.shown;
-		if (this.presentation !== 'floating' && entry?.part.groups.some(group => group.count > 0)) {
-			// Docked beside the chat, closing the last tab leaves the panel open on its list. A preview
-			// floating over the chat is not the panel, so it does not keep one open.
+		if (this.openedByUser && this.presentation !== 'floating' && entry?.part.groups.some(group => group.count > 0)) {
+			// Opened by the user and docked beside the chat, closing the last tab leaves the panel open
+			// on its list. A panel a tab brought up closes with its last tab, and a preview floating
+			// over the chat is not the panel, so neither keeps one open.
 			this.keepOpen = true;
 		}
 		// In the IDE layout a chat's tools are tabs in the middle (see agentIdeWorkspace), not a split beside it.
@@ -2324,11 +2359,11 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	/** One scope of the chat's changes (Review) as a diff tab. Source Control itself is in the files sidebar. */
-	private async openChangesInTools(preserveFocus: boolean, scope: AgentChangesScope, forSession?: string): Promise<void> {
+	private async openChangesInTools(preserveFocus: boolean, scope: AgentChangesScope, forSession?: string, reveal?: { readonly original: URI | undefined; readonly modified: URI | undefined }): Promise<void> {
 		const sessionId = forSession ?? this.sessionId;
 		const group = this.toolsGroup();
 		if (group && sessionId) {
-			await openAgentChangesDiff(this.instantiationService, group, sessionId, scope, preserveFocus);
+			await openAgentChangesDiff(this.instantiationService, group, sessionId, scope, preserveFocus, reveal);
 		}
 	}
 
@@ -2403,6 +2438,23 @@ export class AgentSurfaceHost extends Disposable {
 				return unknown;
 			}
 		}
+	}
+
+	/**
+	 * A side chat opened in another chat's tools sends in that chat's project. Without this, Send
+	 * makes a scratch folder (or runs with no folder) and the prompt never starts in the project.
+	 */
+	ensureSideChatProject(): void {
+		const sessionId = this.sessionId;
+		const owner = this.target();
+		if (!sessionId || !owner || owner === this) {
+			return;
+		}
+		const parentId = owner.currentSessionId;
+		if (!parentId || parentId === sessionId || this.sessionContext.bindingFor(sessionId)) {
+			return;
+		}
+		owner.bindSideChatProject(parentId, sessionId);
 	}
 
 	private bindSideChatProject(parentSessionId: string, chatSessionId: string): void {

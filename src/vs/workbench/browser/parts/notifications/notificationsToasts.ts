@@ -26,6 +26,7 @@ import { IntervalCounter } from '../../../../base/common/async.js';
 import { assertReturnsDefined } from '../../../../base/common/types.js';
 import { NotificationsToastsVisibleContext } from '../../../common/contextkeys.js';
 import { mainWindow } from '../../../../base/browser/window.js';
+import { isVoltCompact } from '../../../../base/browser/ui/voltMobile/voltViewport.js';
 
 interface INotificationToast {
 	readonly item: INotificationViewItem;
@@ -560,7 +561,10 @@ export class NotificationsToasts extends Themable implements INotificationsToast
 			availableHeight -= (2 * 12); // adjust for paddings top and bottom
 		}
 
-		return new Dimension(Math.min(maxWidth, availableWidth), availableHeight ?? 0);
+		// A phone's toasts span the screen between 8px margins (voltMobileWorkbench.css): their rows are
+		// measured at that width, or a wrapped message pushes its buttons out of the toast.
+		const width = this.workbenchDimensions && isVoltCompact() ? availableWidth : Math.min(maxWidth, availableWidth);
+		return new Dimension(width, availableHeight ?? 0);
 	}
 
 	private layoutLists(width: number): void {

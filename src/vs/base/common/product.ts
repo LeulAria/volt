@@ -97,6 +97,11 @@ export interface IProductConfiguration {
 	 * build requires the signer of the running app, and an unsigned one the build's helper manifest.
 	 */
 	readonly voltHelperSigning?: IVoltHelperSigningConfiguration;
+	/**
+	 * The Electron fuses flipped in this packaged build (build/lib/fuses.ts), by fuse name. Absent in
+	 * development, where every fuse keeps Electron's default.
+	 */
+	readonly electronFuses?: { readonly [fuse: string]: boolean };
 	readonly date?: string;
 	readonly quality?: string;
 	readonly commit?: string;
@@ -344,4 +349,13 @@ export interface ISurveyData {
 	languageId: string;
 	editCount: number;
 	userProbability: number;
+}
+
+/**
+ * Whether this packaged build turned Electron's EnableNodeCliInspectArguments fuse off. Then `--inspect*`
+ * flags start no inspector, and SIGUSR1 terminates a utility process (an extension host) instead of
+ * opening one (spec B-19, INV-30).
+ */
+export function isInspectorFusedOff(product: Pick<IProductConfiguration, 'electronFuses'>): boolean {
+	return product.electronFuses?.EnableNodeCliInspectArguments === false;
 }

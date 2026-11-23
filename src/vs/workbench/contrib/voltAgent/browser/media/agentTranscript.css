@@ -1406,6 +1406,37 @@ button.volt-tr-subagent-head:hover .volt-tr-chevron,
 
 /* "Stopped" / "Interrupted" at the end of a turn that did not finish. */
 
+/*
+ * "3 subagents running" at the end of the transcript, while the chat's own turn is over but its agents
+ * still work (agentEditor.ts syncAgentsTail): the turn's column, the live status's shimmer, a click lists them.
+ */
+.volt-agent-agents-tail {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	width: 100%;
+	max-width: 728px;
+	min-height: 24px;
+	margin: 6px auto 16px;
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.volt-agent-agents-tail:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+	border-radius: 3px;
+}
+
+.volt-agent-agents-tail.waiting .volt-agent-activity-progress.shimmer {
+	--volt-shimmer-hi: var(--vscode-editorWarning-foreground, #e5a50a);
+}
+
 .volt-agent-run-marker {
 	display: flex;
 	align-items: center;
@@ -1470,4 +1501,23 @@ button.volt-tr-subagent-head:hover .volt-tr-chevron,
 .volt-tr-group.step.card > .volt-tr-body > .volt-tr-terminal {
 	border: 0;
 	border-radius: 0;
+}
+
+/* "3 subagents running" after the chat's title in the title bar (agentTitlebarHeader.ts), quieter than the title. */
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-agents:not([hidden]) {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	height: 18px;
+	padding: 0 6px;
+	border-radius: 9px;
+	font-size: 11px;
+	line-height: 18px;
+	white-space: nowrap;
+	color: var(--volt-md-fg-secondary);
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-project .volt-agent-primary-header-agents {
+	display: none;
 }

@@ -111,8 +111,9 @@
 	display: none;
 }
 
-/* A phone's Editor button (voltMobileWorkbench.css shows it). */
-.volt-agent-mobile-editor-toggle {
+/* A phone's Editor button (voltMobileWorkbench.css shows it). As specific as the toggles' own `display: flex`
+ * above, which otherwise wins and shows it on the desktop too. */
+.monaco-workbench.volt-layout-agent .volt-agent-titlebar-toggle.volt-agent-mobile-editor-toggle {
 	display: none;
 }
 
@@ -591,13 +592,41 @@
 	height: 14px;
 }
 
-/* The pull-request glyph fills its box more than the other row icons. */
-.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon.codicon-git-pull-request {
+/*
+ * Every row icon is drawn 12px tall, centered in the same 14px box. The glyphs fill their em square
+ * by different amounts (measured ink height over font size: branch 1.005, pull request 0.94,
+ * terminal and history 0.88, extensions 0.875, globe and add 0.815, play 0.81), so each gets the
+ * font size that brings its ink to 12px: 12 / ratio.
+ */
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon:not(.volt-pr-dock-chevron) {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	font-size: 12px;
-	line-height: 12px;
+	line-height: 14px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon.codicon-git-branch {
+	font-size: 11.9px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon:is(.codicon-git-pull-request, .codicon-git-pull-request-draft, .codicon-git-pull-request-closed, .codicon-git-merge) {
+	font-size: 12.8px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon:is(.codicon-terminal, .codicon-history) {
+	font-size: 13.6px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon.codicon-extensions {
+	font-size: 13.7px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon:is(.codicon-globe, .codicon-add) {
+	font-size: 14.7px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon.codicon-play {
+	font-size: 14.8px;
 }
 
 .volt-agent-quick-open-actions .volt-agent-stroke-icon {
@@ -609,6 +638,29 @@
 .volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon {
 	width: 14px;
 	height: 14px;
+}
+
+/* The drawn icons, on a 24 grid with a 1.5 stroke: ink height = (shape height + 1.5) x size / 24.
+ * Related Chats (20 tall) and Changes (18 tall) are sized to 12px of ink. The folder (17 tall, 20
+ * wide) stops at 11.5px: a landscape shape at the full 12 would be the widest icon in the column.
+ * The margins keep each in the rows' 14px box, so the labels stay on one line. */
+.volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon.volt-agent-dock-icon-files {
+	--volt-dock-icon-size: 14.9px;
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon.volt-agent-dock-icon-relatedChats {
+	--volt-dock-icon-size: 13.4px;
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon.volt-agent-dock-icon-changes {
+	--volt-dock-icon-size: 14.8px;
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon:is(.volt-agent-dock-icon-files, .volt-agent-dock-icon-relatedChats, .volt-agent-dock-icon-changes) {
+	flex: none;
+	width: var(--volt-dock-icon-size, 14px);
+	height: var(--volt-dock-icon-size, 14px);
+	margin: calc((14px - var(--volt-dock-icon-size, 14px)) / 2);
 }
 
 .volt-agent-quick-open-actions .volt-agent-stroke-icon :is(path, circle) {
@@ -728,7 +780,9 @@
 	right: 0;
 }
 
-/* The same fill at rest as under the pointer: whenever the button shows, it reads as a button. */
+/* The same fill at rest as under the pointer: whenever the button shows, it reads as a button. The
+ * collapse button above it carries the same fill, so the two read as one pair. */
+.volt-agent-quick-open-actions.expanded > .volt-agent-quick-open-toggle,
 .volt-agent-quick-open-actions > .volt-agent-dock-tune,
 .volt-agent-quick-open-actions > .volt-agent-dock-tune:hover,
 .volt-agent-quick-open-actions > .volt-agent-dock-tune.open,
@@ -746,44 +800,102 @@
 	color: inherit;
 }
 
-/* Usage: a brand mark and a thin bar per account; the full card opens on hover. */
+/*
+ * Usage: per account a line with its mark, name, and how much is used and when it resets, over a thin
+ * bar that starts under the name. The account in use reads bright; the full card opens on hover.
+ */
 .volt-agent-dock-usage-bars {
 	display: flex;
 	flex-direction: column;
-	gap: 7px;
-	padding: 4px 12px 8px;
+	gap: 10px;
+	padding: 2px 12px 12px;
 	cursor: default;
 }
 
 .volt-agent-dock-usage-line {
 	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	min-width: 0;
+}
+
+.volt-agent-dock-usage-head {
+	display: flex;
 	align-items: center;
 	gap: 8px;
-	height: 12px;
+	min-width: 0;
+	height: 16px;
+	font-size: 12px;
+	line-height: 16px;
 }
 
-.volt-agent-dock-usage-line > .volt-brand-icon {
+.volt-agent-dock-usage-head > .volt-brand-icon {
 	flex: none;
-	opacity: 0.8;
+	opacity: 0.7;
 }
 
-.volt-agent-dock-usage-line.active > .volt-brand-icon {
+.volt-agent-dock-usage-line.active .volt-agent-dock-usage-head > .volt-brand-icon {
 	opacity: 1;
 }
 
+.volt-agent-dock-usage-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-dock-usage-line.active .volt-agent-dock-usage-name {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-dock-usage-value {
+	flex: none;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 6px;
+	font-variant-numeric: tabular-nums;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-agent-dock-usage-percent {
+	color: var(--vscode-foreground);
+}
+
+.volt-agent-dock-usage-reset {
+	font-size: 11px;
+	opacity: 0.8;
+}
+
+.volt-agent-dock-usage-line.high .volt-agent-dock-usage-percent {
+	color: var(--vscode-editorWarning-foreground, #e5a50a);
+}
+
+.volt-agent-dock-usage-line.full .volt-agent-dock-usage-percent {
+	color: var(--vscode-errorForeground, #f14c4c);
+}
+
+/* The bar starts under the name: the mark (14px) and the gap (8px). */
 .volt-agent-dock-usage-bar {
-	flex: 1;
 	display: block;
-	height: 3px;
+	height: 4px;
+	margin-left: 22px;
 	overflow: hidden;
 	border-radius: 999px;
-	background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
 }
 
 .volt-agent-dock-usage-fill {
 	display: block;
 	height: 100%;
+	min-width: 0;
 	border-radius: inherit;
+	background: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+}
+
+.volt-agent-dock-usage-line.active .volt-agent-dock-usage-fill {
 	background: var(--vscode-textLink-foreground, #4c8dff);
 }
 
@@ -791,9 +903,14 @@
 	background: var(--vscode-editorWarning-foreground, #e5a50a);
 }
 
-.volt-agent-dock-usage-empty {
+.volt-agent-dock-usage-line.full .volt-agent-dock-usage-fill {
+	background: var(--vscode-errorForeground, #f14c4c);
+}
+
+/* Muted like the section's own header: the dock's row color would otherwise win. */
+.monaco-workbench .volt-agent-dock-usage-empty.volt-agent-dock-usage-empty {
 	font-size: 12px;
-	color: var(--vscode-descriptionForeground);
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
 }
 
 /* Automations: VS Code list rows, edge to edge and square, like Previous agents. */

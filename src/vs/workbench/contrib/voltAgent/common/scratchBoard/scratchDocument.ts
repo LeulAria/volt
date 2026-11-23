@@ -443,6 +443,7 @@ function parseBoardMeta(v: unknown): IScratchBoardMeta | undefined {
 		deleted: v.deleted === true ? true : undefined,
 		excerpt: typeof v.excerpt === 'string' ? v.excerpt.slice(0, 300) : undefined,
 		elementCount: typeof v.elementCount === 'number' && Number.isFinite(v.elementCount) ? v.elementCount : undefined,
+		file: typeof v.file === 'string' && v.file ? v.file.slice(0, 4000) : undefined,
 	};
 }
 

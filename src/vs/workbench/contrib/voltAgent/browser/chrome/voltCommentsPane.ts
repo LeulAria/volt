@@ -55,6 +55,10 @@ export interface IVoltCommentsPaneOptions {
 	onPick?(id: string, picked: boolean): void;
 	/** A close button in the head (the browser's comments panel). */
 	onClose?(): void;
+	/** "Resolve Sent" in the head, shown while any comment is sent (the browser: clears the sent pins). */
+	onResolveSent?(): void;
+	/** A "Sent Pins" switch in the head: whether sent comments keep their pin on the page. */
+	readonly sentPins?: { readonly shown: () => boolean; set(show: boolean): void };
 }
 
 /** Open comments of the user's can go with the next send; a checkbox picks which. */
@@ -174,6 +178,8 @@ export class VoltCommentsPane extends Disposable {
 	private readonly resolvedCheck: Checkbox;
 	private readonly resolvedToggle: HTMLElement;
 	private readonly archiveButton: HTMLButtonElement;
+	private readonly resolveSentButton: HTMLButtonElement | undefined;
+	private readonly sentPinsCheck: Checkbox | undefined;
 	private readonly sendButton: ReturnType<typeof createVoltButton>;
 	private items: readonly IVoltCommentItem[] = [];
 	/** Open comments the user unticked; everything else open goes with Send. */
@@ -215,6 +221,32 @@ export class VoltCommentsPane extends Disposable {
 		this.countEl = append(this.head, $('span.volt-comments-count'));
 		append(this.head, $('span.volt-comments-grow'));
 		const tools = append(this.head, $('.volt-comments-head-tools'));
+		if (options.onResolveSent) {
+			const button = this.resolveSentButton = append(tools, $('button.volt-comments-icon-button')) as HTMLButtonElement;
+			button.type = 'button';
+			button.appendChild(renderIcon(Codicon.checkAll));
+			setAgentTooltip(button, localize('voltComments.resolveSent', "Resolve Sent"));
+			button.setAttribute('aria-label', localize('voltComments.resolveSent', "Resolve Sent"));
+			this._register(addDisposableListener(button, 'click', e => {
+				e.stopPropagation();
+				options.onResolveSent?.();
+			}));
+		}
+		if (options.sentPins) {
+			const sentPins = options.sentPins;
+			const toggle = append(tools, $('.volt-comments-resolved'));
+			const check = this.sentPinsCheck = this._register(new Checkbox(localize('voltComments.sentPins', "Sent Pins"), sentPins.shown(), defaultCheckboxStyles));
+			toggle.appendChild(check.domNode);
+			const label = append(toggle, $('span.volt-comments-resolved-label'));
+			label.textContent = localize('voltComments.sentPins', "Sent Pins");
+			setAgentTooltip(toggle, localize('voltComments.sentPinsHint', "Keep sent comments' pins on the page"));
+			this._register(addDisposableListener(label, 'click', e => {
+				e.stopPropagation();
+				check.checked = !check.checked;
+				sentPins.set(check.checked);
+			}));
+			this._register(check.onChange(() => sentPins.set(check.checked)));
+		}
 		this.archiveButton = append(tools, $('button.volt-comments-icon-button')) as HTMLButtonElement;
 		this.archiveButton.type = 'button';
 		this.archiveButton.appendChild(renderIcon(Codicon.archive));
@@ -394,6 +426,12 @@ export class VoltCommentsPane extends Disposable {
 		const resolved = this.items.filter(item => item.status === 'resolved').length;
 		this.archiveButton.hidden = !resolved;
 		this.archiveButton.setAttribute('aria-label', localize('voltComments.archiveCount', "Archive {0} Resolved", resolved));
+		if (this.resolveSentButton) {
+			this.resolveSentButton.hidden = !this.items.some(item => item.status === 'sent');
+		}
+		if (this.sentPinsCheck && this.options.sentPins) {
+			this.sentPinsCheck.checked = this.options.sentPins.shown();
+		}
 		this.syncFoot();
 		this._onDidChangeHeight.fire();
 	}

@@ -1,0 +1,2 @@
+{"variant":"bare","rep":1,"firstTextS":1.726,"at":"2026-11-16T17:27:03.868Z","load":"21.28 15.85 11.25","resultS":null,"textChars":18263,"peakMiB":136,"restMiB":122,"samples":240}
+{"variant":"bare+smol","rep":1,"firstTextS":1.769,"at":"2026-11-16T17:28:04.247Z","load":"42.15 22.33 13.96","resultS":null,"textChars":18231,"peakMiB":136,"restMiB":122,"samples":240}

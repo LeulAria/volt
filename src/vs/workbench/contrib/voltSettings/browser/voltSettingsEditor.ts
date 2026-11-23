@@ -13,7 +13,7 @@ import { openVoltSurface } from '../../../../base/browser/ui/voltMobile/voltSurf
 import { isVoltCompact } from '../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
-import { isMacintosh } from '../../../../base/common/platform.js';
+import { isMacintosh, isWeb } from '../../../../base/common/platform.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
 import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
@@ -46,7 +46,7 @@ import { IAgentRuntimeService } from '../../../services/voltRuntime/common/runti
 import { IPredictionSettings, IVoltPredictionService } from '../../../services/voltRuntime/common/prediction.js';
 import { IWorkbenchThemeService, ThemeSettings } from '../../../services/themes/common/workbenchThemeService.js';
 import { AGENT_DEFAULT_MODEL_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_PROMPT_HISTORY_SETTING, AGENT_VOICE_DEFAULT_REALTIME_MODEL, AGENT_VOICE_ENDPOINT_SETTING, AGENT_VOICE_ENGINE_SETTING, AGENT_VOICE_MODEL_SETTING, AGENT_VOICE_REALTIME_MODEL_SETTING, AGENT_VOICE_REALTIME_MODELS, AgentVoiceEngine } from '../../voltAgent/common/agentComposerSettings.js';
-import { AGENT_READ_ALOUD_SPEED_SETTING, AGENT_READ_ALOUD_SPEEDS, AGENT_READ_ALOUD_VOICE_SETTING, clampReadAloudSpeed } from '../../voltAgent/common/agentReadAloud.js';
+import { AGENT_READ_ALOUD_SPEED_SETTING, AGENT_READ_ALOUD_SPEEDS, AGENT_READ_ALOUD_VOICE_SETTING, clampReadAloudSpeed, READ_ALOUD_SYSTEM_VOICE } from '../../voltAgent/common/agentReadAloud.js';
 import { agentReadAloud, canReadAloud, localVoiceDescription, localVoiceModelLabel, readAloudVoices } from '../../voltAgent/browser/chat/agentReadAloud.js';
 import { DEFAULT_LOCAL_VOICES, ILocalVoiceState, IVoltLocalVoiceService, LOCAL_VOICE_MODEL_IDS, LOCAL_VOICES, localVoice, LocalVoiceModelId, pickLocalVoice, readyLocalVoiceModels } from '../../../../platform/voltLocalVoice/common/voltLocalVoice.js';
 import { AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_KEEP_WORKING_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING } from '../../voltAgent/common/agentWorkflowSettings.js';
@@ -1120,7 +1120,10 @@ export class VoltSettingsEditor extends EditorPane {
 			host => this.textGenerationPicker(host, 'git', localize('voltSettings.gitTextModel', "Git text model"), localize('voltSettings.gitTextDefault', "Default"), localize('voltSettings.gitTextDefaultDesc', "Use the text generation model")),
 		);
 		this.renderPower();
-		this.renderUpdates();
+		// The browser runs the server's build: nothing of its own to check for.
+		if (!isWeb) {
+			this.renderUpdates();
+		}
 	}
 
 	/** Lid-Closed Mode, and staying awake while agents work. */
@@ -1827,9 +1830,10 @@ export class VoltSettingsEditor extends EditorPane {
 				return;
 			}
 			host.replaceChildren();
-			const current = picked();
-			const options: IVoltDropdownOption<string>[] = [{ id: '', label: localize('voltSettings.readAloudSystemVoice', "System default") }];
-			const seen = new Set<string>(['']);
+			// Unset reads with the first downloaded voice (as calls do): show that one, not "System default".
+			const current = picked() || (pickLocalVoice(undefined, ready)?.ref ?? READ_ALOUD_SYSTEM_VOICE);
+			const options: IVoltDropdownOption<string>[] = [{ id: READ_ALOUD_SYSTEM_VOICE, label: localize('voltSettings.readAloudSystemVoice', "System default") }];
+			const seen = new Set<string>([READ_ALOUD_SYSTEM_VOICE]);
 			for (const voice of LOCAL_VOICES) {
 				if (ready.includes(voice.model)) {
 					seen.add(voice.ref);
@@ -1850,7 +1854,7 @@ export class VoltSettingsEditor extends EditorPane {
 				seen.add(current);
 				options.push({ id: current, label: current });
 			}
-			this.dropdown(host, options, seen.has(current) ? current : '', voiceLabel, value => void pick(value).then(() => this.playReadAloudSample()));
+			this.dropdown(host, options, seen.has(current) ? current : READ_ALOUD_SYSTEM_VOICE, voiceLabel, value => void pick(value).then(() => this.playReadAloudSample()));
 			const listen = append(host, $('button.volt-agent-footer-btn')) as HTMLButtonElement;
 			const listenLabel = localize('voltSettings.readAloudPreview', "Play a sample");
 			listen.setAttribute('aria-label', listenLabel);

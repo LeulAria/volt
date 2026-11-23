@@ -1,6 +1,6 @@
 #!/bin/zsh
-# One timed session under ~/.volt-r9/timing.lock (at most 25 minutes): waits for a 1-minute load of 14 or less and a
-# free lock, runs the steps given, frees the lock. Each launch inside also waits for the load gate (rows record it).
+# One timed session under ~/.volt-r9/timing.lock (at most 25 minutes): waits for the lock, runs the steps given, frees
+# the lock. Each launch and each run inside waits for a 1-minute load of 14 or less (rows record the load).
 #   session10.sh ab <arm,arm> [reps] [n3] [n4]        A3 and A4 per launch, interleaved, no project (a scratch chat)
 #   session10.sh abp <arm,arm> [reps] [n3] [n4]       the same in the arena project (ADEMark's precondition)
 # Arms: r8, dev, devbase, or name=/path/VOLT.app (a release app) / name=/path/to/dev/tree.
@@ -18,7 +18,7 @@ while true; do
 		if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then echo "stale lock of pid $pid removed"; rm -rf "$LOCK"; fi
 	fi
 	# ~/.volt-r10/speed/busy: this area's own test instance is in use (one instance at a time on CDP 9987).
-	if [ ! -e "$HOME/.volt-r10/speed/busy" ] && [ "$(echo "$(load1) <= 14" | bc)" = 1 ] && mkdir "$LOCK" 2>/dev/null; then
+	if [ ! -e "$HOME/.volt-r10/speed/busy" ] && mkdir "$LOCK" 2>/dev/null; then
 		echo "speed session10.sh $* pid $$ start $(date)" > "$LOCK/owner"
 		break
 	fi

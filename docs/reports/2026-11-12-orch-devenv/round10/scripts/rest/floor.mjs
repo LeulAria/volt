@@ -44,7 +44,7 @@ try {
 		b.n++; b.mib += s[s.length >> 1] / 1048576; b.cpuPct += c; b.wakeups += k; cpu += c; wk += k;
 	}
 	for (const b of Object.values(byRole)) { b.mib = Math.round(b.mib * 10) / 10; b.cpuPct = Math.round(b.cpuPct * 1000) / 1000; b.wakeups = Math.round(b.wakeups * 10) / 10; }
-	const row = { arm: 'floor', page, electron: E, at: new Date().toISOString(), load: loadAvg, calm: gate.calm, settleS: +settleArg, windowS: +windowArg, appMedianMiB: Math.round(summary.app_median_b / 1048576 * 10) / 10, cpuAppPct: Math.round(cpu * 1000) / 1000, wakeupsApp: Math.round(wk * 10) / 10, processes: per.size, byRole };
+	const row = { arm: 'floor', page: [page, process.env.FLOOR_WINDOW, process.env.FLOOR_SWITCHES].filter(Boolean).join('+'), electron: E, at: new Date().toISOString(), load: loadAvg, calm: gate.calm, settleS: +settleArg, windowS: +windowArg, appMedianMiB: Math.round(summary.app_median_b / 1048576 * 10) / 10, cpuAppPct: Math.round(cpu * 1000) / 1000, wakeupsApp: Math.round(wk * 10) / 10, processes: per.size, byRole };
 	appendFileSync(join(DATA, 'floor.jsonl'), JSON.stringify(row) + '\n');
 	console.log(JSON.stringify(row));
 } finally {

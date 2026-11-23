@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { createSessionHoverBranchIcon, createSessionHoverFolderIcon } from '../../browser/home/agentHomeIcons.js';
+import { createSessionHoverBranchIcon, createSessionHoverClockIcon, createSessionHoverFolderIcon } from '../../browser/home/agentHomeIcons.js';
 import { agentSessionHoverRows, agentSessionStatusNote } from '../../browser/home/agentSessionHover.js';
 
 suite('Agent session hover card', () => {
@@ -25,14 +25,14 @@ suite('Agent session hover card', () => {
 		]);
 		assert.deepStrictEqual(interrupted, [
 			{ label: 'Testing' },
-			{ label: 'The last run was interrupted', icon: Codicon.clock },
+			{ label: 'The last run was interrupted', icon: createSessionHoverClockIcon },
 			{ label: '~/Desktop/Agent-Test', icon: createSessionHoverFolderIcon, muted: true },
 		]);
 
 		const failed = agentSessionHoverRows('Testing', agentSessionStatusNote({ status: 'error' }), [
 			{ pathLabel: '~/Desktop/Agent-Test' },
 		]);
-		assert.strictEqual(failed[1]?.icon, Codicon.clock);
+		assert.strictEqual(failed[1]?.icon, createSessionHoverClockIcon);
 		assert.notStrictEqual(failed[1]?.icon, Codicon.bell);
 	});
 

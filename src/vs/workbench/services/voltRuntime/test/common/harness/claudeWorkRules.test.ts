@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeEditCheckHooks, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_WORK_SUBAGENT_RULES, agentDescriptionWithTypes, claudeWorkRulesMeta, compactAgentListing, compactVoltToolNames, isClaudePlaceholderTitle, voltAttributionNote, voltBypassModeNote, voltEnvInfo, voltSessionContext, voltSkillListing, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
+import { CLAUDE_MAIN_ASK_RULE, CLAUDE_MAIN_DISALLOWED_TOOLS, CLAUDE_MAIN_LAZY_RULE, CLAUDE_MAIN_LAZY_TOOLS, CLAUDE_MAIN_RULES, claudeEditCheckHooks, claudeLazyToolsPlugin, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SESSION_TITLE, CLAUDE_READONLY_SUBAGENT_PROMPT, CLAUDE_SUBAGENT_DISALLOWED_TOOLS, CLAUDE_SUBAGENT_PLAN_MODE, CLAUDE_SUBAGENT_RULES, CLAUDE_THINKING, CLAUDE_WORK_SUBAGENT_RULES, agentDescriptionWithTypes, claudeWorkRulesMeta, compactAgentListing, compactVoltToolNames, isClaudePlaceholderTitle, voltAttributionNote, voltBypassModeNote, voltEnvInfo, voltSessionContext, voltSkillListing, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
 
 /** Claude Code 2.1.322's agent-types reminder (trimmed), with one custom agent whose description runs over two lines. */
 const AGENT_LISTING = [
@@ -288,5 +288,12 @@ suite('Volt Claude work rules', () => {
 		assert.ok(settings({ editChecks: true, subagent: true }).PostToolUse);
 		assert.strictEqual(settings({ editChecks: true, subagent: 'readonly' }).PostToolUse, undefined);
 		assert.strictEqual(settings({}).PostToolUse, undefined);
+	});
+
+	test('session meta asks for thinking summaries, so a model that thinks for minutes is not silent', () => {
+		// Without `display`, Opus 5.5 streams empty thinking deltas and the idle watchdog interrupts it.
+		const options = (claudeWorkRulesMeta('claude-opus-5-5') as { claudeCode: { options: { thinking: unknown } } }).claudeCode.options;
+		assert.deepStrictEqual(options.thinking, { type: 'adaptive', display: 'summarized' });
+		assert.deepStrictEqual(options.thinking, CLAUDE_THINKING);
 	});
 });

@@ -122,7 +122,7 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 		},
 		[AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING]: {
 			type: 'boolean',
-			default: false,
+			default: true,
 			description: localize('voltAppearance.chatBackgroundInConversations', "Keep the chat background picture, darker, behind chats that have messages. Off, only a new chat shows it."),
 		},
 	},

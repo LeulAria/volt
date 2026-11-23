@@ -29,8 +29,26 @@ export interface IVoltWindowScopeService {
 	/** The Agent/IDE mode this scoped window last used. */
 	readonly layoutMode: VoltWindowLayoutMode | undefined;
 
+	/**
+	 * A window without a scope, or a scoped one that is the main window too because no window
+	 * without a scope is open. It lists every chat and project no scoped window holds.
+	 */
+	readonly isMain: boolean;
+
+	/** Another window asked to open a chat this window owns; this window was brought to the front for it. */
+	readonly onDidRevealSession: Event<string>;
+
 	showsSession(sessionId: string): boolean;
 	showsProject(projectId: string): boolean;
+
+	/** Another open window owns the chat: it must not be open here. */
+	heldElsewhere(sessionId: string): boolean;
+
+	/**
+	 * Before opening a chat this window does not list: when another open window owns it, that window
+	 * comes to the front and shows it, and this answers true (do not open it here).
+	 */
+	revealElsewhere(sessionId: string): Promise<boolean>;
 
 	/** A chat started in this window. */
 	claimSession(sessionId: string): void;
