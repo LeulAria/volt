@@ -28,7 +28,7 @@ import { createCodeTools, ITextFileChange } from '../../../services/voltRuntime/
 import { NO_HOOK_OUTPUT } from '../../../services/voltRuntime/browser/tools/editDiagnostics.js';
 import { IFileToolHost, writeComputedEdit } from '../../../services/voltRuntime/browser/tools/fileTools.js';
 import { displayPath, resolveWorkspaceUri } from '../../../services/voltRuntime/browser/tools/workspacePath.js';
-import { confineCodeIntel, ICodeIntelRules } from './codeIntelConfinement.js';
+import { confineCodeIntel, ICodeIntelRules } from '../../../services/voltRuntime/browser/tools/codeIntelConfinement.js';
 import { EditChecks } from './editChecks.js';
 import { createSearchTools } from '../../../services/voltRuntime/browser/tools/searchTools.js';
 

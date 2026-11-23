@@ -22,6 +22,7 @@ import { EditorExtensions } from '../../../common/editor.js';
 import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IVoltAgentWindowService, IVoltChatPane } from '../../../services/voltPlugins/browser/voltAgentWindow.js';
+import { featureModuleCheck } from '../../../services/voltPlugins/common/featureCapabilityMode.js';
 import { IVoltPluginService } from '../../../services/voltPlugins/common/voltApi.js';
 import { ISCMHistoryItem } from '../../scm/common/history.js';
 import { ISCMProvider, ISCMRepository, ISCMService } from '../../scm/common/scm.js';
@@ -383,10 +384,10 @@ class ExplainLinesAction extends Action2 {
 export const gitGraphModule: IVoltFeatureModule = {
 	activate(host: IVoltFeatureModuleHost): void {
 		const { plugin, subscriptions } = host;
-		// Its uses of git and chats, checked against its manifest (report mode: logged, never refused).
+		// Its uses of git and chats, checked against its manifest: the Git Graph is enforced (M5), so a use beyond it is refused.
 		const reporter = host.instantiationService.invokeFunction(accessor => accessor.get(IVoltPluginService).reporter);
 		const principal = { extensionId: plugin.extensionId, label: plugin.manifest.contributes?.voltModule?.label, firstParty: true, capabilities: plugin.manifest.contributes?.voltCapabilities ?? {} };
-		subscriptions.add(setGitGraphCheck(request => reporter.check(principal, request)));
+		subscriptions.add(setGitGraphCheck(featureModuleCheck(reporter, principal)));
 
 		subscriptions.add(Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane(
 			EditorPaneDescriptor.create(GitGraphEditor, GIT_GRAPH_EDITOR_ID, localize('voltGitGraph.editorLabel', "Git Graph")),

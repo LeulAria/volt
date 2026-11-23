@@ -43,7 +43,7 @@ for (const [variant, keep] of Object.entries(VARIANTS)) {
 		console.log(line(`${variant} ${arm} cpu % (app)`, r.map(x => x.cpuAppPct), loads));
 		console.log(line(`${variant} ${arm} wakeups/s (app)`, r.map(x => x.wakeupsApp), loads));
 		console.log(`   window on screen: ${r.filter(x => x.onScreen === true).length}, off screen: ${r.filter(x => x.onScreen === false).length}, not recorded: ${r.filter(x => x.onScreen === undefined).length}`);
-		for (const role of ['gpu', 'renderer', 'main', 'agent server', 'node utility', 'extension host', 'code index', 'sandbox helper', 'plugin host', 'log stream', 'claude CLI', 'ACP adapter']) {
+		for (const role of ['gpu', 'renderer', 'main', 'agent server', 'node utility', 'extension host', 'json server', 'ext host child', 'code index', 'sandbox helper', 'plugin host', 'log stream', 'claude CLI', 'ACP adapter']) {
 			console.log('   ' + line(`${role} cpu %`, r.map(x => x.byRole?.[role]?.cpuPct ?? 0), loads) + ' | ' + line('wakeups', r.map(x => x.byRole?.[role]?.wakeups ?? 0), loads).replace(/^.*?: /, ''));
 		}
 	}

@@ -37,14 +37,39 @@ export function skillsTrail(editor: { readonly typeId: string } | undefined): IS
 	return editor?.typeId === SKILLS_EDITOR_INPUT_TYPE_ID && 'crumbs' in editor ? editor as { readonly typeId: string } & ISkillsTrail : undefined;
 }
 
+/**
+ * Where the skills list was when a skill opened from it: Back to Skills in the Skill Editor puts the
+ * list back like this. The host only carries it back to the page.
+ */
+export interface ISkillsListState {
+	readonly search: string;
+	readonly kind: string;
+	readonly resourceScope: string;
+	readonly excluded: readonly string[];
+	readonly expanded: readonly string[];
+	readonly scrollTop: number;
+}
+
+/** What hosts the embedded page (Volt Settings), for the page's way back from a skill it opened. */
+export interface ISkillsEmbeddedHost {
+	/** The host was closed to show a skill: open it again on Skills & Plugins with the list as `state` had it. */
+	returnToSkillList(state: ISkillsListState): Promise<void>;
+}
+
 /** The Skills & Plugins page hosted inside another editor (Volt Settings > Skills & Plugins). */
 export interface ISkillsEmbeddedPage extends IDisposable {
 	setVisible(visible: boolean): void;
 	layout(width: number, height: number): void;
+	/** Shows the skills list as it was when a skill opened from it. */
+	restoreSkillList(state: ISkillsListState): void;
 }
 
 /** What the loaded module gives core (`IVoltFeatureModuleService.activate('skills')`). */
 export interface IVoltSkillsModule {
-	/** The Skills & Plugins page in `parent`. Disposed with the module if it unloads first. */
-	createEmbeddedPage(parent: HTMLElement, group: IEditorGroup): ISkillsEmbeddedPage;
+	/**
+	 * The Skills & Plugins page in `parent`. Disposed with the module if it unloads first. With a
+	 * `host`, a skill opens in the Skill Editor where the user can reach it (the IDE group, or the
+	 * current chat's tools in the agent layout) instead of beside the page.
+	 */
+	createEmbeddedPage(parent: HTMLElement, group: IEditorGroup, host?: ISkillsEmbeddedHost): ISkillsEmbeddedPage;
 }

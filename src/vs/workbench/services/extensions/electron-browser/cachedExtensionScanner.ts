@@ -18,6 +18,8 @@ import { getErrorMessage } from '../../../../base/common/errors.js';
 import { IWorkbenchExtensionManagementService } from '../../extensionManagement/common/extensionManagement.js';
 import { toExtensionDescription } from '../common/extensions.js';
 import { IWorkbenchEnvironmentService } from '../../environment/common/environmentService.js';
+import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { VoltExtensionIntegrityGate } from './voltExtensionIntegrityGate.js';
 
 export class CachedExtensionScanner {
 
@@ -33,6 +35,7 @@ export class CachedExtensionScanner {
 		@IWorkbenchExtensionManagementService private readonly _extensionManagementService: IWorkbenchExtensionManagementService,
 		@IWorkbenchEnvironmentService private readonly _environmentService: IWorkbenchEnvironmentService,
 		@ILogService private readonly _logService: ILogService,
+		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 	) {
 		this.scannedExtensions = new Promise<IExtensionDescription[]>((resolve, reject) => {
 			this._scannedExtensionsResolve = resolve;
@@ -70,7 +73,8 @@ export class CachedExtensionScanner {
 
 			let scannedUserExtensions: IScannedExtension[] = [];
 			if (result[1].status === 'fulfilled') {
-				scannedUserExtensions = result[1].value;
+				// Volt (H.10): an extension whose files changed on disk after install is not started.
+				scannedUserExtensions = await this._instantiationService.createInstance(VoltExtensionIntegrityGate).filter(result[1].value);
 			} else {
 				hasErrors = true;
 				this._logService.error(`Error scanning user extensions:`, getErrorMessage(result[1].reason));

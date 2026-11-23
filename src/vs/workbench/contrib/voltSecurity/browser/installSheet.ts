@@ -29,7 +29,8 @@ import { TrustGrantDraft } from '../../../../platform/voltSandbox/common/trust.j
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { isScannedExtension, IVoltExtensionCodeScanService, summarizeFindings } from '../../../services/extensions/browser/voltExtensionCodeScan.js';
-import { codeScanDigest } from '../../../../platform/voltPlugins/common/extensionCodeScan.js';
+import { codeScanDigest, ICodeScanFinding } from '../../../../platform/voltPlugins/common/extensionCodeScan.js';
+import { IVoltHeldUpdate, VoltUpdateConcern } from '../../../../platform/extensionManagement/common/voltExtensionLock.js';
 import { IVoltExtensionApiService } from '../../../services/voltPlugins/common/voltExtensionApi.js';
 import { pickVoltContributes } from '../../../services/voltPlugins/common/voltContributions.js';
 import { bindGestureButton } from '../../../services/voltTrust/browser/gestureTokens.js';
@@ -223,12 +224,19 @@ export interface IInstallSheetRequest {
 	 * extension has code the user picks where it runs, before any of it runs.
 	 */
 	readonly install?: {
-		/** Its code: whether Volt can run it in a sandbox here, and why not. Absent: no code, nothing to choose. */
-		readonly sandbox?: { readonly available: true } | { readonly available: false; readonly reason: string };
+		/**
+		 * Its code: whether Volt can run it in a sandbox here, and why not. Absent: no code, nothing to
+		 * choose. `stayOff`: Volt runs every extension in a sandbox (`required`), so one it can't
+		 * sandbox stays off unless the user picks "With your access" here (P8).
+		 */
+		readonly sandbox?: { readonly available: true } | { readonly available: false; readonly reason: string; readonly stayOff?: boolean };
+		/** An update Volt held (H.10): why, one line each, shown above everything else; the button says Update. */
+		readonly heldBecause?: readonly string[];
 	};
 }
 
-export type InstallSheetPlace = 'sandbox' | 'full';
+/** Where the code runs: in a sandbox, with the user's access, or not at all (kept off, P8). */
+export type InstallSheetPlace = 'sandbox' | 'full' | 'off';
 
 /**
  * The install sheet (spec P4, G.4, G.12): the first activation of a third-party extension that
@@ -239,7 +247,8 @@ export type InstallSheetPlace = 'sandbox' | 'full';
 export function showInstallSheet(layoutService: ILayoutService, instantiationService: IInstantiationService, request: IInstallSheetRequest, answer: (allowed: boolean, gesture?: IUserGestureToken, place?: InstallSheetPlace) => void): IDisposable {
 	let answered = false;
 	// Recommended, and what Install keeps unless the user picks otherwise.
-	let place: InstallSheetPlace = request.install?.sandbox?.available ? 'sandbox' : 'full';
+	const sandboxChoice = request.install?.sandbox;
+	let place: InstallSheetPlace = sandboxChoice?.available ? 'sandbox' : sandboxChoice?.stayOff ? 'off' : 'full';
 	const decide = (allowed: boolean, gesture?: IUserGestureToken) => {
 		if (!answered) {
 			answered = true;
@@ -252,7 +261,7 @@ export function showInstallSheet(layoutService: ILayoutService, instantiationSer
 	];
 	const grantsSomething = !request.install && request.groups.some(group => group.class === 'medium');
 	return showVoltModal(layoutService, {
-		title: request.install ? localize('voltSheet.installTitle', "Install extension") : localize('voltSheet.title', "Extension permissions"),
+		title: request.install?.heldBecause ? localize('voltSheet.updateTitle', "Update extension") : request.install ? localize('voltSheet.installTitle', "Install extension") : localize('voltSheet.title', "Extension permissions"),
 		width: 520,
 		height: 480,
 		headless: true,
@@ -264,14 +273,48 @@ export function showInstallSheet(layoutService: ILayoutService, instantiationSer
 			const head = append(content, $('.head'));
 			append(head, $('.mark')).appendChild(renderIcon(Codicon.extensions));
 			const titles = append(head, $('.titles'));
-			append(titles, $('h2')).textContent = request.install
-				? localize('voltSheet.installAsk', "Install {0}?", request.extensionName)
-				: !request.groups.length && request.findings?.length
-					? localize('voltSheet.foundTitle', "What Volt found in {0}'s code", request.extensionName)
-					: localize('voltSheet.ask', "{0} asks for these permissions", request.extensionName);
+			append(titles, $('h2')).textContent = request.install?.heldBecause
+				? localize('voltSheet.updateAsk', "Update {0}?", request.extensionName)
+				: request.install
+					? localize('voltSheet.installAsk', "Install {0}?", request.extensionName)
+					: !request.groups.length && request.findings?.length
+						? localize('voltSheet.foundTitle', "What Volt found in {0}'s code", request.extensionName)
+						: localize('voltSheet.ask', "{0} asks for these permissions", request.extensionName);
 			append(titles, $('.meta')).textContent = localize('voltSheet.meta', "Extension by {0}", request.publisher);
+			const held = request.install?.heldBecause;
+			if (held?.length) {
+				// Why Volt did not apply the update on its own (H.10): the first thing read.
+				const notice = append(content, $('.volt-install-sheet-where.volt-install-sheet-held'));
+				append(notice, $('.title')).textContent = localize('voltSheet.heldTitle', "Volt held this update for you");
+				for (const reason of held) {
+					append(notice, $('.detail')).textContent = reason;
+				}
+			}
 			const sandbox = request.install?.sandbox;
-			if (sandbox) {
+			if (sandbox && !sandbox.available && sandbox.stayOff) {
+				// P8 under `required`: it can't be sandboxed here, so it stays off unless the user picks their access.
+				const where = append(content, $('.volt-install-sheet-where'));
+				append(where, $('.title')).textContent = localize('voltSheet.where', "Where its code runs");
+				const hint = append(where, $('.detail'));
+				const describe = (value: InstallSheetPlace) => value === 'off'
+					? localize('voltSheet.offHint', "Volt can't run it in a sandbox here: {0} It is installed but stays off. You can run it later from its menu.", sandbox.reason)
+					: localize('voltSheet.fullHint', "Like any other extension: it can read and change your files, use the network and read your credentials.");
+				const dropdown = createVoltDropdown<InstallSheetPlace>(where, instantiationService.invokeFunction(accessor => accessor.get(IContextViewService)), {
+					options: [
+						{ id: 'off', label: localize('voltSheet.keepOff', "Keep it off (recommended)"), icon: Codicon.lock },
+						{ id: 'full', label: localize('voltSheet.withAccess', "With your access"), icon: Codicon.unlock },
+					],
+					value: place,
+					ariaLabel: localize('voltSheet.whereAria', "Where the extension's code runs"),
+					onChange: value => {
+						place = value;
+						hint.textContent = describe(value);
+					},
+				}, store);
+				dropdown.element.classList.add('volt-install-sheet-place');
+				where.appendChild(hint);
+				hint.textContent = describe(place);
+			} else if (sandbox) {
 				const where = append(content, $('.volt-install-sheet-where'));
 				append(where, $('.title')).textContent = localize('voltSheet.where', "Where its code runs");
 				const hint = append(where, $('.detail'));
@@ -339,7 +382,7 @@ export function showInstallSheet(layoutService: ILayoutService, instantiationSer
 			if (request.install) {
 				// Installing is the user's own act from Volt's UI; the sheet grants nothing, so no gesture token.
 				const install = store.add(createVoltButton(footer, 'primary'));
-				install.label = localize('voltSheet.install', "Install");
+				install.label = request.install.heldBecause ? localize('voltSheet.update', "Update") : localize('voltSheet.install', "Install");
 				install.element.classList.add('allow');
 				store.add(install.onDidClick(() => {
 					decide(true);
@@ -361,6 +404,41 @@ export function showInstallSheet(layoutService: ILayoutService, instantiationSer
 			return store;
 		},
 	});
+}
+
+/** Why Volt held an update, in its words: one line on the sheet. */
+export function heldUpdateReason(concern: VoltUpdateConcern, held: Pick<IVoltHeldUpdate, 'installedVersion' | 'version'>): string {
+	switch (concern.kind) {
+		case 'publisher-changed':
+			return localize('voltSheet.held.publisher', "It is now published by {0}, not {1}: the account or namespace behind it changed.", concern.to, concern.from);
+		case 'publisher-unverified':
+			return localize('voltSheet.held.unverified', "Its publisher, {0}, was verified when you installed it and is not now.", concern.publisher);
+		case 'signature-worse':
+			return localize('voltSheet.held.signature', "Version {0} was signed ({1}); version {2} is not ({3}).", held.installedVersion, concern.from, held.version, concern.to);
+		case 'capabilities':
+			return localize('voltSheet.held.capabilities', "Version {0} asks for Volt features {1} didn't: {2}.", held.version, held.installedVersion, concern.added.join(', '));
+		case 'code':
+			return localize('voltSheet.held.code', "Version {0} has code that hides what it does, which {1} didn't have ({2} new findings, listed below).", held.version, held.installedVersion, concern.added.length);
+	}
+}
+
+/**
+ * When the sheet is shown for an installed extension (P4, G.9, G.12), from what it declares and what
+ * the code scan found `high`. Undefined: nothing to show. The key is per declared set and per set of
+ * high findings, so an update that adds a capability or such code gets the sheet again.
+ *
+ * - not reviewed before install and declaring capabilities: the permissions, and the findings;
+ * - `high` findings while it runs with the user's access: the findings, with "Run in a Sandbox";
+ * - reviewed and sandboxed before install: the findings alone, said once (nothing to grant).
+ */
+export function installSheetPlan(input: { readonly subject: SubjectKey; readonly groups: readonly IInstallSheetGroup[]; readonly high: readonly ICodeScanFinding[]; readonly reviewed: boolean; readonly sandboxed: boolean }): { readonly key: string; readonly groups: readonly IInstallSheetGroup[] } | undefined {
+	const forGroups = input.groups.length > 0 && !input.reviewed;
+	const forScan = input.high.length > 0 && !(input.reviewed && input.sandboxed);
+	const tellOnly = input.high.length > 0 && !forGroups && !forScan;
+	if (!forGroups && !forScan && !tellOnly) {
+		return undefined;
+	}
+	return { key: installSheetKey(input.subject, input.groups) + (input.high.length ? `.${codeScanDigest(input.high)}` : ''), groups: tellOnly ? [] : input.groups };
 }
 
 /**
@@ -389,7 +467,7 @@ export class InstallSheetContribution extends Disposable implements IWorkbenchCo
 		@IExtensionManifestPropertiesService private readonly manifestProperties: IExtensionManifestPropertiesService,
 	) {
 		super();
-		this._register(setVoltInstallReview({ review: manifest => this.reviewInstall(manifest) }));
+		this._register(setVoltInstallReview({ review: manifest => this.reviewInstall(manifest), reviewHeldUpdate: held => this.reviewHeldUpdate(held) }));
 		const check = () => void this.trust.whenReady.then(() => this.check());
 		this._register(extensionService.onDidChangeExtensions(check));
 		void extensionService.whenInstalledExtensionsRegistered().then(check);
@@ -418,24 +496,18 @@ export class InstallSheetContribution extends Disposable implements IWorkbenchCo
 				// The code scan (once per version, cached): code that hides what it does gets the sheet
 				// even when it declares no Volt capability, and again when an update adds such code.
 				const scan = scanned ? await this.codeScan.scan(extension) : undefined;
-				const high = scan?.findings.filter(finding => finding.severity === 'high') ?? [];
-				// Reviewed before it was installed: its capabilities are asked at first use instead. Code the
-				// scan flags still gets the sheet while it runs with the user's access.
-				const reviewed = this.storage.getBoolean(installReviewKey(extension.identifier.value, groups), StorageScope.APPLICATION, false);
-				const forGroups = groups.length > 0 && !reviewed;
-				const forScan = high.length > 0 && !(reviewed && this.sandbox.isOptedIn(extension.identifier.value));
-				// Reviewed and put in a sandbox before install: the review saw only the manifest (the code was
-				// not unpacked yet), so what the scan found is said once now, with nothing to grant.
-				const tellOnly = high.length > 0 && !forGroups && !forScan;
-				if (!forGroups && !forScan && !tellOnly) {
+				const plan = installSheetPlan({
+					subject,
+					groups,
+					high: scan?.findings.filter(finding => finding.severity === 'high') ?? [],
+					reviewed: this.storage.getBoolean(installReviewKey(extension.identifier.value, groups), StorageScope.APPLICATION, false),
+					sandboxed: this.sandbox.isOptedIn(extension.identifier.value),
+				});
+				if (!plan || this.shown.has(plan.key) || this.storage.getBoolean(plan.key, StorageScope.APPLICATION, false)) {
 					return;
 				}
-				const key = installSheetKey(subject, groups) + (high.length ? `.${codeScanDigest(high)}` : '');
-				if (this.shown.has(key) || this.storage.getBoolean(key, StorageScope.APPLICATION, false)) {
-					return;
-				}
-				this.shown.add(key);
-				return this.ask(extension, subject, tellOnly ? [] : groups, key, scan ? summarizeFindings(scan.findings) : []);
+				this.shown.add(plan.key);
+				return this.ask(extension, subject, plan.groups, plan.key, scan ? summarizeFindings(scan.findings) : []);
 			});
 		}
 	}
@@ -452,15 +524,21 @@ export class InstallSheetContribution extends Disposable implements IWorkbenchCo
 		const id = `${manifest.publisher}.${manifest.name}`;
 		const groups = installSheetGroups(manifest, true);
 		const code = !!manifest.main || !!manifest.browser;
-		// Already chosen (an update, a reinstall, `required` mode): nothing to choose again.
-		const decided = this.sandbox.isOptedIn(id) || this.sandbox.state(id).kind === 'unsandboxed';
+		const plan = extensionSandboxPlan({ id, builtin: false, main: !!manifest.main, browser: !!manifest.browser, extensionKind: this.manifestProperties.getExtensionKind(manifest) }, voltPlatform());
+		const unsandboxed = this.sandbox.state(id).kind === 'unsandboxed';
+		// In scope for the sandbox (the `required` default, or opted in) but not sandboxable here: it
+		// would stay off, so the user chooses now, once: keep it off, or run it with their access (P8).
+		const mustChoose = code && this.sandbox.isOptedIn(id) && !unsandboxed && plan.kind === 'refuse' && !this.sandbox.isKeptOff(id);
+		// Already chosen (an update, a reinstall, sandboxed under `required`): nothing to choose again.
+		const decided = !mustChoose && (this.sandbox.isOptedIn(id) || unsandboxed);
 		if (!groups.length && (!code || decided)) {
 			return true;
 		}
-		const plan = extensionSandboxPlan({ id, builtin: false, main: !!manifest.main, browser: !!manifest.browser, extensionKind: this.manifestProperties.getExtensionKind(manifest) }, voltPlatform());
-		const sandbox = code && !decided
-			? plan.kind === 'sandbox' ? { available: true as const } : plan.kind === 'refuse' ? { available: false as const, reason: plan.reason } : undefined
-			: undefined;
+		const sandbox = mustChoose && plan.kind === 'refuse'
+			? { available: false as const, reason: plan.reason, stayOff: true }
+			: code && !decided
+				? plan.kind === 'sandbox' ? { available: true as const } : plan.kind === 'refuse' ? { available: false as const, reason: plan.reason } : undefined
+				: undefined;
 		const answer = await new Promise<{ install: boolean; place?: InstallSheetPlace }>(resolve => {
 			const sheet = this._register(new DisposableStore());
 			sheet.add(showInstallSheet(this.layoutService, this.instantiationService, {
@@ -480,10 +558,43 @@ export class InstallSheetContribution extends Disposable implements IWorkbenchCo
 		}
 		if (answer.place === 'sandbox') {
 			await this.sandbox.setOptedIn(id, true, { beforeInstall: true });
+		} else if (answer.place === 'full' && mustChoose) {
+			// The sheet said what it means: no second dialog.
+			await this.sandbox.runWithoutSandbox(id, { confirmed: true, beforeInstall: true });
+		} else if (answer.place === 'off') {
+			this.sandbox.keepOff(id);
 		}
 		this.storage.store(installReviewKey(id, groups), true, StorageScope.APPLICATION, StorageTarget.MACHINE);
-		this.logService.info(`[volt install review] ${id}: install, code runs ${answer.place === 'sandbox' ? 'in a sandbox' : answer.place === 'full' ? 'with the user\'s access' : 'as before (nothing to choose)'}`);
+		this.logService.info(`[volt install review] ${id}: install, code runs ${answer.place === 'sandbox' ? 'in a sandbox' : answer.place === 'full' ? 'with the user\'s access' : answer.place === 'off' ? 'nowhere: it stays off' : 'as before (nothing to choose)'}`);
 		return true;
+	}
+
+	/**
+	 * An update the install side held (H.10): the sheet says why, lists what is new (capabilities,
+	 * code-scan findings), and the update is applied only on Update. Cancel keeps the installed version.
+	 */
+	private async reviewHeldUpdate(held: IVoltHeldUpdate): Promise<boolean> {
+		const capabilities = held.concerns.some(concern => concern.kind === 'capabilities');
+		const groups = capabilities ? installSheetGroups({ contributes: held.contributes as IExtensionDescription['contributes'] }, true) : [];
+		const findings = held.concerns.some(concern => concern.kind === 'code') ? summarizeFindings((held.findings ?? []) as ICodeScanFinding[]) : [];
+		const inSandbox = this.sandbox.isOptedIn(held.id) && this.sandbox.state(held.id).kind !== 'unsandboxed';
+		const update = await new Promise<boolean>(resolve => {
+			const sheet = this._register(new DisposableStore());
+			sheet.add(showInstallSheet(this.layoutService, this.instantiationService, {
+				extensionName: held.displayName ?? held.id,
+				publisher: held.publisher,
+				groups,
+				gesture: { registry: this.trust.gestures, principal: held.id },
+				...(findings.length ? { findings } : {}),
+				...(findings.length && !inSandbox ? { runInSandbox: () => void this.sandbox.setOptedIn(held.id, true) } : {}),
+				install: { heldBecause: held.concerns.map(concern => heldUpdateReason(concern, held)) },
+			}, install => {
+				this._store.delete(sheet);
+				resolve(install);
+			}));
+		});
+		this.logService.info(`[volt install review] ${held.id}: the user ${update ? 'approved' : 'declined'} the held update to ${held.version} (${held.concerns.map(concern => concern.kind).join(', ')})`);
+		return update;
 	}
 
 	private ask(extension: IExtensionDescription, subject: SubjectKey, groups: readonly IInstallSheetGroup[], key: string, findings: readonly IInstallSheetFinding[]): Promise<void> {

@@ -10,8 +10,8 @@ import { ICapabilityRequest } from '../../../services/voltPlugins/common/capabil
  * What the Git Graph does with git and with chats, checked against its manifest's capabilities
  * (`git.read`, `git.write`, `git.push`, `agents.send`) while its module is active. Until the git
  * broker exists (P3) the graph still goes through the SCM history provider and git's own commands;
- * these checks are where the broker's calls will go, and in report mode they record any use the
- * manifest doesn't declare.
+ * these checks are where the broker's calls will go. The Git Graph is enforced (M5), so a use the
+ * manifest doesn't declare throws `VoltCapabilityError` before it happens (`featureModuleCheck`).
  */
 
 let active: ((request: ICapabilityRequest) => void) | undefined;

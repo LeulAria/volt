@@ -206,6 +206,11 @@
 					"reason": "Notes and skills later chats read."
 				},
 				{
+					"id": "agents.read:any",
+					"class": "medium",
+					"reason": "memory_list and memory_read read the notes every chat saved."
+				},
+				{
 					"id": "files.read:workspace",
 					"class": "low",
 					"targets": [

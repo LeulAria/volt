@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { effectiveExtensionSandboxMode, extensionListed, extensionSandboxPlan, extensionSandboxTier, IT3ExportsFacts, IT3ExtensionFacts, T3_REQUIRED_PLATFORMS, t3BrokenExports, t3ExtensionHostPolicy, t3ManifestView, t3Subject } from '../../common/extensionHostSandbox.js';
+import { effectiveExtensionSandboxMode, extensionListed, extensionSandboxPlan, extensionSandboxTier, IT3ExportsFacts, IT3ExtensionFacts, T3_REQUIRED_PLATFORMS, t3BrokenExports, t3ExtensionHostPolicy, t3ManifestView, t3Subject, VOLT_EXTENSION_SANDBOX_MODE_DEFAULT } from '../../common/extensionHostSandbox.js';
 import { parseSandboxPolicy } from '../../common/sandboxSchema.js';
 import { IResolvedSandboxPolicy } from '../../common/sandboxResolved.js';
 import { summarizeSandboxPolicy } from '../../common/sandboxWorkloads.js';
@@ -63,13 +63,19 @@ suite('Volt T3 extension host policy (H.7)', () => {
 		assert.strictEqual(summarizeSandboxPolicy({ ...resolved, network: { ...resolved.network, allow: ['registry.npmjs.org'] } }, ['registry.npmjs.org', 'api.x.test']).allowedHosts, 2, 'a host in both is counted once');
 	});
 
-	test('P8-TIER-1: opt-in is the default; required covers third-party code on macOS and Linux only; built-ins, code-less and "Run Without Sandbox" stay shared', () => {
+	test('P8-TIER-1: required is the default and covers third-party code on macOS and Linux only; optIn sandboxes the list only; built-ins, code-less and "Run Without Sandbox" stay shared', () => {
 		const settings = (overrides: Partial<{ mode: unknown; killSwitch: unknown; sandboxed: unknown; unsandboxed: unknown }> = {}) => ({ mode: undefined, killSwitch: undefined, sandboxed: [], unsandboxed: [], ...overrides });
 		const ext = facts();
-		// Default (no mode set): only the opt-in list.
-		assert.strictEqual(extensionSandboxTier(settings(), ext, 'darwin'), 'shared', 'not opted in: as before');
-		assert.strictEqual(extensionSandboxTier(settings({ sandboxed: ['pub.ext'] }), ext, 'darwin'), 'sandbox');
+		// Default (no mode set): every third-party extension with code, where the flip applies.
+		assert.strictEqual(VOLT_EXTENSION_SANDBOX_MODE_DEFAULT, 'required');
+		assert.strictEqual(effectiveExtensionSandboxMode(undefined, 'darwin'), 'required');
+		assert.strictEqual(extensionSandboxTier(settings(), ext, 'darwin'), 'sandbox', 'not opted in, sandboxed anyway');
+		assert.strictEqual(extensionSandboxTier(settings(), ext, 'linux'), 'sandbox');
+		assert.strictEqual(extensionSandboxTier(settings(), ext, 'win32'), 'shared', 'Windows: the default reads as optIn');
+		assert.strictEqual(extensionSandboxTier(settings({ sandboxed: ['pub.ext'] }), ext, 'win32'), 'sandbox', 'the opt-in list still applies there');
+		// optIn: only the opt-in list.
 		assert.strictEqual(extensionSandboxTier(settings({ mode: 'optIn' }), ext, 'linux'), 'shared');
+		assert.strictEqual(extensionSandboxTier(settings({ mode: 'optIn', sandboxed: ['pub.ext'] }), ext, 'darwin'), 'sandbox');
 		// The per-OS flip.
 		assert.strictEqual(extensionSandboxTier(settings({ mode: 'required' }), ext, 'darwin'), 'sandbox');
 		assert.strictEqual(extensionSandboxTier(settings({ mode: 'required' }), ext, 'linux'), 'sandbox');
@@ -81,6 +87,10 @@ suite('Volt T3 extension host policy (H.7)', () => {
 		assert.strictEqual(extensionSandboxTier(settings({ mode: 'required' }), facts({ builtin: true }), 'darwin'), 'shared', 'built-in');
 		assert.strictEqual(extensionSandboxTier(settings({ mode: 'required' }), facts({ main: false }), 'darwin'), 'shared', 'a theme');
 		assert.strictEqual(extensionSandboxTier(settings({ mode: 'required', unsandboxed: ['PUB.EXT'] }), ext, 'darwin'), 'shared', 'the user chose Run Without Sandbox');
+		assert.strictEqual(extensionSandboxTier(settings(), facts({ builtin: true }), 'darwin'), 'shared', 'built-ins stay shared under the default too');
+		// An extension the user is developing (--extensionDevelopmentPath) is not swept in by the default; listing it still sandboxes it.
+		assert.strictEqual(extensionSandboxTier(settings(), facts({ underDevelopment: true }), 'darwin'), 'shared');
+		assert.strictEqual(extensionSandboxTier(settings({ sandboxed: ['pub.ext'] }), facts({ underDevelopment: true }), 'darwin'), 'sandbox');
 	});
 
 	test('P8-KILL-2: the kill switch moves the tier to ask, never to off; nothing out of scope changes', () => {

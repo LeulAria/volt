@@ -81,19 +81,21 @@ suite('IDE tools: test commands', () => {
 
 	test('vitest: files plus an anchored name pattern', () => {
 		const command = buildTestCommand('vitest', [{ file: 'src/a.test.ts', path: ['math', 'adds (1+1)'] }], { reportFile: '/tmp/r.json', windows: false });
-		assert.strictEqual(command.command, `npx --no-install vitest run --reporter=json --outputFile=/tmp/r.json src/a.test.ts -t '^(?:math adds \\(1\\+1\\))$'`);
+		// The verbose reporter streams live results; a test's name is anchored at its end, a suite's is not.
+		assert.strictEqual(command.command, `npx --no-install vitest run --reporter=json --outputFile=/tmp/r.json --reporter=verbose src/a.test.ts -t '^(?:math adds \\(1\\+1\\)$)'`);
 		assert.strictEqual(command.format, 'jest-json');
 	});
 
 	test('whole files run without a name filter; empty selection runs everything', () => {
 		assert.ok(!buildTestCommand('jest', [{ file: 'a.test.js', path: [] }], { reportFile: 'r', windows: false }).command.includes(' -t '));
-		assert.strictEqual(buildTestCommand('go', [], { reportFile: 'r.json', windows: false }).command, 'go test -json ./... > r.json');
+		// go test's JSON is read from its output stream, not a file.
+		assert.strictEqual(buildTestCommand('go', [], { reportFile: 'r.json', windows: false }).command, 'go test -json ./...');
 	});
 
 	test('pytest node ids, go -run, cargo --exact', () => {
-		assert.strictEqual(buildTestCommand('pytest', [{ file: 'tests/test_a.py', path: ['TestX', 'test_b'] }], { reportFile: 'r.xml', windows: false, python: '.venv/bin/python' }).command, `.venv/bin/python -m pytest -q -rN --junitxml=r.xml tests/test_a.py::TestX::test_b`);
-		assert.strictEqual(buildTestCommand('go', [{ file: 'pkg/a_test.go', path: ['TestA'] }], { reportFile: 'r', windows: false }).command, `go test -json -run '^(?:TestA)$' ./pkg > r`);
-		assert.strictEqual(buildTestCommand('cargo', [{ file: 'src/lib.rs', path: ['tests', 'adds'] }], { reportFile: 'r', windows: false }).command, 'cargo test --no-fail-fast -- tests::adds --exact > r');
+		assert.strictEqual(buildTestCommand('pytest', [{ file: 'tests/test_a.py', path: ['TestX', 'test_b'] }], { reportFile: 'r.xml', windows: false, python: '.venv/bin/python' }).command, `.venv/bin/python -m pytest -v -rN --no-header --junitxml=r.xml -o junit_family=xunit1 tests/test_a.py::TestX::test_b`);
+		assert.strictEqual(buildTestCommand('go', [{ file: 'pkg/a_test.go', path: ['TestA'] }], { reportFile: 'r', windows: false }).command, `go test -json -run '^(?:TestA)$' ./pkg`);
+		assert.strictEqual(buildTestCommand('cargo', [{ file: 'src/lib.rs', path: ['tests', 'adds'] }], { reportFile: 'r', windows: false }).command, 'cargo test --no-fail-fast -- tests::adds --exact');
 	});
 });
 
@@ -141,7 +143,8 @@ E       assert 1 == 2
 
 tests/test_a.py:8: AssertionError</failure></testcase><testcase classname="tests.test_a" name="test_c" time="0"><skipped/></testcase><testcase classname="tests.test_a" name="test_d[1]" time="0"/></testsuite>`;
 		const report = parseJunit(xml);
-		assert.deepStrictEqual(report.outcomes.map(item => [item.path.join('::'), item.state]), [['TestX::test_b', 'failed'], ['test_c', 'skipped'], ['test_d[1]', 'passed']]);
+		// A parametrized row is a case (variant) of its test.
+		assert.deepStrictEqual(report.outcomes.map(item => [item.path.join('::'), item.variant, item.state]), [['TestX::test_b', undefined, 'failed'], ['test_c', undefined, 'skipped'], ['test_d', '[1]', 'passed']]);
 		assert.strictEqual(report.outcomes[0].line, 7);
 		assert.strictEqual(report.outcomes[0].actual, '1');
 		assert.deepStrictEqual(report.outcomes[0].stack?.[0], { path: 'tests/test_a.py', line: 8 });
@@ -158,8 +161,9 @@ tests/test_a.py:8: AssertionError</failure></testcase><testcase classname="tests
 			{ Action: 'fail', Package: 'm/broken', Elapsed: 0 },
 		].map(line => JSON.stringify(line)).join('\n');
 		const report = parseGoJson(lines);
-		assert.deepStrictEqual(report.outcomes.map(item => [item.path[0], item.state]), [['TestA', 'failed'], ['TestB', 'passed']]);
-		assert.ok(report.outcomes[0].message?.includes('got 1 want 2'));
+		// A subtest is a case (variant) of its test.
+		assert.deepStrictEqual(report.outcomes.map(item => [item.path[0], item.variant, item.state]), [['TestA', undefined, 'failed'], ['TestA', 'sub', 'failed'], ['TestB', undefined, 'passed']]);
+		assert.ok(report.outcomes[1].message?.includes('got 1 want 2'));
 		assert.strictEqual(report.errors.length, 1);
 	});
 

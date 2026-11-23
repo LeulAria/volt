@@ -6,8 +6,10 @@
 // Ceilings enforced (spec M.4 M5, G.10, G.12). M5-MODE-1: a built-in is enforced only when its
 // manifest and its own API namespace show 0 would-be denials under enforcement. M5-ENFORCE-1, 2: an
 // enforced built-in calling beyond its manifest or ceiling is refused before Volt runs anything,
-// while a report-mode one is logged and runs. M5-ZERO-PROMPT-1, 2: in-ceiling first-party calls are
-// allowed with no prompt and without ever consulting the consent store.
+// while a report-mode one is logged and runs. M5-MODE-2: a built-in left in report mode is there only
+// for a critical capability. M5-MODULE-1: a module's check on its direct service use is judged the
+// same way. M5-ZERO-PROMPT-1, 2: in-ceiling first-party calls are allowed with no prompt and without
+// ever consulting the consent store.
 
 import assert from 'assert';
 import { Emitter } from '../../../../../base/common/event.js';
@@ -16,9 +18,9 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { declarationsOutsideCeiling, FIRST_PARTY_ENFORCED, firstPartyCapabilityMode, firstPartyCeiling } from '../../../../../platform/voltPlugins/common/firstPartyCeilings.js';
 import { VOLT_FEATURE_MANIFESTS } from '../../../../contrib/voltCustomize/common/voltFeatureManifests.generated.js';
 import { HOST_TOOL_SANDBOX_CLASSES } from '../../../voltRuntime/common/hostToolSandbox.js';
-import { ICapabilityReporter, ICapabilityRequest, IVoltPluginPrincipal, IWouldBeDenial, toolClassCapability, VoltCapabilityError } from '../../common/capabilities.js';
+import { capabilityClass, ICapabilityReporter, ICapabilityRequest, IVoltPluginPrincipal, IWouldBeDenial, toolClassCapability, VoltCapabilityError } from '../../common/capabilities.js';
 import { IVoltConsentStore, VoltExtensionCapabilityPolicy } from '../../common/extensionCapabilityPolicy.js';
-import { VoltFeatureCapabilityReporter } from '../../common/featureCapabilityMode.js';
+import { featureModuleCheck, VoltFeatureCapabilityReporter } from '../../common/featureCapabilityMode.js';
 import { createVoltApi, IVoltApi, IVoltApiBackend } from '../../common/voltApi.js';
 import { IVoltCapabilityDeclaration, IVoltPluginManifest } from '../../common/voltContributions.js';
 
@@ -136,6 +138,53 @@ suite('Volt first-party ceilings enforced (M5)', () => {
 		assert.deepStrictEqual(zero.filter(id => !FIRST_PARTY_ENFORCED.has(id)), [], 'a built-in shows 0 would-be denials but is not enforced; add it after its release in report mode');
 	});
 
+	test('M5-MODE-2: a built-in left in report mode is there only for a critical capability its manifest declares, which the API never grants', async () => {
+		const reasons: string[] = [];
+		for (const manifest of VOLT_FEATURE_MANIFESTS.filter(entry => !FIRST_PARTY_ENFORCED.has(idOf(entry)))) {
+			const id = idOf(manifest);
+			const capabilities = manifest.contributes?.voltCapabilities ?? {};
+			const critical = [...capabilities.required ?? [], ...capabilities.optional ?? []].filter(entry => capabilityClass(entry.id) === 'critical').map(entry => entry.id);
+			const denials = await wouldBeDenials(manifest);
+			assert.ok(denials.length, `${id} shows its would-be denials`);
+			assert.deepStrictEqual(denials.filter(denial => denial.deniedBy !== 'critical').map(denial => `${denial.capability}:${denial.deniedBy}`), [], `${id}: every would-be denial is a critical capability`);
+			assert.ok(denials.every(denial => critical.includes(denial.capability)), `${id}: ${denials.map(denial => denial.capability).join(', ')} are the critical capabilities it declares (${critical.join(', ')})`);
+			assert.deepStrictEqual(declarationsOutsideCeiling(id, [...capabilities.required ?? [], ...capabilities.optional ?? []]), [], `${id} declares only what its ceiling holds`);
+			reasons.push(`${id}: ${[...new Set(denials.map(denial => denial.capability))].sort().join(', ')}`);
+		}
+		assert.deepStrictEqual(reasons, [
+			'volt.agent-resources: files.read:home',
+			'volt.automations: spawn.unsandboxed',
+			'volt.claude-accounts: secrets.manage',
+			'volt.commit-review: spawn.unsandboxed',
+			'volt.computer-use: desktop.control, screen.capture, spawn.unsandboxed',
+			'volt.dev-environment: files.read:home, spawn.unsandboxed',
+			'volt.devices: screen.capture, spawn.unsandboxed',
+			'volt.orchestra: spawn.unsandboxed',
+			'volt.pull-requests: spawn.unsandboxed',
+		]);
+	});
+
+	test('M5-MODULE-1: a feature module\'s check on its direct use of Volt\'s services refuses beyond the manifest when enforced, and only logs in report mode', () => {
+		const logs: string[] = [];
+		const reporter = store.add(new VoltFeatureCapabilityReporter(message => logs.push(message)));
+		const graph = principalOf(VOLT_FEATURE_MANIFESTS.find(entry => idOf(entry) === 'volt.git-graph')!);
+		const review = principalOf(VOLT_FEATURE_MANIFESTS.find(entry => idOf(entry) === 'volt.commit-review')!);
+		assert.strictEqual(firstPartyCapabilityMode('volt.git-graph'), 'enforce');
+		assert.strictEqual(firstPartyCapabilityMode('volt.commit-review'), 'report');
+		const graphCheck = featureModuleCheck(reporter, graph);
+		// Declared: allowed, with no prompt and nothing logged.
+		graphCheck({ api: 'gitGraph.toolbar', capability: 'git.push', target: 'git.push' });
+		graphCheck({ api: 'gitGraph.askAgent', capability: 'agents.send' });
+		// Not declared: refused before the use.
+		assert.throws(() => graphCheck({ api: 'gitGraph.test', capability: 'hosting.write' }), (error: VoltCapabilityError) => error.name === VoltCapabilityError.NAME && error.deniedBy === 'manifest' && error.capability === 'hosting.write');
+		// Report mode: the same use goes on and is logged once.
+		const reviewCheck = featureModuleCheck(reporter, review);
+		reviewCheck({ api: 'commitReview.test', capability: 'hosting.write' });
+		reviewCheck({ api: 'commitReview.test', capability: 'hosting.write' });
+		assert.deepStrictEqual(reporter.reports.map(report => `${report.extensionId}:${report.capability}:${report.deniedBy}`), ['volt.commit-review:hosting.write:manifest']);
+		assert.strictEqual(logs.length, 1);
+	});
+
 	test('M5-ENFORCE-1: an enforced built-in calling beyond its manifest or its ceiling is refused before Volt runs anything', async () => {
 		const reporter = store.add(new VoltFeatureCapabilityReporter(() => { }));
 		const calls: string[] = [];
@@ -162,13 +211,13 @@ suite('Volt first-party ceilings enforced (M5)', () => {
 		const reporter = store.add(new VoltFeatureCapabilityReporter(message => logs.push(message)));
 		const calls: string[] = [];
 		const disposables = store.add(new DisposableStore());
-		const manifest = VOLT_FEATURE_MANIFESTS.find(entry => idOf(entry) === 'volt.memory')!;
-		assert.strictEqual(firstPartyCapabilityMode('volt.memory'), 'report');
+		const manifest = VOLT_FEATURE_MANIFESTS.find(entry => idOf(entry) === 'volt.agent-resources')!;
+		assert.strictEqual(firstPartyCapabilityMode('volt.agent-resources'), 'report');
 		const volt = createVoltApi(principalOf(manifest), manifest, fakeBackend(disposables, calls), reporter, disposables);
 		await volt.agents.create({ title: 'x' });
 		await volt.agents.create({ title: 'y' });
 		assert.deepStrictEqual(calls, ['invokeTool:thread_launch', 'invokeTool:thread_launch']);
-		assert.deepStrictEqual(reporter.reports.map(report => `${report.extensionId}:${report.capability}:${report.deniedBy}`), ['volt.memory:agents.create:manifest']);
+		assert.deepStrictEqual(reporter.reports.map(report => `${report.extensionId}:${report.capability}:${report.deniedBy}`), ['volt.agent-resources:agents.create:manifest']);
 		assert.strictEqual(logs.length, 1);
 		// A third party is never enforced through this path, whatever its id says.
 		assert.strictEqual(reporter.modeFor({ extensionId: 'volt.code-intelligence', firstParty: false, capabilities: {} }), 'report');

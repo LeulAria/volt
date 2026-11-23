@@ -7,6 +7,8 @@
 // T3-ROUTE-1..4: an opted-in extension gets a host of its own and nothing else joins it; extensions
 // not opted in run where they ran before (parity). XEXT-SECRET-1: with those hosts, one host can't
 // read another's SecretStorage or call the main thread as another extension.
+// The opt-in tests set the mode to optIn: the default is required (P8-ROUTE-1), and they are about
+// the opt-in list, which optIn (and Windows) use.
 
 import assert from 'assert';
 import { mock } from '../../../../base/test/common/mock.js';
@@ -51,11 +53,12 @@ suite('Volt: sandboxed extension hosts in the window (P2, P6)', () => {
 	const theme = extension('pub.theme', { main: undefined });
 	const all = [lint, other, formatter, git, theme];
 
-	function tracker(settings: { sandboxed?: string[]; unsandboxed?: string[]; mode?: string; killSwitch?: boolean }, kind: ExtensionHostKind = ExtensionHostKind.LocalProcess, affinity: Record<string, number> = {}): ExtensionRunningLocationTracker {
+	function tracker(settings: { sandboxed?: string[]; unsandboxed?: string[]; mode?: string | null; killSwitch?: boolean }, kind: ExtensionHostKind = ExtensionHostKind.LocalProcess, affinity: Record<string, number> = {}): ExtensionRunningLocationTracker {
 		const config = new TestConfigurationService();
 		config.setUserConfiguration(VOLT_SANDBOXED_EXTENSIONS_SETTING, settings.sandboxed ?? []);
 		config.setUserConfiguration(VOLT_UNSANDBOXED_EXTENSIONS_SETTING, settings.unsandboxed ?? []);
-		config.setUserConfiguration(VOLT_EXTENSION_SANDBOX_MODE_SETTING, settings.mode);
+		// null: no mode set (the default); left out: optIn, what the opt-in tests are about.
+		config.setUserConfiguration(VOLT_EXTENSION_SANDBOX_MODE_SETTING, settings.mode === null ? undefined : settings.mode ?? 'optIn');
 		config.setUserConfiguration(VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, settings.killSwitch);
 		config.setUserConfiguration('extensions.experimental.affinity', affinity);
 		const picker: IExtensionHostKindPicker = { pickExtensionHostKind: () => kind };
@@ -130,10 +133,13 @@ suite('Volt: sandboxed extension hosts in the window (P2, P6)', () => {
 		assert.ok(!new RemoteRunningLocation().equals(lintAt));
 	});
 
-	test('P8-ROUTE-1: under required (where the flip applies) every third-party extension with code runs alone; built-ins and themes stay; the default is opt-in', () => {
-		const defaults = tracker({});
+	test('P8-ROUTE-1: under required (the default, where the flip applies) every third-party extension with code runs alone; built-ins and themes stay', () => {
+		const defaults = tracker({ mode: null });
 		place(defaults);
-		assert.deepStrictEqual(defaults.sandboxedRunningLocations, [], 'opt-in by default: nothing moves');
+		const flipped = T3_REQUIRED_PLATFORMS.has(voltPlatform());
+		assert.strictEqual(defaults.sandboxedRunningLocations.length, flipped ? 3 : 0, 'by default: lint, other and formatter each alone (none on Windows)');
+		assert.ok(defaults.getRunningLocation(git.identifier)?.equals(new LocalProcessRunningLocation(0)), 'built-ins stay shared by default');
+		assert.ok(defaults.getRunningLocation(theme.identifier)?.equals(new LocalProcessRunningLocation(0)), 'code-less ones too');
 		const t = tracker({ mode: 'required', unsandboxed: ['pub.formatter'] });
 		place(t);
 		if (!T3_REQUIRED_PLATFORMS.has(voltPlatform())) {

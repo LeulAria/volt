@@ -11,10 +11,11 @@ import { IVoltSandboxPolicy, SANDBOX_POLICY_SCHEMA_VERSION, SandboxDimension } f
 
 /**
  * The T3 extension host (spec H.1, H.7, H.8): one VS Code extension in its own extension host
- * process, started by the supervisor inside the OS sandbox. Opt-in per extension (N.1 #22): an
- * extension the user did not opt in runs exactly as before, in the shared host. Pure: the policy,
- * the quotas and the decision whether an extension can be sandboxed at all, so each is tested
- * without a process.
+ * process, started by the supervisor inside the OS sandbox. By default every third-party extension
+ * with code runs this way on macOS and Linux (`required`, P8's flip); elsewhere, or with the mode
+ * set to `optIn`, only the ones the user opted in do (N.1 #22) and the rest run as before, in the
+ * shared host. Built-ins always run in the shared host. Pure: the policy, the quotas and the
+ * decision whether an extension can be sandboxed at all, so each is tested without a process.
  */
 
 /** The opt-in list (`publisher.name`). Per profile, user (or remote user) settings only: a repository can't change it. */
@@ -28,13 +29,20 @@ export const VOLT_SANDBOXED_EXTENSIONS_SETTING = 'volt.extensions.sandboxed';
 export const VOLT_UNSANDBOXED_EXTENSIONS_SETTING = 'volt.extensions.runWithoutSandbox';
 
 /**
- * Which third-party extensions run sandboxed (P8). `optIn` (the default, N.1 #22): only the ones in
- * {@link VOLT_SANDBOXED_EXTENSIONS_SETTING}. `required`: every third-party extension with code, on
- * the platforms in {@link T3_REQUIRED_PLATFORMS} (elsewhere it reads as `optIn`).
+ * Which third-party extensions run sandboxed (P8). `required` (the default): every third-party
+ * extension with code, on the platforms in {@link T3_REQUIRED_PLATFORMS} (elsewhere it reads as
+ * `optIn`). `optIn` (N.1 #22): only the ones in {@link VOLT_SANDBOXED_EXTENSIONS_SETTING}.
  */
 export const VOLT_EXTENSION_SANDBOX_MODE_SETTING = 'volt.extensions.sandboxMode';
 
 export type ExtensionSandboxMode = 'optIn' | 'required';
+
+/**
+ * The mode when the user has not set one: `required`, so a third-party extension runs in its own
+ * sandboxed host unless the user says otherwise. The cost is one extension host process (and its
+ * memory) per running third-party extension with code (docs/security/sandbox/05-limitations.md).
+ */
+export const VOLT_EXTENSION_SANDBOX_MODE_DEFAULT: ExtensionSandboxMode = 'required';
 
 /**
  * P8's kill switch: the tier moves to `ask`, never silently to off. Every extension that would run
@@ -49,9 +57,13 @@ export const VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING = 'volt.extensions.sandb
  */
 export const T3_REQUIRED_PLATFORMS: ReadonlySet<string> = new Set(['darwin', 'linux']);
 
-/** The mode as it applies on `platform`: `required` only where the flip is on. */
+/**
+ * The mode as it applies on `platform`: `required` only where the flip is on. Unset (undefined) is
+ * {@link VOLT_EXTENSION_SANDBOX_MODE_DEFAULT}; any other value than the two modes reads as `optIn`.
+ */
 export function effectiveExtensionSandboxMode(mode: unknown, platform: string): ExtensionSandboxMode {
-	return mode === 'required' && T3_REQUIRED_PLATFORMS.has(platform) ? 'required' : 'optIn';
+	const value = mode === undefined || mode === null ? VOLT_EXTENSION_SANDBOX_MODE_DEFAULT : mode;
+	return value === 'required' && T3_REQUIRED_PLATFORMS.has(platform) ? 'required' : 'optIn';
 }
 
 /** The settings an extension's tier is decided from (raw values, as configuration returns them). */
@@ -64,21 +76,22 @@ export interface IExtensionSandboxSettings {
 
 /**
  * Where an extension runs (P2, P8):
- * - `shared`: as before, in the shared host (not in scope, built-in, no code, or the user chose
- *   "Run Without Sandbox");
+ * - `shared`: as before, in the shared host (not in scope, built-in, no code, the user chose
+ *   "Run Without Sandbox", or, under `required` only, an extension the user is developing with
+ *   `--extensionDevelopmentPath`: the agent server can't find it in an extensions folder);
  * - `sandbox`: alone in its own sandboxed host;
  * - `ask`: in scope, but the kill switch is on: it stays off until the user answers.
  */
 export type ExtensionSandboxTier = 'shared' | 'sandbox' | 'ask';
 
-export function extensionSandboxTier(settings: IExtensionSandboxSettings, extension: Pick<IT3ExtensionFacts, 'id' | 'builtin' | 'main' | 'browser'>, platform: string): ExtensionSandboxTier {
+export function extensionSandboxTier(settings: IExtensionSandboxSettings, extension: Pick<IT3ExtensionFacts, 'id' | 'builtin' | 'main' | 'browser' | 'underDevelopment'>, platform: string): ExtensionSandboxTier {
 	if (extension.builtin || (!extension.main && !extension.browser)) {
 		return 'shared';
 	}
 	if (extensionListed(settings.unsandboxed, extension.id)) {
 		return 'shared';
 	}
-	const inScope = extensionListed(settings.sandboxed, extension.id) || effectiveExtensionSandboxMode(settings.mode, platform) === 'required';
+	const inScope = extensionListed(settings.sandboxed, extension.id) || (effectiveExtensionSandboxMode(settings.mode, platform) === 'required' && !extension.underDevelopment);
 	if (!inScope) {
 		return 'shared';
 	}
@@ -149,6 +162,8 @@ export interface IT3ExtensionFacts {
 	readonly extensionKind: readonly string[];
 	/** Hosts it names in `contributes.voltCapabilities` `net.connect`: reachable without asking (low, G.4). */
 	readonly declaredHosts?: readonly string[];
+	/** Loaded with `--extensionDevelopmentPath`: the user's own code under development. */
+	readonly underDevelopment?: boolean;
 }
 
 /** Why an opted-in extension does not run in a sandbox, as a code the UI keys its action on. */

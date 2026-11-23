@@ -10,7 +10,7 @@ import { TestConfigurationService } from '../../../../../platform/configuration/
 import { ICodeIntelHost, ICodeLocation, ICodeNavIndex, ITextFileChange, runCodeAction, runCodeNav, runDiagnostics } from '../../../../services/voltRuntime/browser/tools/codeTools.js';
 import { inVoltWorktree, LSP_ENABLED_SETTING, LSP_WORKTREES_SETTING, lspOffMessage, lspPolicy } from '../../../../services/voltRuntime/common/codeIntelligence.js';
 import { IToolContext } from '../../../../services/voltRuntime/common/tools/tool.js';
-import { confineCodeIntel, HOVER_WITHHELD, ICodeIntelRules } from '../../browser/codeIntelConfinement.js';
+import { confineCodeIntel, HOVER_WITHHELD, ICodeIntelRules } from '../../../../services/voltRuntime/browser/tools/codeIntelConfinement.js';
 
 const ROOT = URI.file('/ws');
 const at = (path: string, line: number, preview?: string): ICodeLocation => ({ uri: URI.file(path), line, column: 1, ...(preview ? { preview } : {}) });

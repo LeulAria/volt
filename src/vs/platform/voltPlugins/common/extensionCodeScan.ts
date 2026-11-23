@@ -19,7 +19,10 @@ import { CREDENTIAL_HOME_PATHS } from '../../voltSandbox/common/sandboxProfiles.
  *   `'ev' + 'al'`, a reversed string, `'\x65val'`);
  * - `encoded-payload`: base64 or hex that decodes to a host, a command, a credential path or a hidden name;
  * - `raw-host` to a drop box for stolen data (a request catcher, paste site, chat webhook or tunnel);
- * - `undeclared-api`: a `vscode.volt` call whose capability `contributes.voltCapabilities` doesn't declare.
+ * - `undeclared-api`: a `vscode.volt` call whose capability `contributes.voltCapabilities` doesn't declare;
+ * - `invisible-code`: characters an editor doesn't show, written raw into the code (GlassWorm's
+ *   variation-selector payloads, Trojan Source's bidi controls): see {@link invisibleFindings} for
+ *   what counts and what ordinary bundles are allowed (emoji sequences, a BOM, icon-font glyphs).
  *
  * `medium`, what the code can do, common in legitimate extensions too (language servers, git, SSH):
  * - `credential-path`: a credential location (`~/.ssh`, `~/.aws`, a keychain, Volt's own grants), also
@@ -32,12 +35,12 @@ import { CREDENTIAL_HOME_PATHS } from '../../voltSandbox/common/sandboxProfiles.
  * - `native-binding`: `process.binding`, `process.dlopen`.
  */
 
-export type CodeScanRule = 'credential-path' | 'dynamic-code' | 'hidden-name' | 'encoded-payload' | 'process-spawn' | 'computed-require' | 'raw-host' | 'env-harvest' | 'native-binding' | 'undeclared-api';
+export type CodeScanRule = 'credential-path' | 'dynamic-code' | 'hidden-name' | 'encoded-payload' | 'invisible-code' | 'process-spawn' | 'computed-require' | 'raw-host' | 'env-harvest' | 'native-binding' | 'undeclared-api';
 
 export type CodeScanSeverity = 'high' | 'medium';
 
 /** The order findings are listed in: what most needs a sandbox first. */
-export const CODE_SCAN_RULES: readonly CodeScanRule[] = ['hidden-name', 'encoded-payload', 'raw-host', 'undeclared-api', 'credential-path', 'dynamic-code', 'process-spawn', 'computed-require', 'env-harvest', 'native-binding'];
+export const CODE_SCAN_RULES: readonly CodeScanRule[] = ['invisible-code', 'hidden-name', 'encoded-payload', 'raw-host', 'undeclared-api', 'credential-path', 'dynamic-code', 'process-spawn', 'computed-require', 'env-harvest', 'native-binding'];
 
 export interface ICodeScanFinding {
 	readonly rule: CodeScanRule;
@@ -102,6 +105,9 @@ interface ILexed {
 	/** `code` with string contents blanked too (quotes kept): for rules about syntax. */
 	readonly blank: string;
 	readonly strings: readonly IStringLiteral[];
+	/** Comments and regular expression literals, `[start, end)`, in source order. */
+	readonly comments: readonly (readonly [number, number])[];
+	readonly regexes: readonly (readonly [number, number])[];
 }
 
 /** Where a `/` starts a regular expression rather than a division (the usual heuristic). */
@@ -111,6 +117,8 @@ function lex(text: string): ILexed {
 	const code = text.split('');
 	const blank = text.split('');
 	const strings: IStringLiteral[] = [];
+	const comments: [number, number][] = [];
+	const regexes: [number, number][] = [];
 	const blankOut = (from: number, to: number, both: boolean) => {
 		for (let i = from; i < to; i++) {
 			if (text[i] !== '\n') {
@@ -167,11 +175,13 @@ function lex(text: string): ILexed {
 			const end = text.indexOf('\n', i);
 			const stop = end < 0 ? n : end;
 			blankOut(i, stop, true);
+			comments.push([i, stop]);
 			i = stop;
 		} else if (ch === '/' && next === '*') {
 			const end = text.indexOf('*/', i + 2);
 			const stop = end < 0 ? n : end + 2;
 			blankOut(i, stop, true);
+			comments.push([i, stop]);
 			i = stop;
 		} else if (ch === '\'' || ch === '"' || ch === '`') {
 			i = readString(ch, i);
@@ -198,6 +208,7 @@ function lex(text: string): ILexed {
 				j++;
 			}
 			blankOut(i + 1, j, false);
+			regexes.push([i + 1, j]);
 			i = j + 1;
 		} else {
 			if (ch === '{') {
@@ -208,7 +219,7 @@ function lex(text: string): ILexed {
 			i++;
 		}
 	}
-	return { code: code.join(''), blank: blank.join(''), strings };
+	return { code: code.join(''), blank: blank.join(''), strings, comments, regexes };
 }
 
 /** One escape sequence at `at` (a backslash): its value and length. */
@@ -368,10 +379,251 @@ function hostDeclared(host: string, declared: readonly string[], drop: boolean):
 	return drop ? named.includes(lower) : named.some(pattern => capabilityTargetMatches(pattern, lower));
 }
 
+// --- invisible characters ----------------------------------------------------------------------------
+
+type InvisibleKind = 'variation' | 'tag' | 'private' | 'zero-width' | 'bidi';
+
+/** A first, cheap pass: any of the characters {@link invisibleFindings} looks at (surrogate pairs for the planes above the BMP). */
+const INVISIBLE_CANDIDATE = /[\uFE00-\uFE0F\u200B-\u200D\u2060\uFEFF\u202A-\u202E\u2066-\u2069\uE000-\uF8FF]|\uDB40[\uDC00-\uDDEF]|[\uDB80-\uDBFF][\uDC00-\uDFFF]/g;
+
+function invisibleKind(cp: number): InvisibleKind | undefined {
+	if ((cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0xE0100 && cp <= 0xE01EF)) {
+		return 'variation';
+	}
+	if (cp >= 0xE0000 && cp <= 0xE007F) {
+		return 'tag';
+	}
+	if ((cp >= 0xE000 && cp <= 0xF8FF) || (cp >= 0xF0000 && cp <= 0xFFFFD) || (cp >= 0x100000 && cp <= 0x10FFFD)) {
+		return 'private';
+	}
+	if ((cp >= 0x200B && cp <= 0x200D) || cp === 0x2060 || cp === 0xFEFF) {
+		return 'zero-width';
+	}
+	if ((cp >= 0x202A && cp <= 0x202E) || (cp >= 0x2066 && cp <= 0x2069)) {
+		return 'bidi';
+	}
+	return undefined;
+}
+
+const INVISIBLE_LABELS: Record<InvisibleKind, string> = {
+	'variation': 'variation selectors',
+	'tag': 'Unicode tag characters',
+	'private': 'private-use characters',
+	'zero-width': 'zero-width characters',
+	'bidi': 'bidi controls',
+};
+
+/**
+ * In strings, comments and regular expressions single invisible characters are ordinary: bundles
+ * compare against them (`ch === "<ZWJ>"`), list them in Unicode tables (acorn's identifier
+ * characters, iconv-lite's code pages, the HTML entity decoder's trie) and build character classes
+ * from them. What a hidden payload needs is many of them, so these are the findings there:
+ */
+/** A run of zero-width characters and BMP variation selectors this long (not part of an emoji). */
+const ZERO_WIDTH_RUN = 4;
+/** A run of private-use characters this long: longer than any code page table's gap (iconv-lite's longest is under 40). */
+const PRIVATE_USE_RUN = 64;
+/** Bidi controls are checked in strings up to this long: longer ones are data (the entity decoder's trie), not code a reader is shown. */
+const BIDI_STRING_MAX = 500;
+
+type Region = 'code' | 'string' | 'regex' | 'comment';
+
+/** A visible character outside ASCII: what an emoji's variation selector or joiner follows. */
+function isVisibleNonAscii(cp: number | undefined): boolean {
+	return cp !== undefined && cp > 0x7F && !invisibleKind(cp) && cp !== 0x20E3;
+}
+
+/** A CJK ideograph: what an ideographic variation sequence (a supplementary variation selector) follows. */
+function isIdeograph(cp: number | undefined): boolean {
+	return cp !== undefined && ((cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0x20000 && cp <= 0x3FFFF));
+}
+
+/** Whether the bidi controls in `segment` (one line of one string or comment) are all closed again. */
+function bidiBalanced(segment: string): boolean {
+	const open: string[] = [];
+	for (const ch of segment) {
+		const cp = ch.codePointAt(0)!;
+		if (cp === 0x202A || cp === 0x202B || cp === 0x202D || cp === 0x202E) {
+			open.push('embedding');
+		} else if (cp >= 0x2066 && cp <= 0x2068) {
+			open.push('isolate');
+		} else if (cp === 0x202C || cp === 0x2069) {
+			if (open.pop() !== (cp === 0x202C ? 'embedding' : 'isolate')) {
+				return false;
+			}
+		}
+	}
+	return open.length === 0;
+}
+
+/**
+ * `invisible-code` (GlassWorm, Trojan Source): characters an editor doesn't show, written raw (an
+ * escape sequence is visible text and is not looked at). Calibrated on 110 installed extensions
+ * (Claude Code, Java, Maven, Svelte, Code Spell Checker, Git Graph, Bruno...), where none trips it:
+ *
+ * - in code (outside strings, comments and regular expressions): any of them, except a byte order
+ *   mark at the very start of the file;
+ * - in a string, comment or regular expression:
+ *   - a supplementary variation selector (U+E0100 to U+E01EF) not after a CJK ideograph: the
+ *     GlassWorm encoding, one byte per selector;
+ *   - a tag character (U+E0000 to U+E007F) outside a flag's tag sequence (U+1F3F4 followed by tags and a cancel tag):
+ *     "ASCII smuggling";
+ *   - {@link ZERO_WIDTH_RUN} or more zero-width characters and BMP variation selectors in a row,
+ *     not counting the ones of an emoji (a selector after a visible non-ASCII character or in a
+ *     keycap, a joiner between visible non-ASCII characters);
+ *   - {@link PRIVATE_USE_RUN} or more private-use characters in a row;
+ * - bidi controls left open on a line of a comment (Trojan Source's commenting-out and early
+ *   return), or of a string of up to {@link BIDI_STRING_MAX} characters where a control sits
+ *   between visible characters (a stretched string), not in a list or `a-b` range of them as a
+ *   character class source has.
+ */
+function invisibleFindings(text: string, lexed: ILexed): { readonly at: number; readonly evidence: string }[] {
+	INVISIBLE_CANDIDATE.lastIndex = 0;
+	if (!INVISIBLE_CANDIDATE.test(text)) {
+		return [];
+	}
+	// Where each offset is: strings, comments and regexes are in source order and never overlap.
+	const ranges: [number, number, Region][] = [
+		// The contents between the quotes (a template literal's part before `${` ends at the `$`).
+		...lexed.strings.map(literal => [literal.start + 1, text.startsWith('${', literal.end) ? literal.end : literal.end - 1, 'string'] as [number, number, Region]),
+		...lexed.comments.map(([start, end]) => [start, end, 'comment'] as [number, number, Region]),
+		...lexed.regexes.map(([start, end]) => [start, end, 'regex'] as [number, number, Region]),
+	].sort((a, b) => a[0] - b[0]);
+	const rangeAt = (offset: number): [number, number, Region] | undefined => {
+		let low = 0;
+		let high = ranges.length - 1;
+		while (low <= high) {
+			const mid = (low + high) >> 1;
+			if (ranges[mid][0] > offset) {
+				high = mid - 1;
+			} else if (ranges[mid][1] <= offset) {
+				low = mid + 1;
+			} else {
+				return ranges[mid];
+			}
+		}
+		return undefined;
+	};
+
+	// Runs of adjacent invisible code points, each in one region.
+	interface IRun { start: number; end: number; region: Region; range?: [number, number, Region]; cps: number[] }
+	const runs: IRun[] = [];
+	INVISIBLE_CANDIDATE.lastIndex = 0;
+	for (const match of text.matchAll(INVISIBLE_CANDIDATE)) {
+		const at = match.index;
+		const cp = match[0].codePointAt(0)!;
+		if (!invisibleKind(cp)) {
+			continue;
+		}
+		const range = rangeAt(at);
+		const region: Region = range?.[2] ?? 'code';
+		const last = runs[runs.length - 1];
+		if (last && last.end === at && last.region === region && last.range === range) {
+			last.end = at + match[0].length;
+			last.cps.push(cp);
+		} else {
+			runs.push({ start: at, end: at + match[0].length, region, range, cps: [cp] });
+		}
+	}
+
+	const found: { at: number; evidence: string }[] = [];
+	const seen = new Set<string>();
+	const add = (at: number, kinds: Iterable<InvisibleKind>, place: string) => {
+		const evidence = `${[...new Set(kinds)].map(kind => INVISIBLE_LABELS[kind]).join(', ')} ${place}`;
+		// Once per evidence and file: the merge counts files, not characters.
+		if (!seen.has(evidence)) {
+			seen.add(evidence);
+			found.push({ at, evidence });
+		}
+	};
+	const where: Record<Region, string> = { code: 'in code', string: 'in a string', regex: 'in a regular expression', comment: 'in a comment' };
+	const checkedBidi = new Set<string>();
+
+	for (const run of runs) {
+		if (run.region === 'code') {
+			if (!(run.start === 0 && run.cps.length === 1 && run.cps[0] === 0xFEFF)) {
+				add(run.start, run.cps.map(cp => invisibleKind(cp)!), where.code);
+			}
+			continue;
+		}
+		const range = run.range!;
+		const before = previousCodePoint(text, run.start);
+		const after = run.end < text.length ? text.codePointAt(run.end) : undefined;
+		const bad: InvisibleKind[] = [];
+
+		// Bidi controls left open on this line of the string or comment.
+		if (run.region !== 'regex' && run.cps.some(cp => invisibleKind(cp) === 'bidi')) {
+			const lineStart = text.lastIndexOf('\n', run.start - 1) + 1;
+			const lineEnd = text.indexOf('\n', run.start);
+			// Between visible characters (not another control, nor the `-` of a range): text, not a list.
+			const embedded = run.cps.length === 1 && before !== undefined && before !== 0x2D && after !== undefined && after !== 0x2D && !invisibleKind(after);
+			const stretched = run.region === 'comment' || (range[1] - range[0] <= BIDI_STRING_MAX && embedded);
+			const key = `${range[0]}:${lineStart}`;
+			if (stretched && !checkedBidi.has(key)) {
+				checkedBidi.add(key);
+				if (!bidiBalanced(text.slice(Math.max(range[0], lineStart), Math.min(range[1], lineEnd < 0 ? text.length : lineEnd)))) {
+					add(run.start, ['bidi'], `left open ${where[run.region]}`);
+				}
+			}
+		}
+
+		// The rest, character by character against what ordinary text uses it for.
+		const flag = before === 0x1F3F4 && run.cps.every(cp => invisibleKind(cp) === 'tag') && run.cps[run.cps.length - 1] === 0xE007F && run.cps.length <= 8;
+		let zeroWidth = 0;
+		let privateUse = 0;
+		for (let i = 0; i < run.cps.length; i++) {
+			const cp = run.cps[i];
+			const kind = invisibleKind(cp)!;
+			const prev = i === 0 ? before : run.cps[i - 1];
+			const next = i === run.cps.length - 1 ? after : run.cps[i + 1];
+			if (kind === 'tag' && !flag) {
+				bad.push('tag');
+			} else if (kind === 'variation' && cp >= 0xE0100) {
+				if (!isIdeograph(prev)) {
+					bad.push('variation');
+				}
+			} else if (kind === 'variation' || kind === 'zero-width') {
+				const emoji = kind === 'variation'
+					? isVisibleNonAscii(prev) || (prev !== undefined && prev <= 0x7F && /[0-9#*]/.test(String.fromCharCode(prev)) && next === 0x20E3)
+					: cp === 0x200D && (isVisibleNonAscii(prev) || prev === 0xFE0F) && isVisibleNonAscii(next);
+				if (!emoji && ++zeroWidth === ZERO_WIDTH_RUN) {
+					bad.push(kind);
+				}
+			} else if (kind === 'private' && ++privateUse === PRIVATE_USE_RUN) {
+				bad.push('private');
+			}
+		}
+		if (bad.length) {
+			add(run.start, bad, where[run.region]);
+		}
+	}
+	return found;
+}
+
+/** The code point that ends right before `offset` (a surrogate pair read whole). */
+function previousCodePoint(text: string, offset: number): number | undefined {
+	if (offset <= 0) {
+		return undefined;
+	}
+	const low = text.charCodeAt(offset - 1);
+	if (low >= 0xDC00 && low <= 0xDFFF && offset >= 2) {
+		const high = text.charCodeAt(offset - 2);
+		if (high >= 0xD800 && high <= 0xDBFF) {
+			return text.codePointAt(offset - 2);
+		}
+	}
+	return low;
+}
+
 function scanFile(file: ICodeScanFile, options: ICodeScanOptions): IRawFinding[] {
-	const { code, blank, strings } = lex(file.text);
+	const lexed = lex(file.text);
+	const { code, blank, strings } = lexed;
 	const found: IRawFinding[] = [];
 	const add = (rule: CodeScanRule, severity: CodeScanSeverity, at: number, evidence: string) => found.push({ rule, severity, at, evidence });
+
+	for (const invisible of invisibleFindings(file.text, lexed)) {
+		add('invisible-code', 'high', invisible.at, invisible.evidence);
+	}
 
 	// The text with each string literal as a token `\u0001<index>\u0002`, for rules about how literals combine.
 	let tokens = '';

@@ -1,0 +1,4 @@
+installed
+callbacks: 2 in 60.1 s (0.03/s; top 30 keys)
+     1   0.02/s  FSREQPROMISE  Object.stat (node:internal/original-fs/promises:1040:13) < readManagedPreferences (vs/platform/voltSandbox/node/adminPolicy.js:94:25) < Object.read (vs/platform/voltSandbox/node/adminPolicy.js:56:39) < readAdminPolicy (vs/platform/voltSandbox/nod
+     1   0.02/s  FSREQPROMISE  Object.stat (node:internal/original-fs/promises:1040:13) < readManagedPreferences (vs/platform/voltSandbox/node/adminPolicy.js:94:25) < async readAdminPolicy (vs/platform/voltSandbox/node/adminPolicy.js:16:11) < async VoltSandboxLauncher.refreshM

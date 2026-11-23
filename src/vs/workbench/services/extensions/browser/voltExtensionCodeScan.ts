@@ -147,6 +147,7 @@ registerSingleton(IVoltExtensionCodeScanService, VoltExtensionCodeScanService, I
 // --- what the user is told ---------------------------------------------------------------------------
 
 const RULE_LABELS: Record<CodeScanRule, string> = {
+	'invisible-code': localize('voltScan.invisible', "hides code in characters an editor doesn't show"),
 	'hidden-name': localize('voltScan.hiddenName', "builds a sensitive name from pieces to hide it"),
 	'encoded-payload': localize('voltScan.encoded', "decodes hidden text"),
 	'raw-host': localize('voltScan.rawHost', "sends to an address it does not declare"),

@@ -34,6 +34,8 @@ import { IAllowedExtensionsService, IExtensionGalleryService, IExtensionManageme
 import { ExtensionSignatureVerificationService, IExtensionSignatureVerificationService } from '../../../platform/extensionManagement/node/extensionSignatureVerificationService.js';
 import { ExtensionManagementChannel, ExtensionTipsChannel } from '../../../platform/extensionManagement/common/extensionManagementIpc.js';
 import { ExtensionManagementService, INativeServerExtensionManagementService } from '../../../platform/extensionManagement/node/extensionManagementService.js';
+import { IVoltExtensionIntegrityService, VOLT_EXTENSION_INTEGRITY_CHANNEL } from '../../../platform/extensionManagement/common/voltExtensionLock.js';
+import { extensionLockPath, voltExtensionIntegrity } from '../../../platform/extensionManagement/node/voltExtensionIntegrity.js';
 import { IExtensionRecommendationNotificationService } from '../../../platform/extensionRecommendations/common/extensionRecommendations.js';
 import { IFileService } from '../../../platform/files/common/files.js';
 import { FileService } from '../../../platform/files/common/fileService.js';
@@ -390,6 +392,11 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
 		// Extensions Management
 		const channel = new ExtensionManagementChannel(accessor.get(IExtensionManagementService), () => null);
 		this.server.registerChannel('extensions', channel);
+
+		// Volt (H.10): the integrity lock of installed extensions, checked by each window before it starts them
+		const voltIntegrity = voltExtensionIntegrity(accessor.get(ILogService), extensionLockPath(accessor.get(INativeEnvironmentService).userHome.fsPath));
+		const voltIntegrityCalls: Omit<IVoltExtensionIntegrityService, '_serviceBrand'> = { verify: locations => voltIntegrity.verify(locations), trust: location => voltIntegrity.trust(location) };
+		this.server.registerChannel(VOLT_EXTENSION_INTEGRITY_CHANNEL, ProxyChannel.fromService(voltIntegrityCalls, this._store));
 
 
 		// Language Packs

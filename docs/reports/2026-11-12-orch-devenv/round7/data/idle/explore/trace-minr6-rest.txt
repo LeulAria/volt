@@ -1,0 +1,78 @@
+{"secs":30,"load":36.46,"state":"{\"vis\":\"visible\",\"focus\":true}","spanMs":30053,"events":2283}
+
+== busy threads (tasks/s, ms/s)
+Browser / CrBrowserMain                                         22.2 /s   18.35 ms/s
+Renderer / CrRendererMain                                        1.1 /s    4.36 ms/s
+GPU Process / CrGpuMain                                          0.4 /s    0.49 ms/s
+GPU Process / GpuWatchdog                                        0.1 /s    0.46 ms/s
+GPU Process / PerfettoTrace                                      2.8 /s    0.40 ms/s
+Browser / ThreadPoolForegroundWorker                             3.5 /s    0.25 ms/s
+Renderer / ThreadPoolForegroundWorker                            3.1 /s    0.19 ms/s
+Browser / ThreadPoolServiceThread                                0.9 /s    0.04 ms/s
+Renderer / Compositor                                            0.1 /s    0.04 ms/s
+Renderer / Chrome_ChildIOThread                                  0.3 /s    0.03 ms/s
+Renderer / ThreadPoolServiceThread                               0.9 /s    0.03 ms/s
+Browser / Chrome_IOThread                                        0.1 /s    0.02 ms/s
+Browser / CacheThread_BlockFile                                  0.1 /s    0.01 ms/s
+Browser / Chrome_DevToolsHandlerThread                           0.1 /s    0.01 ms/s
+
+== task sources (posted from), all threads, top 40 by count
+ 21.60 /s  16.865 ms/s  Browser / CrBrowserMain                      common/node_bindings.cc:WakeupMainThread
+  2.50 /s   0.191 ms/s  Browser / ThreadPoolForegroundWorker         system/simple_watcher.cc:Notify
+  2.43 /s   0.159 ms/s  Renderer / ThreadPoolForegroundWorker        system/simple_watcher.cc:Notify
+  2.33 /s   0.168 ms/s  GPU Process / PerfettoTrace                  system/simple_watcher.cc:Notify
+  0.93 /s   0.045 ms/s  Browser / ThreadPoolForegroundWorker         tracing/perfetto_task_runner.cc:PostDelayedTask
+  0.60 /s   0.025 ms/s  Renderer / ThreadPoolForegroundWorker        tracing/perfetto_task_runner.cc:PostDelayedTask
+  0.47 /s   0.237 ms/s  GPU Process / PerfettoTrace                  tracing/perfetto_task_runner.cc:PostDelayedTask
+  0.47 /s   0.017 ms/s  Browser / ThreadPoolServiceThread            thread_pool/delayed_task_manager.cc:AddDelayedTask
+  0.47 /s   0.026 ms/s  Browser / ThreadPoolServiceThread            thread_pool/delayed_task_manager.cc:ScheduleProcessRipeTasksOnServiceThread
+  0.43 /s   0.010 ms/s  Renderer / ThreadPoolServiceThread           thread_pool/delayed_task_manager.cc:AddDelayedTask
+  0.43 /s   0.021 ms/s  Renderer / ThreadPoolServiceThread           thread_pool/delayed_task_manager.cc:ScheduleProcessRipeTasksOnServiceThread
+  0.30 /s   2.291 ms/s  Renderer / CrRendererMain                    scheduler/dom_timer.cc:DOMTimer
+  0.27 /s   0.900 ms/s  Browser / CrBrowserMain                      allocator/partition_alloc_support.cc:MaybeScheduleTask
+  0.27 /s   0.018 ms/s  Renderer / CrRendererMain                    controller/memory_usage_monitor.cc:StartMonitoringIfNeeded
+  0.23 /s   0.419 ms/s  GPU Process / CrGpuMain                      allocator/partition_alloc_support.cc:MaybeScheduleTask
+  0.13 /s   0.022 ms/s  Renderer / Chrome_ChildIOThread              ipc/ipc_mojo_bootstrap.cc:SendMessage
+  0.13 /s   0.015 ms/s  Browser / Chrome_IOThread                    system/simple_watcher.cc:Notify
+  0.13 /s   0.455 ms/s  Browser / CrBrowserMain                      ipc/ipc_mojo_bootstrap.cc:Accept
+  0.13 /s   0.936 ms/s  Renderer / CrRendererMain                    system/simple_watcher.cc:Notify
+  0.10 /s   0.011 ms/s  Renderer / Chrome_ChildIOThread              lib/interface_endpoint_client.cc:SendMessage
+  0.10 /s   0.013 ms/s  Browser / CacheThread_BlockFile              blockfile/backend_impl.cc:SyncInit
+  0.07 /s   0.010 ms/s  Browser / ThreadPoolForegroundWorker         lib/connector.cc:PostDispatchNextMessageFromPipe
+  0.07 /s   0.004 ms/s  Renderer / CrRendererMain                    trace_event/trace_log.cc:OnStart
+  0.07 /s   0.008 ms/s  Renderer / ThreadPoolForegroundWorker        lib/connector.cc:PostDispatchNextMessageFromPipe
+  0.07 /s   0.010 ms/s  Browser / Chrome_DevToolsHandlerThread       devtools/devtools_http_handler.cc:DispatchProtocolMessage
+  0.07 /s   0.457 ms/s  GPU Process / GpuWatchdog                    service/gpu_watchdog_thread.cc:ContinueWithNextWatchdogTimeoutTask
+  0.07 /s   0.028 ms/s  Renderer / CrRendererMain                    allocator/partition_alloc_support.cc:RunThreadCachePeriodicPurge
+  0.07 /s   0.028 ms/s  GPU Process / CrGpuMain                      service/scheduler.cc:RunNextTask
+  0.07 /s   0.001 ms/s  Renderer / CrRendererMain                    main_thread/main_thread_scheduler_impl.cc:OnPendingTasksChanged
+  0.07 /s   0.005 ms/s  Renderer / Compositor                        trees/proxy_main.cc:RequestBeginMainFrameNotExpected
+  0.03 /s   0.001 ms/s  Browser / CrBrowserMain                      perfetto/perfetto_traced_process.h:OnStart
+  0.03 /s   0.041 ms/s  Browser / CrBrowserMain                      perfetto/trace_event_metadata_source.cc:StartTracingImpl
+  0.03 /s   0.009 ms/s  Browser / CrBrowserMain                      protocol/tracing_handler.cc:operator()
+  0.03 /s   0.011 ms/s  Renderer / CrRendererMain                    timing/performance.cc:ActivateObserver
+  0.03 /s   0.006 ms/s  Browser / CrBrowserMain                      allocator/partition_alloc_support.cc:RunThreadCachePeriodicPurge
+  0.03 /s   0.183 ms/s  Renderer / CrRendererMain                    client/client_discardable_shared_memory_manager.cc:ScheduledPurge
+  0.03 /s   0.002 ms/s  Renderer / Chrome_ChildIOThread              client/client_discardable_shared_memory_manager.cc:DeletedDiscardableSharedMemory
+  0.03 /s   0.035 ms/s  Renderer / Compositor                        tiles/gpu_image_decode_cache.cc:PostPurgeOldCacheEntriesTask
+  0.03 /s   0.008 ms/s  GPU Process / CrGpuMain                      service/scheduler.cc:TryScheduleSequence
+  0.03 /s   0.035 ms/s  GPU Process / CrGpuMain                      service/graphite_cache_controller.cc:ScheduleCleanUpAllResources
+
+== renderer main: callbacks (count, ms) over the window
+    9     57.1 ms  TimerFire  :: 
+    4     26.3 ms  FunctionCall  :: 
+    2      9.7 ms  FunctionCall  vs/workbench/workbench.desktop.main.js:33:1969 
+    2      3.4 ms  FunctionCall g vs/workbench/workbench.desktop.main.js:30:81839 
+    2      0.4 ms  FunctionCall  vs/workbench/workbench.desktop.main.js:30:81355 
+    1      0.1 ms  FunctionCall  vs/workbench/workbench.desktop.main.js:14187:21942 
+    1      0.1 ms  FunctionCall  vs/workbench/workbench.desktop.main.js:13938:2026 
+    1      0.9 ms  FunctionCall  vs/workbench/workbench.desktop.main.js:14179:7578 
+    1      0.6 ms  FunctionCall  vs/workbench/workbench.desktop.main.js:11717:10137 
+    1     11.8 ms  FireIdleCallback  :: 
+    1      7.2 ms  FunctionCall  vs/workbench/workbench.desktop.main.js:420:97809 
+    1      0.1 ms  FunctionCall  vs/workbench/workbench.desktop.main.js:30:77159 
+
+== renderer main: rendering passes
+display link callbacks: 0 (0.0/s)
+
+viz DrawAndSwap: 0 (0.0/s)

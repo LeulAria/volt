@@ -59,6 +59,7 @@ test('M5-CI-3: a built-in without a ceiling, a renamed manifest and a stale ceil
 	assert.deepEqual(problems, []);
 	assert.deepEqual(warnings, [
 		'volt.memory: the ceiling holds agents.context, which the manifest doesn\'t declare (narrow the ceiling)',
+		'volt.memory: the ceiling holds agents.read:any, which the manifest doesn\'t declare (narrow the ceiling)',
 		'volt.memory: the ceiling holds files.read:workspace, which the manifest doesn\'t declare (narrow the ceiling)',
 		'volt.memory: the ceiling holds files.write, which the manifest doesn\'t declare (narrow the ceiling)',
 	]);

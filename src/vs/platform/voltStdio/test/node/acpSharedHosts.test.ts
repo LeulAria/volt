@@ -18,6 +18,12 @@ import { writeFakeAcpAdapter } from './acpSharedHostFixture.js';
 /** A CLI stand-in: says its marked environment once, then echoes its stdin in upper case. */
 const FAKE_CLI = `process.stdout.write('env ' + (process.env.ADDED || '-') + ' ' + (process.env.GONE || '-') + ' ' + (process.env.FROM_LAUNCH || '-') + '\\n'); process.stdin.on('data', data => { const text = String(data); if (text.includes('die')) { process.exit(7); } process.stdout.write(text.toUpperCase()); });`;
 
+/**
+ * The adapter host and the CLI stand-in run on `process.execPath`: plain node under `npm run test-node`,
+ * Electron (its renderer helper) under `scripts/test.sh`, where it only acts as node when told to.
+ */
+const AS_NODE: Record<string, string> = process.versions['electron'] ? { ELECTRON_RUN_AS_NODE: '1' } : {};
+
 const policy = (over: Partial<IResolvedSandboxPolicy>): IResolvedSandboxPolicy => ({
 	name: 't', platform: 'darwin', readAll: false, read: [], write: [], writeFiles: [], deny: [], protect: [], denyPatterns: [], protectPatterns: [],
 	newRepositoryGuard: [], gitDirs: [], network: { mode: 'host', allow: [], loopbackPorts: [], listen: false }, unixSockets: [], systemServices: false,
@@ -44,13 +50,13 @@ suite('Shared ACP adapter host', () => {
 		}
 	};
 	const delegate = (): IAcpSharedHostDelegate => ({
-		hostEnv: async () => ({ PATH: process.env['PATH'], HOME: process.env['HOME'], SHARED: 'host' }),
+		hostEnv: async () => ({ PATH: process.env['PATH'], HOME: process.env['HOME'], SHARED: 'host', ...AS_NODE }),
 		sandboxView: async options => options.sandbox ? views.get(options.cwd ?? '') : undefined,
 		startChild: async (id, options, unset, helper) => {
 			started.push({ id, options, unset, helper });
 			// A sandbox launch takes a moment (prepare, attest): what the adapter wrote meanwhile must not be lost.
 			await new Promise(resolve => setTimeout(resolve, 40));
-			const env: NodeJS.ProcessEnv = { PATH: process.env['PATH'], ...options.env, ...(options.sandbox ? { FROM_LAUNCH: 'sandbox' } : {}) };
+			const env: NodeJS.ProcessEnv = { PATH: process.env['PATH'], ...AS_NODE, ...options.env, ...(options.sandbox ? { FROM_LAUNCH: 'sandbox' } : {}) };
 			for (const key of unset) {
 				delete env[key];
 			}

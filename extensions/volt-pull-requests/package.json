@@ -110,6 +110,11 @@
 					"class": "high"
 				},
 				{
+					"id": "agents.send",
+					"class": "medium",
+					"reason": "Links a pull request to its chat, and wakes the chat when a watched pull request changes."
+				},
+				{
 					"id": "spawn.unsandboxed",
 					"class": "critical",
 					"reason": "stack_branch and restack_stack run git checkout, rebase and push on the host."

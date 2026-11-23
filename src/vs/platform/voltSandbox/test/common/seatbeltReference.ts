@@ -46,6 +46,13 @@ const ESCAPE_SERVICES = [
 	'com.apple.lsd.modifydb',
 	'com.apple.lsd.open',
 	'com.apple.coreservices.launchservicesd',
+	// Shortcuts: running any of the user's shortcuts in Shortcuts' own process.
+	'com.apple.siri.VoiceShortcuts.xpc',
+	'com.apple.shortcuts.daemon',
+	'com.apple.WorkflowKit.BackgroundShortcutRunner',
+	// Spotlight: the index of the whole disk, past the file read rules.
+	'com.apple.metadata.mds',
+	'com.apple.metadata.mds.legacy',
 ];
 
 /** DNS lookups outside the broker: denied unless the network is open (B-31, J.1 "DNS"). */

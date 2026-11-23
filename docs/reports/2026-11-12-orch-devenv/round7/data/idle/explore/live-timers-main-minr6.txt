@@ -1,0 +1,7 @@
+every 60000 ms (unref)  vs/code/electron-main/main.js:183:15246
+    ()=>{this.refreshManagedPolicy().catch(()=>{})}
+every 30000 ms  vs/code/electron-main/main.js:608:4045
+    ()=>this.L()
+every 100 ms (unref)  vs/code/electron-main/main.js:608:11172
+    ()=>{const t=this.f(),s=e.tick(t);s?this.e({startTime:this.g()-s.durationMs,durationMs:s.durationMs}):t>this.b&&this.j()}
+3 live timers, 3 shown

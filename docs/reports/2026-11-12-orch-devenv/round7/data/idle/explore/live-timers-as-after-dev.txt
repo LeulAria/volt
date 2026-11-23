@@ -1,0 +1,21 @@
+every 2000 ms  vs/server/node/voltAgent/serverDevRestart.js:35:27
+    () => { if (!restarting && changedAt !== undefined && Date.now() - changedAt >= SETTLE_MS && idle()) { restarting = true; logService.info("[volt agent server] restarting to load the recompiled code"); restart(); } }
+every 20000 ms (unref)  vs/platform/voltAgentServer/node/webSocket.js:60:32
+    () => { if (this.missedPongs >= 2) { this.socket.destroy(); return; } this.missedPongs++; this.writeFrame(Op.Ping, Buffer.alloc(0)); }
+every 20000 ms  vs/base/common/async.js:862:37
+    () => { runner(); }
+every 300000 ms  vs/base/common/async.js:862:37
+    () => { runner(); }
+every 60000 ms  vs/server/node/voltAgent/serverIdleExit.js:52:15
+    () => { if (stopped) { return; } if (options.clients().length > 0) { lonelySince = undefined; return; } lonelySince ??= Date.now(); if (Date.now() - lonelySince < lonelyFor || !options.runsIdle()) { return; } if (busyThr
+every 30000 ms (unref)  
+    function () { [native code] }
+every 30000 ms (unref)  
+    function () { [native code] }
+every 60000 ms (unref)  vs/platform/voltSandbox/node/sandboxLauncher.js:640:28
+    () => void this.refreshManagedPolicy().catch(() => undefined)
+every 30000 ms (unref)  
+    function () { [native code] }
+once in 5000 ms  
+    function () { [native code] }
+11 live timers, 10 shown

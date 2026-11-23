@@ -90,6 +90,16 @@
 					"reason": "An automation run is a chat."
 				},
 				{
+					"id": "agents.read:any",
+					"class": "medium",
+					"reason": "Lists your automations and their runs' chats."
+				},
+				{
+					"id": "agents.send",
+					"class": "medium",
+					"reason": "An automation can run in a chat you already have."
+				},
+				{
 					"id": "net.connect",
 					"class": "low",
 					"reason": "Slack and Teams actions."

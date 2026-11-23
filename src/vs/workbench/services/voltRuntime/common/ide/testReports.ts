@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { findLastIdx } from '../../../../../base/common/arraysFind.js';
 import type { TestReportFormat } from './testAdapter.js';
 
 /** A source position in a failure's stack (path as the runner printed it: absolute or relative). */
@@ -132,7 +133,9 @@ export function parseExpectedActual(message: string): { expected?: string; actua
 	if (unittest) {
 		return pair(unittest[2], unittest[1]);
 	}
-	const pytest = /assert (.+?) == (.+?)$/m.exec(text);
+	// pytest's failure text quotes the source line (`>   assert f(x) == 11.0`) before the evaluated
+	// one (`E   assert 12.0 == 11.0`): the values are on the `E` line.
+	const pytest = /^E\s+assert (.+?) == (.+?)$/m.exec(text) ?? /assert (.+?) == (.+?)$/m.exec(text);
 	if (pytest) {
 		return pair(pytest[2], pytest[1]);
 	}
@@ -281,7 +284,7 @@ export function parseXml(raw: string): IXmlNode {
 			top.text += match[1];
 		} else if (match[2]) {
 			// Close up to the matching open element; a stray close tag is ignored.
-			const index = stack.findLastIndex(node => node.name === match[2]);
+			const index = findLastIdx(stack, node => node.name === match[2]);
 			if (index > 0) {
 				stack.length = index;
 			}
@@ -340,7 +343,7 @@ function pytestRef(classname: string, name: string, file: string | undefined): I
 		moduleLength = file.replace(/\\/g, '/').replace(/\.py$/, '').split('/').length;
 	} else {
 		// Without the file attribute: the module ends at its test_ part, else where the class names start.
-		const testPart = parts.findLastIndex(part => /^test_|_test$/.test(part));
+		const testPart = findLastIdx(parts, part => /^test_|_test$/.test(part));
 		const firstClass = parts.findIndex(part => /^[A-Z]/.test(part));
 		moduleLength = testPart >= 0 ? testPart + 1 : firstClass >= 0 ? firstClass : parts.length;
 	}
@@ -734,7 +737,8 @@ export function parseUnittestText(raw: string): ITestReport {
 		}
 	}
 	for (const block of text.split(/^={50,}$/m).slice(1)) {
-		const head = /^\s*(FAIL|ERROR): (\w+) \(([\w.]+)\)/.exec(block);
+		// A module that failed to import is named by its dotted path (`ERROR: tests.test_x (...)`).
+		const head = /^\s*(FAIL|ERROR): ([\w.]+) \(([\w.]+)\)/.exec(block);
 		if (!head) {
 			continue;
 		}

@@ -662,11 +662,12 @@ suite('Volt extension API (vscode.volt)', () => {
 
 	test('EXT-API-CAP-2: a built-in beyond its ceiling is refused', async () => {
 		// A manifest that declares more than the compiled ceiling (tampered or not yet released in core).
-		const memory = description('volt.memory', { builtin: true, contributes: { voltCapabilities: { required: [{ id: 'agents.context', class: 'high' }, { id: 'agents.read:any', class: 'medium' }] } } });
+		// Memory's ceiling reads every chat but never sends to one.
+		const memory = description('volt.memory', { builtin: true, contributes: { voltCapabilities: { required: [{ id: 'agents.context', class: 'high' }, { id: 'agents.send', class: 'high' }] } } });
 		const h = host([memory], ['volt.memory']);
 		const volt = h.voltFor('volt.memory');
-		const err = await refusal(volt.chats.list());
-		assert.deepStrictEqual([err.capability, err.deniedBy], ['agents.read:any', 'ceiling']);
+		const err = await refusal(volt.chats.send('chat-1', 'hi'));
+		assert.deepStrictEqual([err.capability, err.deniedBy], ['agents.send', 'ceiling']);
 		assert.strictEqual(container.querySelector('.volt-extension-consent'), null);
 	});
 

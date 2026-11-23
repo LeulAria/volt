@@ -127,7 +127,8 @@ suite('Agent thread view', () => {
 			// The side toolbar's rows opened as a card over the transcript (outside the toolbar's own box) count too.
 			scroller.style.position = 'relative';
 			const toolbar = scroller.appendChild($('.volt-agent-quick-open-actions'));
-			toolbar.style.cssText = 'position: absolute; top: 0; right: 0; width: 28px; height: 28px;';
+			// The stylesheet (once another suite loads it) hides the toolbar outside the agent layout.
+			toolbar.style.cssText = 'display: block; position: absolute; top: 0; right: 0; width: 28px; height: 28px;';
 			const card = toolbar.appendChild($('.volt-agent-quick-open-body'));
 			card.style.cssText = 'position: absolute; top: 0; right: 0; width: 200px; height: 260px;';
 			assert.strictEqual(at(900), false, 'a toolbar card reaching the fade keeps the mask');
@@ -147,13 +148,20 @@ suite('Agent thread view', () => {
 		thread.element.style.cssText = 'position: fixed; top: 0; left: 0; width: 300px; height: 300px;';
 		thread.inner.style.height = '300px';
 		thread.inner.style.overflow = 'hidden';
+		// The pixel positions below assume no gaps, margins or padding, which the thread's stylesheet
+		// adds once another suite loads it.
+		thread.inner.style.padding = '0';
+		thread.inner.style.gap = '0';
 		mainWindow.document.body.appendChild(thread.element);
 		try {
 			const exchange = thread.inner.appendChild($('.volt-agent-exchange'));
+			exchange.style.cssText = 'margin: 0; gap: 0;';
 			const card = exchange.appendChild($('.volt-agent-turn.user'));
-			card.style.cssText = 'position: sticky; top: 0; height: 40px;';
+			card.style.cssText = 'position: sticky; top: 0; height: 40px; margin: 0; padding: 0;';
 			const reply = exchange.appendChild($('.volt-agent-turn.agent'));
+			reply.style.cssText = 'margin: 0; gap: 0;';
 			const body = reply.appendChild($('.volt-agent-thread-body'));
+			body.style.gap = '0';
 			const rows: HTMLElement[] = [];
 			for (let i = 0; i < 40; i++) {
 				const row = body.appendChild($('.volt-agent-reply'));

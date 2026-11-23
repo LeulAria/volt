@@ -43,6 +43,8 @@ import { IExtensionsScannerService, IScannedExtension, ManifestMetadata, UserExt
 import { ExtensionsDownloader } from './extensionDownloader.js';
 import { hasVoltRegistryPublicKeys } from '../common/voltExtensionSigning.js';
 import { isConsentedUnsignedExtension, VoltUnsignedExtensionConsent } from './voltUnsignedExtensionConsent.js';
+import { approvedUpdateKey, declaredVoltCapabilities, gained, heldUpdateMessage, IVoltPublisherFacts, VOLT_UPDATE_APPROVED_CONTEXT, voltPublisherConcerns, VoltUpdateConcern } from '../common/voltExtensionLock.js';
+import { extensionLockPath, scanHighFindings, voltExtensionIntegrity } from './voltExtensionIntegrity.js';
 import { ExtensionsLifecycle } from './extensionLifecycle.js';
 import { fromExtractError, getManifest } from './extensionManagementUtil.js';
 import { ExtensionsManifestCache } from './extensionsManifestCache.js';
@@ -324,6 +326,15 @@ export class ExtensionManagementService extends AbstractExtensionManagementServi
 
 			await this.recordUnsignedConsent(gallery, options.donotVerifySignature);
 
+			// Volt (H.10, P4): an update that changes who publishes it or what it does waits for the user; then its files are locked.
+			await this.voltHoldOrRecord(local, options, {
+				publisher: manifest.publisher,
+				...(gallery.publisherId ? { publisherId: gallery.publisherId } : {}),
+				...(gallery.publisherDisplayName ? { publisherDisplayName: gallery.publisherDisplayName } : {}),
+				...(gallery.publisherDomain ? { verified: gallery.publisherDomain.verified } : {}),
+				...(verificationStatus !== undefined ? { signature: verificationStatus } : {}),
+			});
+
 			if (verificationStatus !== ExtensionSignatureVerificationCode.Success && this.environmentService.isBuilt) {
 				try {
 					await this.extensionsDownloader.delete(location);
@@ -417,7 +428,77 @@ export class ExtensionManagementService extends AbstractExtensionManagementServi
 			path.resolve(location.fsPath),
 			isBoolean(options.keepExisting) ? !options.keepExisting : true,
 			token);
+		// Volt (H.10): a `.vsix` is the user's own file, reviewed on the install sheet; its files are locked as unpacked.
+		await this.voltRecord(local, { publisher: local.manifest.publisher, source: 'vsix' }, undefined);
 		return { local };
+	}
+
+	/**
+	 * Volt (H.10, P4): after a gallery extension is unpacked, before it is added to the profile (so
+	 * nothing of it runs yet). An update is held when the publisher's identity changed, its signature
+	 * got worse, or it gains Volt capabilities or `high` code-scan findings, unless the user approved
+	 * that version on the install sheet: the unpacked copy is deleted and the error carries why
+	 * (`VOLT_UPDATE_HELD_PREFIX`), so the window can ask. Otherwise its files are locked.
+	 */
+	private async voltHoldOrRecord(local: ILocalExtension, options: InstallExtensionTaskOptions, next: IVoltPublisherFacts): Promise<void> {
+		const id = local.identifier.id;
+		const scan = await scanHighFindings(local.location.fsPath, local.manifest).catch(error => {
+			this.logService.warn(`[volt integrity] could not scan ${id}: ${getErrorMessage(error)}`);
+			return undefined;
+		});
+		const installed = (await this.extensionsScanner.scanExtensions(ExtensionType.User, options.profileLocation, options.productVersion))
+			.find(extension => areSameExtensions(extension.identifier, local.identifier) && extension.manifest.version !== local.manifest.version);
+		if (installed) {
+			const integrity = this.voltIntegrity;
+			const entry = await integrity.entry(installed.location.fsPath);
+			const before: IVoltPublisherFacts = entry ?? { publisher: installed.manifest.publisher, ...(installed.publisherId ? { publisherId: installed.publisherId } : {}) };
+			const concerns: VoltUpdateConcern[] = voltPublisherConcerns(before, next);
+			const capabilities = gained(declaredVoltCapabilities(installed.manifest), declaredVoltCapabilities(local.manifest));
+			if (capabilities.length) {
+				concerns.push({ kind: 'capabilities', added: capabilities });
+			}
+			if (scan) {
+				const previous = entry?.highFindings ?? (await scanHighFindings(installed.location.fsPath, installed.manifest).catch(() => undefined))?.keys;
+				const code = previous ? gained(previous, scan.keys) : [];
+				if (code.length) {
+					concerns.push({ kind: 'code', added: code });
+				}
+			}
+			const approved = options.context?.[VOLT_UPDATE_APPROVED_CONTEXT] === approvedUpdateKey(id, local.manifest.version);
+			if (concerns.length && !approved) {
+				this.logService.warn(`[volt integrity] holding the update of ${id} to ${local.manifest.version} for the user: ${concerns.map(concern => concern.kind).join(', ')}`);
+				await this.extensionsScanner.deleteExtension(local, 'held').catch(error => this.logService.warn(`[volt integrity] could not remove the held copy of ${id}: ${getErrorMessage(error)}`));
+				throw new ExtensionManagementError(heldUpdateMessage({
+					id,
+					version: local.manifest.version,
+					installedVersion: installed.manifest.version,
+					publisher: local.manifest.publisher,
+					...(local.manifest.displayName ? { displayName: local.manifest.displayName } : {}),
+					concerns,
+					...(scan?.findings.length ? { findings: scan.findings } : {}),
+					...(local.manifest.contributes ? { contributes: local.manifest.contributes } : {}),
+				}), ExtensionManagementErrorCode.NotAllowed);
+			}
+			if (concerns.length) {
+				this.logService.info(`[volt integrity] the user approved the update of ${id} to ${local.manifest.version} (${concerns.map(concern => concern.kind).join(', ')})`);
+			}
+		}
+		await this.voltRecord(local, { ...next, source: 'gallery' }, scan?.keys);
+	}
+
+	/** The integrity lock under this user's home (`~/.volt/trust`). */
+	private get voltIntegrity() {
+		return voltExtensionIntegrity(this.logService, extensionLockPath(this.environmentService.userHome.fsPath));
+	}
+
+	private async voltRecord(local: ILocalExtension, facts: IVoltPublisherFacts & { readonly source: 'gallery' | 'vsix' }, highFindings: readonly string[] | undefined): Promise<void> {
+		try {
+			const keys = highFindings ?? (await scanHighFindings(local.location.fsPath, local.manifest).catch(() => undefined))?.keys;
+			await this.voltIntegrity.record(local.location.fsPath, { ...facts, id: local.identifier.id, version: local.manifest.version, ...(keys ? { highFindings: keys } : {}) });
+		} catch (error) {
+			// Not fatal: the first check records the folder as it is then (a baseline).
+			this.logService.error(`[volt integrity] could not record ${local.identifier.id}: ${getErrorMessage(error)}`);
+		}
 	}
 
 	private async collectFiles(extension: ILocalExtension): Promise<IFile[]> {

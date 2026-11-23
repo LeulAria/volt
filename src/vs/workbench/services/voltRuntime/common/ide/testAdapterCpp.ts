@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { findLast } from '../../../../../base/common/arraysFind.js';
 import { braceDelta, escapeRegExp, IMissingTool, IOpenTest, IStaticTest, ITestAdapter, ITestCommand, ITestCommandOptions, ITestSelection, missingToolchain, shellQuote, splitSelection } from './testAdapter.js';
 
 export type CppTestFlavor = 'gtest' | 'catch2' | 'doctest';
@@ -76,7 +77,7 @@ export function parseCppTests(text: string): IStaticTest[] {
 		if (testCase) {
 			const suite = testCase[1] === 'TEST_SUITE';
 			const node: IOpenTest = { name: `${testCase[1] === 'SCENARIO' ? 'Scenario: ' : ''}${unescapeC(testCase[2])}`, kind: suite ? 'suite' : 'test', line: index + 1, endLine: index + 1, children: [], flavor };
-			const parent = stack.findLast(open => open.node.kind === 'suite');
+			const parent = findLast(stack, open => open.node.kind === 'suite');
 			(parent?.node.children ?? roots).push(node);
 			stack.push({ node, depth });
 		} else if (part && stack.length) {

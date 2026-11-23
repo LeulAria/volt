@@ -1,0 +1,4 @@
+installed
+callbacks: 2 in 20.0 s (0.10/s; top 30 keys)
+     1   0.05/s  FSREQPROMISE  Object.stat (node:internal/original-fs/promises:1040:13) < Qq (vs/code/electron-main/main.js:148:10902) < Object.read (vs/code/electron-main/main.js:148:10355) < Yq (vs/code/electron-main/main.js:148:9773) < CX.u (vs/code/electron-main/main.js:18
+     1   0.05/s  FSREQPROMISE  Object.stat (node:internal/original-fs/promises:1040:13) < Qq (vs/code/electron-main/main.js:148:10902) < async Yq (vs/code/electron-main/main.js:148:9765) < async CX.refreshManagedPolicy (vs/code/electron-main/main.js:183:14912)

@@ -9,9 +9,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
-import { codexSandboxArgs, parseAgentLine, runnerAgentEnv, toolSummary } from '../src/runner/agents.mjs';
+import { AGENTS, codexSandboxArgs, parseAgentLine, runnerAgentEnv, runnerAgentEnvParts, toolSummary } from '../src/runner/agents.mjs';
 import { LoadSampler } from '../src/runner/load.mjs';
 import { Runner } from '../src/runner/runner.mjs';
+import { loadRunnerSandbox, runnerSandboxMode } from '../src/runner/sandbox.mjs';
 import { startRelayServer } from '../src/server.mjs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'volt-runner-test-'));
@@ -59,6 +60,136 @@ describe('agent launch (B-06)', () => {
 		}
 		assert.deepEqual(codexSandboxArgs('linux', { VOLT_RUNNER_CODEX_SANDBOX: 'off' }), ['--dangerously-bypass-approvals-and-sandbox']);
 		assert.deepEqual(codexSandboxArgs('win32', {}), ['--dangerously-bypass-approvals-and-sandbox']);
+	});
+});
+
+describe('agent in Volt\'s sandbox (05-limitations item 20)', () => {
+	const fakeAgent = (body) => {
+		const file = path.join(tmp, `agent-${Math.random().toString(36).slice(2)}.mjs`);
+		fs.writeFileSync(file, `const fs = process.getBuiltinModule('fs');\nlet prompt = '';\nprocess.stdin.on('data', d => prompt += d);\nprocess.stdin.on('end', () => {\n${body}\n});\n`);
+		return file;
+	};
+	const withEnv = async (values, fn) => {
+		const saved = Object.fromEntries(Object.keys(values).map(name => [name, process.env[name]]));
+		Object.assign(process.env, values);
+		try {
+			return await fn();
+		} finally {
+			for (const [name, value] of Object.entries(saved)) {
+				if (value === undefined) {
+					delete process.env[name];
+				} else {
+					process.env[name] = value;
+				}
+			}
+		}
+	};
+
+	test('the sandbox gets only the allow-listed environment; the agent\'s credentials and the task id are set on purpose', () => {
+		const host = { PATH: '/usr/bin', HOME: '/home/runner', VOLT_RELAY_ENROLL_KEY: 'enrol-secret', VOLT_RELAY_TOKEN: 'relay-token', ANTHROPIC_API_KEY: 'sk-ant', OPENAI_API_KEY: 'sk-openai', NPM_TOKEN: 'npm', DB_PASSWORD: 'pw' };
+		assert.deepEqual(runnerAgentEnvParts('claude', host), { base: { PATH: '/usr/bin', HOME: '/home/runner' }, credentials: { ANTHROPIC_API_KEY: 'sk-ant' } });
+		assert.deepEqual(runnerAgentEnvParts('codex', host).credentials, { OPENAI_API_KEY: 'sk-openai' });
+		assert.deepEqual(runnerAgentEnv('claude', host), { PATH: '/usr/bin', HOME: '/home/runner', ANTHROPIC_API_KEY: 'sk-ant' });
+	});
+
+	test('Codex\'s own sandbox is off only inside Volt\'s, which encloses it', () => {
+		assert.deepEqual(codexSandboxArgs('darwin', {}, true), ['--sandbox', 'danger-full-access', '-c', 'approval_policy="never"']);
+		assert.ok(AGENTS.codex.command({}, { sandboxed: true }).args.includes('danger-full-access'));
+		assert.ok(!AGENTS.codex.command({}, { sandboxed: false }).args.includes('danger-full-access'));
+	});
+
+	test('modes, and why there is no sandbox: off, Windows, no Volt build', async () => {
+		assert.equal(runnerSandboxMode({}), 'auto');
+		assert.equal(runnerSandboxMode({ VOLT_RUNNER_SANDBOX: 'required' }), 'required');
+		assert.equal(runnerSandboxMode({ VOLT_RUNNER_SANDBOX: 'off' }), 'off');
+		const dataDir = path.join(tmp, 'sbx-data');
+		assert.equal((await loadRunnerSandbox({ env: { VOLT_RUNNER_SANDBOX: 'off' }, dataDir })).sandbox, undefined);
+		assert.match((await loadRunnerSandbox({ env: {}, platform: 'win32', dataDir })).reason, /Windows/);
+		assert.match((await loadRunnerSandbox({ env: { VOLT_RUNNER_SANDBOX_OUT: path.join(tmp, 'no-volt-build') }, platform: 'linux', dataDir })).reason, /no Volt build/);
+		// Required and missing: the runner stops before it claims a task.
+		await withEnv({ VOLT_RUNNER_SANDBOX: 'required', VOLT_RUNNER_SANDBOX_OUT: path.join(tmp, 'no-volt-build') }, async () => {
+			const runner = new Runner({ relayUrl: 'http://127.0.0.1:9', dataDir, workDir: path.join(dataDir, 'work') });
+			await assert.rejects(runner.loadSandbox(), /VOLT_RUNNER_SANDBOX=required/);
+		});
+	});
+
+	test('the agent starts through the sandbox\'s launch, which gets the checkout as its only workspace, and is confirmed before it runs', async () => {
+		const prepared = [];
+		const disposed = [];
+		const sandbox = {
+			mechanism: 'seatbelt',
+			detail: 'macOS test',
+			prepare: async request => {
+				prepared.push(request);
+				return {
+					command: process.execPath,
+					args: [request.binary, ...request.args],
+					cwd: request.checkout,
+					env: { ...request.hostEnv, ...request.env },
+					extraStdio: [],
+					confirm: async () => ({ ok: true, detail: 'test' }),
+					terminate: async child => { child.kill('SIGKILL'); },
+					dispose: () => disposed.push(request.taskId),
+				};
+			},
+		};
+		const agent = fakeAgent(`console.log(JSON.stringify({ type: 'result', subtype: 'success', result: JSON.stringify({ enrol: process.env.VOLT_RELAY_ENROLL_KEY ?? null, key: process.env.ANTHROPIC_API_KEY ?? null, task: process.env.VOLT_CLOUD_TASK }) }));`);
+		const checkout = fs.mkdtempSync(path.join(tmp, 'checkout-'));
+		await withEnv({ VOLT_RUNNER_CLAUDE_BIN: agent, VOLT_RELAY_ENROLL_KEY: 'enrol-secret', ANTHROPIC_API_KEY: 'sk-ant' }, async () => {
+			const runner = new Runner({ relayUrl: 'http://127.0.0.1:9', dataDir: path.join(tmp, 'sbx-run'), workDir: path.join(tmp, 'sbx-run', 'work'), sandbox });
+			await runner.loadSandbox();
+			const events = [];
+			const state = {};
+			const exit = await runner.runAgent({ id: 'task_1', agent: 'claude', prompt: 'hi' }, AGENTS.claude, checkout, new AbortController().signal, { push: event => events.push(event) }, state);
+			assert.equal(exit, 0);
+			assert.deepEqual(JSON.parse(state.summary), { enrol: null, key: 'sk-ant', task: 'task_1' });
+			assert.equal(prepared.length, 1);
+			assert.equal(prepared[0].checkout, checkout);
+			assert.equal(prepared[0].agent, 'claude');
+			assert.equal(prepared[0].hostEnv.ANTHROPIC_API_KEY, undefined, 'credentials are not left to the profile\'s filter');
+			assert.equal(prepared[0].hostEnv.VOLT_RELAY_ENROLL_KEY, undefined);
+			assert.equal(prepared[0].env.ANTHROPIC_API_KEY, 'sk-ant');
+			assert.ok(events.some(event => /runs in Volt's sandbox \(macOS test\)/.test(event.text ?? '')));
+			assert.deepEqual(disposed, ['task_1']);
+		});
+	});
+
+	test('a launch the sandbox cannot confirm is stopped, never run unconfined', async () => {
+		const marker = path.join(tmp, `ran-${Date.now()}`);
+		const agent = fakeAgent(`setTimeout(() => { fs.writeFileSync(${JSON.stringify(marker)}, 'ran'); console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'ran' })); }, 1500);`);
+		let terminated = 0;
+		const sandbox = {
+			mechanism: 'seatbelt',
+			detail: 'macOS test',
+			prepare: async request => ({
+				command: process.execPath,
+				args: [request.binary, ...request.args],
+				cwd: request.checkout,
+				env: { ...request.hostEnv, ...request.env },
+				extraStdio: [],
+				confirm: async () => ({ ok: false, error: 'no evidence the process is sandboxed' }),
+				terminate: async child => { terminated++; child.kill('SIGKILL'); },
+				dispose: () => undefined,
+			}),
+		};
+		await withEnv({ VOLT_RUNNER_CLAUDE_BIN: agent }, async () => {
+			const runner = new Runner({ relayUrl: 'http://127.0.0.1:9', dataDir: path.join(tmp, 'sbx-run2'), workDir: path.join(tmp, 'sbx-run2', 'work'), sandbox });
+			await runner.loadSandbox();
+			const state = {};
+			const exit = await runner.runAgent({ id: 'task_2', agent: 'claude', prompt: 'hi' }, AGENTS.claude, fs.mkdtempSync(path.join(tmp, 'checkout-')), new AbortController().signal, { push: () => undefined }, state);
+			assert.notEqual(exit, 0);
+			assert.equal(state.failed, true);
+			assert.match(state.error, /could not be confirmed.*no evidence/);
+			assert.equal(terminated, 1);
+			assert.equal(fs.existsSync(marker), false);
+		});
+	});
+
+	test('a launch the sandbox refuses fails the task', async () => {
+		const sandbox = { mechanism: 'seatbelt', detail: 'macOS test', prepare: async () => { throw new Error('Volt\'s sandbox policy refused this launch'); } };
+		const runner = new Runner({ relayUrl: 'http://127.0.0.1:9', dataDir: path.join(tmp, 'sbx-run3'), workDir: path.join(tmp, 'sbx-run3', 'work'), sandbox });
+		await runner.loadSandbox();
+		await assert.rejects(runner.runAgent({ id: 'task_3', agent: 'claude', prompt: 'hi' }, AGENTS.claude, tmp, new AbortController().signal, { push: () => undefined }, {}), /refused this launch/);
 	});
 });
 

@@ -111,6 +111,11 @@
 	color: var(--volt-skill-fg);
 }
 
+.volt-skill-editor-icon-button[hidden],
+.monaco-workbench:not(.volt-layout-agent) .volt-skill-editor-back-to-skills {
+	display: none;
+}
+
 /* Content: the preview and the source editor share the space; one shows at a time. */
 
 .volt-skill-editor-content {

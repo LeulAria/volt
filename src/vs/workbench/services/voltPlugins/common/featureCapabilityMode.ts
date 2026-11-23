@@ -5,7 +5,7 @@
 
 import { Event } from '../../../../base/common/event.js';
 import { firstPartyCapabilityMode } from '../../../../platform/voltPlugins/common/firstPartyCeilings.js';
-import { ICapabilityReporter, ICapabilityRequest, ICapabilityVerdict, IVoltPluginPrincipal, IWouldBeDenial, ReportModeCapabilityReporter } from './capabilities.js';
+import { ICapabilityReporter, ICapabilityRequest, ICapabilityVerdict, IVoltPluginPrincipal, IWouldBeDenial, ReportModeCapabilityReporter, VoltCapabilityError } from './capabilities.js';
 import { IExtensionCapabilityPolicyOptions, VoltExtensionCapabilityPolicy } from './extensionCapabilityPolicy.js';
 
 /**
@@ -50,4 +50,20 @@ export class VoltFeatureCapabilityReporter implements ICapabilityReporter {
 		this.report.dispose();
 		this.enforcing.dispose();
 	}
+}
+
+/**
+ * The check a feature module makes before it uses a Volt service directly for something its
+ * manifest declares (the Git Graph's commands, the commit review's commits). It is judged like the
+ * module's `volt` API calls: an enforced built-in is refused with a typed error before the use, a
+ * report-mode one is logged once and goes on.
+ */
+export function featureModuleCheck(reporter: ICapabilityReporter, principal: IVoltPluginPrincipal): (request: ICapabilityRequest) => void {
+	return request => {
+		const verdict = reporter.check(principal, request);
+		if (!verdict.allowed) {
+			const denial = verdict.denial;
+			throw new VoltCapabilityError(request.capability, request.target, denial?.deniedBy ?? 'manifest', denial?.reason ?? `${request.capability} was denied`, !!denial?.promptable);
+		}
+	};
 }

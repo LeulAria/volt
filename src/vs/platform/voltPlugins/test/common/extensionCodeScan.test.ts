@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { CODE_SCAN_LIMITS, codeScanDigest, codeScanOptionsOf, ICodeScanOptions, readScanFiles, scanExtensionCode } from '../../common/extensionCodeScan.js';
+import { CODE_SCAN_LIMITS, CODE_SCAN_RULES, codeScanDigest, codeScanOptionsOf, ICodeScanOptions, readScanFiles, scanExtensionCode } from '../../common/extensionCodeScan.js';
 
 function scan(text: string, options?: ICodeScanOptions) {
 	return scanExtensionCode([{ path: 'out/extension.js', text }], options).findings;
@@ -144,5 +144,50 @@ suite('Volt extension code scan (EXT-SCAN)', () => {
 		assert.deepStrictEqual(files.map(file => file.path), ['out/extension.js']);
 		assert.deepStrictEqual(read, ['/ext/out/extension.js']);
 		assert.strictEqual(skipped, 1);
+	});
+
+	// Invisible characters are built from code points here: this file itself must stay free of them.
+	const cp = (...points: number[]) => String.fromCodePoint(...points);
+	const run = (from: number, length: number) => cp(...Array.from({ length }, (_, i) => from + (i % 16)));
+	const RLO = cp(0x202E), LRI = cp(0x2066), RLI = cp(0x2067), PDI = cp(0x2069), ZWSP = cp(0x200B), ZWJ = cp(0x200D), BOM = cp(0xFEFF), VS16 = cp(0xFE0F);
+
+	test('EXT-SCAN-13: invisible code (GlassWorm, Trojan Source) is high', () => {
+		// GlassWorm: a payload of supplementary variation selectors, decoded and run.
+		assert.deepStrictEqual(rules(`const s = '${run(0xE0100, 40)}'; eval(decode(s));`), ['high invisible-code: variation selectors in a string', 'medium dynamic-code: eval']);
+		// The same with BMP selectors, a run of them after nothing visible.
+		assert.deepStrictEqual(rules(`const s = "${run(0xFE00, 6)}";`), ['high invisible-code: variation selectors in a string']);
+		// "ASCII smuggling": tag characters spelling text an editor doesn't show.
+		assert.deepStrictEqual(rules(`const note = 'hi${cp(0xE0069, 0xE0067, 0xE006E, 0xE006F, 0xE0072, 0xE0065)}';`), ['high invisible-code: Unicode tag characters in a string']);
+		// Zero-width runs used as bits.
+		assert.deepStrictEqual(rules(`const bits = "a${ZWSP}${cp(0x200C)}${ZWSP}${cp(0x200C)}${ZWSP}b";`), ['high invisible-code: zero-width characters in a string']);
+		// Trojan Source, commenting-out: an override left open in a comment.
+		assert.deepStrictEqual(rules(`/*${RLO} } ${LRI}if (isAdmin)${PDI} ${LRI} begin admins only */\nrun();`), ['high invisible-code: bidi controls left open in a comment']);
+		// Trojan Source, stretched string.
+		assert.deepStrictEqual(rules(`if (level != "user${RLO} ${LRI}// Check if admin${PDI} ${LRI}") { grant(); }`), ['high invisible-code: bidi controls left open in a string']);
+		// Anything of these in code itself (an identifier with a zero-width space, a selector after a name).
+		assert.deepStrictEqual(rules(`const a${ZWSP} = 1;`), ['high invisible-code: zero-width characters in code']);
+		assert.deepStrictEqual(rules(`const b = x${cp(0xFE01)};`), ['high invisible-code: variation selectors in code']);
+		assert.deepStrictEqual(rules(`const s = 1;\n// ${run(0xE0100, 12)}\n`), ['high invisible-code: variation selectors in a comment']);
+		assert.strictEqual(CODE_SCAN_RULES[0], 'invisible-code', 'listed first');
+	});
+
+	test('EXT-SCAN-14: what ordinary bundles do with these characters is no finding', () => {
+		assert.deepStrictEqual(rules([
+			`${BOM}"use strict";`,
+			// Emoji: a selector after a visible character, a ZWJ family, a keycap, a flag's tag sequence.
+			`const heart = "${cp(0x2764)}${VS16}", family = "${cp(0x1F468)}${ZWJ}${cp(0x1F469)}${ZWJ}${cp(0x1F467)}", one = "1${VS16}${cp(0x20E3)}";`,
+			`const wales = "${cp(0x1F3F4, 0xE0067, 0xE0062, 0xE0077, 0xE006C, 0xE0073, 0xE007F)}";`,
+			// HTML entity tables: a selector after the symbol it varies.
+			`const entities = { lvertneqq: "${cp(0x2268)}${cp(0xFE00)}", ZeroWidthSpace: "${ZWSP}", zwj: "${ZWJ}", NoBreak: "${cp(0x2060)}" };`,
+			// Comparisons and BOM stripping.
+			`if (ch === "${ZWJ}" || ch === "${VS16}") { skip(); } text = text.replace("${BOM}", "");`,
+			// Character classes, as regular expressions and as strings to build one from (acorn, xterm).
+			`const strip = /[${ZWSP}-${ZWJ}${BOM}]/g; const ranges = "${cp(0x200C)}${ZWJ}${cp(0xB7)}${cp(0x300)}-${cp(0x36F)}${cp(0xFE00)}-${cp(0xFE0F)}";`,
+			`const controls = new RegExp("[${cp(0x202A)}-${RLO}${LRI}${RLI}${PDI}${BOM}]", "g");`,
+			// Localized text with its bidi isolates closed again.
+			`const label = "${RLI}${cp(0x5E9, 0x5DC, 0x5D5, 0x5DD)}${PDI}: ok";`,
+			// Icon fonts: a few private-use glyphs.
+			`const icons = { gear: "${cp(0xE001)}", bell: "${cp(0xF101, 0xF102)}", strip: "${run(0xF880, 20)}" };`,
+		].join('\n')), []);
 	});
 });

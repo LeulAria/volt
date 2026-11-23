@@ -75,7 +75,15 @@ try {
 }
 ```
 
-**What this does not protect.** The capability check binds what an extension does *through `vscode.volt`*. A VS Code extension runs in a Node extension host with the user's rights unless the user turned on its sandbox; it can read files and open sockets itself. Extensions that share an extension host can't be told apart from each other (Volt checks that the extension a call names runs in the calling host). See the sandbox spec for the per-extension hosts that close this.
+**What this does not protect.** The capability check binds what an extension does *through `vscode.volt`*. On macOS and Linux every third-party extension with code runs in an extension host of its own inside Volt's sandbox by default (`volt.extensions.sandboxMode`: `required`): it reads its own folder, its storage, the user's toolchains and a trusted workspace, writes only its storage, and reaches only the hosts it declares with `net.connect` or the user allows. On Windows, or with the mode set to `optIn`, an extension runs in the shared Node extension host with the user's rights unless the user turned on its sandbox, and can read files and open sockets itself; extensions that share a host can't be told apart from each other (Volt checks that the extension a call names runs in the calling host). An extension Volt can't sandbox (`extensionKind: ["ui"]` without a `browser` entry, browser-only code) stays off by default until the user chooses to run it without the sandbox, so prefer `workspace` code. One host per extension also means another extension's `exports` are not reachable across hosts (docs/security/sandbox/05-limitations.md, item 17).
+
+### 2.1 Installing and updating
+
+Volt reviews an extension before its code runs and again on every update:
+
+- **The install sheet** lists what it declares in `voltCapabilities`, by class, and what the install-time code scan found in its JavaScript. `high` findings are what malware does and ordinary extensions don't: names hidden by building them from pieces, encoded payloads, drop-box hosts, undeclared `vscode.volt` calls, and `invisible-code`: characters an editor doesn't show written raw into the code (Unicode variation selectors and tag characters used to carry a payload, runs of zero-width or private-use characters, bidi controls left open in a comment or string, any of them outside strings and comments). Emoji, a BOM at the start of a file, icon-font glyphs and character classes that strip invisible characters are fine; write invisible characters as escapes (`'\u200b'`) to keep a reviewer's view honest.
+- **Integrity.** Volt records a SHA-256 of every file it unpacked in `~/.volt/trust/extensions.lock.json` and checks them before the window starts extensions. An extension whose files change on disk after install (it downloads code into its own folder, or something else edits it) is not started until the user reinstalls it or trusts its files as they are. Keep downloads in `context.globalStorageUri`, never in `context.extensionUri`; a sandboxed extension can't write its own folder anyway.
+- **Updates** are held for the user, also under auto-update, when the publisher's identity changed (another publisher id for the namespace, a namespace that lost its verified flag on Open VSX), the signature check got worse, or the new version declares Volt capabilities the installed one didn't or has `high` findings it didn't. The sheet says why and installs the update only on Update. Declare new capabilities in a release note so users know to expect the sheet.
 
 ## 3. The API
 
@@ -282,7 +290,23 @@ What each agent harness loads from the open project (instructions, skills, subag
 In-process feature code uses `IVoltPluginService.getContext` (trusted core, spec B-21), judged per feature (M5, `featureCapabilityMode.ts`). A built-in on `FIRST_PARTY_ENFORCED` (`firstPartyCeilings.ts`) is enforced: what its manifest declares within its ceiling runs with no prompt, anything else is refused. Every other built-in runs in report mode: calls run as before and each would-be denial is logged once. The switch is compiled into core, never a setting.
 
 - **Moving a feature to enforcement:** its report log shows 0 would-be denials over one release, and `M5-MODE-1` (`featureCapabilityMode.test.ts`) shows 0 for its manifest and its own API namespace. The test also fails when a feature shows 0 and is not on the list.
-- **Enforced:** `volt.browser`, `volt.code-intelligence`, `volt.customize`, `volt.git-graph`, `volt.http-client`, `volt.playgrounds`, `volt.remote-devices`, `volt.scratch-board`, `volt.skills-and-plugins`, `volt.usage` and the 12 `volt.provider-*` extensions.
-- **Report mode:** `volt.agent-resources`, `volt.automations`, `volt.claude-accounts`, `volt.commit-review`, `volt.computer-use`, `volt.dev-environment`, `volt.devices`, `volt.memory`, `volt.orchestra`, `volt.pull-requests`, `volt.visuals`. `volt.orchestra` and `volt.dev-environment` declare critical capabilities (`spawn.unsandboxed`, and `commands.execute:*` for the `ide` gateway's extensions capability), which the API never grants, so they stay here until those leave the API (`FEAT-R4-2`).
+- **Enforced:** `volt.browser`, `volt.code-intelligence`, `volt.customize`, `volt.git-graph`, `volt.http-client`, `volt.memory`, `volt.playgrounds`, `volt.remote-devices`, `volt.scratch-board`, `volt.skills-and-plugins`, `volt.usage`, `volt.visuals`, `volt.voice-chat` and the 12 `volt.provider-*` extensions. Memory and Visuals declare what their own namespace's methods use (`agents.read:any` for `memory.list` and `memory.read`, `agents.send` for `visuals.drawOnScratch`), within ceilings widened for exactly that.
+- **Report mode:** the nine built-ins whose manifest declares a critical capability. The API never grants critical (G.8), so enforcing them would refuse what their manifest says they do; they stay here until that capability leaves the API (`M5-MODE-2` fails if one of them shows any other would-be denial):
+
+  | Built-in | Critical capability | Why it has it |
+  |---|---|---|
+  | `volt.agent-resources` | `files.read:home` | What each harness loads from its own folder (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, `~/.agents`) |
+  | `volt.automations` | `spawn.unsandboxed` | Shell nodes and `open_pr` run on the host |
+  | `volt.claude-accounts` | `secrets.manage` | Swaps Claude logins under Claude's own locks |
+  | `volt.commit-review` | `spawn.unsandboxed` | `rename_branch` runs git (and its hooks) on the host |
+  | `volt.computer-use` | `desktop.control`, `screen.capture`, `spawn.unsandboxed` | The desktop tools act on the user's apps |
+  | `volt.dev-environment` | `files.read:home`, `spawn.unsandboxed` (and `commands.execute:*`) | Debug sessions, tasks, kernels and CLIs on the host; `~/.ssh/config`; the `ide` gateway's extensions capability (`FEAT-R4-2`) |
+  | `volt.devices` | `screen.capture`, `spawn.unsandboxed` | Window capture; installing and launching apps runs the agent's build on the host |
+  | `volt.orchestra` | `spawn.unsandboxed` | Members in new worktrees run the worktree's setup on the host (`FEAT-R4-2`) |
+  | `volt.pull-requests` | `spawn.unsandboxed` | `stack_branch` and `restack_stack` run checkout, rebase and push on the host |
+
+  Their tools that run on the host are class `escapes`, which implies `spawn.unsandboxed`. Core's own services serve those tools, not the module's context, so today nothing they do asks the API for a critical capability; but `M5-MODE-1` judges the whole manifest, and moving them means either an API path for critical capabilities held by a compiled ceiling (a change to G.8) or taking the host-run tools out of the manifest's API surface.
+
+A module that uses Volt's services directly can still check that use against its manifest with `featureModuleCheck` (`featureCapabilityMode.ts`): the Git Graph checks its git commands and its Ask Agent this way, and since it is enforced, a use its manifest doesn't declare throws `VoltCapabilityError` before it happens. The commit review checks its commits the same way, in report mode (`M5-MODULE-1`).
 
 Code in extension hosts is always enforced.

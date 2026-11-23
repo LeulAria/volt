@@ -63,7 +63,11 @@ import { ITestProfileService } from '../../../testing/common/testProfileService.
 import { ITestResult, LiveTestResult } from '../../../testing/common/testResult.js';
 import { ITestResultService } from '../../../testing/common/testResultService.js';
 import { IMainThreadTestController, ITestService } from '../../../testing/common/testService.js';
-import { InternalTestItem, ITestRunProfile, ResolvedTestRunRequest, TestItemExpandState, TestResultState, TestRunProfileBitset, TestsDiff } from '../../../testing/common/testTypes.js';
+import { InternalTestItem, ITestRunProfile, ResolvedTestRunRequest, TestDiffOpType, TestItemExpandState, TestResultState, TestRunProfileBitset, TestsDiff } from '../../../testing/common/testTypes.js';
+import { IVoltHttpAutomations } from '../../../voltHttp/browser/voltHttpAutomations.js';
+import { IVoltHttpCollections } from '../../../voltHttp/browser/voltHttpCollections.js';
+import { IVoltHttpPerformance } from '../../../voltHttp/browser/voltHttpPerformance.js';
+import { IVoltHttpSecurity } from '../../../voltHttp/browser/voltHttpSecurity.js';
 import { IVoltHttpService } from '../../../voltHttp/browser/voltHttpService.js';
 import { AgentIdeService } from '../../browser/ide/agentIdeService.js';
 import { IdeCli } from '../../browser/ide/capabilities/capability.js';
@@ -119,12 +123,11 @@ suite('Volt agent IDE tools in the sandbox', () => {
 	function controllerRig() {
 		const fileService = store.add(new FileService(new NullLogService()));
 		store.add(fileService.registerProvider(Schemas.file, store.add(new InMemoryFileSystemProvider())));
-		const testFiles: URI[] = [];
+		// Every file written: discovery's one search finds test files and project marker files (package.json) together.
+		const files: URI[] = [];
 		const write = async (path: string, text: string) => {
 			await fileService.writeFile(URI.file(path), VSBuffer.fromString(text));
-			if (/\.test\.js$/.test(path)) {
-				testFiles.push(URI.file(path));
-			}
+			files.push(URI.file(path));
 		};
 		const folder = { uri: URI.file('/ws'), name: 'ws', index: 0, toResource: (path: string) => URI.joinPath(URI.file('/ws'), path) };
 		const workspace = {
@@ -132,11 +135,11 @@ suite('Volt agent IDE tools in the sandbox', () => {
 			getWorkspaceFolder: (uri: URI) => isEqualOrParent(uri, folder.uri) ? folder : null,
 			onDidChangeWorkspaceFolders: Event.None,
 		} as unknown as IWorkspaceContextService;
-		// The query builder's query is just the folders; the search finds the test files under them.
+		// The query builder's query is just the folders; the search finds the files under them (the controller sorts test files from project files).
 		const instantiation = { createInstance: () => ({ file: (folders: (URI | { uri: URI })[]) => ({ folders }) }) } as unknown as IInstantiationService;
 		const search = {
 			fileSearch: async (query: { folders: (URI | { uri: URI })[] }) => ({
-				results: testFiles.filter(file => query.folders.some(item => isEqualOrParent(file, URI.isUri(item) ? item : item.uri))).map(resource => ({ resource })),
+				results: files.filter(file => query.folders.some(item => isEqualOrParent(file, URI.isUri(item) ? item : item.uri))).map(resource => ({ resource })),
 			}),
 		} as unknown as ISearchService;
 		let controller: IMainThreadTestController | undefined;
@@ -217,14 +220,17 @@ suite('Volt agent IDE tools in the sandbox', () => {
 		assert.strictEqual(rig.state(agents, 'adds'), TestResultState.Passed);
 		assert.strictEqual(refusedTestRuns.get(agents), undefined);
 
-		// A report the chat may not read (a link it left in its place) is not read: the test reads as errored, with why.
+		// A report the chat may not read (a link it left in its place) is not read: its file reads as errored, with why
+		// (an error of the whole run sits on each file once, never on each test).
 		const refusedRead = await rig.run(1, { exec, tmpdir: '/chat-tmp', readRefusal: async () => 'it links outside the workspace' });
-		assert.strictEqual(rig.state(refusedRead, 'adds'), TestResultState.Errored);
-		const message = [...refusedRead.tests].find(item => item.item.label === 'adds')!.tasks[0].messages[0].message;
+		assert.strictEqual(rig.state(refusedRead, 'math.test.js'), TestResultState.Errored);
+		assert.notStrictEqual(rig.state(refusedRead, 'adds'), TestResultState.Passed, 'nothing was read, so nothing passed');
+		const message = [...refusedRead.tests].find(item => item.item.label === 'math.test.js')!.tasks[0].messages[0].message;
 		assert.match(typeof message === 'string' ? message : message.value, /The run's report was not read: it links outside the workspace/);
 		// Without the gate's rule Volt cannot tell: not read either.
 		const noRule = await rig.run(1, { exec, tmpdir: '/chat-tmp' });
-		assert.strictEqual(rig.state(noRule, 'adds'), TestResultState.Errored);
+		assert.strictEqual(rig.state(noRule, 'math.test.js'), TestResultState.Errored);
+		assert.notStrictEqual(rig.state(noRule, 'adds'), TestResultState.Passed);
 	});
 
 	test('DEV-SBX-5: a test command the chat\'s sandbox refused did not run (refused, not failing); a sandboxed debug run starts nothing', async () => {
@@ -254,8 +260,9 @@ suite('Volt agent IDE tools in the sandbox', () => {
 		await mochaProject(rig, '/tmp/v4-devrepo');
 		rig.create();
 		await rig.controller()!.syncTests(CancellationToken.None);
-		const fileId = new TestId([VOLT_TEST_CONTROLLER_ID, URI.file('/tmp/v4-devrepo/test/math.test.js').toString()]).toString();
-		const published = () => rig.diffs.flat().some(op => op.op === 0 && op.item.item.extId === fileId);
+		// The file's item, under its folders (its id is its path in the tree, so it is found by its file).
+		const file = URI.file('/tmp/v4-devrepo/test/math.test.js').toString();
+		const published = () => rig.diffs.flat().some(op => op.op === TestDiffOpType.Add && op.item.item.label === 'math.test.js' && op.item.item.uri?.toString() === file);
 		assert.strictEqual(published(), false, 'the window\'s folders do not hold it');
 		await voltTestRoots.ensure(URI.file('/tmp/v4-devrepo'));
 		assert.strictEqual(published(), true, 'the tests tool adds the chat\'s folder before it lists or runs');
@@ -401,7 +408,7 @@ suite('Volt agent IDE tools in the sandbox', () => {
 		const commands: string[] = [];
 		instantiation.stub(ICommandService, { executeCommand: async (id: string) => { commands.push(id); } } as unknown as ICommandService);
 		for (const id of [ITestService, ITestResultService, ITestProfileService, IDebugService, ITaskService, ITerminalService, IFileService, IViewsService, IEditorService, ICodeEditorService, ITextFileService,
-			INotebookEditorModelResolverService, INotebookKernelService, INotebookExecutionService, INotebookExecutionStateService, ITextModelService, IContextKeyService, IVoltHttpService, IEnvironmentService,
+			INotebookEditorModelResolverService, INotebookKernelService, INotebookExecutionService, INotebookExecutionStateService, ITextModelService, IContextKeyService, IVoltHttpService, IVoltHttpCollections, IVoltHttpAutomations, IVoltHttpPerformance, IVoltHttpSecurity, IEnvironmentService,
 			IMarkerService, IWorkbenchEnvironmentService, IPathService, IExtensionService, IVoltProfilerService]) {
 			instantiation.stub(id as ServiceIdentifier<object>, {});
 		}
