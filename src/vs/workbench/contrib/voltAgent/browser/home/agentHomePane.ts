@@ -1319,12 +1319,11 @@ class AgentHomeSectionPane extends Pane {
 function groupHeaderIcon(group: AgentHomeElement): AgentHomeGroupIconId | undefined {
 	const id = group.type === 'bucket' || group.type === 'group' ? group.id : undefined;
 	switch (id) {
-		case 'needsAttention': return 'attention';
+		// Needs Attention and Settled read by their label alone: no icon at the header's end.
 		case 'working': return 'working';
 		case 'draft': return 'draft';
 		case 'done': return 'done';
 		case 'pinned': return 'pinned';
-		case 'settled': return 'settled';
 		case 'snooze': return 'snooze';
 		case 'today':
 		case 'yesterday':

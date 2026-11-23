@@ -2968,9 +2968,9 @@ html.volt-layout-agent-window body {
 	flex: none;
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 4px;
 	height: 40px;
-	padding: 0 10px 0 15px;
+	padding: 0 8px;
 	box-sizing: border-box;
 	border-top: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
 }
@@ -2988,10 +2988,9 @@ html.volt-layout-agent-window body {
 	min-width: 16px;
 	height: 16px;
 	padding: 0 4px;
-	margin-right: 6px;
 	box-sizing: border-box;
 	border-radius: 8px;
-	background: color-mix(in srgb, currentColor 22%, transparent);
+	background: color-mix(in srgb, currentColor 18%, transparent);
 	font-size: 10px;
 	font-weight: 600;
 	line-height: 1;
@@ -3005,18 +3004,23 @@ html.volt-layout-agent-window body {
 	white-space: nowrap;
 }
 
-.monaco-workbench .volt-agent-home-select-bar > .volt-button {
+.monaco-workbench .volt-agent-home-select-bar > .volt-button.volt-button {
 	flex: none;
-	height: 24px;
-	padding: 0 8px;
+	width: auto;
+	height: 26px;
+	padding: 0 10px;
+	font-size: 12px;
+	line-height: 26px;
 }
 
 /* In a narrow sidebar the primary label gives way first; the count badge stays. */
 .monaco-workbench .volt-agent-home-select-bar > .volt-button.volt-button-primary {
-	flex: 0 1 auto;
+	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	display: inline-flex;
 	align-items: center;
-	padding-left: 4px;
+	justify-content: center;
+	gap: 6px;
+	padding: 0 10px 0 5px;
 }
