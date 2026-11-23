@@ -273,7 +273,7 @@
 
 .monaco-workbench.volt-layout-agent.volt-chat-backdrop:not(.hc-black):not(.hc-light) .volt-agent-editor.backdrop-host:not(.browser-hosted):not(.has-turns) .volt-agent-input-box:not(.editing),
 .monaco-workbench.volt-layout-agent.volt-chat-backdrop.volt-chat-backdrop-in-chats:not(.hc-black):not(.hc-light) .volt-agent-editor.backdrop-host:not(.browser-hosted) .volt-agent-input-box:not(.editing) {
-	--volt-composer-bg: color-mix(in srgb, var(--volt-surface-raised-solid, #1f1f1f) 58%, transparent);
+	--volt-composer-bg: color-mix(in srgb, var(--volt-surface-raised-solid, #1f1f1f) 45%, transparent);
 	position: relative;
 	isolation: isolate;
 }
