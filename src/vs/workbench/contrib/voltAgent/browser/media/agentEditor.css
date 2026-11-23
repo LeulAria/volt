@@ -6422,7 +6422,7 @@ pre.volt-agent-searchable {
 .volt-agent-picker-section {
 	display: flex;
 	flex-direction: column;
-	padding: 4px 0;
+	padding: 0;
 }
 
 .volt-agent-picker-section + .volt-agent-picker-section {
@@ -8994,6 +8994,26 @@ pre.volt-agent-searchable {
 
 .volt-agent-mention-file-chevron.hidden {
 	display: none;
+}
+
+/* Back, pinned above the list or tree: it stays while they scroll. Hover gives it the rows' highlight. */
+.volt-agent-mention-pinned {
+	flex: none;
+	border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+}
+
+.volt-agent-mention-pinned.hidden {
+	display: none;
+}
+
+.volt-agent-mention-pinned-row > .volt-menu-row {
+	height: 30px;
+	align-items: center;
+}
+
+.volt-agent-mention-pinned-row:hover {
+	background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
+	color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
 }
 
 /* Tree: entries sit after the twistie like the explorer; Back, Recent and dividers stay flush. */
