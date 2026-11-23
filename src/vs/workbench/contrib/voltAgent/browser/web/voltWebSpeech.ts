@@ -118,7 +118,7 @@ export class WebSpeechService extends Disposable implements IVoltSpeechService {
 					return;
 				}
 				// The browser stops listening by itself after a pause: a new round goes on, keeping the
-				// text so far. Pauses end nothing; the composer stops after two minutes without a word.
+				// text so far. Pauses end nothing; only the user stops a dictation.
 				if (!session.stopping && started) {
 					session.quickEnds = Date.now() - session.roundStartedAt < QUICK_END_MS ? session.quickEnds + 1 : 0;
 					if (session.quickEnds < MAX_QUICK_ENDS) {

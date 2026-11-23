@@ -23,8 +23,11 @@ const AUDIO_BLOCK_MS = AUDIO_BLOCK_FRAMES / VOLT_SPEECH_SAMPLE_RATE * 1000;
 const TRANSCRIBE_TIMEOUT_MS = 60_000;
 /** 32 ms at 16 kHz: four waveform bars per audio block. */
 const LEVEL_SLICE_FRAMES = 512;
-/** Pauses never end a dictation; two minutes without a word do. */
-const SILENCE_STOP_MS = 120_000;
+/**
+ * How long a send waits for the recognizer's last words once the microphone is off, when a partial
+ * transcript is already on screen; past it the message goes with that partial.
+ */
+const SEND_FLUSH_MS = 4_000;
 /** Blocks kept from before the voice starts (about a quarter second), so soft first syllables go through. */
 const PREROLL_BLOCKS = 2;
 
@@ -45,6 +48,8 @@ interface IDictationSession {
 	/** The last silent blocks, sent ahead of the voice that follows them. */
 	readonly preroll: Float32Array[];
 	audio?: IDictationAudio;
+	/** A send is waiting on this dictation: resolved with true once its transcript is in, false when it was dropped. */
+	sending?: (sent: boolean) => void;
 }
 
 /**
@@ -52,8 +57,9 @@ interface IDictationSession {
  * main process, which streams partial text back until a final transcript. The prediction model
  * then cleans the transcript up (punctuation, misheard names, spoken code, fillers) unless that is
  * turned off, or the transcript is clean already. Silence never reaches the recognizer or a model:
- * pauses cost nothing, and two minutes without a word end the dictation. Only one dictation runs
- * at a time; `message` carries the last problem or the "nothing heard" note while idle.
+ * pauses cost nothing, and only the user ends a dictation (the mic, Escape, releasing the shortcut,
+ * or sending). Only one dictation runs at a time; `message` carries the last problem or the
+ * "nothing heard" note while idle.
  */
 export class AgentVoiceDictation extends Disposable {
 
@@ -80,6 +86,7 @@ export class AgentVoiceDictation extends Disposable {
 	private generation = 0;
 	private pendingStop = false;
 	private transcribeTimer: ReturnType<typeof setTimeout> | undefined;
+	private sendTimer: ReturnType<typeof setTimeout> | undefined;
 	/** The cleanup of a final transcript in flight. */
 	private polishing: CancellationTokenSource | undefined;
 
@@ -177,6 +184,54 @@ export class AgentVoiceDictation extends Disposable {
 		this._level = 0;
 		this.setState('idle');
 		void this.speech.cancel(session.id).catch(err => this.logService.trace('[voice] cancel failed', err));
+		session.sending?.(false);
+	}
+
+	/**
+	 * Ends the dictation for a send: the microphone goes off at once, and the promise resolves once the
+	 * whole transcript is in the composer (through {@link onDidCommit}), as heard, without the cleanup:
+	 * the last words the recognizer still owes are not lost, and the send does not wait on a model.
+	 * Resolves false when the dictation was dropped instead (Escape, or a transcript that failed with
+	 * nothing heard), so the draft stays. With no dictation it resolves true at once.
+	 */
+	finishForSend(): Promise<boolean> {
+		const session = this.session;
+		if (!session) {
+			return Promise.resolve(true);
+		}
+		if (this._state === 'starting') {
+			// The microphone is not open yet, so nothing was heard: the draft goes as it is.
+			this.cancel();
+			return Promise.resolve(true);
+		}
+		const done = new Promise<boolean>(resolve => {
+			const earlier = session.sending;
+			session.sending = sent => {
+				session.sending = undefined;
+				this.clearSendTimer();
+				earlier?.(sent);
+				resolve(sent);
+			};
+		});
+		if (this.polishing) {
+			// Takes the transcript as heard: it settles straight away.
+			this.polishing.cancel();
+			return done;
+		}
+		this.stop();
+		this.clearSendTimer();
+		this.sendTimer = setTimeout(() => {
+			this.sendTimer = undefined;
+			// The recognizer is slow with its last words: the message goes with what is on screen. Without
+			// a partial (a transcription endpoint shows none) the transcript is all there is, so it waits.
+			if (this.session === session && this._partial) {
+				this.logService.trace('[voice] no final transcript in time: sending the partial');
+				void this.speech.cancel(session.id).catch(err => this.logService.trace('[voice] cancel failed', err));
+				this.clearTranscribeTimer();
+				this.settle(session, this._partial.trim());
+			}
+		}, SEND_FLUSH_MS);
+		return done;
 	}
 
 	override dispose(): void {
@@ -244,11 +299,6 @@ export class AgentVoiceDictation extends Disposable {
 		const heardBefore = session.gate.heardVoice;
 		const decision = session.gate.push(this._level, AUDIO_BLOCK_MS);
 		if (decision === 'silence') {
-			if (session.gate.silentMs >= SILENCE_STOP_MS) {
-				this.logService.trace('[voice] two minutes without a word: dictation ends');
-				this.stop();
-				return;
-			}
 			// The audio buffer is reused by the next callback.
 			session.preroll.push(samples.slice());
 			if (session.preroll.length > PREROLL_BLOCKS) {
@@ -296,7 +346,8 @@ export class AgentVoiceDictation extends Disposable {
 		}
 		this.clearTranscribeTimer();
 		this.closeAudio(session);
-		if (!text || !this.prediction.getSettings().voice || !dictationNeedsCleanup(text, this.textBefore?.())) {
+		// A send waiting on this transcript takes it as heard: no model stands between Enter and the message.
+		if (!text || session.sending || !this.prediction.getSettings().voice || !dictationNeedsCleanup(text, this.textBefore?.())) {
 			this.settle(session, text);
 			return;
 		}
@@ -330,6 +381,7 @@ export class AgentVoiceDictation extends Disposable {
 			this._onDidCommit.fire(text);
 		}
 		this.setState('idle', text ? undefined : localize('voltAgent.dictation.nothingHeard', "No speech was heard."));
+		session.sending?.(true);
 	}
 
 	private stopPolishing(): void {
@@ -340,6 +392,14 @@ export class AgentVoiceDictation extends Disposable {
 	private fail(sessionId: string, message: string): void {
 		const session = this.session;
 		if (!session || session.id !== sessionId) {
+			return;
+		}
+		if (session.sending && this._partial.trim()) {
+			// A send keeps the words already on screen: they go out instead of being taken back.
+			this.logService.warn('[voice] the final transcript failed: sending the partial', message);
+			void this.speech.cancel(sessionId).catch(err => this.logService.trace('[voice] cancel failed', err));
+			this.clearTranscribeTimer();
+			this.settle(session, this._partial.trim());
 			return;
 		}
 		this.generation++;
@@ -353,6 +413,7 @@ export class AgentVoiceDictation extends Disposable {
 		this.setState('idle', message);
 		this._onDidFail.fire(message);
 		void this.speech.cancel(sessionId).catch(err => this.logService.trace('[voice] cancel failed', err));
+		session.sending?.(false);
 	}
 
 	private closeAudio(session: IDictationSession): void {
@@ -367,6 +428,13 @@ export class AgentVoiceDictation extends Disposable {
 		audio.mute.disconnect();
 		audio.stream.getTracks().forEach(track => track.stop());
 		void audio.context.close();
+	}
+
+	private clearSendTimer(): void {
+		if (this.sendTimer !== undefined) {
+			clearTimeout(this.sendTimer);
+			this.sendTimer = undefined;
+		}
 	}
 
 	private clearTranscribeTimer(): void {

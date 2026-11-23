@@ -7141,7 +7141,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		// A side chat with no project of its own sends in its parent's project, not a new scratch folder.
 		this.surfaceHost.ensureSideChatProject();
-		this.endDictationForSend();
+		if (this.voiceDictation?.active) {
+			this.sendAfterDictation();
+			return;
+		}
 		// A video just attached is still being cut into stills; send once they are ready.
 		const media = this.mentionController?.whenMediaReady();
 		if (media) {
@@ -7176,15 +7179,21 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 	}
 
-	/** Sending ends a dictation: what it wrote so far goes out with the draft, and the mic stops. */
-	private endDictationForSend(): void {
-		if (!this.voiceDictation?.active) {
-			return;
-		}
-		if (this.dictatedText.writing) {
-			this.dictatedText.end(this.voiceDictation.partial);
-		}
-		this.voiceDictation.cancel();
+	/**
+	 * Sending ends a dictation: the mic stops at once, the recognizer's last words land in the draft
+	 * (cancelling the partial instead would drop them, and everything from an engine with no partials),
+	 * and then the draft goes out once. Sends in the meantime are ignored. Escape while it waits, or a
+	 * transcript that failed with nothing heard, keeps the draft unsent; so does switching chats.
+	 */
+	private sendAfterDictation(): void {
+		const sessionKey = this.sessionKey;
+		this.submitting = true;
+		void this.voiceDictation.finishForSend().then(sent => {
+			this.submitting = false;
+			if (sent && this.sessionKey === sessionKey && !this.voiceDictation.active && !this._store.isDisposed) {
+				this.send();
+			}
+		});
 	}
 
 	/** Why this composer cannot send one prompt to several models now; undefined when it can. */
