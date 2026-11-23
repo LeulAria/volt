@@ -70,7 +70,7 @@ import { AGENT_USAGE_INPUT_ID } from '../../../voltUsage/common/voltUsage.js';
 import { AGENT_FOOTER_ACTIONS, AgentFooterAction, wireAgentFooterAction } from './agentHomeFooterActions.js';
 import { IVoltSlotService, VoltSlotPlacement } from '../../../voltCustomize/common/voltSlots.js';
 import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
-import { AgentHomeGroupIconId, createHomeAutomationsIcon, createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeGroupIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon, createQueueEditIcon } from './agentHomeIcons.js';
+import { createHomeAutomationsIcon, createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon, createQueueEditIcon } from './agentHomeIcons.js';
 import { OPEN_SCRATCH_BOARD_COMMAND_ID, ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { IScratchSessionLinks } from '../scratchBoard/scratchSessionLinks.js';
 import { showAgentSnoozeMenu } from './agentSnoozeMenu.js';
@@ -1143,7 +1143,6 @@ class AgentHomeSectionPane extends Pane {
 	private twist: HTMLElement | undefined;
 	private label: HTMLElement | undefined;
 	private count: HTMLElement | undefined;
-	private mark: HTMLElement | undefined;
 	private add: HTMLButtonElement | undefined;
 
 	constructor(
@@ -1258,7 +1257,6 @@ class AgentHomeSectionPane extends Pane {
 		this.twist = append(append(row, $('span.icon')), $('span.twist'));
 		this.label = append(row, $('span.name'));
 		this.count = append(row, $('span.meta'));
-		this.mark = append(row, $('span.group-mark'));
 		const add = append(row, $('button.add.hidden')) as HTMLButtonElement;
 		add.type = 'button';
 		add.tabIndex = -1;
@@ -1288,9 +1286,7 @@ class AgentHomeSectionPane extends Pane {
 		this.label.textContent = elementLabel(group);
 		const count = group.type === 'bucket' || group.type === 'group' || group.type === 'cloudHeader' ? group.count : undefined;
 		this.count.textContent = count === undefined ? '' : String(count);
-		const mark = groupHeaderIcon(group);
-		this.mark?.replaceChildren(...(mark ? [createHomeGroupIcon(mark)] : []));
-		this.mark?.classList.toggle('hidden', !mark);
+		// Group headers read by their label alone: no icon at the right end.
 		// The header's +: only the projects section has one (it adds a project); chat groups (Pinned, Done, Settled) have none.
 		const addsProject = group.type === 'section' && !!group.add;
 		add.classList.toggle('hidden', !addsProject);
@@ -1315,27 +1311,6 @@ class AgentHomeSectionPane extends Pane {
 
 	protected layoutBody(height: number, width: number): void {
 		this.tree?.layout(height, width);
-	}
-}
-
-/** The icon at a group header's right end: what the group holds, at a glance. */
-function groupHeaderIcon(group: AgentHomeElement): AgentHomeGroupIconId | undefined {
-	const id = group.type === 'bucket' || group.type === 'group' ? group.id : undefined;
-	switch (id) {
-		// Needs Attention and Settled read by their label alone: no icon at the header's end.
-		case 'working': return 'working';
-		case 'draft': return 'draft';
-		case 'done': return 'done';
-		case 'pinned': return 'pinned';
-		case 'snooze': return 'snooze';
-		case 'today':
-		case 'yesterday':
-		case 'week':
-		case 'month':
-		case 'older': return 'date';
-		case 'cloud': return 'cloud';
-		case 'local': return 'local';
-		default: return undefined;
 	}
 }
 

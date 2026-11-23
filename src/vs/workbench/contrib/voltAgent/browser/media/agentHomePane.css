@@ -2638,33 +2638,6 @@ html.volt-layout-agent-window body {
 	display: none;
 }
 
-/* The group's icon at the header's right end, in line with the chat rows' right edge. Open
- * headers show it a step brighter, as their label. */
-.volt-agent-home-row.is-group > .group-mark {
-	flex: none;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	margin-left: 6px;
-	/* Pulls back into the row's right padding so the icon ends where the chat rows' statuses end. */
-	margin-right: -9px;
-	opacity: 0.55;
-}
-
-.volt-agent-home-row.is-group > .group-mark.hidden {
-	display: none;
-}
-
-.volt-agent-home-row.is-group > .group-mark .volt-agent-svg-icon {
-	display: flex;
-}
-
-.volt-agent-home-tree .pane-header.expanded > .volt-agent-home-row.is-group > .group-mark {
-	opacity: 0.85;
-}
-
 /* Snoozed tabs sit back until hovered; the countdown is blue, and hover swaps it for the bell. */
 .volt-agent-home-row.is-session.shelf-snooze > .name,
 .volt-agent-home-row.is-session.shelf-snooze > .icon {
