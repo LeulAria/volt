@@ -28,8 +28,9 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
 		{ id: 'files.read:workspace' },
 		{ id: 'files.read:home', targets: ['~/.claude/*', '~/.codex/*', '~/.cursor/*', '~/.config/opencode/*', '~/.agents/*'] },
 	],
+	// agents.read:any lists automations (the API's automations.list); agents.send runs one in an existing chat (threadId).
 	'volt.automations': [
-		{ id: 'tools.register' }, { id: 'automations.schedule' }, { id: 'agents.create' }, { id: 'net.connect' },
+		{ id: 'tools.register' }, { id: 'automations.schedule' }, { id: 'agents.create' }, { id: 'agents.read:any' }, { id: 'agents.send' }, { id: 'net.connect' },
 		{ id: 'hosting.write' }, { id: 'secrets.use:*' }, { id: 'spawn.unsandboxed' },
 	],
 	'volt.browser': [{ id: 'tools.register' }, { id: 'browser.drive' }, { id: 'browser.read' }, { id: 'files.read:workspace' }, { id: 'files.write' }],
@@ -54,6 +55,9 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
 	// The first T2 plugin (P1): project notes and skills through the files broker; its user notes are its own storage.
 	'volt.memory': [
 		{ id: 'tools.register' }, { id: 'agents.context' },
+		// memory_list and memory_read read the notes every chat saved (the API's memory.list and memory.read).
+		// The T2 plugin API has no chat-reading method, so its sandboxed code gains nothing from it.
+		{ id: 'agents.read:any' },
 		{ id: 'files.read:workspace', targets: ['*/.volt/memory', '*/.volt/memory/*'] },
 		// `~/.volt/skills/*` names the home folder's skills as a folder the broker may reach (`*/...` names none).
 		{ id: 'files.write', targets: ['*/.volt/memory/*', '*/.volt/skills/*', '~/.volt/skills/*'] },
@@ -76,8 +80,9 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
 	'volt.provider-opencode': PROVIDER('opencode'),
 	'volt.provider-openrouter': [{ id: 'net.connect', targets: ['openrouter.ai'] }, { id: 'secrets.use:openrouter' }],
 	'volt.provider-pi': PROVIDER('pi'),
+	// agents.send: linking a pull request to its chat (the API's pullRequests.link) and waking the chat when a watched one changes.
 	'volt.pull-requests': [
-		{ id: 'tools.register' }, { id: 'git.read' }, { id: 'hosting.read' }, { id: 'hosting.write' }, { id: 'git.write' }, { id: 'git.push' }, { id: 'spawn.unsandboxed' },
+		{ id: 'tools.register' }, { id: 'git.read' }, { id: 'hosting.read' }, { id: 'hosting.write' }, { id: 'git.write' }, { id: 'git.push' }, { id: 'agents.send' }, { id: 'spawn.unsandboxed' },
 	],
 	'volt.remote-devices': [{ id: 'net.listen:*' }],
 	'volt.scratch-board': [{ id: 'tools.register' }],
@@ -86,7 +91,8 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
 		{ id: 'net.connect', targets: ['skills.sh', '*.skills.sh', 'github.com', '*.githubusercontent.com'] },
 	],
 	'volt.usage': [{ id: 'usage.report' }, { id: 'net.connect' }, { id: 'secrets.use:*' }],
-	'volt.visuals': [{ id: 'tools.register' }, { id: 'files.read:workspace' }, { id: 'browser.drive' }, { id: 'devices.drive' }],
+	// agents.send: drawing on a chat's Scratch board (the API's visuals.drawOnScratch).
+	'volt.visuals': [{ id: 'tools.register' }, { id: 'files.read:workspace' }, { id: 'browser.drive' }, { id: 'devices.drive' }, { id: 'agents.send' }],
 	// The call sends work to chats (or starts one from a new chat's composer) and streams to the voice provider with its key.
 	'volt.voice-chat': [{ id: 'agents.send' }, { id: 'agents.create' }, { id: 'net.connect' }, { id: 'secrets.use:voice' }],
 });
@@ -105,9 +111,12 @@ export const FIRST_PARTY_CEILINGS: Readonly<Record<string, readonly IVoltCeiling
  *
  * Extension hosts (`vscode.volt`) are always enforced; this list is only for trusted-core code.
  *
- * Still in report mode (each has a would-be denial in M5-MODE-1 today): agent-resources,
- * automations, claude-accounts, commit-review, computer-use, dev-environment, devices, memory,
- * orchestra, pull-requests, visuals.
+ * Still in report mode, each only because its manifest declares a critical capability (M5-MODE-2):
+ * agent-resources (files.read:home), automations, commit-review, orchestra, pull-requests
+ * (spawn.unsandboxed), claude-accounts (secrets.manage), computer-use (desktop.control,
+ * screen.capture, spawn.unsandboxed), dev-environment (files.read:home, spawn.unsandboxed),
+ * devices (screen.capture, spawn.unsandboxed). Their tools that run on the host are class
+ * `escapes`, which implies spawn.unsandboxed; core serves them, not the API.
  */
 export const FIRST_PARTY_ENFORCED: ReadonlySet<string> = new Set([
 	'volt.browser',
@@ -115,11 +124,14 @@ export const FIRST_PARTY_ENFORCED: ReadonlySet<string> = new Set([
 	'volt.customize',
 	'volt.git-graph',
 	'volt.http-client',
+	'volt.memory',
 	'volt.playgrounds',
 	'volt.remote-devices',
 	'volt.scratch-board',
 	'volt.skills-and-plugins',
 	'volt.usage',
+	'volt.visuals',
+	'volt.voice-chat',
 	// The 12 providers: each declares only its own secret (or loopback ports, or openrouter.ai).
 	'volt.provider-antigravity',
 	'volt.provider-claude',

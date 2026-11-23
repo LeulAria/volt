@@ -94,6 +94,11 @@
 					"id": "devices.drive",
 					"class": "high",
 					"reason": "screens_capture drives a simulator."
+				},
+				{
+					"id": "agents.send",
+					"class": "medium",
+					"reason": "Draws diagrams on a chat's Scratch board."
 				}
 			]
 		}

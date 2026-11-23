@@ -106,6 +106,16 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						reason: 'An automation run is a chat.',
 					},
 					{
+						id: 'agents.read:any',
+						class: 'medium',
+						reason: 'Lists your automations and their runs\' chats.',
+					},
+					{
+						id: 'agents.send',
+						class: 'medium',
+						reason: 'An automation can run in a chat you already have.',
+					},
+					{
 						id: 'net.connect',
 						class: 'low',
 						reason: 'Slack and Teams actions.',
@@ -1002,6 +1012,11 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						reason: 'Notes and skills later chats read.',
 					},
 					{
+						id: 'agents.read:any',
+						class: 'medium',
+						reason: 'memory_list and memory_read read the notes every chat saved.',
+					},
+					{
 						id: 'files.read:workspace',
 						class: 'low',
 						targets: ['*/.volt/memory', '*/.volt/memory/*'],
@@ -1874,6 +1889,11 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						class: 'high',
 					},
 					{
+						id: 'agents.send',
+						class: 'medium',
+						reason: 'Links a pull request to its chat, and wakes the chat when a watched pull request changes.',
+					},
+					{
 						id: 'spawn.unsandboxed',
 						class: 'critical',
 						reason: 'stack_branch and restack_stack run git checkout, rebase and push on the host.',
@@ -2148,6 +2168,11 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 						id: 'devices.drive',
 						class: 'high',
 						reason: 'screens_capture drives a simulator.',
+					},
+					{
+						id: 'agents.send',
+						class: 'medium',
+						reason: 'Draws diagrams on a chat\'s Scratch board.',
 					},
 				],
 			},
