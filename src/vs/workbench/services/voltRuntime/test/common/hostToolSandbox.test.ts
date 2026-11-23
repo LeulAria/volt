@@ -388,7 +388,8 @@ suite('Volt host tool sandbox classes', () => {
 				}
 			}
 		}
-		assert.deepStrictEqual(escapes, ['notebook.run', 'remote.hosts', 'remote.exec', 'extensions.run']);
+		// The Volt Client's load test and security scan send traffic from the window (65f003f92a6).
+		assert.deepStrictEqual(escapes, ['notebook.run', 'http.perf_run', 'http.security_scan', 'remote.hosts', 'remote.exec', 'extensions.run']);
 	});
 
 	test('DEV-SBX-3: an IDE refusal names the op and says what to do instead', () => {
