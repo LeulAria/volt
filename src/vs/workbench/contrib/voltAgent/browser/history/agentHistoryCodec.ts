@@ -300,14 +300,76 @@ export function userMessageText(message: IAgentUserMessage): string {
 	return (message.agentText ?? message.text ?? '').trim();
 }
 
+/** Room for two lines in a list row; the index cuts it at a word (MAX_SUMMARY_LENGTH). */
+const SUMMARY_PROSE_CHARS = 280;
+
 /**
- * Short activity summary for history lists: files edited beat files read,
- * which beat the live status, which beats the first line of the reply.
+ * What the agent wrote as readable prose, without markdown: fenced code and tables go, links keep
+ * their text, and paragraphs join with a middle dot. `fromEnd` keeps the last paragraph only (the
+ * line the agent is narrating right now).
+ */
+export function summaryProse(text: string, fromEnd = false): string | undefined {
+	const paragraphs = text
+		.replace(/```[\s\S]*?(?:```|$)/g, '\n\n')
+		.split(/\n\s*\n/)
+		.map(paragraph => paragraph
+			.split('\n')
+			.filter(line => !/^\s*\|/.test(line) && !/^\s*(?:[-*_]\s*){3,}$/.test(line))
+			.map(line => line.replace(/^\s*(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/, ''))
+			.join(' ')
+			.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+			.replace(/<[^>\n]{1,80}>/g, ' ')
+			.replace(/(\*\*|__|~~|`)/g, '')
+			.replace(/(^|\s)[*_]([^*_\s][^*_]*)[*_](?=[\s.,;:!?)]|$)/g, '$1$2')
+			.replace(/\s+/g, ' ')
+			.trim())
+		.filter(Boolean);
+	if (!paragraphs.length) {
+		return undefined;
+	}
+	if (fromEnd) {
+		return paragraphs[paragraphs.length - 1].slice(0, SUMMARY_PROSE_CHARS);
+	}
+	let prose = '';
+	for (const paragraph of paragraphs) {
+		prose = prose ? `${prose} \u00b7 ${paragraph}` : paragraph;
+		if (prose.length >= SUMMARY_PROSE_CHARS) {
+			break;
+		}
+	}
+	return prose.slice(0, SUMMARY_PROSE_CHARS);
+}
+
+/** The reply's last stretch of prose: what the agent said after its last tool call. */
+function lastProseSegment(message: IAgentAssistantMessage): string | undefined {
+	for (let i = message.segments.length - 1; i >= 0; i--) {
+		const segment = message.segments[i];
+		if (segment.kind === 'text' && segment.text.trim()) {
+			return segment.text;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * The line a chat shows in lists, in the agent's own words where it has any. While the run is live:
+ * what it last said it is doing, else its live status, else the files it touched. Once it ends: how
+ * its final message starts (the outcome), else the files it touched.
  */
 export function assistantSummary(message: IAgentAssistantMessage, plainText: string): string | undefined {
 	// A failed run is listed by why it failed; the sidebar tells a usage limit apart from it.
 	if (message.outcome === 'failed' && message.failure?.message) {
 		return message.failure.message;
+	}
+	const streaming = !!message.activity?.streaming;
+	const said = lastProseSegment(message);
+	const prose = said ? summaryProse(said, streaming) : undefined;
+	if (prose) {
+		return prose;
+	}
+	// "Thinking" is the badge's word: the row keeps the prompt until the agent does or says something.
+	if (streaming && message.activity?.status && !/^thinking\b/i.test(message.activity.status)) {
+		return message.activity.status;
 	}
 	const items = collectActivityItems(message);
 	const edited = uniqueFiles(items.filter(item => /^(edited|created|deleted|wrote)$/i.test(item.label)));
@@ -318,11 +380,7 @@ export function assistantSummary(message: IAgentAssistantMessage, plainText: str
 	if (read.length) {
 		return `${localize('voltAgent.history.read', "Read")} ${joinFiles(read)}`;
 	}
-	if (message.activity?.streaming && message.activity.status) {
-		return message.activity.status;
-	}
-	const firstLine = plainText.split('\n').map(line => line.trim()).find(Boolean);
-	return firstLine ? firstLine.replace(/[#*_`>]+/g, '').trim() : undefined;
+	return summaryProse(plainText);
 }
 
 function collectActivityItems(message: IAgentAssistantMessage): IAgentActivityItem[] {

@@ -3,12 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Codicon } from '../../../../../base/common/codicons.js';
 import { localize } from '../../../../../nls.js';
 import { isUsageLimitText } from '../../../../services/voltRuntime/common/acpNotices.js';
 import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IAgentTooltipRow } from '../chrome/agentTooltip.js';
-import { createSessionHoverBranchIcon, createSessionHoverFolderIcon } from './agentHomeIcons.js';
+import { createSessionHoverBranchIcon, createSessionHoverClockIcon, createSessionHoverFolderIcon } from './agentHomeIcons.js';
 import { IAgentRepoInfo, repoSlug } from './agentRepoInfo.js';
 
 /** Folder facts the chat-row hover card can show. */
@@ -57,7 +56,7 @@ export function agentSessionHoverRows(
 ): IAgentTooltipRow[] {
 	const rows: IAgentTooltipRow[] = [{ label: title }];
 	if (statusNote) {
-		rows.push({ label: statusNote, icon: Codicon.clock });
+		rows.push({ label: statusNote, icon: createSessionHoverClockIcon });
 	}
 	for (const folder of folders) {
 		const branch = folder.repo?.branch?.trim();

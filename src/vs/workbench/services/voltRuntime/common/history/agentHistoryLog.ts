@@ -28,7 +28,9 @@ import {
 const NEWLINE = 0x0a;
 const MAX_TITLE_LENGTH = 56;
 const MAX_PREVIEW_LENGTH = 200;
-const MAX_SUMMARY_LENGTH = 96;
+/** Two lines of a sidebar row. */
+const MAX_SUMMARY_LENGTH = 220;
+const MAX_PROMPT_LINE_LENGTH = 200;
 
 //#region Encoding
 
@@ -283,6 +285,35 @@ export function derivePreview(text: string): string {
 	return collapsed.length > MAX_PREVIEW_LENGTH ? `${collapsed.slice(0, MAX_PREVIEW_LENGTH - 1)}…` : collapsed;
 }
 
+/** A summary cut to what a list row shows. */
+export function clampSummary(summary: string): string {
+	return truncateAtWord(summary, MAX_SUMMARY_LENGTH);
+}
+
+/** A prompt as one readable line: tags and attachment chips out, whitespace collapsed. */
+export function derivePromptLine(text: string): string {
+	const collapsed = text
+		.replace(/<[^>\n]{1,80}>/g, ' ')
+		.replace(/\[(?:Image|Video|File)\b[^\]\n]*\]/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+	return truncateAtWord(collapsed, MAX_PROMPT_LINE_LENGTH);
+}
+
+/** The latest prompt the user wrote, as they typed it (the stored message's text), for list rows. */
+function lastUserPromptLine(transcript: IAgentSessionTranscript): string | undefined {
+	for (let i = transcript.turns.length - 1; i >= 0; i--) {
+		const user = transcript.turns[i].user;
+		const message = user.message as { origin?: unknown; text?: unknown } | null | undefined;
+		if (message && typeof message === 'object' && message.origin !== undefined) {
+			continue;
+		}
+		const typed = message && typeof message === 'object' && typeof message.text === 'string' ? message.text : user.text;
+		return derivePromptLine(typed) || undefined;
+	}
+	return undefined;
+}
+
 export function deriveStatus(transcript: IAgentSessionTranscript): AgentSessionStatus {
 	const last = transcript.turns.at(-1);
 	if (!last) {
@@ -341,6 +372,7 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		wokeAt: previous?.wokeAt,
 		lastPromptAt: last?.user.at,
 		lastUserPromptAt: lastUserPromptAt(transcript),
+		lastPrompt: lastUserPromptLine(transcript),
 		hasDraft: previous?.hasDraft,
 		unread: previous?.unread,
 		attention: previous?.attention,

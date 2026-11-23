@@ -49,6 +49,7 @@ import {
 	compactRecords,
 	createEmptyIndex,
 	decodeLog,
+	clampSummary,
 	deriveMeta,
 	describeWorkspace,
 	IAgentHistoryExport,
@@ -155,6 +156,8 @@ class SessionHandle implements IAgentSessionHandle {
 	 * final record replaces it; a reload before that reads it back (doLoad).
 	 */
 	private partial: IPartialRecord | undefined;
+	/** What the streaming reply last said it is doing: the index's summary until the reply is recorded. */
+	private liveSummary: { readonly turn: string; readonly text: string } | undefined;
 	private partialTimer: ReturnType<typeof setTimeout> | undefined;
 	/** A partial file may be on disk; it goes once the log holds what it had. */
 	private partialOnDisk = false;
@@ -313,8 +316,28 @@ class SessionHandle implements IAgentSessionHandle {
 			return;
 		}
 		this.dropPartial();
+		this.liveSummary = undefined;
 		this.append({ type: 'agent', at: Date.now(), ...entry });
 		this.flushSoon();
+	}
+
+	noteLiveSummary(turn: string, summary: string | undefined): void {
+		if (this.closed) {
+			return;
+		}
+		const text = summary?.trim() ? clampSummary(summary.trim()) : undefined;
+		this.liveSummary = text ? { turn, text } : undefined;
+		const meta = this.meta;
+		if (meta && text) {
+			this.service.updateMeta(this.withLiveSummary(meta));
+		}
+	}
+
+	/** The streaming reply speaks for its turn until it is recorded: a title or model change must not blank the row. */
+	private withLiveSummary(meta: IAgentSessionMeta): IAgentSessionMeta {
+		const live = this.liveSummary;
+		const last = this.transcript?.turns.at(-1);
+		return live && last && last.id === live.turn && !last.assistant && meta.summary !== live.text ? { ...meta, summary: live.text } : meta;
 	}
 
 	/**
@@ -420,7 +443,7 @@ class SessionHandle implements IAgentSessionHandle {
 		this.entries.push(snapshot);
 		this.pending.push(encoded);
 		this.transcript = foldTranscript(this.header, this.entries);
-		this.service.updateMeta(metaAfterEntry(deriveMeta(this.transcript, this.meta), snapshot));
+		this.service.updateMeta(this.withLiveSummary(metaAfterEntry(deriveMeta(this.transcript, this.meta), snapshot)));
 		if (this.appendTimer === undefined) {
 			this.appendTimer = setTimeout(() => {
 				this.appendTimer = undefined;

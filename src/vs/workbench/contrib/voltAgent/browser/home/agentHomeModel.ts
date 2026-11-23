@@ -7,7 +7,7 @@ import { basename } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IAgentSessionMeta } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { deriveTitle } from '../../../../services/voltRuntime/common/history/agentHistoryLog.js';
+import { derivePromptLine, deriveTitle } from '../../../../services/voltRuntime/common/history/agentHistoryLog.js';
 import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import type { IOrchState } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { canonicalProjectRoot, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
@@ -394,6 +394,9 @@ export function sessionsWithSendingChats(sessions: readonly IAgentSessionMeta[],
 			attention: undefined,
 			wokeAt: undefined,
 			hasDraft: false,
+			// The reply before this prompt is old news: the row says what was just asked.
+			summary: undefined,
+			lastPrompt: derivePromptLine(prompt) || session.lastPrompt,
 			turnCount: draft ? 1 : session.turnCount,
 			updatedAt: Math.max(session.updatedAt, now),
 		};
@@ -942,9 +945,9 @@ export function sessionMetaParts(session: IAgentSessionMeta, context: IAgentHome
 	return parts;
 }
 
-/** Agent tabs take two lines while the Show menu puts anything on the second (branch, PR, model). */
+/** Agent tabs take more than one line while the Show menu puts anything under the title (summary, branch, PR, model). */
 export function isTwoLineView(view: IAgentHomeViewState): boolean {
-	return view.show.has('branch') || view.show.has('pr') || view.show.has('model');
+	return view.show.has('branch') || view.show.has('pr') || view.show.has('model') || view.show.has('summary');
 }
 
 /** A project name short enough for a chat row's second line: 8 characters, then an ellipsis. */
@@ -974,6 +977,73 @@ export function sessionSecondLine(session: IAgentSessionMeta, context: IAgentHom
 		...(!branch && context.workspace ? { place: context.workspace } : {}),
 		...(model ? { model } : {}),
 	};
+}
+
+/**
+ * How a chat's summary reads:
+ * - `ask`: the prompt just sent, until the agent says anything.
+ * - `live`: what the agent says it is doing now.
+ * - `input`: it waits on the user (an approval, a question).
+ * - `done`: how its last reply starts, not looked at yet. `seen` once it was.
+ * - `failed`: why the run failed.
+ * - `paused`: stopped or interrupted; what it last said.
+ */
+export type AgentHomeSummaryTone = 'ask' | 'live' | 'input' | 'done' | 'seen' | 'failed' | 'paused';
+
+export interface IAgentHomeSummary {
+	readonly text: string;
+	readonly tone: AgentHomeSummaryTone;
+}
+
+/**
+ * The lines under an agent tab's title: one summary that follows the chat. Sending a prompt shows the
+ * prompt; the agent's own words replace it while it works; its final message replaces those when it
+ * ends. A chat with nothing sent has none.
+ */
+export function sessionSummary(session: IAgentSessionMeta, live?: AgentHomeWorkState, seen = false): IAgentHomeSummary | undefined {
+	if (session.turnCount === 0) {
+		return undefined;
+	}
+	const said = session.summary?.trim();
+	switch (session.attention) {
+		case 'approval':
+			return { tone: 'input', text: said ? localize('voltAgent.home.summary.approvalAfter', "Needs your approval \u00b7 {0}", said) : localize('voltAgent.home.summary.approval', "Needs your approval to continue") };
+		case 'question':
+			return { tone: 'input', text: said ? localize('voltAgent.home.summary.questionAfter', "Has a question for you \u00b7 {0}", said) : localize('voltAgent.home.summary.question', "Has a question for you") };
+		case undefined: break;
+		default: {
+			const unexpected: never = session.attention;
+			return unexpected;
+		}
+	}
+	const work = sessionWorkState(session, live);
+	if (work === 'delegating') {
+		return { tone: 'live', text: said ? localize('voltAgent.home.summary.delegatingAfter', "Waiting on its subagents \u00b7 {0}", said) : localize('voltAgent.home.summary.delegating', "Waiting on its subagents") };
+	}
+	if (work === 'working') {
+		// History still holds the last reply while a new turn starts: only a running record speaks for this turn.
+		if (said && session.status === 'running') {
+			return { tone: 'live', text: said };
+		}
+		return session.lastPrompt ? { tone: 'ask', text: session.lastPrompt } : said ? { tone: 'live', text: said } : undefined;
+	}
+	switch (session.status) {
+		case 'error':
+			return { tone: 'failed', text: said || localize('voltAgent.home.summary.failed', "The run failed before it replied") };
+		case 'interrupted':
+		case 'cancelled': {
+			const text = said || session.lastPrompt;
+			return text ? { tone: 'paused', text } : undefined;
+		}
+		case 'running':
+		case 'done':
+		case 'idle':
+			return said ? { tone: seen ? 'seen' : 'done', text: said } : undefined;
+		default: {
+			const unexpected: never = session.status;
+			return unexpected;
+		}
+	}
 }
 
 export function agentHomeGroupLabel(id: AgentHomeGroupId): string {

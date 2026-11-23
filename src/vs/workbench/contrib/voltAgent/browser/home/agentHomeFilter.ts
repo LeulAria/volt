@@ -12,7 +12,7 @@ export type AgentHomeGrouping = 'repository' | 'workspace' | 'updated' | 'status
 /** `manual`: the order chats were dragged into (see {@link placeChatInOrder}). */
 export type AgentHomeChatOrder = 'updated' | 'status' | 'manual';
 export type AgentHomeGroupOrder = 'updated' | 'manual';
-export type AgentHomeShowField = 'status' | 'updated' | 'environment' | 'pr' | 'workspace' | 'branch' | 'machine' | 'model';
+export type AgentHomeShowField = 'status' | 'updated' | 'environment' | 'pr' | 'workspace' | 'branch' | 'machine' | 'model' | 'summary';
 export type AgentHomeStatusFilter = 'needsAttention' | 'unread' | 'working' | 'draft' | 'done';
 export type AgentHomePrFilter = 'draft' | 'open' | 'merged' | 'closed' | 'none';
 export type AgentHomeEnvironmentFilter = 'cloud' | 'local';
@@ -47,9 +47,9 @@ export interface IAgentHomeViewStateJson {
 
 export const AGENT_HOME_VIEW_STORAGE_KEY = 'volt.agent.home.view';
 
-export const DEFAULT_AGENT_HOME_SHOW: readonly AgentHomeShowField[] = ['status', 'updated', 'environment', 'pr', 'branch', 'model'];
-/** Bumped when a Show field is added. Revision 2 added the status line; 3 the second line (branch, model). */
-const AGENT_HOME_SHOW_REVISION = 3;
+export const DEFAULT_AGENT_HOME_SHOW: readonly AgentHomeShowField[] = ['status', 'updated', 'environment', 'pr', 'branch', 'model', 'summary'];
+/** Bumped when a Show field is added. Revision 2 added the status line; 3 the second line (branch, model); 4 the summary. */
+const AGENT_HOME_SHOW_REVISION = 4;
 export const DEFAULT_AGENT_HOME_STATUS: readonly AgentHomeStatusFilter[] = ['needsAttention', 'working', 'draft', 'done'];
 export const DEFAULT_AGENT_HOME_PR: readonly AgentHomePrFilter[] = ['draft', 'open', 'merged', 'closed', 'none'];
 export const DEFAULT_AGENT_HOME_ENVIRONMENT: readonly AgentHomeEnvironmentFilter[] = ['cloud', 'local'];
@@ -403,6 +403,9 @@ function reviveShow(value: Partial<IAgentHomeViewStateJson>): Set<AgentHomeShowF
 		show.add('branch');
 		show.add('model');
 	}
+	if (revision < 4) {
+		show.add('summary');
+	}
 	return show;
 }
 
@@ -427,7 +430,7 @@ function isGroupOrder(value: unknown): value is AgentHomeGroupOrder {
 }
 
 function isShowField(value: unknown): value is AgentHomeShowField {
-	return value === 'status' || value === 'updated' || value === 'environment' || value === 'pr' || value === 'workspace' || value === 'branch' || value === 'machine' || value === 'model';
+	return value === 'status' || value === 'updated' || value === 'environment' || value === 'pr' || value === 'workspace' || value === 'branch' || value === 'machine' || value === 'model' || value === 'summary';
 }
 
 function isStatusFilter(value: unknown): value is AgentHomeStatusFilter {

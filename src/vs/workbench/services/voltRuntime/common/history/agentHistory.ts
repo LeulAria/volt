@@ -159,7 +159,7 @@ export interface IAgentSessionMeta {
 	readonly turnCount: number;
 	/** First prompt, trimmed, for search and previews. */
 	readonly preview: string;
-	/** Latest activity summary, for the second line in lists. */
+	/** What the agent is doing now, or how its last reply starts: up to two lines in lists. */
 	readonly summary?: string;
 	readonly status: AgentSessionStatus;
 	readonly pinned?: boolean;
@@ -189,6 +189,8 @@ export interface IAgentSessionMeta {
 	 * request news) do not count. Absent in older indexes: fall back to {@link lastPromptAt}.
 	 */
 	readonly lastUserPromptAt?: number;
+	/** The latest prompt the user wrote, as one line: what a working chat was asked, until it says what it is doing. */
+	readonly lastPrompt?: string;
 	readonly hasDraft?: boolean;
 	/** A reply finished while the chat was not on screen. */
 	readonly unread?: boolean;
@@ -266,6 +268,11 @@ export interface IAgentSessionHandle {
 
 	appendUser(turn: string, text: string, message: unknown): void;
 	appendAssistant(entry: IAgentSessionAppendAssistant): void;
+	/**
+	 * What the reply still streaming for `turn` says the agent is doing now. Lists follow it at once;
+	 * nothing is written to the log (the final reply's summary replaces it).
+	 */
+	noteLiveSummary?(turn: string, summary: string | undefined): void;
 	truncate(fromTurn: string): void;
 	setMeta(meta: { title?: string; agentTitle?: string; mode?: string; model?: string; worktreePath?: string; worktreeBranch?: string; forkOf?: IAgentForkOrigin }): void;
 	saveDraft(draft: Omit<IAgentSessionDraft, 'updatedAt'> | undefined): void;

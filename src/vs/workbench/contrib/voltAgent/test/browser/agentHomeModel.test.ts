@@ -36,6 +36,7 @@ import {
 	sessionInWorkingShelf,
 	sessionsWithOpenDrafts,
 	sessionsWithSendingChats,
+	sessionSummary,
 	sessionWorkState,
 	sortWorkingSessions,
 	uniqueHomeFolders,
@@ -564,6 +565,7 @@ suite('Agent home list model', () => {
 		const full = view();
 		assert.ok(isTwoLineView(full));
 		assert.ok(!isTwoLineView(view({ show: ['status', 'updated'] })), 'with nothing for the second line, tabs stay one line');
+		assert.ok(isTwoLineView(view({ show: ['summary'] })));
 		assert.ok(isTwoLineView(view({ show: ['pr'] })));
 
 		const worktree = session('w', { worktreeBranch: 'volt/abc12345', model: 'Opus 4.5' });
@@ -756,5 +758,28 @@ suite('Agent home list model', () => {
 		assert.deepStrictEqual(fairPaneShares([56, 1000, 1000], 456), { sizes: [56, 200, 200], left: 0 });
 		assert.deepStrictEqual(fairPaneShares([1000, 1000], 301), { sizes: [150, 151], left: 0 });
 		assert.deepStrictEqual(fairPaneShares([100], -10), { sizes: [0], left: 0 });
+	});
+
+	test('a chat row carries one summary: the prompt, then the agent\'s words, then the outcome', () => {
+		assert.strictEqual(sessionSummary(session('draft', { turnCount: 0, summary: 'old' })), undefined, 'nothing sent, nothing to say');
+		const asked = session('a', { turnCount: 2, status: 'running', lastPrompt: 'fix the login bug' });
+		assert.deepStrictEqual(sessionSummary(asked), { tone: 'ask', text: 'fix the login bug' });
+		assert.deepStrictEqual(sessionSummary({ ...asked, summary: 'Reading login.ts' }), { tone: 'live', text: 'Reading login.ts' });
+		// A queued turn is starting: the reply on record is the last turn's, so the prompt stands in.
+		assert.deepStrictEqual(sessionSummary(session('q', { turnCount: 2, status: 'done', summary: 'Old reply', lastPrompt: 'next thing' }), 'working'), { tone: 'ask', text: 'next thing' });
+		const done = session('d', { turnCount: 2, status: 'done', summary: 'Fixed the login bug.', lastPrompt: 'fix the login bug' });
+		assert.deepStrictEqual(sessionSummary(done), { tone: 'done', text: 'Fixed the login bug.' });
+		assert.deepStrictEqual(sessionSummary(done, undefined, true), { tone: 'seen', text: 'Fixed the login bug.' });
+		assert.strictEqual(sessionSummary({ ...done, attention: 'approval' })?.tone, 'input');
+		assert.strictEqual(sessionSummary({ ...done, status: 'error', summary: 'Connection reset' })?.tone, 'failed');
+		assert.deepStrictEqual(sessionSummary({ ...done, status: 'cancelled', summary: undefined }), { tone: 'paused', text: 'fix the login bug' });
+		assert.strictEqual(sessionSummary(done, 'delegating')?.tone, 'live');
+	});
+
+	test('a sending chat shows its prompt in place of the last reply', () => {
+		const [sending] = sessionsWithSendingChats([session('s', { turnCount: 3, status: 'done', summary: 'Old reply' })], new Map([['s', 'now add <b>tests</b>\n[Image #1: a.png]']]), 1_000);
+		assert.strictEqual(sending.summary, undefined);
+		assert.strictEqual(sending.lastPrompt, 'now add tests');
+		assert.deepStrictEqual(sessionSummary(sending), { tone: 'ask', text: 'now add tests' });
 	});
 });
