@@ -16,7 +16,7 @@ import { IContextViewService } from '../../../../../platform/contextview/browser
 import { ILimitChipView, limitChipView, limitParkedClock, nextBannerTick } from '../../../../services/voltRuntime/common/orchestration/limitRecovery.js';
 import { IAgentOrchestratorService, IOrchThread } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { rescueChipView, rescueWaits } from '../../../../services/voltRuntime/common/orchestration/rescue.js';
-import { setAgentTooltip } from '../chrome/agentTooltip.js';
+import { AgentTooltip, IAgentTooltipRow, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IAgentThreadLifecycleService } from '../home/agentThreadLifecycle.js';
 import { IVoltMenuItem, showVoltMenu } from '../ui/menu/voltMenu.js';
 
@@ -28,6 +28,9 @@ export interface IAgentLimitChipHost {
 }
 
 type LimitAction = 'arm' | 'disarm' | 'resume' | 'stop' | 'switch';
+
+/** How long the pointer rests on the chip before its explanation opens. */
+const LIMIT_CARD_DELAY_MS = 350;
 
 /**
  * The chat's usage-limit state as the first chip of the composer's row (agentComposerChips.ts):
@@ -50,6 +53,9 @@ export class AgentLimitChip extends Disposable {
 	/** The chip showed, hid or changed width: the row lays itself out again. */
 	readonly onDidChange: Event<void> = this._onDidChange.event;
 	private readonly renderStore = this._register(new DisposableStore());
+	private readonly hover = this._register(new AgentTooltip());
+	/** The chip's menu is up: its explanation card and button tooltips stay away. */
+	private menuOpen = false;
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private error: string | undefined;
 	private shownFor: string | undefined;
@@ -124,7 +130,17 @@ export class AgentLimitChip extends Disposable {
 		if (view.primary === 'arm' && !this.error) {
 			append(main, $('span.volt-agent-limit-chip-arm')).textContent = view.armLabel;
 		}
-		setAgentTooltip(main, view.tooltip);
+		// A card, not a one-line tooltip: what the chip says, the provider's own sentence, then what Volt does
+		// about it under a hairline. It stays away while the chip's menu is open (the menu covers the same ground).
+		const explained = view.tooltip.split('\n');
+		const note = explained.pop() ?? '';
+		const rows: IAgentTooltipRow[] = [
+			{ label: [view.label, view.detail].filter(Boolean).join(' \u00b7 '), body: true },
+			...(explained.length ? [{ label: explained.join('\n'), body: true }] : []),
+			...(note ? [{ label: note, body: true, separator: true }] : []),
+		];
+		this.renderStore.add(this.hover.bind(main, () => this.menuOpen ? [] : rows, { variant: 'card', placement: 'above', delay: LIMIT_CARD_DELAY_MS }));
+		main.setAttribute('aria-expanded', String(this.menuOpen));
 		main.setAttribute('aria-label', [view.label, view.detail, view.primary === 'arm' ? view.armLabel : undefined].filter(Boolean).join(', '));
 		this.renderStore.add(addDisposableListener(main, 'click', e => {
 			EventHelper.stop(e, true);
@@ -139,10 +155,12 @@ export class AgentLimitChip extends Disposable {
 		more.type = 'button';
 		more.setAttribute('aria-haspopup', 'menu');
 		more.appendChild(renderIcon(Codicon.chevronDown));
+		more.setAttribute('aria-expanded', String(this.menuOpen));
 		setAgentTooltip(more, localize('voltAgent.limitChip.more', "Usage limit options"));
 		this.renderStore.add(addDisposableListener(more, 'click', e => {
 			EventHelper.stop(e, true);
-			this.openMenu(chatId, more, view);
+			// Over the whole chip, its left edge on the chip's: from the arrow alone it opened off to the right.
+			this.openMenu(chatId, chip, view);
 		}));
 
 		// The countdown moves by the minute; the chip re-reads the state when it is due.
@@ -209,7 +227,7 @@ export class AgentLimitChip extends Disposable {
 		setAgentTooltip(more, localize('voltAgent.rescueChip.more', "Restart options"));
 		this.renderStore.add(addDisposableListener(more, 'click', e => {
 			EventHelper.stop(e, true);
-			open(more);
+			open(chip);
 		}));
 		const next = nextBannerTick(view.dueAt, now);
 		if (next !== undefined) {
@@ -217,19 +235,36 @@ export class AgentLimitChip extends Disposable {
 		}
 	}
 
+	private setMenuOpen(open: boolean): void {
+		this.menuOpen = open;
+		if (open) {
+			this.hover.hide();
+		}
+		// The chip may have been drawn again since the menu opened: its buttons are found now.
+		for (const button of this.element.querySelectorAll('button')) {
+			button.setAttribute('aria-expanded', String(open));
+		}
+	}
+
 	private openMenu(chatId: string, anchor: HTMLElement, view: ILimitChipView): void {
+		// Each line under a label fits the menu's width: a cut-off explanation explains nothing. What to do
+		// now comes first, then how the wait is set, then the way around the limit.
 		const items: IVoltMenuItem<LimitAction>[] = [];
 		if (view.tone === 'checking') {
-			items.push({ id: 'stop', label: localize('voltAgent.limitChip.stopChecking', "Stop checking"), subtitle: localize('voltAgent.limitChip.stopCheckingDetail', "Stops the resume that is waiting for an answer"), icon: Codicon.debugStop, data: 'stop' });
+			items.push({ id: 'stop', label: localize('voltAgent.limitChip.stopChecking', "Stop checking"), subtitle: localize('voltAgent.limitChip.stopCheckingDetail', "Cancels the resume that is out now"), icon: Codicon.debugStop, data: 'stop' });
 		} else {
+			items.push({ id: 'resume', label: localize('voltAgent.limitChip.resumeNow', "Resume now"), subtitle: localize('voltAgent.limitChip.resumeNowDetail', "Tries once; waits again if still limited"), icon: Codicon.play, data: 'resume' });
 			if (view.auto) {
-				items.push({ id: 'disarm', label: localize('voltAgent.limitChip.disarm', "Stop waiting"), subtitle: localize('voltAgent.limitChip.disarmDetail', "Nothing is sent until you resume the chat yourself"), icon: Codicon.circleSlash, data: 'disarm' });
+				items.push({ id: 'disarm', label: localize('voltAgent.limitChip.disarm', "Stop waiting"), subtitle: localize('voltAgent.limitChip.disarmDetail', "Nothing is sent until you resume it"), icon: Codicon.circleSlash, data: 'disarm' });
 			} else {
-				items.push({ id: 'arm', label: view.armLabel, subtitle: localize('voltAgent.limitChip.armDetail', "Volt keeps checking and continues this chat once it answers"), icon: Codicon.history, data: 'arm' });
+				items.push({ id: 'arm', label: view.armLabel, subtitle: localize('voltAgent.limitChip.armDetail', "Continues this chat once it answers"), icon: Codicon.history, data: 'arm' });
 			}
-			items.push({ id: 'resume', label: localize('voltAgent.limitChip.resumeNow', "Resume now"), subtitle: localize('voltAgent.limitChip.resumeNowDetail', "Try once more now; if the limit holds the chat waits again"), icon: Codicon.debugContinue, data: 'resume' });
 		}
-		items.push({ id: 'switch', label: localize('voltAgent.limitChip.switch', "Switch model…"), subtitle: localize('voltAgent.limitChip.switchDetail', "Continue on a model that is not limited"), icon: Codicon.arrowSwap, data: 'switch' });
+		items.push({ id: 'switch', label: localize('voltAgent.limitChip.switch', "Switch model"), subtitle: localize('voltAgent.limitChip.switchDetail', "Continue on a model that is not limited"), icon: Codicon.arrowSwap, data: 'switch' });
+		// The heading names the limit ("Codex limit"); the provider's whole sentence is in the chip's hover card.
+		const heading = view.label.split(' \u00b7 ')[0];
+		// While the menu is up the chip's buttons say nothing on hover (the shared tooltip reads aria-expanded).
+		this.setMenuOpen(true);
 		showVoltMenu<LimitAction>(this.contextViewService, {
 			anchor,
 			position: 'above',
@@ -237,8 +272,9 @@ export class AgentLimitChip extends Disposable {
 			width: 320,
 			ariaLabel: localize('voltAgent.limitChip.menu', "Usage limit"),
 			className: 'volt-agent-terminal-menu',
-			sections: [{ id: 'limit', title: view.message, items }],
+			sections: [{ id: 'limit', title: heading, items }],
 			onPick: item => this.act(chatId, item.data, anchor),
+			onHide: () => this.setMenuOpen(false),
 		});
 	}
 
