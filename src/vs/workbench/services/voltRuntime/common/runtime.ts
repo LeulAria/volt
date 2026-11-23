@@ -51,6 +51,10 @@ export interface IVoltMcpServerStatus {
 	readonly scope: 'project' | 'user';
 	/** `idle`: configured but not started yet (servers start with the first run that needs tools). */
 	readonly state: 'idle' | 'connecting' | 'ready' | 'error';
+	/** `error` only: why the last attempt failed, in words for a hover. */
+	readonly error?: string;
+	/** `error` only: the server asks for a sign-in (OAuth) Volt cannot do yet, rather than being broken. */
+	readonly needsAuth?: boolean;
 	/**
 	 * Project servers only: whether Volt may start it. `needed` (never decided), `changed` (decided
 	 * for another command), `untrusted` (approved, but the folder is not trusted), `denied`.

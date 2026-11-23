@@ -2456,10 +2456,11 @@ export class AgentMentionController extends Disposable {
 					: localize('voltAgent.mention.userMcp', "User MCP server"),
 				icon: Codicon.server,
 				trailing: server.state === 'ready' ? localize('voltAgent.mention.mcpReady', "Ready")
-					: server.state === 'error' ? localize('voltAgent.mention.mcpError', "Error")
+					: server.state === 'error' ? (server.needsAuth ? localize('voltAgent.mention.mcpNeedsAuth', "Needs sign-in") : localize('voltAgent.mention.mcpError', "Error"))
 						: server.state === 'connecting' ? localize('voltAgent.mention.mcpConnecting', "Connecting...")
 							: undefined,
-				trailingTone: server.state === 'error' ? 'error' : undefined,
+				trailingTone: server.state === 'error' ? (server.needsAuth ? 'warning' : 'error') : undefined,
+				trailingTitle: server.state === 'error' ? server.error : undefined,
 				run: () => this.pickMention({ id: generateUuid(), kind: 'mcp', label: server.name }),
 			});
 		}
