@@ -22,7 +22,7 @@ import { IViewsService } from '../../../services/views/common/viewsService.js';
 import type { AgentSidePanel } from '../../voltAgent/browser/chrome/agentSidePanel.js';
 import { AGENT_SIDE_PANEL_VIEW_ID } from '../../voltAgent/browser/editor/agentEditorInput.js';
 import { closeModuleEditorsOnUnload, embedModuleEditor, IVoltFeatureModule, IVoltFeatureModuleHost } from '../../voltCustomize/browser/voltFeatureModules.js';
-import { ISkillsEmbeddedPage, IVoltSkillsModule, OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID, SKILLS_EDITOR_ID, SKILLS_EDITOR_INPUT_TYPE_ID } from '../common/voltSkills.js';
+import { ISkillsEmbeddedHost, ISkillsEmbeddedPage, IVoltSkillsModule, OPEN_SKILLS_COMMAND_ID, OPEN_SKILLS_MARKETPLACE_COMMAND_ID, SKILLS_EDITOR_ID, SKILLS_EDITOR_INPUT_TYPE_ID } from '../common/voltSkills.js';
 import { AgentCustomizeEditor, AgentCustomizeEditorInput, AgentCustomizeEditorInputSerializer } from './agentCustomizeEditor.js';
 
 function registerCommands(store: DisposableStore): void {
@@ -91,12 +91,22 @@ class VoltSkillsModule implements IVoltFeatureModule, IVoltSkillsModule {
 		host.subscriptions.add(toDisposable(() => this.host = undefined));
 	}
 
-	createEmbeddedPage(parent: HTMLElement, group: IEditorGroup): ISkillsEmbeddedPage {
+	createEmbeddedPage(parent: HTMLElement, group: IEditorGroup, pageHost?: ISkillsEmbeddedHost): ISkillsEmbeddedPage {
 		const host = this.host;
 		if (!host) {
 			throw new Error('The Skills & Plugins module is not loaded.');
 		}
-		return embedModuleEditor(host, host.instantiationService.createInstance(AgentCustomizeEditor, group), new AgentCustomizeEditorInput(), parent);
+		const editor = host.instantiationService.createInstance(AgentCustomizeEditor, group);
+		if (pageHost) {
+			editor.setSkillEditorHost(pageHost);
+		}
+		const page = embedModuleEditor(host, editor, new AgentCustomizeEditorInput(), parent);
+		return {
+			setVisible: visible => page.setVisible(visible),
+			layout: (width, height) => page.layout(width, height),
+			restoreSkillList: state => editor.restoreSkillList(state),
+			dispose: () => page.dispose(),
+		};
 	}
 }
 

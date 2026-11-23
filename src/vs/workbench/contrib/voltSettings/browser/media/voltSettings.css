@@ -71,15 +71,24 @@
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
-	padding: 52px 0 0;
+	/* Agent mode's overlay clears the window's title bar (below); a Settings tab sits under the editor tabs. */
+	padding: 12px 0 0;
 	background: var(--vscode-voltAgent-sidebarBackground, var(--volt-agent-sidebar-bg, color-mix(in srgb, color-mix(in srgb, var(--volt-agent-window-bg-base, #141414) 78%, #000) 55%, transparent)));
 	border-right: 1px solid var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
 }
 
 .volt-settings-sidebar-head {
+	display: none;
+	margin: 0 10px 8px;
+}
+
+.volt-settings-overlay .volt-settings-sidebar {
+	padding-top: 52px;
+}
+
+.volt-settings-overlay .volt-settings-sidebar-head {
 	flex: none;
 	display: flex;
-	margin: 0 10px 8px;
 }
 
 /* The agent list's footer row (agentHomePane.css styles the buttons). */
@@ -200,6 +209,9 @@
 	font-size: 13px;
 	line-height: 18px;
 	white-space: nowrap;
+}
+
+.volt-settings-overlay .volt-settings-topbar {
 	-webkit-app-region: drag;
 }
 

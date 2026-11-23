@@ -260,6 +260,11 @@ function registerActiveEditorMoveCopyCommand(): void {
 	}
 
 	function moveCopyActiveEditorToGroup(isMove: boolean, args: SelectedEditorsMoveCopyArguments, sourceGroup: IEditorGroup, editors: EditorInput[], accessor: ServicesAccessor): void {
+		const eligibleEditors = isMove ? editors : editors.filter(editor => !editor.hasCapability(EditorInputCapabilities.Singleton));
+		if (!eligibleEditors.length) {
+			return;
+		}
+
 		const editorGroupsService = accessor.get(IEditorGroupsService);
 		const configurationService = accessor.get(IConfigurationService);
 
@@ -314,7 +319,7 @@ function registerActiveEditorMoveCopyCommand(): void {
 		}
 
 		if (targetGroup) {
-			const editorsWithOptions = prepareMoveCopyEditors(sourceGroup, editors);
+			const editorsWithOptions = prepareMoveCopyEditors(sourceGroup, eligibleEditors);
 			if (isMove) {
 				sourceGroup.moveEditors(editorsWithOptions, targetGroup);
 			} else if (sourceGroup.id !== targetGroup.id) {

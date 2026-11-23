@@ -12,17 +12,18 @@ import { IAction } from '../../../../base/common/actions.js';
 import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { fromNow } from '../../../../base/common/date.js';
+import { toErrorMessage } from '../../../../base/common/errorMessage.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../base/common/network.js';
-import { basename, joinPath } from '../../../../base/common/resources.js';
+import { basename, isEqual, joinPath } from '../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
-import { IEditorOptions } from '../../../../platform/editor/common/editor.js';
+import { EditorActivation, IEditorOptions } from '../../../../platform/editor/common/editor.js';
 import { IFileService, IFileStat } from '../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
@@ -35,7 +36,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
 import { getLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
-import { IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../../../common/editor.js';
+import { EditorsOrder, IEditorOpenContext, IEditorSerializer, IUntypedEditorInput } from '../../../common/editor.js';
 import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IEditorGroup, IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService, SIDE_GROUP } from '../../../services/editor/common/editorService.js';
@@ -47,6 +48,7 @@ import { IVoltHookExecution, IVoltHooksService } from '../../../services/voltRun
 import '../../../services/voltRuntime/browser/hooks/voltHooksService.js';
 import { createCustomizationKindIcon } from '../../voltAgent/browser/chrome/agentModeIcons.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
+import { AgentEditorInput } from '../../voltAgent/browser/editor/agentEditorInput.js';
 import { createAgentScrollable } from '../../voltAgent/browser/editor/agentScrollable.js';
 import { createAgentTitleActionViewItem } from '../../voltAgent/browser/editor/agentTitleActions.js';
 import { AGENT_RESOURCE_FILTER_ICON, AgentResourceScopeKind } from '../../voltAgent/common/agentResources.js';
@@ -55,16 +57,17 @@ import { AgentResourcesSectionId } from '../../voltAgent/browser/resources/agent
 import { agentResourceScopeFilterOptions } from '../../voltAgent/browser/resources/agentResourcesSections.js';
 import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { IVoltMenuItem, IVoltMenuSection, showVoltMenu } from '../../voltAgent/browser/ui/menu/voltMenu.js';
-import { AgentSurfaceHost } from '../../voltAgent/browser/workspace/agentSurfaceHost.js';
+import { AgentSurfaceHost, ensureAgentToolsPart, revealAgentToolEditor } from '../../voltAgent/browser/workspace/agentSurfaceHost.js';
 import { createSurfaceStrokeIcon } from '../../voltAgent/browser/workspace/agentSurfaceMenu.js';
 import { hasSavedAgentTools } from '../../voltAgent/browser/workspace/agentToolsEditorPart.js';
-import { AgentCustomizationKind, customizationGroupKey, IAgentCustomization, IAgentPluginInfo, kindInfo, ORIGIN_LABELS, safeItemName } from '../../voltAgent/browser/customize/agentCustomize.js';
+import { AgentCustomizationKind, customizationGroupKey, customizationKindForResource, IAgentCustomization, IAgentPluginInfo, kindInfo, ORIGIN_LABELS, safeItemName } from '../../voltAgent/browser/customize/agentCustomize.js';
 import { IAgentCustomizeService } from '../../voltAgent/browser/customize/agentCustomizeService.js';
 import { itemNameError, showCustomizeConfirmDialog, showCustomizeInputDialog } from '../../voltAgent/browser/customize/agentCustomizeDialogs.js';
 import { formatInstalls, IAgentMarketplaceService, IMarketplace, IMarketplacePlugin, ISkillsShSkill, MarketplaceScope } from '../../voltAgent/browser/customize/agentMarketplace.js';
 import { AgentMarketplaceView, IAgentMarketplaceScope, IAgentPageCrumb } from '../../voltAgent/browser/customize/agentMarketplaceView.js';
+import { AGENT_SKILL_EDITOR_ID, AgentSkillEditorInput } from '../../voltAgent/browser/customize/agentSkillEditorInput.js';
 
-import { SKILLS_EDITOR_ID, SKILLS_EDITOR_INPUT_TYPE_ID, ISkillsTrail } from '../common/voltSkills.js';
+import { SKILLS_EDITOR_ID, SKILLS_EDITOR_INPUT_TYPE_ID, ISkillsEmbeddedHost, ISkillsListState, ISkillsTrail } from '../common/voltSkills.js';
 
 export const AGENT_CUSTOMIZE_EDITOR_ID = SKILLS_EDITOR_ID;
 export const AGENT_CUSTOMIZE_INPUT_ID = SKILLS_EDITOR_INPUT_TYPE_ID;
@@ -259,6 +262,9 @@ export class AgentCustomizeEditor extends EditorPane {
 	private kind: Tab = 'skill';
 	private resourceScope: 'all' | AgentResourceScopeKind = 'all';
 	private resourcesEmbed!: AgentResourcesEmbed;
+	private skillEditorHost: ISkillsEmbeddedHost | undefined;
+	private openingSkill = false;
+	private hiddenScrollTop: number | undefined;
 	private sort: SortOrder = 'name';
 	private showDescriptions = true;
 	private excluded = new Set<string>();
@@ -310,6 +316,11 @@ export class AgentCustomizeEditor extends EditorPane {
 	}
 
 	//#region Setup
+
+	/** Settings embeds this page over the workbench and owns dismissing the overlay. */
+	setSkillEditorHost(host: ISkillsEmbeddedHost): void {
+		this.skillEditorHost = host;
+	}
 
 	protected override createEditor(parent: HTMLElement): void {
 		this.rootEl = append(parent, $('.volt-customize-root'));
@@ -475,6 +486,20 @@ export class AgentCustomizeEditor extends EditorPane {
 	 * tools. Without that panel (the IDE layout, or the page in the side panel) it opens beside.
 	 */
 	private async openResource(resource: URI): Promise<void> {
+		if (this.skillEditorHost && customizationKindForResource(resource) === 'skill') {
+			if (this.openingSkill) {
+				return;
+			}
+			this.openingSkill = true;
+			try {
+				await this.openSkillEditor(resource, this.skillEditorHost);
+			} catch (error) {
+				this.notificationService.error(toErrorMessage(error));
+			} finally {
+				this.openingSkill = false;
+			}
+			return;
+		}
 		const host = this.surfaceHost;
 		if (host && getLayoutMode(this.layoutService) === 'agent' && this.editorGroupsService.mainPart.groups.includes(this.group)) {
 			this.presentTools();
@@ -515,6 +540,80 @@ export class AgentCustomizeEditor extends EditorPane {
 	}
 
 	//#endregion
+
+	restoreSkillList(state: ISkillsListState): void {
+		this.view = 'manage';
+		// The state came from this page (openSkillEditor); check it like the stored page state.
+		const kind = TABS.find(tab => tab === state.kind);
+		if (kind) {
+			this.kind = kind;
+		}
+		const scope = agentResourceScopeFilterOptions().find(option => option.id === state.resourceScope);
+		if (scope) {
+			this.resourceScope = scope.id;
+		}
+		this.excluded = new Set(state.excluded);
+		this.expanded.clear();
+		for (const id of state.expanded) {
+			this.expanded.add(id);
+		}
+		this.searchInput.value = state.search;
+		this.query = state.search.trim();
+		this.scheduleRemoteSearch();
+		this.render();
+		this.hiddenScrollTop = undefined;
+		this.scroll.setScrollPosition({ scrollTop: state.scrollTop });
+		this.searchInput.focus({ preventScroll: true });
+	}
+
+	private async openSkillEditor(resource: URI, host: ISkillsEmbeddedHost): Promise<void> {
+		const browseState: ISkillsListState = {
+			search: this.searchInput.value, kind: this.kind, resourceScope: this.resourceScope,
+			excluded: [...this.excluded], expanded: [...this.expanded], scrollTop: this.bodyEl.scrollTop,
+		};
+		const overlay = getLayoutMode(this.layoutService) === 'agent';
+		const settingsInput = this.group.activeEditor;
+		const chatGroup = overlay
+			? [this.group, ...this.editorGroupsService.mainPart.groups].find(group => group.editors.some(editor => editor instanceof AgentEditorInput))
+			: undefined;
+		const chat = chatGroup?.getEditors(EditorsOrder.MOST_RECENTLY_ACTIVE).find(editor => editor instanceof AgentEditorInput);
+		// Load in the chat's own tools even while Settings covers the chat.
+		const tools = chat ? ensureAgentToolsPart(chat.sessionId) : undefined;
+		const group = tools?.groups.find(group => group.editors.some(editor => editor instanceof AgentSkillEditorInput && isEqual(editor.resource, resource)))
+			?? tools?.activeGroup ?? this.group;
+		const pane = await this.editorService.openEditor({
+			resource,
+			options: {
+				override: AGENT_SKILL_EDITOR_ID,
+				pinned: true,
+				preserveFocus: !!tools,
+				activation: tools ? EditorActivation.PRESERVE : EditorActivation.ACTIVATE,
+				ignoreError: true,
+			},
+		}, group);
+		const input = pane?.input;
+		if (!pane || !(input instanceof AgentSkillEditorInput) || !isEqual(input.resource, resource)) {
+			throw new Error(localize('voltCustomize.skillEditorUnavailable', "The editor could not load SKILL.md. Check that the file is still available."));
+		}
+		if (!overlay || getLayoutMode(this.layoutService) === 'ide') {
+			input.setSkillListReturn(undefined);
+			pane.group.focus();
+			return;
+		}
+		if (!settingsInput || this.group.activeEditor !== (tools ? settingsInput : input)) {
+			return;
+		}
+		if (!await this.group.closeEditor(settingsInput)) {
+			throw new Error(localize('voltCustomize.skillSettingsCloseFailed', "The skill opened, but Settings could not be closed."));
+		}
+		input.setSkillListReturn(() => host.returnToSkillList(browseState));
+		if (tools && chatGroup && chat && chatGroup.activeEditor === chat) {
+			// Closing the overlay starts restoring the chat. Wait for it to host its tools again.
+			await chatGroup.openEditor(chat, { preserveFocus: true, activation: EditorActivation.PRESERVE });
+			revealAgentToolEditor(input);
+		}
+		pane.group.focus();
+	}
 
 	//#region State changes
 
@@ -1845,10 +1944,21 @@ export class AgentCustomizeEditor extends EditorPane {
 		);
 	}
 
+	protected override setEditorVisible(visible: boolean): void {
+		if (!visible && this.skillEditorHost && this.bodyEl.clientHeight > 0) {
+			// The parent can report hidden again after the editor group has detached the pane.
+			this.hiddenScrollTop ??= this.bodyEl.scrollTop;
+		}
+	}
+
 	override layout(dimension: Dimension): void {
 		this.rootEl.style.height = `${dimension.height}px`;
 		this.surfaceHost?.layout(dimension);
 		this.scroll.scanDomNode();
+		if (this.isVisible() && this.hiddenScrollTop !== undefined) {
+			this.scroll.setScrollPosition({ scrollTop: this.hiddenScrollTop });
+			this.hiddenScrollTop = undefined;
+		}
 	}
 
 	override focus(): void {

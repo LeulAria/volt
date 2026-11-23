@@ -33,11 +33,12 @@ import { ITelemetryService } from '../../../../platform/telemetry/common/telemet
 import { getInputBoxStyle } from '../../../../platform/theme/browser/defaultStyles.js';
 import { IThemeService } from '../../../../platform/theme/common/themeService.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
-import { IEditorOpenContext } from '../../../common/editor.js';
-import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
+import { GroupModelChangeKind, IEditorOpenContext } from '../../../common/editor.js';
+import { IEditorGroup, IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
+import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { Orientation, Sash } from '../../../../base/browser/ui/sash/sash.js';
-import { getLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
+import { getLayoutMode, onDidChangeLayoutMode } from '../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { settingsTextInputBackground, settingsTextInputBorder, settingsTextInputForeground } from '../../preferences/common/settingsEditorColorRegistry.js';
 import { ACCESS_MODE_OPTIONS, accessModeOption } from '../../../services/voltRuntime/common/access/accessModes.js';
 import { IPermissionRule } from '../../../services/voltRuntime/common/access/accessTypes.js';
@@ -59,7 +60,7 @@ const APPEARANCE_PAGE_SETTINGS = [ThemeSettings.DETECT_COLOR_SCHEME, ThemeSettin
 const COMPOSER_PAGE_SETTINGS = [AGENT_PROMPT_HISTORY_SETTING, AGENT_NEW_CHAT_DRAFT_SETTING, AGENT_KEEP_WORKING_SETTING, AGENT_RESUME_AFTER_RESTART_SETTING, AGENT_AUTO_RESUME_AFTER_LIMIT_SETTING, AGENT_COMPACT_OLD_THREADS_SETTING, AGENT_HOME_WORKING_SECTION_SETTING, AGENT_HOME_AUTO_SETTLE_DAYS_SETTING];
 import { AgentModelPicker, type IModelOption, type IProviderGroup } from '../../voltAgent/browser/picker/agentModelPicker.js';
 import { appendSettingsBlock, SettingsStickyHeads } from './settingsStickyHeads.js';
-import { VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
+import { openVoltSettingsEditor, VoltSettingsEditorInput } from './voltSettingsEditorInput.js';
 import { renderProjectsSection, renderStorageSection } from '../../voltSetup/browser/settingsSections.js';
 import { clampWorktreeMaxCount, clampWorktreeMaxSizeGB, WORKTREE_MAX_COUNT_SETTING, WORKTREE_MAX_SIZE_GB_SETTING } from '../../voltSetup/common/worktreeLimits.js';
 import { setAgentTooltip } from '../../voltAgent/browser/chrome/agentTooltip.js';
@@ -83,7 +84,7 @@ import { createAgentHeaderSeparatorIcon } from '../../voltAgent/browser/chrome/a
 import { AgentFooterAction, appendAgentFooterActions } from '../../voltAgent/browser/home/agentHomeFooterActions.js';
 import { AUTOMATIONS_FEATURE_ID, IVoltAutomationsModule } from '../../voltAutomations/common/voltAutomations.js';
 import { IVoltEmbeddedEditorPage, IVoltFeatureModule, IVoltFeatureModuleService, IVoltFeatureSettingsPage } from '../../voltCustomize/browser/voltFeatureModules.js';
-import { IVoltSkillsModule, SKILLS_FEATURE_ID } from '../../voltSkills/common/voltSkills.js';
+import { ISkillsEmbeddedHost, ISkillsEmbeddedPage, ISkillsListState, IVoltSkillsModule, SKILLS_FEATURE_ID } from '../../voltSkills/common/voltSkills.js';
 import { createHomeAutomationsIcon } from '../../voltAgent/browser/home/agentHomeIcons.js';
 import { IVoltFeatureService } from '../../voltCustomize/common/voltFeatures.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
@@ -240,7 +241,7 @@ export class VoltSettingsEditor extends EditorPane {
 	 * nav stays. Made on first visit and kept, like Usage.
 	 */
 	private customizeHost!: HTMLElement;
-	private customizePage!: VoltSettingsModulePage<IVoltSkillsModule>;
+	private customizePage!: VoltSettingsModulePage<IVoltSkillsModule, ISkillsEmbeddedPage>;
 	/** Automations: the agent's Automations page, hosted here like Skills & Plugins. */
 	private automationsHost!: HTMLElement;
 	private automationsPage!: VoltSettingsModulePage<IVoltAutomationsModule>;
@@ -314,6 +315,14 @@ export class VoltSettingsEditor extends EditorPane {
 				this.renderContent();
 			}
 		}));
+		// Settings is a tab of its group: it shows over the window only while it is that group's active
+		// tab in the agent layout, and moves back into its group when the layout or the active tab changes.
+		this._register(group.onDidModelChange(event => {
+			if (event.kind === GroupModelChangeKind.EDITOR_ACTIVE) {
+				this.syncPresentation();
+			}
+		}));
+		this._register(onDidChangeLayoutMode(() => this.syncPresentation()));
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
 			if (this.section === 'composer' && COMPOSER_PAGE_SETTINGS.some(key => e.affectsConfiguration(key))) {
 				this.renderContent();
@@ -359,20 +368,20 @@ export class VoltSettingsEditor extends EditorPane {
 		this.container = append(parent, $('.volt-settings'));
 		this._register(toDisposable(() => {
 			this.container.remove();
-			this.layoutService.mainContainer.classList.remove('volt-settings-open');
+			this.syncSettingsOpen();
 		}));
 
 		const sidebar = this.sidebar = append(this.container, $('.volt-settings-sidebar'));
 		const commandService = this.instantiationService.invokeFunction(accessor => accessor.get(ICommandService));
 
-		// Back to the chat, above the search.
+		// Back to the chat, above the search. Only the agent layout's overlay shows it; a Settings tab closes like any tab.
 		const head = append(sidebar, $('.volt-settings-sidebar-head'));
 		const back = append(head, $('button.volt-settings-back')) as HTMLButtonElement;
 		back.type = 'button';
 		back.appendChild(renderIcon(Codicon.arrowLeft));
 		append(back, $('span')).textContent = localize('voltSettings.back', "Back");
 		back.setAttribute('aria-label', localize('voltSettings.backToChat', "Close settings"));
-		this._register(addDisposableListener(back, 'click', () => this.close()));
+		this._register(addDisposableListener(back, 'click', () => void this.close()));
 
 		const searchHost = append(sidebar, $('.volt-settings-search'));
 		append(searchHost, $('span.volt-settings-search-icon')).appendChild(createSettingsIcon('search') ?? renderIcon(Codicon.search));
@@ -444,8 +453,19 @@ export class VoltSettingsEditor extends EditorPane {
 		customizeResize.observe(this.automationsHost);
 		// Both pages are feature modules' (Skills & Plugins, Automations): they load with the module on first visit.
 		const modules = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltFeatureModuleService));
-		this.customizePage = this._register(new VoltSettingsModulePage<IVoltSkillsModule>(modules, this.logService, SKILLS_FEATURE_ID, this.customizeHost,
-			module => module.createEmbeddedPage(this.customizeHost, this.group), () => this.isVisible() && this.section === 'customize'));
+		// A skill opened from the page in the agent layout closes Settings; its editor's Back to Skills
+		// opens Settings again on the list as it was.
+		const [editorService, editorGroupsService] = this.instantiationService.invokeFunction(accessor => [accessor.get(IEditorService), accessor.get(IEditorGroupsService)] as const);
+		const skillsHost: ISkillsEmbeddedHost = {
+			returnToSkillList: async state => {
+				const settings = await openVoltSettingsEditor(editorService, editorGroupsService);
+				if (!(settings instanceof VoltSettingsEditor) || !await settings.restoreSkillList(state)) {
+					throw new Error(localize('voltSettings.skillsUnavailable', "Couldn't return to Skills in Settings."));
+				}
+			},
+		};
+		this.customizePage = this._register(new VoltSettingsModulePage<IVoltSkillsModule, ISkillsEmbeddedPage>(modules, this.logService, SKILLS_FEATURE_ID, this.customizeHost,
+			module => module.createEmbeddedPage(this.customizeHost, this.group, skillsHost), () => this.isVisible() && this.section === 'customize'));
 		this.automationsPage = this._register(new VoltSettingsModulePage<IVoltAutomationsModule>(modules, this.logService, AUTOMATIONS_FEATURE_ID, this.automationsHost,
 			module => module.createEmbeddedPage(this.automationsHost, this.group), () => this.isVisible() && this.section === 'automations'));
 		this._register(toDisposable(() => customizeResize.disconnect()));
@@ -465,7 +485,11 @@ export class VoltSettingsEditor extends EditorPane {
 			rerender: () => this.renderContent(),
 			isCurrent: () => this.section === 'providers',
 			scrollToTop: () => { this.renderedSection = undefined; },
-			revealWorkbench: () => this.close(),
+			revealWorkbench: () => {
+				if (this.container.classList.contains('volt-settings-overlay')) {
+					void this.close();
+				}
+			},
 			switch: (parent, on, label, onClick) => this.switch(parent, on, label, onClick),
 			inputBoxStyles: () => this.inputBoxStyles(),
 		});
@@ -508,38 +532,54 @@ export class VoltSettingsEditor extends EditorPane {
 		}));
 	}
 
-	private close(): void {
+	private async close(): Promise<boolean> {
 		const input = this.input;
-		if (input) {
-			void this.group.closeEditor(input);
-		}
+		return input && this.group.activeEditor === input ? this.group.closeEditor(input) : false;
 	}
 
-	protected override setEditorVisible(visible: boolean): void {
-		if (!this.container) {
+	protected override setEditorVisible(): void {
+		this.syncPresentation();
+	}
+
+	private syncPresentation(): void {
+		const editorContainer = this.getContainer();
+		if (!this.container || !editorContainer) {
 			return;
 		}
-		if (visible) {
-			this.container.classList.add('volt-settings-overlay');
-			this.layoutService.mainContainer.classList.add('volt-settings-open');
-			this.layoutService.mainContainer.appendChild(this.container);
-			this.syncSidebarWidth();
-			this.usage.value?.setVisible(this.section === 'usage');
-			if (this.section === 'customize') {
-				this.showCustomize();
-			} else if (this.section === 'automations') {
-				this.showAutomations();
-			}
-			this.scheduleScrollSync();
+		// The editor group owns the pane. The agent layout (and a phone, whose Settings is always a
+		// page over the window) presents its content over the workbench while it is the active tab.
+		const visible = this.isVisible() && this.input !== undefined && this.group.activeEditor === this.input;
+		const overlay = visible && (getLayoutMode(this.layoutService) === 'agent' || isVoltCompact());
+		const parent = overlay ? this.layoutService.mainContainer : editorContainer;
+		this.container.classList.toggle('volt-settings-overlay', overlay);
+		if (this.container.parentElement !== parent) {
+			parent.appendChild(this.container);
+		}
+		this.syncSettingsOpen();
+		this.usage.value?.setVisible(visible && this.section === 'usage');
+		if (!visible) {
+			this.customizePage?.hide();
+			this.automationsPage?.hide();
+			this.setPhoneDetail(false);
 			return;
 		}
-		this.usage.value?.setVisible(false);
-		this.customizePage?.hide();
-		this.automationsPage?.hide();
-		this.setPhoneDetail(false);
-		this.container.classList.remove('volt-settings-overlay');
-		this.layoutService.mainContainer.classList.remove('volt-settings-open');
-		this.container.remove();
+		this.syncSidebarWidth();
+		if (this.section === 'customize') {
+			this.showCustomize();
+		} else if (this.section === 'automations') {
+			this.showAutomations();
+		}
+		this.scheduleScrollSync();
+	}
+
+	/**
+	 * `volt-settings-open` on the window hides what lies under an overlay (voltSettings.css) and tells
+	 * the phone's navigation that Settings covers the screen. It follows whether any Settings overlay
+	 * is in the window, so a pane that leaves never clears another's.
+	 */
+	private syncSettingsOpen(): void {
+		const main = this.layoutService.mainContainer;
+		main.classList.toggle('volt-settings-open', !!main.querySelector(':scope > .volt-settings.volt-settings-overlay'));
 	}
 
 	/**
@@ -997,6 +1037,17 @@ export class VoltSettingsEditor extends EditorPane {
 			}
 		}
 		await this.devices.render(isCurrent);
+	}
+
+	/** Opens Skills & Plugins with its list as `state` had it (Back to Skills); false if the page didn't load. */
+	private async restoreSkillList(state: ISkillsListState): Promise<boolean> {
+		this.setSection('customize');
+		const page = await this.customizePage.load();
+		if (!page || this.section !== 'customize') {
+			return false;
+		}
+		page.restoreSkillList(state);
+		return true;
 	}
 
 	/** Shows the hosted Skills & Plugins page, making it on first visit. */
@@ -2214,7 +2265,17 @@ export class VoltSettingsEditor extends EditorPane {
 
 	override async setInput(input: VoltSettingsEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
-		this.renderContent();
+		if (!token.isCancellationRequested && this.input === input) {
+			this.syncPresentation();
+			if (this.group.activeEditor === input) {
+				this.renderContent();
+			}
+		}
+	}
+
+	override clearInput(): void {
+		super.clearInput();
+		this.syncPresentation();
 	}
 
 	override layout(_dimension: Dimension): void {
@@ -2281,17 +2342,17 @@ function describeLidClosedMode(state: IAwakeState | undefined): string {
  * module on first visit and kept; it goes when the module unloads (the extension was disabled), and
  * the next visit loads it again.
  */
-class VoltSettingsModulePage<M> extends Disposable {
+class VoltSettingsModulePage<M, P extends IVoltEmbeddedEditorPage = IVoltEmbeddedEditorPage> extends Disposable {
 
-	private page: IVoltEmbeddedEditorPage | undefined;
-	private loading = false;
+	private page: P | undefined;
+	private loading: Promise<P | undefined> | undefined;
 
 	constructor(
 		private readonly modules: IVoltFeatureModuleService,
 		private readonly logService: ILogService,
 		private readonly feature: string,
 		private readonly host: HTMLElement,
-		private readonly create: (module: M) => IVoltEmbeddedEditorPage,
+		private readonly create: (module: M) => P,
 		/** Whether the page is the one showing. */
 		private readonly showing: () => boolean,
 	) {
@@ -2310,22 +2371,31 @@ class VoltSettingsModulePage<M> extends Disposable {
 			this.layout();
 			return;
 		}
-		if (this.loading) {
-			return;
+		void this.load();
+	}
+
+	/** The page, loading its module and making it first if needed; undefined if the module didn't load. */
+	load(): Promise<P | undefined> {
+		if (this.page) {
+			return Promise.resolve(this.page);
 		}
-		this.loading = true;
-		this.modules.activate<IVoltFeatureModule & M>(this.feature).then(module => {
-			this.loading = false;
-			if (!module || this.page || this._store.isDisposed) {
-				return;
+		this.loading ??= this.modules.activate<IVoltFeatureModule & M>(this.feature).then(module => {
+			this.loading = undefined;
+			if (!module || this._store.isDisposed) {
+				return undefined;
 			}
-			this.page = this.create(module);
-			this.page.setVisible(this.showing());
-			this.layout();
+			if (!this.page) {
+				this.page = this.create(module);
+				this.page.setVisible(this.showing());
+				this.layout();
+			}
+			return this.page;
 		}, error => {
-			this.loading = false;
+			this.loading = undefined;
 			this.logService.error(`[volt settings] the ${this.feature} page did not load`, error);
+			return undefined;
 		});
+		return this.loading;
 	}
 
 	hide(): void {
