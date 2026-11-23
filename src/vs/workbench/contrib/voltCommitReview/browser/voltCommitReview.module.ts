@@ -6,6 +6,7 @@
 import { ITextModelService } from '../../../../editor/common/services/resolverService.js';
 import { ServiceCollection } from '../../../../platform/instantiation/common/serviceCollection.js';
 import { IVoltAgentWindowService } from '../../../services/voltPlugins/browser/voltAgentWindow.js';
+import { featureModuleCheck } from '../../../services/voltPlugins/common/featureCapabilityMode.js';
 import { IVoltPluginService } from '../../../services/voltPlugins/common/voltApi.js';
 import { IVoltHostToolCall, IVoltHostToolResult } from '../../../services/voltRuntime/common/hostTools.js';
 import { IMultiDiffSourceResolverService } from '../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
@@ -36,10 +37,10 @@ class CommitReviewModule implements IVoltFeatureModule, ICommitReviewModule {
 		const { plugin, subscriptions } = host;
 		const service = this.service = subscriptions.add(host.instantiationService.createInstance(AgentCommitPlanService));
 		subscriptions.add({ dispose: () => this.service === service && (this.service = undefined) });
-		// Its uses of git, checked against its manifest (report mode: logged, never refused).
+		// Its uses of git, checked against its manifest (report mode: logged and never refused until it is enforced).
 		const reporter = host.instantiationService.invokeFunction(accessor => accessor.get(IVoltPluginService).reporter);
 		const principal = { extensionId: plugin.extensionId, label: plugin.manifest.contributes?.voltModule?.label, firstParty: true, capabilities: plugin.manifest.contributes?.voltCapabilities ?? {} };
-		service.setCapabilityCheck(request => reporter.check(principal, request));
+		service.setCapabilityCheck(featureModuleCheck(reporter, principal));
 		// Its own views and providers get the service by injection, from a child of the window's.
 		const child = subscriptions.add(host.instantiationService.createChild(new ServiceCollection([IAgentCommitPlanService, service])));
 		child.invokeFunction(accessor => {
