@@ -685,9 +685,9 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			this.renderStatusBadge(template.badge, thinking ? { kind: 'working', label: badge.label.replace(/^\S+/, localize('voltAgent.home.badge.thinking', "Thinking")) } : badge);
 		}
 
-		// Hover: snooze and Settle on the inbox, snooze on Settled, wake on Snoozed.
+		// Hover: snooze and Settle on the inbox, snooze and Move Out on Settled, wake on Snoozed.
 		template.snooze.classList.toggle('hidden', shelf === 'snooze');
-		template.settle.classList.toggle('hidden', shelf !== 'active');
+		template.settle.classList.toggle('hidden', shelf !== 'active' && shelf !== 'settled');
 		template.wake.classList.toggle('hidden', shelf !== 'snooze');
 		if (shelf !== 'snooze') {
 			this.renderRowAction(template, template.snooze, localize('voltAgent.home.snoozeThread', "Snooze thread"),
@@ -697,6 +697,9 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			const label = localize('voltAgent.home.settleThread', "Settle");
 			this.renderRowAction(template, template.settle, localize('voltAgent.home.settleThreadTooltip', "Move to Settled"),
 				() => this.host.settle(session), renderIcon(Codicon.check), $('span.label', undefined, label));
+		} else if (shelf === 'settled') {
+			this.renderRowAction(template, template.settle, localize('voltAgent.home.unsettle', "Move Out of Settled"),
+				() => this.host.unsettle(session), renderIcon(Codicon.discard));
 		}
 		if (shelf === 'snooze') {
 			this.renderRowAction(template, template.wake, localize('voltAgent.home.unsnoozeThread', "Unsnooze"),
@@ -2680,6 +2683,11 @@ export class AgentHomePane extends Disposable {
 	settle(session: IAgentSessionMeta): void {
 		this.hover.hide();
 		void this.lifecycle.setSettled(session.id, true);
+	}
+
+	unsettle(session: IAgentSessionMeta): void {
+		this.hover.hide();
+		void this.lifecycle.setSettled(session.id, false);
 	}
 
 	/**
