@@ -22,7 +22,7 @@ import { isSandboxRefusedMessage, sandboxRefusedReason } from '../../../../servi
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { KeyCode } from '../../../../../base/common/keyCodes.js';
-import { disposableTimeout, raceTimeout, RunOnceScheduler } from '../../../../../base/common/async.js';
+import { disposableTimeout, raceTimeout, RunOnceScheduler, timeout } from '../../../../../base/common/async.js';
 import { DisposableMap, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename, dirname, isAbsolute } from '../../../../../base/common/path.js';
 import { isEqual, joinPath } from '../../../../../base/common/resources.js';
@@ -389,6 +389,11 @@ const HEAD_JUMP_FRAME_MS = 32;
 const STASHED_DRAWN_EXCHANGES = 12;
 /** Shows the pane even if the first chat's history never finishes loading. */
 const RESTORE_REVEAL_TIMEOUT_MS = 1500;
+/**
+ * The waits before the shown chat's history is read again after a read failed (the agent server dropped the
+ * connection or was restarting): about half a minute in all, while the chat stays on screen.
+ */
+const HISTORY_RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 4000, 8000, 15_000];
 /** An "ago" label older than this reads in hours or days, so the clock redoes it only every {@link AGO_OLD_SWEEP_MS}. */
 const AGO_OLD_MS = 60 * 60_000;
 const AGO_OLD_SWEEP_MS = 60_000;
@@ -9635,13 +9640,12 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// A chat not read yet whose first screen a window kept (agentFirstScreen.ts) is drawn from that at
 		// once, and from its transcript when that is read. A screen kept before the chat last changed is not used.
 		const firstScreen = input.isLoaded ? undefined : readFirstScreen<IAgentMessage>(this.storageService, input.sessionId, this.history.get(input.sessionId)?.updatedAt);
-		const loading = input.ensureLoaded().catch(err => {
+		const read = input.ensureLoaded().then(() => true, err => {
 			// A broken history entry must never block opening the editor.
 			this.logService.warn('[volt agent] failed to load session history', err);
+			return false;
 		});
-		if (!firstScreen) {
-			await loading;
-		}
+		const readNow = firstScreen ? true : await read;
 		if (token.isCancellationRequested) {
 			return;
 		}
@@ -9668,10 +9672,19 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.limitChip?.render();
 		this.ensureInputEditor();
 		this.restoreInputState(input, firstScreen);
-		this.firstScreenLoad = firstScreen ? loading : undefined;
 		if (firstScreen) {
+			// A failed read keeps the first screen up while the history is read again, never an empty chat.
+			const loading = read.then(ok => ok || this.retryHistoryLoad(input));
+			this.firstScreenLoad = loading.then(() => undefined);
 			this.threadRestore = 'first screen';
-			void loading.then(() => this.drawOverFirstScreen(input, firstScreen));
+			void loading.then(ok => ok && this.drawOverFirstScreen(input, firstScreen));
+		} else {
+			this.firstScreenLoad = undefined;
+			if (!readNow) {
+				// Drawn empty for now: the transcript replaces it once a read gets through, unless a message went first.
+				const shown = this.messages;
+				void this.retryHistoryLoad(input).then(ok => ok && !shown.length && this.drawOverFirstScreen(input, shown));
+			}
 		}
 		const drawn = performance.now();
 		this.followThreadModel();
@@ -9795,6 +9808,28 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.updateInputPlaceholder();
 		this.refreshContextUsage();
 		this.schedulePrewarm();
+	}
+
+	/**
+	 * The shown chat's history could not be read (the agent server dropped the connection, or was restarting):
+	 * it is read again after each of {@link HISTORY_RETRY_DELAYS_MS} while the chat stays on screen. True once read;
+	 * false when the pane moved on or every read failed (the next open of the chat reads it again).
+	 */
+	private async retryHistoryLoad(input: AgentEditorInput): Promise<boolean> {
+		for (const delay of HISTORY_RETRY_DELAYS_MS) {
+			await timeout(delay);
+			if (this.input !== input || input.isDisposed() || this._store.isDisposed) {
+				return false;
+			}
+			try {
+				await input.ensureLoaded();
+				this.logService.info(`[volt agent] read session history of ${input.sessionId} after a failed read`);
+				return true;
+			} catch (err) {
+				this.logService.warn('[volt agent] failed to load session history again', err);
+			}
+		}
+		return false;
 	}
 
 	/**

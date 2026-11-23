@@ -386,19 +386,24 @@ export class AgentEditorInput extends EditorInput {
 		return this.loading ?? this.setLoading(this.doLoad());
 	}
 
-	/** The transcript and draft have been read (or failed to be): {@link messages} is the chat's. */
+	/** The transcript and draft have been read: {@link messages} is the chat's. */
 	get isLoaded(): boolean {
 		return this.loadSettled;
 	}
 
 	private setLoading(loading: Promise<void>): Promise<void> {
 		this.loading = loading;
-		const settle = () => {
+		loading.then(() => {
 			if (this.loading === loading) {
 				this.loadSettled = true;
 			}
-		};
-		loading.then(settle, settle);
+		}, () => {
+			// A failed read (the agent server dropped the connection, or was restarting) is not kept: the next
+			// call reads again. Kept, it drew the chat empty on every open until the window was reloaded.
+			if (this.loading === loading) {
+				this.loading = undefined;
+			}
+		});
 		return loading;
 	}
 
