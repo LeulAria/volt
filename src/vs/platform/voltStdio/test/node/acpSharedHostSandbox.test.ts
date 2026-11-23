@@ -64,7 +64,9 @@ suite('Shared ACP adapter host against real sandboxes', function () {
 	const policyOf = (id: string) => (stdio as unknown as { sandboxes: Map<string, { policy: IResolvedSandboxPolicy }> }).sandboxes.get(id)?.policy;
 	const context = (chat: string, sandboxed: boolean): IVoltExecContext => ({ principal: `chat:${chat}`, reason: 'agent', sandboxed });
 	const sandbox = (ws: string): IVoltSandboxRequest => ({ level: 'workspace-write', network: false, providerId: '', workspaceRoots: [ws] });
-	const open = (chat: string, ws: string, sandboxed = true) => stdio.spawn({ command: process.execPath, args: [entry], cwd: ws, context: context(chat, sandboxed), ...(sandboxed ? { sandbox: sandbox(ws) } : {}), acpHost: { entry } });
+	// The adapter host runs on `process.execPath`: Electron under `scripts/test.sh`, which acts as node only when told to.
+	const asNode = process.versions['electron'] ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {};
+	const open = (chat: string, ws: string, sandboxed = true) => stdio.spawn({ command: process.execPath, args: [entry], cwd: ws, ...asNode, context: context(chat, sandboxed), ...(sandboxed ? { sandbox: sandbox(ws) } : {}), acpHost: { entry } });
 
 	suiteSetup(async function () {
 		if (process.platform === 'win32') {
