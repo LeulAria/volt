@@ -957,6 +957,7 @@
 		"--volt-device-radius",
 		"--volt-device-screen",
 		"--volt-dock-ease",
+		"--volt-dock-icon-size",
 		"--volt-dock-max",
 		"--volt-context-panel-bg",
 		"--volt-file-preview-add",

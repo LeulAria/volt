@@ -592,13 +592,41 @@
 	height: 14px;
 }
 
-/* The pull-request glyph fills its box more than the other row icons. */
-.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon.codicon-git-pull-request {
+/*
+ * Every row icon is drawn 12px tall, centered in the same 14px box. The glyphs fill their em square
+ * by different amounts (measured ink height over font size: branch 1.005, pull request 0.94,
+ * terminal and history 0.88, extensions 0.875, globe and add 0.815, play 0.81), so each gets the
+ * font size that brings its ink to 12px: 12 / ratio.
+ */
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon:not(.volt-pr-dock-chevron) {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	font-size: 12px;
-	line-height: 12px;
+	line-height: 14px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon.codicon-git-branch {
+	font-size: 11.9px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon:is(.codicon-git-pull-request, .codicon-git-pull-request-draft, .codicon-git-pull-request-closed, .codicon-git-merge) {
+	font-size: 12.8px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon:is(.codicon-terminal, .codicon-history) {
+	font-size: 13.6px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon.codicon-extensions {
+	font-size: 13.7px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon:is(.codicon-globe, .codicon-add) {
+	font-size: 14.7px;
+}
+
+.monaco-workbench .volt-agent-quick-open-actions .volt-agent-dock-row .codicon.codicon-play {
+	font-size: 14.8px;
 }
 
 .volt-agent-quick-open-actions .volt-agent-stroke-icon {
@@ -610,6 +638,29 @@
 .volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon {
 	width: 14px;
 	height: 14px;
+}
+
+/* The drawn icons, on a 24 grid with a 1.5 stroke: ink height = (shape height + 1.5) x size / 24.
+ * Related Chats (20 tall) and Changes (18 tall) are sized to 12px of ink. The folder (17 tall, 20
+ * wide) stops at 11.5px: a landscape shape at the full 12 would be the widest icon in the column.
+ * The margins keep each in the rows' 14px box, so the labels stay on one line. */
+.volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon.volt-agent-dock-icon-files {
+	--volt-dock-icon-size: 14.9px;
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon.volt-agent-dock-icon-relatedChats {
+	--volt-dock-icon-size: 13.4px;
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon.volt-agent-dock-icon-changes {
+	--volt-dock-icon-size: 14.8px;
+}
+
+.volt-agent-quick-open-actions .volt-agent-dock-row .volt-agent-stroke-icon:is(.volt-agent-dock-icon-files, .volt-agent-dock-icon-relatedChats, .volt-agent-dock-icon-changes) {
+	flex: none;
+	width: var(--volt-dock-icon-size, 14px);
+	height: var(--volt-dock-icon-size, 14px);
+	margin: calc((14px - var(--volt-dock-icon-size, 14px)) / 2);
 }
 
 .volt-agent-quick-open-actions .volt-agent-stroke-icon :is(path, circle) {
@@ -729,7 +780,9 @@
 	right: 0;
 }
 
-/* The same fill at rest as under the pointer: whenever the button shows, it reads as a button. */
+/* The same fill at rest as under the pointer: whenever the button shows, it reads as a button. The
+ * collapse button above it carries the same fill, so the two read as one pair. */
+.volt-agent-quick-open-actions.expanded > .volt-agent-quick-open-toggle,
 .volt-agent-quick-open-actions > .volt-agent-dock-tune,
 .volt-agent-quick-open-actions > .volt-agent-dock-tune:hover,
 .volt-agent-quick-open-actions > .volt-agent-dock-tune.open,

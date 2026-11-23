@@ -762,7 +762,8 @@ class AgentViewSidebarsContribution extends Disposable {
 	private appendActionIcon(parent: HTMLElement, action: IDockAction): void {
 		if (action.iconPath) {
 			const icon = createSurfaceStrokeIcon(parent.ownerDocument, action.iconPath);
-			icon.classList.add('volt-agent-stroke-icon');
+			// Named, so each drawing is sized to the rows' shared 12px ink height (agentViewSidebars.css).
+			icon.classList.add('volt-agent-stroke-icon', `volt-agent-dock-icon-${action.id}`);
 			parent.appendChild(icon);
 			return;
 		}
