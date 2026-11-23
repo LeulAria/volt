@@ -192,6 +192,33 @@ suite('AgentEditorInput read-ahead', () => {
 		assert.strictEqual(controls[0].disposed, true);
 	}));
 
+	test('a failed read is not kept: the next read of the chat tries again', async () => {
+		const history = { get: () => undefined, has: () => false, onDidChange: Event.None, whenReady: Promise.resolve() } as unknown as IAgentHistoryService;
+		const message: IAgentMessage = { kind: 'user', text: 'hello' } as IAgentMessage;
+		const reads: (IAgentMessage[] | Error)[] = [new Error('The connection to the Volt agent server dropped before it answered.'), [message]];
+		setAgentSessionControlFactory(() => ({
+			onDidChange: Event.None,
+			onDidBecomeIdle: Event.None,
+			get isRunning() { return false; },
+			setHost: () => { },
+			loadTranscript: async () => {
+				const next = reads.shift()!;
+				if (next instanceof Error) {
+					throw next;
+				}
+				return { messages: next };
+			},
+			dispose: () => { },
+		}) as unknown as IAgentSessionControl);
+		const input = store.add(new AgentEditorInput(AgentEditorInput.uriForSession('chat-d'), history, {} as IAgentRuntimeService, {} as IInstantiationService));
+		await assert.rejects(input.ensureLoaded(), /dropped/);
+		await timeout(0);
+		assert.strictEqual(input.isLoaded, false, 'a failed read does not count as the chat\'s history');
+		await input.ensureLoaded();
+		assert.deepStrictEqual(input.messages, [message], 'the second read drew the transcript');
+		assert.strictEqual(input.isLoaded, true);
+	});
+
 	test('a window that reads history itself reads nothing ahead here', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
 		let made = 0;
 		AgentEditorInput.readAhead('chat-c', { createInstance: () => { made++; } } as unknown as IInstantiationService);
