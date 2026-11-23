@@ -907,9 +907,10 @@
 	background: var(--vscode-errorForeground, #f14c4c);
 }
 
-.volt-agent-dock-usage-empty {
+/* Muted like the section's own header: the dock's row color would otherwise win. */
+.monaco-workbench .volt-agent-dock-usage-empty.volt-agent-dock-usage-empty {
 	font-size: 12px;
-	color: var(--vscode-descriptionForeground);
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
 }
 
 /* Automations: VS Code list rows, edge to edge and square, like Previous agents. */
