@@ -3,9 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// Volt P2/P8: the opt-in per extension (per profile, user settings) and the kill switch.
+// Volt P2/P8: the opt-in per extension (per profile, user settings), the kill switch, and the
+// `required` default on macOS and Linux.
 // P8-KILL-1: a refusal is shown with "Run Without Sandbox", the extension stays off until the user
 // confirms that choice, and a refused confirmation changes nothing.
+// The opt-in tests set `optIn` explicitly: they are about the opt-in list, which is what `optIn`
+// (and Windows) uses; P8-DEFAULT-* cover the default.
 
 import assert from 'assert';
 import { mock } from '../../../../../base/test/common/mock.js';
@@ -15,6 +18,7 @@ import { TestConfigurationService } from '../../../../../platform/configuration/
 import { IConfirmation, IConfirmationResult, IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { NullLogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService, IPromptChoice, Severity } from '../../../../../platform/notification/common/notification.js';
+import { InMemoryStorageService, IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { T3_REQUIRED_PLATFORMS, VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, VOLT_EXTENSION_SANDBOX_MODE_SETTING, VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../../platform/voltSandbox/common/extensionHostSandbox.js';
 import { IHostService } from '../../../host/browser/host.js';
 import { VoltExtensionSandboxService } from '../../browser/voltExtensionSandboxService.js';
@@ -24,7 +28,7 @@ suite('Volt: per-extension sandbox opt-in and kill switch (P2, P8)', () => {
 
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function service(confirm: boolean) {
+	function service(confirm: boolean, mode: string | null = 'optIn', storage: IStorageService = store.add(new InMemoryStorageService())) {
 		const config = new class extends TestConfigurationService {
 			readonly writes: [string, unknown, ConfigurationTarget | undefined][] = [];
 			override updateValue(key: string, value: unknown, target?: unknown): Promise<void> {
@@ -32,6 +36,9 @@ suite('Volt: per-extension sandbox opt-in and kill switch (P2, P8)', () => {
 				return this.setUserConfiguration(key, value);
 			}
 		}();
+		if (mode !== null) { // null: no mode set, the default applies
+			config.setUserConfiguration(VOLT_EXTENSION_SANDBOX_MODE_SETTING, mode);
+		}
 		const prompts: { message: string; choices: IPromptChoice[] }[] = [];
 		const confirmations: IConfirmation[] = [];
 		const notifications = new class extends mock<INotificationService>() {
@@ -46,8 +53,8 @@ suite('Volt: per-extension sandbox opt-in and kill switch (P2, P8)', () => {
 				return { confirmed: confirm };
 			}
 		};
-		const s = store.add(new VoltExtensionSandboxService(config, notifications, dialogs, new class extends mock<IHostService>() { }, new NullLogService()));
-		return { s, config, prompts, confirmations };
+		const s = store.add(new VoltExtensionSandboxService(config, notifications, dialogs, new class extends mock<IHostService>() { }, new NullLogService(), storage));
+		return { s, config, prompts, confirmations, storage };
 	}
 
 	test('opting in writes the per-profile user setting; not opted in is the shared host as before', async () => {
@@ -126,5 +133,51 @@ suite('Volt: per-extension sandbox opt-in and kill switch (P2, P8)', () => {
 		assert.deepStrictEqual(s.state('pub.any'), { kind: 'unsandboxed' });
 		await s.setOptedIn('pub.any', true);
 		assert.deepStrictEqual(config.getValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING), [], 'back in the sandbox');
+	});
+
+	test('P8-DEFAULT-1: with no mode set, every third-party extension is in scope on macOS and Linux (the default), and none is on Windows', () => {
+		const { s } = service(true, null);
+		const flipped = T3_REQUIRED_PLATFORMS.has(voltPlatform());
+		assert.strictEqual(s.isOptedIn('pub.any'), flipped);
+		assert.deepStrictEqual(s.state('pub.any'), flipped ? { kind: 'starting' } : { kind: 'shared' });
+	});
+
+	test('P8-DEFAULT-2: under the default, a refusal asks once: Run Without Sandbox or Keep It Off; Keep It Off is remembered, never silently unsandboxed', async () => {
+		if (!T3_REQUIRED_PLATFORMS.has(voltPlatform())) {
+			return; // Windows: the default reads as optIn, covered above
+		}
+		const first = service(true, null);
+		first.s.report('pub.ui', { kind: 'refused', code: 'ui-full-access', reason: 'It must run beside the window.' });
+		assert.strictEqual(first.prompts.length, 1);
+		assert.match(first.prompts[0].message, /pub\.ui stays off: Volt runs extensions in a sandbox.*It must run beside the window\./);
+		assert.deepStrictEqual(first.prompts[0].choices.map(c => c.label), ['Run Without Sandbox', 'Keep It Off']);
+		await first.prompts[0].choices[1].run();
+		assert.ok(first.s.isKeptOff('PUB.UI'));
+		assert.deepStrictEqual(first.config.getValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING) ?? [], [], 'kept off, not unsandboxed');
+		assert.strictEqual(first.s.state('pub.ui').kind, 'refused', 'still off');
+
+		// The next window (same profile storage): no prompt again, it stays off.
+		const next = service(true, null, first.storage);
+		next.s.report('pub.ui', { kind: 'refused', code: 'ui-full-access', reason: 'It must run beside the window.' });
+		assert.strictEqual(next.prompts.length, 0, 'answered once');
+		// A refusal of another kind (the agent server is off) for an extension not kept off still asks.
+		next.s.report('pub.lint', { kind: 'refused', code: 'server-off', reason: 'The agent server is off.' });
+		assert.strictEqual(next.prompts.length, 1);
+
+		// Run Without Sandbox from its menu later: asked first, then it clears "kept off".
+		assert.strictEqual(await next.s.runWithoutSandbox('pub.ui'), true);
+		assert.strictEqual(next.confirmations.length, 1);
+		assert.deepStrictEqual(next.config.getValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING), ['pub.ui']);
+		assert.ok(!next.s.isKeptOff('pub.ui'));
+	});
+
+	test('P8-DEFAULT-3: the install sheet\'s choice of "With your access" is the confirmation: no second dialog', async () => {
+		const { s, config, confirmations } = service(false, null);
+		assert.strictEqual(await s.runWithoutSandbox('pub.ui', { confirmed: true, beforeInstall: true }), true);
+		assert.strictEqual(confirmations.length, 0);
+		assert.deepStrictEqual(config.getValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING), ['pub.ui']);
+		// Not confirmed and the dialog says no: nothing changes.
+		assert.strictEqual(await s.runWithoutSandbox('pub.other'), false);
+		assert.deepStrictEqual(config.getValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING), ['pub.ui']);
 	});
 });

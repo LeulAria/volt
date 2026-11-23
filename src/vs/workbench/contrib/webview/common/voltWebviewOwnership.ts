@@ -9,7 +9,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { ConfigurationScope, Extensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
-import { VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, VOLT_EXTENSION_SANDBOX_MODE_SETTING, VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
+import { VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, VOLT_EXTENSION_SANDBOX_MODE_DEFAULT, VOLT_EXTENSION_SANDBOX_MODE_SETTING, VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
 import { webviewResourceBaseHost } from './webview.js';
 
 /**
@@ -41,7 +41,7 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			uniqueItems: true,
 			// Per profile, in user (or remote user) settings only: a repository can't change which extensions are confined.
 			scope: ConfigurationScope.MACHINE,
-			description: localize('voltExtensions.sandboxed', "Extensions Volt runs in a sandbox, by id (publisher.name). Each runs alone in its own extension host, which reads only its own folder and storage, your toolchains and a trusted workspace, writes only its storage, and reaches no network except hosts you allow. Their webviews reach no network except the hosts the extension declares with net.connect, read the workspace only when it is trusted, and links they open outside Volt ask first. Extensions not listed run as before."),
+			description: localize('voltExtensions.sandboxed', "Extensions Volt runs in a sandbox, by id (publisher.name). Each runs alone in its own extension host, which reads only its own folder and storage, your toolchains and a trusted workspace, writes only its storage, and reaches no network except hosts you allow. Their webviews reach no network except the hosts the extension declares with net.connect, read the workspace only when it is trusted, and links they open outside Volt ask first. Under the required sandbox mode (the default on macOS and Linux) every third-party extension with code runs this way; under optIn, extensions not listed run as before."),
 		},
 		[VOLT_UNSANDBOXED_EXTENSIONS_SETTING]: {
 			type: 'array',
@@ -49,18 +49,18 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 			default: [],
 			uniqueItems: true,
 			scope: ConfigurationScope.MACHINE,
-			description: localize('voltExtensions.runWithoutSandbox', "Extensions in volt.extensions.sandboxed that Volt could not sandbox here and that you chose to run without the sandbox anyway. Until you choose that, such an extension stays off."),
+			description: localize('voltExtensions.runWithoutSandbox', "Extensions Volt would run in a sandbox (every third-party one under the required mode, or those in volt.extensions.sandboxed) that you chose to run without the sandbox. An extension Volt can't sandbox here stays off until you choose that."),
 		},
 		[VOLT_EXTENSION_SANDBOX_MODE_SETTING]: {
 			type: 'string',
 			enum: ['optIn', 'required'],
 			enumDescriptions: [
 				localize('voltExtensions.sandboxMode.optIn', "Only the extensions in volt.extensions.sandboxed run in a sandbox. Others run as before."),
-				localize('voltExtensions.sandboxMode.required', "Every third-party extension with code runs in a sandbox, on macOS and Linux. Built-in extensions run as before. On Windows this reads as optIn."),
+				localize('voltExtensions.sandboxMode.required', "Every third-party extension with code runs in a sandbox, on macOS and Linux, each in its own extension host. Built-in extensions run as before. On Windows this reads as optIn."),
 			],
-			default: 'optIn',
+			default: VOLT_EXTENSION_SANDBOX_MODE_DEFAULT,
 			scope: ConfigurationScope.MACHINE,
-			description: localize('voltExtensions.sandboxMode', "Which third-party extensions Volt runs in a sandbox. Applies after a window reload."),
+			description: localize('voltExtensions.sandboxMode', "Which third-party extensions Volt runs in a sandbox. Each sandboxed extension runs in an extension host process of its own. An extension Volt can't sandbox here stays off until you choose Run Without Sandbox. Applies after a window reload."),
 		},
 		[VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING]: {
 			type: 'boolean',

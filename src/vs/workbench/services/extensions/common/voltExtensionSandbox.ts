@@ -11,10 +11,11 @@ import { createDecorator } from '../../../../platform/instantiation/common/insta
 import { ExtensionSandboxRefusalCode, ExtensionSandboxTier, extensionSandboxTier, IExtensionSandboxSettings, IT3ExtensionFacts, VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, VOLT_EXTENSION_SANDBOX_MODE_SETTING, VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
 
 /**
- * The window's side of per-extension sandboxing (spec P2, P6, P8; N.1 #22: opt-in per extension).
- * An extension the user did not opt in runs exactly as before. An opted-in one runs alone in its
- * own sandboxed extension host on the agent server; when that can't happen it stays off and says
- * why, until the user chooses "Run Without Sandbox" (never silently unsandboxed).
+ * The window's side of per-extension sandboxing (spec P2, P6, P8). By default (`required`, macOS and
+ * Linux) every third-party extension with code is in scope; with `optIn` (and on Windows) only the
+ * ones the user opted in (N.1 #22), and the rest run exactly as before. An extension in scope runs
+ * alone in its own sandboxed extension host on the agent server; when that can't happen it stays
+ * off and says why, until the user chooses "Run Without Sandbox" (never silently unsandboxed).
  */
 
 /** The P2/P8 settings, as configuration holds them. */
@@ -69,7 +70,7 @@ export function voltConfigurationWriteRefusal(key: string, hostedSandboxed: read
  * `platform` where it can't sandbox.
  */
 export function voltExtensionSandboxTier(configurationService: IConfigurationService, extension: IExtensionDescription, platform: string = voltPlatform()): ExtensionSandboxTier {
-	return extensionSandboxTier(voltExtensionSandboxSettings(configurationService), { id: extension.identifier.value, builtin: extension.isBuiltin, main: !!extension.main, browser: !!extension.browser }, platform);
+	return extensionSandboxTier(voltExtensionSandboxSettings(configurationService), { id: extension.identifier.value, builtin: extension.isBuiltin, main: !!extension.main, browser: !!extension.browser, underDevelopment: extension.isUnderDevelopment }, platform);
 }
 
 /** Whether `extension` gets a host of its own in this window: sandboxed, or held off by the kill switch (`ask`). Never the shared host. */
@@ -133,8 +134,19 @@ export interface IVoltExtensionSandboxService {
 	setOptedIn(extensionId: string, sandboxed: boolean, options?: { readonly beforeInstall?: boolean }): Promise<void>;
 	/** P8's kill switch: on moves the tier to `ask` (asks to confirm); off returns to sandboxing. */
 	setKillSwitch(on: boolean): Promise<boolean>;
-	/** P8: after a refusal, the user's explicit choice to run it without the sandbox (asks first). */
-	runWithoutSandbox(extensionId: string): Promise<boolean>;
+	/**
+	 * P8: after a refusal, the user's explicit choice to run it without the sandbox (asks first).
+	 * `confirmed`: the user already chose it on a sheet that said what it means (the install review),
+	 * so no second dialog; `beforeInstall` as for {@link setOptedIn}.
+	 */
+	runWithoutSandbox(extensionId: string, options?: { readonly confirmed?: boolean; readonly beforeInstall?: boolean }): Promise<boolean>;
+	/**
+	 * P8, `required`: the user's other answer to a refusal: it stays off, and Volt stops asking at
+	 * every start. "Run Without Sandbox" in its menu still changes that.
+	 */
+	keepOff(extensionId: string): void;
+	/** Whether the user answered a refusal with {@link keepOff}. */
+	isKeptOff(extensionId: string): boolean;
 	/** From the extension host layer: its sandboxed host is starting, runs, or was refused. */
 	report(extensionId: string, state: VoltExtensionSandboxState): void;
 }

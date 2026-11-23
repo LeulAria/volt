@@ -10,14 +10,19 @@ import { ConfigurationTarget, IConfigurationService } from '../../../../platform
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { INotificationService, NotificationPriority, Severity } from '../../../../platform/notification/common/notification.js';
+import { INotificationService, IPromptChoice, NotificationPriority, Severity } from '../../../../platform/notification/common/notification.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { effectiveExtensionSandboxMode, extensionListed, VOLT_EXTENSION_SANDBOX_KILL_SWITCH_SETTING, VOLT_EXTENSION_SANDBOX_MODE_SETTING, VOLT_SANDBOXED_EXTENSIONS_SETTING, VOLT_UNSANDBOXED_EXTENSIONS_SETTING } from '../../../../platform/voltSandbox/common/extensionHostSandbox.js';
 import { IHostService } from '../../host/browser/host.js';
 import { affectsVoltExtensionSandbox, IVoltExtensionSandboxService, voltPlatform, VoltExtensionSandboxState } from '../common/voltExtensionSandbox.js';
 
+/** Extensions the user chose to keep off after a refusal under `required` (per profile): not asked again. */
+const KEPT_OFF_KEY = 'volt.extensions.sandbox.keptOff';
+
 /**
- * Per-extension sandboxing in the window: the opt-in (per profile, in user or remote user
- * settings), what each opted-in extension's host is doing, and the P8 choice after a refusal.
+ * Per-extension sandboxing in the window: the scope (`required` by default on macOS and Linux, or
+ * the opt-in list, per profile in user or remote user settings), what each extension's sandboxed
+ * host is doing, and the P8 choice after a refusal, asked once per extension until answered.
  */
 export class VoltExtensionSandboxService extends Disposable implements IVoltExtensionSandboxService {
 
@@ -36,6 +41,7 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 		@IDialogService private readonly dialogService: IDialogService,
 		@IHostService private readonly hostService: IHostService,
 		@ILogService private readonly logService: ILogService,
+		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super();
 		this._register(this.configurationService.onDidChangeConfiguration(e => {
@@ -89,6 +95,7 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 			if (unsandboxed.some(id => id.toLowerCase() === lower)) {
 				await this.configurationService.updateValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING, unsandboxed.filter(id => id.toLowerCase() !== lower), ConfigurationTarget.USER);
 			}
+			this.setKeptOff(extensionId, false);
 			this.states.delete(lower);
 			this._onDidChange.fire(extensionId);
 			return;
@@ -106,7 +113,57 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 		this._onDidChange.fire(extensionId);
 	}
 
-	async runWithoutSandbox(extensionId: string): Promise<boolean> {
+	async runWithoutSandbox(extensionId: string, options?: { readonly confirmed?: boolean; readonly beforeInstall?: boolean }): Promise<boolean> {
+		if (!options?.confirmed && !await this.confirmRunWithout(extensionId)) {
+			return false;
+		}
+		if (options?.beforeInstall) {
+			this.quiet++;
+		}
+		try {
+			const unsandboxed = this.list(VOLT_UNSANDBOXED_EXTENSIONS_SETTING).filter(id => id.toLowerCase() !== extensionId.toLowerCase());
+			await this.configurationService.updateValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING, [...unsandboxed, extensionId], ConfigurationTarget.USER);
+		} finally {
+			if (options?.beforeInstall) {
+				this.quiet--;
+			}
+		}
+		this.setKeptOff(extensionId, false);
+		this.logService.info(`[volt-sandbox] the user chose to run ${extensionId} without the sandbox`);
+		this._onDidChange.fire(extensionId);
+		return true;
+	}
+
+	keepOff(extensionId: string): void {
+		this.setKeptOff(extensionId, true);
+		this.logService.info(`[volt-sandbox] the user chose to keep ${extensionId} off rather than run it without the sandbox`);
+		this._onDidChange.fire(extensionId);
+	}
+
+	isKeptOff(extensionId: string): boolean {
+		return this.keptOff().includes(extensionId.toLowerCase());
+	}
+
+	private keptOff(): string[] {
+		try {
+			const value = JSON.parse(this.storageService.get(KEPT_OFF_KEY, StorageScope.PROFILE, '[]'));
+			return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+		} catch {
+			return [];
+		}
+	}
+
+	private setKeptOff(extensionId: string, off: boolean): void {
+		const lower = extensionId.toLowerCase();
+		const before = this.keptOff();
+		const rest = before.filter(id => id !== lower);
+		if (!off && rest.length === before.length) {
+			return;
+		}
+		this.storageService.store(KEPT_OFF_KEY, JSON.stringify(off ? [...rest, lower] : rest), StorageScope.PROFILE, StorageTarget.MACHINE);
+	}
+
+	private async confirmRunWithout(extensionId: string): Promise<boolean> {
 		const state = this.state(extensionId);
 		const { confirmed } = await this.dialogService.confirm({
 			type: Severity.Warning,
@@ -114,14 +171,7 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 			detail: localize('voltSandbox.runWithoutDetail', "{0}\n\nWithout the sandbox it runs like any other extension, with the same access as Volt: your files, the network and your credentials.", state.kind === 'refused' ? state.reason : localize('voltSandbox.cantSandbox', "Volt can't run it in a sandbox here.")),
 			primaryButton: localize({ key: 'voltSandbox.runWithoutButton', comment: ['&& denotes a mnemonic'] }, "&&Run Without Sandbox"),
 		});
-		if (!confirmed) {
-			return false;
-		}
-		const unsandboxed = this.list(VOLT_UNSANDBOXED_EXTENSIONS_SETTING).filter(id => id.toLowerCase() !== extensionId.toLowerCase());
-		await this.configurationService.updateValue(VOLT_UNSANDBOXED_EXTENSIONS_SETTING, [...unsandboxed, extensionId], ConfigurationTarget.USER);
-		this.logService.info(`[volt-sandbox] the user chose to run ${extensionId} without the sandbox`);
-		this._onDidChange.fire(extensionId);
-		return true;
+		return confirmed;
 	}
 
 	async setKillSwitch(on: boolean): Promise<boolean> {
@@ -148,18 +198,21 @@ export class VoltExtensionSandboxService extends Disposable implements IVoltExte
 		this._onDidChange.fire(extensionId);
 		if (state.kind === 'refused') {
 			this.logService.warn(`[volt-sandbox] ${extensionId} stays off: no sandboxed host (${state.code}): ${state.reason}`);
-			if (!this.notified.has(key)) {
+			// Asked once per window until answered. In scope only by the `required` default, the other
+			// answer is "Keep It Off", which is remembered (per profile): no prompt at every start.
+			const byDefault = state.code !== 'kill-switch' && this.required() && !extensionListed(this.configurationService.getValue(VOLT_SANDBOXED_EXTENSIONS_SETTING), extensionId);
+			if (!this.notified.has(key) && !(byDefault && this.isKeptOff(extensionId))) {
 				this.notified.add(key);
 				const message = state.code === 'kill-switch'
 					? localize('voltSandbox.held', "{0} stays off: the extension sandbox is switched off. Run it without the sandbox?", extensionId)
-					: localize('voltSandbox.refused', "{0} stays off: Volt can't run it in a sandbox here. {1}", extensionId, state.reason);
-				this.notificationService.prompt(Severity.Warning, message, [{
-					label: localize('voltSandbox.runWithoutAction', "Run Without Sandbox"),
-					run: () => this.runWithoutSandbox(extensionId),
-				}, {
-					label: localize('voltSandbox.stopSandboxing', "Stop Sandboxing It"),
-					run: () => this.setOptedIn(extensionId, false),
-				}], { priority: NotificationPriority.URGENT, sticky: true });
+					: byDefault
+						? localize('voltSandbox.refusedDefault', "{0} stays off: Volt runs extensions in a sandbox and can't run this one in one here. {1} Run it without the sandbox, or keep it off?", extensionId, state.reason)
+						: localize('voltSandbox.refused', "{0} stays off: Volt can't run it in a sandbox here. {1}", extensionId, state.reason);
+				const runWithout: IPromptChoice = { label: localize('voltSandbox.runWithoutAction', "Run Without Sandbox"), run: () => this.runWithoutSandbox(extensionId) };
+				const other: IPromptChoice = byDefault
+					? { label: localize('voltSandbox.keepOff', "Keep It Off"), run: () => this.keepOff(extensionId) }
+					: { label: localize('voltSandbox.stopSandboxing', "Stop Sandboxing It"), run: () => this.setOptedIn(extensionId, false) };
+				this.notificationService.prompt(Severity.Warning, message, [runWithout, other], { priority: NotificationPriority.URGENT, sticky: true });
 			}
 		}
 	}
