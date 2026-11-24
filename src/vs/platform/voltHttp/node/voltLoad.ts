@@ -958,7 +958,7 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 			sample(Math.max(1, Math.ceil(elapsed / 1000)));
 		}
 		finished = true;
-		clearInterval(ticker);
+		clearTimeout(ticker);
 		for (const user of users) {
 			if (user) {
 				clearTimeout(user.timer);
@@ -996,7 +996,18 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 		hooks.onDone(result);
 	};
 
-	const ticker = setInterval(() => {
+	// The clock ticks at each step, and at the run's end. Each tick is aimed at its time by this clock, not left to
+	// an interval: a timer counts from the loop's own time, which is behind `now()` when the turn that set it had
+	// been busy, so an interval's tick can come a few milliseconds before a second or the end is over, and the
+	// sample or the end would then wait for the next tick: a run a quarter second longer than asked.
+	const tickMs = Math.min(stepMs, 250);
+	let ticker: ReturnType<typeof setTimeout> | undefined;
+	const arm = (): void => {
+		const elapsed = now() - t0;
+		const next = Math.min(totalMs, (Math.floor(elapsed / tickMs) + 1) * tickMs);
+		ticker = setTimeout(tick, Math.max(1, Math.ceil(next - elapsed)));
+	};
+	const tick = (): void => {
 		const elapsed = now() - t0;
 		const whole = Math.floor(elapsed / 1000);
 		while (secondsOut < whole && !finished) {
@@ -1011,7 +1022,11 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 		if (mode === 'http' && maxRequests && measuredStarted >= maxRequests && active === 0 && measuredDone >= measuredStarted) {
 			end$('completed');
 		}
-	}, Math.min(stepMs, 250));
+		if (!finished) {
+			arm();
+		}
+	};
+	arm();
 	if (targets.length) {
 		scale(0);
 	}
