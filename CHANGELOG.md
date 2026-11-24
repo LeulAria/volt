@@ -8,6 +8,199 @@ Volt is built on VS Code (Code - OSS 1.105). Changes to that base come from upst
 Download a build from [Releases](https://github.com/LeulAria/volt/releases). From 0.0.4, Mac builds are signed with an Apple
 Developer ID and notarized.
 
+## [0.0.7] - 2026-11-24
+
+A sandbox around every new chat, voice, and an API tool inside Volt. New chats on macOS and Linux run in an OS sandbox, and
+third-party extensions run in a sandboxed host with integrity checks and held updates. You can talk to your agents in a
+realtime voice call (with or without an API key) and have replies read aloud by voices that run on your computer. Volt
+Client turns the HTTP client into a full API tool, Customize Volt changes the window's look and layout from files, and
+GitHub Copilot and VS Code's built-in AI are removed.
+
+### Highlights
+
+- **A sandbox around every new chat.** On macOS and Linux a new chat starts in a workspace-write OS sandbox (Seatbelt, or
+  bubblewrap with seccomp and Landlock). Its terminals, checks, workflows and MCP servers run inside it, a refused action
+  shows a denial card, and a chat that cannot be sandboxed is refused instead of running without one.
+- **Trust for third-party extensions.** They run in a sandboxed extension host by default on macOS and Linux, their files
+  are hashed at install and checked at startup, and an update is held for your approval when its publisher changes or it
+  adds permissions.
+- **Voice chat.** A realtime call with your agents on desktop, web and the phone app: the voice sends work to the chat's
+  agent, steers a running turn and speaks the result. It works with an xAI or OpenAI key, or with no key at all on this
+  computer.
+- **Read Aloud.** A speaker button under each reply, with two optional voice downloads (10 fast voices, 28 expressive ones)
+  that run on your computer.
+- **Volt Client.** The HTTP client becomes an API tool: collections in `.http` files, ten request kinds, tests, automations,
+  load tests and security scans, all usable by agents.
+- **Customize Volt.** Looks and layouts are files that apply live, Volt's buttons can be moved between slots, and a
+  Playground window with devtools lets you or an agent build one.
+- **Chat backgrounds.** Orbit (animated), Volt, Halftone, four photos or your own image behind a new chat.
+- **Related Chats and windows.** The Explorer sidebar lists the open project's chats with search, and each chat opens in one
+  window only.
+- **Copilot is gone.** GitHub Copilot and VS Code's built-in AI features are removed (about 178,000 lines).
+
+### Performance
+
+| | 0.0.6 | 0.0.7 |
+| --- | ---: | ---: |
+| Idle CPU | 1.70% | 0.69% |
+| Relaunch to Ready | 944 ms | 773 ms |
+| Prompt tokens for "hi" | 14.1K | 12.2K |
+| Agent sandbox startup on macOS | about 510 ms | about 40 ms |
+
+Measured on dev builds during the orchestration and performance rounds; the reports are in
+`docs/reports/2026-11-12-orch-devenv`. With a downloaded fast voice, a voice call's greeting starts 0.19 s after the click
+(M4 Max).
+
+### Added
+
+**Sandbox and security**
+- New chats on macOS and Linux start in a workspace-write sandbox. A chat's sandbox is fixed at its first agent start, so
+  chats that already ran stay as they were until you change them.
+- Commands Volt runs for a chat (terminals, checks, workflows, MCP servers, test runs, job checks) run inside that chat's
+  sandbox, under a supervisor shown in Settings > Security.
+- One Policy Authority makes every permission decision, with grants kept in `~/.volt/trust/grants.json`. Permission screens:
+  a denial card, an install sheet, an Access page.
+- A network broker per chat: a route and token for each, DNS-rebinding and private-address blocks, budgets, and tunnels that
+  close when access is revoked.
+- A sandboxed chat cannot plant files that unsandboxed tools run later (skills, MCP and editor configs, git config and
+  hooks). With the network on, only ssh's config, known hosts and public keys are readable in `~/.ssh`; with it off, nothing
+  there is.
+- Packaged builds flip Electron's fuses, and a paired device is pinned by its certificate fingerprint, which the Add Device
+  window shows. Plain HTTP to other devices is refused.
+
+**Extensions and plugins**
+- Third-party extensions run in a sandboxed extension host by default on macOS and Linux. One that cannot be sandboxed asks
+  once before it runs without it.
+- The install scan flags invisible code (GlassWorm, Trojan Source) as high risk.
+- Integrity lock: an extension whose files changed since install does not start.
+- Updates are held for approval when the publisher changes, the verified or signature status gets worse, or the update adds
+  permissions or high-risk code.
+- 30 Volt features are built-in extensions that turn on or off without a reload, and third-party extensions get a
+  `vscode.volt` API with declared capabilities and one-time consent.
+- A sandboxed host for Volt-native plugins; Memory is the first plugin.
+
+**Voice**
+- Voice chat: an empty composer shows a mic and a waveform button. A call has a tray with a clock, live waveform, Mute,
+  Settings, View transcript and Hang up, and the thread shows a card for each call.
+- The voice agent sends work to the chat's agent, steers a running turn, starts a chat from an empty composer, and speaks
+  results when a turn finishes or needs a decision.
+- "On This Computer": voice chat without a key. Dictation hears you, the chat's own agent answers, and a downloaded voice
+  reads the reply. Automatic uses it when neither xAI nor OpenAI has a key.
+- Read Aloud under each reply reads the prose, skips code blocks, and says file names and paths the way a developer does.
+- Two optional voice downloads into `~/.volt/voices`: fast voices (85 MB, 10 voices, a sentence in 60 to 220 ms) and
+  expressive voices (132 MB, 28 American and British voices).
+- One Voice page in Settings for voice chat, Read Aloud, the downloads and dictation, with a sample for every voice.
+- Pressing Send while dictating waits for the last words and sends one message. Only you end a dictation.
+
+**Volt Client**
+- Collections in `.http` files: folders, environments, variables, 14 auth types (OAuth 2.0, Digest, Hawk, AWS, NTLM and
+  more), cookies, and Postman, OpenAPI and cURL import.
+- Request kinds: HTTP, GraphQL, WebSocket, SSE, Socket.IO, MQTT, gRPC, MCP and more, with code snippets in many languages.
+- Scripts and tests with per-test detail, plus AI-written tests, docs and edits using the chat's model.
+- Automations: ordered request flows with conditions, repeats, data rows and teardown.
+- Performance: load tests over HTTP, WebSocket and SSE with profiles, limits, charts and history.
+- Security: passive checks and opt-in active probes, only for hosts you tick, with findings, AI triage and reports.
+- Requests are sent from the main process, so local APIs without CORS headers answer and every response header shows.
+- Agents use all of it through `ide http`. A sandboxed chat follows its network rules and cannot run a scan.
+
+**Customize Volt**
+- A look (`look.json`) sets sizes and theme colors; a layout (`layout.json`) sets the sidebars, chat width, right-panel tabs
+  and slots. Files live in `~/.volt/customize`, and a bad file never breaks the window.
+- The agent sidebar's header and footer buttons are slot items a layout can move, reorder or hide, and there is an optional
+  VS Code-style activity bar.
+- Playground: each draft is an extension folder with its own git repo. A flask in the title bar has Develop, Preview, Review
+  Changes, Apply to My Volt and Install as Extension.
+- A Devtools tab beside the Playground chat: Layers, Variables and an Inspect element picker. Drag a layer into the chat to
+  hand the agent that part.
+- Volt: Reset Customizations (Cmd+Option+Shift+Escape) undoes everything.
+
+**Agents and chats**
+- Job waits: with `watch_job` an idle agent hands Volt a check for a long build, benchmark or deploy. Volt runs it on a
+  timer, shows a "Watching job" row and wakes the agent when the job ends.
+- The queued messages card has Pause and Resume. A paused queue sends nothing when the turn ends.
+- Related Chats: a tab in the Explorer sidebar with the chats of the open chat's project, the same groups as the left list,
+  search and New Chat.
+- One window per chat, Select Chats, and Open Project in New Window.
+- A next-message suggestion with a Tab chip, and "N subagents running" at the end of the transcript.
+- A turn that was running when the agent server stopped continues its own agent session after the restart.
+- Orchestra works in sandboxed chats: team members start sandboxed at least as strictly as their lead.
+- Code intelligence for agents: `code_nav` impact, body and structural search on a tree-sitter index, and errors returned
+  with each edit.
+- Chat backgrounds in Settings > Appearance > Chat Background: a gallery, Choose Image, Dim, Pixel Grid and Behind
+  Conversations.
+- A settled chat's row has Move Out of Settled.
+- A failed MCP server says why on hover, and a server that wants a sign-in reads "Needs sign-in" instead of "Error".
+
+**Terminals, devices and Scratch**
+- A chip for a command an agent runs in the background opens it in the chat's Terminals tab as a read-only terminal that
+  follows the output. The tab opens by itself once when an agent starts a terminal.
+- Device previews open only beside the chat whose agent used the device. `/device` lists iOS Simulators, Android Emulators
+  and connected devices, and "Run the app on iOS" asks which device as the turn starts.
+- Android emulators boot without their window, and Simulator.app stays hidden while Volt shows the simulator.
+- Excalidraw drawings on the Scratch board, and Scratch boards as files and in @ mentions.
+
+**Git and pull requests**
+- Hovering an open pull request shows Merge, or Fix Conflicts when it has conflicts.
+- Squash and Merge shows its spinner inside the button.
+- Labels are a colored dot and the name, and the row's second line shows one thing between the author and the age.
+
+**Web and mobile**
+- The phone app is the real workbench in a shell, with phone navigation, sheets and phone-sized rows.
+- Voice chat in the browser and on the phone: the phone runs only the audio, and the agent server runs the tools.
+
+**IDE layout**
+- The empty editor lists everything the agent window's tools pane lists (New Agent, File, Terminal, Browser, Device,
+  Changes, Git Graph, Scratch, Canvas, Automations, Workflows), each with its shortcut.
+- The activity bar has 16px icons without highlight boxes.
+
+### Changed
+
+- **Breaking:** GitHub Copilot and VS Code's built-in AI are removed, with `vscode.chat`, `vscode.lm`, `vscode.ai` and
+  `vscode.interactive`. A third-party extension that calls them without checking fails to activate. Volt's own agent and MCP
+  support are not affected.
+- Supervised is the default access mode for new profiles and new chats. A default you already picked stays.
+- Cmd+, (Ctrl+, on Windows and Linux) opens Volt Settings. VS Code's settings are under All Settings.
+- The files sidebar is now the Explorer sidebar. Its tabs run Explorer, Search, Source Control, Pull Requests, Related Chats
+  (Ctrl+Option+1 to 5).
+- Pull request rows and a new chat's pickers show no tooltips on hover.
+- Merge moved from the side panel's Pull requests group to hover in the list.
+- Several chats can share one worktree checkout, and the worktree limits never remove the checkout of an open chat used in
+  the last three days.
+- The release notes page draws each release in its own blueprint colour.
+- The README opens with a demo video, and the website has photo backdrops and a release rail on its changelog.
+- CI: main's failing checks are fixed, and the release build no longer fails on macOS runners with an older SDK or when
+  GitHub throttles a download.
+
+### Fixed
+
+- A chat could open as an empty new-chat screen after one failed history read. The read is now tried again, and the first
+  screen stays.
+- A chat whose worktree folder was deleted failed with git's "already used by worktree". It now works in the checkout that
+  holds its branch.
+- The worktree limits removed a chat's clean checkout minutes after its last message.
+- Device previews could open in another project's window.
+- In full screen the title bar kept a gap for traffic lights that were not there.
+- After switching from Agent to IDE, the title and status bars stayed see-through until the next theme change.
+- In a narrow tab, the Changes header's controls overlapped and ran into the next pane, and the workflows library's title
+  was squeezed into a thin column.
+- A prompt from the browser's "Message Volt" in a chat with no project had no folder.
+- Claude Code chats on Opus 5.5 could stall for six minutes at a time while thinking.
+- A load test in Volt Client ran a quarter longer than its duration.
+- A table in an earlier chat answer lost its right border.
+- Tooltips stayed open after their anchor moved away, and menus with no room on the right ran off the window.
+- The PR chip could fall back to Source Control instead of the Pull Requests tab.
+
+### Known limitations
+
+- macOS is the platform Volt is developed and tested on. Windows and Linux builds come from CI and have had little testing;
+  computer use on Windows has not yet run on a real Windows machine.
+- The sandbox is off on Windows, and Windows has no sandboxed extension host. Git Bash is refused inside a sandbox there.
+- Native models' `web_fetch` and `web_search` do not yet follow a chat's network rules.
+- The downloaded voices have only been run on macOS.
+- Update-signing checks are in the code but not enforced until keys are pinned.
+- The iOS app is a simulator build (it runs in the iOS Simulator on Apple silicon) until iOS release signing is set up. The
+  Android app is signed for release, with an `.aab` for Google Play.
+
 ## [0.0.6] - 2026-11-04
 
 A hundred agents at once, a calendar for Automations, and run and debug in the agent window. The agent window keeps the
@@ -620,6 +813,7 @@ mode, Git views for branches and worktrees, several Claude accounts, and a good 
 The first tagged build of Volt, which added the release pipeline with Stable, Beta and Nightly channels. It was never published to
 GitHub Releases.
 
+[0.0.7]: https://github.com/LeulAria/volt/releases/tag/v0.0.7
 [0.0.6]: https://github.com/LeulAria/volt/releases/tag/v0.0.6
 [0.0.5]: https://github.com/LeulAria/volt/releases/tag/v0.0.5
 [0.0.4]: https://github.com/LeulAria/volt/releases/tag/v0.0.4
