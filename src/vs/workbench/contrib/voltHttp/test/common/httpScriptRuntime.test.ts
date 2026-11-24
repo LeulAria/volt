@@ -7,6 +7,13 @@ import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { httpScriptNames, httpScriptRuntime, httpScriptTestSites, httpScriptWorkerSource, IHttpScriptBreak, IHttpScriptInput, IHttpScriptOutput, IHttpScriptValue } from '../../common/httpScriptRuntime.js';
 
+/**
+ * The line an error was thrown from inside `new Function` code is read from V8's stack (`<anonymous>:line:col`),
+ * the engine Volt runs on. Bun's engine reports its caller's file and line there, so tests that check those lines
+ * run under mocha (`npm run test-node`) and are skipped by `npm run test-volt-bun`.
+ */
+const testOnV8 = (globalThis as { Bun?: unknown }).Bun ? test.skip : test;
+
 function input(script: string, overrides: Partial<IHttpScriptInput> = {}): IHttpScriptInput {
 	return {
 		script,
@@ -370,7 +377,7 @@ suite('HTTP client script runtime', () => {
 		/* 16 */ `nope.x = 1;`,
 	].join('\n');
 
-	test('detail: each test carries its duration, assertions, expected and actual, and the line it failed on', () => {
+	testOnV8('detail: each test carries its duration, assertions, expected and actual, and the line it failed on', () => {
 		const out = run(DETAIL_SCRIPT, { detail: true });
 		assert.deepStrictEqual(out.tests.map(test => test.name), ['ok', 'bad', 'throws', 'handler', 'later']);
 		const [ok, bad, throws, handler, later] = out.tests;
@@ -513,7 +520,7 @@ suite('HTTP client script runtime', () => {
 		assert.deepStrictEqual(run(BREAK_SCRIPT, { breakpoints: [] }).breaks, []);
 	});
 
-	test('breakpoints: a script reports the same with them as without', () => {
+	testOnV8('breakpoints: a script reports the same with them as without', () => {
 		const scripts = [
 			DETAIL_SCRIPT,
 			BREAK_SCRIPT,
