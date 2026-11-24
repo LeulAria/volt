@@ -11,7 +11,7 @@ import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '.
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
-import { AGENT_BROWSER_ACCESS_SETTING, BrowserBlockReason, browserBlockReason, IVoltBrowserAccessService } from '../common/browserAccess.js';
+import { AGENT_BROWSER_ACCESS_SETTING, AGENT_COOKIE_IMPORT_SETTING, BrowserBlockReason, browserBlockReason, IVoltBrowserAccessService } from '../common/browserAccess.js';
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	id: 'volt.browser',
@@ -22,6 +22,17 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			type: 'boolean',
 			default: true,
 			description: localize('voltBrowser.allowAgents', "Let agents open, read and click in the in-app browser. When off, the browser tools refuse with a message the agent sees. Each chat can still turn browser access on or off from the browser's menu."),
+		},
+		[AGENT_COOKIE_IMPORT_SETTING]: {
+			type: 'string',
+			enum: ['ask', 'allow', 'off'],
+			enumDescriptions: [
+				localize('voltBrowser.cookieImport.ask', "Show the import dialog: you pick the browser, profile and sites, or decline."),
+				localize('voltBrowser.cookieImport.allow', "Import the sites an agent asks for from the browser profile you allowed in the dialog, without asking. Asks when no profile was allowed."),
+				localize('voltBrowser.cookieImport.off', "Agents can't ask; they are told to have you sign in yourself."),
+			],
+			default: 'ask',
+			description: localize('voltBrowser.cookieImport', "When an agent needs a signed-in page, it can ask to import your cookies for those sites from another browser (Chrome, Safari, Arc, Firefox, …) into the in-app browser. Agents never see the cookies, only how many were imported."),
 		},
 	},
 });

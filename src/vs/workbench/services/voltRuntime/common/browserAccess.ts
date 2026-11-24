@@ -9,6 +9,21 @@ import { createDecorator } from '../../../../platform/instantiation/common/insta
 /** Whether agents may drive the in-app browser at all. A chat's own choice overrides it. */
 export const AGENT_BROWSER_ACCESS_SETTING = 'volt.browser.allowAgents';
 
+/**
+ * What `browser_import_cookies` does when an agent asks for the user's sign-ins: `ask` shows the
+ * user the import dialog, `allow` imports the asked sites from the profile the user allowed (and
+ * asks when there is none), `off` refuses without showing anything.
+ */
+export const AGENT_COOKIE_IMPORT_SETTING = 'volt.browser.agentCookieImport';
+export type AgentCookieImportMode = 'ask' | 'allow' | 'off';
+
+/** The browser profile (`IVoltCookieSource.id`) agents may import from without asking; application storage. */
+export const AGENT_COOKIE_SOURCE_STORAGE_KEY = 'volt.browser.agentCookieSource';
+
+export function agentCookieImportMode(value: unknown): AgentCookieImportMode {
+	return value === 'allow' || value === 'off' ? value : 'ask';
+}
+
 export const IVoltBrowserAccessService = createDecorator<IVoltBrowserAccessService>('voltBrowserAccessService');
 
 /** Why a chat's agent may not use the browser: the setting, or the user's choice in that chat. */
