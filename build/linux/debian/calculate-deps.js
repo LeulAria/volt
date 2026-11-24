@@ -35,12 +35,8 @@ function calculatePackageDeps(binaryPath, arch, chromiumSysroot, vscodeSysroot) 
     const chromiumManifest = cgmanifest_json_1.default.registrations.filter(registration => {
         return registration.component.type === 'git' && registration.component.git.name === 'chromium';
     });
-    const dpkgShlibdepsUrl = `https://raw.githubusercontent.com/chromium/chromium/${chromiumManifest[0].version}/third_party/dpkg-shlibdeps/dpkg-shlibdeps.pl`;
     const dpkgShlibdepsScriptLocation = `${(0, os_1.tmpdir)()}/dpkg-shlibdeps.pl`;
-    const result = (0, child_process_1.spawnSync)('curl', [dpkgShlibdepsUrl, '-o', dpkgShlibdepsScriptLocation]);
-    if (result.status !== 0) {
-        throw new Error('Cannot retrieve dpkg-shlibdeps. Stderr:\n' + result.stderr);
-    }
+    fetchDpkgShlibdeps(chromiumManifest[0].version, dpkgShlibdepsScriptLocation);
     const cmd = [dpkgShlibdepsScriptLocation, '--ignore-weak-undefined'];
     switch (arch) {
         case 'amd64':
@@ -85,5 +81,47 @@ function calculatePackageDeps(binaryPath, arch, chromiumSysroot, vscodeSysroot) 
     }).sort();
     const requires = new Set(filteredDeps);
     return requires;
+}
+/**
+ * Volt: Chromium's dpkg-shlibdeps for this Chromium version, kept in the temp folder between packages. GitHub
+ * throttles its Chromium mirror (a 429 page was once saved and run as Perl, which failed two release builds), so each
+ * answer must be a script, and Chromium's own host is asked when GitHub does not give one.
+ */
+function fetchDpkgShlibdeps(version, location) {
+    const marker = `${location}.version`;
+    const isScript = () => {
+        try {
+            return (0, fs_1.readFileSync)(location, 'utf8').startsWith('#!');
+        }
+        catch {
+            return false;
+        }
+    };
+    try {
+        if ((0, fs_1.readFileSync)(marker, 'utf8') === version && isScript()) {
+            return;
+        }
+    }
+    catch {
+        // not fetched yet
+    }
+    const file = 'third_party/dpkg-shlibdeps/dpkg-shlibdeps.pl';
+    const curl = ['-fsSL', '--retry', '3', '--retry-delay', '5', '--retry-all-errors', '--max-time', '120'];
+    const errors = [];
+    const github = (0, child_process_1.spawnSync)('curl', [...curl, `https://raw.githubusercontent.com/chromium/chromium/${version}/${file}`, '-o', location]);
+    if (github.status !== 0 || !isScript()) {
+        errors.push(`raw.githubusercontent.com: ${String(github.stderr).trim() || 'not a script'}`);
+        // Gitiles answers with the file in base64.
+        const encoded = `${location}.b64`;
+        const gitiles = (0, child_process_1.spawnSync)('curl', [...curl, `https://chromium.googlesource.com/chromium/src/+/${version}/${file}?format=TEXT`, '-o', encoded]);
+        if (gitiles.status === 0) {
+            (0, fs_1.writeFileSync)(location, Buffer.from((0, fs_1.readFileSync)(encoded, 'utf8'), 'base64'));
+        }
+        if (gitiles.status !== 0 || !isScript()) {
+            errors.push(`chromium.googlesource.com: ${String(gitiles.stderr).trim() || 'not a script'}`);
+            throw new Error('Cannot retrieve dpkg-shlibdeps.\n' + errors.join('\n'));
+        }
+    }
+    (0, fs_1.writeFileSync)(marker, version);
 }
 //# sourceMappingURL=calculate-deps.js.map
