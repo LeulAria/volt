@@ -175,10 +175,90 @@ export function toElectronCookie(cookie: IReadCookie, now = Date.now() / 1000): 
 	};
 }
 
-/** The site a host belongs to, roughly (last two labels), to count sites in the result. */
+/** Second-level labels under country codes that sites register below (`example.co.uk`, `example.com.au`). */
+const COUNTRY_SECOND_LEVELS = new Set(['co', 'com', 'org', 'net', 'gov', 'ac', 'edu', 'ne', 'or', 'go']);
+
+/**
+ * The site a host belongs to, roughly (its registrable part: `github.com`, `bbc.co.uk`), to group
+ * cookies by site. IP addresses and single-label hosts (`localhost`) are their own site.
+ */
 export function siteOf(host: string): string {
-	const labels = host.replace(/^\./, '').split('.');
-	return labels.slice(-2).join('.');
+	const bare = host.toLowerCase().replace(/^\./, '').replace(/^\[|\]$/g, '');
+	if (/^\d{1,3}(\.\d{1,3}){3}$/.test(bare) || bare.includes(':')) {
+		return bare;
+	}
+	const labels = bare.split('.');
+	const keep = labels.length > 2 && labels[labels.length - 1].length === 2 && COUNTRY_SECOND_LEVELS.has(labels[labels.length - 2]) ? 3 : 2;
+	return labels.slice(-keep).join('.');
+}
+
+/** One site in a browser profile's cookie store, as the import dialog lists it (no values). */
+export interface IVoltCookieSite {
+	/** `github.com`: its cookies and every subdomain's. */
+	readonly site: string;
+	/** Cookies the import would bring over (not expired, not partitioned). */
+	readonly cookies: number;
+}
+
+/** A cookie's host and expiry, read without its value: listing sites needs no keychain. */
+export interface ICookieHost {
+	readonly host: string;
+	/** Unix seconds; undefined for session cookies. */
+	readonly expires?: number;
+}
+
+/** The sites of a cookie store with their cookie counts, most cookies first. Expired cookies are left out. */
+export function summarizeCookieSites(hosts: Iterable<ICookieHost>, now = Date.now() / 1000): IVoltCookieSite[] {
+	const counts = new Map<string, number>();
+	for (const { host, expires } of hosts) {
+		if (!host || (expires !== undefined && expires <= now)) {
+			continue;
+		}
+		const site = siteOf(host);
+		if (site) {
+			counts.set(site, (counts.get(site) ?? 0) + 1);
+		}
+	}
+	return [...counts].map(([site, cookies]) => ({ site, cookies })).sort((a, b) => b.cookies - a.cookies || a.site.localeCompare(b.site));
+}
+
+/** Whether a site the import lists answers a site someone asked for (`app.vercel.com` asks for `vercel.com`). */
+export function siteAnswers(site: string, requested: string): boolean {
+	const wanted = requested.toLowerCase().replace(/^\./, '');
+	return site === wanted || wanted.endsWith(`.${site}`) || site.endsWith(`.${wanted}`);
+}
+
+export interface IOrderedCookieSites {
+	/** The requested sites first (in the order asked), then the rest as listed. */
+	readonly sites: readonly IVoltCookieSite[];
+	/** The sites to check at first: the ones asked for. */
+	readonly preselected: ReadonlySet<string>;
+	/** Requested sites this profile has no cookies for (not signed in there). */
+	readonly missing: readonly string[];
+}
+
+/** Puts the sites an agent asked for at the top, checked, and names the ones the profile lacks. */
+export function orderCookieSites(sites: readonly IVoltCookieSite[], requested: readonly string[]): IOrderedCookieSites {
+	const first: IVoltCookieSite[] = [];
+	const missing: string[] = [];
+	for (const wanted of requested) {
+		const matches = sites.filter(entry => siteAnswers(entry.site, wanted) && !first.includes(entry));
+		if (!matches.length && !first.some(entry => siteAnswers(entry.site, wanted))) {
+			missing.push(wanted);
+		}
+		first.push(...matches);
+	}
+	return {
+		sites: [...first, ...sites.filter(entry => !first.includes(entry))],
+		preselected: new Set(first.map(entry => entry.site)),
+		missing,
+	};
+}
+
+/** "Google Chrome · Personal", or the browser alone when its one profile has no name of its own. */
+export function cookieSourceLabel(source: IVoltCookieSource): string {
+	const profile = source.profileLabel || source.profile;
+	return source.browser === 'safari' ? source.browserLabel : `${source.browserLabel} · ${profile}`;
 }
 
 /** `Local State`'s profile names: folder → the name the user sees. */

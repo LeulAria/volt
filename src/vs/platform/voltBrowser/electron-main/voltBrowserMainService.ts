@@ -13,9 +13,9 @@ import { IVoltDevServer, IVoltEmulation, IVoltLocalServer, IVoltMockHit, IVoltMo
 import { BrowserPlaygrounds, listLocalServers } from '../node/browserPlaygrounds.js';
 import { DevServers } from '../node/devServers.js';
 import { BrowserDevToolsBridge } from './browserDevToolsBridge.js';
-import { isPreviewPartition, IVoltCookieImportRequest, IVoltCookieImportResult, IVoltCookieSource, matchesDomainFilter, parseDomainFilter, siteOf, toElectronCookie } from '../common/browserCookies.js';
+import { isPreviewPartition, IVoltCookieImportRequest, IVoltCookieImportResult, IVoltCookieSite, IVoltCookieSource, matchesDomainFilter, parseDomainFilter, siteOf, toElectronCookie } from '../common/browserCookies.js';
 import { IVoltBrowserService, IVoltSiteData, VOLT_BROWSER_PARTITION, VoltBrowserColorScheme, VoltBrowserDataKind, VoltSiteDataKind } from '../common/voltBrowser.js';
-import { listCookieSources, readCookies } from '../node/browserCookieReader.js';
+import { listCookieSites, listCookieSources, readCookies } from '../node/browserCookieReader.js';
 import { ISandboxBrowserRules } from '../common/sandboxBrowser.js';
 import { SandboxBrowserSessions } from './sandboxBrowserSessions.js';
 import { NETWORK_BROKER_SETTING, readNetworkBrokerMode } from '../../voltSandbox/common/networkBrokerSetting.js';
@@ -397,6 +397,14 @@ export class VoltBrowserMainService implements IVoltBrowserService {
 
 	listCookieSources(): Promise<IVoltCookieSource[]> {
 		return listCookieSources();
+	}
+
+	async listCookieSites(sourceId: string): Promise<IVoltCookieSite[]> {
+		const source = (await listCookieSources()).find(candidate => candidate.id === sourceId);
+		if (!source) {
+			throw new Error('That browser profile is no longer there.');
+		}
+		return listCookieSites(source);
 	}
 
 	async importCookies(request: IVoltCookieImportRequest): Promise<IVoltCookieImportResult> {

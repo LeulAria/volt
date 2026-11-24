@@ -5,7 +5,7 @@
 
 import { createDecorator } from '../../instantiation/common/instantiation.js';
 import { IVoltDevServer, IVoltEmulation, IVoltLocalServer, IVoltMockHit, IVoltMockRoute, IVoltPlayground, IVoltPlaygroundRequest, IVoltPlaygroundUpdate } from './browserAgent.js';
-import { IVoltCookieImportRequest, IVoltCookieImportResult, IVoltCookieSource } from './browserCookies.js';
+import { IVoltCookieImportRequest, IVoltCookieImportResult, IVoltCookieSite, IVoltCookieSource } from './browserCookies.js';
 import { ISandboxBrowserRules } from './sandboxBrowser.js';
 
 export const IVoltBrowserService = createDecorator<IVoltBrowserService>('voltBrowserService');
@@ -72,6 +72,9 @@ export interface IVoltBrowserService {
 
 	/** Cookie stores of the browsers installed here (Chrome, Safari, Arc, Firefox, Edge, Brave, …), one per profile. */
 	listCookieSources(): Promise<IVoltCookieSource[]>;
+
+	/** The sites one profile has cookies for, with counts. Reads hosts only: never asks for the keychain. */
+	listCookieSites(sourceId: string): Promise<IVoltCookieSite[]>;
 
 	/** Copies one profile's cookies into a preview browser profile. Decrypting Chromium cookies may make the OS ask the user once. */
 	importCookies(request: IVoltCookieImportRequest): Promise<IVoltCookieImportResult>;
