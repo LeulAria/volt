@@ -154,7 +154,8 @@ export class BrowserTitleService extends MultiWindowParts<BrowserTitlebarPart> i
 	//#region Auxiliary Titlebar Parts
 
 	createAuxiliaryTitlebarPart(container: HTMLElement, editorGroupsContainer: IEditorGroupsContainer, instantiationService: IInstantiationService): IAuxiliaryTitlebarPart {
-		const titlebarPartContainer = $('.part.titlebar', { role: 'none' });
+		// The class keeps the agent window's own title bar rules (no drag layer, no title) off this window's bar.
+		const titlebarPartContainer = $('.part.titlebar.volt-auxiliary-titlebar', { role: 'none' });
 		titlebarPartContainer.style.position = 'relative';
 		container.insertBefore(titlebarPartContainer, container.firstChild); // ensure we are first element
 
