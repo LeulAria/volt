@@ -31,7 +31,10 @@ suite('agentChatOrbit', () => {
 		assert.strictEqual(orbitStopVisibility({ left: 900, top: 100, right: 960, bottom: 113 }, [], 14), 1);
 	});
 
-	test('at rest the canvas lets its bitmap go behind a picture of its frame, and comes back on play', async () => {
+	test('at rest the canvas lets its bitmap go behind a picture of its frame, and comes back on play', async function () {
+		// The picture is encoded in the window's idle time. The test window is hidden and has none, so the
+		// encoder starts on its own fallback about a second in (1.2 s on CI when it passed), and later on a busy runner.
+		this.timeout(30_000);
 		const parent = mainWindow.document.createElement('div');
 		parent.style.cssText = 'position: relative; width: 200px; height: 100px';
 		mainWindow.document.body.appendChild(parent);
@@ -42,7 +45,7 @@ suite('agentChatOrbit', () => {
 			const width = canvas.width;
 			assert.ok(width >= 200, 'drawn at its size');
 			orbit.rest();
-			for (let i = 0; i < 200 && !parent.querySelector('img.volt-agent-chat-orbit-still'); i++) {
+			for (const until = Date.now() + 20_000; Date.now() < until && !parent.querySelector('img.volt-agent-chat-orbit-still');) {
 				await new Promise(resolve => setTimeout(resolve, 10));
 			}
 			const picture = parent.querySelector<HTMLImageElement>('img.volt-agent-chat-orbit-still');

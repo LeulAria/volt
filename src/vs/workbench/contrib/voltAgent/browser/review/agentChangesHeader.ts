@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { $, addDisposableListener, append, EventHelper } from '../../../../../base/browser/dom.js';
+import { $, addDisposableListener, append, EventHelper, getWindow, scheduleAtNextAnimationFrame } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Disposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
@@ -39,6 +39,13 @@ import { AgentGitActionsControl } from '../pullRequests/agentGitActionsControl.j
 import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 
 const HEADER_HEIGHT = 40;
+
+/**
+ * What the header gives up, in order, while its row is wider than the tab (agentChangesEditor.css):
+ * shorter scope and branch names, the branch, the scope's name, Find Issues as an icon, the git
+ * action as an icon, the line counts, Find Issues.
+ */
+const FIT_STEPS = ['fit-1', 'fit-2', 'fit-3', 'fit-4', 'fit-5', 'fit-6', 'fit-7'];
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** Git branch outline at a 1.5px stroke; a codicon's stroke is fixed by its font. */
@@ -213,7 +220,11 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 		const find = append(this.element, $('.volt-agent-changes-find'));
 		this.findIssuesButton = append(find, $('button.volt-agent-changes-find-main')) as HTMLButtonElement;
 		this.findIssuesButton.type = 'button';
-		this.findIssuesButton.textContent = localize('voltAgent.changes.findIssues', "Find Issues");
+		// The icon stands in for the words where the tab is narrow.
+		append(this.findIssuesButton, renderIcon(Codicon.search)).classList.add('volt-agent-changes-find-icon');
+		const findIssuesLabel = localize('voltAgent.changes.findIssues', "Find Issues");
+		append(this.findIssuesButton, $('span.volt-agent-changes-find-label')).textContent = findIssuesLabel;
+		this.findIssuesButton.setAttribute('aria-label', findIssuesLabel);
 		this.findIssuesButton.title = localize('voltAgent.changes.findIssuesTitle', "Have the chat's agent review these changes for bugs, without editing");
 		this.findIssuesChevron = append(find, $('button.volt-agent-changes-find-chevron')) as HTMLButtonElement;
 		this.findIssuesChevron.type = 'button';
@@ -240,7 +251,9 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 		const commit = append(this.element, $('button.volt-agent-changes-commit')) as HTMLButtonElement;
 		commit.type = 'button';
 		commit.appendChild(createGitBranchIcon(commit.ownerDocument));
-		append(commit, $('span')).textContent = localize('voltAgent.changes.commitAndPush', "Commit & Push");
+		const commitLabel = localize('voltAgent.changes.commitAndPush', "Commit & Push");
+		append(commit, $('span.volt-agent-changes-commit-label')).textContent = commitLabel;
+		commit.title = commitLabel;
 
 		this._register(addDisposableListener(this.scopeButton, 'click', e => {
 			EventHelper.stop(e, true);
@@ -270,6 +283,42 @@ export class AgentChangesHeader extends Disposable implements IMultiDiffEditorHe
 		this.renderScope();
 		this.renderResolve();
 		this.trackRepository();
+		this.watchFit();
+	}
+
+	/**
+	 * Keeps the row inside the tab: at once when the tab's width changes, on the next frame when a
+	 * control's own width does (a new label, a button shown or hidden).
+	 */
+	private watchFit(): void {
+		const win = getWindow(this.element);
+		const pending = this._register(new MutableDisposable());
+		const width = new win.ResizeObserver(() => this.fit());
+		const content = new win.ResizeObserver(() => {
+			pending.value = scheduleAtNextAnimationFrame(getWindow(this.element), () => this.fit());
+		});
+		width.observe(this.element);
+		for (const child of this.element.children) {
+			if (!child.classList.contains('volt-agent-changes-header-spacer')) {
+				content.observe(child);
+			}
+		}
+		this._register({ dispose: () => { width.disconnect(); content.disconnect(); } });
+	}
+
+	/** Takes the fewest steps that make the row fit, starting again from the full row. */
+	private fit(): void {
+		const element = this.element;
+		if (!element.clientWidth) {
+			return;
+		}
+		element.classList.remove(...FIT_STEPS);
+		for (const step of FIT_STEPS) {
+			if (element.scrollWidth <= element.clientWidth) {
+				break;
+			}
+			element.classList.add(step);
+		}
 	}
 
 	/** What this tab shows, as a Find Issues target. */
