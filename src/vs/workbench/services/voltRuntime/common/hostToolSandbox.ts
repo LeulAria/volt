@@ -195,6 +195,15 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	// Orchestration: other chats. Renaming, stopping and picking their model is Volt's state; reading
 	// what other chats said (their transcripts) needs agents.read:other.
 	orchestrator_capabilities: 'safe',
+	// Like thread_list: a sandboxed chat gets the projects, their folders and listening ports (what its
+	// workspace block and browser_status already say) and its own chats; other chats are left out by the tool.
+	fleet_status: 'safe',
+	// The same confined view: a sandboxed chat's search covers its own chats, the projects and the ports.
+	fleet_find: 'safe',
+	// Another chat's terminal output, changed files and browser page.
+	thread_inspect: 'reads-other',
+	// Names and membership only, as thread_list shows them.
+	thread_group: 'safe',
 	thread_list: 'safe',
 	thread_search: 'reads-other',
 	thread_read: 'reads-other',
@@ -368,6 +377,7 @@ export function hostToolSandboxUse(name: string, args: Readonly<Record<string, u
 		case 'queue_send_now':
 		case 'queue_resume':
 		case 'thread_read':
+		case 'thread_inspect':
 		case 'queue_list':
 		case 'worktree_status':
 			return { kind, target: threadIdArg(args.thread_id) };

@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IFleetProjectRef, projectsLine } from '../orchestration/agentFleet.js';
+
 /**
  * What the user has open beside a chat (its right panel), told to the agent in a few lines with
  * the turn, and only when it changed since the agent last heard it. The details (terminal output,
@@ -13,6 +15,39 @@
 
 /** Runs in the window: `(sessionId) => IWorkspaceSnapshot | undefined` for the chat's right panel. */
 export const WORKSPACE_SNAPSHOT_COMMAND_ID = 'volt.workspace.contextSnapshot';
+
+/**
+ * Runs in the window: `(sessionId, { ownTerminalsOnly?, outputLines? }) => IWorkspaceSnapshot` with
+ * the details workspace_status shows (terminal output, changed files), for any chat (thread_inspect).
+ */
+export const WORKSPACE_DETAIL_COMMAND_ID = 'volt.workspace.contextDetail';
+
+/**
+ * Runs in the window: `(callerSessionId, { chats, terminalLines? }) => IWorkspaceFleetFacts`: what
+ * only a window knows about several chats at once (fleet_status, thread_inspect): the processes
+ * listening on this machine, each chat's browser page and the terminals its agent started.
+ */
+export const WORKSPACE_FLEET_COMMAND_ID = 'volt.workspace.fleetFacts';
+
+export interface IWorkspaceAgentTerminal {
+	readonly id: string;
+	readonly command: string;
+	readonly status: string;
+	/** Still running (starting, running, ready, waiting for input, stopping). */
+	readonly live: boolean;
+	readonly cwd?: string;
+	readonly exitCode?: number;
+	readonly urls?: readonly string[];
+	readonly error?: string;
+	/** Its last output lines, when asked for. */
+	readonly tail?: readonly string[];
+}
+
+export interface IWorkspaceFleetFacts {
+	/** Processes listening on TCP ports of this machine (Volt's own left out). */
+	readonly servers: readonly { readonly port: number; readonly pid: number; readonly command: string; readonly cwd?: string }[];
+	readonly chats: Readonly<Record<string, { readonly browserUrl?: string; readonly terminals?: readonly IWorkspaceAgentTerminal[] }>>;
+}
 
 export const WORKSPACE_STATUS_TOOL_NAME = 'workspace_status';
 
@@ -77,6 +112,10 @@ export interface IWorkspaceSnapshot {
 	readonly git?: IWorkspaceGit;
 	/** The chat's one Scratch board (the one beside it, else the one it drew on), open or not. */
 	readonly scratchBoard?: { readonly id: string; readonly title: string };
+	/** The project the chat works in. */
+	readonly project?: IFleetProjectRef;
+	/** The other projects with recent chats in Volt, most recent first: what a misplaced request may be meant for. */
+	readonly otherProjects?: readonly IFleetProjectRef[];
 }
 
 /** At most this many tabs are named in the turn's lines; the rest are counted. */
@@ -180,7 +219,8 @@ function describeGit(git: IWorkspaceGit): string {
  */
 export function formatWorkspaceContext(snapshot: IWorkspaceSnapshot): string | undefined {
 	const tabs = snapshot.tabs;
-	if (!tabs.length && !snapshot.git && !snapshot.scratchBoard) {
+	const projects = projectsLine(snapshot.project, snapshot.otherProjects ?? []);
+	if (!tabs.length && !snapshot.git && !snapshot.scratchBoard && !projects) {
 		return undefined;
 	}
 	const lines: string[] = [
@@ -217,6 +257,9 @@ export function formatWorkspaceContext(snapshot: IWorkspaceSnapshot): string | u
 	if (snapshot.git) {
 		lines.push(describeGit(snapshot.git));
 	}
+	if (projects) {
+		lines.push(projects);
+	}
 	lines.push(`Call ${WORKSPACE_STATUS_TOOL_NAME} for details (terminal output, changed files, the device's app) when you need them.`);
 	lines.push('</volt_workspace>');
 	return lines.join('\n');
@@ -234,7 +277,7 @@ export function workspaceLeadText(snapshot: IWorkspaceSnapshot, sentKey: string 
 	if (sentKey === workspaceContextKey(snapshot)) {
 		return undefined;
 	}
-	if (sentKey === undefined && agentHasGitStatus && !snapshot.tabs.length) {
+	if (sentKey === undefined && agentHasGitStatus && !snapshot.tabs.length && !snapshot.otherProjects?.length) {
 		return undefined;
 	}
 	return formatWorkspaceContext(snapshot);
@@ -251,6 +294,8 @@ export function workspaceContextKey(snapshot: IWorkspaceSnapshot): string {
 		tabs: snapshot.tabs.map(tab => [tab.kind, tab.title, tab.focused, tab.target, tab.surfaceId, tab.device?.name, tab.device?.state, tab.device?.foreground, tab.device?.floating, tab.terminal?.running]),
 		branch: snapshot.git?.branch,
 		board: snapshot.scratchBoard ? [snapshot.scratchBoard.id, snapshot.scratchBoard.title] : undefined,
+		// Sorted: which project was active last reorders them, and that alone is not news.
+		projects: snapshot.otherProjects?.length ? [snapshot.project?.root, ...snapshot.otherProjects.map(project => project.root).sort()] : undefined,
 	});
 }
 
@@ -298,4 +343,38 @@ export function formatWorkspaceStatus(snapshot: IWorkspaceSnapshot): string {
 		}
 	}
 	return lines.join('\n');
+}
+
+/**
+ * Another chat's surroundings, for thread_inspect: every tab beside it with the id its tools take,
+ * terminal output and changed files. Worded for a reader who is not that chat's agent.
+ */
+export function formatWorkspaceOf(snapshot: IWorkspaceSnapshot): string[] {
+	const lines: string[] = [];
+	if (!snapshot.tabs.length) {
+		lines.push('Tabs beside it: none open in this window.');
+	} else {
+		lines.push(`Tabs beside it (right panel ${snapshot.panelOpen ? 'open' : 'closed'}, ${snapshot.tabs.length}):`);
+		for (const tab of snapshot.tabs) {
+			lines.push(`- ${tab.focused && snapshot.panelOpen ? '[in front] ' : ''}${describeTab(tab)}`);
+			const output = tab.terminal?.output?.trim();
+			if (output) {
+				lines.push('  Last output:', ...output.split('\n').map(line => `  | ${line.replace(/</g, '\u2039').replace(/>/g, '\u203a')}`));
+			}
+		}
+	}
+	if (snapshot.scratchBoard) {
+		lines.push(`Its Scratch board: "${clip(snapshot.scratchBoard.title, 60)}" (boardId ${clip(snapshot.scratchBoard.id, 60)}): scratch_read with that boardId reads it.`);
+	}
+	const git = snapshot.git;
+	if (git) {
+		lines.push(describeGit(git));
+		for (const file of (git.files ?? []).slice(0, MAX_GIT_FILES)) {
+			lines.push(`  ${file}`);
+		}
+		if ((git.files?.length ?? 0) > MAX_GIT_FILES) {
+			lines.push(`  [${git.files!.length - MAX_GIT_FILES} more omitted]`);
+		}
+	}
+	return lines;
 }

@@ -272,7 +272,9 @@ export async function listLocalServers(ownPids: ReadonlySet<number>): Promise<IV
 		}
 		seen.add(key);
 		return true;
-	}).slice(0, 40);
+		// The cap is wide: a machine with Docker and a few desktop apps has more than 40 listeners
+		// before any dev server, and a low cap dropped the servers the caller asked about.
+	}).slice(0, 300);
 	const pids = [...new Set(unique.map(row => row.pid))];
 	const cwds = new Map<number, string>();
 	const commands = new Map<number, string>();

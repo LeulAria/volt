@@ -14,8 +14,11 @@ import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase 
 import { EditorInput } from '../../../../common/editor/editorInput.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
-import { IWorkspaceDevice, IWorkspaceGit, IWorkspaceSnapshot, IWorkspaceTab, IWorkspaceTerminal, WORKSPACE_SNAPSHOT_COMMAND_ID, WORKSPACE_STATUS_TOOL_NAME, formatWorkspaceStatus } from '../../../../services/voltRuntime/common/harness/workspaceContext.js';
+import { IVoltBrowserService } from '../../../../../platform/voltBrowser/common/voltBrowser.js';
+import { isTerminalLive } from '../../../../services/voltRuntime/common/terminalTools.js';
+import { IWorkspaceAgentTerminal, IWorkspaceDevice, IWorkspaceFleetFacts, IWorkspaceGit, IWorkspaceSnapshot, IWorkspaceTab, IWorkspaceTerminal, WORKSPACE_DETAIL_COMMAND_ID, WORKSPACE_FLEET_COMMAND_ID, WORKSPACE_SNAPSHOT_COMMAND_ID, WORKSPACE_STATUS_TOOL_NAME, formatWorkspaceStatus } from '../../../../services/voltRuntime/common/harness/workspaceContext.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { IFleetProjectRef } from '../../../../services/voltRuntime/common/orchestration/agentFleet.js';
 import { IVoltHostToolCall, IVoltHostToolResult, IVoltHostToolService } from '../../../../services/voltRuntime/common/hostTools.js';
 import { parseBranchStatus } from '../../../../services/voltRuntime/common/orchestration/agentThreadTools.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
@@ -43,6 +46,10 @@ const GIT_FRESH_MS = 2_000;
 /** Past this a git result is too old to show: the turn waits for a new one. */
 const GIT_STALE_MS = 60_000;
 const OUTPUT_LINES = 30;
+/** A project counts as open while one of its chats was active this recently. */
+const RECENT_PROJECT_MS = 14 * 24 * 60 * 60_000;
+const MAX_OTHER_PROJECTS = 8;
+const PROJECTS_FRESH_MS = 30_000;
 /** CanvasEditorInput.TypeID and CANVAS_SCHEME (visuals/canvas/canvasEditor.ts), not imported for its weight. */
 const CANVAS_INPUT_TYPE_ID = 'workbench.input.voltCanvas';
 const CANVAS_SCHEME = 'volt-canvas';
@@ -57,6 +64,8 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 
 	/** The last `git status` summary per folder (see git). */
 	private readonly gitByFolder = new Map<string, { at: number; settled?: { value: IWorkspaceGit | undefined }; refreshing: boolean }>();
+	/** The projects with recent chats, most recent first (see recentProjects). */
+	private recent: { readonly at: number; readonly projects: readonly IFleetProjectRef[] } | undefined;
 
 	constructor(
 		@IAgentDevicesService private readonly devices: IAgentDevicesService,
@@ -69,10 +78,15 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		@IEditorService private readonly editorService: IEditorService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 		@IAgentTerminalsService private readonly agentTerminals: IAgentTerminalsService,
+		@IVoltBrowserService private readonly browser: IVoltBrowserService,
 	) {
 		super();
 		this._register(CommandsRegistry.registerCommand(WORKSPACE_SNAPSHOT_COMMAND_ID, (_accessor, sessionId: string) =>
 			raceTimeout(this.snapshot(sessionId, false, isSandboxed(this.runtime.getSandboxSettings(this.runtime.chatFor(sessionId)))), SNAPSHOT_BUDGET_MS), 'internal'));
+		this._register(CommandsRegistry.registerCommand(WORKSPACE_DETAIL_COMMAND_ID, (_accessor, sessionId: string, options?: { readonly ownTerminalsOnly?: boolean; readonly outputLines?: number }) =>
+			this.snapshot(sessionId, true, options?.ownTerminalsOnly === true, options?.outputLines), 'internal'));
+		this._register(CommandsRegistry.registerCommand(WORKSPACE_FLEET_COMMAND_ID, (_accessor, _callerId: string, options?: { readonly chats?: readonly string[]; readonly terminalLines?: number }) =>
+			this.fleetFacts(options?.chats ?? [], options?.terminalLines), 'internal'));
 		this._register(hostTools.registerToolProvider({
 			tools: [{
 				name: WORKSPACE_STATUS_TOOL_NAME,
@@ -95,22 +109,85 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 	}
 
 	/** `detail`: terminal output and changed file names too (workspace_status). `ownTerminalsOnly`: what other terminals ran and printed is left out. */
-	async snapshot(sessionId: string, detail: boolean, ownTerminalsOnly = false): Promise<IWorkspaceSnapshot> {
+	async snapshot(sessionId: string, detail: boolean, ownTerminalsOnly = false, outputLines = OUTPUT_LINES): Promise<IWorkspaceSnapshot> {
 		const id = this.runtime.chatFor(sessionId);
 		const root = this.folder(id);
 		const panel = agentSessionToolTabs(id);
 		const [tabs, git] = await Promise.all([
-			Promise.all((panel?.tabs ?? []).map(tab => this.describe(tab.input, tab.focused, root, detail, ownTerminalsOnly ? id : undefined))),
+			Promise.all((panel?.tabs ?? []).map(tab => this.describe(tab.input, tab.focused, root, detail ? Math.max(0, Math.min(200, outputLines)) : undefined, ownTerminalsOnly ? id : undefined))),
 			root ? this.git(root.fsPath, detail) : Promise.resolve(undefined),
 		]);
 		const shown = tabs.filter((tab): tab is IWorkspaceTab => !!tab);
 		const scratchBoard = this.chatBoard(id, shown);
+		const project = this.projectOf(id);
+		const otherProjects = this.recentProjects().filter(other => other.id !== project?.id).slice(0, MAX_OTHER_PROJECTS);
 		return {
 			panelOpen: panel?.open ?? false,
 			tabs: shown,
 			...(git ? { git } : {}),
 			...(scratchBoard ? { scratchBoard } : {}),
+			...(project ? { project } : {}),
+			...(otherProjects.length ? { otherProjects } : {}),
 		};
+	}
+
+	/** What only a window knows about several chats: listening processes, each chat's page and its agent's terminals. */
+	private async fleetFacts(chats: readonly string[], terminalLines: number | undefined): Promise<IWorkspaceFleetFacts> {
+		const servers = await raceTimeout(this.browser.listLocalServers().catch(() => undefined), 5_000) ?? [];
+		const facts: Record<string, { browserUrl?: string; terminals?: IWorkspaceAgentTerminal[] }> = {};
+		for (const chat of chats.slice(0, 400)) {
+			const id = this.runtime.chatFor(chat);
+			const browserUrl = agentSessionToolTabs(id)?.tabs.map(tab => tab.input).find((input): input is VoltBrowserEditorInput => input instanceof VoltBrowserEditorInput)?.url;
+			const terminals = this.agentTerminals.list(id).slice(0, 12).map((terminal): IWorkspaceAgentTerminal => {
+				const tail = terminalLines ? this.agentTerminals.output(terminal.id)?.text.trimEnd().split('\n').slice(-Math.min(terminalLines, 40)) : undefined;
+				return {
+					id: terminal.id,
+					command: terminal.command,
+					status: terminal.status,
+					live: isTerminalLive(terminal.status),
+					...(terminal.cwd ? { cwd: terminal.cwd } : {}),
+					...(terminal.exitCode !== undefined ? { exitCode: terminal.exitCode } : {}),
+					...(terminal.urls.length ? { urls: terminal.urls.slice(0, 3) } : {}),
+					...(terminal.error ? { error: terminal.error } : {}),
+					...(tail?.some(line => line.trim()) ? { tail } : {}),
+				};
+			});
+			if (browserUrl || terminals.length) {
+				facts[chat] = { ...(browserUrl ? { browserUrl } : {}), ...(terminals.length ? { terminals } : {}) };
+			}
+		}
+		return { servers: servers.map(server => ({ port: server.port, pid: server.pid, command: server.command, ...(server.cwd ? { cwd: server.cwd } : {}) })), chats: facts };
+	}
+
+	private projectOf(sessionId: string): IFleetProjectRef | undefined {
+		const bound = this.sessionContext.bindingFor(sessionId);
+		const record = (bound ? this.sessionContext.getProject(bound.projectId) : undefined)
+			?? this.sessionContext.getProject(this.history.get(sessionId)?.workspaceId ?? '');
+		return record && !record.scratch && record.root.scheme === Schemas.file ? { id: record.id, name: record.displayName, root: record.root.fsPath } : undefined;
+	}
+
+	/**
+	 * The projects the user is working in: those with a chat active in the last two weeks, most
+	 * recent first. Every project ever opened would name folders the user forgot about.
+	 */
+	private recentProjects(): readonly IFleetProjectRef[] {
+		const now = Date.now();
+		if (this.recent && now - this.recent.at < PROJECTS_FRESH_MS) {
+			return this.recent.projects;
+		}
+		const latest = new Map<string, number>();
+		for (const meta of this.history.list({ inWindow: true })) {
+			const at = Math.max(meta.updatedAt, meta.lastPromptAt ?? 0);
+			if (!meta.subagent && now - at < RECENT_PROJECT_MS && at > (latest.get(meta.workspaceId) ?? 0)) {
+				latest.set(meta.workspaceId, at);
+			}
+		}
+		const projects = [...latest].sort((a, b) => b[1] - a[1]).flatMap(([id]): IFleetProjectRef[] => {
+			const record = this.sessionContext.getProject(id);
+			return record && !record.scratch && record.root.scheme === Schemas.file ? [{ id: record.id, name: record.displayName, root: record.root.fsPath }] : [];
+		});
+		this.recent = { at: now, projects };
+		return projects;
 	}
 
 	/** The chat's one board, as scratch_draw picks it: the Scratch tab beside the chat, else one on screen, else the board it drew on. */
@@ -133,7 +210,8 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		return folder?.scheme === Schemas.file ? folder : undefined;
 	}
 
-	private async describe(input: EditorInput, focused: boolean, root: URI | undefined, detail: boolean, onlyTerminalsOf?: string): Promise<IWorkspaceTab | undefined> {
+	/** `outputLines`: terminal output too, this many lines (workspace_status, thread_inspect); undefined for a turn's summary. */
+	private async describe(input: EditorInput, focused: boolean, root: URI | undefined, outputLines: number | undefined, onlyTerminalsOf?: string): Promise<IWorkspaceTab | undefined> {
 		const title = input.getName();
 		if (input instanceof VoltBrowserEditorInput) {
 			return { kind: 'browser', title, focused, ...(input.url ? { target: input.url } : {}) };
@@ -163,7 +241,7 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 			if (instance && onlyTerminalsOf !== undefined && this.agentTerminals.forInstance(instance)?.chatId !== onlyTerminalsOf) {
 				return { kind: 'terminal', title, focused };
 			}
-			return { kind: 'terminal', title, focused, ...(instance && !instance.isDisposed ? { terminal: await this.terminal(instance, detail) } : {}) };
+			return { kind: 'terminal', title, focused, ...(instance && !instance.isDisposed ? { terminal: await this.terminal(instance, outputLines) } : {}) };
 		}
 		if (input instanceof AgentChangesEditorInput) {
 			return { kind: 'changes', title, focused };
@@ -189,13 +267,13 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		return { kind: 'other', title, focused };
 	}
 
-	private async terminal(instance: ITerminalInstance, detail: boolean): Promise<IWorkspaceTerminal> {
+	private async terminal(instance: ITerminalInstance, outputLines: number | undefined): Promise<IWorkspaceTerminal> {
 		const commands = instance.capabilities.get(TerminalCapability.CommandDetection);
 		const running = commands?.executingCommand?.trim();
 		const last = commands?.commands.at(-1);
 		const cwd = instance.capabilities.get(TerminalCapability.CwdDetection)?.getCwd()
 			?? await raceTimeout(instance.getSpeculativeCwd(), 300).catch(() => undefined);
-		const output = detail ? terminalTail(instance, OUTPUT_LINES) : undefined;
+		const output = outputLines ? terminalTail(instance, outputLines) : undefined;
 		return {
 			...(cwd ? { cwd } : {}),
 			...(running ? { running } : {}),
