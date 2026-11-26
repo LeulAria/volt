@@ -94,7 +94,7 @@ import {
 import { CONTEXT_AGENT_FIND_INPUT_FOCUSED, CONTEXT_AGENT_FIND_WIDGET_VISIBLE, CONTEXT_IN_AGENT_INPUT } from './agentFindWidget.js';
 import { AgentSidePanel } from '../chrome/agentSidePanel.js';
 import { startAgentChat } from '../workspace/agentPanels.js';
-import { toggleAgentToolsPanel } from '../workspace/agentSurfaceHost.js';
+import { revealShownSideChat, toggleAgentToolsPanel } from '../workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
@@ -627,12 +627,18 @@ async function addEditorSelectionToAgent(accessor: ServicesAccessor, editor?: IC
 	const layoutService = accessor.get(IWorkbenchLayoutService);
 	const viewsService = accessor.get(IViewsService);
 	// The Changes tab and review diffs add to the chat that is there without opening a closed sidebar.
-	if (isInChangesEditor(control)) {
-		const agent = getActiveAgentEditor(accessor);
-		if (agent) {
-			agent.addSelectionMention(model.uri, selection);
+	const changesChat = isInChangesEditor(control) ? getActiveAgentEditor(accessor) : undefined;
+	// The agent layout's chat is on screen already: adding to it must not open the agents list.
+	if (getLayoutMode(layoutService) === 'agent') {
+		const onScreen = await agentLayoutChat(accessor);
+		if (onScreen) {
+			onScreen.addSelectionMention(model.uri, selection);
 			return true;
 		}
+	}
+	if (changesChat) {
+		changesChat.addSelectionMention(model.uri, selection);
+		return true;
 	}
 
 	revealAgentSidePanel(layoutService);
@@ -797,7 +803,7 @@ async function addResourcesToAgent(accessor: ServicesAccessor, resource: URI | u
 	const layoutService = accessor.get(IWorkbenchLayoutService);
 	const viewsService = accessor.get(IViewsService);
 	// The agent layout's chat is on screen already: adding to it must not open the agents list.
-	const onScreen = !newSession && getLayoutMode(layoutService) === 'agent' ? agentLayoutChat(accessor) : undefined;
+	const onScreen = !newSession && getLayoutMode(layoutService) === 'agent' ? await agentLayoutChat(accessor) : undefined;
 	if (onScreen) {
 		await onScreen.addResourceMentions(resources);
 		return;
@@ -813,13 +819,30 @@ async function addResourcesToAgent(accessor: ServicesAccessor, resource: URI | u
 	await view.getActiveAgentEditor()?.addResourceMentions(resources);
 }
 
-/** The chat the agent layout shows, found like AgentSidePanel.getActiveAgentEditor: the active one, else the most recent. */
-function agentLayoutChat(accessor: ServicesAccessor): AgentEditor | undefined {
+/**
+ * The chat the agent layout adds to: the one last worked in (focus or a click), which is the chat on
+ * screen or a side chat whose tab is in the right panel on screen, brought to the front (a file opened
+ * from the Explorer covers it). Else, like AgentSidePanel.getActiveAgentEditor, the active chat, else
+ * the most recent one.
+ */
+async function agentLayoutChat(accessor: ServicesAccessor): Promise<AgentEditor | undefined> {
 	const active = accessor.get(IEditorService).activeEditorPane;
+	const groups = accessor.get(IEditorGroupsService);
+	const lastUsed = AgentEditor.lastUsedSessionId;
+	if (lastUsed) {
+		const onScreen = groups.mainPart.activeGroup.activeEditorPane;
+		if (onScreen instanceof AgentEditor && onScreen.sessionId === lastUsed) {
+			return onScreen;
+		}
+		const sideChat = await revealShownSideChat(lastUsed);
+		if (sideChat instanceof AgentEditor) {
+			return sideChat;
+		}
+	}
 	if (active instanceof AgentEditor) {
 		return active;
 	}
-	for (const group of accessor.get(IEditorGroupsService).getGroups(GroupsOrder.MOST_RECENTLY_ACTIVE)) {
+	for (const group of groups.getGroups(GroupsOrder.MOST_RECENTLY_ACTIVE)) {
 		if (group.activeEditorPane instanceof AgentEditor) {
 			return group.activeEditorPane;
 		}

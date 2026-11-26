@@ -121,6 +121,8 @@ export class AgentTooltip extends Disposable {
 	private shownOptions: IAgentTooltipShowOptions | undefined;
 	/** Blocks drawn by card rows ({@link IAgentTooltipRow.render}). */
 	private readonly rendered = this._register(new DisposableStore());
+	/** Documents with the stray-pointer check ({@link watchPointer}). */
+	private readonly watchedDocuments = new WeakSet<Document>();
 
 	constructor() {
 		super();
@@ -199,6 +201,7 @@ export class AgentTooltip extends Disposable {
 		}
 
 		const doc = getWindow(anchor).document;
+		this.watchPointer(doc);
 		const host = anchor.closest('.monaco-workbench') ?? doc.body;
 		if (this.domNode.parentElement !== host) {
 			host.appendChild(this.domNode);
@@ -248,6 +251,30 @@ export class AgentTooltip extends Disposable {
 		top = Math.max(8, Math.min(top, win.innerHeight - height - 8));
 		this.domNode.style.left = `${left}px`;
 		this.domNode.style.top = `${top}px`;
+	}
+
+	/**
+	 * An anchor hidden or moved under a still pointer (the composer toolbar laying out again)
+	 * never gets mouseleave, and its tooltip stayed up. Close a plain tooltip as soon as the
+	 * pointer is over anything else; ones the pointer may cross to keep their own delayed hide.
+	 */
+	private watchPointer(doc: Document): void {
+		if (this.watchedDocuments.has(doc)) {
+			return;
+		}
+		this.watchedDocuments.add(doc);
+		this._register(addDisposableListener(doc, 'mouseover', e => {
+			const anchor = this.anchor;
+			const shown = this.shownOptions;
+			if (!anchor || !shown || shown.variant === 'files' || shown.onClick || shown.interactive) {
+				return;
+			}
+			const target = e.target as Node | null;
+			if (target && (anchor.contains(target) || this.domNode.contains(target))) {
+				return;
+			}
+			this.hide();
+		}, true));
 	}
 
 	hide(): void {

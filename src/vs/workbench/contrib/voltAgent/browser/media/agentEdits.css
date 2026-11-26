@@ -62,6 +62,14 @@
 	display: none;
 }
 
+/* A narrow editor: the file bar drops the change counter, then the file counter, before Undo and Keep. */
+.monaco-editor .volt-agent-edit-filebar.compact > .volt-agent-edit-nav:not(.files),
+.monaco-editor .volt-agent-edit-filebar.compact > .volt-agent-edit-divider,
+.monaco-editor .volt-agent-edit-filebar.compact .volt-agent-edit-keys,
+.monaco-editor .volt-agent-edit-filebar.tight > .volt-agent-edit-nav.files {
+	display: none;
+}
+
 .monaco-editor .volt-agent-edit-count {
 	padding: 0 4px;
 	white-space: nowrap;

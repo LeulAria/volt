@@ -47,6 +47,7 @@ suite('Agent history across windows', () => {
 				new NullLogService(),
 				{} as never,
 				windowScope,
+				{ bindingFor: () => undefined } as never,
 			));
 			await history.whenReady;
 			return history;

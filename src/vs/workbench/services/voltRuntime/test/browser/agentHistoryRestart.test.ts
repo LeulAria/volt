@@ -50,6 +50,7 @@ suite('Agent history after a restart', () => {
 			new NullLogService(),
 			{} as never,
 			disposables.add(new VoltWindowScopeService(undefined, undefined, undefined)),
+			{ bindingFor: () => undefined } as never,
 		));
 		await service.whenReady;
 		assert.strictEqual(service.get('done-chat')?.status, 'done', 'the log says it finished');

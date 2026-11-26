@@ -297,6 +297,16 @@ export function deriveStatus(transcript: IAgentSessionTranscript): AgentSessionS
 	return last.assistant.status;
 }
 
+/** The index fields that name a chat's project. */
+export function workspaceMetaFields(workspace: IAgentSessionWorkspace): Pick<IAgentSessionMeta, 'workspaceId' | 'workspaceLabel' | 'workspaceFolder' | 'workspaceFolders'> {
+	return {
+		workspaceId: workspace.id,
+		workspaceLabel: workspace.label,
+		workspaceFolder: workspace.folders[0],
+		workspaceFolders: workspace.folders.length > 1 ? workspace.folders : undefined,
+	};
+}
+
 export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Partial<IAgentSessionMeta>): IAgentSessionMeta {
 	const first = transcript.turns[0];
 	const last = transcript.turns.at(-1);
@@ -315,10 +325,7 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		customTitle: !!custom,
 		createdAt: transcript.header.createdAt,
 		updatedAt,
-		workspaceId: transcript.header.workspace.id,
-		workspaceLabel: transcript.header.workspace.label,
-		workspaceFolder: transcript.header.workspace.folders[0],
-		workspaceFolders: transcript.header.workspace.folders.length > 1 ? transcript.header.workspace.folders : undefined,
+		...workspaceMetaFields(transcript.header.workspace),
 		turnCount: transcript.turns.length,
 		preview: first ? derivePreview(first.user.text) : '',
 		summary,

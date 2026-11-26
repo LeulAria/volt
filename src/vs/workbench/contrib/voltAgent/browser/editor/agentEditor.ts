@@ -730,6 +730,13 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 
 	static readonly ID = AgentEditorInput.EditorID;
 
+	/** The chat the user last worked in (focus or a click in it). Add to Chat from outside a chat prefers it. */
+	private static lastUsedSession: string | undefined;
+
+	static get lastUsedSessionId(): string | undefined {
+		return AgentEditor.lastUsedSession;
+	}
+
 	private container!: HTMLElement;
 	private editorMainEl!: HTMLElement;
 	private threadView!: AgentThreadView;
@@ -1072,6 +1079,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// new-chat landing for a few frames before the conversation replaces it.
 		this.container.classList.add('restoring');
 		this._register(disposableTimeout(() => this.container.classList.remove('restoring'), RESTORE_REVEAL_TIMEOUT_MS));
+		const markUsed = () => AgentEditor.lastUsedSession = this.sessionKey;
+		this._register(addDisposableListener(parent, 'focusin', markUsed));
+		this._register(addDisposableListener(parent, 'pointerdown', markUsed, true));
 		this._register(new DragAndDropObserver(parent, {
 			onDragEnter: e => {
 				this.blockWorkbenchFileDrop(e);
@@ -2087,6 +2097,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.stashThread();
 		this.thinkingStore.clear();
 		this.messages = input.messages;
+		// A side chat with a conversation shows it; an empty one stays the compact composer.
+		this.syncHostedChrome();
 		this.sessionTokensUsed = input.contextUsed;
 		this.sessionTokensWindow = input.contextWindow;
 		this.editingUserIndex = undefined;
@@ -3096,6 +3108,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 
 	/** `deferHead`: a switch to this chat; a long thread draws its last exchanges now and the rest when idle. */
 	private renderThread(scrollToEnd = false, deferHead = false): void {
+		// A side chat hides its transcript until it has one. Show it before the turns are drawn.
+		this.syncHostedChrome();
 		// An open edit survives the redraw: its composer moves into the new slot, keeps its place on
 		// screen (applyEditAnchor, from syncThreadScroll) and keeps the caret.
 		const editing = this.editingUserIndex !== undefined ? this.threadInner.querySelector<HTMLElement>('.volt-agent-turn.user.editing') : null;
@@ -6487,6 +6501,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (this.submitting || !this.composerCanSend() || this.isReadOnlyTaskChat()) {
 			return;
 		}
+		// A side chat with no project of its own sends in its parent's project, not a new scratch folder.
+		this.surfaceHost.ensureSideChatProject();
 		// A video just attached is still being cut into stills; send once they are ready.
 		const media = this.mentionController?.whenMediaReady();
 		if (media) {
@@ -7390,7 +7406,9 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private syncHostedChrome(): void {
 		// A board's or canvas's own chat dock (toolless) keeps the chat's composer (the follow-up pill), even in a right panel.
 		if (this.container?.closest('.volt-agent-tools-area') && !this.container.closest('.volt-agent-toolless')) {
-			const readable = this.input instanceof AgentEditorInput && this.input.showTranscriptInTools;
+			// Empty side chats are a composer. Once a message is sent, the conversation stays on screen
+			// here: hiding it made Send look like it did nothing.
+			const readable = this.messages.length > 0 || (this.input instanceof AgentEditorInput && this.input.showTranscriptInTools);
 			this.setBrowserHosted(!this.isSubagentChat() && !readable);
 		}
 	}
@@ -8148,6 +8166,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 					// A `/compact` turn now shows its own running compaction.
 					this.compactRequested = false;
 					this.compactRequestTimeout.clear();
+					// The first send in a side chat: the transcript was hidden until this turn existed.
+					this.syncHostedChrome();
 					// A turn this panel sent, or one the orchestrator started (queue, subagent report).
 					this._onDidChangeDock.fire();
 					this.stickToBottom = true;

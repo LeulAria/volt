@@ -62,8 +62,21 @@ export function subagentStartHookCommand(context: string = CLAUDE_SUBAGENT_RULES
 }
 
 /**
+ * How Claude Code's thinking reaches Volt. Recent models (Opus 5.5) default to `display: omitted`
+ * when Claude Code runs headless: thinking streams as empty deltas that the ACP adapter drops, so
+ * at high effort a long plan is minutes of silence. The idle watchdog took that for a stall and
+ * interrupted the turn every 6 minutes, throwing the thinking away each time (2026-11-05, a long
+ * prompt on Opus 5.5 Extra High never answered). Summaries stream as `agent_thought_chunk`s: the
+ * user sees the thinking and the watchdog sees activity. Claude Code maps `adaptive` to a thinking
+ * budget on models without adaptive thinking, and an explicit `alwaysThinkingEnabled: false` still
+ * turns thinking off.
+ */
+export const CLAUDE_THINKING = { type: 'adaptive', display: 'summarized' } as const;
+
+/**
  * `session/new` (and `session/resume`) `_meta` for a Claude Code session: the main agent's rules
- * appended to Claude Code's prompt, and a SubagentStart hook that hands every subagent its rules.
+ * appended to Claude Code's prompt, a SubagentStart hook that hands every subagent its rules, and
+ * streamed thinking summaries ({@link CLAUDE_THINKING}).
  * Kept identical across sessions so a resumed session is not rebuilt for a changed fingerprint.
  */
 export function claudeWorkRulesMeta(model?: string): Record<string, unknown> {
@@ -73,6 +86,7 @@ export function claudeWorkRulesMeta(model?: string): Record<string, unknown> {
 			options: {
 				// The exact model: the adapter's picker takes only its aliases (default, sonnet, haiku, ...).
 				...(model ? { model } : {}),
+				thinking: CLAUDE_THINKING,
 				settings: {
 					hooks: {
 						SubagentStart: [{ hooks: [{ type: 'command', command: subagentStartHookCommand(), timeout: 10 }] }],

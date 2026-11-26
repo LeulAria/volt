@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
-import { CLAUDE_MAIN_RULES, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SUBAGENT_RULES, claudeWorkRulesMeta, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
+import { CLAUDE_MAIN_RULES, CLAUDE_OPEN_TASKS_REASON, CLAUDE_SUBAGENT_RULES, CLAUDE_THINKING, claudeWorkRulesMeta, stopHookCommand, subagentStartHookCommand } from '../../../common/harness/claudeWorkRules.js';
 
 /** What a POSIX shell passes to printf for `printf '%s' '<quoted>'`: single quotes, with `'\''` for a quote inside. */
 function shellArgument(command: string): string {
@@ -45,5 +45,12 @@ suite('Volt Claude work rules', () => {
 		assert.strictEqual(hook.command, subagentStartHookCommand());
 		// A resumed session compares this against the one it was created with.
 		assert.strictEqual(JSON.stringify(claudeWorkRulesMeta()), JSON.stringify(meta));
+	});
+
+	test('session meta asks for thinking summaries, so a model that thinks for minutes is not silent', () => {
+		// Without `display`, Opus 5.5 streams empty thinking deltas and the idle watchdog interrupts it.
+		const options = (claudeWorkRulesMeta('claude-opus-5-5') as { claudeCode: { options: { thinking: unknown } } }).claudeCode.options;
+		assert.deepStrictEqual(options.thinking, { type: 'adaptive', display: 'summarized' });
+		assert.deepStrictEqual(options.thinking, CLAUDE_THINKING);
 	});
 });
