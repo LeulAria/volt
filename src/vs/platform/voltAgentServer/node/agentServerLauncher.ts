@@ -31,6 +31,16 @@ export function localNetworkAddress(): string | undefined {
 	return candidates.find(ip => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip)) ?? candidates[0];
 }
 
+/**
+ * Node flags the server runs with. `--disable-sigusr1`: otherwise any local process could open an
+ * inspector on it with SIGUSR1 (spec B-19, HOST-SIG-1). The inspector fuse doesn't cover
+ * ELECTRON_RUN_AS_NODE processes, and the server's children (file watcher, pty host, extension
+ * hosts) inherit its execArgv. Development keeps SIGUSR1 for debugging the server.
+ */
+export function agentServerNodeFlags(dev: boolean): string[] {
+	return dev ? [] : ['--disable-sigusr1'];
+}
+
 export interface IAgentServerLauncherOptions {
 	readonly userDataDir: string;
 	/** The Volt build the server code is loaded from (holds `out/volt-agent-server-main.js`). */
@@ -160,7 +170,7 @@ export class AgentServerLauncher {
 	}
 
 	private async start(): Promise<void> {
-		const program = [this.options.electronPath, this.entry, '--user-data-dir', this.paths.userDataDir];
+		const program = [this.options.electronPath, ...agentServerNodeFlags(!!process.env['VSCODE_DEV']), this.entry, '--user-data-dir', this.paths.userDataDir];
 		if (await this.networkAccess()) {
 			program.push('--host', '0.0.0.0');
 		}

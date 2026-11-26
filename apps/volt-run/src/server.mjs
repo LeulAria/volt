@@ -116,7 +116,8 @@ const INHERITED = /^(VSCODE_|ELECTRON_)/;
  */
 export async function startServer(o) {
 	const { runtime, paths } = o;
-	const args = [path.join(runtime.appRoot, 'out', 'volt-agent-server-main.js'), '--user-data-dir', paths.userDataDir];
+	// SIGUSR1 from any local process would open an inspector on the server (spec B-19); dev keeps it for debugging.
+	const args = [...(runtime.dev ? [] : ['--disable-sigusr1']), path.join(runtime.appRoot, 'out', 'volt-agent-server-main.js'), '--user-data-dir', paths.userDataDir];
 	if (o.host) {
 		args.push('--host', o.host);
 	}

@@ -18,6 +18,8 @@ import { removeDangerousEnvVariables } from '../../../base/common/processes.js';
 import { deepClone } from '../../../base/common/objects.js';
 import { isWindows } from '../../../base/common/platform.js';
 import { isUNCAccessRestrictionsDisabled, getUNCHostAllowlist } from '../../../base/node/unc.js';
+import { isInspectorFusedOff } from '../../../base/common/product.js';
+import product from '../../product/common/product.js';
 
 export interface IUtilityProcessConfiguration {
 
@@ -431,6 +433,12 @@ export class UtilityProcess extends Disposable {
 
 	enableInspectPort(): boolean {
 		if (!this.process || typeof this.processPid !== 'number') {
+			return false;
+		}
+
+		// Release builds turn the inspector fuse off: SIGUSR1 would terminate the process instead.
+		if (isInspectorFusedOff(product)) {
+			this.log('not enabling inspect port: the Node inspector is fused off in this build', Severity.Info);
 			return false;
 		}
 

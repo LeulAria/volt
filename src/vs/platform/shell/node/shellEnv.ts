@@ -106,6 +106,9 @@ export async function getResolvedShellEnv(configurationService: IConfigurationSe
 	}
 }
 
+/** Carries the shell's NODE_OPTIONS past an Electron that removes it (see doResolveUnixShellEnv). */
+const SHELL_NODE_OPTIONS = 'VOLT_SHELL_NODE_OPTIONS';
+
 async function doResolveUnixShellEnv(logService: ILogService, token: CancellationToken): Promise<typeof process.env> {
 	const runAsNode = process.env['ELECTRON_RUN_AS_NODE'];
 	logService.trace('getUnixShellEnvironment#runAsNode', runAsNode);
@@ -148,7 +151,10 @@ async function doResolveUnixShellEnv(logService: ILogService, token: Cancellatio
 			command = `import os, json; print("${mark}", json.dumps(dict(os.environ)), "${mark}")`;
 			shellArgs = ['-i', '-l', '-c'];
 		} else {
-			command = `'${process.execPath}' ${extraArgs} -p '"${mark}" + JSON.stringify(process.env) + "${mark}"'`;
+			// Packaged builds turn Electron's NODE_OPTIONS fuse off, which drops NODE_OPTIONS from the
+			// environment this probe prints: the shell hands its value over under another name.
+			const keepNodeOptions = name === 'tcsh' || name === 'csh' ? '' : `${SHELL_NODE_OPTIONS}="$NODE_OPTIONS" `;
+			command = `${keepNodeOptions}'${process.execPath}' ${extraArgs} -p '"${mark}" + JSON.stringify(process.env) + "${mark}"'`;
 
 			if (name === 'tcsh' || name === 'csh') {
 				shellArgs = ['-ic'];
@@ -214,6 +220,12 @@ async function doResolveUnixShellEnv(logService: ILogService, token: Cancellatio
 				}
 
 				delete env['VSCODE_RESOLVING_ENVIRONMENT'];
+
+				const shellNodeOptions = env[SHELL_NODE_OPTIONS];
+				delete env[SHELL_NODE_OPTIONS];
+				if (shellNodeOptions && env['NODE_OPTIONS'] === undefined) {
+					env['NODE_OPTIONS'] = shellNodeOptions;
+				}
 
 				// https://github.com/microsoft/vscode/issues/22593#issuecomment-336050758
 				delete env['XDG_RUNTIME_DIR'];

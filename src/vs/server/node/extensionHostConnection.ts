@@ -11,6 +11,8 @@ import { Disposable, DisposableStore, toDisposable } from '../../base/common/lif
 import { FileAccess } from '../../base/common/network.js';
 import { delimiter, join } from '../../base/common/path.js';
 import { IProcessEnvironment, isWindows } from '../../base/common/platform.js';
+import { isInspectorFusedOff } from '../../base/common/product.js';
+import product from '../../platform/product/common/product.js';
 import { removeDangerousEnvVariables } from '../../base/common/processes.js';
 import { createRandomIPCHandle, NodeSocket, WebSocketNodeSocket } from '../../base/parts/ipc/node/ipc.net.js';
 import { IConfigurationService } from '../../platform/configuration/common/configuration.js';
@@ -237,7 +239,11 @@ export class ExtensionHostConnection extends Disposable {
 	public async start(startParams: IRemoteExtensionHostStartParams): Promise<void> {
 		try {
 			let execArgv: string[] = process.execArgv ? process.execArgv.filter(a => !/^--inspect(-brk)?=/.test(a)) : [];
-			if (startParams.port && !(<any>process).pkg) {
+			if (startParams.port && isInspectorFusedOff(product)) {
+				// HOST-SIG-3: a release build attaches no debugger to an extension host. Electron's fuse
+				// doesn't cover these ELECTRON_RUN_AS_NODE children, so the flag is refused here.
+				this._logService.warn(`$startExtensionHost: refused --inspect for the extension host, debugging is off in this build`);
+			} else if (startParams.port && !(<any>process).pkg) {
 				execArgv = [
 					`--inspect${startParams.break ? '-brk' : ''}=${startParams.port}`,
 					'--experimental-network-inspection'
