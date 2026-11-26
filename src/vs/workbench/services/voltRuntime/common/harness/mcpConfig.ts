@@ -10,7 +10,11 @@
  */
 
 export type McpServerConfig =
-	| { readonly name: string; readonly kind: 'stdio'; readonly command: string; readonly args: readonly string[]; readonly env: Record<string, string>; readonly cwd?: string }
+	/**
+	 * `allowedHosts` (Volt's own key): the hosts the server may reach when it runs in a sandboxed
+	 * chat's sandbox (C6); without it, no network there. Part of what a project approval pins.
+	 */
+	| { readonly name: string; readonly kind: 'stdio'; readonly command: string; readonly args: readonly string[]; readonly env: Record<string, string>; readonly cwd?: string; readonly allowedHosts?: readonly string[] }
 	| { readonly name: string; readonly kind: 'http'; readonly url: string; readonly headers: Record<string, string> };
 
 export interface IMcpToolInfo {
@@ -54,6 +58,7 @@ export function parseMcpConfig(text: string, variables: Record<string, string>):
 				args: Array.isArray(entry.args) ? entry.args.filter((arg): arg is string => typeof arg === 'string').map(arg => substitute(arg, variables)) : [],
 				env: stringMap(entry.env, variables),
 				...(typeof entry.cwd === 'string' ? { cwd: substitute(entry.cwd, variables) } : {}),
+				...(Array.isArray(entry.allowedHosts) ? { allowedHosts: entry.allowedHosts.filter((host): host is string => typeof host === 'string').map(host => host.trim().toLowerCase()).filter(Boolean) } : {}),
 			});
 		}
 	}

@@ -22,7 +22,7 @@ import { McpServerConfig } from './mcpConfig.js';
 
 /** What a project server would run, as the approval card shows it. Environment and header values are left out: they may be secrets. */
 export type IVoltMcpServerSpec =
-	| { readonly kind: 'stdio'; readonly command: string; readonly args: readonly string[]; readonly envNames: readonly string[]; readonly cwd: string; readonly binary?: string }
+	| { readonly kind: 'stdio'; readonly command: string; readonly args: readonly string[]; readonly envNames: readonly string[]; readonly cwd: string; readonly binary?: string; readonly allowedHosts?: readonly string[] }
 	| { readonly kind: 'http'; readonly url: string; readonly headerNames: readonly string[] };
 
 export interface IVoltMcpApprovalRecord {
@@ -75,19 +75,20 @@ export function mcpServerSpec(config: McpServerConfig, binary: string | undefine
 	if (config.kind === 'http') {
 		return { kind: 'http', url: config.url, headerNames: Object.keys(config.headers).sort() };
 	}
-	return { kind: 'stdio', command: config.command, args: [...config.args], envNames: Object.keys(config.env).sort(), cwd: config.cwd ?? '', ...(binary ? { binary } : {}) };
+	return { kind: 'stdio', command: config.command, args: [...config.args], envNames: Object.keys(config.env).sort(), cwd: config.cwd ?? '', ...(binary ? { binary } : {}), ...(config.allowedHosts ? { allowedHosts: [...config.allowedHosts] } : {}) };
 }
 
 /**
  * SHA-256 (hex) of the canonical JSON of what the server runs: `{command, args, env, cwd, binary}`
- * for a stdio server (environment values included, so a changed token asks again), `{url, headers}`
+ * for a stdio server (environment values included, so a changed token asks again; `allowedHosts`
+ * too when the config has it, so a server without it keeps its digest), `{url, headers}`
  * for an HTTP one. The server's name is not part of it: renaming a server does not carry its approval
  * because records are looked up by name too.
  */
 export async function mcpConfigDigest(config: McpServerConfig, binary: string | undefined): Promise<string> {
 	const pinned = config.kind === 'http'
 		? { kind: 'http', url: config.url, headers: config.headers }
-		: { kind: 'stdio', command: config.command, args: config.args, env: config.env, cwd: config.cwd ?? null, binary: binary ?? null };
+		: { kind: 'stdio', command: config.command, args: config.args, env: config.env, cwd: config.cwd ?? null, binary: binary ?? null, allowedHosts: config.allowedHosts };
 	const bytes = VSBuffer.fromString(canonicalJson(pinned)).buffer;
 	const digest = await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>);
 	return encodeHex(VSBuffer.wrap(new Uint8Array(digest)));
@@ -108,7 +109,7 @@ export function canonicalJson(value: unknown): string {
 
 /** One line of the re-prompt's diff: a field of the spec that changed. */
 export interface IVoltMcpSpecChange {
-	readonly field: 'kind' | 'command' | 'args' | 'cwd' | 'binary' | 'env' | 'url' | 'headers';
+	readonly field: 'kind' | 'command' | 'args' | 'cwd' | 'binary' | 'env' | 'allowedHosts' | 'url' | 'headers';
 	readonly before: string;
 	readonly after: string;
 }
@@ -133,6 +134,7 @@ export function diffMcpServerSpec(before: IVoltMcpServerSpec, after: IVoltMcpSer
 		add('cwd', before.cwd, after.cwd);
 		add('binary', before.binary ?? '', after.binary ?? '');
 		add('env', before.envNames.join(', '), after.envNames.join(', '));
+		add('allowedHosts', (before.allowedHosts ?? []).join(', '), (after.allowedHosts ?? []).join(', '));
 	} else if (before.kind === 'http' && after.kind === 'http') {
 		add('url', before.url, after.url);
 		add('headers', before.headerNames.join(', '), after.headerNames.join(', '));

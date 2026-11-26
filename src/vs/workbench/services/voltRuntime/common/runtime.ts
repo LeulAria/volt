@@ -238,6 +238,8 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	 */
 	chatExec(sessionId: string, reason: VoltExecReason, providerId?: string): IChatExec;
 	setSandboxSettings(sessionId: string, settings: IVoltSandboxSettings): Promise<void>;
+	/** The chat's running agent process on the execution host, when it has one: a denial card names it (P4). */
+	sandboxProcessId?(sessionId: string): string | undefined;
 	getDefaultSandboxSettings(): IVoltSandboxSettings;
 	setDefaultSandboxSettings(settings: IVoltSandboxSettings): Promise<void>;
 	respondToAccessRequest(requestId: string, effect: Extract<PermissionEffect, 'allow' | 'deny'>, scope?: AccessDecisionScope, pattern?: string): void;

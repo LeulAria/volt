@@ -6,8 +6,8 @@
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { ceilingCovers } from '../../../../platform/voltPlugins/common/firstPartyCeilings.js';
 import { evaluate, IDecision, IDeclaredCapability, PolicySnapshot } from '../../../../platform/voltSandbox/common/authority.js';
-import { consentsToGrants } from '../../../../platform/voltSandbox/common/grants.js';
-import { corePrincipal, extensionSubject } from '../../../../platform/voltSandbox/common/principals.js';
+import { consentsToGrants, IGrant, IRefusal } from '../../../../platform/voltSandbox/common/grants.js';
+import { corePrincipal, extensionSubject, SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
 import { PolicyAuthorityMode } from '../../voltRuntime/common/hostToolAuthority.js';
 import { capabilityClass, CapabilityDeniedBy, ICapabilityReporter, ICapabilityRequest, ICapabilityVerdict, IVoltPluginPrincipal, IWouldBeDenial, manifestDenial } from './capabilities.js';
 
@@ -19,6 +19,21 @@ export interface IVoltConsentStore {
 	state(extensionId: string, capability: string): VoltConsentState;
 	/** A consent changed: the Authority's snapshot moves to a new epoch. */
 	readonly onDidChange?: Event<unknown>;
+	/**
+	 * The grant store's grants and refusals of a third-party extension (P4), under its subject
+	 * (with its signer); the Authority judges them (expiry, kind) itself. Undefined: the store is
+	 * not available, and {@link state} answers.
+	 */
+	stored?(extensionId: string): IStoredConsents | undefined;
+	/** A stored grant allowed a call: its last use moves (G.4's 30-day unused expiry counts from it). */
+	used?(extensionId: string, capability: string): void;
+}
+
+export interface IStoredConsents {
+	readonly subject: SubjectKey;
+	readonly epoch: number;
+	readonly grants: readonly IGrant[];
+	readonly refusals: readonly IRefusal[];
 }
 
 /** The capability a consent is kept under: the id without its version (one consent per capability, any target). */
@@ -83,21 +98,25 @@ export class VoltExtensionCapabilityPolicy implements ICapabilityReporter {
 			this._onDidReport.fire(acting);
 			return { allowed: false, denial: acting };
 		}
+		if (!principal.firstParty) {
+			this.consents.used?.(principal.extensionId, request.capability);
+		}
 		return { allowed: true };
 	}
 
 	/** The Authority's decision for one call (G.2), over this extension's manifest and consents. */
 	decide(principal: IVoltPluginPrincipal, request: ICapabilityRequest): IDecision {
-		const subject = extensionSubject(principal.extensionId, principal.firstParty);
+		const stored = principal.firstParty ? undefined : this.consents.stored?.(principal.extensionId);
+		const subject = stored?.subject ?? extensionSubject(principal.extensionId, principal.firstParty);
 		const declared: IDeclaredCapability[] = [
 			...(principal.capabilities.required ?? []).map(entry => ({ id: entry.id, ...(entry.targets?.length ? { targets: entry.targets } : {}) })),
 			...(principal.capabilities.optional ?? []).map(entry => ({ id: entry.id, optional: true, ...(entry.targets?.length ? { targets: entry.targets } : {}) })),
 		];
 		const at = this.options.now?.() ?? Date.now();
-		const state = principal.firstParty || !capabilityClass(request.capability) ? undefined : this.consents.state(principal.extensionId, consentKey(request.capability));
-		const { grants, refusals } = consentsToGrants(subject, state ? [{ capability: consentKey(request.capability), granted: state === 'granted' }] : [], at, this.epoch);
+		const state = stored || principal.firstParty || !capabilityClass(request.capability) ? undefined : this.consents.state(principal.extensionId, consentKey(request.capability));
+		const { grants, refusals } = stored ?? consentsToGrants(subject, state ? [{ capability: consentKey(request.capability), granted: state === 'granted' }] : [], at, this.epoch);
 		const snapshot = PolicySnapshot.build({
-			epoch: this.epoch,
+			epoch: stored?.epoch ?? this.epoch,
 			asOf: at,
 			grants,
 			refusals,

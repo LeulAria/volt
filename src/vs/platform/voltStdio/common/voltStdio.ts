@@ -9,6 +9,8 @@ import type { IBuildEntryChange, IHostGitRequest, IHostGitResult } from '../../v
 import type { ISandboxDenial } from '../../voltSandbox/common/sandboxDenials.js';
 import type { IVoltSandboxRequest } from '../../voltSandbox/common/sandboxPolicy.js';
 import type { ISandboxWorkloadInfo } from '../../voltSandbox/common/sandboxWorkloads.js';
+import type { SubjectKey } from '../../voltSandbox/common/principals.js';
+import type { ITrustChange, ITrustCommitResult, ITrustHistoryEntry, ITrustState } from '../../voltSandbox/common/trust.js';
 
 export const IVoltStdioService = createDecorator<IVoltStdioService>('voltStdioService');
 export const VOLT_STDIO_CHANNEL_NAME = 'voltStdio';
@@ -69,6 +71,37 @@ export interface IVoltExecRefusal {
 	 */
 	readonly kind: 'no-context' | 'no-sandbox' | 'sandbox' | 'build-entry';
 	readonly reason: string;
+	/**
+	 * A sandboxed host: the supervisor's step that refused (F.5 rule 5): `disabled` (the supervisor
+	 * flag is off), `policy`, `budget`, `probe`, `attest`, `launch`, or a sandbox dimension.
+	 */
+	readonly step?: string;
+}
+
+/**
+ * A stdio MCP server for a sandboxed chat, run as a long-lived sandboxed host under Volt's
+ * supervisor (spec M.3 C6): its own principal, a policy that is the chat's narrowed, attested before
+ * it runs, quotas, idle stop and crash restarts. The id it returns works with `write`, `kill`,
+ * `onData` and `onExit` like a spawn's.
+ */
+export interface IVoltSandboxedMcpRequest {
+	/** The chat it works for: its servers stop with it ({@link IVoltStdioService.stopSandboxedHosts}). */
+	readonly chatId: string;
+	/** The chat's title, for the Security page. */
+	readonly chatLabel?: string;
+	/** The server's name in its config. */
+	readonly server: string;
+	/** sha256 (hex) of the server's canonical config (`mcpConfigDigest`): its principal's subject. */
+	readonly digest: string;
+	readonly command: string;
+	readonly args?: readonly string[];
+	readonly cwd?: string;
+	readonly env?: Record<string, string>;
+	/** Hosts approved for the server (its config); none: no network. */
+	readonly allowedHosts?: readonly string[];
+	/** The chat's sandbox. Required: a host for a chat that is not sandboxed is refused. */
+	readonly sandbox: IVoltSandboxRequest;
+	readonly context: IVoltExecContext;
 }
 
 /** A spawn refused by {@link execRefusal} or by the sandbox: it did not start. */
@@ -141,6 +174,11 @@ export interface IVoltSandboxEvent {
 	readonly id: string;
 	readonly denial?: ISandboxDenial;
 	readonly warning?: string;
+	/**
+	 * A sandboxed host crashed and the supervisor restarts it (`restarting`), or the new instance runs
+	 * (`restarted`): what the old instance was asked is lost, and a protocol must start over.
+	 */
+	readonly host?: 'restarting' | 'restarted';
 }
 
 export interface IVoltSandboxSupportInfo {
@@ -315,6 +353,44 @@ export interface IVoltStdioService {
 	stopSandboxWorkload?(id: string): Promise<boolean>;
 	/** A sandboxed workload started, changed state or ended. */
 	readonly onDidChangeSandboxWorkloads?: Event<void>;
+	/**
+	 * Starts a stdio MCP server for a sandboxed chat under the supervisor (see
+	 * {@link IVoltSandboxedMcpRequest}). Resolves once it is attested and running. Rejects with a
+	 * {@link VoltExecRefusedError} (message `... (<step>): <reason>`) when it is refused; nothing ran.
+	 */
+	spawnSandboxedMcp?(request: IVoltSandboxedMcpRequest): Promise<string>;
+	/** The chat closed or its grants were revoked: every host started for it stops, whole trees. */
+	stopSandboxedHosts?(chatId: string): Promise<number>;
+	/**
+	 * The Allow buttons of a network denial card (spec I.4 "Approval", P4): names the broker's
+	 * denial of spawn `id` and the epoch it was refused at; the broker rebuilds the rule from its own
+	 * record. `run`: this run of the agent; `chat`: every later run of the chat, kept in the grant
+	 * store until revoked. Refused when the denial is not that spawn's, or the epoch moved.
+	 */
+	approveSandboxDenial?(id: string, denialId: string, expectedEpoch: number, scope: 'run' | 'chat'): Promise<IVoltSandboxApproval>;
+	/** Skip on a denial card: counts toward the route's refusals (two auto-deny, G.12). */
+	refuseSandboxDenial?(id: string, denialId: string): Promise<boolean>;
+	/** The grant store (`~/.volt/trust/grants.json`) as the Access page shows it. */
+	trustState?(): Promise<ITrustState>;
+	/** Records the user's grants and refusals, revokes, and drops subjects; revocations close tunnels they allowed. */
+	trustCommit?(change: ITrustChange): Promise<ITrustCommitResult>;
+	/** The Access page's history: the Authority's decision log and the brokers' audit logs, newest first. */
+	trustHistory?(limit: number, subject?: SubjectKey): Promise<readonly ITrustHistoryEntry[]>;
+	/** Open routes' prompt budgets (G.12). */
+	trustPromptBudgets?(): Promise<readonly IVoltPromptBudget[]>;
+	/** The Access page was opened: prompts may be offered again (G.12). */
+	resetPromptBudgets?(subject?: SubjectKey): Promise<void>;
+	/** The grant store changed (in this process or another Volt process). */
+	readonly onDidChangeTrust?: Event<{ readonly epoch: number; readonly narrowed: boolean }>;
+}
+
+export type IVoltSandboxApproval = { readonly ok: true; readonly epoch: number } | { readonly ok: false; readonly epoch: number; readonly reason: string };
+
+export interface IVoltPromptBudget {
+	readonly subject: SubjectKey;
+	readonly refusals: number;
+	readonly autoDenied: boolean;
+	readonly promptsToday: number;
 }
 
 /** What one merge of an agent's config overlay did. */

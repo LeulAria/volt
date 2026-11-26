@@ -122,6 +122,8 @@ export interface ISandboxRunDenial {
 	readonly process?: string;
 	/** The network broker's id for it (I.4 "Denials"): what an approval names. */
 	readonly denialId?: string;
+	/** The grant epoch the broker refused at: an approval names it (compare-and-swap, F.9). */
+	readonly epoch?: number;
 	/** False: no "Allow" may be offered (a private or metadata address, or the prompt budget is spent, G.12). */
 	readonly promptable?: boolean;
 }

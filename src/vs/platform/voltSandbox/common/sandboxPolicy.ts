@@ -139,7 +139,7 @@ export const AGENT_STATE_ROOT = '.volt/sandbox/agent-state';
  * `~/.cache`, `~/Library/Caches`, Bun's cache) hold code the host runs later, including the npx
  * copies of the ACP adapters Volt itself launches, so a sandboxed agent must not write them.
  */
-const SANDBOX_CACHE_ENV: Readonly<Record<string, string>> = {
+export const SANDBOX_CACHE_ENV: Readonly<Record<string, string>> = {
 	npm_config_cache: 'npm',
 	XDG_CACHE_HOME: 'xdg',
 	BUN_INSTALL_CACHE_DIR: 'bun',
