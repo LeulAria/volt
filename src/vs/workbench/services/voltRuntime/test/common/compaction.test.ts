@@ -6,6 +6,7 @@
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { agentCompactionPrompt, COMPACT_CHIP_MIN_TOKENS, compactInstructions, isCompactCommand, OLD_THREAD_IDLE_MS, OLD_THREAD_TOKENS, shouldCompactBeforeSend, shouldOfferCompactChip } from '../../common/compaction.js';
+import { DEFAULT_COMPACTION, shouldCompact, shouldCompactEarly } from '../../common/harness/nativeCompaction.js';
 
 suite('Volt compaction rules', () => {
 
@@ -45,5 +46,16 @@ suite('Volt compaction rules', () => {
 
 	test('a low threshold alone never offers a chip for a small chat', () => {
 		assert.ok(!shouldOfferCompactChip({ usedTokens: 23_000, percentFull: 11, thresholdPercent: 5 }));
+	});
+	test('native models compact only when the context is full', () => {
+		const policy = { window: 200_000, ...DEFAULT_COMPACTION };
+		assert.ok(!shouldCompact(160_000, policy), '80% is not full');
+		assert.ok(!shouldCompact(180_000, policy), '90% is not full');
+		assert.ok(shouldCompact(190_000, policy), 'no room left for a reply');
+		// A 1M window is used in full, not capped.
+		assert.ok(!shouldCompact(600_000, { window: 1_000_000, ...DEFAULT_COMPACTION }));
+		// The background summary may be written ahead, but only near the limit.
+		assert.ok(!shouldCompactEarly(140_000, policy));
+		assert.ok(shouldCompactEarly(172_000, policy));
 	});
 });

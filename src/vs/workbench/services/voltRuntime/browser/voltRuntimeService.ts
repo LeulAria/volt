@@ -3612,7 +3612,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			background.job = job;
 			this.logService.info(`[volt] started a background compaction summary in ${session.sessionId}`);
 		};
-		/** Near the context limit: place the background summary once it is in, or wait for it (or compact) at the limit. */
+		/** Near the context limit: write the summary in the background, and place it (or compact) only once the context is full. */
 		const compactIfDue = async (messages: INativeLoopMessage[], estimate: number): Promise<boolean> => {
 			let job = background.job;
 			if (job && job.compactions !== compactions) {
@@ -3620,7 +3620,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				job = background.job = undefined;
 			}
 			const due = shouldCompact(estimate, compactionPolicy);
-			if (job && (job.done || due)) {
+			if (job && due) {
 				background.job = undefined;
 				const summary = await job.summary;
 				job.cts.dispose();
