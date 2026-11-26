@@ -1,0 +1,15 @@
+{"arm":"r8","rep":0,"mode":"scratch","at":"2026-11-17T19:49:23.802Z","load":"7.01 10.84 13.40","readyMs":147,"domMs":132,"probesTyped":2,"readyText":"ad"}
+{"arm":"r8","rep":1,"mode":"scratch","at":"2026-11-17T19:49:28.150Z","load":"7.01 10.84 13.40","readyMs":191,"domMs":176,"probesTyped":3,"readyText":"de"}
+{"arm":"r8","rep":2,"mode":"scratch","at":"2026-11-17T19:49:32.524Z","load":"6.61 10.70 13.33","readyMs":150,"domMs":135,"probesTyped":3,"readyText":"de"}
+{"arm":"r8c","rep":0,"mode":"project","at":"2026-11-17T19:53:09.534Z","load":"8.37 8.94 11.92","readyMs":174,"domMs":159,"probesTyped":3,"readyText":"de"}
+{"arm":"r8c","rep":1,"mode":"project","at":"2026-11-17T19:53:13.359Z","load":"8.37 8.94 11.92","readyMs":141,"domMs":126,"probesTyped":3,"readyText":"de"}
+{"arm":"r8c","rep":2,"mode":"project","at":"2026-11-17T19:53:17.118Z","load":"8.34 8.93 11.90","readyMs":165,"domMs":150,"probesTyped":3,"readyText":"de"}
+{"arm":"r8x","rep":0,"mode":"project","at":"2026-11-17T19:54:49.073Z","load":"7.70 8.38 11.36","readyMs":136,"domMs":121,"probesTyped":2,"readyText":"ad"}
+{"arm":"r8x","rep":1,"mode":"project","at":"2026-11-17T19:54:52.849Z","load":"7.70 8.38 11.36","readyMs":176,"domMs":162,"probesTyped":3,"readyText":"de"}
+{"arm":"r8x","rep":2,"mode":"project","at":"2026-11-17T19:54:56.640Z","load":"7.56 8.34 11.33","readyMs":169,"domMs":154,"probesTyped":3,"readyText":"de"}
+{"arm":"r8x","rep":0,"mode":"project","at":"2026-11-17T19:56:09.105Z","load":"6.36 7.80 10.87","readyMs":154,"domMs":140,"probesTyped":3,"readyText":"de"}
+{"arm":"r8x","rep":1,"mode":"project","at":"2026-11-17T19:56:12.885Z","load":"6.36 7.80 10.87","readyMs":182,"domMs":168,"probesTyped":3,"readyText":"de"}
+{"arm":"r8x","rep":2,"mode":"project","at":"2026-11-17T19:56:16.685Z","load":"7.05 7.92 10.89","readyMs":166,"domMs":150,"probesTyped":3,"readyText":"de"}
+{"arm":"r8c","rep":0,"mode":"project","at":"2026-11-17T19:57:29.659Z","load":"6.58 7.73 10.58","readyMs":138,"domMs":123,"probesTyped":2,"readyText":"ad"}
+{"arm":"r8c","rep":1,"mode":"project","at":"2026-11-17T19:57:33.430Z","load":"6.58 7.73 10.58","readyMs":167,"domMs":151,"probesTyped":3,"readyText":"de"}
+{"arm":"r8c","rep":2,"mode":"project","at":"2026-11-17T19:57:37.218Z","load":"6.21 7.63 10.53","readyMs":145,"domMs":130,"probesTyped":3,"readyText":"de"}
