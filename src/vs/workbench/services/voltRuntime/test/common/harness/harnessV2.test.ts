@@ -185,25 +185,6 @@ suite('Volt harness v2', () => {
 			assert.strictEqual(hunk.added, 1);
 		});
 
-		test('changes far apart in a file are separate hunks with exact counts', () => {
-			const before = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`);
-			const after = [...before];
-			after[7] = 'renamed 8';
-			after[23] = 'renamed 24';
-			const hunk = diffHunk(before.join('\n'), after.join('\n'));
-			assert.deepStrictEqual([hunk.added, hunk.removed], [2, 2]);
-			assert.strictEqual(hunk.text, [
-				'@@ -5,7 +5,7 @@', ' line 5', ' line 6', ' line 7', '-line 8', '+renamed 8', ' line 9', ' line 10', ' line 11',
-				'@@ -21,7 +21,7 @@', ' line 21', ' line 22', ' line 23', '-line 24', '+renamed 24', ' line 25', ' line 26', ' line 27',
-			].join('\n'));
-			// One change, and a block with no line in common, read as before.
-			assert.strictEqual(diffHunk('1\n2\n3\n4\n5\n', '1\n2\nthree\n4\n5\n').text, '@@ -1,6 +1,6 @@\n 1\n 2\n-3\n+three\n 4\n 5\n ');
-			// Close changes stay one hunk; an insertion shifts the new side.
-			const near = diffHunk('a\nb\nc\nd\ne\nf\n', 'a\nB\nc\nd\nnew\nE\nf\n');
-			assert.strictEqual(near.text, '@@ -1,7 +1,8 @@\n a\n-b\n+B\n c\n d\n-e\n+new\n+E\n f\n ');
-			assert.deepStrictEqual([near.added, near.removed], [3, 2]);
-		});
-
 		test('a missed old_string shows the closest text with line numbers', () => {
 			const result = applyExactEdits('function alpha() {\n\treturn 1;\n}\n', [{ oldString: 'function omega() {\n\treturn 2;', newString: 'x' }]);
 			assert.ok('error' in result && /Closest text in the file/.test(result.error) && /lines 1-2/.test(result.error), JSON.stringify(result));

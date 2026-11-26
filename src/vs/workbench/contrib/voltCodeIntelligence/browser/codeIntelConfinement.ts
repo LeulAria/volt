@@ -4,7 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Schemas } from '../../../../base/common/network.js';
-import { joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { ICallEdge, ICodeIntelHost, ICodeLocation, ICodeNavIndex, ICodeRange, ICodeSymbolRef, ITextFileChange } from '../../../services/voltRuntime/browser/tools/codeTools.js';
 
@@ -71,13 +70,6 @@ export function confineCodeIntel(host: ICodeIntelHost, nav: ICodeNavIndex | unde
 		lspAllowed: uri => host.lspAllowed(uri),
 		wordAt: (uri, line, column) => ifReadable(uri, () => host.wordAt(uri, line, column), undefined),
 	};
-	if (host.unchecked) {
-		const unchecked = host.unchecked;
-		confined.unchecked = async uris => {
-			const flags = await Promise.all(uris.map(uri => readable(uri)));
-			return unchecked.call(host, uris.filter((_, index) => flags[index]));
-		};
-	}
 	const { fileText, implementations, typeDefinitions, hover, workspaceSymbols, calls, typeHierarchy, rename, format, codeActions, applyCodeAction } = host;
 	if (fileText) {
 		confined.fileText = (uri: URI) => ifReadable(uri, () => fileText.call(host, uri), undefined);
@@ -137,39 +129,5 @@ export function confineCodeIntel(host: ICodeIntelHost, nav: ICodeNavIndex | unde
 		},
 		outline: (root, uri) => ifReadable(uri, () => nav.outline(root, uri), undefined),
 	};
-	// The index's syntax-tree answers, under the same rule. Without them a sandboxed chat (the default)
-	// had no structural search ("the code index, which this window does not have"), no syntax-tree
-	// outline or body for a language without a server, and an impact without importers or tests.
-	if (nav && confinedNav) {
-		const { implementations: named, structure, importers, structural } = nav;
-		if (named) {
-			confinedNav.implementations = async (root, name) => {
-				const found = await named.call(nav, root, name);
-				return found && keep(found);
-			};
-		}
-		if (structure) {
-			confinedNav.structure = (root, uri) => ifReadable(uri, () => structure.call(nav, root, uri), undefined);
-		}
-		if (importers) {
-			confinedNav.importers = async (root, uri, depth) => {
-				const found = await ifReadable(uri, () => importers.call(nav, root, uri, depth), undefined);
-				return found && keep(found);
-			};
-		}
-		if (structural) {
-			confinedNav.structural = async (root, request) => {
-				if (request.folder && !await readable(request.folder)) {
-					return 'This chat\'s sandbox may not read that folder.';
-				}
-				const result = await structural.call(nav, root, request);
-				if (typeof result === 'string') {
-					return result;
-				}
-				const flags = await Promise.all(result.matches.map(match => readable(joinPath(root, match.path))));
-				return { ...result, matches: result.matches.filter((_, index) => flags[index]) };
-			};
-		}
-	}
 	return { host: confined, nav: confinedNav };
 }

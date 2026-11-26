@@ -35,13 +35,8 @@ export const DIAGNOSED_EXTENSIONS = /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|kts|cs|c
 const PROBED_LANGUAGES = new Set(['typescript', 'typescriptreact', 'javascript', 'javascriptreact']);
 const PROBE_TIMEOUT_MS = 8_000;
 const MAX_PROBED = 200;
-/**
- * An open document is compared with its file (one stat) on every use, at most this often. It was a
- * second: an agent that changed files with its shell (`git checkout`, `sed`, a formatter) and asked
- * in the same step got answers for the old text: "No errors" for a file just broken, a rename
- * applied to one of four files, organize imports "already organized".
- */
-const RECHECK_DISK_MS = 30;
+/** An open document is compared with the file on disk at most this often (by etag, so unchanged files cost a stat). */
+const RECHECK_DISK_MS = 1_000;
 /** Opened documents stay open a while so repeated checks are instant. */
 const KEEP_OPEN_MS = 90_000;
 const MAX_OPEN = 24;
@@ -389,26 +384,10 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	async diagnostics(uris: readonly URI[] | undefined, severity: 'error' | 'warning' | 'all'): Promise<IDiagnostic[]> {
 		const severities = severity === 'error' ? MarkerSeverity.Error : severity === 'warning' ? MarkerSeverity.Error | MarkerSeverity.Warning : MarkerSeverity.Error | MarkerSeverity.Warning | MarkerSeverity.Info;
 		if (!uris?.length) {
-			// The open documents a language service is asked about directly have no markers (TypeScript
-			// outside editor tabs): with markers alone, a project chat's "all problems" was always empty.
-			const probed = [...this.open.keys()].filter(uri => PROBED_LANGUAGES.has(this.open.get(uri)!.ref.object.textEditorModel.getLanguageId()) && !this.markerService.read({ resource: uri, take: 1 }).length);
-			await Promise.all(probed.map(uri => this.freshen(uri).catch(() => undefined)));
-			return [...this.markerService.read({ severities }).slice(0, 500).map(toDiagnostic), ...probed.flatMap(uri => this.currentErrors(uri, severity).map(item => item.diagnostic))];
+			return this.markerService.read({ severities }).slice(0, 500).map(toDiagnostic);
 		}
 		await Promise.all(uris.map(uri => this.freshen(uri)));
 		return uris.flatMap(uri => this.currentErrors(uri, severity).map(item => item.diagnostic));
-	}
-
-	async unchecked(uris: readonly URI[]): Promise<URI[]> {
-		const out: URI[] = [];
-		for (const uri of uris) {
-			const model = await this.model(uri).catch(() => undefined);
-			// Nothing reports on it and no language provider answers for it: no extension knows the language.
-			if (model && !this.hasLanguageProviders(model) && !this.markerService.read({ resource: uri, take: 1 }).length && !probedErrors.has(uri)) {
-				out.push(uri);
-			}
-		}
-		return out;
 	}
 
 	async definitions(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
@@ -428,7 +407,6 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	}
 
 	async references(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
-		await this.refreshOpen();
 		const model = await this.model(uri);
 		const position = new Position(line, column);
 		for (const provider of this.languageFeatures.referenceProvider.ordered(model)) {
@@ -481,7 +459,6 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	}
 
 	async implementations(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
-		await this.refreshOpen();
 		const model = await this.model(uri);
 		const position = new Position(line, column);
 		for (const provider of this.languageFeatures.implementationProvider.ordered(model)) {
@@ -542,7 +519,6 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 		if (!hierarchy) {
 			return undefined;
 		}
-		await this.refreshOpen();
 		const model = await this.model(uri);
 		return this.ask(token => hierarchy.calls(model, new Position(line, column), direction, token));
 	}
@@ -557,7 +533,6 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	}
 
 	async rename(uri: URI, line: number, column: number, newName: string): Promise<readonly ITextFileChange[] | string> {
-		await this.refreshOpen();
 		const model = await this.model(uri);
 		const position = new Position(line, column);
 		const providers = this.languageFeatures.renameProvider.ordered(model);
@@ -579,18 +554,11 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	async format(uri: URI): Promise<readonly ITextFileChange[] | string> {
 		const model = await this.model(uri);
 		const [provider] = this.languageFeatures.documentFormattingEditProvider.ordered(model);
-		// TypeScript and JavaScript (and others) register only a range formatter; the editor's Format
-		// Document uses it on the whole file, and so does this. Without it format answered "No formatter
-		// is registered" for every .ts file.
-		const [ranged] = provider ? [] : this.languageFeatures.documentRangeFormattingEditProvider.ordered(model);
-		if (!provider && !ranged) {
+		if (!provider) {
 			return 'No formatter is registered for this file type. Run the project\'s formatter with shell instead.';
 		}
 		const options = model.getOptions();
-		const formatting = { tabSize: options.tabSize, insertSpaces: options.insertSpaces };
-		const edits = await this.ask(token => provider
-			? provider.provideDocumentFormattingEdits(model, formatting, token)
-			: ranged.provideDocumentRangeFormattingEdits(model, model.getFullModelRange(), formatting, token), EDIT_TIMEOUT_MS);
+		const edits = await this.ask(token => provider.provideDocumentFormattingEdits(model, { tabSize: options.tabSize, insertSpaces: options.insertSpaces }, token), EDIT_TIMEOUT_MS);
 		if (!edits?.length) {
 			return [];
 		}
@@ -623,10 +591,6 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 				: usable.find(({ action }) => action.isPreferred) ?? (usable.length === 1 || only?.startsWith('source') ? usable[0] : undefined);
 			if (!pick) {
 				if (!usable.length) {
-					// Nothing offers it at all (no extension for the language): not "already organized".
-					if (only === 'source.organizeImports' && !offered.actions.length && !this.hasLanguageProviders(await this.model(uri))) {
-						return 'No language service offers organize imports for this file type (no extension for the language is installed). Edit the imports directly, or run the project\'s formatter or linter with shell.';
-					}
 					return only === 'source.organizeImports' ? [] : `No ${only ?? 'code actions'} offered there.`;
 				}
 				return `${wanted ? `No action titled "${title}". ` : 'Several actions apply; pass title. '}Offered: ${usable.slice(0, 12).map(({ action }) => JSON.stringify(action.title)).join(', ')}.`;
@@ -649,7 +613,6 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 
 	/** Every provider's actions for the range, kept with the provider that can resolve them. */
 	private async offeredActions(uri: URI, range: ICodeRange, only: string | undefined): Promise<{ readonly actions: readonly { readonly action: CodeAction; readonly provider: CodeActionProvider }[]; dispose(): void }> {
-		await this.refreshOpen();
 		const model = await this.model(uri);
 		const last = Math.min(Math.max(range.startLine, range.endLine), model.getLineCount());
 		const first = Math.min(range.startLine, last);
@@ -864,20 +827,6 @@ export class CodeIntelHost extends Disposable implements IRuntimeCodeIntel {
 	}
 
 	private readonly opening = new ResourceMap<Promise<ITextModel>>();
-
-	/**
-	 * Every document this host has open, compared with its file. A language server answers about
-	 * several files at once (references, a rename's edits, call hierarchies) from the text it was
-	 * last given: a file changed on disk since is read again before it is asked.
-	 */
-	private async refreshOpen(): Promise<void> {
-		const now = Date.now();
-		const stale = [...this.open].filter(([uri, entry]) => !pinnedDocuments.has(uri) && now - entry.checkedAt > RECHECK_DISK_MS);
-		await Promise.all(stale.map(([, entry]) => {
-			entry.checkedAt = now;
-			return reloadFromDisk(entry.ref.object);
-		}));
-	}
 
 	private async model(uri: URI): Promise<ITextModel> {
 		const existing = this.open.get(uri);

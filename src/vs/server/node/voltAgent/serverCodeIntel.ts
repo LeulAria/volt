@@ -146,11 +146,6 @@ export class ServerCodeIntel extends Disposable implements IRuntimeCodeIntel {
 		return asArray<IDiagnostic>(await this.call<IDiagnostic[]>(uris?.[0], QUERY_TIMEOUT_MS, 'diagnostics', uris, severity));
 	}
 
-	async unchecked(uris: readonly URI[]): Promise<URI[]> {
-		// An older window has no such handler: nothing is called unchecked.
-		return this.window ? asArray<URI>(await this.call<URI[]>(uris[0], QUERY_TIMEOUT_MS, 'unchecked', uris).catch(() => [])).filter(uri => URI.isUri(uri)) : [];
-	}
-
 	async definitions(uri: URI, line: number, column: number): Promise<ICodeLocation[]> {
 		return this.window ? asArray<ICodeLocation>(await this.call<ICodeLocation[]>(uri, QUERY_TIMEOUT_MS, 'definitions', uri, line, column).catch(() => [])) : [];
 	}

@@ -16,57 +16,13 @@ const MAX_IMPORTERS = 200;
 /** A first query may wait this long for the index to load (it is not built just for it). */
 const STRUCTURE_WAIT_MS = 8_000;
 
-const HASH_COMMENTS = /\.(?:py|pyi|rb|sh|bash|zsh|ya?ml|toml|pl|r|ex|exs)$/i;
-
-/**
- * Whether a line uses `name` as code: not only inside a comment or a quoted string. The index
- * matches whole words in text, so "references" by name listed `// LineTotal is the price of one
- * line` and `t.Fatalf("LineTotal = %v", got)` next to the calls. Judged per line: a block comment's
- * inner lines are caught by their leading `*`, a multi-line string is not.
- */
-export function isCodeUse(line: string, name: string, path: string): boolean {
-	const hash = HASH_COMMENTS.test(path);
-	const trimmed = line.trimStart();
-	if (hash ? trimmed.startsWith('#') : /^(?:\/\/|\/\*|\*(?:\s|\/|$))/.test(trimmed)) {
-		return false;
-	}
-	const word = new RegExp(`(?<![\\w$])${name.replace(/[$]/g, '\\$&')}(?![\\w$])`, 'g');
-	const uses = [...line.matchAll(word)].map(match => match.index);
-	if (!uses.length) {
-		return true; // not our match to judge (a regex or multi-line hit)
-	}
-	let quote = '';
-	let next = 0;
-	for (let index = 0; index < line.length && next < uses.length; index++) {
-		const char = line[index];
-		if (index === uses[next]) {
-			if (!quote) {
-				return true;
-			}
-			next++;
-		}
-		if (quote) {
-			if (char === '\\') {
-				index++;
-			} else if (char === quote) {
-				quote = '';
-			}
-		} else if (char === '"' || char === '\'') {
-			quote = char;
-		} else if (hash ? char === '#' : char === '/' && line[index + 1] === '/') {
-			return false; // the rest is a trailing comment
-		}
-	}
-	return false;
-}
-
 /** code_nav by name, from the code index: declarations, whole-word uses, and a file's outline. */
 export function createCodeIndexNav(index: ISearchIndex): ICodeNavIndex {
 	const usable = (root: URI) => root.scheme === Schemas.file && index.enabled();
 	return {
 		definitions: async (root, name) => {
 			if (!usable(root)) {
-				return []; // off, not loading: nothing to wait for (see onceIndexed)
+				return undefined;
 			}
 			const result = await index.service.symbols({ root: root.fsPath, query: name, match: 'exact', limit: MAX_DEFINITIONS, options: index.options() }).catch(() => undefined);
 			if (result?.kind !== 'results') {
@@ -76,7 +32,7 @@ export function createCodeIndexNav(index: ISearchIndex): ICodeNavIndex {
 		},
 		references: async (root, name) => {
 			if (!usable(root) || !/^[\w$]+$/.test(name)) {
-				return [];
+				return undefined;
 			}
 			const result = await index.service.search({
 				root: root.fsPath,
@@ -90,7 +46,7 @@ export function createCodeIndexNav(index: ISearchIndex): ICodeNavIndex {
 			if (result?.kind !== 'results') {
 				return undefined;
 			}
-			return result.files.flatMap(file => file.lines.filter(line => line.match && isCodeUse(line.text, name, file.path)).map((line): ICodeLocation => ({
+			return result.files.flatMap(file => file.lines.filter(line => line.match).map((line): ICodeLocation => ({
 				uri: joinPath(root, file.path),
 				line: line.line,
 				column: Math.max(1, line.text.indexOf(name) + 1),
@@ -101,11 +57,11 @@ export function createCodeIndexNav(index: ISearchIndex): ICodeNavIndex {
 			if (!usable(root) || !/^[\w$]+$/.test(name)) {
 				return undefined;
 			}
-			// `class X implements A, Name {`, `class Y extends Name<T>`, `interface Z extends Name`; Python's `class X(Base, Name):`.
+			// `class X implements A, Name {`, `class Y extends Name<T>`, `interface Z extends Name`.
 			const escaped = name.replace(/\$/g, '\\$');
 			const result = await index.service.search({
 				root: root.fsPath,
-				pattern: `\\b(?:class|interface)\\s+[\\w$]+[^{;]*\\b(?:implements|extends)\\b[^{;]*\\b${escaped}\\b|^\\s*class\\s+\\w+\\s*\\([^)]*\\b${escaped}\\b[^)]*\\)\\s*:`,
+				pattern: `\\b(?:class|interface)\\s+[\\w$]+[^{;]*\\b(?:implements|extends)\\b[^{;]*\\b${escaped}\\b`,
 				isRegExp: true,
 				caseSensitive: true,
 				multiline: false,

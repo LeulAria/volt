@@ -254,25 +254,12 @@ export class TreeSitterParsers {
 		}
 		this.parser ??= new loaded.ts.Parser();
 		this.parser.setLanguage(language);
-		let patternTree = this.parser.parse(metaToIdentifiers(grammar, pattern));
+		const patternTree = this.parser.parse(metaToIdentifiers(grammar, pattern));
 		if (!patternTree) {
 			return `The pattern is not valid ${grammar}.`;
 		}
-		// Go and Rust take statements only inside a function: `tax.RoundCents($X)` alone "does not parse as code".
-		let inBody = false;
-		const wrap = patternTree.rootNode.hasError ? FUNCTION_WRAPPERS[grammar] : undefined;
-		if (wrap) {
-			const wrapped = this.parser.parse(wrap(metaToIdentifiers(grammar, pattern)));
-			if (wrapped && !wrapped.rootNode.hasError) {
-				patternTree.delete();
-				patternTree = wrapped;
-				inBody = true;
-			} else {
-				wrapped?.delete();
-			}
-		}
 		try {
-			const compiled = patternRoot(inBody ? functionBody(patternTree.rootNode) ?? patternTree.rootNode : patternTree.rootNode);
+			const compiled = patternRoot(patternTree.rootNode);
 			if (typeof compiled === 'string') {
 				return compiled;
 			}
@@ -572,25 +559,13 @@ function metaOf(node: SyntaxNode): IMeta | undefined {
 	return found[2] !== undefined ? { name: found[2], many: false } : { name: found[1] ?? '', many: true };
 }
 
-/** Languages whose statements parse only inside a function: the pattern is parsed as one's body. */
-const FUNCTION_WRAPPERS: Readonly<Record<string, ((pattern: string) => string) | undefined>> = {
-	go: pattern => `package p\nfunc _() {\n${pattern}\n}\n`,
-	rust: pattern => `fn _() {\n${pattern};\n}\n`,
-};
-
-/** The body block of the wrapper function (the last `block` child of the first function). */
-function functionBody(root: SyntaxNode): SyntaxNode | undefined {
-	const fn = root.namedChildren.find(child => !!child && /^function_(declaration|item)$/.test(child.type));
-	return fn?.namedChildren.filter((child): child is SyntaxNode => !!child && child.type === 'block').at(-1);
-}
-
 /** The node a pattern stands for: its single statement, or that statement's expression. */
 function patternRoot(root: SyntaxNode): SyntaxNode | string {
 	if (root.hasError) {
 		return 'The pattern does not parse as code; write it as a complete expression or statement (e.g. foo($A, $$$) or if ($C) { $$$ }).';
 	}
 	let node: SyntaxNode = root;
-	while (node.namedChildCount === 1 && /^(program|module|source_file|translation_unit|compilation_unit|expression_statement|global_statement|block|statement_list)$/.test(node.type)) {
+	while (node.namedChildCount === 1 && /^(program|module|source_file|translation_unit|compilation_unit|expression_statement|global_statement)$/.test(node.type)) {
 		node = node.namedChildren[0]!;
 	}
 	if (/^(program|module|source_file|translation_unit|compilation_unit)$/.test(node.type)) {

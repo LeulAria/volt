@@ -180,7 +180,6 @@ export class AgentServerWindow extends Disposable {
 			}
 			return host.diagnostics(list?.length ? list : undefined, severity === 'warning' || severity === 'all' ? severity : 'error');
 		});
-		handle('codeIntel.unchecked', uris => host.unchecked(Array.isArray(uris) ? uris.filter(allowed) : []));
 		const position = (line: unknown, column: unknown) => Number.isInteger(line) && Number.isInteger(column) && (line as number) >= 1 && (column as number) >= 1;
 		handle('codeIntel.definitions', (uri, line, column) => allowed(uri) && position(line, column) ? host.definitions(uri, line as number, column as number) : []);
 		handle('codeIntel.references', (uri, line, column) => allowed(uri) && position(line, column) ? host.references(uri, line as number, column as number) : []);

@@ -105,29 +105,6 @@ suite('Volt code intelligence for a sandboxed chat', () => {
 		assert.match(await runCodeNav(wide, ROOT, { op: 'references', path: 'src/a.ts', line: 3, symbol: 'KEY' }, wideIndex).then(result => result.text), /^3 references\b/);
 	});
 
-	test('a sandboxed chat keeps the index\'s syntax-tree answers (structural, outline, importers, implementations), cut to what it may read', async () => {
-		const index: ICodeNavIndex = {
-			...wideIndex,
-			implementations: async () => [at('/Users/me/secrets/keys.ts', 2, 'class Leak implements Rule {'), at('/ws/src/a.ts', 5, 'class Own implements Rule {')],
-			structure: async (_root, uri) => ({ symbols: [{ name: uri.path.includes('secrets') ? 'Leak' : 'own', kind: 'function', line: 1, endLine: 3, column: 1, depth: 0 }], imports: [] }),
-			importers: async () => [
-				{ path: 'src/b.ts', line: 1, names: ['KEY'], depth: 1, uri: URI.file('/ws/src/b.ts') },
-				{ path: '../../Users/me/secrets/user.ts', line: 1, names: ['KEY'], depth: 1, uri: URI.file('/Users/me/secrets/user.ts') },
-			],
-			structural: async () => ({ matches: [{ path: 'src/a.ts', line: 3, endLine: 3, text: 'use(KEY)' }, { path: '../Users/me/secrets/keys.ts', line: 9, endLine: 9, text: 'use("sk-live-123")' }], limitHit: false, scanned: 2 }),
-		};
-		const { host, nav } = confineCodeIntel({ ...wideHost(), symbols: async () => [], lspAllowed: () => false }, index, rules);
-
-		const structural = (await runCodeNav(host, ROOT, { op: 'structural', pattern: 'use($X)' }, nav)).text;
-		assert.match(structural, /^1 match in 1 file:\nsrc\/a\.ts:\n {2}3: use\(KEY\)$/);
-		assert.match((await runCodeNav(host, ROOT, { op: 'structural', pattern: 'use($X)', path: '/Users/me/secrets' }, nav)).text, /outside the workspace|may not read/);
-
-		assert.match((await runCodeNav(host, ROOT, { op: 'symbols', path: 'src/a.ts' }, nav)).text, /from its syntax tree[^\n]*\nfunction own \[1-3\]/);
-		assert.strictEqual(await nav!.structure!(ROOT, URI.file('/Users/me/secrets/keys.ts')), undefined);
-		assert.deepStrictEqual((await nav!.importers!(ROOT, URI.file('/ws/src/a.ts'), 1))?.map(item => item.path), ['src/b.ts']);
-		assert.deepStrictEqual((await nav!.implementations!(ROOT, 'Rule'))?.map(item => item.uri.path), ['/ws/src/a.ts']);
-	});
-
 	test('DEV-SBX-13: code_action changes nothing unless every file it changes is one the sandbox lets the chat write', async () => {
 		const written: string[] = [];
 		const write = async (change: ITextFileChange) => {

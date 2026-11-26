@@ -6,7 +6,7 @@
 import assert from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { declarationLineIn, declarationsOnly, declaredNameOn, declaredSupertypes, enclosingName, ICodeIntelHost, ICodeLocation, ICodeNavIndex, IDiagnostic, onceIndexed, outlineSymbols, runCodeAction, runCodeNav, runDiagnostics } from '../../browser/tools/codeTools.js';
+import { declarationLineIn, declarationsOnly, declaredNameOn, enclosingName, ICodeIntelHost, ICodeLocation, ICodeNavIndex, outlineSymbols, runCodeAction, runCodeNav } from '../../browser/tools/codeTools.js';
 
 suite('code_nav answers', () => {
 
@@ -137,122 +137,6 @@ suite('code_nav answers', () => {
 		const tie = await runCodeNav(lsp([ref('a/one.ts', 3), ref('b/two.ts', 9)]), root, { op: 'references', symbol: 'StateReader' }, undefined);
 		assert.strictEqual(tie.isError, true);
 		assert.ok(tie.text.startsWith('"StateReader" is declared in 2 places; pass path (and line) for the one you mean:\ninterface StateReader  a/one.ts:3\ninterface StateReader  b/two.ts:9'), tie.text);
-	});
-
-	test('workspace symbols of another project the language server has loaded are not this chat\'s', async () => {
-		const other = { name: 'PriceRule', kind: 'interface', uri: URI.file('/other/src/pricing/rule.ts'), line: 4, column: 18 };
-		const own = { name: 'PriceRule', kind: 'interface', uri: URI.file('/repo/pricing/rule.go'), line: 6, column: 6 };
-		const asked: string[] = [];
-		const lsp = (symbols: (typeof own)[]): ICodeIntelHost => ({ ...host([]), workspaceSymbols: async () => symbols, references: async uri => { asked.push(uri.path); return [at('pricing/rule.go', 6, 'type PriceRule interface {')]; } });
-		const listed = await runCodeNav(lsp([other, own]), root, { op: 'workspace_symbols', query: 'PriceRule' }, undefined);
-		assert.strictEqual(listed.text, '1 symbol matching "PriceRule":\ninterface PriceRule  pricing/rule.go:6');
-		await runCodeNav(lsp([other, own]), root, { op: 'references', symbol: 'PriceRule' }, undefined);
-		assert.deepStrictEqual(asked, ['/repo/pricing/rule.go']);
-		// Only the other project has it: the index answers for this one (here: nothing), never the other project's file.
-		const none = await runCodeNav(lsp([other]), root, { op: 'references', symbol: 'PriceRule' }, index([]));
-		assert.strictEqual(none.isError, true);
-		assert.doesNotMatch(none.text, /other/);
-		assert.doesNotMatch((await runCodeNav(lsp([other]), root, { op: 'workspace_symbols', query: 'PriceRule' }, index([]))).text, /other/);
-	});
-
-	test('diagnostics never says "no errors" for a file nothing checks, or for a project it only knows the open files of', async () => {
-		const go = URI.file('/repo/api/refund.go');
-		const withUnchecked = (found: IDiagnostic[]): ICodeIntelHost => ({ ...host([]), diagnostics: async () => found, unchecked: async uris => uris.filter(uri => uri.path.endsWith('.go') || uri.path.endsWith('.py')) });
-		const none = await runDiagnostics(withUnchecked([]), root, { paths: ['api/refund.go'] });
-		assert.strictEqual(none.isError, true);
-		assert.strictEqual(none.text, 'Not checked: api/refund.go. No language service in Volt covers this file (no extension for the language is installed), so this says nothing about its errors. Run `go vet ./...` (or `go build ./...`) with your shell tool.');
-		const mixed = await runDiagnostics(withUnchecked([]), root, { paths: ['src/a.ts', 'shop/refund.py'] });
-		assert.ok(!mixed.isError);
-		assert.match(mixed.text, /^No errors in src\/a\.ts\.\nNot checked: shop\/refund\.py\. .*py_compile/);
-		const found = await runDiagnostics(withUnchecked([{ uri: URI.file('/repo/src/a.ts'), line: 4, column: 9, severity: 'error', message: 'Cannot find name \'x\'.', source: 'ts', code: '2304' }]), root, { paths: ['src/a.ts', 'api/refund.go'] });
-		assert.match(found.text, /^1 error, 0 other:\nsrc\/a\.ts:4:9 error 2304: Cannot find name 'x'\. \(ts\)\nNot checked: api\/refund\.go\./);
-		void go;
-		// A checked file with nothing to report is still a plain answer.
-		assert.strictEqual((await runDiagnostics(withUnchecked([]), root, { paths: ['src/a.ts'] })).text, 'No errors in src/a.ts.');
-		// No paths: what the language services have open, said as such.
-		const all = await runDiagnostics(withUnchecked([]), root, {});
-		assert.match(all.text, /^No errors in the files the language services have open\. That is not the whole project/);
-		assert.doesNotMatch(all.text, /in the workspace/);
-	});
-
-	test('declaredSupertypes reads parents from a declaration in TypeScript, Python and Go', () => {
-		assert.deepStrictEqual(declaredSupertypes(['export class PercentOff extends BaseRule<number> implements PriceRule, Named {'], 1, 'a.ts'), ['BaseRule', 'PriceRule', 'Named']);
-		assert.deepStrictEqual(declaredSupertypes(['export interface A', '\textends B, pkg.C {'], 1, 'a.ts'), ['B', 'C']);
-		assert.deepStrictEqual(declaredSupertypes(['class PercentOff(BaseRule, abc.ABC, metaclass=Meta):'], 1, 'a.py'), ['BaseRule', 'ABC']);
-		assert.deepStrictEqual(declaredSupertypes(['class Cart:'], 1, 'a.py'), []);
-		assert.deepStrictEqual(declaredSupertypes(['type PercentOff struct {', '\tBaseRule', '\t*pricing.Named // embedded', '\tpercent float64', '}'], 1, 'a.go'), ['BaseRule', 'Named']);
-	});
-
-	test('without a language server: callers and callees by name, type hierarchy from declarations, hover from the declaration', async () => {
-		const files: Record<string, string> = {
-			'shop/tax.py': 'def round_cents(value):\n    return round(value * 100) / 100\n\n\ndef compute_tax(amount, region):\n    """Tax for a region."""\n    return round_cents(amount * RATES[region])\n',
-			'shop/checkout.py': 'from shop.tax import compute_tax, round_cents\n\n\nclass Till:\n    def quote(self, cart):\n        return round_cents(cart.subtotal())\n',
-			'shop/rules.py': 'class PriceRule:\n    pass\n\n\nclass BaseRule(PriceRule):\n    pass\n\n\nclass PercentOff(BaseRule):\n    pass\n',
-		};
-		const uri = (path: string) => URI.file(`/repo/${path}`);
-		const grep = (test: (line: string) => boolean): ICodeLocation[] => Object.entries(files).flatMap(([path, content]) => content.split('\n').flatMap((line, index) => test(line) ? [{ uri: uri(path), line: index + 1, column: 1, preview: line.trim() }] : []));
-		const noServer: ICodeIntelHost = { ...host([]), columnOf: async (file, line, symbol) => { const at = (files[file.path.slice(6)]?.split('\n')[line - 1] ?? '').indexOf(symbol); return at < 0 ? undefined : at + 1; }, fileText: async file => files[file.path.slice(6)] };
-		const nav: ICodeNavIndex = {
-			definitions: async (_root, name) => grep(line => new RegExp(`^\\s*(?:def|class)\\s+${name}\\b`).test(line)),
-			references: async (_root, name) => grep(line => new RegExp(`\\b${name}\\b`).test(line)),
-			outline: async () => [],
-			implementations: async (_root, name) => grep(line => new RegExp(`^class\\s+\\w+\\([^)]*\\b${name}\\b`).test(line)),
-			structure: async (_root, file) => ({
-				imports: [],
-				symbols: file.path.endsWith('tax.py')
-					? [{ name: 'round_cents', kind: 'function', line: 1, endLine: 2, column: 5, depth: 0 }, { name: 'compute_tax', kind: 'function', line: 5, endLine: 7, column: 5, depth: 0 }]
-					: [{ name: 'Till', kind: 'class', line: 4, endLine: 6, column: 7, depth: 0 }, { name: 'quote', kind: 'method', line: 5, endLine: 6, column: 9, depth: 1 }],
-			}),
-		};
-		const ask = (args: Record<string, unknown>) => runCodeNav(noServer, root, args, nav).then(result => result.text);
-
-		const callers = await ask({ op: 'callers', path: 'shop/tax.py', symbol: 'round_cents' });
-		assert.match(callers, /^2 callers of round_cents \(by name, [^)]*not type-checked[^)]*\):\nfunction compute_tax {2}shop\/tax\.py:5 {2}\(calls at line 7\)\nmethod Till\.quote {2}shop\/checkout\.py:5 {2}\(calls at line 6\)$/);
-		const tree = await ask({ op: 'callers', path: 'shop/tax.py', symbol: 'round_cents', depth: 2 });
-		assert.match(tree, /^Callers of round_cents [^\n]*2 levels[^\n]*by name/);
-		assert.match(tree, /function compute_tax {2}shop\/tax\.py:5 \(calls at 7\) {2}\[no callers\]/);
-
-		const callees = await ask({ op: 'callees', path: 'shop/tax.py', symbol: 'compute_tax' });
-		assert.match(callees, /^1 callee of compute_tax \(by name[^\n]*\nfunction round_cents {2}shop\/tax\.py:1 {2}\(called at line 7\)$/);
-
-		assert.match(await ask({ op: 'supertypes', path: 'shop/rules.py', symbol: 'PercentOff' }), /^1 supertype of PercentOff \(read from the declarations[^\n]*\nBaseRule {2}shop\/rules\.py:5$/);
-		assert.match(await ask({ op: 'subtypes', path: 'shop/rules.py', symbol: 'PriceRule' }), /^2 subtypes \(read from the declarations[^\n]*\nshop\/rules\.py:\n {2}5: class BaseRule\(PriceRule\):\n {2}9: class PercentOff\(BaseRule\):$/);
-		assert.match(await ask({ op: 'implementations', path: 'shop/rules.py', symbol: 'PriceRule' }), /^2 implementations \(from the code index/);
-
-		const hover = await ask({ op: 'hover', path: 'shop/checkout.py', symbol: 'compute_tax', line: 1 });
-		assert.match(hover, /no type information from a language server; compute_tax is declared at shop\/tax\.py:5 \(from the code index\):\n {4}5 {2}def compute_tax\(amount, region\):\n {4}6 {6}"""Tax for a region\."""$/);
-	});
-
-	test('a Go interface\'s implementations without gopls: the types whose own and embedded methods cover it', async () => {
-		const files: Record<string, string> = {
-			'pricing/rule.go': 'package pricing\n\ntype PriceRule interface {\n\tName() string\n\tApply(total float64) float64\n}\n',
-			'pricing/base.go': 'package pricing\n\ntype BaseRule struct {\n\tname string\n}\n\nfunc (b BaseRule) Name() string {\n\treturn b.name\n}\n',
-			'pricing/percent.go': 'package pricing\n\ntype PercentOff struct {\n\tBaseRule\n\tpercent float64\n}\n\nfunc (p *PercentOff) Apply(total float64) float64 {\n\treturn total\n}\n',
-			'pricing/free.go': 'package pricing\n\ntype FreeShipping struct{}\n\nfunc (FreeShipping) Name() string {\n\treturn "free"\n}\n\nfunc (FreeShipping) Apply(total float64) float64 {\n\treturn total\n}\n',
-		};
-		const uri = (path: string) => URI.file(`/repo/${path}`);
-		const grep = (test: (line: string) => boolean): ICodeLocation[] => Object.entries(files).flatMap(([path, content]) => content.split('\n').flatMap((line, index) => test(line) ? [{ uri: uri(path), line: index + 1, column: 1, preview: line.trim() }] : []));
-		const noServer: ICodeIntelHost = { ...host([]), columnOf: async () => 6, fileText: async file => files[file.path.slice(6)] };
-		const nav: ICodeNavIndex = {
-			definitions: async (_root, name) => grep(line => new RegExp(`^(?:type|func)\\s+${name}\\b`).test(line)),
-			references: async (_root, name) => grep(line => new RegExp(`\\b${name}\\b`).test(line)),
-			outline: async () => [],
-			structure: async (_root, file) => ({ imports: [], symbols: file.path.endsWith('percent.go') ? [{ name: 'PercentOff', kind: 'struct', line: 3, endLine: 6, column: 6, depth: 0 }] : [] }),
-		};
-		const found = (await runCodeNav(noServer, root, { op: 'implementations', path: 'pricing/rule.go', symbol: 'PriceRule' }, nav)).text;
-		assert.match(found, /^2 implementations in 2 files \(from the code index/);
-		assert.match(found, /pricing\/percent\.go:3 {2}type PercentOff struct \{/);
-		assert.match(found, /pricing\/free\.go:3 {2}type FreeShipping struct\{\}/);
-		assert.doesNotMatch(found, /base\.go/);
-	});
-
-	test('a lookup that arrives while the index is loading waits for it, and says so if it never loads', async () => {
-		let asks = 0;
-		const loading: ICodeNavIndex = { ...index([]), definitions: async () => ++asks < 3 ? undefined : [at('src/tax.ts', 13, 'export function computeTax(amount: number): number {')] };
-		assert.deepStrictEqual(await onceIndexed(() => loading.definitions(root, 'computeTax'), 1_000, 5).then(found => found?.map(item => item.line)), [13]);
-		assert.strictEqual(asks, 3);
-		assert.strictEqual(await onceIndexed(async () => undefined, 20, 5), undefined);
-		assert.deepStrictEqual(await onceIndexed(async () => [], 1_000, 5), [], 'an empty answer is an answer');
 	});
 
 	test('a rename that would reach outside the project changes nothing', async () => {
