@@ -10,7 +10,7 @@ import { homedir, tmpdir } from 'os';
 import { join } from '../../../base/common/path.js';
 import type { Database } from '@vscode/sqlite3';
 import { generateUuid } from '../../../base/common/uuid.js';
-import { chromiumSameSite, chromiumTimeToUnix, firefoxExpiryToUnix, firefoxSameSite, IReadCookie, IVoltCookieSource, parseBinaryCookies, parseChromiumProfileNames, parseFirefoxProfilesIni, VoltCookieBrowser } from '../common/browserCookies.js';
+import { chromiumSameSite, chromiumTimeToUnix, firefoxExpiryToUnix, firefoxSameSite, ICookieHost, IReadCookie, IVoltCookieSite, IVoltCookieSource, parseBinaryCookies, parseChromiumProfileNames, parseFirefoxProfilesIni, summarizeCookieSites, VoltCookieBrowser } from '../common/browserCookies.js';
 
 interface IChromiumBrowser {
 	readonly browser: VoltCookieBrowser;
@@ -428,5 +428,33 @@ export async function readCookies(source: IVoltCookieSource, env: ICookieReaderE
 			return readFirefox(source);
 		default:
 			return readChromium(source, env);
+	}
+}
+
+/**
+ * The sites a profile has cookies for, with counts, from the hosts and expiry dates alone: no
+ * value is read or decrypted, so listing never asks for the keychain.
+ */
+export async function listCookieSites(source: IVoltCookieSource): Promise<IVoltCookieSite[]> {
+	return summarizeCookieSites(await readCookieHosts(source));
+}
+
+async function readCookieHosts(source: IVoltCookieSource): Promise<ICookieHost[]> {
+	switch (source.browser) {
+		case 'safari':
+			return (await readSafari(source)).cookies.map(({ host, expires }) => ({ host, expires }));
+		case 'firefox':
+		case 'zen':
+			return withDatabaseCopy(source.path, async db => {
+				const columns = new Set((await all<{ name: string }>(db, 'PRAGMA table_info(moz_cookies)')).map(column => column.name));
+				const rows = await all<{ host: string; expiry: number; originAttributes?: string }>(db, `SELECT host, expiry${columns.has('originAttributes') ? ', originAttributes' : ''} FROM moz_cookies`);
+				return rows.filter(row => !row.originAttributes).map(row => ({ host: row.host, expires: firefoxExpiryToUnix(row.expiry) }));
+			});
+		default:
+			return withDatabaseCopy(source.path, async db => {
+				const columns = new Set((await all<{ name: string }>(db, 'PRAGMA table_info(cookies)')).map(column => column.name));
+				const rows = await all<{ host_key: string; expires_utc: string; top_frame_site_key?: string }>(db, `SELECT host_key, CAST(expires_utc AS TEXT) AS expires_utc${columns.has('top_frame_site_key') ? ', top_frame_site_key' : ''} FROM cookies`);
+				return rows.filter(row => !row.top_frame_site_key).map(row => ({ host: row.host_key, expires: chromiumTimeToUnix(row.expires_utc) }));
+			});
 	}
 }

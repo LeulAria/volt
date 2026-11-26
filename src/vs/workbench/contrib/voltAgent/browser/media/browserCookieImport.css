@@ -1,0 +1,223 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* The cookie import dialog (browser profile → sites with checkboxes). It lives in the opaque
+ * .volt-modal panel: nothing here is see-through and there is no backdrop-filter. Lists run
+ * edge to edge (volt-lists). */
+
+.volt-cookie-import .volt-modal-body {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.volt-cookie-import-head {
+	display: flex;
+	gap: 12px;
+	align-items: flex-start;
+	padding: 20px 20px 12px;
+	flex-shrink: 0;
+}
+
+.volt-cookie-import-head .mark {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	flex-shrink: 0;
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+	color: var(--vscode-foreground);
+}
+
+.volt-cookie-import-head .mark .codicon[class*='codicon-'] {
+	font-size: 18px;
+}
+
+.volt-cookie-import-head .titles {
+	min-width: 0;
+}
+
+.volt-cookie-import-head h2 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+	line-height: 20px;
+	overflow-wrap: anywhere;
+}
+
+.volt-cookie-import-head .lead,
+.volt-cookie-import-head .reason {
+	margin: 6px 0 0;
+	font-size: 12.5px;
+	line-height: 18px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-cookie-import-head .reason {
+	color: var(--vscode-foreground);
+}
+
+.volt-cookie-import-crumb {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 20px;
+	flex-shrink: 0;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+	border-top: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.volt-cookie-import-crumb .step {
+	color: var(--vscode-foreground);
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.volt-cookie-import-crumb .monaco-button.back {
+	width: auto;
+	gap: 2px;
+	margin-left: -8px;
+	padding: 2px 6px;
+}
+
+.volt-cookie-import-stage {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+}
+
+.volt-cookie-import-tools {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 4px 20px 8px;
+	flex-shrink: 0;
+}
+
+.volt-cookie-import-search {
+	flex: 1;
+	min-width: 0;
+}
+
+.volt-cookie-import-search .monaco-inputbox {
+	border-radius: 6px;
+}
+
+.volt-cookie-import-list {
+	flex: 1;
+	min-height: 0;
+	position: relative;
+}
+
+.volt-cookie-import-list .monaco-list-row {
+	border-radius: 0;
+}
+
+.volt-cookie-import-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 100%;
+	padding: 0 20px;
+	min-width: 0;
+}
+
+.volt-cookie-import-check {
+	display: flex;
+	align-items: center;
+	flex: none;
+}
+
+.volt-cookie-import .volt-cookie-import-check .monaco-custom-toggle.monaco-checkbox {
+	margin: 0;
+}
+
+.volt-cookie-import-row .volt-cookie-import-icon {
+	display: flex;
+	flex: none;
+}
+
+.volt-cookie-import-list .volt-cookie-import-row .volt-cookie-import-icon .codicon[class*='codicon-'] {
+	font-size: 16px;
+}
+
+.volt-cookie-import-row .volt-cookie-import-label {
+	flex: none;
+	max-width: 60%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.volt-cookie-import-row .volt-cookie-import-detail {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-cookie-import-row.site .volt-cookie-import-label {
+	flex: 1;
+	max-width: none;
+}
+
+.volt-cookie-import-row .volt-cookie-import-hint {
+	flex: none;
+	font-size: 12px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-cookie-import-list .volt-cookie-import-row .volt-cookie-import-chevron .codicon[class*='codicon-'] {
+	font-size: 14px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-cookie-import-empty {
+	padding: 16px 20px;
+	font-size: 12.5px;
+	line-height: 18px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-cookie-import-missing {
+	margin: 0 20px 8px;
+	padding: 6px 10px;
+	border-radius: 6px;
+	font-size: 12px;
+	line-height: 17px;
+	background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #d29922) 12%, transparent);
+	color: var(--vscode-foreground);
+	flex-shrink: 0;
+}
+
+.volt-cookie-import-always {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 20px;
+	font-size: 12.5px;
+	cursor: pointer;
+	flex-shrink: 0;
+	border-top: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+}
+
+.volt-cookie-import-footer .volt-add-footer-hint.error {
+	color: var(--vscode-errorForeground);
+	white-space: normal;
+	line-height: 16px;
+}
+
+.volt-cookie-import-footer .monaco-button.hidden {
+	display: none;
+}

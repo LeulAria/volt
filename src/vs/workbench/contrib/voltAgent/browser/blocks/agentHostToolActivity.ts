@@ -318,6 +318,7 @@ function describeAgentBrowserTool(tool: string, args: Record<string, unknown>): 
 		}
 		case 'browser_emulate': return { tool, label: args.reset === true ? 'Reset emulation' : 'Emulated', detail: ['color_scheme', 'network', 'timezone', 'locale'].map(key => text(args[key])).filter(Boolean).join(', ') || (args.reduced_motion === true ? 'reduced motion' : undefined) };
 		case 'browser_audit': return { tool, label: 'Audited page', detail: Array.isArray(args.checks) ? args.checks.join(', ') : undefined };
+		case 'browser_import_cookies': return { tool, label: 'Asked to import cookies', detail: Array.isArray(args.sites) ? args.sites.map(site => text(site, 40)).filter(Boolean).join(', ') || undefined : undefined };
 		case 'playground_create': return { tool, label: 'Created playground', detail: text(args.title, 60) };
 		case 'playground_update': return { tool, label: 'Updated playground', detail: text(args.id) };
 		case 'playground_list': return { tool, label: 'Listed playgrounds' };
