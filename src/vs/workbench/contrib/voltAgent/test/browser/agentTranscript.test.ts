@@ -18,7 +18,7 @@ import { placeMessageMentions } from '../../browser/composer/agentMentionImages.
 import { formatImageSize, imageExtension } from '../../browser/composer/agentImageAttachments.js';
 import { formatDuration, keptRanges, mapRangesToSource, mergeRanges, normalizeVideoMime, rangesDuration, videoExtensionForMime, videoFrameCount, videoFrameTimes } from '../../browser/composer/agentVideoAttachments.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { ELAPSED_CLASS, formatWorkedTime, tickElapsed } from '../../browser/chrome/agentTranscriptView.js';
+import { ELAPSED_CLASS, formatWorkedTime, ITranscriptHost, renderTranscript, tickElapsed } from '../../browser/chrome/agentTranscriptView.js';
 import { describeTodoUpdate, isTodoTool } from '../../browser/editor/agentSessionController.js';
 import { planFromCursorTodos } from '../../../../services/voltRuntime/browser/agents/acpProvider.js';
 
@@ -453,5 +453,54 @@ suite('Agent transcript run controls', () => {
 		assert.strictEqual(tickElapsed(root, 8000), 1, 'a live counter keeps the chat clock at one second');
 		assert.notStrictEqual(label.firstChild, text);
 		assert.strictEqual(tickElapsed(document.createElement('div'), 8000), 0, 'none: the clock may slow down');
+	});
+});
+
+suite('Agent transcript steer rows', () => {
+	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
+
+	type SteerRow = Extract<TranscriptRow, { kind: 'steer' }>;
+
+	/** Draws one reply's rows the way the editor does, with open/closed state kept like a message's blockState. */
+	function draw(row: SteerRow, expanded: Map<string, boolean>, store: DisposableStore): HTMLElement {
+		const parent = document.createElement('div');
+		const host: ITranscriptHost = {
+			store,
+			ctx: { store, blockState: {}, onScroll: () => { } } as unknown as IBlockRenderContext,
+			isExpanded: id => expanded.get(id),
+			setExpanded: (id, open) => expanded.set(id, open),
+			openFile: () => { },
+			openStepItem: () => { },
+			renderStatus: () => { },
+			renderBlock: () => { },
+			renderNotice: () => { },
+			setSearchableText: (el, text) => { el.textContent = text; },
+		};
+		renderTranscript(parent, [row], host, { streaming: true, statusKey: 'test' });
+		return parent;
+	}
+
+	test('a long message sent into a running turn shows its first lines with Read more, as a sent prompt does', () => {
+		const store = disposables.add(new DisposableStore());
+		const expanded = new Map<string, boolean>();
+		const text = Array.from({ length: 12 }, (_, i) => `line ${i + 1} of a long brief`).join('\n');
+		const row: SteerRow = { kind: 'steer', id: 'steer-0', text };
+		const steer = draw(row, expanded, store).querySelector<HTMLElement>('.volt-tr-steer')!;
+		assert.ok(steer.classList.contains('clamped'), 'clamped to its first lines');
+		assert.ok(steer.querySelector('.volt-agent-user-read-more'), 'Read more is offered');
+		assert.strictEqual(steer.querySelector('.volt-tr-steer-text')?.textContent, text, 'the whole text is there, only clipped');
+
+		steer.click();
+		assert.strictEqual(expanded.get('steer:steer-0'), true, 'a click opens it');
+		const opened = draw(row, expanded, store).querySelector<HTMLElement>('.volt-tr-steer')!;
+		assert.ok(opened.classList.contains('expanded') && !opened.classList.contains('clamped'), 'drawn again open');
+		assert.strictEqual(opened.querySelector('.volt-agent-user-read-more'), null);
+	});
+
+	test('a short message sent into a running turn shows whole', () => {
+		const store = disposables.add(new DisposableStore());
+		const steer = draw({ kind: 'steer', id: 'steer-0', text: 'Use b.ts instead' }, new Map(), store).querySelector<HTMLElement>('.volt-tr-steer')!;
+		assert.ok(!steer.classList.contains('clamped'));
+		assert.strictEqual(steer.querySelector('.volt-agent-user-read-more'), null);
 	});
 });

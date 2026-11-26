@@ -1203,6 +1203,41 @@ button.volt-tr-compaction-pill:hover .volt-tr-chevron,
 	overflow-wrap: anywhere;
 }
 
+.volt-tr-steer-clip {
+	position: relative;
+	min-width: 0;
+}
+
+/* A long one shows its first two lines, as a sent prompt does (agentEditor.css `.clamped`): Read
+ * more sits in the bottom-right corner of the last line, which fades out under it. */
+.volt-tr-steer.clamped {
+	cursor: pointer;
+}
+
+.volt-tr-steer.clamped .volt-tr-steer-text {
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+	overflow: hidden;
+	-webkit-mask:
+		linear-gradient(#000, #000) top / 100% calc(100% - 22px) no-repeat,
+		linear-gradient(to left, transparent 92px, #000 124px) bottom / 100% 22px no-repeat;
+	mask:
+		linear-gradient(#000, #000) top / 100% calc(100% - 22px) no-repeat,
+		linear-gradient(to left, transparent 92px, #000 124px) bottom / 100% 22px no-repeat;
+}
+
+.volt-tr-steer.clamped .volt-agent-user-read-more {
+	display: inline-flex;
+}
+
+/* Opened: the whole message, scrolling past the height an opened sent prompt stops at. */
+.volt-tr-steer.expanded .volt-tr-steer-clip {
+	max-height: 240px;
+	overflow: auto;
+}
+
 /* Sub-agents: the step they are on, a fold with their recent steps or report. */
 
 button.volt-tr-subagent-head {

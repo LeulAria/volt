@@ -18,6 +18,7 @@ import { localize } from '../../../../../nls.js';
 import { AgentBlock, IAgentActivityItem, IToolBlock } from '../blocks/agentBlocks.js';
 import { formatContextTokens } from '../context/agentContextUsage.js';
 import { createCompactIcon } from '../context/agentContextUsageView.js';
+import { createStrokeIcon } from './agentModeIcons.js';
 import { appendHighlightedShell, IBlockRenderContext, isDiagramBlock, isLiveCodeBlock, LiveMarkdown, lockAnimationPhase, mermaidOptions, newLiveCodeCard, renderMarkdownInto, StreamingMarkdownView, updateLiveCodeCard } from '../blocks/agentBlockRenderers.js';
 import { MermaidDiagramView } from '../blocks/agentMermaid.js';
 import { fenceChartSpec } from '../blocks/agentMarkdown.js';
@@ -445,7 +446,7 @@ function rowSignature(row: TranscriptRow, host: ITranscriptHost): string {
 		case 'notice':
 			return `${host.isExpanded(`dismiss:${row.id}`)}|${shapeOf(row)}`;
 		case 'steer':
-			return steerSignature(row);
+			return steerSignature(row, host);
 		case 'compaction':
 			return `${host.isExpanded(row.id)}|${shapeOf(row.compaction)}`;
 		case 'block': {
@@ -559,21 +560,62 @@ function renderTodoChecklist(parent: HTMLElement, todos: ITodoChecklist, live: b
 	}
 }
 
-/** A message the user steered the running agent with, drawn as a sent message where the agent picked it up. */
+/** Where a steer row keeps whether the user opened it past its first lines. */
+const steerExpandedId = (row: Extract<TranscriptRow, { kind: 'steer' }>) => `steer:${row.id}`;
+
+/**
+ * A message the user steered the running agent with, drawn as a sent message where the agent picked
+ * it up. Like a sent prompt, a long one shows its first two lines with Read more, which opens it
+ * (up to 240px, then it scrolls).
+ */
 function renderSteerRow(parent: HTMLElement, row: Extract<TranscriptRow, { kind: 'steer' }>, host: ITranscriptHost): void {
 	const el = append(parent, $('.volt-tr-steer'));
-	const text = append(el, $('span.volt-tr-steer-text'));
+	const clip = append(el, $('.volt-tr-steer-clip'));
+	const text = append(clip, $('span.volt-tr-steer-text'));
 	if (host.renderSteerText) {
 		host.renderSteerText(text, row);
 	} else {
 		host.setSearchableText(text, row.text);
 	}
+	if (host.isExpanded(steerExpandedId(row))) {
+		el.classList.add('expanded');
+		return;
+	}
+	// The sent prompt's guess (agentEditor.renderUserTurn); the draw below drops it when it fits after all.
+	if (row.text.split('\n').length <= 2 && row.text.length <= 160) {
+		return;
+	}
+	el.classList.add('clamped');
+	const readMore = append(clip, $('button.volt-agent-user-read-more')) as HTMLButtonElement;
+	readMore.type = 'button';
+	readMore.appendChild(createStrokeIcon('read-more', ['M4 6h16', 'M4 10h16', 'M4 14h16', 'M4 18h10']));
+	append(readMore, $('span')).textContent = localize('voltAgent.readMore', "Read more");
+	host.store.add(addDisposableListener(el, 'click', e => {
+		// Selecting words in it is not asking for the rest.
+		if (!el.classList.contains('clamped') || !el.ownerDocument.getSelection()?.isCollapsed) {
+			return;
+		}
+		e.preventDefault();
+		e.stopPropagation();
+		host.setExpanded(steerExpandedId(row), true);
+	}));
+	// The line clamp hides what does not fit: a prompt that fits in two lines needs no Read more.
+	const win = el.ownerDocument.defaultView;
+	const frame = win?.requestAnimationFrame(() => {
+		if (text.isConnected && text.clientHeight && text.scrollHeight <= text.clientHeight + 1) {
+			el.classList.remove('clamped');
+			readMore.remove();
+		}
+	});
+	if (frame !== undefined) {
+		host.store.add(toDisposable(() => win?.cancelAnimationFrame(frame)));
+	}
 }
 
-/** What a steer row draws: its text and its chips (never their bytes, which only change with the chip). */
-function steerSignature(row: Extract<TranscriptRow, { kind: 'steer' }>): string {
+/** What a steer row draws: its text, its chips (never their bytes, which only change with the chip) and whether it is open. */
+function steerSignature(row: Extract<TranscriptRow, { kind: 'steer' }>, host: ITranscriptHost): string {
 	const chips = row.mentions?.map(mention => `${mention.kind}:${mention.label}:${mention.image?.id ?? ''}:${mention.image?.bytes ? 1 : 0}`).join('|') ?? '';
-	return `${row.text}\u0000${chips}`;
+	return `${row.text}\u0000${chips}\u0000${host.isExpanded(steerExpandedId(row)) ? 1 : 0}`;
 }
 
 /**
@@ -658,7 +700,7 @@ function cachedRowSignature(row: TranscriptRow, host: ITranscriptHost, options: 
 		case 'compaction':
 			return row.compaction.status === 'running' ? undefined : hashString(JSON.stringify([row, host.isExpanded(row.id) ?? null]));
 		case 'steer':
-			return hashString(steerSignature(row));
+			return hashString(steerSignature(row, host));
 		case 'block': {
 			const block = row.block;
 			if (block.type === 'visual' || isDiagramBlock(block)) {
