@@ -419,9 +419,18 @@ export function isTitleFromLead(title: string, lead: string): boolean {
 	return head.length >= 6 && flat(lead).startsWith(head);
 }
 
+/** Dead resumable sessions remembered until their handle is disposed (see `diedResumable`). */
+const MAX_DIED_RESUMABLE = 256;
+
 export class AcpAgentProvider implements IAgentProvider {
 
 	private readonly sessions = new Map<string, IAcpSession>();
+	/**
+	 * Handles of resumable sessions whose process died under them (the adapter crashed or was killed):
+	 * the session is gone from `sessions`, but its transcript is on disk and a new process can continue
+	 * it (see `canResume`). Bounded; an entry goes when its handle is disposed.
+	 */
+	private readonly diedResumable = new Set<string>();
 	private readonly bridge: IProviderAccessBridge;
 	private gate: IAccessGate | undefined;
 	private writeObserver: ((write: IAcpFileWrite) => void) | undefined;
@@ -666,9 +675,16 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 	}
 
-	/** The agent can continue this session in a new process (`session/resume`) after it was stopped. */
-	canResume(session: IAgentSessionHandle): boolean {
+	/**
+	 * The agent can continue this session in a new process (`session/resume`) after it was stopped.
+	 * With `died`, the question is asked about a session whose process is already gone mid-turn: its
+	 * transcript is on disk, so a session that could resume still can, and nothing it ran lives on.
+	 */
+	canResume(session: IAgentSessionHandle, died = false): boolean {
 		const live = this.sessions.get(session.id);
+		if (died && (!live || live.client.isDead)) {
+			return live ? live.resumable === true && !live.textOnly : this.diedResumable.has(session.id);
+		}
 		if (!live || live.resumable !== true || live.textOnly || live.client.isDead) {
 			return false;
 		}
@@ -991,6 +1007,12 @@ export class AcpAgentProvider implements IAgentProvider {
 		client.whenDead(() => {
 			for (const [id, session] of this.sessions) {
 				if (session.client === client) {
+					if (session.resumable === true && !session.textOnly) {
+						this.diedResumable.add(id);
+						if (this.diedResumable.size > MAX_DIED_RESUMABLE) {
+							this.diedResumable.delete(this.diedResumable.values().next().value!);
+						}
+					}
 					this.sessions.delete(id);
 				}
 			}
@@ -2280,6 +2302,7 @@ export class AcpAgentProvider implements IAgentProvider {
 
 	async dispose(session: IAgentSessionHandle): Promise<void> {
 		const live = this.sessions.get(session.id);
+		this.diedResumable.delete(session.id);
 		if (!live) {
 			return;
 		}

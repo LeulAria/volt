@@ -246,6 +246,14 @@ const STARTUP_DETECT_DELAY_MS = 60_000;
 /** CLI detections (`--version`, auth status for every CLI) this fresh are not repeated by a health tick or a relaunch. */
 const DETECT_TTL_MS = 30 * 60_000;
 const VOLT_DETECTIONS_STORAGE_KEY = 'volt.runtime.detections';
+/**
+ * The agent session of every chat whose turn is running, kept while it runs. When the agent server
+ * dies under a turn (a crash, a kill, a restart while agents work), the session's transcript is on
+ * disk with every step the turn took; the restarted server has forgotten which session that was,
+ * and the turn's continuation started a new one that knew none of them. See `parseRunningAgents`.
+ */
+export const VOLT_RUNNING_AGENTS_STORAGE_KEY = 'volt.runtime.runningAgents';
+const MAX_RUNNING_AGENTS = 100;
 /** Project checks Volt runs itself (the regression gate) are stopped after this. */
 const CHECK_TIMEOUT_MS = 120_000;
 /** A baseline slower than this is not started again for that folder; the gate needs a fast suite. */
@@ -285,10 +293,45 @@ export function resumeFields(released: { readonly providerId: string; readonly r
  * turn's prompt included). Undefined: the restart starts a new session.
  */
 export function restartResume(handle: IAgentSessionHandle | undefined, provider: Pick<IAgentProvider, 'id' | 'canResume'> | undefined, ref: string | undefined, cwd: string | undefined, worked: boolean, messages: number): { readonly providerId: string; readonly ref: string; readonly cwd: string | undefined; readonly providerSessionId: string; readonly stateKey?: string; readonly synced: number } | undefined {
-	if (!worked || !handle?.providerSessionId || !provider || !ref || !provider.canResume?.(handle)) {
+	if (!worked || !handle?.providerSessionId || !provider || !ref || !provider.canResume?.(handle, true)) {
 		return undefined;
 	}
 	return { providerId: provider.id, ref, cwd, providerSessionId: handle.providerSessionId, ...(handle.stateKey ? { stateKey: handle.stateKey } : {}), synced: messages };
+}
+
+/** A chat's agent session as `releasedAgent` remembers it. */
+export interface IResumableAgent {
+	readonly providerId: string;
+	readonly ref: string;
+	readonly cwd: string | undefined;
+	readonly providerSessionId: string;
+	readonly stateKey?: string;
+	readonly synced: number;
+}
+
+/** The stored record of running turns' agent sessions, by chat: entries that do not have the shape are dropped, the newest `MAX_RUNNING_AGENTS` kept. */
+export function parseRunningAgents(raw: string | undefined): Map<string, IResumableAgent> {
+	const out = new Map<string, IResumableAgent>();
+	let parsed: unknown;
+	try {
+		parsed = raw ? JSON.parse(raw) : undefined;
+	} catch {
+		return out;
+	}
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		return out;
+	}
+	for (const [chat, value] of Object.entries(parsed as Record<string, unknown>)) {
+		const entry = value as Partial<IResumableAgent> | null;
+		if (entry && typeof entry.providerId === 'string' && typeof entry.ref === 'string' && typeof entry.providerSessionId === 'string' && entry.providerSessionId
+			&& typeof entry.synced === 'number' && entry.synced >= 0 && (entry.cwd === undefined || typeof entry.cwd === 'string') && (entry.stateKey === undefined || typeof entry.stateKey === 'string')) {
+			out.set(chat, { providerId: entry.providerId, ref: entry.ref, cwd: entry.cwd, providerSessionId: entry.providerSessionId, ...(entry.stateKey ? { stateKey: entry.stateKey } : {}), synced: Math.floor(entry.synced) });
+		}
+	}
+	while (out.size > MAX_RUNNING_AGENTS) {
+		out.delete(out.keys().next().value!);
+	}
+	return out;
 }
 
 /** How many of the chat's messages a newly bound agent has seen: those its resumed session saw, else none. */
@@ -1071,6 +1114,11 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 				messages: [],
 				seq: 0,
 			};
+			// Its turn was running when the agent server last stopped: the next start continues that agent session.
+			const left = this.runningAgentRecords().get(key);
+			if (left) {
+				(session as ISessionState).releasedAgent = left;
+			}
 			this.sessions.set(key, session);
 		}
 		return session;
@@ -1747,6 +1795,44 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		const released = restartResume(handle, provider, session.agentRef, session.agentCwd, !!this.runActivity(run), session.messages.length);
 		this.disposeSessionAgent(session);
 		session.releasedAgent = released;
+	}
+
+	private runningAgents: Map<string, IResumableAgent> | undefined;
+
+	private runningAgentRecords(): Map<string, IResumableAgent> {
+		return this.runningAgents ??= parseRunningAgents(this.storageService.get(VOLT_RUNNING_AGENTS_STORAGE_KEY, StorageScope.APPLICATION));
+	}
+
+	/**
+	 * The turn's prompt is with the chat's agent: its session is written down until the turn ends, so a
+	 * server that dies meanwhile finds it again (see VOLT_RUNNING_AGENTS_STORAGE_KEY). Only a session a
+	 * new process can continue is kept.
+	 */
+	private noteRunningAgent(session: ISessionState): void {
+		const handle = session.agentHandle;
+		const provider = session.agentProviderId ? this.agentProviders.get(session.agentProviderId) : undefined;
+		const records = this.runningAgentRecords();
+		if (!handle?.providerSessionId || !provider || !session.agentRef || !provider.canResume?.(handle)) {
+			this.forgetRunningAgent(session.sessionId);
+			return;
+		}
+		records.delete(session.sessionId);
+		records.set(session.sessionId, { providerId: provider.id, ref: session.agentRef, cwd: session.agentCwd, providerSessionId: handle.providerSessionId, ...(handle.stateKey ? { stateKey: handle.stateKey } : {}), synced: session.messages.length });
+		while (records.size > MAX_RUNNING_AGENTS) {
+			records.delete(records.keys().next().value!);
+		}
+		this.storeRunningAgents();
+	}
+
+	/** The chat's turn is over: nothing of it is left to continue. */
+	private forgetRunningAgent(sessionId: string): void {
+		if (this.runningAgentRecords().delete(sessionId)) {
+			this.storeRunningAgents();
+		}
+	}
+
+	private storeRunningAgents(): void {
+		this.storageService.store(VOLT_RUNNING_AGENTS_STORAGE_KEY, JSON.stringify(Object.fromEntries(this.runningAgentRecords())), StorageScope.APPLICATION, StorageTarget.MACHINE);
 	}
 
 	/** Lets go of the chat's current agent, if any. */
@@ -5343,6 +5429,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			run.prompted = true;
 			this.emit(session, run.runId, { type: 'lifecycle', phase: 'running' });
 		}
+		this.noteRunningAgent(session);
 		// The agent keeps its own model requests; the Trajectory panel gets each answer as Volt sees it.
 		const trace = new AgentTrajectoryRecorder({
 			begin: input => this.trajectory.begin(input),
@@ -5609,6 +5696,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 			return;
 		}
 		run.ended = true;
+		this.forgetRunningAgent(session.sessionId);
 		run.metrics.end(reason);
 		if (session.activeRun?.runId === run.runId) {
 			session.activeRun = { ...session.activeRun, status: reason === 'done' ? 'completed' : reason === 'abort' ? 'cancelled' : 'failed', endedAt: Date.now() };

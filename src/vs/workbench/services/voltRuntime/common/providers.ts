@@ -212,8 +212,12 @@ export interface IAgentProvider {
 	resumeIn?(session: IAgentSessionHandle, req: IAgentStartRequest): Promise<IAgentSessionHandle | undefined>;
 	/** False when the CLI process has already exited and the next send must start a new session. */
 	isLive?(session: IAgentSessionHandle): boolean;
-	/** The session can be stopped and continued later in a new process (see `IAgentStartRequest.resumeSessionId`). */
-	canResume?(session: IAgentSessionHandle): boolean;
+	/**
+	 * The session can be stopped and continued later in a new process (see `IAgentStartRequest.resumeSessionId`).
+	 * `died`: its process is already gone (it crashed or was killed mid-turn) and the restart asks whether
+	 * the session it left on disk can be continued.
+	 */
+	canResume?(session: IAgentSessionHandle, died?: boolean): boolean;
 	send(session: IAgentSessionHandle, msg: IAgentMessage, profile: IProviderProfile, token: CancellationToken): AsyncIterable<IVoltEvent>;
 	interrupt(session: IAgentSessionHandle): Promise<void>;
 	dispose(session: IAgentSessionHandle): Promise<void>;
