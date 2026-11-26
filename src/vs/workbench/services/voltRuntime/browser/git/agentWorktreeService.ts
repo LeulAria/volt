@@ -21,6 +21,7 @@ import {
 	IEnsuredAgentWorktree,
 	IGitRunResult,
 	IReleasedWorktreeBranch,
+	IReservedAgentWorktree,
 	IWorktreeFiles,
 	archivedWorktreeCandidates,
 	branchNameFromTitle,
@@ -28,6 +29,8 @@ import {
 	ensureAgentWorktree,
 	releaseWorktreeBranch,
 	removeAgentWorktree,
+	reserveAgentWorktree,
+	reservedIdFirst,
 	serializeForRepo,
 	WorktreeRemoval,
 } from '../../common/git/agentWorktree.js';
@@ -48,13 +51,23 @@ export class AgentWorktreeService implements IAgentWorktreeService {
 		@ILogService private readonly logService: ILogService,
 	) { }
 
-	async create(repoRoot: string, target?: AgentWorktreeTarget): Promise<ICreatedAgentWorktree> {
+	async create(repoRoot: string, target?: AgentWorktreeTarget, reserved?: IReservedAgentWorktree): Promise<ICreatedAgentWorktree> {
 		return createAgentWorktree({
 			run: (cwd, args) => this.git(cwd, args),
 			files: this.files(),
 			repoRoot,
 			worktreesRoot: this.worktreesRoot(),
 			target,
+			...(reserved ? { allocateId: reservedIdFirst(reserved.id) } : {}),
+		});
+	}
+
+	async reserve(repoRoot: string): Promise<IReservedAgentWorktree | undefined> {
+		return reserveAgentWorktree({
+			run: (cwd, args) => this.git(cwd, args),
+			files: this.files(),
+			repoRoot,
+			worktreesRoot: this.worktreesRoot(),
 		});
 	}
 

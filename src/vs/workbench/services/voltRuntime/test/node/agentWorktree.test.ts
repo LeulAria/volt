@@ -7,9 +7,9 @@ import assert from 'assert';
 import { spawn } from 'child_process';
 import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
-import { join } from '../../../../../base/common/path.js';
+import { basename, join } from '../../../../../base/common/path.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { AgentWorktreeError, GitRunner, IGitRunResult, IWorktreeFiles, branchNameFromTitle, createAgentWorktree, ensureAgentWorktree, releaseWorktreeBranch } from '../../common/git/agentWorktree.js';
+import { AgentWorktreeError, GitRunner, IGitRunResult, IWorktreeFiles, branchNameFromTitle, createAgentWorktree, ensureAgentWorktree, releaseWorktreeBranch, reserveAgentWorktree, reservedIdFirst } from '../../common/git/agentWorktree.js';
 
 suite('Agent worktrees on git', () => {
 
@@ -52,6 +52,34 @@ suite('Agent worktrees on git', () => {
 			assert.ok(branches[0].includes(created.branch));
 			const trees = (await git(repo, ['worktree', 'list', '--porcelain'])).stdout.split('\n').filter(line => line.startsWith('worktree '));
 			assert.strictEqual(trees.length, 2);
+		} finally {
+			await rm(worktreesRoot, { recursive: true, force: true });
+			await rm(repo, { recursive: true, force: true });
+		}
+	});
+
+	test('a reserved path is where the worktree is made, so its agent can boot for it first', async () => {
+		const repo = await mkdtemp(join(tmpdir(), 'volt-repo-'));
+		const worktreesRoot = await mkdtemp(join(tmpdir(), 'volt-wt-'));
+		try {
+			await git(repo, ['init', '-b', 'main']);
+			await git(repo, ['config', 'user.email', 'test@volt.local']);
+			await git(repo, ['config', 'user.name', 'Volt Test']);
+			await writeFile(join(repo, 'README'), 'hello\n');
+			await git(repo, ['add', 'README']);
+			await git(repo, ['commit', '-m', 'init']);
+
+			const reserved = await reserveAgentWorktree({ run: git, files: files(), repoRoot: repo, worktreesRoot });
+			assert.ok(reserved);
+			assert.strictEqual(basename(reserved.path), `volt-${reserved.id}`);
+			const created = await createAgentWorktree({ run: git, files: files(), repoRoot: repo, worktreesRoot, allocateId: reservedIdFirst(reserved.id) });
+			assert.strictEqual(created.path, reserved.path);
+			assert.strictEqual(created.branch, `volt/${reserved.id}`);
+			// Taken meanwhile: the next create moves on to a fresh id.
+			const again = await createAgentWorktree({ run: git, files: files(), repoRoot: repo, worktreesRoot, allocateId: reservedIdFirst(reserved.id) });
+			assert.notStrictEqual(again.path, reserved.path);
+
+			assert.strictEqual(await reserveAgentWorktree({ run: git, files: files(), repoRoot: worktreesRoot, worktreesRoot }), undefined, 'not a repository');
 		} finally {
 			await rm(worktreesRoot, { recursive: true, force: true });
 			await rm(repo, { recursive: true, force: true });

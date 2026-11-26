@@ -150,6 +150,38 @@ interface IAcpChild {
 }
 
 /** A session started ahead of time that no chat owns yet. */
+/** What `initialize` answers, as far as Volt reads it. */
+interface IAcpInitializeResult {
+	agentCapabilities?: {
+		session?: { _meta?: unknown; modes?: { availableModes?: { id: string; name?: string }[] } };
+		sessionCapabilities?: { resume?: unknown };
+		mcpCapabilities?: IAcpMcpCapabilities;
+		promptCapabilities?: { image?: boolean; embeddedContext?: boolean };
+	};
+	configOptions?: IAcpConfigOption[];
+}
+
+/** An agent process that answered `initialize` (and, for an engine, opened its warm-up session), before any chat's `session/new`. */
+interface IAcpBootedProcess {
+	readonly processId: string;
+	readonly client: AcpJsonRpcClient;
+	readonly initialized: IAcpInitializeResult;
+	readonly command: string;
+	readonly args: readonly string[];
+	/** The engine's throwaway session: its updates belong to no chat. */
+	readonly warmSessionId?: string;
+	/** Launch, spawn, initialize (and warm-up) done, as Date.now() values. */
+	readonly steps: readonly number[];
+}
+
+/** A booted process parked for the next session with the same launch (see {@link AcpAgentProvider.bootEngine}). */
+interface IAcpEngine {
+	readonly key: string;
+	readonly startedAt: number;
+	readonly booted: Promise<IAcpBootedProcess>;
+	expiry?: ReturnType<typeof setTimeout>;
+}
+
 interface IAcpSpare {
 	readonly key: string;
 	/** The chat the spare was started for (its host MCP URL names it). */
@@ -294,6 +326,14 @@ const TEXT_ONLY_CANCEL_LINGER_MS = 750;
 /** A spare session nobody adopted is stopped after this long; its process holds a model connection. */
 const SPARE_TTL_MS = 10 * 60_000;
 const MAX_SPARES = 2;
+/**
+ * Agents whose first `session/new` in a process is the slow part of a cold start, whatever the
+ * folder: cursor-agent (2026.11) answers `initialize` in ~0.45 s, its first `session/new` in 3.6-4.6 s
+ * (12 s with other agents starting), and every later one in the same process in ~0.75 s, in any
+ * cwd (its tools run in the session's cwd, not the process's). An engine pays the first one ahead.
+ */
+const ENGINE_PROVIDERS: ReadonlySet<string> = new Set(['cursor-acp']);
+const MAX_ENGINES = 2;
 /** Sandbox events kept per session (or spawn) until a turn shows them. */
 const MAX_PENDING_SANDBOX_EVENTS = 20;
 /** Spawn ids whose sandbox events wait for a session; older ones are dropped first. */
@@ -402,6 +442,8 @@ export class AcpAgentProvider implements IAgentProvider {
 	private questionAsker: AcpQuestionAsker | undefined;
 	private supervision: IAcpSupervisionOptions = {};
 	private readonly spares = new Map<string, IAcpSpare>();
+	/** Booted processes not bound to a folder yet, by {@link engineKey}. */
+	private readonly engines = new Map<string, IAcpEngine>();
 	/** Every live agent process of this provider (spares too), by spawn id: where its sandbox events go. */
 	private readonly byProcess = new Map<string, IAcpSession>();
 	/**
@@ -700,13 +742,92 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 	}
 
-	/** Stops every parked spare. */
+	/**
+	 * Boots a process for a session like `req` (spawn, `initialize`, a throwaway `session/new`) that
+	 * is not bound to a folder yet: the next session with the same launch (command, model, sandbox)
+	 * opens on it with only its own `session/new`, in its own cwd. For a chat whose folder does not
+	 * exist yet (a worktree being created): `req.cwd` is where the session will run (the sandbox is
+	 * built for it), `spawnCwd` an existing folder the process starts in. No-op for agents whose
+	 * cold start is not the first `session/new` (see {@link ENGINE_PROVIDERS}).
+	 */
+	bootEngine(req: IAgentStartRequest, spawnCwd: string): void {
+		if (!ENGINE_PROVIDERS.has(this.id)) {
+			return;
+		}
+		const key = this.engineKey(req);
+		const existing = this.engines.get(key);
+		if (existing && Date.now() - existing.startedAt < SPARE_TTL_MS) {
+			return;
+		}
+		if (existing) {
+			this.dropEngine(existing);
+		}
+		while (this.engines.size >= MAX_ENGINES) {
+			this.dropEngine([...this.engines.values()].sort((x, y) => x.startedAt - y.startedAt)[0]);
+		}
+		const engine: IAcpEngine = { key, startedAt: Date.now(), booted: this.bootProcess(req, spawnCwd, true) };
+		this.engines.set(key, engine);
+		engine.expiry = setTimeout(() => this.dropEngine(engine), SPARE_TTL_MS);
+		engine.booted.then(booted => booted.client.whenDead(() => this.forgetEngine(engine)), err => {
+			this.forgetEngine(engine);
+			this.logService.trace('[ACP] engine failed to boot', err);
+		});
+	}
+
+	/** True when a process for sessions like `req` is booted or booting. */
+	hasEngine(req: IAgentStartRequest): boolean {
+		return this.engines.has(this.engineKey(req));
+	}
+
+	/** Stops every parked spare and engine. */
 	async disposeSpares(): Promise<void> {
 		const all = [...this.spares.entries()];
 		for (const [key, spare] of all) {
 			this.forgetSpare(key, spare);
 		}
-		await Promise.all(all.map(([, spare]) => spare.session.then(live => this.stopSession(live), () => undefined)));
+		const engines = [...this.engines.values()];
+		for (const engine of engines) {
+			this.forgetEngine(engine);
+		}
+		await Promise.all([
+			...all.map(([, spare]) => spare.session.then(live => this.stopSession(live), () => undefined)),
+			...engines.map(engine => engine.booted.then(booted => this.stopProcess(booted), () => undefined)),
+		]);
+	}
+
+	/** Launch, sandbox and chat: the session's folder is left out, it is given on `session/new`. */
+	private engineKey(req: IAgentStartRequest): string {
+		return JSON.stringify([this.id, req.profile.command || this.defaultCommand, this.startArgs(req), this.sandboxRequest(req) ?? null]);
+	}
+
+	/** Hands over the engine for `req`'s launch, if one is booted or booting. */
+	private takeEngine(req: IAgentStartRequest): IAcpEngine | undefined {
+		if (!ENGINE_PROVIDERS.has(this.id)) {
+			return undefined;
+		}
+		const engine = this.engines.get(this.engineKey(req));
+		if (engine) {
+			this.forgetEngine(engine);
+		}
+		return engine;
+	}
+
+	private dropEngine(engine: IAcpEngine): void {
+		this.forgetEngine(engine);
+		void engine.booted.then(booted => this.stopProcess(booted), () => undefined);
+	}
+
+	private forgetEngine(engine: IAcpEngine): void {
+		clearTimeout(engine.expiry);
+		if (this.engines.get(engine.key) === engine) {
+			this.engines.delete(engine.key);
+		}
+	}
+
+	private async stopProcess(booted: IAcpBootedProcess): Promise<void> {
+		booted.client.dispose();
+		this.forgetProcess(booted.processId);
+		await this.stdio.kill(booted.processId).catch(() => undefined);
 	}
 
 	private dropSpare(key: string, spare: IAcpSpare): void {
@@ -831,71 +952,22 @@ export class AcpAgentProvider implements IAgentProvider {
 	private async createSession(req: IAgentStartRequest, resume?: string): Promise<IAcpSession> {
 		// Where a cold start's time goes (launch command, spawn with the sandbox, initialize, session/new, setup), for the log line below.
 		const started = Date.now();
-		const steps: number[] = [];
-		const step = () => steps.push(Date.now());
-		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
-		step();
 		const cwd = req.cwd || req.profile.cwd || this.workspace.getWorkspace().folders[0]?.uri.fsPath;
-		const env = cliAgentDefinition(this.id)?.acpEnv;
-		const settings = req.sandbox?.settings;
-		if (settings && settings.level !== 'off' && sandboxStrategy(this.id, settings.level, this.sandboxPlatform()) === 'none') {
-			// No OS sandbox here (Windows): a sandboxed chat is refused, never run unconfined.
-			throw sandboxUnavailableError(sandboxPlatformUnavailable(this.sandboxPlatform()) ?? `${this.label} cannot run in an OS sandbox on this machine.`);
+		// A process booted ahead for this launch (bootEngine) needs only this session's `session/new`.
+		const engine = resume ? undefined : this.takeEngine(req);
+		let booted = engine ? await engine.booted.catch(() => undefined) : undefined;
+		if (booted?.client.isDead) {
+			booted = undefined;
 		}
-		const sandbox = this.sandboxRequest(req);
-		let processId: string;
-		this.spawning++;
-		try {
-			// Rejects with a SandboxUnavailableError when the sandbox cannot be enforced; the runtime shows it.
-			// `sandboxed` follows the wrap: an agent whose strategy is its own sandbox gets no Volt wrap here (sandboxStrategy).
-			const context: IVoltExecContext = { principal: req.sessionId ? `chat:${req.sessionId}` : 'volt', reason: 'agent', sandboxed: !!sandbox };
-			processId = await this.stdio.spawn({ command, args, cwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}), context });
-		} finally {
-			this.spawning--;
-		}
-		step();
-		// Ours now: its events wait here through initialize and session/new.
-		if (!this.earlySandboxEvents.has(processId)) {
-			this.earlySandboxEvents.set(processId, []);
-		}
-		(sandbox ? this.sandboxedProcesses : this.unconfinedProcesses).add(processId);
-		const client = new AcpJsonRpcClient(this.stdio, processId);
-		this.bindClientRequests(client);
-		client.whenDead(() => {
-			for (const [id, session] of this.sessions) {
-				if (session.client === client) {
-					this.sessions.delete(id);
-				}
-			}
-			this.forgetProcess(processId);
-			// Its listeners filter every stdout chunk of every process: a dead client lets go of them,
-			// after the other death handlers (a spare's) have run.
-			queueMicrotask(() => {
-				client.dispose();
-				void this.stdio.kill(processId).catch(() => undefined);
-			});
-		});
+		const fromEngine = !!booted;
+		const waited = Date.now() - started;
+		booted ??= await this.bootProcess(req, cwd, false);
+		const { processId, client, initialized, command, args } = booted;
 
-		// Setup that never answers would leave the chat on "Thinking" with nothing to show for it:
-		// the prompt watchdog only starts once there is a session. Bound it, and stop the process.
-		let initialized: {
-			agentCapabilities?: {
-				session?: { _meta?: unknown; modes?: { availableModes?: { id: string; name?: string }[] } };
-				sessionCapabilities?: { resume?: unknown };
-				mcpCapabilities?: IAcpMcpCapabilities;
-				promptCapabilities?: { image?: boolean; embeddedContext?: boolean };
-			};
-			configOptions?: IAcpConfigOption[];
-		};
 		let created: ISessionNewResponse;
 		let hostMcp: IAcpSession['hostMcp'];
+		const opening = Date.now();
 		try {
-			initialized = await client.request('initialize', {
-				protocolVersion: 1,
-				clientCapabilities: ACP_CLIENT_CAPABILITIES,
-				clientInfo: { name: 'volt', title: 'Volt', version: '0.1.0' },
-			}, ACP_INITIALIZE_TIMEOUT_MS);
-			step();
 			const capabilities = initialized.agentCapabilities?.mcpCapabilities;
 			// A text-only session never calls Volt's tools: no server, and nothing to go stale.
 			const groups = hostToolOptions(req)?.groups;
@@ -914,13 +986,11 @@ export class AcpAgentProvider implements IAgentProvider {
 				const meta = this.sessionMeta(req, voltAsks);
 				created = await client.request<ISessionNewResponse>('session/new', { cwd: cwd ?? '', mcpServers, ...(meta ? { _meta: meta } : {}) }, ACP_SESSION_NEW_TIMEOUT_MS);
 			}
-			step();
 		} catch (err) {
-			client.dispose();
-			this.forgetProcess(processId);
-			void this.stdio.kill(processId);
+			void this.stopProcess(booted);
 			throw err;
 		}
+		const sessionDone = Date.now();
 
 		const handle: IAgentSessionHandle = {
 			id: created.sessionId,
@@ -954,8 +1024,10 @@ export class AcpAgentProvider implements IAgentProvider {
 			this.byProcess.set(processId, live);
 		}
 		// One listener for the life of the session; it routes to whichever turn is current.
+		const warmSessionId = booted.warmSessionId;
 		client.handleNotifications(note => {
-			if (note.method === 'session/update') {
+			// An engine's warm-up session shares the process; what it reports is no chat's.
+			if (note.method === 'session/update' && !(warmSessionId && (note.params as { sessionId?: unknown } | undefined)?.sessionId === warmSessionId)) {
 				this.onSessionUpdate(live, note.params);
 			}
 		});
@@ -967,11 +1039,86 @@ export class AcpAgentProvider implements IAgentProvider {
 		}
 		// What the agent actually runs, for model-variant parity checks against its own CLI.
 		const config = (live.configOptions ?? []).filter(option => option.id !== 'mode').map(option => `${option.id}=${String(option.currentValue ?? '')}`).join(' ');
-		step();
-		const [launched, spawned, initDone, sessionDone, ready] = steps.map(at => at - started);
-		const timing = `launch ${launched}ms, spawn ${spawned - launched}ms, initialize ${initDone - spawned}ms, ${resume ? 'session/resume' : 'session/new'} ${sessionDone - initDone}ms, setup ${ready - sessionDone}ms`;
+		const ready = Date.now();
+		const [launched, spawned, initDone, warmedUp] = booted.steps.map(at => at - started);
+		const opened = `${resume ? 'session/resume' : 'session/new'} ${sessionDone - opening}ms, setup ${ready - sessionDone}ms`;
+		const timing = fromEngine
+			? `engine (booted ${Math.max(0, -(warmedUp ?? initDone))}ms ahead, waited ${waited}ms), ${opened}`
+			: `launch ${launched}ms, spawn ${spawned - launched}ms, initialize ${initDone - spawned}ms, ${opened}`;
 		this.logService.info(`[ACP] ${this.id} session ${handle.id}: ${command} ${args.join(' ')} | ${config} | ${timing}`);
 		return live;
+	}
+
+	/**
+	 * Launches the agent for `req` in `spawnCwd` (its sandbox built for `req.cwd`) and waits for
+	 * `initialize`; with `warmUp`, also for a throwaway `session/new` in `spawnCwd`, the slow first one.
+	 */
+	private async bootProcess(req: IAgentStartRequest, spawnCwd: string | undefined, warmUp: boolean): Promise<IAcpBootedProcess> {
+		const steps: number[] = [];
+		const step = () => steps.push(Date.now());
+		const { command, args } = await this.launchFor(req.profile, this.startArgs(req));
+		step();
+		const env = cliAgentDefinition(this.id)?.acpEnv;
+		const settings = req.sandbox?.settings;
+		if (settings && settings.level !== 'off' && sandboxStrategy(this.id, settings.level, this.sandboxPlatform()) === 'none') {
+			// No OS sandbox here (Windows): a sandboxed chat is refused, never run unconfined.
+			throw sandboxUnavailableError(sandboxPlatformUnavailable(this.sandboxPlatform()) ?? `${this.label} cannot run in an OS sandbox on this machine.`);
+		}
+		const sandbox = this.sandboxRequest(req);
+		let processId: string;
+		this.spawning++;
+		try {
+			// Rejects with a SandboxUnavailableError when the sandbox cannot be enforced; the runtime shows it.
+			// `sandboxed` follows the wrap: an agent whose strategy is its own sandbox gets no Volt wrap here (sandboxStrategy).
+			const context: IVoltExecContext = { principal: req.sessionId ? `chat:${req.sessionId}` : 'volt', reason: 'agent', sandboxed: !!sandbox };
+			processId = await this.stdio.spawn({ command, args, cwd: spawnCwd, ...(env ? { env: { ...env } } : {}), ...(sandbox ? { sandbox } : {}), context });
+		} finally {
+			this.spawning--;
+		}
+		step();
+		// Ours now: its events wait here through initialize and session/new.
+		if (!this.earlySandboxEvents.has(processId)) {
+			this.earlySandboxEvents.set(processId, []);
+		}
+		(sandbox ? this.sandboxedProcesses : this.unconfinedProcesses).add(processId);
+		const client = new AcpJsonRpcClient(this.stdio, processId);
+		this.bindClientRequests(client);
+		client.whenDead(() => {
+			for (const [id, session] of this.sessions) {
+				if (session.client === client) {
+					this.sessions.delete(id);
+				}
+			}
+			this.forgetProcess(processId);
+			// Its listeners filter every stdout chunk of every process: a dead client lets go of them,
+			// after the other death handlers (a spare's) have run.
+			queueMicrotask(() => {
+				client.dispose();
+				void this.stdio.kill(processId).catch(() => undefined);
+			});
+		});
+		// Setup that never answers would leave the chat on "Thinking" with nothing to show for it:
+		// the prompt watchdog only starts once there is a session. Bound it, and stop the process.
+		try {
+			const initialized = await client.request<IAcpInitializeResult>('initialize', {
+				protocolVersion: 1,
+				clientCapabilities: ACP_CLIENT_CAPABILITIES,
+				clientInfo: { name: 'volt', title: 'Volt', version: '0.1.0' },
+			}, ACP_INITIALIZE_TIMEOUT_MS);
+			step();
+			let warmSessionId: string | undefined;
+			if (warmUp) {
+				const warm = await client.request<ISessionNewResponse>('session/new', { cwd: spawnCwd ?? '', mcpServers: [] }, ACP_SESSION_NEW_TIMEOUT_MS);
+				warmSessionId = warm.sessionId;
+				step();
+			}
+			return { processId, client, initialized, command, args, steps, ...(warmSessionId ? { warmSessionId } : {}) };
+		} catch (err) {
+			client.dispose();
+			this.forgetProcess(processId);
+			void this.stdio.kill(processId);
+			throw err;
+		}
 	}
 
 	/**

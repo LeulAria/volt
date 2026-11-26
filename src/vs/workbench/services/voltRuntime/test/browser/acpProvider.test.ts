@@ -45,7 +45,9 @@ class FakeAgentStdio {
 	private readonly onExitEmitter: Emitter<{ id: string; code: number | null }>;
 	private readonly onSandboxEventEmitter: Emitter<IVoltSandboxEvent>;
 	readonly written: { process: string; msg: IWire }[] = [];
-	readonly spawned: { command: string; args: readonly string[]; sandbox?: unknown }[] = [];
+	readonly spawned: { command: string; args: readonly string[]; cwd?: string; sandbox?: unknown }[] = [];
+	/** `session/new` calls per process: the first is `acp-<process>`, later ones `acp-<process>-<n>`. */
+	private readonly sessionsOpened = new Map<string, number>();
 	/** Runs inside `spawn` before it answers, with the new spawn id (the sandbox warns that early). */
 	onSpawn: ((id: string) => void) | undefined;
 	/** `spawn` rejects with this (the stdio layer refusing a sandbox it cannot enforce). */
@@ -83,11 +85,11 @@ class FakeAgentStdio {
 			onExit: this.onExitEmitter.event,
 			// The provider listens for its whole life (it is never disposed): the test's store ends the listener.
 			onSandboxEvent: (listener: (event: IVoltSandboxEvent) => void) => this.store.add(this.onSandboxEventEmitter.event(listener)),
-			spawn: async (options: { command: string; args: string[]; sandbox?: unknown }) => {
+			spawn: async (options: { command: string; args: string[]; cwd?: string; sandbox?: unknown }) => {
 				if (this.spawnError) {
 					throw this.spawnError;
 				}
-				this.spawned.push({ command: options.command, args: options.args, ...(options.sandbox ? { sandbox: options.sandbox } : {}) });
+				this.spawned.push({ command: options.command, args: options.args, ...(options.cwd ? { cwd: options.cwd } : {}), ...(options.sandbox ? { sandbox: options.sandbox } : {}) });
 				const id = `p${this.spawned.length}`;
 				this.onSpawn?.(id);
 				return id;
@@ -124,9 +126,12 @@ class FakeAgentStdio {
 				return reply({ protocolVersion: 1, agentCapabilities: this.capabilities, ...(this.initMeta ? { _meta: this.initMeta } : {}) });
 			case '_session/steering':
 				return reply({ outcome: this.steeringOutcome });
-			case 'session/new':
+			case 'session/new': {
+				const opened = (this.sessionsOpened.get(process) ?? 0) + 1;
+				this.sessionsOpened.set(process, opened);
 				this.sessionConfig.set(process, JSON.parse(JSON.stringify(this.configOptions)) as Json[]);
-				return reply({ sessionId: `acp-${process}`, configOptions: this.sessionConfig.get(process), modes: { currentModeId: 'agent', availableModes: [{ id: 'agent' }, { id: 'plan' }, { id: 'ask' }] } });
+				return reply({ sessionId: opened === 1 ? `acp-${process}` : `acp-${process}-${opened}`, configOptions: this.sessionConfig.get(process), modes: { currentModeId: 'agent', availableModes: [{ id: 'agent' }, { id: 'plan' }, { id: 'ask' }] } });
+			}
 			case 'session/set_config_option': {
 				const config = this.sessionConfig.get(process) ?? [];
 				const option = config.find(candidate => candidate.id === msg.params?.configId);
@@ -505,6 +510,54 @@ suite('ACP provider supervision', () => {
 		await env.provider.prewarmSpare(request({ cwd: '/elsewhere' }));
 		await env.provider.disposeSpares();
 		assert.strictEqual(env.provider.hasSpare(request({ cwd: '/elsewhere' })), false);
+	});
+
+	test('an engine booted for a folder that does not exist yet opens the chat\'s session there with one session/new', async () => {
+		const env = setup();
+		const worktree = request({ sessionId: 'chat', cwd: '/wt/volt-1234abcd' });
+		env.provider.bootEngine(worktree, '/project');
+		assert.strictEqual(env.provider.hasEngine(request({ sessionId: 'chat', cwd: '/anywhere' })), true, 'the folder is not part of the launch');
+		await settle();
+		assert.deepStrictEqual(env.agent.spawned.map(spawn => spawn.cwd), ['/project'], 'the process starts in a folder that exists');
+		assert.strictEqual(env.agent.count('session/new'), 1, 'the slow first session/new is paid ahead');
+
+		const handle = await env.provider.start(worktree);
+		assert.strictEqual(env.agent.spawned.length, 1, 'no second process');
+		assert.strictEqual(env.agent.count('initialize'), 1);
+		const opened = env.agent.written.filter(entry => entry.msg.method === 'session/new').map(entry => entry.msg.params?.cwd);
+		assert.deepStrictEqual(opened, ['/project', '/wt/volt-1234abcd'], 'the chat\'s session runs in its worktree');
+		assert.strictEqual(handle.id, 'acp-p1-2');
+		assert.strictEqual(env.provider.hasEngine(worktree), false, 'taken');
+
+		const cts = store.add(new CancellationTokenSource());
+		const turn = collect(env.provider.send(handle, { text: 'hi', mode: 'agent' }, PROFILE, cts.token));
+		await settle();
+		assert.strictEqual(env.agent.prompts()[0].params?.sessionId, 'acp-p1-2');
+		// The warm-up session shares the process: what it reports is no chat's.
+		env.agent.update('p1', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'stray' } });
+		env.agent.send('p1', { jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'acp-p1-2', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } } } });
+		env.agent.answerPrompt(0, { stopReason: 'end_turn' });
+		await turn.done;
+		assert.deepStrictEqual(turn.events.flatMap(event => event.type === 'text.delta' ? [event.delta] : []), ['hello']);
+		await finish(env, handle);
+	});
+
+	test('an engine serves only the same launch; other agents never boot one', async () => {
+		const env = setup();
+		env.provider.bootEngine(request({ sessionId: 'chat' }), '/project');
+		await settle();
+		const other = await env.provider.start(request({ sessionId: 'chat', modelId: 'grok-4.6' }));
+		assert.strictEqual(env.agent.spawned.length, 2, 'another model starts its own process');
+		assert.strictEqual(env.provider.hasEngine(request({ sessionId: 'chat' })), true, 'the engine stays for its own launch');
+		await finish(env, other);
+		await env.provider.disposeSpares();
+		assert.strictEqual(env.provider.hasEngine(request({ sessionId: 'chat' })), false);
+		assert.ok(env.agent.killed.includes('p1'), 'the parked engine is stopped');
+
+		const claude = setup(undefined, 'claude-code');
+		claude.provider.bootEngine(request({ sessionId: 'chat' }), '/project');
+		await settle();
+		assert.strictEqual(claude.agent.spawned.length, 0, 'its first session/new is not the slow part');
 	});
 
 	test('prewarming another chat stops the spare parked for the previous one', async () => {

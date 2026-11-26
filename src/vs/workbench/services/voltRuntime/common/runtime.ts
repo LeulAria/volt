@@ -161,8 +161,10 @@ export interface IAgentRuntimeService extends IVoltModelAccess {
 	/**
 	 * Starts the selected ACP agent ahead of the first message. For a native model, fills what a
 	 * send reads before its request (skills, rules, memory, hooks, the API key) and starts MCP servers.
+	 * `runOn` is where the send would run: for a new worktree the agent is booted for the checkout
+	 * the send will create, not for the open folder.
 	 */
-	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void;
+	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode, runOn?: IVoltSendRequest['runOn']): void;
 	/** Restore the checkout a chat already created, so a reload does not fall through to the open folder. */
 	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void;
 	/**

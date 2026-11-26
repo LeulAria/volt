@@ -167,6 +167,41 @@ export interface ICreateAgentWorktree {
  * checkout is registered and HEAD matches (a post-checkout hook failed after
  * a good tree). Otherwise the branch, directory, and registration are removed.
  */
+/** Where a new worktree will go, decided before git makes it: its agent can start meanwhile (its sandbox is built for the path). */
+export interface IReservedAgentWorktree {
+	readonly id: string;
+	readonly path: string;
+}
+
+/** A free `volt-<id>` path for {@link createAgentWorktree} (pass its id as `allocateId`); undefined outside a git repository. */
+export async function reserveAgentWorktree(input: Pick<ICreateAgentWorktree, 'run' | 'files' | 'repoRoot' | 'worktreesRoot'>): Promise<IReservedAgentWorktree | undefined> {
+	let commonDir: string;
+	try {
+		commonDir = await gitCommonDir(input.run, input.repoRoot);
+	} catch {
+		return undefined;
+	}
+	const repoKey = hash(normalize(commonDir)).toString(36);
+	for (let attempt = 0; attempt < 8; attempt++) {
+		const id = allocateWorktreeId();
+		const path = join(input.worktreesRoot, repoKey, `volt-${id}`);
+		if (!await input.files.exists(path)) {
+			return { id, path };
+		}
+	}
+	return undefined;
+}
+
+/** `allocateId` that hands out `id` first, then fresh ones. */
+export function reservedIdFirst(id: string | undefined): () => string {
+	let next = id;
+	return () => {
+		const value = next ?? allocateWorktreeId();
+		next = undefined;
+		return value;
+	};
+}
+
 export async function createAgentWorktree(input: ICreateAgentWorktree): Promise<ICreatedAgentWorktree> {
 	const commonDir = await gitCommonDir(input.run, input.repoRoot);
 	return withRepoQueue(commonDir, () => createLocked(input, commonDir));
@@ -540,7 +575,9 @@ export const IAgentWorktreeService = createDecorator<IAgentWorktreeService>('age
 export interface IAgentWorktreeService {
 	readonly _serviceBrand: undefined;
 	/** A new checkout on `target`'s branch, else a fresh `volt/<id>` at HEAD. */
-	create(repoRoot: string, target?: AgentWorktreeTarget): Promise<ICreatedAgentWorktree>;
+	create(repoRoot: string, target?: AgentWorktreeTarget, reserved?: IReservedAgentWorktree): Promise<ICreatedAgentWorktree>;
+	/** A free path for the next {@link create} (pass it back as `reserved`), so an agent can start for it while git works. */
+	reserve?(repoRoot: string): Promise<IReservedAgentWorktree | undefined>;
 	/**
 	 * Recreates a pruned checkout from its kept branch, or points to the checkout that has the
 	 * branch now (see {@link ensureAgentWorktree}); the caller records a changed path.

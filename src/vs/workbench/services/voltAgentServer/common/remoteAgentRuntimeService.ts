@@ -240,8 +240,8 @@ export class RemoteAgentRuntimeService extends Disposable implements IAgentRunti
 		this.client.send('runtime.truncateSession', sessionId, userTurns);
 	}
 
-	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void {
-		this.client.send('runtime.prewarmAgent', sessionId, providerRef, mode);
+	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode, runOn?: IVoltSendRequest['runOn']): void {
+		this.client.send('runtime.prewarmAgent', sessionId, providerRef, mode, runOn);
 	}
 
 	rememberWorktree(sessionId: string, path: string | undefined, branch: string | undefined): void {

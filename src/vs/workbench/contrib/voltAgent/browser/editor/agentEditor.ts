@@ -90,7 +90,7 @@ import { createReportStackIcon, isLiveSubagentState, isResumableSubagent, isRetr
 import type { IVoltSendRequest } from '../../../../services/voltRuntime/common/session.js';
 import { type IAgentQuestionResponse, questionResponseText } from '../../../../services/voltRuntime/common/questions.js';
 import { AgentSessionStatus, IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
-import { agentRunOnStorageKey, IAgentWorktreeService, normalizeAgentRunOn, runOnForPrompt } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
+import { AgentRunOn, agentRunOnStorageKey, IAgentWorktreeService, normalizeAgentRunOn, runOnForPrompt } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IWorkspaceMoveSpec } from '../../../../services/voltRuntime/common/git/workspaceMove.js';
 import { parseWorktreeList } from '../../../../services/voltRuntime/common/orchestration/agentThreadTools.js';
 import { showAgentMoveMenu } from '../orchestration/agentMoveMenu.js';
@@ -7170,13 +7170,17 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	}
 
 	/** The run request for a prompt: the chosen model and options, the checkout, and the prompt's images. */
-	private sendRequest(value: string, display: IAgentPromptDisplay | undefined, mode: string): IVoltSendRequest & { readonly images?: readonly IAgentImageAttachment[] } {
+	/** Where the next prompt runs: the project's location for a new chat; a follow-up stays on the chat's own checkout. */
+	private promptRunOn(): AgentRunOn {
 		// A scratch folder is not a git repository, so it has no worktrees.
 		const binding = this.sessionContext.bindingFor(this.sessionKey);
 		const scratch = !!binding && !!this.sessionContext.getProject(binding.projectId)?.scratch;
 		const location = scratch ? 'same-branch' : normalizeAgentRunOn(this.storageService.get(agentRunOnStorageKey(this.sessionContext.activeProject?.id), StorageScope.APPLICATION));
-		// The project's location is where a new chat starts; a follow-up stays on the chat's own checkout.
-		const runOn = runOnForPrompt(location, (this.orchestrator.getThread(this.sessionKey)?.turns ?? 0) > 0);
+		return runOnForPrompt(location, (this.orchestrator.getThread(this.sessionKey)?.turns ?? 0) > 0);
+	}
+
+	private sendRequest(value: string, display: IAgentPromptDisplay | undefined, mode: string): IVoltSendRequest & { readonly images?: readonly IAgentImageAttachment[] } {
+		const runOn = this.promptRunOn();
 		const images = imageAttachmentsFromMentions(display?.mentions);
 		return {
 			text: value,
@@ -9176,7 +9180,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.prewarmedAt = Date.now();
 		// The turn's workspace summary (its git status) is read now too, so the send finds it ready.
 		void this.commandService.executeCommand(WORKSPACE_SNAPSHOT_COMMAND_ID, this.sessionKey).catch(() => undefined);
-		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode);
+		this.runtime.prewarmAgent(this.sessionKey, this.modelAuto ? undefined : (this.currentModel || undefined), normalizeVoltMode(this.currentMode) as VoltMode, this.promptRunOn());
 		this.refreshMcpApprovals();
 	}
 

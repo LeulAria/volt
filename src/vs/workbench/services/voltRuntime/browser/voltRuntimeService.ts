@@ -20,7 +20,7 @@ import { IRequestService } from '../../../../platform/request/common/request.js'
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { IAgentWorktreeService } from '../common/git/agentWorktree.js';
+import { IAgentWorktreeService, IReservedAgentWorktree } from '../common/git/agentWorktree.js';
 import { describeMoveResult, workspaceMoveNote } from '../common/git/workspaceMove.js';
 import { IAgentHistoryService } from '../common/history/agentHistory.js';
 import { buildTitlePrompt, isNeutralTitle, isVagueMessage, sanitizeTitle, titleCommandFor } from '../common/history/titleGeneration.js';
@@ -367,6 +367,8 @@ interface ISessionState extends IVoltSession {
 	nativeUsedAt?: number;
 	/** One notice after a checkout is created or restored. */
 	announceWorktree?: boolean;
+	/** The path the chat's first send will create its worktree at, picked early so its agent boots meanwhile (bootForNewWorktree). */
+	worktreeReservation?: { readonly project: string; readonly reserved: Promise<IReservedAgentWorktree | undefined> };
 	/** The chat moved to another checkout: the next turn opens with this note and notice. */
 	moved?: { readonly model: string; readonly announce: string; readonly announced?: boolean };
 	/** A title was requested from the first message; set once it landed, so the agent's own titles stop replacing it. */
@@ -1194,8 +1196,14 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		}
 		const engine = catalogItem?.kind === 'agent' ? 'agent' : 'native';
 		const run = this.beginRun(session, request.mode, engine, sendAt);
+		// A first send that creates a worktree: its agent boots while git checks the files out, and
+		// the chat says "Starting" instead of "Thinking" through both.
+		const reserved = engine === 'agent' && catalogItem && this.createsWorktree(session, request) ? this.bootForNewWorktree(session, catalogItem, request.options, request.mode) : undefined;
+		if (reserved) {
+			this.emitStarting(session, run);
+		}
 		try {
-			await this.prepareWorktree(session, request, () => !this.isCurrent(session, run));
+			await this.prepareWorktree(session, request, () => !this.isCurrent(session, run), reserved);
 		} catch (err) {
 			this.emit(session, run.runId, { type: 'error', message: err instanceof Error ? err.message : String(err), retryable: true });
 			this.finish(session, run, 'fail');
@@ -1430,7 +1438,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	 * bound to this chat until a send adopts it. For a native model it fills the caches a send
 	 * reads before its request instead (see prewarmNative).
 	 */
-	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode): void {
+	prewarmAgent(sessionId: string, providerRef: string | undefined, mode: VoltMode, runOn?: IVoltSendRequest['runOn']): void {
 		const session = this.getOrCreateSession(sessionId) as ISessionState;
 		if (session.run && !session.run.ended) {
 			return;
@@ -1454,6 +1462,12 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		// read both now, not on the send (the notes' sandboxed host takes ~0.5 s to start).
 		void this.largeIndexedProject(this.executionRoot(session));
 		void this.memory.context().catch(() => undefined);
+		if (runOn && this.createsWorktree(session, { text: '', mode, runOn })) {
+			// The send runs in a worktree it has yet to create: a spare for the project's folder could
+			// never serve it. Boot the agent for the worktree's path instead.
+			void this.bootForNewWorktree(session, item, undefined, mode);
+			return;
+		}
 		const sandbox = this.sandboxStart(session.sessionId, cwd);
 		const spare = this.spareRequest(provider, profile, item, cwd, undefined, sandbox, session.subagent);
 		if (this.agentPool.has(spare.key)) {
@@ -2942,7 +2956,44 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 	}
 
 	/** First send in New Worktree mode creates the checkout. Later sends stay there, recreating it if archive pruned the files. */
-	private async prepareWorktree(session: ISessionState, request: IVoltSendRequest, isCancelled: () => boolean): Promise<void> {
+	/** This send makes the chat's worktree (New Worktree, first message, no checkout yet). */
+	private createsWorktree(session: ISessionState, request: IVoltSendRequest): boolean {
+		return request.runOn === 'worktree' && !session.worktreePath && session.messages.filter(message => message.role === 'user').length <= 1;
+	}
+
+	/**
+	 * Picks the path the chat's worktree will be created at (once per chat) and boots its agent for
+	 * that path while it does not exist yet: the process starts in the project and opens its session
+	 * in the checkout once git has made it (AcpAgentProvider.bootEngine). Without this, a worktree
+	 * chat waited for `git worktree add` and then paid the whole cold start (10-12 s for cursor-agent),
+	 * because spares started for the project's folder never match the worktree's.
+	 */
+	private bootForNewWorktree(session: ISessionState, item: IVoltCatalogItem, options: IVoltModelOptions | undefined, mode: VoltMode): Promise<IReservedAgentWorktree | undefined> {
+		const project = this.projectRoot(session)?.fsPath;
+		if (!project || !this.worktrees.reserve) {
+			return Promise.resolve(undefined);
+		}
+		if (session.worktreeReservation?.project !== project) {
+			session.worktreeReservation = { project, reserved: this.worktrees.reserve(project).catch(() => undefined) };
+		}
+		const reservation = session.worktreeReservation.reserved;
+		const profile = this.profiles.find(candidate => candidate.id === item.profileId);
+		const provider = profile ? this.agentProviders.get(profile.providerId) as (IAgentProvider & Partial<Pick<AcpAgentProvider, 'bootEngine'>>) | undefined : undefined;
+		if (profile && provider?.bootEngine && item.kind === 'agent') {
+			void reservation.then(reserved => {
+				if (!reserved || session.worktreePath) {
+					return;
+				}
+				// The sandbox the chat will have once the worktree exists (sandboxStart with worktreePath set).
+				const settings = this.getSandboxSettings(session.sessionId);
+				const sandbox: IAgentSandboxStart | undefined = settings.level === 'off' ? undefined : { settings, workspaceRoots: sandboxWorkspaceRoots(reserved.path, project, true) };
+				provider.bootEngine!(this.agentStartRequest(session.sessionId, profile, item, reserved.path, options, mode, sandbox), project);
+			});
+		}
+		return reservation;
+	}
+
+	private async prepareWorktree(session: ISessionState, request: IVoltSendRequest, isCancelled: () => boolean, reservation?: Promise<IReservedAgentWorktree | undefined>): Promise<void> {
 		const project = this.projectRoot(session);
 		if (session.worktreePath && session.worktreeBranch) {
 			if (!project) {
@@ -2976,7 +3027,9 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
 		if (!project) {
 			throw new Error('Open a folder before using a worktree.');
 		}
-		const created = await this.worktrees.create(project.fsPath, request.worktreeTarget);
+		const reserved = await reservation;
+		const created = await this.worktrees.create(project.fsPath, request.worktreeTarget, reserved);
+		session.worktreeReservation = undefined;
 		session.worktreePath = created.path;
 		session.worktreeBranch = created.branch;
 		session.announceWorktree = true;
