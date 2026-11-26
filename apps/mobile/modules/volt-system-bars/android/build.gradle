@@ -1,0 +1,20 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.voltadk.systembars'
+version = '1.0.0'
+
+android {
+  namespace "com.voltadk.systembars"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // The same AndroidX core expo-system-ui uses: nothing new is downloaded or shipped.
+  implementation 'androidx.core:core:1.17.0'
+}

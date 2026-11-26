@@ -38,6 +38,7 @@ import {
 } from './agentHomeFilter.js';
 import { dominantRepoOwner, IAgentRepoInfo, repoDisplayName } from './agentRepoInfo.js';
 import { isScratchSession, scratchProjectLabel } from './agentHomeWorkspace.js';
+import { agentDiskPath } from '../../common/agentDiskPath.js';
 import { ICloudTask } from '../../../../services/voltRuntime/common/cloud/cloudTasks.js';
 
 export interface IAgentHomeFolder {
@@ -853,7 +854,8 @@ function projectNodes(
 }
 
 function knownFolder(folders: readonly IAgentHomeFolder[], path: string): IAgentHomeFolder | undefined {
-	return folders.find(folder => !folder.workspace && (folderPath(folder.uri) === path || folder.uri.toString() === path));
+	// In the browser the agent server records a project's chats by its path on disk, while the project is a `vscode-remote:` URI of it.
+	return folders.find(folder => !folder.workspace && (folderPath(folder.uri) === path || folder.uri.toString() === path || agentDiskPath(folder.uri) === path));
 }
 
 /** A session can name a folder the sidebar does not list (not registered, dropped from recents). */

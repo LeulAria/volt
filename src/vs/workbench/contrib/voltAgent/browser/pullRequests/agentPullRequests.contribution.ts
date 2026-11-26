@@ -31,6 +31,7 @@ import { IEditorResolverService, RegisteredEditorPriority } from '../../../../se
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IMultiDiffSourceResolverService } from '../../../multiDiffEditor/browser/multiDiffSourceResolverService.js';
 import { ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
+import { agentDiskPath } from '../../common/agentDiskPath.js';
 import { buildReviewLinePrompt, currentLink } from '../../common/agentPullRequests.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 import { AgentFilesSidebar } from '../workspace/agentFilesSidebar.js';
@@ -402,14 +403,15 @@ registerAction2(class extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const repository = [...scmService.repositories].find(candidate => URI.isUri(rootUri) && candidate.provider.rootUri?.toString() === rootUri.toString())
 			?? accessor.get(ISCMViewService).activeRepository.get();
-		const root = repository?.provider.rootUri;
-		if (!repository || !root || root.scheme !== 'file') {
+		// In the browser Git's roots are `vscode-remote:` URIs of folders on the host that writes the message.
+		const root = agentDiskPath(repository?.provider.rootUri);
+		if (!repository || !root) {
 			return;
 		}
 		const sessionId = chatFor(accessor, undefined);
 		await progressService.withProgress({ location: ProgressLocation.Scm, title: localize('voltPr.generatingCommit', "Writing a commit message…") }, async () => {
 			try {
-				const message = await pullRequests.generateCommitMessage(root.fsPath, sessionId);
+				const message = await pullRequests.generateCommitMessage(root, sessionId);
 				if (!message) {
 					notificationService.info(localize('voltPr.nothingToCommit', "There are no changes to describe."));
 					return;

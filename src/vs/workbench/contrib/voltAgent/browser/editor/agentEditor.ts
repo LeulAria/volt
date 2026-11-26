@@ -209,6 +209,7 @@ import { fitImageStripToOneRow } from './agentMessageImageRow.js';
 import { DEFAULT_LABELS_CONTAINER, ResourceLabels } from '../../../../browser/labels.js';
 import { chooseFileChangeDiffStyle } from '../review/fileChangePreviewModel.js';
 import { VOLT_FONT_FAMILY } from '../../common/agentTypography.js';
+import { agentDiskPath } from '../../common/agentDiskPath.js';
 import { RUN_DEVICE_PICK_NOTE, runDeviceIntent } from '../../common/agentRunTargets.js';
 import { IAgentRunService } from '../run/agentRunService.js';
 
@@ -6633,7 +6634,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			return localize('voltAgent.multiNewChat', "Compare models from a new chat: each model gets its own chat and worktree.");
 		}
 		const project = this.sessionContext.activeProject;
-		if (!project || project.root.scheme !== 'file') {
+		// A folder on the computer the runs' worktrees are made on; in the browser, `vscode-remote:` ones are.
+		if (!project || !agentDiskPath(project.root)) {
 			return localize('voltAgent.multiNoProject', "Open a git project to compare models: each one runs in its own worktree.");
 		}
 		return undefined;

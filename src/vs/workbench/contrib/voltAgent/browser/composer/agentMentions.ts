@@ -58,6 +58,7 @@ import { AgentMentionMenu, AgentMentionMenuContent, AgentMentionRow, IAgentMenti
 import { MentionCodePreview } from './mentionCodePreview.js';
 import { AgentAttachmentStore } from './agentAttachmentStore.js';
 import { attachmentRoute, countLines, fileChipDetail, heicJpegName, IAgentFilePayload, isTextAttachment, largePasteBytes, PASTED_TEXT_NAME, shouldFoldPaste, storageMime } from './agentFileAttachments.js';
+import { agentDiskPath } from '../../common/agentDiskPath.js';
 import { formatLineCount, guessPastedLanguage, pastedFileName } from '../../common/agentPastedText.js';
 import { AGENT_LARGE_PASTE_SETTING } from '../../common/agentComposerSettings.js';
 import { PastedTextPreview } from './agentPastedTextPreview.js';
@@ -199,7 +200,8 @@ export function attachmentPathLines(mentions: readonly IAgentDisplayMention[]): 
 	let videos = 0;
 	let files = 0;
 	for (const mention of mentions) {
-		const fsPath = mention.resource?.scheme === 'file' ? mention.resource.fsPath : undefined;
+		// The agent's tools open the path on disk; in the browser a picked file is a `vscode-remote:` URI of it.
+		const fsPath = agentDiskPath(mention.resource);
 		if (mention.file) {
 			files += 1;
 			const file = mention.file;

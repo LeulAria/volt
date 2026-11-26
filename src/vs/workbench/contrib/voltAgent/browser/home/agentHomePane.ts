@@ -137,10 +137,23 @@ import { ARCHIVE_RUN_GROUP_COMMAND_ID, OPEN_RUN_GROUP_COMMAND_ID } from '../runG
 import { AGENT_HOME_WORKING_SECTION_SETTING } from '../../common/agentHomeSettings.js';
 import { lifecycleUndoLabel } from '../../common/agentLifecycleUndo.js';
 import { AGENT_LIFECYCLE_UNDO_COMMAND_ID, IAgentThreadLifecycleService } from './agentThreadLifecycle.js';
+import { isCoarsePointer, touchRowHeight } from '../../../../../base/browser/coarsePointer.js';
 
 const ROW_HEIGHT = 28;
 /** An agent tab with a second line (branch, pull request, model). */
 const TWO_LINE_ROW_HEIGHT = 46;
+/** On a phone the list is a page of its own (voltWorkbenchWeb.css): rows a thumb reads and hits. */
+const PHONE_ROW_HEIGHT = 44;
+const PHONE_TWO_LINE_ROW_HEIGHT = 64;
+/** On a phone the project's name has the room for more than the sidebar's 8 characters. */
+const PHONE_PROJECT_NAME_MAX = 24;
+
+let phoneScreen: boolean | undefined;
+
+/** A phone, upright or on its side: a finger, and a screen under 600px across its short side (read once). */
+function isPhoneScreen(): boolean {
+	return phoneScreen ??= isCoarsePointer() && Math.min(globalThis.screen?.width ?? Infinity, globalThis.screen?.height ?? Infinity) < 600;
+}
 /** How often ages, "Working 2m" and snooze countdowns are redrawn. */
 const CLOCK_TICK_MS = 30_000;
 /** Longest a list rebuild waits for an idle moment. */
@@ -285,9 +298,12 @@ class AgentHomeDelegate implements IListVirtualDelegate<AgentHomeElement> {
 	constructor(private readonly host: { readonly twoLine: boolean }) { }
 
 	getHeight(element: AgentHomeElement): number {
-		return (element.type === 'session' && !isOneLineSession(element.session)) || element.type === 'runGroup'
-			? (this.host.twoLine ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT)
-			: ROW_HEIGHT;
+		const twoLine = this.host.twoLine && ((element.type === 'session' && !isOneLineSession(element.session)) || element.type === 'runGroup');
+		if (isPhoneScreen()) {
+			return twoLine ? PHONE_TWO_LINE_ROW_HEIGHT : PHONE_ROW_HEIGHT;
+		}
+		// Taller under a finger (a tablet's agents drawer).
+		return touchRowHeight(twoLine ? TWO_LINE_ROW_HEIGHT : ROW_HEIGHT);
 	}
 
 	getTemplateId(): string {
@@ -733,7 +749,7 @@ class AgentHomeRenderer implements ITreeRenderer<AgentHomeElement, void, IHomeTe
 			if (project) {
 				template.subBranch.appendChild(renderIcon(Codicon.folder));
 				const label = append(template.subBranch, $('span.sub-project'));
-				label.textContent = shortProjectName(project);
+				label.textContent = shortProjectName(project, isPhoneScreen() ? PHONE_PROJECT_NAME_MAX : undefined);
 				if (label.textContent !== project) {
 					setAgentTooltip(label, project);
 				}
@@ -1314,6 +1330,8 @@ export class AgentHomePane extends Disposable {
 		}));
 		this.element = append(parent, $('.volt-agent-home'));
 		this.element.classList.toggle('scoped', this.scoped);
+		// Rows sized for a thumb (AgentHomeDelegate); the stylesheet sizes their text and buttons to match.
+		this.element.classList.toggle('phone', isPhoneScreen());
 		if (!this.scoped) {
 			this.keepSingleHome(parent);
 		}

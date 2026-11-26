@@ -32,6 +32,7 @@ import { IVoltProjectsService } from '../../../voltProjects/common/projects.js';
 import { IVoltFolderPickerService } from '../../../voltProjects/browser/folderPickerService.js';
 import { IProjectCloneService } from '../../../voltProjects/browser/projectCloneService.js';
 import { AddProjectDialog } from '../../../voltProjects/browser/ui/addProjectView.js';
+import { agentDiskUri } from '../../common/agentDiskPath.js';
 import { agentHomeWorkspaceEntries, CLAUDE_HISTORY_LIMIT, claudeHistoryFolderKind, claudeHistoryFolders, cloneFolderName, commitFailureSummary, freeFolderName, gitErrorSummary, IAgentHomeWorkspaceEntry, namedProjectReadme, projectFolderSlug } from './agentHomeWorkspace.js';
 import { IAgentHomeWorkspaceMenuHost, showAgentHomeWorkspaceMenu } from './agentHomeWorkspaceMenu.js';
 
@@ -109,16 +110,17 @@ export class AgentHomeWorkspaceActions {
 
 	/**
 	 * Local folders only (no remotes, no workspace files): recently opened first, then registered
-	 * projects, then the folders Claude Code has worked in.
+	 * projects, then the folders Claude Code has worked in. In the browser the server's folders are
+	 * the local ones (`vscode-remote:` URIs, kept as they are for opening).
 	 */
 	async entries(): Promise<IAgentHomeWorkspaceEntry[]> {
 		const [recents, history] = await Promise.all([this.workspacesService.getRecentlyOpened(), this.claudeHistory()]);
 		const recent = recents.workspaces
 			.filter(isRecentFolder)
-			.filter(folder => folder.folderUri.scheme === 'file')
+			.filter(folder => !!agentDiskUri(folder.folderUri))
 			.map(folder => ({ uri: folder.folderUri, name: folder.label || this.labelService.getUriBasenameLabel(folder.folderUri) }));
 		const projects = this.sessionContext.projects
-			.filter(project => project.root.scheme === 'file')
+			.filter(project => !!agentDiskUri(project.root))
 			.map(project => ({ uri: project.root, name: project.displayName }));
 		return agentHomeWorkspaceEntries(recent, [...projects, ...history], uri => this.labelService.getUriLabel(uri));
 	}

@@ -67,6 +67,7 @@ import {
 	worktreeSetupEnv,
 } from '../../../../services/voltRuntime/common/runGroups/worktreeSetup.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { agentDiskPath } from '../../common/agentDiskPath.js';
 import { stashTurnDisplay } from '../orchestration/agentTurnDisplays.js';
 import { attachSessionToProject } from '../workspace/agentShell.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
@@ -932,7 +933,11 @@ export class AgentRunGroupService extends Disposable implements IAgentRunGroupSe
 
 	private projectFor(group: IRunGroup) {
 		const byId = group.projectId ? this.sessionContext.getProject(group.projectId) : undefined;
-		return byId ?? this.sessionContext.projects.find(project => project.root.scheme === 'file' && normalize(project.root.fsPath) === normalize(group.repoRoot));
+		return byId ?? this.sessionContext.projects.find(project => {
+			// The group names its repository by the path on disk; the browser names projects by `vscode-remote:` URIs.
+			const path = agentDiskPath(project.root);
+			return path !== undefined && normalize(path) === normalize(group.repoRoot);
+		});
 	}
 
 	private async restore(): Promise<void> {

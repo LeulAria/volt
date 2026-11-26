@@ -49,6 +49,7 @@ import { IAgentOrchestratorService } from '../../../../services/voltRuntime/comm
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { followWorktreeBranch } from './agentWorktreeBranch.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { agentDiskPath } from '../../common/agentDiskPath.js';
 import { AGENT_BRANCH_PREFIX_SETTING, AGENT_PR_ATTRIBUTION_SETTING, readBranchPrefix, withPullRequestAttribution } from '../../common/agentGitSettings.js';
 import {
 	addLink,
@@ -618,12 +619,16 @@ export class AgentPullRequestService extends Disposable implements IAgentPullReq
 		if (meta?.worktreePath) {
 			return meta.worktreePath;
 		}
-		const root = this.sessionContext.rootFor(sessionId);
-		if (root?.scheme === 'file') {
-			return root.fsPath;
+		// The path on disk the host's git and gh take; in the browser the project is a `vscode-remote:` URI of it.
+		const root = agentDiskPath(this.sessionContext.rootFor(sessionId));
+		if (root) {
+			return root;
 		}
 		const folder = meta?.workspaceFolders?.[0] ?? meta?.workspaceFolder;
-		return folder && !folder.includes('://') ? folder : undefined;
+		if (!folder) {
+			return undefined;
+		}
+		return folder.includes('://') ? agentDiskPath(URI.parse(folder)) : folder;
 	}
 
 	async repoFor(sessionId: string): Promise<IVoltPrRepo | undefined> {

@@ -41,6 +41,7 @@ import { createVoltButton, VoltButtonKind } from '../../voltAgent/browser/chrome
 import { createVoltDropdown, IVoltDropdownOption } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { createMessageCopyIcon } from '../../voltAgent/browser/blocks/agentCodeBlock.js';
 import { IVoltFeatureService } from '../../voltCustomize/common/voltFeatures.js';
+import { settingsRowHeight } from './settingsNav.js';
 import './media/providersPage.css';
 
 /** How long a background install may run before it is called failed. */
@@ -146,7 +147,7 @@ function listRowLabel(row: ListRow): string {
 
 class ProviderRowDelegate implements IListVirtualDelegate<ListRow> {
 	getHeight(row: ListRow): number {
-		return row.kind === 'group' ? 34 : row.kind === 'none' ? 44 : 32;
+		return row.kind === 'group' ? 34 : row.kind === 'none' ? 44 : settingsRowHeight(32);
 	}
 	getTemplateId(): string {
 		return 'row';

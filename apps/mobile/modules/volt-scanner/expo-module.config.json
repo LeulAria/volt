@@ -1,0 +1,9 @@
+{
+	"platforms": ["apple", "android"],
+	"apple": {
+		"modules": ["VoltScannerModule"]
+	},
+	"android": {
+		"modules": ["com.voltadk.scanner.VoltScannerModule"]
+	}
+}

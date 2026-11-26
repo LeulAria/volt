@@ -94,6 +94,9 @@ type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' 
 type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'connected' | 'devices' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
 type CatalogSection = `cat:${string}`;
 
+/** What a phone shows of the page: the nav, a page's list (providers, a category's subsections, the color themes) or the page. */
+type PhonePane = 'nav' | 'list' | 'page';
+
 function isCatalogSection(section: string): section is CatalogSection {
 	return section.startsWith('cat:');
 }
@@ -250,6 +253,11 @@ export class VoltSettingsEditor extends EditorPane {
 	private sidebarSash!: Sash;
 	/** The nav's width when there is no agent sidebar to follow (IDE layout). */
 	private ownSidebarWidth: number | undefined;
+	/**
+	 * Phones show one pane at a time (voltPhoneSurfaces.css), like a phone app's settings: the nav,
+	 * then a page's list, then the page. The top bar's back button steps out one.
+	 */
+	private phonePanes: PhonePane[] = ['nav'];
 	private readonly renderStore = this._register(new DisposableStore());
 	private readonly scrollSync = this._register(new MutableDisposable());
 	/** Lid-Closed Mode lives in the main process; absent in the web build. */
@@ -364,7 +372,11 @@ export class VoltSettingsEditor extends EditorPane {
 
 		// Volt's pages, then every setting VS Code and the extensions register, in one tree.
 		this.nav = this._register(this.instantiationService.createInstance(SettingsNav, sidebar));
-		this._register(this.nav.onDidOpen(id => this.showSection(id)));
+		this._register(this.nav.onDidOpen(id => {
+			this.showSection(id);
+			// Appearance opens on its page; its themes are a row away there.
+			this.setPhonePanes(['nav', this.hasPhoneList() && this.section !== 'appearance' ? 'list' : 'page']);
+		}));
 		this.loadCatalog();
 
 		// The agent list's footer row, so Usage, Automations and Customize are a click away here too.
@@ -377,13 +389,19 @@ export class VoltSettingsEditor extends EditorPane {
 				e.preventDefault();
 				e.stopImmediatePropagation();
 				this.footerActions[action].blur();
-				this.setSection(action);
+				// showSection, so a phone moves on from the nav to the page too.
+				this.showSection(action);
 			}, true));
 		}
 
 		// Where the page is, as the title bar puts it over a chat ("Settings / Usage"); the overlay covers that bar.
 		const main = append(this.container, $('.volt-settings-main'));
 		const topbar = append(main, $('.volt-settings-topbar'));
+		const phoneBack = append(topbar, $('button.volt-settings-phone-back.volt-settings-phone-only')) as HTMLButtonElement;
+		phoneBack.type = 'button';
+		phoneBack.appendChild(renderIcon(Codicon.chevronLeft));
+		phoneBack.setAttribute('aria-label', localize('voltSettings.phoneBack', "Back"));
+		this._register(addDisposableListener(phoneBack, 'click', () => this.setPhonePanes(this.phonePanes.slice(0, -1))));
 		append(topbar, $('span.volt-settings-crumb.root')).textContent = localize('voltSettings.title', "Settings");
 		createAgentHeaderSeparatorIcon(append(topbar, $('span.volt-settings-crumb-sep')));
 		this.crumb = append(topbar, $('span.volt-settings-crumb'));
@@ -392,6 +410,7 @@ export class VoltSettingsEditor extends EditorPane {
 		this.body = append(main, $('.volt-settings-body'));
 		this.side = append(this.body, $('.volt-settings-side'));
 		this._register(attachPaneSash(this.body, this.side, 'side', 200));
+		this.trackPhoneListTaps();
 
 		const scroll = $('.volt-settings-content');
 		this.content = append(scroll, $('.volt-settings-content-inner'));
@@ -467,6 +486,47 @@ export class VoltSettingsEditor extends EditorPane {
 		}));
 	}
 
+	/** Whether the page has a list a phone shows on its own first (providers, a category's subsections). */
+	private hasPhoneList(): boolean {
+		const classes = this.container.classList;
+		return classes.contains('volt-settings-side-open') || classes.contains('volt-settings-inspect-open') || classes.contains('volt-settings-volt-page');
+	}
+
+	private setPhonePanes(panes: PhonePane[]): void {
+		this.phonePanes = panes.length ? panes : ['nav'];
+		const shown = this.phonePanes[this.phonePanes.length - 1];
+		for (const pane of ['nav', 'list', 'page'] as const) {
+			this.container.classList.toggle(`volt-settings-phone-${pane}`, pane === shown);
+		}
+	}
+
+	private showPhonePage(): void {
+		if (this.phonePanes[this.phonePanes.length - 1] !== 'page') {
+			this.setPhonePanes([...this.phonePanes, 'page']);
+		}
+	}
+
+	/**
+	 * On a phone a tap on a row of a page's list (a provider, a subsection, one of Volt's pages) shows
+	 * what it opened. The lists take taps through VS Code's Gesture, which swallows the click, so this
+	 * reads the pointer instead. A color theme applies where it is, so the theme list stays.
+	 */
+	private trackPhoneListTaps(): void {
+		let down: { readonly x: number; readonly y: number } | undefined;
+		this._register(addDisposableListener(this.body, 'pointerdown', e => down = { x: e.clientX, y: e.clientY }));
+		this._register(addDisposableListener(this.body, 'pointerup', e => {
+			const start = down;
+			down = undefined;
+			if (!start || this.phonePanes[this.phonePanes.length - 1] !== 'list' || Math.abs(e.clientX - start.x) > 10 || Math.abs(e.clientY - start.y) > 10) {
+				return;
+			}
+			const row = (e.target as HTMLElement).closest<HTMLElement>('.monaco-list-row');
+			if (row?.closest('.volt-settings-side, .volt-settings-inspect-list-pane') && !row.closest('.volt-settings-theme-list') && !row.querySelector('.volt-pm-item.group')) {
+				this.showPhonePage();
+			}
+		}));
+	}
+
 	private close(): void {
 		const input = this.input;
 		if (input) {
@@ -479,6 +539,8 @@ export class VoltSettingsEditor extends EditorPane {
 			return;
 		}
 		if (visible) {
+			// A phone opens on the nav; a command that opens a page (showSection) moves on to it.
+			this.setPhonePanes(['nav']);
 			this.container.classList.add('volt-settings-overlay');
 			this.layoutService.mainContainer.classList.add('volt-settings-open');
 			this.layoutService.mainContainer.appendChild(this.container);
@@ -611,6 +673,7 @@ export class VoltSettingsEditor extends EditorPane {
 
 	/** Opens a page by id, e.g. `storage` from Volt: Manage Storage. */
 	showSection(section: string): void {
+		this.showPhonePage();
 		// `devices:add` (or `devices:add:cloudflare`) opens Devices with Add Device on top.
 		const add = /^devices:add(?::(lan|tailscale|cloudflare|ssh))?$/.exec(section);
 		if (add) {
@@ -1096,6 +1159,12 @@ export class VoltSettingsEditor extends EditorPane {
 		);
 		const kit = this.settingsKit();
 		const themeGroup = this.settingsGroup();
+		// A phone has no room for the theme list beside the page: this row opens it in the page's place.
+		this.settingRow(themeGroup, localize('voltSettings.colorTheme', "Color theme"), undefined, host => {
+			const open = this.renderStore.add(createVoltButton(host));
+			open.label = this.workbenchThemeService.getColorTheme().label;
+			this.renderStore.add(open.onDidClick(() => this.setPhonePanes([...this.phonePanes, 'list'])));
+		}).classList.add('volt-settings-phone-only');
 		this.settingRow(
 			themeGroup,
 			localize('voltSettings.appearanceMode', "Mode"),

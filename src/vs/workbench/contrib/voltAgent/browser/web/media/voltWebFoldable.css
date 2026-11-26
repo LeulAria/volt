@@ -1,0 +1,136 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Book posture (voltWebFoldable.ts): the page spans two screen segments side by side and nothing
+ * may sit across the hinge between them.
+ */
+
+/* The hinge where the browser has env(viewport-segment-*) but not `window.viewport`: left is the first segment's right edge. */
+.volt-web-hinge-probe {
+	position: fixed;
+	top: 0;
+	left: env(viewport-segment-right 0 0, 0px);
+	width: calc(env(viewport-segment-left 1 0, 0px) - env(viewport-segment-right 0 0, 0px));
+	height: 0;
+	visibility: hidden;
+	pointer-events: none;
+}
+
+/* The chat ends at the hinge and its tools start past it, whatever split was dragged before. */
+.monaco-workbench.volt-web-book .volt-agent-editor > .volt-agent-editor-main.volt-book-split {
+	flex: 0 0 var(--volt-book-chat-width) !important;
+	width: var(--volt-book-chat-width) !important;
+}
+
+/* The chat's content keeps to one segment: past the agents list's end, or before the hinge. */
+.monaco-workbench.volt-web-book .volt-agent-editor > .volt-agent-editor-main.volt-book-inset {
+	box-sizing: border-box;
+	padding-left: var(--volt-book-inset-start, 0px);
+	padding-right: var(--volt-book-inset-end, 0px);
+}
+
+/* The split line sits on the hinge: it does not drag off it. */
+.monaco-workbench.volt-web-book-split .volt-agent-surface-sash,
+.monaco-workbench.volt-web-book-split > .volt-agent-tools-area > .volt-agent-tools-grip {
+	pointer-events: none;
+}
+
+/*
+ * The chat's title follows the chat: past the hinge with it, or ending before the hinge. Above
+ * `.mac.fullscreen`'s padding (an iPad reports a Mac, and an app's WebView fills the screen).
+ */
+.monaco-workbench.web.volt-web-book.volt-layout-agent .part.titlebar > .titlebar-container > .titlebar-left {
+	padding-left: var(--volt-book-title-inset, 0px);
+}
+
+.monaco-workbench.volt-web-book .part.titlebar .volt-agent-primary-header {
+	max-width: var(--volt-book-title-max, none);
+}
+
+/*
+ * Tablets and unfolded foldables (a touch screen wider than a phone, `volt-web-touch` without
+ * `volt-web-phone`): controls a finger hits get the room a pointer did not need. A mouse or trackpad
+ * (with hover) keeps the desktop's sizes; a phone has its own layout (voltWorkbenchWeb.css). List rows
+ * are sized in TypeScript (coarsePointer.ts). The title bar is 35px tall, so its controls take 34.
+ */
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .part.titlebar .volt-titlebar-control {
+	min-width: 36px;
+	min-height: 34px;
+}
+
+/* The agents list's own title row: its toggle, Back and Forward, centered as before. */
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone).volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle {
+	top: calc((var(--volt-agent-titlebar-height, 35px) - 32px) / 2);
+	left: 2px;
+	width: 32px;
+	height: 32px;
+	padding: 8px;
+}
+
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone).volt-layout-agent .volt-agent-nav-button {
+	width: 32px;
+	height: 32px;
+	padding: 8px;
+}
+
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-home-nav-action {
+	width: 32px;
+	height: 32px;
+}
+
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-home-footer .volt-agent-home-settings {
+	width: 36px;
+	height: 36px;
+}
+
+/* The chat's side toolbar: the tools it opens. */
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-quick-open-toggle,
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-rail-btn {
+	min-width: 36px;
+	min-height: 36px;
+}
+
+/*
+ * The composer's add, mic and send, in a chat alone in the window. Beside its tools a chat can be
+ * 240px wide, and wider buttons there push send out of the composer.
+ */
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .part.editor .volt-agent-editor:not(.has-surfaces) .volt-agent-plus,
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .part.editor .volt-agent-editor:not(.has-surfaces) .volt-agent-send,
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .part.editor .volt-agent-editor:not(.has-surfaces) .volt-agent-mic-btn:not(.recording) {
+	min-width: 36px;
+	min-height: 36px;
+}
+
+/* The model, the chips under the composer and above it. */
+
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-model,
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-status-access,
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-status-branch,
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-context-meter,
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-composer-chip {
+	min-height: 36px;
+}
+
+/* The tools' tab row is 35px tall (the editor group lays out under it): its buttons take what it has. */
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-tools-area .tabs-container > .tab {
+	padding-left: 12px;
+}
+
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-tools-area .tabs-container > .tab .tab-actions .action-label,
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-tools-area .title .editor-actions .action-label,
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-tools-area .title .editor-actions button {
+	min-width: 30px;
+	min-height: 30px;
+	box-sizing: border-box;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.monaco-workbench.web.volt-web-touch:not(.volt-web-phone) .volt-agent-files-sidebar-tab {
+	min-width: 34px;
+	min-height: 34px;
+}

@@ -14,6 +14,7 @@ import { WorkbenchList } from '../../../../platform/list/browser/listService.js'
 import { ColorScheme, isDark, isHighContrast } from '../../../../platform/theme/common/theme.js';
 import { IWorkbenchColorTheme } from '../../../services/themes/common/workbenchThemeService.js';
 import { AppearancePage, swatch, themeOrder } from './appearancePage.js';
+import { settingsRowHeight } from './settingsNav.js';
 
 type ThemeRow =
 	| { readonly kind: 'header'; readonly id: string; readonly label: string }
@@ -30,7 +31,7 @@ interface IThemeTemplate {
 
 class ThemeDelegate implements IListVirtualDelegate<ThemeRow> {
 	getHeight(row: ThemeRow): number {
-		return row.kind === 'header' ? 30 : 28;
+		return row.kind === 'header' ? 30 : settingsRowHeight(28);
 	}
 	getTemplateId(): string {
 		return ThemeRenderer.ID;

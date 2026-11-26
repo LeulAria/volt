@@ -7,7 +7,6 @@ import { $, addDisposableListener, append } from '../../../../../base/browser/do
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, IDisposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -49,6 +48,7 @@ import { Codicon } from '../../../../../base/common/codicons.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IVoltFeatureService } from '../../../voltCustomize/common/voltFeatures.js';
+import { agentDiskPath } from '../../common/agentDiskPath.js';
 import { AGENT_RESOURCE_FILTER_ICON, AGENT_RESOURCE_GROUPS, agentResourceGroup } from '../../common/agentResources.js';
 import { AgentResourceTree, openAgentResource } from '../resources/agentResourceTree.js';
 import { AgentResourceFilter, IAgentResourcesService } from '../resources/agentResourcesService.js';
@@ -271,7 +271,7 @@ export class AgentFilesSidebar extends Disposable {
 		this.pullRequests = instantiationService.invokeFunction(accessor => accessor.getIfExists(IAgentPullRequestService));
 		if (this.pullRequests) {
 			this._register(this.pullRequests.onDidChangeOrigin(folder => {
-				if (this.sessionId && folder === this.folderOf(this.sessionId)?.fsPath) {
+				if (this.sessionId && folder === agentDiskPath(this.folderOf(this.sessionId))) {
 					this.sync();
 				}
 			}));
@@ -603,7 +603,7 @@ export class AgentFilesSidebar extends Disposable {
 				break;
 			case 'notRepository':
 				message = localize('voltAgent.filesSidebar.notRepository', "This folder is not a Git repository.");
-				if (folder?.scheme === Schemas.file) {
+				if (agentDiskPath(folder)) {
 					action = { label: localize('voltAgent.filesSidebar.initRepository', "Initialize Repository"), run: () => this.initRepository() };
 				}
 				break;
@@ -672,10 +672,12 @@ export class AgentFilesSidebar extends Disposable {
 	private async initRepository(): Promise<void> {
 		const session = this.scmSession;
 		const folder = this.scmFolder;
-		if (!session || folder?.scheme !== Schemas.file) {
+		// git runs on the host, at the path on disk (the browser names the folder by a `vscode-remote:` URI).
+		const path = agentDiskPath(folder);
+		if (!session || !path) {
 			return;
 		}
-		const result = await runGit(this.stdio, folder.fsPath, ['init'], INIT_TIMEOUT_MS);
+		const result = await runGit(this.stdio, path, ['init'], INIT_TIMEOUT_MS);
 		if (result.exitCode !== 0) {
 			this.notificationService.error(result.timedOut
 				? localize('voltAgent.initTimedOut', "git init did not finish in time")
@@ -697,8 +699,8 @@ export class AgentFilesSidebar extends Disposable {
 
 	/** A repository with an `origin`, or a chat that already has pull requests (its chip opens them here). */
 	private showsPullRequests(): boolean {
-		const folder = this.sessionId ? this.folderOf(this.sessionId) : undefined;
-		if (folder?.scheme === 'file' && this.pullRequests?.hasOrigin(folder.fsPath)) {
+		const folder = agentDiskPath(this.sessionId ? this.folderOf(this.sessionId) : undefined);
+		if (folder && this.pullRequests?.hasOrigin(folder)) {
 			return true;
 		}
 		return !!this.sessionId && !!this.pullRequests?.links(this.sessionId).length;

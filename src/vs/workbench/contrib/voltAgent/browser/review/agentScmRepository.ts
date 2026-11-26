@@ -7,7 +7,7 @@ import { timeout } from '../../../../../base/common/async.js';
 import { toErrorMessage } from '../../../../../base/common/errorMessage.js';
 import { Event } from '../../../../../base/common/event.js';
 import { Disposable, DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
-import { FileAccess, Schemas } from '../../../../../base/common/network.js';
+import { FileAccess } from '../../../../../base/common/network.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
@@ -20,6 +20,7 @@ import { IWorkspaceContextService } from '../../../../../platform/workspace/comm
 import { IExtensionService } from '../../../../services/extensions/common/extensions.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
+import { agentComparableUri, agentDiskPath } from '../../common/agentDiskPath.js';
 
 const GIT_EXTENSION_ID = 'vscode.git';
 /** How long a stopped Git extension gets to come back (the extension host restarts when the window moves folders). */
@@ -58,27 +59,20 @@ export type AgentScmRepositoryState =
 const openingRepositories = new WeakMap<ICommandService, Map<string, Promise<unknown>>>();
 
 /**
- * The path on the computer: in the browser workbench Git runs on the server and registers its
- * repositories as `vscode-remote:` URIs, while chats name their folders as `file:` paths.
- */
-function onDisk(uri: URI): URI {
-	return uri.scheme === Schemas.vscodeRemote ? uri.with({ scheme: Schemas.file, authority: '' }) : uri;
-}
-
-/**
  * The repository at this folder, or the innermost one it is inside. Compared as paths on the
- * computer (see {@link onDisk}) and the way the disk does: a chat's root can differ from git's in
- * case alone on macOS.
+ * computer (in the browser workbench Git registers `vscode-remote:` roots, while a chat's worktree
+ * is a `file:` path; see {@link agentComparableUri}) and the way the disk does: a chat's root can
+ * differ from git's in case alone on macOS.
  */
 export function findAgentScmRepository(scmService: ISCMService, uriIdentityService: IUriIdentityService, root: URI): ISCMRepository | undefined {
-	const target = onDisk(root);
+	const target = agentComparableUri(root);
 	let containing: { readonly repository: ISCMRepository; readonly depth: number } | undefined;
 	for (const repository of scmService.repositories) {
 		const repositoryRoot = repository.provider.rootUri;
 		if (!repositoryRoot) {
 			continue;
 		}
-		const candidate = onDisk(repositoryRoot);
+		const candidate = agentComparableUri(repositoryRoot);
 		if (uriIdentityService.extUri.isEqual(candidate, target)) {
 			return repository;
 		}
@@ -120,12 +114,13 @@ export class AgentScmRepositoryFocus extends Disposable {
 	async show(sessionId: string, isShowing: () => boolean, folder?: URI, onState?: (state: AgentScmRepositoryState) => void): Promise<void> {
 		const request = ++this.request;
 		this.watcher.clear();
-		const repoRoot = folder?.scheme === Schemas.file ? folder.fsPath : this.repoRoot(sessionId);
-		if (!repoRoot) {
+		// `root` as the file service names it (`vscode-remote:` in the browser), `repoRoot` as git's path on disk.
+		const root = agentDiskPath(folder) ? folder : this.rootOf(sessionId);
+		const repoRoot = agentDiskPath(root);
+		if (!root || !repoRoot) {
 			onState?.({ kind: 'noFolder' });
 			return;
 		}
-		const root = URI.file(repoRoot);
 		/** Git's own top folder for `root`, once asked: a subfolder's repository, or the same folder through a symlink. */
 		let gitRoot: URI | undefined;
 		const repositoryAt = () => this.repositoryAt(root) ?? (gitRoot ? this.repositoryAt(gitRoot) : undefined);
@@ -336,8 +331,7 @@ export class AgentScmRepositoryFocus extends Disposable {
 		return findAgentScmRepository(this.scmService, this.uriIdentityService, root);
 	}
 
-	private repoRoot(sessionId: string): string | undefined {
-		const root = this.sessionContext.rootFor(sessionId) ?? this.workspaceContextService.getWorkspace().folders[0]?.uri;
-		return root?.scheme === Schemas.file ? root.fsPath : undefined;
+	private rootOf(sessionId: string): URI | undefined {
+		return this.sessionContext.rootFor(sessionId) ?? this.workspaceContextService.getWorkspace().folders[0]?.uri;
 	}
 }

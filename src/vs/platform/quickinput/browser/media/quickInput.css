@@ -321,6 +321,17 @@
 	justify-content: center;
 }
 
+/* Volt: rows are taller under a finger (QUICK_INPUT_ROW_HEIGHT, coarsePointer.ts): the entry fills the row and a codicon stays centred in its box. */
+@media (pointer: coarse) {
+	.quick-input-list .quick-input-list-entry {
+		height: 100%;
+	}
+
+	.quick-input-widget .quick-input-list .quick-input-list-icon.codicon[class*='codicon-'] {
+		display: flex;
+	}
+}
+
 .quick-input-list .quick-input-list-rows {
 	overflow: hidden;
 	text-overflow: ellipsis;

@@ -508,6 +508,20 @@
 	font-size: 12px;
 }
 
+/* Too narrow for both (workflowBuilderPage.ts `stacked`): the side panel covers the canvas. */
+.volt-wfb-builder.stacked .volt-wfb-side {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 5;
+	border-left: none;
+}
+
+.volt-wfb-builder.stacked .volt-wfb-side > .volt-wfb-sash {
+	display: none;
+}
+
 /* Narrow editors: icons only, but Save keeps its word. */
 .volt-wfb-builder.narrow .volt-wfb-bar-button:not(.primary):not(.chevron) .label,
 .volt-wfb-builder.narrow .volt-wfb-save-state span:not(.dot),

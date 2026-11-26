@@ -5,6 +5,7 @@
 
 import { $, append, getWindow } from '../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { mainWindow } from '../../../../base/browser/window.js';
 import { IListVirtualDelegate } from '../../../../base/browser/ui/list/list.js';
 import { RenderIndentGuides } from '../../../../base/browser/ui/tree/abstractTree.js';
 import { ITreeElement, ITreeNode, ITreeRenderer } from '../../../../base/browser/ui/tree/tree.js';
@@ -33,9 +34,17 @@ const ROW_HEIGHT = 28;
 /** How far a child row steps in from its parent. */
 const NAV_INDENT = 12;
 
+/**
+ * A row's height in Settings' lists: a finger's height on a phone (the web workbench's
+ * `volt-web-phone`, voltWebTouch.ts), else the given desktop height.
+ */
+export function settingsRowHeight(height: number): number {
+	return mainWindow.document.querySelector('.monaco-workbench.volt-web-phone') ? Math.max(height, 44) : height;
+}
+
 class NavDelegate implements IListVirtualDelegate<ISettingsNavNode> {
 	getHeight(node: ISettingsNavNode): number {
-		return node.heading ? 40 : ROW_HEIGHT;
+		return node.heading ? 40 : settingsRowHeight(ROW_HEIGHT);
 	}
 	getTemplateId(): string {
 		return NavRenderer.ID;

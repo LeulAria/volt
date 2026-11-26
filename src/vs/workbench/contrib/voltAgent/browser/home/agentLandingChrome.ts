@@ -31,6 +31,7 @@ import { VOLT_RELAY_CONNECT_COMMAND_ID } from '../automations/automationHooks.js
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ISCMRepository, ISCMService, ISCMViewService } from '../../../scm/common/scm.js';
 import { IVoltProjectsService } from '../../../voltProjects/common/projects.js';
+import { agentComparableUri, agentDiskPath } from '../../common/agentDiskPath.js';
 import { createThisMacIcon, createWorktreeIcon } from '../chrome/accessIcons.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { showAgentBranchMenu } from '../picker/agentBranchMenu.js';
@@ -275,8 +276,10 @@ export class AgentLandingChrome extends Disposable {
 	private findRepository(): ISCMRepository | undefined {
 		const root = this.projectRoot();
 		if (root) {
+			// As paths: in the browser Git's roots and projects can name one folder by different schemes.
+			const target = agentComparableUri(root);
 			for (const repository of this.scmService.repositories) {
-				if (repository.provider.rootUri && isEqual(repository.provider.rootUri, root)) {
+				if (repository.provider.rootUri && isEqual(agentComparableUri(repository.provider.rootUri), target)) {
 					return repository;
 				}
 			}
@@ -307,11 +310,12 @@ export class AgentLandingChrome extends Disposable {
 	async refreshBranch(): Promise<void> {
 		const root = this.projectRoot();
 		const request = ++this.branchRequest;
-		if (!root || root.scheme !== 'file') {
+		const repoRoot = agentDiskPath(root);
+		if (!root || !repoRoot) {
 			this.setBranch(root?.toString(), {});
 			return;
 		}
-		const branches = await this.gitService.listBranches({ repoRoot: root.fsPath }).catch(() => undefined);
+		const branches = await this.gitService.listBranches({ repoRoot }).catch(() => undefined);
 		if (request !== this.branchRequest) {
 			return;
 		}

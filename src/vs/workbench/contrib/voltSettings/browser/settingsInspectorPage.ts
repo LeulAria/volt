@@ -27,6 +27,7 @@ import { createVoltButton } from '../../voltAgent/browser/chrome/voltButton.js';
 import { createVoltDropdown } from '../../voltAgent/browser/ui/dropdown/voltDropdown.js';
 import { catalogSettings, ISettingsCatalogCategory, ISettingsCatalogGroup, ISettingsCatalogSetting, searchWords, settingMatches } from './settingsCatalog.js';
 import { createSettingsIcon } from './settingsIcons.js';
+import { settingsRowHeight } from './settingsNav.js';
 
 const ROW_HEIGHT = 30;
 
@@ -53,7 +54,7 @@ interface IRowTemplate {
 
 class RowDelegate implements IListVirtualDelegate<ListRow> {
 	getHeight(): number {
-		return ROW_HEIGHT;
+		return settingsRowHeight(ROW_HEIGHT);
 	}
 	getTemplateId(): string {
 		return RowRenderer.ID;

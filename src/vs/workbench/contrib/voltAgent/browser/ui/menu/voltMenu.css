@@ -477,3 +477,144 @@
 .volt-menu.coarse .volt-menu-row.two-line {
 	height: 56px;
 }
+
+/*
+ * A phone's bottom sheet (voltMenu.ts `sheet`; web/media/voltPhoneSheets.css pins the context view to
+ * the bottom edge and draws the grab handle and scrim). The host is the sheet's surface; the menu
+ * runs edge to edge in it with 48px rows (the row heights in voltMenu.ts match these), and a flyout
+ * takes the menu's place as the next page of the sheet.
+ */
+.volt-menu-host.sheet {
+	margin-top: 0;
+	width: 100%;
+	box-sizing: border-box;
+	padding-bottom: var(--volt-phone-sheet-safe-bottom, 0px);
+	background: var(--vscode-editor-background, #1e1e1e);
+	color: var(--vscode-menu-foreground, var(--vscode-foreground));
+	border-radius: 12px 12px 0 0;
+	box-shadow:
+		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)),
+		0 -8px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	overflow: hidden;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet {
+	width: 100%;
+	max-width: none;
+	background: transparent;
+	border-radius: 0;
+	box-shadow: none;
+	font-size: 15px;
+	font-weight: 400;
+}
+
+.volt-menu-host.sheet.sheet-page-open > .volt-menu,
+.volt-menu-host.sheet .sheet-page-open > .volt-menu {
+	display: none;
+}
+
+.volt-menu-host.sheet .volt-menu-flyout {
+	position: static;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-row,
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-message {
+	height: 48px;
+	padding: 0 16px;
+	gap: 12px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-row.two-line {
+	height: 60px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-message {
+	font-size: 14px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-header {
+	height: 32px;
+	padding: 0 16px 4px;
+	font-size: 13px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-icon {
+	width: 20px;
+	height: 20px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-icon .codicon {
+	font-size: 18px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-trailing .codicon {
+	font-size: 16px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-description,
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-detail,
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-subtitle,
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-stats {
+	font-size: 13px;
+}
+
+/* Keyboard hints mean nothing without a keyboard at hand. */
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-keybinding {
+	display: none;
+}
+
+/* A destination's "Change" is its action, not a key: it stays. */
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-destination .volt-menu-keybinding {
+	display: inline;
+	font-size: 14px;
+}
+
+/* No hover on a phone: the action at a row's end and its trailing hint stay in sight. */
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-trailing.on-hover {
+	visibility: visible;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-action {
+	width: 36px;
+	height: 36px;
+	border-radius: 8px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-action .codicon {
+	font-size: 16px;
+}
+
+/* The row under the finger, while it is down. */
+.volt-menu-host.sheet .volt-menu.sheet .monaco-list-row:active .volt-menu-row,
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-footer .volt-menu-row:active,
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-sheet-back:active {
+	background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)));
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-search {
+	height: 44px;
+	padding: 0 16px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-search .monaco-inputbox .input {
+	font-size: 16px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-heading {
+	height: 40px;
+	padding: 0 10px 0 16px;
+	font-size: 14px;
+}
+
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-heading > .action {
+	height: 32px;
+	padding: 0 10px;
+	font-size: 14px;
+}
+
+/* A flyout's way back: the row it came from, with a chevron. */
+.volt-menu-host.sheet .volt-menu.sheet .volt-menu-sheet-back {
+	flex-shrink: 0;
+	font-weight: 600;
+	border-bottom: 1px solid var(--vscode-menu-separatorBackground, var(--vscode-menu-border, rgba(128, 128, 128, 0.35)));
+}

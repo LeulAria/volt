@@ -29,6 +29,7 @@ import { VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput } from '../review/agentChangesEditor.js';
 import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
+import { agentDiskUri } from '../../common/agentDiskPath.js';
 import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
 import { agentSessionToolTabs } from './agentSurfaceHost.js';
 
@@ -104,8 +105,8 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 
 	private folder(sessionId: string): URI | undefined {
 		const worktree = this.history.get(sessionId)?.worktreePath;
-		const folder = worktree ? URI.file(worktree) : this.sessionContext.rootFor(sessionId);
-		return folder?.scheme === Schemas.file ? folder : undefined;
+		// On disk, for the host's git and the agent's paths; in the browser the project is a `vscode-remote:` URI of it.
+		return agentDiskUri(worktree ? URI.file(worktree) : this.sessionContext.rootFor(sessionId));
 	}
 
 	private async describe(input: EditorInput, focused: boolean, root: URI | undefined, detail: boolean): Promise<IWorkspaceTab | undefined> {
@@ -153,8 +154,9 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 			const canvasId = (input as { readonly canvasId?: unknown }).canvasId;
 			return { kind: 'canvas', title, focused, ...(typeof canvasId === 'string' && canvasId ? { surfaceId: canvasId } : {}) };
 		}
-		const resource = input.resource;
-		if (resource?.scheme === Schemas.file || resource?.scheme === Schemas.vscodeUserData) {
+		// The browser's editors show `vscode-remote:` files; the agent knows them by their path on disk.
+		const resource = input.resource?.scheme === Schemas.vscodeUserData ? input.resource : agentDiskUri(input.resource);
+		if (resource) {
 			const path = root && resource.fsPath.startsWith(root.fsPath) ? relative(root.fsPath, resource.fsPath) : resource.fsPath;
 			return { kind: 'file', title, focused, target: path, ...(input.isDirty() ? { dirty: true } : {}) };
 		}

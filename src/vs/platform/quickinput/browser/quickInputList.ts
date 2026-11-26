@@ -43,6 +43,8 @@ import { isDark } from '../../theme/common/theme.js';
 import { IThemeService } from '../../theme/common/themeService.js';
 import { IQuickPickItem, IQuickPickItemButtonEvent, IQuickPickSeparator, IQuickPickSeparatorButtonEvent, QuickPickFocus, QuickPickItem } from '../common/quickInput.js';
 import { quickInputButtonToAction } from './quickInputUtils.js';
+import { isCoarsePointer, touchRowHeight } from '../../../base/browser/coarsePointer.js';
+import { mainWindow } from '../../../base/browser/window.js';
 
 const $ = dom.$;
 
@@ -271,7 +273,23 @@ class QuickPickSeparatorElement extends BaseQuickPickItemElement {
 }
 
 /** One line in a quick pick (Quick Open, the Command Palette, pickers). */
-export const QUICK_INPUT_ROW_HEIGHT = 26;
+export const QUICK_INPUT_ROW_HEIGHT = touchRowHeight(26);
+
+/**
+ * Volt: on a phone under a finger the quick input is a bottom sheet (the web workbench's
+ * voltPhoneSheets.css) with rows as tall as a phone's own lists. Read when items are set, so a
+ * window turned to a wider shape gets desktop rows from its next pick.
+ */
+const PHONE_ROW_HEIGHT = 44;
+let phoneQuery: MediaQueryList | undefined;
+
+function quickInputRowHeight(): number {
+	if (!isCoarsePointer()) {
+		return QUICK_INPUT_ROW_HEIGHT;
+	}
+	phoneQuery ??= mainWindow.matchMedia('(max-width: 600px)');
+	return phoneQuery.matches ? PHONE_ROW_HEIGHT : QUICK_INPUT_ROW_HEIGHT;
+}
 
 class QuickInputItemDelegate implements IListVirtualDelegate<IQuickPickElement> {
 	getHeight(element: IQuickPickElement): number {
@@ -280,7 +298,8 @@ class QuickInputItemDelegate implements IListVirtualDelegate<IQuickPickElement> 
 			return 30;
 		}
 		// Volt: 26px rows like its other lists; a detail line adds 22.
-		return element.saneDetail ? QUICK_INPUT_ROW_HEIGHT + 22 : QUICK_INPUT_ROW_HEIGHT;
+		const height = quickInputRowHeight();
+		return element.saneDetail ? height + 22 : height;
 	}
 
 	getTemplateId(element: IQuickPickElement): string {
@@ -1379,9 +1398,10 @@ export class QuickInputList extends Disposable {
 	}
 
 	layout(maxHeight?: number): void {
+		const rowHeight = quickInputRowHeight();
 		this._tree.getHTMLElement().style.maxHeight = maxHeight ? `${
 			// Make sure height aligns with list item heights
-			Math.floor(maxHeight / QUICK_INPUT_ROW_HEIGHT) * QUICK_INPUT_ROW_HEIGHT
+			Math.floor(maxHeight / rowHeight) * rowHeight
 			// Add some extra height so that it's clear there's more to scroll
 			+ 6
 			}px` : '';

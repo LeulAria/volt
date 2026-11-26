@@ -14,14 +14,16 @@
 			"supportsTablet": true,
 			"infoPlist": {
 				"NSCameraUsageDescription": "Volt scans the pairing code your computer shows, and takes photos you send to your agents.",
-				"NSPhotoLibraryUsageDescription": "Volt sends the photos and screenshots you pick to your agents.",
+				"NSMicrophoneUsageDescription": "Volt listens while you dictate a message to your agents.",
+				"NSSpeechRecognitionUsageDescription": "Volt turns what you dictate into the text of your message.",
 				"NSLocalNetworkUsageDescription": "Volt connects to the agent server on your computer over your local network.",
 				"NSAppTransportSecurity": {
 					"NSAllowsLocalNetworking": true,
 					"NSAllowsArbitraryLoads": true
 				},
 				"ITSAppUsesNonExemptEncryption": false
-			}
+			},
+			"buildNumber": "29897073"
 		},
 		"android": {
 			"package": "com.voltadk.volt",
@@ -32,20 +34,11 @@
 			},
 			"edgeToEdgeEnabled": true,
 			"predictiveBackGestureEnabled": true,
-			"permissions": [
-				"android.permission.CAMERA"
-			]
+			"permissions": [],
+			"versionCode": 29897073
 		},
 		"plugins": [
-			"expo-router",
 			"expo-secure-store",
-			[
-				"expo-camera",
-				{
-					"cameraPermission": "Volt scans the pairing code your computer shows.",
-					"recordAudioAndroid": false
-				}
-			],
 			[
 				"expo-splash-screen",
 				{
@@ -64,38 +57,21 @@
 				{
 					"android": {
 						"usesCleartextTraffic": true,
-						"buildArchs": ["arm64-v8a"]
+						"buildArchs": [
+							"arm64-v8a"
+						],
+						"enableMinifyInReleaseBuilds": true,
+						"enableShrinkResourcesInReleaseBuilds": true
 					}
 				}
 			],
 			"./plugins/withFastBuilds",
-			[
-				"expo-image-picker",
-				{
-					"photosPermission": "Volt sends the photos and screenshots you pick to your agents.",
-					"cameraPermission": "Volt takes photos you send to your agents.",
-					"microphonePermission": false
-				}
-			],
+			"./plugins/withAndroidShell",
 			"volt-mobile-widgets",
-			[
-				"expo-speech-recognition",
-				{
-					"microphonePermission": "Volt listens while you dictate a message to your agents.",
-					"speechRecognitionPermission": "Volt turns what you dictate into the text of your message.",
-					"androidSpeechServicePackages": [
-						"com.google.android.googlequicksearchbox"
-					]
-				}
-			],
-			"expo-document-picker",
 			"./plugins/withSceneLifecycle"
 		],
 		"buildCacheProvider": {
 			"plugin": "./scripts/buildCache.js"
-		},
-		"experiments": {
-			"typedRoutes": true
 		}
 	}
 }

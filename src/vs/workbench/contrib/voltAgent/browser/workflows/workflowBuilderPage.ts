@@ -69,6 +69,8 @@ const RUN_MIN = 160;
 const DOCK_STRIP = 28;
 /** The canvas keeps at least this much room when the docks grow. */
 const CANVAS_MIN = 240;
+/** Narrower than the side panel and a usable canvas together (a phone): the panel covers the canvas. */
+const STACK_WIDTH = SIDE_MIN + CANVAS_MIN;
 const LAYOUT_KEY = 'volt.workflows.builder.layout';
 
 type SideTab = 'inspector' | 'yaml';
@@ -202,6 +204,8 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 	private describing: IWorkflowExecution | undefined;
 	private paintPending = false;
 	private layoutPending = false;
+	/** The side panel covers the canvas instead of sitting beside it (layout()). */
+	private stacked = false;
 
 	// Laid-out parts (set by build()).
 	private body!: HTMLElement;
@@ -217,6 +221,7 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 	private sideTabs!: HTMLElement;
 
 	// Bar pieces that change.
+	private bar: HTMLElement | undefined;
 	private nameInput: HTMLInputElement | undefined;
 	private pill: HTMLButtonElement | undefined;
 	private saveStateEl: HTMLElement | undefined;
@@ -253,6 +258,13 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 		super();
 		clearNode(host.bar);
 		this.layoutState = this.readLayout();
+		// Too narrow for the panel beside the canvas (a phone): start on the canvas, which the panel
+		// would cover. Not stored, so a wide window keeps its own choice.
+		const width = host.stage.clientWidth || host.stageSize().width;
+		this.stacked = width > 0 && width < STACK_WIDTH;
+		if (this.stacked) {
+			this.layoutState.sideOpen = false;
+		}
 		this.root = append(host.stage, $('.volt-wfb-builder'));
 		this.root.tabIndex = -1;
 		const loading = append(this.root, $('.volt-wfb-loading'));
@@ -529,7 +541,8 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 		this.pageStore.add(model.onDidChangeDirty(() => this.syncSaveState()));
 		this.pageStore.add(model.onDidChangeSelection(selection => {
 			// A pick opens the closed panel on the node; an open YAML tab stays (the user chose it).
-			if (selection.length && !this.layoutState.sideOpen) {
+			// Not when the panel would cover the canvas: the finger that picked a node may be dragging it.
+			if (selection.length && !this.layoutState.sideOpen && !this.stacked) {
 				this.setSideOpen(true, 'inspector', false);
 			}
 			if (selection.length === 1 && this.runOpen) {
@@ -682,10 +695,15 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 		const reported = this.host.stageSize();
 		const width = this.host.stage.clientWidth || reported.width;
 		const height = this.host.stage.clientHeight || reported.height;
-		const bodyHeight = Math.max(0, height - BAR_HEIGHT);
+		// A phone wraps the bar's tools onto a second row (voltPhoneSurfaces.css), so measure it.
+		const bodyHeight = Math.max(0, height - (this.bar?.offsetHeight || BAR_HEIGHT));
 		const sideOpen = this.layoutState.sideOpen;
-		const sideWidth = sideOpen ? clamp(this.layoutState.side, SIDE_MIN, Math.max(SIDE_MIN, Math.min(SIDE_MAX, width - CANVAS_MIN))) : 0;
-		const centerWidth = Math.max(0, width - sideWidth);
+		// Too narrow for both: the open panel takes the whole width over the canvas, whose X
+		// (or the bar's panel toggle) puts the canvas back.
+		const stacked = this.stacked = width < STACK_WIDTH;
+		const sideWidth = !sideOpen ? 0 : stacked ? width : clamp(this.layoutState.side, SIDE_MIN, Math.max(SIDE_MIN, Math.min(SIDE_MAX, width - CANVAS_MIN)));
+		const centerWidth = stacked ? width : Math.max(0, width - sideWidth);
+		this.root.classList.toggle('stacked', stacked);
 		const dockHeight = this.runOpen ? clamp(this.layoutState.run, RUN_MIN, Math.max(RUN_MIN, bodyHeight - CANVAS_MIN)) : DOCK_STRIP;
 		const canvasHeight = Math.max(0, bodyHeight - dockHeight);
 		this.body.style.height = `${bodyHeight}px`;
@@ -763,7 +781,7 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 
 	private renderBar(): void {
 		this.barStore.clear();
-		const bar = append(this.root, $('.volt-wfb-bar'));
+		const bar = this.bar = append(this.root, $('.volt-wfb-bar'));
 		const left = append(bar, $('.volt-wfb-bar-left'));
 		this.barIcon(left, Codicon.arrowLeft, localize('voltWorkflows.backToAutomations', "Back to Automations"), () => this.host.navigate({ page: 'list' }), this.barStore, undefined, 'volt-wfb-back');
 
@@ -796,19 +814,21 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 		}, this.barStore, undefined, 'ghost.hidden');
 
 		const right = append(bar, $('.volt-wfb-bar-right'));
-		const edit = append(right, $('.volt-wfb-bar-group'));
+		// The editing tools, apart from Save: a phone gives them a row of their own.
+		const tools = append(right, $('.volt-wfb-bar-tools'));
+		const edit = append(tools, $('.volt-wfb-bar-group'));
 		this.addButton = this.barButton(edit, Codicon.add, localize('voltWorkflows.addNodeShort', "Add node"), localize('voltWorkflows.addNode', "Add a node"), () => this.togglePicker(), this.barStore, 'Tab', 'ghost.add');
 		this.barIcon(edit, Codicon.typeHierarchySub, localize('voltWorkflows.autoLayout', "Auto-layout"), () => this.canvas?.autoLayout((this.model?.selection.length ?? 0) > 1), this.barStore, shortcut('L', { shift: true, alt: true, mod: false }));
 		this.undoButton = this.barIcon(edit, Codicon.discard, localize('voltWorkflows.undo', "Undo"), () => this.model?.undo(), this.barStore, shortcut('Z'));
 		this.redoButton = this.barIcon(edit, Codicon.redo, localize('voltWorkflows.redo', "Redo"), () => this.model?.redo(), this.barStore, shortcut('Z', { shift: true }));
 
-		const run = append(right, $('.volt-wfb-bar-group'));
+		const run = append(tools, $('.volt-wfb-bar-group'));
 		this.simulateGroup = this.splitButton(run, Codicon.beaker, localize('voltWorkflows.simulate', "Simulate"), localize('voltWorkflows.simulateTip', "Simulate: run the graph with sample data, no side effects"), shortcut('Enter'), () => void this.simulate(), anchor => this.showSimulateMenu(anchor), 'simulate');
 		this.runControls = append(run, $('.volt-wfb-run-controls'));
 
-		const view = append(right, $('.volt-wfb-bar-group'));
+		const view = append(tools, $('.volt-wfb-bar-group'));
 		this.yamlToggle = this.barButton(view, Codicon.code, localize('voltWorkflows.yaml', "YAML"), localize('voltWorkflows.yamlTip', "Show the workflow as YAML"), () => this.toggleYaml(), this.barStore, undefined, 'ghost.toggle');
-		this.runToggle = this.barIcon(view, Codicon.layoutPanel, localize('voltWorkflows.executionsPanel', "Executions panel"), () => this.setRunOpen(!this.runOpen), this.barStore, undefined, 'toggle');
+		this.runToggle = this.barIcon(view, Codicon.layoutPanel, localize('voltWorkflows.executionsPanel', "Executions panel"), () => this.setRunOpen(!this.runOpen), this.barStore, undefined, 'toggle.executions');
 		this.sideToggle = this.barIcon(view, Codicon.layoutSidebarRight, localize('voltWorkflows.inspectorPanel', "Inspector panel"), () => this.setSideOpen(!this.layoutState.sideOpen), this.barStore, undefined, 'toggle');
 		const more = this.barIcon(view, Codicon.ellipsis, localize('voltWorkflows.more', "More actions"), anchor => this.showMoreMenu(anchor), this.barStore);
 		more.setAttribute('aria-haspopup', 'menu');

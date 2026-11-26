@@ -1,0 +1,615 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * The workbench's pop-ups on a phone (voltPhoneSheets.ts). Quick picks, Volt's menus, the model
+ * picker and context menus are bottom sheets: full width on the bottom edge (or the keyboard's, in
+ * a phone's browser), rounded top corners, a grab handle, over a dim scrim. Dialogs fit the screen
+ * with stacked buttons, toasts drop in under the title bar, and hovers stay away from taps. Their
+ * positions are set inline by their widgets, hence the !important. Nothing here applies wider than
+ * a phone (`volt-web-phone`, or the same width for dialogs) or, for hovers, without touch
+ * (`volt-web-touch`).
+ */
+
+.monaco-workbench.web.volt-web-phone {
+	/* What a sheet keeps clear of under it: the home indicator, unless the keyboard is up (voltWebPhone.ts). */
+	--volt-phone-sheet-safe-bottom: var(--volt-phone-safe-bottom, 0px);
+}
+
+@keyframes volt-phone-sheet-in {
+	from {
+		transform: translateY(100%);
+	}
+
+	to {
+		transform: none;
+	}
+}
+
+@keyframes volt-phone-scrim-in {
+	from {
+		opacity: 0;
+	}
+
+	to {
+		opacity: 1;
+	}
+}
+
+/* The dim page behind a sheet. A tap on it closes the sheet. */
+.monaco-workbench .volt-phone-sheet-scrim {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.42);
+	cursor: pointer;
+	touch-action: none;
+	-webkit-tap-highlight-color: transparent;
+	transition: opacity 220ms ease-out;
+	animation: volt-phone-scrim-in 200ms ease-out;
+}
+
+.monaco-workbench.vs .volt-phone-sheet-scrim,
+.monaco-workbench.hc-light .volt-phone-sheet-scrim {
+	background: rgba(0, 0, 0, 0.28);
+}
+
+/* Just under the sheet it belongs to (quick input 2550, context views 2575). */
+.monaco-workbench .volt-phone-sheet-scrim.quick-input {
+	z-index: 2549;
+}
+
+.monaco-workbench .volt-phone-sheet-scrim.context {
+	z-index: 2574;
+}
+
+.monaco-workbench .volt-phone-sheet-scrim.closing {
+	opacity: 0 !important;
+	transition: opacity 200ms ease-out;
+}
+
+/* The grab handle: a pill at the top of the sheet, dragged down to close it. */
+.monaco-workbench .volt-phone-sheet-handle {
+	position: relative;
+	flex-shrink: 0;
+	height: 24px;
+	touch-action: none;
+	cursor: grab;
+}
+
+.monaco-workbench .volt-phone-sheet-handle::before {
+	content: '';
+	position: absolute;
+	top: 9px;
+	left: 50%;
+	width: 36px;
+	height: 5px;
+	margin-left: -18px;
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
+}
+
+/* A sheet springs back when let go short of closing; it follows the finger exactly while dragged. */
+.monaco-workbench .volt-phone-sheet-dragging {
+	transition: none !important;
+}
+
+/* ---- Context views on the bottom edge: Volt's menus, the model picker, context menus ---------- */
+
+/*
+ * A context menu is keyed on `monaco-menu-container` (set before the menu measures its rows), not
+ * on a class added once it is open: the menu sizes its scrolling from the first layout.
+ */
+.monaco-workbench.web.volt-web-phone > .context-view.volt-sheet-view,
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view,
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container {
+	position: fixed !important;
+	top: auto !important;
+	left: 0 !important;
+	right: 0 !important;
+	bottom: var(--volt-phone-sheet-bottom, 0px) !important;
+	width: auto !important;
+	transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
+	animation: volt-phone-sheet-in 260ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* A context menu (long-press on an Explorer row, a chat row): the context view is its surface. */
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container {
+	box-sizing: border-box;
+	padding-bottom: var(--volt-phone-sheet-safe-bottom, 0px);
+	background: var(--vscode-menu-background, var(--vscode-editor-background));
+	color: var(--vscode-menu-foreground, var(--vscode-foreground));
+	border-radius: 12px 12px 0 0;
+	box-shadow:
+		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)),
+		0 -8px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-scrollable-element {
+	border: none !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+	outline: none !important;
+	background: transparent !important;
+}
+
+/* The sheet's height less its grab handle. */
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container > .monaco-scrollable-element > .monaco-menu {
+	max-height: calc(var(--volt-phone-sheet-max-height, 70vh) - 24px) !important;
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-menu {
+	min-width: 0 !important;
+	width: 100%;
+	font-size: 15px;
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-menu .monaco-action-bar.vertical {
+	padding: 0 !important;
+	width: 100%;
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-menu .monaco-action-bar.vertical .action-item {
+	margin: 0 !important;
+	border-radius: 0 !important;
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-menu .monaco-action-bar.vertical .action-menu-item {
+	flex: 1;
+	height: 48px !important;
+	margin: 0 !important;
+	border-radius: 0 !important;
+	align-items: center;
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-menu .monaco-action-bar.vertical .action-label:not(.separator) {
+	padding: 0 16px !important;
+	font-size: 15px !important;
+	line-height: 48px !important;
+	height: 48px !important;
+}
+
+/* Keyboard shortcuts mean nothing without a keyboard at hand. */
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-menu .monaco-action-bar.vertical .keybinding {
+	display: none !important;
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-menu .monaco-action-bar.vertical .action-label.separator {
+	margin: 4px 0 !important;
+	padding: 0 !important;
+	width: 100% !important;
+}
+
+/* A submenu is a second sheet over the first, on the same edge (it stays open until a row is picked or the scrim tapped). */
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-submenu {
+	position: fixed !important;
+	top: auto !important;
+	left: 0 !important;
+	right: 0 !important;
+	bottom: var(--volt-phone-sheet-bottom, 0px) !important;
+	z-index: 1 !important;
+	box-sizing: border-box;
+	padding: 8px 0 var(--volt-phone-sheet-safe-bottom, 0px);
+	background: var(--vscode-menu-background, var(--vscode-editor-background));
+	border-radius: 12px 12px 0 0;
+	box-shadow:
+		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)),
+		0 -8px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	animation: volt-phone-sheet-in 260ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Short of the first sheet, so its top rows stay in sight. */
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-submenu > .monaco-scrollable-element > .monaco-menu {
+	max-height: calc(var(--volt-phone-sheet-max-height, 70vh) - 80px) !important;
+}
+
+/* The row under the finger, while it is down. */
+.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-menu .monaco-action-bar.vertical .action-item:active > .action-menu-item {
+	background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+	color: var(--vscode-menu-selectionForeground, inherit);
+}
+
+/* Volt's menus draw their own surface (voltMenu.css `.sheet`); it moves under the finger. */
+.monaco-workbench.web.volt-web-phone > .context-view.volt-sheet-view > .volt-menu-host.sheet {
+	transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ---- The composer's model picker (agentModelPicker.ts): its panel is the sheet ----------------- */
+
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-dropdown.models.picker {
+	width: 100%;
+	min-width: 0;
+	max-width: none;
+	border-radius: 12px 12px 0 0;
+	font-size: 14px;
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-picker-panel {
+	max-height: var(--volt-phone-sheet-max-height, 70vh);
+	padding-bottom: var(--volt-phone-sheet-safe-bottom, 0px);
+	border-radius: 12px 12px 0 0;
+	box-shadow:
+		0 0 0 1px var(--volt-picker-stroke),
+		0 -8px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-picker-search {
+	min-height: 44px;
+	box-sizing: border-box;
+	padding: 0 16px;
+	gap: 10px;
+}
+
+/* 16px keeps iOS from zooming the page into a field it focuses. */
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-picker-search .monaco-inputbox .input {
+	font-size: 16px;
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-provider-tab {
+	flex-basis: 44px;
+	width: 44px;
+	height: 44px;
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-picker-list .monaco-list-row {
+	padding-left: 16px;
+	padding-right: 12px;
+}
+
+/* No hover: a row's Edit sits beside its check instead of over it. */
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-picker-edit {
+	position: static;
+	margin-right: 10px;
+	font-size: 14px;
+}
+
+/* A model's hover card has no hover to come from; a row's options open as a second sheet over the first. */
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-picker-flyout.card {
+	display: none !important;
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-picker-flyout {
+	position: absolute !important;
+	top: auto !important;
+	left: 0 !important;
+	right: 0 !important;
+	bottom: 0 !important;
+	width: auto !important;
+	min-width: 0;
+	max-height: calc(100% - 48px) !important;
+	padding-bottom: var(--volt-phone-sheet-safe-bottom, 0px);
+	border: none;
+	border-radius: 12px 12px 0 0;
+	box-shadow:
+		0 0 0 1px var(--volt-picker-stroke),
+		0 -8px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	font-size: 14px;
+	animation: volt-phone-sheet-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-picker-flyout .volt-agent-picker-row.choice {
+	min-height: 44px;
+	padding-left: 16px;
+	padding-right: 16px;
+}
+
+/* ---- Quick input (Go to File, the Command Palette, the Tabs picker, any quick pick) ----------- */
+
+.monaco-workbench.web.volt-web-phone > .quick-input-widget {
+	position: fixed !important;
+	top: auto !important;
+	left: 0 !important;
+	right: 0 !important;
+	bottom: var(--volt-phone-sheet-bottom, 0px) !important;
+	width: auto !important;
+	/* Not shifted off centre by the agent sidebar (the drawer, on a phone). */
+	margin: 0;
+	max-height: var(--volt-phone-sheet-max-height, 70vh);
+	padding-bottom: var(--volt-phone-sheet-safe-bottom, 0px);
+	border: none !important;
+	border-radius: 12px 12px 0 0;
+	box-shadow:
+		0 0 0 1px var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)),
+		0 -8px 28px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36)) !important;
+	transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
+	animation: volt-phone-sheet-in 260ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-titlebar,
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-header,
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-title {
+	cursor: default;
+	border-radius: 0;
+}
+
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-header {
+	padding: 0 12px 8px;
+}
+
+/* 16px keeps iOS from zooming the page into a field it focuses. */
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-box .monaco-inputbox .input {
+	font-size: 16px;
+}
+
+/* The list fills the rest of the sheet; rows are 44px (quickInputList.ts) and run edge to edge. */
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-list .monaco-list {
+	max-height: calc(var(--volt-phone-sheet-max-height, 70vh) - 84px) !important;
+}
+
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-list .quick-input-list-entry {
+	padding-left: 16px;
+	padding-right: 12px;
+}
+
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-list .quick-input-list-label,
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-list .quick-input-list-rows {
+	font-size: 15px;
+}
+
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-list .quick-input-list-separator {
+	font-size: 13px;
+}
+
+/*
+ * No hover: a row's Close (a tab's, a recent file's) stays in sight. Its other buttons (a command's
+ * keybinding gear, Open to the Side) show on the focused row, as they do on a desktop.
+ */
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-list .quick-input-list-entry-action-bar .action-label.codicon-close {
+	display: flex;
+}
+
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-list .quick-input-list-entry-action-bar .action-label {
+	min-width: 32px;
+	min-height: 32px;
+	box-sizing: border-box;
+	align-items: center;
+	justify-content: center;
+}
+
+/* Keyboard shortcuts beside commands mean nothing without a keyboard at hand. */
+.monaco-workbench.web.volt-web-phone > .quick-input-widget .quick-input-list .quick-input-list-entry-keybinding {
+	display: none;
+}
+
+/* ---- Dialogs --------------------------------------------------------------------------------- */
+
+/*
+ * Keyed on the width itself, not on `volt-web-phone`: the Trust this folder? card is up before the
+ * workbench has restored and set that class. The same width as voltWebPhone.ts VOLT_WEB_PHONE_QUERY.
+ */
+@media (max-width: 600px) {
+	.monaco-workbench.web .monaco-dialog-box {
+		box-sizing: border-box;
+		width: calc(100vw - 24px) !important;
+		min-width: 0 !important;
+		max-width: none !important;
+		max-height: calc(100vh - 48px);
+		max-height: calc(100dvh - 48px);
+		overflow-y: auto;
+		padding: 16px 16px 12px;
+		border-radius: 14px;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box .dialog-message-row,
+	.monaco-workbench.web .monaco-dialog-box .dialog-footer-row {
+		padding: 0;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box .dialog-message-row > .dialog-icon.codicon {
+		flex: 0 0 32px;
+		height: 32px;
+		font-size: 32px;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box:not(.align-vertical) .dialog-message-row .dialog-message-container,
+	.monaco-workbench.web .monaco-dialog-box:not(.align-vertical) .dialog-footer-row {
+		padding-left: 12px;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box .dialog-message-row .dialog-message-container {
+		min-width: 0;
+		flex: 1;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box .dialog-message-row .dialog-message-container .dialog-message {
+		min-height: 32px;
+		font-size: 17px;
+		line-height: 23px;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box .dialog-message-row .dialog-message-container .dialog-message-detail {
+		font-size: 14px;
+		line-height: 20px;
+	}
+
+	/* The checkbox's label wraps as a sentence beside it. */
+	.monaco-workbench.web .monaco-dialog-box .dialog-message-row .dialog-message-container .dialog-checkbox-row {
+		align-items: center;
+		gap: 8px;
+		min-height: 44px;
+		box-sizing: border-box;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box .dialog-message-row .dialog-message-container .dialog-checkbox-row .dialog-checkbox-message {
+		min-width: 0;
+		white-space: normal;
+		font-size: 14px;
+		line-height: 20px;
+	}
+
+	/* Buttons stacked full width, the main action on top and Cancel last (as iOS and Android stack them). */
+	.monaco-workbench.web .monaco-dialog-box > .dialog-buttons-row {
+		padding: 16px 0 0;
+		white-space: normal;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box > .dialog-buttons-row > .dialog-buttons {
+		flex-direction: column;
+		gap: 8px;
+		margin: 0 !important;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box > .dialog-buttons-row > .dialog-buttons > .monaco-button,
+	.monaco-workbench.web .monaco-dialog-box > .dialog-buttons-row > .dialog-buttons > .monaco-button-dropdown {
+		box-sizing: border-box;
+		width: 100% !important;
+		min-height: 44px;
+		margin: 0 !important;
+		font-size: 15px;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box > .dialog-buttons-row > .dialog-buttons > .monaco-button {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 10px;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box > .dialog-buttons-row > .dialog-buttons > .monaco-button:not(.secondary),
+	.monaco-workbench.web .monaco-dialog-box > .dialog-buttons-row > .dialog-buttons > .monaco-button-dropdown {
+		order: -1;
+	}
+
+	.monaco-workbench.web .monaco-dialog-box > .dialog-buttons-row > .dialog-buttons > .monaco-button-dropdown > .monaco-text-button {
+		flex: 1;
+		min-height: 44px;
+	}
+
+	/* Volt's Trust this folder? card: the same shape, its three columns as rows. */
+	.monaco-workbench.web .volt-trust-card {
+		max-width: calc(100% - 24px);
+		max-height: calc(100% - 24px);
+		padding: 18px 16px 16px;
+		border-radius: 14px;
+		font-size: 14px;
+	}
+
+	.monaco-workbench.web .volt-trust-subtitle {
+		font-size: 13px;
+	}
+
+	.monaco-workbench.web .volt-trust-rows {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 10px;
+	}
+
+	.monaco-workbench.web .volt-trust-row-name {
+		font-size: 14px;
+	}
+
+	.monaco-workbench.web .volt-trust-row-desc {
+		font-size: 13px;
+	}
+
+	.monaco-workbench.web .volt-trust-footer {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 12px;
+	}
+
+	.monaco-workbench.web .volt-trust-toggle-row {
+		min-height: 44px;
+		gap: 12px;
+	}
+
+	.monaco-workbench.web .volt-trust-toggle-label {
+		flex: 1;
+		font-size: 14px;
+		line-height: 19px;
+	}
+
+	.monaco-workbench.web .volt-trust-switch {
+		width: 44px;
+		height: 26px;
+		border-radius: 13px;
+	}
+
+	.monaco-workbench.web .volt-trust-switch-knob {
+		width: 22px;
+		height: 22px;
+	}
+
+	.monaco-workbench.web .volt-trust-switch.checked .volt-trust-switch-knob {
+		transform: translateX(18px);
+	}
+
+	.monaco-workbench.web .volt-trust-actions {
+		flex-direction: column;
+		margin-left: 0;
+		gap: 8px;
+	}
+
+	.monaco-workbench.web .volt-trust-actions .volt-button.volt-trust-primary {
+		order: -1;
+	}
+
+	.monaco-workbench.web .volt-trust-actions .volt-button.volt-trust-primary,
+	.monaco-workbench.web .volt-trust-actions .volt-button.volt-trust-secondary {
+		width: 100%;
+		height: 44px;
+		border-radius: 10px;
+		font-size: 15px;
+	}
+}
+
+/* ---- Notifications: toasts and the center drop in under the title bar --------------------------- */
+
+.monaco-workbench.web.volt-web-phone > .notifications-toasts,
+.monaco-workbench.web.volt-web-phone > .notifications-center {
+	top: calc(var(--volt-phone-titlebar-height, 40px) + 6px);
+	bottom: auto;
+	left: 8px;
+	right: 8px;
+	/* Over everything, sheets and dialogs included. */
+	z-index: 2700;
+}
+
+.monaco-workbench.web.volt-web-phone > .notifications-toasts .notification-toast-container > .notification-toast {
+	margin: 0 0 6px;
+	transform: translate3d(0, -100%, 0);
+	border-radius: 12px;
+}
+
+.monaco-workbench.web.volt-web-phone > .notifications-toasts .notification-toast-container > .notification-toast.notification-fade-in,
+.monaco-workbench.web.volt-web-phone > .notifications-toasts .notification-toast-container > .notification-toast.notification-fade-in-done {
+	transform: none;
+}
+
+/* A swipe's toast slides back, or out, when let go (voltPhoneSheets.ts). */
+.monaco-workbench.web.volt-web-phone > .notifications-toasts .notification-toast-container > .notification-toast.notification-fade-in-done {
+	transition: transform 160ms ease-out, opacity 160ms ease-out;
+}
+
+.monaco-workbench.web.volt-web-phone > .notifications-toasts .notification-toast-container > .notification-toast.volt-phone-toast-dragging {
+	transition: none;
+}
+
+.monaco-workbench.web.volt-web-phone > .notifications-toasts .notification-toast,
+.monaco-workbench.web.volt-web-phone > .notifications-center {
+	touch-action: pan-y;
+}
+
+/* No hover: a toast's Clear and its other buttons stay in sight. */
+.monaco-workbench.web.volt-web-phone > .notifications-toasts .notification-list-item .notification-list-item-toolbar-container {
+	display: block;
+}
+
+/* ---- Hovers and tooltips stay away from taps on a touch screen ------------------------------- */
+
+.monaco-workbench.volt-web-touch .workbench-hover-container:not(.locked),
+.monaco-workbench.volt-web-touch .volt-agent-tooltip {
+	display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.monaco-workbench.web.volt-web-phone > .context-view.volt-sheet-view,
+	.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view,
+	.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container,
+	.monaco-workbench.web.volt-web-phone > .context-view.monaco-menu-container .monaco-submenu,
+	.monaco-workbench.web.volt-web-phone > .context-view.volt-agent-models-picker-view .volt-agent-picker-flyout,
+	.monaco-workbench.web.volt-web-phone > .quick-input-widget,
+	.monaco-workbench .volt-phone-sheet-scrim {
+		animation: none;
+	}
+}

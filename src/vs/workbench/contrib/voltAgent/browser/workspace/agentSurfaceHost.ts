@@ -36,7 +36,7 @@ import { getLayoutMode, LayoutModeContext, onDidChangeLayoutMode } from '../../.
 import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
 import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
-import { IEditorPane } from '../../../../common/editor.js';
+import { GroupModelChangeKind, IEditorPane } from '../../../../common/editor.js';
 import { ResourceContextKey } from '../../../../common/contextkeys.js';
 import { ExplorerFolderContext } from '../../../files/common/files.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -104,6 +104,11 @@ const FLOAT_WIDTH = 256;
  * and the tools side by side: the tools lie over the chat, below its title bar, and close back to it.
  */
 const TOOLS_OVER_CHAT_MAX_WIDTH = 600;
+/**
+ * A phone on its side: wide enough for both, but as short as a phone is narrow. Its rail switches
+ * between the chat and the tools as the bottom bar does upright (voltWebPhone.ts), so they lie over the chat too.
+ */
+export const VOLT_PHONE_LANDSCAPE_QUERY = '(orientation: landscape) and (max-height: 500px) and (pointer: coarse)';
 
 /** Where the floating preview sits, from the chat's bottom-right corner. Shared by every chat in the window. */
 interface IFloatRect {
@@ -200,6 +205,68 @@ export function toggleAgentToolsPanel(): boolean {
 	}
 	return false;
 }
+/**
+ * What a phone's bottom bar switches between (voltWebPhoneNav.ts): the chat, or one kind of tab in
+ * its tools, which lie over the chat on a phone. `tabs` is any other tab (a side chat, Scratch, a
+ * canvas, Git Graph).
+ */
+export type AgentPhoneTool = 'chat' | 'browser' | 'editor' | 'terminal' | 'git' | 'tabs';
+
+/** A tab in the tools of the chat on screen, for the phone's list of tabs. */
+export interface IAgentPhoneTab {
+	readonly editor: EditorInput;
+	readonly group: IEditorGroup;
+	readonly active: boolean;
+}
+
+/** The view showing the chat on screen: the one a phone's bottom bar drives. */
+function phoneHost(): AgentSurfaceHost | undefined {
+	return [...hosts].find(host => isChatToolsHost(host) && host.canOpenTools());
+}
+
+/** What the chat on screen shows now; undefined with no chat on screen (a page, the IDE layout). */
+export function agentPhoneTool(): AgentPhoneTool | undefined {
+	return phoneHost()?.phoneTool();
+}
+
+/** Brings `tool` to the front of the chat on screen (`chat` closes its tools); false with no chat on screen. */
+export function showAgentPhoneTool(tool: Exclude<AgentPhoneTool, 'tabs'>): boolean {
+	return phoneHost()?.showPhoneTool(tool) ?? false;
+}
+
+export function agentPhoneTabs(): readonly IAgentPhoneTab[] {
+	return phoneHost()?.phoneTabs() ?? [];
+}
+
+export function revealAgentPhoneTab(tab: IAgentPhoneTab): void {
+	phoneHost()?.revealPhoneTab(tab);
+}
+
+/** Closes the tools over the chat on a phone, as the system's Back does; false when they were not open. */
+export function closeAgentPhoneTools(): boolean {
+	const host = phoneHost();
+	return !!host && host.phoneTool() !== 'chat' && host.showPhoneTool('chat');
+}
+
+function phoneToolFor(editor: EditorInput | null | undefined): AgentPhoneTool {
+	if (editor instanceof VoltBrowserEditorInput) {
+		return 'browser';
+	}
+	if (editor instanceof TerminalEditorInput || editor instanceof AgentTerminalsEditorInput) {
+		return 'terminal';
+	}
+	if (editor instanceof AgentChangesEditorInput || editor?.typeId === 'workbench.editors.diffEditorInput') {
+		return 'git';
+	}
+	return isPhoneFileEditor(editor) ? 'editor' : 'tabs';
+}
+
+/** A tab showing a file of the project (or a new one), not a tool. */
+function isPhoneFileEditor(editor: EditorInput | null | undefined): boolean {
+	const scheme = editor && !(editor instanceof AgentEditorInput) ? editor.resource?.scheme : undefined;
+	return scheme === Schemas.file || scheme === Schemas.vscodeRemote || scheme === Schemas.untitled || scheme === Schemas.vscodeUserData;
+}
+
 /** Each chat's tools area, shared by every chat view: it moves to whichever view shows the chat. */
 const toolParts = new Map<string, IToolsPart>();
 const toolEditorsEmitter = new Emitter<void>();
@@ -489,6 +556,11 @@ export class AgentSurfaceHost extends Disposable {
 	private tabsHidden = false;
 	/** The panel stays open with no tab (its empty area lists what can open) until it is closed or the chat changes. */
 	private keepOpen = false;
+	/**
+	 * On a phone the files sidebar and the tabs take turns filling the tools: true while the sidebar
+	 * is in front (it was opened last), false once a tab opens or comes to the front.
+	 */
+	private phoneSidebarFront = false;
 	/** How the tools are drawn: beside the chat, floating over it (a preview), or across the whole window. */
 	private presentation: BrowserPresentation = 'split';
 	private readonly closePanelButton: HTMLButtonElement;
@@ -729,7 +801,9 @@ export class AgentSurfaceHost extends Disposable {
 			return;
 		}
 		if (this.sessionId !== sessionId) {
-			this.toolsHidden = false;
+			// A phone shows a chat it switches to, not the tools left open over the last one.
+			this.toolsHidden = this.toolsOverChat();
+			this.phoneSidebarFront = false;
 			this.tabsHidden = false;
 			this.keepOpen = false;
 			this.setPresentation('split', false);
@@ -945,6 +1019,102 @@ export class AgentSurfaceHost extends Disposable {
 
 	//#endregion
 
+	//#region A phone's bottom bar
+
+	phoneTool(): AgentPhoneTool {
+		const entry = this.shown;
+		if (!entry || !this.open || this.presentation === 'floating') {
+			return 'chat';
+		}
+		if (this.filesSidebarOpen() && (!this.showsTabs(entry) || (this.toolsOverChat() && this.phoneSidebarFront))) {
+			const view = AgentFilesSidebar.view(this.storageService);
+			return view === 'scm' || view === 'pullRequests' ? 'git' : 'editor';
+		}
+		return phoneToolFor(entry.part.activeGroup.activeEditor);
+	}
+
+	showPhoneTool(tool: Exclude<AgentPhoneTool, 'tabs'>): boolean {
+		if (!this.canOpenTools()) {
+			return false;
+		}
+		switch (tool) {
+			case 'chat':
+				this.keepOpen = false;
+				this.toolsHidden = true;
+				this.phoneSidebarFront = false;
+				this.setPresentation('split', false);
+				this.syncOpen();
+				this.chat.focus();
+				break;
+			case 'browser':
+				if (!this.revealPhoneEditor(editor => editor instanceof VoltBrowserEditorInput)) {
+					this.openBrowser();
+				}
+				break;
+			case 'terminal':
+				if (!this.revealPhoneEditor(editor => phoneToolFor(editor) === 'terminal')) {
+					this.openTerminal();
+				}
+				break;
+			case 'editor': {
+				// Again on Editor: from the file to the Explorer and back.
+				const onFile = this.phoneTool() === 'editor' && !this.phoneSidebarFront && isPhoneFileEditor(this.shown?.part.activeGroup.activeEditor);
+				if (onFile || !this.revealPhoneEditor(isPhoneFileEditor)) {
+					this.showPhoneSidebar('explorer');
+				}
+				break;
+			}
+			case 'git':
+				this.showPhoneSidebar('scm');
+				break;
+		}
+		notifyAgentToolEditors();
+		return true;
+	}
+
+	phoneTabs(): IAgentPhoneTab[] {
+		const entry = this.shown;
+		if (!entry) {
+			return [];
+		}
+		const front = this.phoneTool() !== 'chat' && !this.phoneSidebarFront;
+		return entry.part.groups.flatMap(group => group.editors.map(editor => ({ editor, group, active: front && group === entry.part.activeGroup && group.activeEditor === editor })));
+	}
+
+	revealPhoneTab(tab: IAgentPhoneTab): void {
+		if (this.revealPhoneEditor(editor => editor === tab.editor)) {
+			notifyAgentToolEditors();
+		}
+	}
+
+	/** A tab of the chat's tools came to the front: on a phone it takes the tools from the files sidebar. */
+	phoneTabToFront(): void {
+		if (this.phoneSidebarFront && this.toolsOverChat()) {
+			this.phoneSidebarFront = false;
+		}
+	}
+
+	/** Brings a tab `match` finds to the front of the tools; false when there is none. */
+	private revealPhoneEditor(match: (editor: EditorInput) => boolean): boolean {
+		const found = this.findInShown(match);
+		if (!found) {
+			return false;
+		}
+		this.phoneSidebarFront = false;
+		// Opens the tools again if they were closed, then the tab.
+		this.toolsGroup();
+		void found.group.openEditor(found.editor, { pinned: true });
+		return true;
+	}
+
+	private showPhoneSidebar(view: AgentFilesSidebarView): void {
+		this.phoneSidebarFront = true;
+		this.toolsHidden = false;
+		this.showFilesSidebar(view);
+	}
+
+	//#endregion
+
 	//#region Drag and drop onto the chat
 
 	private dragKinds(e: DragEvent): IAgentSurfaceDragKinds {
@@ -1147,7 +1317,11 @@ export class AgentSurfaceHost extends Disposable {
 				)));
 			}
 			if (!groupListeners.has(group.id)) {
-				groupListeners.set(group.id, group.onDidModelChange(() => {
+				groupListeners.set(group.id, group.onDidModelChange(e => {
+					if (e.kind === GroupModelChangeKind.EDITOR_OPEN || e.kind === GroupModelChangeKind.EDITOR_ACTIVE) {
+						// On a phone a tab coming to the front takes the tools from the files sidebar.
+						entry.holder?.phoneTabToFront();
+					}
 					entry.holder?.syncOpen();
 					notifyAgentToolEditors();
 				}));
@@ -1490,9 +1664,11 @@ export class AgentSurfaceHost extends Disposable {
 	 */
 	private layoutFilesSidebar(entry: IToolsPart, available: number, height: number): number {
 		const open = this.presentation !== 'floating' && this.filesSidebarOpen();
+		// A phone has no room for both: the sidebar fills the tools while it is in front, and is put away otherwise.
+		const phone = this.toolsOverChat();
 		// No tab beside it: the sidebar is the whole tools area, without an empty editor group next to it.
-		const fills = open && !this.showsTabs(entry);
-		const width = fills ? available : open ? this.filesSidebar.widthFor(available) : 0;
+		const fills = open && (!this.showsTabs(entry) || (phone && this.phoneSidebarFront));
+		const width = fills ? available : open && !phone ? this.filesSidebar.widthFor(available) : 0;
 		this.partsHost.classList.toggle('hidden', fills);
 		// The sidebar is see-through like the chat; only the tabs keep the area's solid fill (agentEditor.css).
 		this.area.classList.toggle('with-files-sidebar', width > 0);
@@ -1728,7 +1904,7 @@ export class AgentSurfaceHost extends Disposable {
 			return false;
 		}
 		const width = this.layoutService.mainContainer.clientWidth;
-		return width > 0 && width < TOOLS_OVER_CHAT_MAX_WIDTH;
+		return width > 0 && (width < TOOLS_OVER_CHAT_MAX_WIDTH || getWindow(this.container).matchMedia(VOLT_PHONE_LANDSCAPE_QUERY).matches);
 	}
 
 	/** Over the whole chat below the title bar, which keeps the toggles that close the tools. */

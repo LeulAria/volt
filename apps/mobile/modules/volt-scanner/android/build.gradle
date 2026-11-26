@@ -1,0 +1,20 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.voltadk.scanner'
+version = '1.0.0'
+
+android {
+  namespace "com.voltadk.scanner"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // Google's code scanner: the scanning UI and model live in Play services, not in the app.
+  implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'
+}

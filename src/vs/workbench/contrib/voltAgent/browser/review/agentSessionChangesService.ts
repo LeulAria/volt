@@ -45,6 +45,7 @@ import {
 import { IAgentEditsService, IAgentPendingFile } from './agentEditsService.js';
 import { IAgentCheckpointService, IAgentSnapshotChange } from './agentCheckpointService.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
+import { agentComparableUri } from '../../common/agentDiskPath.js';
 
 export const IAgentSessionChangesService = createDecorator<IAgentSessionChangesService>('voltAgentSessionChanges');
 
@@ -756,8 +757,10 @@ export class AgentSessionChangesService extends Disposable implements IAgentSess
 		if (!root) {
 			return this.scmService.repositories;
 		}
+		// As paths: in the browser Git's roots and the chat's project can name one folder by different schemes.
+		const target = agentComparableUri(root);
 		for (const repository of this.scmService.repositories) {
-			if (repository.provider.rootUri && extUriIgnorePathCase.isEqual(repository.provider.rootUri, root)) {
+			if (repository.provider.rootUri && extUriIgnorePathCase.isEqual(agentComparableUri(repository.provider.rootUri), target)) {
 				return [repository];
 			}
 		}

@@ -1,0 +1,91 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* The key row above a phone's keyboard (voltPhoneKeys.ts). Its top comes from the script: right above the keyboard. */
+.monaco-workbench .volt-phone-keys {
+	position: fixed;
+	left: 0;
+	right: 0;
+	top: 0;
+	z-index: 30;
+	box-sizing: border-box;
+	height: 44px;
+	padding: 0 var(--volt-phone-safe-right, 0px) 0 var(--volt-phone-safe-left, 0px);
+	background: var(--volt-agent-window-bg-base, var(--vscode-sideBar-background));
+	border-top: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.18)));
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+}
+
+.monaco-workbench .volt-phone-keys.hidden,
+.monaco-workbench .volt-phone-keys-row.hidden {
+	display: none;
+}
+
+/* Scrolls sideways when the keys don't fit; the scrollbar stays hidden like a native accessory row. */
+.monaco-workbench .volt-phone-keys-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 100%;
+	padding: 0 6px;
+	overflow-x: auto;
+	overflow-y: hidden;
+	overscroll-behavior-x: contain;
+	scrollbar-width: none;
+	touch-action: pan-x;
+}
+
+.monaco-workbench .volt-phone-keys-row::-webkit-scrollbar {
+	display: none;
+}
+
+.monaco-workbench .volt-phone-keys .volt-button.volt-phone-key {
+	flex: 0 0 auto;
+	min-width: 40px;
+	height: 34px;
+	padding: 0 10px;
+	border-radius: 7px;
+	font-size: 14px;
+	font-weight: 500;
+	transition: none;
+	touch-action: pan-x;
+	-webkit-tap-highlight-color: transparent;
+}
+
+.monaco-workbench .volt-phone-keys .volt-button.volt-phone-key.volt-phone-key-group {
+	margin-left: 6px;
+}
+
+/* A tap leaves :hover behind on a touch screen; the key only changes while it is held. */
+.monaco-workbench .volt-phone-keys .volt-button.volt-phone-key:hover {
+	color: var(--vscode-button-secondaryForeground);
+	background: var(--vscode-button-secondaryBackground);
+}
+
+.monaco-workbench .volt-phone-keys .volt-button.volt-phone-key.pressed {
+	background: color-mix(in srgb, var(--vscode-foreground) 22%, var(--vscode-button-secondaryBackground));
+}
+
+/* Ctrl or Alt waiting for the next key; locked keeps an underline. */
+.monaco-workbench .volt-phone-keys .volt-button.volt-phone-key.active {
+	color: var(--vscode-button-foreground);
+	background: var(--vscode-button-background);
+}
+
+.monaco-workbench .volt-phone-keys .volt-button.volt-phone-key.active.pressed {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.monaco-workbench .volt-phone-keys .volt-button.volt-phone-key.locked {
+	text-decoration: underline;
+	text-decoration-thickness: 2px;
+	text-underline-offset: 4px;
+}
+
+.monaco-workbench .volt-phone-keys .volt-phone-key .volt-phone-key-icon {
+	font-size: 16px;
+}

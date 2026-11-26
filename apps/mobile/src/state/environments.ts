@@ -4,14 +4,17 @@
  *--------------------------------------------------------------------------------------------*/
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { IStorage } from '@volt/client-core/src/client';
 import {
-	activeEnvironment, EMPTY_CATALOG, type IEnvironmentCatalog, type IPairRequest, type ISavedEnvironment, type IStorage, pairEnvironment, type PairingTarget,
-	parseCatalog, removeEnvironment, upsertEnvironment, uuid
-} from '@volt/client-core';
+	activeEnvironment, EMPTY_CATALOG, type IEnvironmentCatalog, type ISavedEnvironment, pairEnvironment, type PairingTarget,
+	parseCatalog, removeEnvironment, upsertEnvironment
+} from '@volt/client-core/src/environments';
+import { uuid } from '@volt/client-core/src/ids';
+import type { IPairRequest } from '@volt/client-core/src/protocol';
 import * as Device from 'expo-device';
 import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
 import { useSyncExternalStore } from 'react';
+import { Platform } from 'react-native';
 
 /**
  * Paired machines. Tokens live in the keychain / keystore (SecureStore, one entry per machine);
@@ -21,18 +24,6 @@ import { useSyncExternalStore } from 'react';
 const CATALOG_KEY = 'volt.catalog.v1';
 const CLIENT_ID_KEY = 'volt.clientId';
 const tokenKey = (environmentId: string) => `volt.token.${environmentId.replace(/[^A-Za-z0-9._-]/g, '_')}`;
-
-/**
- * Tokens: the keychain / keystore. The web build (a browser preview of the app, `expo start --web`)
- * has no secure store, so it keeps them with the rest of the catalog.
- */
-const tokens = Platform.OS === 'web'
-	? {
-		setItemAsync: (key: string, value: string) => AsyncStorage.setItem(key, value),
-		getItemAsync: (key: string) => AsyncStorage.getItem(key),
-		deleteItemAsync: (key: string) => AsyncStorage.removeItem(key),
-	}
-	: SecureStore;
 
 export const asyncStorage: IStorage = {
 	getItem: key => AsyncStorage.getItem(key),
@@ -63,27 +54,39 @@ export function useEnvironments(): IState {
 }
 
 export function useActiveEnvironment(): ISavedEnvironment | undefined {
-	const { catalog } = useEnvironments();
-	return activeEnvironment(catalog);
+	return activeEnvironment(useEnvironments().catalog);
 }
 
 async function persist(catalog: IEnvironmentCatalog): Promise<void> {
 	const stripped: IEnvironmentCatalog = { ...catalog, environments: catalog.environments.map(env => ({ ...env, token: '' })) };
 	await AsyncStorage.setItem(CATALOG_KEY, JSON.stringify(stripped));
-	await Promise.all(catalog.environments.map(env => tokens.setItemAsync(tokenKey(env.environmentId), env.token)));
+	await Promise.all(catalog.environments.map(env => SecureStore.setItemAsync(tokenKey(env.environmentId), env.token)));
 }
 
-export async function loadEnvironments(): Promise<void> {
-	if (state.loaded) {
-		return;
-	}
-	try {
-		const parsed = parseCatalog(await AsyncStorage.getItem(CATALOG_KEY));
-		const environments = await Promise.all(parsed.environments.map(async env => ({ ...env, token: (await tokens.getItemAsync(tokenKey(env.environmentId)).catch(() => null)) ?? '' })));
-		set({ loaded: true, catalog: { ...parsed, environments: environments.filter(env => env.token) } });
-	} catch {
-		set({ loaded: true, catalog: EMPTY_CATALOG });
-	}
+let stored: Promise<IEnvironmentCatalog> | undefined;
+let loading: Promise<void> | undefined;
+
+/**
+ * The saved catalog without its tokens (AsyncStorage only): enough to start looking for the active
+ * computer while the keychain is still being read.
+ */
+export function storedCatalog(): Promise<IEnvironmentCatalog> {
+	stored ??= AsyncStorage.getItem(CATALOG_KEY).then(parseCatalog);
+	return stored;
+}
+
+/** Reads the catalog once (started at launch, before the first render). */
+export function loadEnvironments(): Promise<void> {
+	loading ??= (async () => {
+		try {
+			const parsed = await storedCatalog();
+			const environments = await Promise.all(parsed.environments.map(async env => ({ ...env, token: (await SecureStore.getItemAsync(tokenKey(env.environmentId)).catch(() => null)) ?? '' })));
+			set({ loaded: true, catalog: { ...parsed, environments: environments.filter(env => env.token) } });
+		} catch {
+			set({ loaded: true, catalog: EMPTY_CATALOG });
+		}
+	})();
+	return loading;
 }
 
 let clientIdPromise: Promise<string> | undefined;
@@ -130,13 +133,7 @@ export async function activate(environmentId: string): Promise<void> {
 
 export async function forget(environmentId: string): Promise<void> {
 	const catalog = removeEnvironment(state.catalog, environmentId);
-	await tokens.deleteItemAsync(tokenKey(environmentId)).catch(() => undefined);
+	await SecureStore.deleteItemAsync(tokenKey(environmentId)).catch(() => undefined);
 	await persist(catalog);
 	set({ loaded: true, catalog });
-}
-
-export function updateEnvironment(environment: ISavedEnvironment): void {
-	const catalog = upsertEnvironment(state.catalog, environment, state.catalog.activeId === environment.environmentId);
-	set({ loaded: true, catalog });
-	void persist(catalog);
 }

@@ -227,6 +227,11 @@
 	height: 14px;
 }
 
+/* Phones only (voltPhoneSurfaces.css shows them): the top bar's back button, Appearance's theme row. */
+.volt-settings .volt-settings-phone-only {
+	display: none;
+}
+
 .volt-settings-content-scroll {
 	flex: 1;
 	min-width: 0;

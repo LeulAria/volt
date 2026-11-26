@@ -276,3 +276,386 @@
 .monaco-workbench.web.volt-web-phone .volt-agent-composer {
 	padding: 8px 14px max(8px, env(safe-area-inset-bottom));
 }
+
+/* The workbench already keeps clear of the home indicator (voltWebPhone.ts): no second gap under the composer. */
+.monaco-workbench.web.volt-web-phone.volt-phone-insets .volt-agent-composer {
+	padding-bottom: 8px;
+}
+
+/*
+ * Phones (voltWebPhone.ts): a bottom bar switches between the chat and its tools, as a phone app's
+ * tab bar does. It sits under the workbench (the layout leaves it the room) and over the home
+ * indicator, and steps aside while the keyboard is up.
+ */
+.volt-phone-safe-area-probe {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 0;
+	height: 0;
+	visibility: hidden;
+	pointer-events: none;
+	padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
+.monaco-workbench .volt-phone-nav {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 30;
+	box-sizing: border-box;
+	display: flex;
+	align-items: stretch;
+	height: calc(var(--volt-phone-nav-height, 52px) + var(--volt-phone-safe-bottom, 0px));
+	padding: 0 var(--volt-phone-safe-right, 0px) var(--volt-phone-safe-bottom, 0px) var(--volt-phone-safe-left, 0px);
+	background: var(--volt-agent-window-bg-base, var(--vscode-sideBar-background));
+	border-top: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.18)));
+	-webkit-user-select: none;
+	user-select: none;
+	touch-action: manipulation;
+}
+
+.monaco-workbench .volt-phone-nav.hidden {
+	display: none;
+}
+
+.monaco-workbench .volt-phone-nav-item {
+	flex: 1 1 0;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	font: inherit;
+	font-size: 10.5px;
+	font-weight: 500;
+	line-height: 1;
+	letter-spacing: 0.01em;
+	cursor: pointer;
+	-webkit-tap-highlight-color: transparent;
+}
+
+.monaco-workbench .volt-phone-nav-item.selected {
+	color: var(--vscode-foreground);
+	font-weight: 600;
+}
+
+/* A tap leaves no box behind (the workbench outlines a focused button); a keyboard still gets one. */
+.monaco-workbench .volt-phone-nav-item:focus,
+.monaco-workbench .volt-phone-nav-item:focus:not(:focus-visible) {
+	outline: none;
+}
+
+.monaco-workbench .volt-phone-nav-item:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -3px;
+}
+
+.monaco-workbench .volt-phone-nav-item:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.monaco-workbench .volt-phone-nav-icon {
+	position: relative;
+	display: flex;
+	width: 22px;
+	height: 22px;
+	transition: transform 120ms ease-out;
+}
+
+/* Pressed: the icon gives a little under the finger. */
+.monaco-workbench .volt-phone-nav-item:active:not(:disabled) .volt-phone-nav-icon {
+	transform: scale(0.92);
+}
+
+.monaco-workbench .volt-phone-nav-icon > svg {
+	width: 22px;
+	height: 22px;
+}
+
+/* On Agent: another chat waits for an answer or an approval (the list's "needs input" colour). */
+.monaco-workbench .volt-phone-nav-dot {
+	position: absolute;
+	top: -2px;
+	right: -3px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 50%, var(--vscode-charts-purple, #b180d7));
+	box-shadow: 0 0 0 2px var(--volt-agent-window-bg-base, var(--vscode-sideBar-background));
+}
+
+.monaco-workbench .volt-phone-nav-dot.hidden {
+	display: none;
+}
+
+.monaco-workbench .volt-phone-nav-count {
+	position: absolute;
+	top: -4px;
+	right: -9px;
+	min-width: 14px;
+	height: 14px;
+	padding: 0 3px;
+	box-sizing: border-box;
+	border-radius: 7px;
+	background: var(--vscode-badge-background);
+	color: var(--vscode-badge-foreground);
+	font-size: 9px;
+	font-weight: 600;
+	line-height: 14px;
+	text-align: center;
+}
+
+.monaco-workbench .volt-phone-nav-count.hidden {
+	display: none;
+}
+
+.monaco-workbench .volt-phone-nav-label {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/*
+ * A phone on its side: the same items stand in a rail along the left edge, icons only, past the
+ * notch (VS Code's activity bar). The layout keeps the workbench right of it.
+ */
+.monaco-workbench .volt-phone-nav.rail {
+	top: 0;
+	right: auto;
+	flex-direction: column;
+	justify-content: flex-start;
+	width: calc(var(--volt-phone-rail-width, 48px) + var(--volt-phone-safe-left, 0px));
+	height: auto;
+	padding: var(--volt-phone-safe-top, 0px) 0 var(--volt-phone-safe-bottom, 0px) var(--volt-phone-safe-left, 0px);
+	border-top: 0;
+	border-right: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.18)));
+}
+
+.monaco-workbench .volt-phone-nav.rail .volt-phone-nav-item {
+	flex: 0 0 48px;
+	width: 100%;
+}
+
+.monaco-workbench .volt-phone-nav.rail .volt-phone-nav-label {
+	display: none;
+}
+
+/* With the bar, the title bar's Files and right panel buttons have their place in it. */
+.monaco-workbench.web.volt-phone-nav-shown.volt-layout-agent .volt-agent-titlebar-toggles > .volt-agent-files-panel-toggle,
+.monaco-workbench.web.volt-phone-nav-shown.volt-layout-agent .volt-agent-titlebar-toggles > .volt-agent-right-panel-toggle,
+.monaco-workbench.web.volt-phone-nav-shown .volt-agent-tools-area.over-chat .volt-agent-tools-fullscreen:not(.volt-agent-tools-empty-add) {
+	display: none !important;
+}
+
+/*
+ * Phones: the agents list is a page of its own, as wide as the window (layout.ts lays it out so),
+ * from below the notch down to the bottom bar, which stays in reach. Without the finger on it, it
+ * slides in (voltWebTouch.ts) and away (layout.ts, a copy of it: the part leaves the page at once).
+ */
+.monaco-workbench.web.volt-web-phone.volt-layout-agent.volt-agent-drawer-mode.volt-agent-drawer-open:not(.noauxiliarybar):not(.volt-agent-left-collapsed) .monaco-grid-view .split-view-view.volt-grid-auxiliarybar {
+	top: var(--volt-phone-inset-top, 0px) !important;
+	left: var(--volt-phone-inset-left, 0px) !important;
+	bottom: var(--volt-phone-inset-bottom, 0px) !important;
+	width: calc(100% - var(--volt-phone-inset-left, 0px) - var(--volt-phone-inset-right, 0px)) !important;
+	height: auto !important;
+	border-radius: 0;
+}
+
+/*
+ * The list is no column of the grid on a phone, so the sash at the chat's left edge resizes nothing:
+ * it would take the finger that pulls the list in (and open it at no width).
+ */
+.monaco-workbench.web.volt-agent-drawer-mode:is(.volt-web-phone, .volt-phone-rail) .split-view-view.volt-grid-has-auxiliarybar > .monaco-grid-branch-node > .monaco-split-view2 > .sash-container > .monaco-sash.vertical {
+	pointer-events: none;
+}
+
+/* The scrim dims the chat only: the bottom bar stays live under an open list. */
+.monaco-workbench.web.volt-web-phone > .volt-agent-drawer-scrim {
+	top: var(--volt-phone-inset-top, 0px);
+	right: var(--volt-phone-inset-right, 0px);
+	bottom: var(--volt-phone-inset-bottom, 0px);
+	left: var(--volt-phone-inset-left, 0px);
+}
+
+.monaco-workbench.web.volt-agent-drawer-dragging .split-view-view.volt-grid-auxiliarybar {
+	will-change: transform;
+}
+
+.volt-agent-drawer-ghost {
+	position: fixed;
+	z-index: 100;
+	overflow: hidden;
+	pointer-events: none;
+	background: var(--vscode-voltAgent-sidebarBackground, var(--volt-agent-sidebar-bg));
+	box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35);
+	animation: volt-agent-drawer-slide-away 240ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+.monaco-workbench .volt-agent-drawer-ghost > .part.auxiliarybar {
+	display: block !important;
+	width: 100%;
+	height: 100%;
+}
+
+@keyframes volt-agent-drawer-slide-away {
+	to { transform: translate3d(-100%, 0, 0); }
+}
+
+.monaco-workbench:not(.enable-motion) > .volt-agent-drawer-ghost {
+	display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.volt-agent-drawer-ghost {
+		display: none;
+	}
+}
+
+/* The list's own title row lines up with the chat's title bar: its toggle where the chat's is, a finger's size. */
+.monaco-workbench.web.volt-web-phone.volt-layout-agent .part.auxiliarybar > .volt-primary-sidebar-toggle {
+	top: calc((var(--volt-agent-titlebar-height, 35px) - 32px) / 2);
+	left: 3px;
+	width: 32px;
+	height: 32px;
+	padding: 8px;
+}
+
+/* Back and Forward are the chat's (its "…" menu), not the list's. */
+.monaco-workbench.web.volt-web-phone.volt-layout-agent .part.auxiliarybar > .volt-agent-nav {
+	display: none !important;
+}
+
+/*
+ * The list's rows and controls on a phone (agentHomePane.ts sizes the rows for a thumb and sets
+ * `phone`): the title and the second line read at a phone's sizes, status always shows, and the
+ * buttons a pointer finds on hover come from a long press (the row's menu) instead.
+ */
+.monaco-workbench.web .volt-agent-home.phone > .volt-agent-home-nav {
+	padding-bottom: 8px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-nav-bar {
+	height: 44px;
+	gap: 2px;
+	padding: 0 6px 0 12px;
+}
+
+/* Search: a field-like row, the biggest thing to hit at the top. */
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-nav-row {
+	height: 38px;
+	margin-right: 4px;
+	padding-left: 10px;
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-nav-row > .volt-agent-home-row {
+	font-size: 15px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-nav-action {
+	width: 40px;
+	height: 40px;
+	border-radius: 10px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-home.phone .volt-agent-home-nav-action .volt-agent-svg-icon,
+.monaco-workbench.volt-layout-agent .volt-agent-home.phone .volt-agent-home-nav-action .volt-agent-svg-icon svg {
+	width: 20px;
+	height: 20px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-row.is-session {
+	padding-right: 16px;
+	font-size: 15px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-row.is-session > .name {
+	font-size: 15px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-row.is-session.two-line {
+	row-gap: 4px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-row.is-session.two-line > :is(.icon, .name, .meta, .status-badge) {
+	height: 20px;
+	line-height: 20px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-row.is-session > .meta {
+	font-size: 12.5px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-row.is-session > .status-badge {
+	height: 20px;
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-row.is-session.two-line > .sub {
+	gap: 8px;
+	height: 18px;
+	font-size: 13px;
+	line-height: 18px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-row.is-session.two-line > .sub .codicon {
+	font-size: 12px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-row.is-session.two-line > .sub > .sub-branch {
+	gap: 4px;
+	max-width: 80%;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .monaco-list-row .volt-agent-home-row.is-session > .actions {
+	display: none !important;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .monaco-list-row .volt-agent-home-row.is-session > :is(.status-badge, .meta, .line-pr, .unread-dot) {
+	visibility: visible;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .monaco-list-row .volt-agent-home-row.is-session > .name {
+	-webkit-mask-image: none;
+	mask-image: none;
+}
+
+/* Settings, Usage, Pull Requests and the rest: a row of finger-sized buttons over the bottom bar. */
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-footer {
+	justify-content: space-between;
+	height: 52px;
+	padding: 0 8px;
+	border-top: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.18)));
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-footer .volt-agent-home-settings {
+	width: 44px;
+	height: 44px;
+	border-radius: 10px;
+}
+
+.monaco-workbench.volt-layout-agent .volt-agent-home.phone .volt-agent-home-footer .volt-agent-home-settings svg,
+.monaco-workbench.volt-layout-agent .volt-agent-home.phone .volt-agent-home-footer .volt-agent-home-settings :is(.volt-agent-svg-icon, .volt-usage-icon) {
+	width: 18px;
+	height: 18px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone .volt-agent-home-footer .volt-agent-home-settings .codicon {
+	font-size: 17px;
+}
+
+.monaco-workbench.web .volt-agent-home.phone :is(.volt-agent-home-nav-action, .volt-agent-home-settings):active {
+	background: var(--vscode-toolbar-activeBackground, color-mix(in srgb, var(--vscode-foreground) 16%, transparent));
+}

@@ -12,6 +12,11 @@
 import './media/voltWorkbenchWeb.css';
 import './voltWebFolders.js';
 import './voltWebTouch.js';
+import './voltPhoneSheets.js';
+import './voltPhoneKeys.js';
+import './voltWebFoldable.js';
+import './voltPhoneSurfaces.js';
+import { voltShellSignedOut } from './voltWebPhone.js';
 import { WebSpeechService } from './voltWebSpeech.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Event } from '../../../../../base/common/event.js';
@@ -406,7 +411,10 @@ registerAction2(class extends Action2 {
 	}
 	override async run(): Promise<void> {
 		await fetch('/api/workbench/session', { method: 'DELETE', credentials: 'same-origin' }).catch(() => undefined);
-		mainWindow.location.assign('/');
+		// In the Volt phone app the app's own list of computers takes over (forget this one, pair another).
+		if (!voltShellSignedOut()) {
+			mainWindow.location.assign('/');
+		}
 	}
 });
 

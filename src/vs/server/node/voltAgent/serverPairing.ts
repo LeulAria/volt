@@ -195,7 +195,8 @@ export class ServerPairing extends Disposable {
 			serverVersion: ctx.serverVersion,
 			protocol: AGENT_SERVER_PROTOCOL_VERSION,
 			network: ctx.network,
-			capabilities: { pairing: true, workbench: !!ctx.workbench },
+			// `shellSignIn`: `GET /api/workbench/session` takes the device token as a bearer and redirects into the workbench.
+			capabilities: { pairing: true, workbench: !!ctx.workbench, shellSignIn: true },
 		};
 	}
 

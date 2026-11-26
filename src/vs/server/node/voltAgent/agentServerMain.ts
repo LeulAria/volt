@@ -131,7 +131,8 @@ import { ServerAgentRunGroupService } from './serverRunGroups.js';
 import { IPairingHttpContext, isLoopbackAddress, machineLabel, ServerPairing } from './serverPairing.js';
 import { handleSignIn } from './serverSignIn.js';
 import { ServerTunnels } from './serverTunnels.js';
-import { ServerWorkbench } from './serverWorkbench.js';
+import { ServerWorkbench, WORKBENCH_PREWARM_FILES } from './serverWorkbench.js';
+import { ServerStaticCache } from './serverStaticCache.js';
 import { ServerRender } from './serverRender.js';
 import { VOLT_SOURCE_CONTROL_HOSTS_SETTING } from '../../../platform/voltPullRequests/common/voltPrHosts.js';
 import { IVoltPullRequestService } from '../../../platform/voltPullRequests/common/voltPullRequests.js';
@@ -141,6 +142,8 @@ import { VoltPullRequestService } from '../../../platform/voltPullRequests/node/
 const IMPORTED_STORAGE_PREFIXES = ['volt.runtime.', 'volt.agent.', 'volt.pullRequests.', 'volt.access.'];
 const IMPORT_DONE_KEY = 'volt.agentServer.importedDesktopStorage';
 const SERVER_VERSION = '1';
+/** How long after listening the workbench's big files start compressing for the disk cache. */
+const STATIC_PREWARM_DELAY_MS = 5000;
 
 interface IServerArgs {
 	readonly userDataDir: string;
@@ -467,6 +470,9 @@ export async function main(argv: string[]): Promise<void> {
 	const appRoot = FileAccess.asFileUri('').fsPath.replace(/[\\/]out[\\/]?$/, '');
 	// Usage and limits: the browser workbench's Usage page, and other machines reading this one's (`/api/usage`).
 	const usage = new VoltUsageService(resolveEnv, logService, join(args.userDataDir, 'volt-usage'));
+	// A release's big workbench files at brotli's best, made once and kept across starts. Never in a
+	// dev checkout: its files change all the time and are not cached by the browser either.
+	const staticCache = process.env['VSCODE_DEV'] ? undefined : disposables.add(new ServerStaticCache(join(paths.dir, 'static-cache'), logService));
 	// Volt's workbench for browsers (VS Code's server, started with the first page load).
 	const workbench = disposables.add(instantiationService.createInstance(ServerWorkbench, {
 		userDataDir: args.userDataDir,
@@ -477,7 +483,7 @@ export async function main(argv: string[]): Promise<void> {
 		resolveEnv,
 		git: instantiationService.invokeFunction(accessor => accessor.get(IVoltGitService)),
 		codeIndex,
-		sendFile,
+		sendFile: (req, res, file, immutable) => sendFile(req, res, file, immutable, immutable ? staticCache : undefined),
 		usage,
 		pullRequests,
 	}));
@@ -568,6 +574,11 @@ export async function main(argv: string[]): Promise<void> {
 	};
 	await writeAgentServerRuntime(paths, info);
 	logService.info(`[volt agent server] listening on http://${args.host}:${port} (epoch ${epoch})`);
+	if (staticCache && workbench.available) {
+		// Once startup has settled, so a phone's first page gets the small copies (about 40 s of one threadpool thread, once per update).
+		const prewarm = setTimeout(() => void staticCache.warm(WORKBENCH_PREWARM_FILES), STATIC_PREWARM_DELAY_MS);
+		disposables.add(toDisposable(() => clearTimeout(prewarm)));
+	}
 
 	//#endregion
 
@@ -817,8 +828,9 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<string> {
 /**
  * Sends a file with an ETag, compressed when the browser takes it, and cached for good when
  * `immutable` (its name changes with its content). Resolves false when there is no such file.
+ * A big file's brotli copy comes from `staticCache` once that has made it (serverStaticCache.ts).
  */
-async function sendFile(req: http.IncomingMessage, res: http.ServerResponse, served: string, immutable: boolean): Promise<boolean> {
+async function sendFile(req: http.IncomingMessage, res: http.ServerResponse, served: string, immutable: boolean, staticCache?: ServerStaticCache): Promise<boolean> {
 	try {
 		const stat = await fs.stat(served);
 		if (!stat.isFile()) {
@@ -838,7 +850,12 @@ async function sendFile(req: http.IncomingMessage, res: http.ServerResponse, ser
 		}
 		let data: Buffer | undefined;
 		const encoding = COMPRESSIBLE.has(extname(served)) && stat.size > 1024 ? preferredEncoding(req.headers['accept-encoding']) : undefined;
-		if (encoding) {
+		// The stored best-quality copy, to every client (loopback too): it costs nothing to send.
+		const stored = encoding === 'br' ? await staticCache?.get(served, stat.size, stat.mtimeMs) : undefined;
+		if (stored) {
+			data = stored;
+			headers['Content-Encoding'] = 'br';
+		} else if (encoding) {
 			const copy = compressedCopy(served, stat.mtimeMs, encoding);
 			// Over loopback compressing only costs time (seconds for the workbench's bundle on a fresh
 			// server): this computer's browser gets the file as it is until the copy is made.

@@ -17,6 +17,7 @@ import { IClipboardService } from '../../../../../platform/clipboard/common/clip
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { IKeybindingService } from '../../../../../platform/keybinding/common/keybinding.js';
+import { IUriIdentityService } from '../../../../../platform/uriIdentity/common/uriIdentity.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { getLayoutMode, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
@@ -36,6 +37,7 @@ import { IAgentPageCrumb } from '../customize/agentMarketplaceView.js';
 import { AgentEditorInput, NEW_AGENT_COMMAND_ID } from '../editor/agentEditorInput.js';
 import { onDidChangeShownAgentChat, shownAgentChat } from '../editor/agentShownChat.js';
 import { localEnvironmentLabel } from '../home/agentHomeFilter.js';
+import { findAgentScmRepository } from '../review/agentScmRepository.js';
 import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { getComputerName, onDidChangeComputerName } from '../usage/agentComputerName.js';
 import { AgentUsageEditorInput } from '../usage/agentUsageEditor.js';
@@ -393,6 +395,7 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		@ISCMViewService private readonly scmViewService: ISCMViewService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
+		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
 	) {
 		super();
 		this.machineLabel = machineDisplayName(getComputerName()) ?? usageMachineName(headerProcessEnv(), localEnvironmentLabel());
@@ -647,7 +650,8 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		if (!folder) {
 			return undefined;
 		}
-		const repository = this.scmService.getRepository(folder);
+		// By path: a chat's stored folder is a `file:` path, the browser's Git roots `vscode-remote:` URIs.
+		const repository = findAgentScmRepository(this.scmService, this.uriIdentityService, folder);
 		const ref = repository?.provider.historyProvider.get()?.historyItemRef.get();
 		return headerBranchName(ref?.name);
 	}

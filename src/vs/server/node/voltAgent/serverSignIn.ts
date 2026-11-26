@@ -6,7 +6,7 @@
 import { randomBytes } from 'crypto';
 import type * as http from 'http';
 import { VOLT_LOCAL_SESSION_PATH, VOLT_PAIR_PATH } from '../../../platform/voltAgentServer/common/protocol.js';
-import { WORKBENCH_BASE_PATH, WORKBENCH_SESSION_PATH } from './serverWorkbench.js';
+import { safeNext, WORKBENCH_SESSION_PATH } from './serverWorkbench.js';
 
 /** The pages a browser lands on before the workbench: the server's root and pairing links (`/pair#code=…`). */
 const SIGN_IN_PATHS = new Set(['/', '/pair', '/index.html']);
@@ -56,11 +56,6 @@ export function handleSignIn(req: http.IncomingMessage, res: http.ServerResponse
 	});
 	res.end(req.method === 'HEAD' ? undefined : page_(options, next, nonce));
 	return true;
-}
-
-/** Where to go once signed in: a workbench path the page was sent from, or the workbench. */
-function safeNext(next: string | null): string {
-	return next && new RegExp(`^${WORKBENCH_BASE_PATH}(/|$|\\?)`).test(next) && !next.includes('//') ? next : `${WORKBENCH_BASE_PATH}/`;
 }
 
 function escapeHtml(text: string): string {

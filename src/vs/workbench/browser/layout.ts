@@ -50,6 +50,7 @@ import { ITelemetryService } from '../../platform/telemetry/common/telemetry.js'
 import { IAuxiliaryWindowService } from '../services/auxiliaryWindow/browser/auxiliaryWindowService.js';
 import { IVoltWindowScopeService } from '../services/voltWindowScope/common/voltWindowScope.js';
 import { CodeWindow, mainWindow } from '../../base/browser/window.js';
+import { getWorkbenchLayoutInsets, onDidChangeWorkbenchLayoutInsets } from './layoutInsets.js';
 
 //#region Layout Implementation
 
@@ -117,6 +118,11 @@ interface IInitialEditorsState {
 
 	readonly layout?: EditorGroupLayout;
 }
+
+/** A window this narrow is a phone's: the agent drawer fills it (the same width as voltWebPhone.ts's bottom bar). */
+const AGENT_PHONE_DRAWER_QUERY = '(max-width: 600px)';
+/** Longest the drawer's slide away runs (voltWorkbenchWeb.css), with room to spare. */
+const AGENT_DRAWER_SLIDE_MAX_MS = 400;
 
 const COMMAND_CENTER_SETTINGS = [
 	'workbench.navigationControl.enabled',
@@ -679,8 +685,27 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		}
 	}
 
+	/**
+	 * The page's area less the room kept free along its edges (a phone's safe areas and bottom bar,
+	 * see layoutInsets.ts), with the workbench moved in by the top and left ones.
+	 */
+	private insetMainContainerArea(area: IDimension): Dimension {
+		const insets = getWorkbenchLayoutInsets();
+		const style = this.mainContainer.style;
+		const top = insets.top ? `${insets.top}px` : '';
+		const left = insets.left ? `${insets.left}px` : '';
+		if (style.top !== top) {
+			style.top = top;
+		}
+		if (style.left !== left) {
+			style.left = left;
+		}
+		return new Dimension(Math.max(0, area.width - insets.left - insets.right), Math.max(0, area.height - insets.top - insets.bottom));
+	}
+
 	private initLayoutState(lifecycleService: ILifecycleService, fileService: IFileService): void {
-		this._mainContainerDimension = getClientArea(this.parent, this.contextService.getWorkbenchState() === WorkbenchState.EMPTY ? DEFAULT_EMPTY_WINDOW_DIMENSIONS : DEFAULT_WORKSPACE_WINDOW_DIMENSIONS); // running with fallback to ensure no error is thrown (https://github.com/microsoft/vscode/issues/240242)
+		this._mainContainerDimension = this.insetMainContainerArea(getClientArea(this.parent, this.contextService.getWorkbenchState() === WorkbenchState.EMPTY ? DEFAULT_EMPTY_WINDOW_DIMENSIONS : DEFAULT_WORKSPACE_WINDOW_DIMENSIONS)); // running with fallback to ensure no error is thrown (https://github.com/microsoft/vscode/issues/240242)
+		this._register(onDidChangeWorkbenchLayoutInsets(() => this.layout()));
 
 		this.stateModel = new LayoutStateModel(this.storageService, this.configurationService, this.contextService, this.environmentService);
 		this.stateModel.load({
@@ -1783,11 +1808,11 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 		if (!this.disposed) {
 			this.syncPrimedAgentTitlebar();
 			this.syncAgentBannerInset();
-			this._mainContainerDimension = getClientArea(this.state.runtime.mainWindowFullscreen ?
+			this._mainContainerDimension = this.insetMainContainerArea(getClientArea(this.state.runtime.mainWindowFullscreen ?
 				mainWindow.document.body : 	// in fullscreen mode, make sure to use <body> element because
 				this.parent,				// in that case the workbench will span the entire site
 				this.contextService.getWorkbenchState() === WorkbenchState.EMPTY ? DEFAULT_EMPTY_WINDOW_DIMENSIONS : DEFAULT_WORKSPACE_WINDOW_DIMENSIONS // running with fallback to ensure no error is thrown (https://github.com/microsoft/vscode/issues/240242)
-			);
+			));
 			this.logService.trace(`Layout#layout, height: ${this._mainContainerDimension.height}, width: ${this._mainContainerDimension.width}`);
 
 			this.updateAgentDrawerMode();
@@ -1796,6 +1821,10 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 
 			// Layout the grid widget
 			this.workbenchGrid.layout(this._mainContainerDimension.width, this._mainContainerDimension.height);
+			// The open drawer is outside the grid; on a phone it is as big as the window, which may have turned.
+			if (this.agentDrawerMode && this.mainContainer.classList.contains('volt-agent-drawer-open') && this.isPhoneAgentDrawer()) {
+				this.layoutAgentDrawer();
+			}
 			this.stampAgentGridWrappers();
 			if (this.agentColumnRestore !== undefined) {
 				const width = this.agentColumnRestore;
@@ -2356,6 +2385,10 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 
 		this.stateModel.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_HIDDEN, hidden);
 
+		if (hidden && this.agentDrawerMode) {
+			this.slideAwayAgentDrawer();
+		}
+
 		// Adjust CSS
 		if (hidden) {
 			this.mainContainer.classList.add(LayoutClasses.AUXILIARYBAR_HIDDEN);
@@ -2398,7 +2431,8 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	private updateAgentDrawerMode(): boolean {
 		const root = this.mainContainer;
 		const agent = root.classList.contains('volt-layout-agent');
-		const toolsOpen = !!root.querySelector(':scope > .volt-agent-tools-area:not(.hidden):not(.floating)');
+		// Tools lying over the chat (a phone) take no column from it.
+		const toolsOpen = !!root.querySelector(':scope > .volt-agent-tools-area:not(.hidden):not(.floating):not(.over-chat)');
 		// The right-edge sidebar (Files / Source Control / Pull Requests) inside the tools area
 		// takes a column of its own beside the tabs; count it so the list folds away when it opens in a
 		// tight window. With no tabs it fills the tools area and is already counted as the tools.
@@ -2454,13 +2488,51 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 			}));
 			// Picking a chat, or a folder, is the way out.
 			this.agentDrawerOpenStore.add(this.mainPartEditorService.onDidActiveEditorChange(close));
-			const height = this._mainContainerDimension.height - Math.max(0, this.getSize(Parts.TITLEBAR_PART).height);
-			this.auxiliaryBarPartView.layout(AuxiliaryBarPart.AGENT_DEFAULT_WIDTH, Math.max(0, height), 0, 0);
+			this.layoutAgentDrawer();
 		} else {
 			this.agentDrawerScrim?.remove();
 			this.agentDrawerScrim = undefined;
 		}
 		this._onDidChangePartVisibility.fire();
+	}
+
+	/** On a phone the list is a page of its own, as wide as the window (voltWorkbenchWeb.css places it). */
+	private isPhoneAgentDrawer(): boolean {
+		return getWindow(this.mainContainer).matchMedia(AGENT_PHONE_DRAWER_QUERY).matches;
+	}
+
+	private layoutAgentDrawer(): void {
+		const width = this.isPhoneAgentDrawer() ? this._mainContainerDimension.width : AuxiliaryBarPart.AGENT_DEFAULT_WIDTH;
+		const height = this._mainContainerDimension.height - Math.max(0, this.getSize(Parts.TITLEBAR_PART).height);
+		this.auxiliaryBarPartView.layout(width, Math.max(0, height), 0, 0);
+	}
+
+	/**
+	 * Closing, a phone's list slides away to the left. The part takes its content off the page at once,
+	 * so a copy of it is what moves; a list a finger already moved away (voltWebTouch.ts) has none.
+	 */
+	private slideAwayAgentDrawer(): void {
+		const root = this.mainContainer;
+		const part = this.getContainer(mainWindow, Parts.AUXILIARYBAR_PART);
+		const view = part?.parentElement;
+		if (!part || !view || view.style.transform || !root.classList.contains('volt-agent-drawer-open') || !this.isPhoneAgentDrawer()) {
+			return;
+		}
+		const box = view.getBoundingClientRect();
+		const ghost = root.ownerDocument.createElement('div');
+		ghost.className = 'volt-agent-drawer-ghost';
+		ghost.setAttribute('aria-hidden', 'true');
+		ghost.inert = true;
+		ghost.style.top = `${box.top}px`;
+		ghost.style.left = `${box.left}px`;
+		ghost.style.width = `${box.width}px`;
+		ghost.style.height = `${box.height}px`;
+		ghost.appendChild(part.cloneNode(true));
+		root.appendChild(ghost);
+		const remove = () => ghost.remove();
+		ghost.addEventListener('animationend', remove, { once: true });
+		// No animation runs with reduced motion.
+		setTimeout(remove, AGENT_DRAWER_SLIDE_MAX_MS);
 	}
 
 	//#endregion

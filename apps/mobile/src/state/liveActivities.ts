@@ -4,9 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-	approvalsFor, catalogItem, historyOf, questionsFor, runtimeOf, sessionsOf, tasksOf, threadsOf, type VoltClient
-} from '@volt/client-core';
+import type { VoltClient } from '@volt/client-core/src/client';
+import { approvalsFor, catalogItem, historyOf, questionsFor, runtimeOf, sessionsOf, tasksOf, threadsOf } from '@volt/client-core/src/selectors';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { Platform } from 'react-native';
 import { chatView, type IAgentChatView, type IChatSources } from 'volt-mobile-widgets/src/agentState.ts';

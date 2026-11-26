@@ -19,6 +19,7 @@ import { IVoltStdioService } from '../../../../../platform/voltStdio/common/volt
 import { AgentWorktreeTarget, IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { ISCMRepository } from '../../../scm/common/scm.js';
+import { agentDiskPath } from '../../common/agentDiskPath.js';
 import { INIT_TIMEOUT_MS, runGit } from '../home/agentHomeWorkspaceActions.js';
 import { IVoltMenuHandle, IVoltMenuItem, IVoltMenuPrompt, IVoltSubmenu, showVoltMenu } from '../ui/menu/voltMenu.js';
 
@@ -76,7 +77,10 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 	const worktrees = accessor.get(IAgentWorktreeService);
 	const runtime = accessor.get(IAgentRuntimeService);
 	const { root, repository, worktree } = options;
-	const repoRoot = root?.scheme === 'file' ? root.fsPath : undefined;
+	// Volt's git takes the path on disk; in the browser the project is a `vscode-remote:` URI of it.
+	const repoRoot = agentDiskPath(root);
+	/** Where checkouts run: the disk path, else (a remote folder on the desktop) the folder's own path, as before. */
+	const checkoutRoot = repoRoot ?? root?.fsPath;
 	/** The checked-out branch, as of the last load. */
 	let head: string | undefined;
 
@@ -125,7 +129,7 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 	};
 
 	const pick = async (data: BranchPick): Promise<void> => {
-		if (!root) {
+		if (!root || !checkoutRoot) {
 			return;
 		}
 		try {
@@ -188,7 +192,7 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 				return;
 			}
 			if (data.kind === 'detached') {
-				await gitService.checkout({ repoRoot: root.fsPath, ref: data.ref, kind: 'detached' });
+				await gitService.checkout({ repoRoot: checkoutRoot, ref: data.ref, kind: 'detached' });
 				await options.onDidChange?.('checkout');
 				return;
 			}
@@ -196,12 +200,12 @@ export function showAgentBranchMenu(accessor: ServicesAccessor, options: IAgentB
 				return;
 			}
 			const local = data.ref === 'local' ? data.name : data.ref === 'remote' ? localName(data.name) : undefined;
-			const released = local ? await release(root.fsPath, local) : undefined;
+			const released = local ? await release(checkoutRoot, local) : undefined;
 			if (repository?.provider.rootUri && data.ref !== 'remote') {
 				// The git extension's checkout: same errors and dirty-tree handling as the SCM view.
 				await commandService.executeCommand('git.checkout', repository.provider.rootUri, data.ref === 'tag' ? `refs/tags/${data.name}` : data.name);
 			} else {
-				await gitService.checkout({ repoRoot: root.fsPath, ref: data.name, kind: data.ref });
+				await gitService.checkout({ repoRoot: checkoutRoot, ref: data.name, kind: data.ref });
 			}
 			await options.onDidChange?.('checkout');
 			released?.();

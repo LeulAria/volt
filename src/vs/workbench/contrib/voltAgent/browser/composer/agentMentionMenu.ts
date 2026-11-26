@@ -12,7 +12,7 @@ import { IListRenderer, IListVirtualDelegate } from '../../../../../base/browser
 import { List } from '../../../../../base/browser/ui/list/listWidget.js';
 import { RenderIndentGuides } from '../../../../../base/browser/ui/tree/abstractTree.js';
 import { AsyncDataTree } from '../../../../../base/browser/ui/tree/asyncDataTree.js';
-import { IAsyncDataSource, ITreeNode, ITreeRenderer, TreeMouseEventTarget } from '../../../../../base/browser/ui/tree/tree.js';
+import { IAsyncDataSource, ITreeMouseEvent, ITreeNode, ITreeRenderer, TreeMouseEventTarget } from '../../../../../base/browser/ui/tree/tree.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { IMatch } from '../../../../../base/common/filters.js';
 import { Disposable, DisposableStore, IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
@@ -371,12 +371,15 @@ class MentionMenuView extends Disposable {
 				this.list.setFocus([e.index]);
 			}
 		}));
-		this._register(this.list.onMouseClick(e => {
-			const row = e.index !== undefined ? this.rows[e.index] : undefined;
+		const pressRow = (index: number | undefined) => {
+			const row = index !== undefined ? this.rows[index] : undefined;
 			if (row && (row.kind === 'item' || row.kind === 'file')) {
 				row.run();
 			}
-		}));
+		};
+		this._register(this.list.onMouseClick(e => pressRow(e.index)));
+		// A finger: the list's touch gestures cancel the click a tap would make (touch.ts).
+		this._register(this.list.onTap(e => pressRow(e.index)));
 
 		this.treeHost = append(menu, $('.volt-agent-mention-tree'));
 		const rowElements = new WeakMap<HTMLElement, TreeElement>();
@@ -416,7 +419,7 @@ class MentionMenuView extends Disposable {
 				this.tree.setFocus([element]);
 			}
 		}));
-		this._register(this.tree.onMouseClick(e => {
+		const pressTreeRow = (e: ITreeMouseEvent<TreeElement | null>) => {
 			const element = e.element ?? undefined;
 			// The arrow opens and closes a folder (the tree handles that); the rest of a row picks it.
 			if (e.target === TreeMouseEventTarget.Twistie) {
@@ -427,7 +430,9 @@ class MentionMenuView extends Disposable {
 			} else if (element && (element.kind === 'item' || element.kind === 'file')) {
 				element.run();
 			}
-		}));
+		};
+		this._register(this.tree.onMouseClick(pressTreeRow));
+		this._register(this.tree.onTap(pressTreeRow));
 		this._register(this.tree.onDidChangeContentHeight(() => {
 			if (this.mode === 'tree') {
 				this.layoutTree();

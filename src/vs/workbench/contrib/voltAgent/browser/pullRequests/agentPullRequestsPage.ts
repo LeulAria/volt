@@ -39,6 +39,7 @@ import { IWorkbenchLayoutService } from '../../../../services/layout/browser/lay
 import { IVoltQueryCache, IVoltQueryHandle } from '../../../../services/voltRuntime/browser/queryCache.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { IVoltProjectsService, VoltProjectCommands } from '../../../voltProjects/common/projects.js';
+import { agentDiskPath } from '../../common/agentDiskPath.js';
 import { compilePrSearch, IPrSearch, IPrSearchHit, rankBySearch } from '../../common/agentPullRequestSearch.js';
 import { blockedReason, isOpenState, isReadyToMerge, prInvolvement } from '../../common/agentPullRequests.js';
 import { AGENT_HEADER_SEARCH_PATH } from '../chrome/agentTitlebarHeader.js';
@@ -493,9 +494,10 @@ export class AgentPullRequestsPage extends EditorPane {
 		const active = this.sessionContext.activeProject?.root;
 		const folders = [
 			input?.sessionId ? this.pullRequests.folderFor(input.sessionId) : undefined,
-			active?.scheme === 'file' ? active.fsPath : undefined,
-			...this.workspace.getWorkspace().folders.filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath),
-			...this.projects.list().filter(project => project.uri.scheme === 'file' && project.state.kind !== 'cloning').map(project => project.uri.fsPath),
+			// Paths on disk for the host's git and gh; in the browser these folders are `vscode-remote:` URIs.
+			agentDiskPath(active),
+			...this.workspace.getWorkspace().folders.map(folder => agentDiskPath(folder.uri)),
+			...this.projects.list().filter(project => project.state.kind !== 'cloning').map(project => agentDiskPath(project.uri)),
 			...this.pullRequests.linkedChats().map(sessionId => this.pullRequests.folderFor(sessionId)),
 		];
 		return [...new Set(folders.filter((folder): folder is string => !!folder))];

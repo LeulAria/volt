@@ -15,6 +15,7 @@ import { Registry } from '../../../../../platform/registry/common/platform.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AGENT_CHAT_MAX_WIDTH, AGENT_CHAT_MIN_WIDTH, AGENT_CHAT_WIDTH_SETTING } from '../../common/agentChatWidth.js';
+import { agentDiskPath } from '../../common/agentDiskPath.js';
 import {
 	AGENT_BADGE_SETTING,
 	AGENT_NOTIFY_INPUT_SETTING,
@@ -161,7 +162,7 @@ registerAction2(class ChangeProjectIconAction extends Action2 {
 		type Item = IQuickPickItem & { readonly project: typeof sessionContext.projects[number] };
 		const items: Item[] = sessionContext.projects.map(project => ({
 			label: project.displayName,
-			description: project.root.scheme === 'file' ? project.root.fsPath : project.root.toString(),
+			description: agentDiskPath(project.root) ?? project.root.toString(),
 			project,
 		}));
 		// The open project first.

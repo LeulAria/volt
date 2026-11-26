@@ -38,7 +38,11 @@ import type { SocketServer } from '../serverServices.js';
 
 /** Where the workbench lives on the agent server's port (`/` is the sign-in page, serverSignIn.ts). */
 export const WORKBENCH_BASE_PATH = '/code';
-/** `POST` with the device token as a bearer: the cookies that open the workbench. `DELETE` signs out. */
+/**
+ * With the device token as a bearer: `POST` (same origin, the sign-in page's fetch) answers the
+ * cookies that open the workbench; `GET ?next=<path>` (the phone app's WebView loading it with an
+ * `Authorization` header, so no token rides in a URL) sets them and redirects there. `DELETE` signs out.
+ */
 export const WORKBENCH_SESSION_PATH = '/api/workbench/session';
 
 const SESSION_COOKIE = 'volt-session';
@@ -48,8 +52,59 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 /** The checkout in dev, the app's Resources/app when packaged. */
 const APP_ROOT = dirname(FileAccess.asFileUri('').fsPath);
 
+/** The big files every workbench page loads (served as `<static>/<path>`), compressed ahead of the first page in a release. */
+export const WORKBENCH_PREWARM_FILES: readonly string[] = [
+	'out/vs/code/browser/workbench/workbench.js',
+	'out/vs/code/browser/workbench/workbench.css',
+	'out/nls.messages.js',
+	'out/vs/workbench/api/worker/extensionHostWorkerMain.js',
+].map(file => join(APP_ROOT, file));
+
 /** Settings that describe the desktop's window, not the workbench in a tab. */
 const DESKTOP_ONLY_SETTING_PREFIXES = ['window.', 'update.', 'volt.agentServer.', 'remote.', 'keyboard.dispatch'];
+
+/**
+ * A phone's workbench (the Volt app's WebView, or a phone browser): over the desktop's settings,
+ * no editor chrome that eats a narrow screen (minimap, gutters, rulers, sticky lines, code lenses),
+ * wrapped lines, no animations, and nothing that works in the background (extension updates, git
+ * fetches, tips, experiments) on a phone's battery and network.
+ */
+export const PHONE_CONFIGURATION_DEFAULTS: Readonly<Record<string, unknown>> = {
+	'editor.minimap.enabled': false,
+	'editor.stickyScroll.enabled': false,
+	'editor.glyphMargin': false,
+	'editor.folding': false,
+	'editor.lineDecorationsWidth': 6,
+	'editor.wordWrap': 'on',
+	'editor.scrollBeyondLastLine': false,
+	'editor.overviewRulerLanes': 0,
+	'editor.hideCursorInOverviewRuler': true,
+	'editor.smoothScrolling': false,
+	'editor.cursorSmoothCaretAnimation': 'off',
+	'editor.codeLens': false,
+	'editor.lightbulb.enabled': 'off',
+	'editor.fontSize': 13,
+	'breadcrumbs.enabled': false,
+	'workbench.list.smoothScrolling': false,
+	'workbench.tips.enabled': false,
+	'workbench.startupEditor': 'none',
+	'workbench.enableExperiments': false,
+	'extensions.autoCheckUpdates': false,
+	'extensions.autoUpdate': false,
+	'extensions.ignoreRecommendations': true,
+	'git.autofetch': false,
+	'files.autoSave': 'afterDelay',
+};
+
+/** The Volt app's WebView shell, an iPhone or iPod, or an Android phone (not a tablet: those say no `Mobile`). */
+export function isPhoneUserAgent(userAgent: string | undefined): boolean {
+	return !!userAgent && (/VoltShell\//.test(userAgent) || /iPhone|iPod/.test(userAgent) || /Android.+Mobile/.test(userAgent));
+}
+
+/** Where to go once signed in: a workbench path the page was sent from, or the workbench. */
+export function safeNext(next: string | null | undefined): string {
+	return next && new RegExp(`^${WORKBENCH_BASE_PATH}(/|$|\\?)`).test(next) && !next.includes('//') ? next : `${WORKBENCH_BASE_PATH}/`;
+}
 
 export interface IServerWorkbenchOptions {
 	/** The desktop's user data dir (holds `User/settings.json`). */
@@ -147,6 +202,10 @@ export class ServerWorkbench extends Disposable {
 			// cookie, and cookies ignore the port, so another Volt server on this host (whose page set
 			// one under /code) would lock this one out: it gets this server's token instead.
 			req.headers.cookie = withCookie(req.headers.cookie, CONNECTION_TOKEN_COOKIE, await this.ensureConnectionToken());
+			if (url.pathname === WORKBENCH_BASE_PATH || url.pathname === `${WORKBENCH_BASE_PATH}/`) {
+				// The page's configuration differs for phones (PHONE_CONFIGURATION_DEFAULTS); VS Code's page keeps headers set here.
+				res.setHeader('Vary', 'User-Agent');
+			}
 			await server.handleRequest(req, res);
 		} catch (err) {
 			this.logService.error('[volt agent server] the workbench server failed to start', err);
@@ -193,25 +252,30 @@ export class ServerWorkbench extends Disposable {
 			res.writeHead(204, { 'Set-Cookie': [`${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`, ...tokenCookies] }).end();
 			return;
 		}
-		if (req.method !== 'POST' || !sameOrigin(req)) {
+		// The `GET` is a navigation, which has no Origin to check, and another site's link cannot add
+		// an `Authorization` header to one: the token in it is the proof. The `POST` is a page's fetch.
+		const navigation = req.method === 'GET';
+		if (!navigation && (req.method !== 'POST' || !sameOrigin(req))) {
 			res.writeHead(405, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'method_not_allowed' }));
 			return;
 		}
 		const header = req.headers.authorization ?? '';
 		const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
 		if (!token || !this.options.authorize(token)) {
-			res.writeHead(401, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized', message: 'This device is not paired with Volt any more.' }));
+			res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ error: 'unauthorized', message: 'This device is not paired with Volt any more.' }));
 			return;
 		}
 		if (!this.available) {
-			res.writeHead(404, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'unavailable', message: 'This Volt build does not include the browser workbench.' }));
+			res.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ error: 'unavailable', message: 'This Volt build does not include the browser workbench.' }));
 			return;
 		}
-		res.writeHead(200, {
-			'Content-Type': 'application/json',
-			'Cache-Control': 'no-store',
-			'Set-Cookie': `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${secure}`,
-		}).end(JSON.stringify({ path: `${WORKBENCH_BASE_PATH}/` }));
+		const cookie = `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${COOKIE_MAX_AGE}${secure}`;
+		if (navigation) {
+			const next = safeNext(new URL(req.url ?? '/', 'http://localhost').searchParams.get('next'));
+			res.writeHead(302, { Location: next, 'Cache-Control': 'no-store', 'Set-Cookie': cookie }).end();
+		} else {
+			res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Set-Cookie': cookie }).end(JSON.stringify({ path: `${WORKBENCH_BASE_PATH}/` }));
+		}
 		// Warm the server while the browser follows the link.
 		void this.ensureServer().catch(() => undefined);
 	}
@@ -350,7 +414,7 @@ export class ServerWorkbench extends Disposable {
 	 * What the page starts with: the desktop's settings as defaults (theme, fonts, editor), the
 	 * agent layout, Volt's product identity, and which paired environment this is, with the device
 	 * token the page signed in with (its session cookie), so the agent UI connects without a
-	 * second sign-in.
+	 * second sign-in. A phone's page also gets {@link PHONE_CONFIGURATION_DEFAULTS} over the desktop's.
 	 */
 	private async webConfiguration(req: http.IncomingMessage): Promise<Record<string, unknown>> {
 		const settings = await this.desktopSettings();
@@ -366,6 +430,9 @@ export class ServerWorkbench extends Disposable {
 		defaults['workbench.colorTheme'] ??= 'Volt Dark';
 		// The desktop's title (a browser's adds the server's address).
 		defaults['window.title'] ??= '${dirty}${activeEditorShort}${separator}${rootName}${separator}${profileName}${separator}${appName}';
+		if (isPhoneUserAgent(req.headers['user-agent'])) {
+			Object.assign(defaults, PHONE_CONFIGURATION_DEFAULTS);
+		}
 		return {
 			// VS Code's connection token, given to signed-in pages only (a cookie would clash with other servers on this host).
 			connectionToken: await this.ensureConnectionToken(),

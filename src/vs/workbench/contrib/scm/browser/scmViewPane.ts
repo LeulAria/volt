@@ -108,6 +108,7 @@ import { observableConfigValue } from '../../../../platform/observable/common/pl
 import { AccessibilityVerbositySettingId } from '../../accessibility/browser/accessibilityConfiguration.js';
 import { IAccessibilityService } from '../../../../platform/accessibility/common/accessibility.js';
 import { AccessibilityCommandId } from '../../accessibility/common/accessibilityCommands.js';
+import { touchRowHeight } from '../../../../base/browser/coarsePointer.js';
 
 type TreeElement = ISCMRepository | ISCMInput | ISCMActionButton | ISCMResourceGroup | ISCMResource | IResourceNode<ISCMResource, ISCMResourceGroup>;
 
@@ -721,7 +722,8 @@ class ListDelegate implements IListVirtualDelegate<TreeElement> {
 		} else if (isSCMActionButton(element)) {
 			return ActionButtonRenderer.DEFAULT_HEIGHT + 8;
 		} else {
-			return 22;
+			// Volt: taller under a finger (a phone or tablet).
+			return touchRowHeight(22);
 		}
 	}
 

@@ -4,7 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable } from '../../../../../base/common/lifecycle.js';
-import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { WorkbenchPhase, registerWorkbenchContribution2 } from '../../../../common/contributions.js';
 import { getLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
@@ -13,6 +12,7 @@ import { IWorkbenchLayoutService } from '../../../../services/layout/browser/lay
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { IVoltSessionContextService } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { ITerminalService } from '../../../terminal/browser/terminal.js';
+import { agentDiskUri } from '../../common/agentDiskPath.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
 
 /**
@@ -47,7 +47,8 @@ class AgentTerminalCwdContribution extends Disposable {
 			folder = worktree ? URI.file(worktree) : this.sessionContext.rootFor(editor.sessionId);
 		}
 		folder ??= this.sessionContext.activeProject?.root;
-		return folder?.scheme === Schemas.file ? folder : undefined;
+		// A folder on the computer the shell starts on: in the browser, `vscode-remote:` folders are on the server its terminals run on.
+		return agentDiskUri(folder) ? folder : undefined;
 	}
 }
 

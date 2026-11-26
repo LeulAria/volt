@@ -1,0 +1,478 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/*
+ * Volt's secondary surfaces on a phone (voltPhoneSurfaces.ts): Settings, the tools' pages, the
+ * Changes view and the editors, laid out for one narrow column and a finger. Everything here is
+ * scoped to `.volt-web-phone` (voltWebTouch.ts), so the desktop and wide windows are untouched.
+ */
+
+/* ---------------------------------------------------------------------------------------------
+ * Volt Settings: one pane at a time, like a phone app's settings (voltSettingsEditor.ts
+ * phonePanes). The nav fills the screen; a page with a list (providers, a category's subsections,
+ * Volt's pages, the color themes) shows the list, then the page; the top bar's chevron steps back.
+ * ------------------------------------------------------------------------------------------- */
+
+.monaco-workbench.web.volt-web-phone .volt-settings .volt-settings-phone-only {
+	display: flex;
+}
+
+/* No sashes: nothing sits side by side to resize. */
+.monaco-workbench.web.volt-web-phone .volt-settings > .monaco-sash,
+.monaco-workbench.web.volt-web-phone .volt-settings-body > .monaco-sash,
+.monaco-workbench.web.volt-web-phone .volt-settings-inspect > .monaco-sash {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings:not(.volt-settings-phone-nav) > .volt-settings-sidebar,
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-phone-nav > .volt-settings-main {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-phone-nav > .volt-settings-sidebar {
+	flex: 1 1 auto;
+	width: auto;
+	padding-top: 8px;
+	border-right: 0;
+}
+
+/* The desktop's drag strip over the window's top edge would swallow taps on the top bar. */
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-overlay::before {
+	display: none;
+}
+
+/* The nav's rows and Back are a finger's height (settingsRowHeight, settingsNav.ts), in phone-sized type. */
+.monaco-workbench.web.volt-web-phone .volt-settings-back {
+	height: 44px;
+	font-size: 15px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-nav-row:not(.heading),
+.monaco-workbench.web.volt-web-phone .volt-settings-inspect-list .volt-settings-inspect-label,
+.monaco-workbench.web.volt-web-phone .volt-settings-theme-row:not(.header),
+.monaco-workbench.web.volt-web-phone .volt-settings-side .volt-pm-item:not(.group) {
+	font-size: 15px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-nav-row.heading,
+.monaco-workbench.web.volt-web-phone .volt-settings-theme-row.header {
+	font-size: 12px;
+}
+
+/* The footer's page buttons (Settings, Usage, Automations, Skills & Plugins) take a finger. */
+.monaco-workbench.web.volt-web-phone .volt-settings-footer {
+	height: 52px;
+	gap: 4px;
+	padding: 0 12px 8px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-footer .volt-agent-home-settings {
+	width: 40px;
+	height: 40px;
+}
+
+.monaco-workbench.monaco-workbench.web.volt-web-phone .volt-settings-footer .volt-agent-home-settings .codicon {
+	font-size: 18px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-search .monaco-inputbox {
+	height: 36px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-search .monaco-inputbox input {
+	font-size: 16px;
+}
+
+/* The top bar: a back chevron and where the page is ("Usage"), without the "Settings /" root. */
+.monaco-workbench.web.volt-web-phone .volt-settings-topbar {
+	height: 44px;
+	padding: 0 12px 0 4px;
+	gap: 2px;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-topbar > .volt-settings-crumb.root,
+.monaco-workbench.web.volt-web-phone .volt-settings-topbar > .volt-settings-crumb-sep {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-phone-back {
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	width: 40px;
+	height: 40px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-phone-back:active {
+	background: var(--volt-settings-hover);
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-phone-back .codicon {
+	font-size: 20px;
+}
+
+/* The list: it takes the whole width, and the page waits behind it. */
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-phone-list .volt-settings-side,
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-phone-list .volt-settings-inspect,
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-phone-list .volt-settings-inspect-list-pane {
+	flex: 1 1 auto;
+	width: auto !important;
+	border-right: 0;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-phone-list .volt-settings-content-scroll,
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-phone-list .volt-settings-inspect-detail-host {
+	display: none;
+}
+
+/* The page: the list steps aside. */
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-phone-page .volt-settings-side,
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-phone-page .volt-settings-inspect-list-pane,
+.monaco-workbench.web.volt-web-phone .volt-settings.volt-settings-phone-page.volt-settings-volt-page .volt-settings-inspect {
+	display: none;
+}
+
+/* Pages read in one column with the phone's gutters. */
+.monaco-workbench.web.volt-web-phone .volt-settings-content-inner {
+	padding: 4px 16px 48px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-inspect-detail {
+	padding: 12px 16px 48px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-settings-row,
+.monaco-workbench.web.volt-web-phone .volt-settings-card,
+.monaco-workbench.web.volt-web-phone .volt-settings-mode {
+	padding: 12px 14px;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Automations (the tool's tab and Settings' page): the title over its buttons, the view tabs on
+ * one row with search under them, a table of what fits, and calendars sized for 7 narrow days.
+ * ------------------------------------------------------------------------------------------- */
+
+/* The list page has nothing on the bar; the detail page's back arrow keeps it. */
+.monaco-workbench.web.volt-web-phone .volt-automations-bar:empty {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-automations-bar {
+	height: 48px;
+	padding: 0 8px;
+	gap: 8px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-page {
+	padding: 16px 16px 64px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-page.detail {
+	padding-top: 8px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-list-head {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 14px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-head-actions {
+	display: flex;
+	gap: 8px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-head-actions > * {
+	flex: 1 1 0;
+	justify-content: center;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-primary,
+.monaco-workbench.web.volt-web-phone .volt-auto-outline-button,
+.monaco-workbench.web.volt-web-phone .volt-auto-save {
+	height: 36px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-outline-button.small,
+.monaco-workbench.web.volt-web-phone .volt-auto-small-button {
+	height: 32px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-icon-button {
+	width: 36px;
+	height: 36px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-stats {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+}
+
+/* List / Day / Week / Month on one row; All Runs and search share the next. */
+.monaco-workbench.web.volt-web-phone .volt-auto-tabs-row {
+	flex-wrap: wrap;
+	row-gap: 10px;
+	margin-top: 20px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-tabs {
+	flex: 1 0 100%;
+	flex-wrap: nowrap;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-tab {
+	flex: 1 1 0;
+	height: 36px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-tabs-row .volt-auto-spacer {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-all-runs {
+	min-height: 36px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-search,
+.monaco-workbench.web.volt-web-phone .volt-auto-run-search {
+	flex: 1 1 auto;
+	width: auto;
+	min-width: 0;
+	height: 36px;
+	/* 16px keeps iOS from zooming the page when the field takes focus. */
+	font-size: 16px;
+}
+
+/* The table keeps Name, Next run and Status; Created by and Tools are in the automation itself. */
+.monaco-workbench.web.volt-web-phone .volt-auto-table .volt-auto-row {
+	grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 76px 36px;
+	min-height: 48px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-table .volt-auto-row > .cell:nth-child(3),
+.monaco-workbench.web.volt-web-phone .volt-auto-table .volt-auto-row > .cell:nth-child(5) {
+	display: none;
+}
+
+/* Run history: what ran (the trigger, or the automation in All Runs), when, and how it went. The
+ * header's cells have no names, so columns go by place: Trigger, Triggered, Tools, Status,
+ * Duration; All Runs puts Automation first. */
+.monaco-workbench.web.volt-web-phone .volt-auto-runs .volt-auto-row,
+.monaco-workbench.web.volt-web-phone .volt-auto-runs.all .volt-auto-row {
+	grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 84px 36px;
+	min-height: 48px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-runs:not(.all) .volt-auto-row > .cell:nth-child(3),
+.monaco-workbench.web.volt-web-phone .volt-auto-runs:not(.all) .volt-auto-row > .cell:nth-child(5),
+.monaco-workbench.web.volt-web-phone .volt-auto-runs.all .volt-auto-row > .cell:nth-child(2),
+.monaco-workbench.web.volt-web-phone .volt-auto-runs.all .volt-auto-row > .cell:nth-child(4),
+.monaco-workbench.web.volt-web-phone .volt-auto-runs.all .volt-auto-row > .cell:nth-child(6) {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-builtins,
+.monaco-workbench.web.volt-web-phone .volt-auto-template-grid {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-builtin {
+	min-height: 52px;
+}
+
+/* Calendars: the toolbar wraps (arrows, Today and the title first), the counts drop. */
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-toolbar {
+	flex-wrap: wrap;
+	height: auto;
+	min-height: 50px;
+	padding: 6px 8px;
+	row-gap: 4px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-toolbar .title {
+	margin-left: 4px;
+	font-size: 15px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-toolbar .stats,
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-toolbar .tz {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-toolbar .nav .today {
+	height: 32px;
+}
+
+/* Week: a narrow hour gutter, and each day's name over its date instead of beside it. */
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-week {
+	--volt-auto-cal-gutter: 40px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-week .wk-head > .gutter {
+	padding-right: 4px;
+	font-size: 9px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-week .wk-grid > .gutter span {
+	right: 5px;
+	font-size: 9.5px;
+}
+
+/* Day: the empty day's hint wraps inside the screen instead of running along the timeline. */
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-day .lane-name {
+	max-width: calc(100vw - 72px);
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-day .lane.add .lane-name {
+	align-items: flex-start;
+	height: auto;
+	margin-top: 10px;
+	white-space: normal;
+	line-height: 16px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-day .lane.add .lane-name .codicon {
+	margin-top: 1px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-week .wk-day {
+	flex-direction: column;
+	gap: 2px;
+	height: 52px;
+	padding: 0;
+	min-width: 0;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-week .wk-day .dow {
+	font-size: 9.5px;
+	letter-spacing: 0.02em;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-auto-cal-week .wk-day .num {
+	min-width: 26px;
+	height: 26px;
+	font-size: 13px;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Workflows: the library's header in one column with its tabs on one row; the builder's bar in
+ * two rows (the name and Save, then the tools; workflowBuilderPage.ts measures it), and its side
+ * panel over the canvas (workflowBuilderPage.ts `stacked`).
+ * ------------------------------------------------------------------------------------------- */
+
+/* The titles' 320px basis is a width beside the buttons; in a column it would be their height. */
+.monaco-workbench.web.volt-web-phone .volt-wf-library > .volt-auto-list-head > .titles {
+	flex: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wf-library .volt-auto-tabs {
+	flex-wrap: nowrap;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wf-lib-search {
+	flex: 1 1 auto;
+	width: auto;
+	height: 36px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wf-lib-search input.volt-wf-lib-search-input {
+	font-size: 16px;
+}
+
+/* My Workflows keeps the name, the trigger and the row's menu. */
+.monaco-workbench.web.volt-web-phone .volt-wf-lib-row {
+	grid-template-columns: minmax(0, 1fr) 96px 36px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wf-lib-row .cell.nodes,
+.monaco-workbench.web.volt-web-phone .volt-wf-lib-row .cell.last-run,
+.monaco-workbench.web.volt-web-phone .volt-wf-lib-row .cell.automations {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar {
+	flex-wrap: wrap;
+	height: auto;
+	padding: 0 8px;
+	gap: 0 8px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar-left {
+	flex: 1 1 0;
+	height: 44px;
+}
+
+/* Save and the running label join the name's row; the tools take the row under it. */
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar-right {
+	display: contents;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar-tools {
+	display: flex;
+	flex: 1 0 100%;
+	order: 1;
+	align-items: center;
+	justify-content: space-between;
+	height: 44px;
+	margin: 0 -8px;
+	padding: 0 8px;
+	border-top: 1px solid var(--volt-wfb-hair);
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar-tools::-webkit-scrollbar {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar-tools .volt-wfb-bar-group {
+	flex-shrink: 0;
+}
+
+/* The side panel's YAML tab and the strip under the canvas already open these. */
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar-tools .volt-wfb-bar-button.toggle,
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar-tools .volt-wfb-icon-button.executions {
+	display: none;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar .volt-wfb-icon-button {
+	width: 34px;
+	height: 34px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar .volt-wfb-bar-button,
+.monaco-workbench.web.volt-web-phone .volt-wfb-bar .volt-wfb-split > .volt-wfb-bar-button {
+	height: 34px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-wfb-side-head .volt-wfb-icon-button {
+	width: 36px;
+	height: 36px;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Scratch: the minimap would cover a third of the board; a phone pans and pinches instead.
+ * ------------------------------------------------------------------------------------------- */
+
+.monaco-workbench.web.volt-web-phone .sx-minimap {
+	display: none;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Git Graph: controls a finger can hit.
+ * ------------------------------------------------------------------------------------------- */
+
+.monaco-workbench.web.volt-web-phone .volt-git-graph {
+	--vgg-control: 32px;
+}
