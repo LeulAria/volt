@@ -151,6 +151,25 @@ suite('Volt Client load: the engine', function () {
 		assert.ok(result.count >= 12 && result.count <= 22, `2 users, one request each 100 ms for 1 s: ${result.count}`);
 	});
 
+	test('a tick that comes before its time does not put the end off to the next one', async () => {
+		const { base } = await serve();
+		// The engine's clock a hundredth slower than the timers': the tick set for the end of the run comes
+		// 10 ms before it, as one does (by less) wherever timers count in whole milliseconds.
+		const slow = { performance: { now: () => performance.now() * 0.99 } };
+		let handle!: IVoltLoadHandle;
+		const done = new Promise<IVoltLoadResult>(resolve => {
+			handle = voltLoadEngine(
+				planVoltLoad({ mode: 'http', targets: [get(`${base}/ok`)], users: 1, durationSec: 1, thinkMs: 50 }),
+				{ onSample: () => undefined, onDone: resolve },
+				name => name === 'perf_hooks' ? slow : voltLoadInlineRequire(name),
+			);
+		});
+		runs.push(handle);
+		const result = await done;
+		assert.ok(result.durationMs >= 1000 && result.durationMs < 1100, `a one second run took ${result.durationMs} ms`);
+		assert.strictEqual(result.series.length, 1);
+	});
+
 	test('a request that takes too long is a timeout', async () => {
 		const { base } = await serve();
 		const run = start({ mode: 'http', targets: [get(`${base}/slow`)], users: 3, requests: 6, timeoutMs: 100 });

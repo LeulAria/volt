@@ -68,6 +68,7 @@
 			"src/vs/workbench/services/voltRuntime/browser/host/codeIntelHost.ts",
 			"src/vs/workbench/services/voltRuntime/browser/search/voltSearch.ts",
 			"src/vs/workbench/services/voltRuntime/browser/tools/codeIndexNav.ts",
+			"src/vs/workbench/services/voltRuntime/browser/tools/codeIntelConfinement.ts",
 			"src/vs/workbench/services/voltRuntime/browser/tools/codeTools.ts",
 			"src/vs/workbench/services/voltRuntime/browser/tools/editDiagnostics.ts",
 			"src/vs/workbench/services/voltRuntime/browser/tools/fileTools.ts",
@@ -116,6 +117,7 @@
 			"src/vs/workbench/contrib/voltAgent/browser/customize/agentCustomizeService.ts",
 			"src/vs/workbench/contrib/voltAgent/browser/customize/agentMarketplace.ts",
 			"src/vs/workbench/contrib/voltAgent/browser/customize/agentMarketplaceView.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/customize/agentSkillEditorInput.ts",
 			"src/vs/workbench/contrib/voltAgent/browser/editor/agentEditorInput.ts",
 			"src/vs/workbench/contrib/voltAgent/browser/editor/agentScrollable.ts",
 			"src/vs/workbench/contrib/voltAgent/browser/editor/agentTitleActions.ts",
@@ -140,6 +142,7 @@
 		"usage": [
 			"src/vs/workbench/contrib/voltAgent/browser/chrome/agentDockSections.ts",
 			"src/vs/workbench/contrib/voltAgent/browser/editor/agentScrollable.ts",
+			"src/vs/workbench/contrib/voltAgent/browser/editor/agentShownChat.ts",
 			"src/vs/workbench/contrib/voltAgent/browser/usage/agentUsageFormat.ts",
 			"src/vs/workbench/contrib/voltAgent/browser/usage/agentUsageIcons.ts",
 			"src/vs/workbench/contrib/voltAgent/browser/usage/agentUsageModel.ts",
@@ -148,7 +151,10 @@
 			"src/vs/workbench/services/editor/common/editorGroupsService.ts",
 			"src/vs/workbench/services/editor/common/editorService.ts",
 			"src/vs/workbench/services/voltRuntime/browser/providers/providerBrands.ts",
-			"src/vs/workbench/services/voltRuntime/browser/queryCache.ts"
+			"src/vs/workbench/services/voltRuntime/browser/providers/providerFamily.ts",
+			"src/vs/workbench/services/voltRuntime/browser/queryCache.ts",
+			"src/vs/workbench/services/voltRuntime/common/orchestration/orchestrator.ts",
+			"src/vs/workbench/services/voltRuntime/common/runtime.ts"
 		],
 		"voiceChat": [
 			"src/vs/workbench/contrib/voltAgent/browser/chat/agentReadAloud.ts",

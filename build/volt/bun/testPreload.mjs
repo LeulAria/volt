@@ -46,6 +46,11 @@ plugin({
 	},
 });
 
+// Bun has a global `postMessage` that delivers nothing on the main thread. `setTimeout0` (base/common/platform.ts)
+// takes it for the browser's and never calls back, so `runWithFakedTimers` waits forever, the test times out with
+// the faked timers still installed, and every later test that waits on a timer times out too.
+delete globalThis.postMessage;
+
 // Mocha's `this` in tests and hooks. Timeouts are Bun's (--timeout); the current test is unknown.
 function context() {
 	return {
