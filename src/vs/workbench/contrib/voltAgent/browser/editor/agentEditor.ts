@@ -6533,9 +6533,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.inputBox.classList.add('focused');
 			// Focus means a message is coming: start a CLI agent now so the first send skips its cold start.
 			// A switch focuses the composer too; then the open timer decides (see schedulePrewarm).
-			// Not the focus a window gives its restored chat at launch: nobody picked that chat yet.
-			if (!this.focusingForSwitch && hasUserInput(getWindow(this.inputBox))) {
-				this.prewarmAgent();
+			// The focus a window gives its restored chat at launch, or gives back when the user returns to a
+			// window not touched since launch, warms it for a short while only: nobody picked that chat yet.
+			if (!this.focusingForSwitch) {
+				this.prewarmAgent(hasUserInput(getWindow(this.inputBox)) ? undefined : UNTOUCHED_WARM_TTL_MS);
 			}
 		}));
 		this.editorDisposables.add(this.inputEditor.onDidBlurEditorText(() => this.inputBox.classList.remove('focused')));
