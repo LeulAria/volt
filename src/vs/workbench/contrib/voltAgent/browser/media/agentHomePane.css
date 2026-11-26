@@ -1770,6 +1770,15 @@ html.volt-layout-agent-window body {
 	-webkit-app-region: none !important;
 }
 
+/* A tab moved into a window of its own copies the agent window's classes but has none of its title bar controls,
+ * so its whole bar drags the window. The columns drag too: the left one spans the bar, and a no-drag column
+ * (what `none` computes to) would cut the drag layer behind it away. */
+.monaco-workbench.volt-layout-agent .part.titlebar.volt-auxiliary-titlebar > .titlebar-container > .titlebar-drag-region,
+.monaco-workbench.volt-layout-agent .part.titlebar.volt-auxiliary-titlebar > .titlebar-container > .titlebar-left,
+.monaco-workbench.volt-layout-agent .part.titlebar.volt-auxiliary-titlebar > .titlebar-container > .titlebar-right {
+	-webkit-app-region: drag !important;
+}
+
 .monaco-workbench.volt-layout-agent .part.titlebar > .titlebar-container > .titlebar-left > .volt-agent-titlebar-drag {
 	flex: 1 1 auto;
 	align-self: stretch;

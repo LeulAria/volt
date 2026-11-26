@@ -3,16 +3,14 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { getWindow } from '../../../../../base/browser/dom.js';
 import { localize } from '../../../../../nls.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
-import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
-import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
+import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IVoltBrowserService } from '../../../../../platform/voltBrowser/common/voltBrowser.js';
-import { AGENT_BROWSER_ACCESS_SETTING, IVoltBrowserAccessService } from '../../../../services/voltRuntime/common/browserAccess.js';
+import { AGENT_BROWSER_ACCESS_SETTING, AGENT_COOKIE_IMPORT_SETTING, agentCookieImportMode, IVoltBrowserAccessService } from '../../../../services/voltRuntime/common/browserAccess.js';
 import { IVoltRecordingStatusService } from '../capture/recordingStatus.js';
-import { showCookieImportMenu } from './browserCookieImport.js';
+import { importCookiesInteractively } from './browserCookieImport.js';
 import { BrowserMenuEntry } from './browserMenu.js';
 
 /** Commands from the electron-browser layer (the desktop app). */
@@ -48,7 +46,7 @@ function optional<T>(accessor: ServicesAccessor, get: (accessor: ServicesAccesso
 /** The browser ⋯ menu's rows for recording, simulators, agent access and cookie import. */
 export function browserMenuExtras(accessor: ServicesAccessor, context: IBrowserMenuExtrasContext): IBrowserMenuExtras {
 	const commandService = accessor.get(ICommandService);
-	const contextViewService = accessor.get(IContextViewService);
+	const instantiationService = accessor.get(IInstantiationService);
 	const configurationService = accessor.get(IConfigurationService);
 	const access = optional(accessor, a => a.get(IVoltBrowserAccessService));
 	const recordings = optional(accessor, a => a.get(IVoltRecordingStatusService));
@@ -77,12 +75,19 @@ export function browserMenuExtras(accessor: ServicesAccessor, context: IBrowserM
 			}
 			context.toast(checked ? localize('voltBrowser.agentsAllowed', "Agents can use the browser") : localize('voltBrowser.agentsBlocked', "Agents can't use the browser"));
 		},
-	}] : [];
+	}, ...browserService ? [{
+		kind: 'toggle' as const,
+		label: localize('voltBrowser.menu.agentCookies', "Let Agents Ask to Import Cookies"),
+		checked: agentCookieImportMode(configurationService.getValue(AGENT_COOKIE_IMPORT_SETTING)) !== 'off',
+		run: (checked: boolean) => {
+			void configurationService.updateValue(AGENT_COOKIE_IMPORT_SETTING, checked ? 'ask' : 'off');
+			context.toast(checked ? localize('voltBrowser.agentCookiesAsk', "Agents will ask before importing cookies") : localize('voltBrowser.agentCookiesOff', "Agents can't ask to import cookies"));
+		},
+	}] : []] : [];
 	const profile: BrowserMenuEntry[] = browserService ? [{
 		kind: 'item',
-		label: localize('voltBrowser.menu.importCookies', "Import Cookies from Browser…"),
-		// After the ⋯ menu closes: the picker takes the same anchor.
-		run: () => getWindow(context.anchor).setTimeout(() => void showCookieImportMenu(contextViewService, context.anchor, browserService, context.toast), 0),
+		label: localize('voltBrowser.menu.importCookies', "Import Cookies from Another Browser"),
+		run: () => void instantiationService.invokeFunction(accessor => importCookiesInteractively(accessor, context.toast)),
 	}] : [];
 	return { capture, devices, agents, profile };
 }

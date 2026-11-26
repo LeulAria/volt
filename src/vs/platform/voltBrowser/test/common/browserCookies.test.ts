@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { chromiumSameSite, chromiumTimeToUnix, firefoxExpiryToUnix, IReadCookie, isPreviewPartition, macTimeToUnix, matchesDomainFilter, parseBinaryCookies, parseChromiumProfileNames, parseDomainFilter, parseFirefoxProfilesIni, siteOf, toElectronCookie } from '../../common/browserCookies.js';
+import { chromiumSameSite, chromiumTimeToUnix, cookieSourceLabel, firefoxExpiryToUnix, IReadCookie, isPreviewPartition, IVoltCookieSource, macTimeToUnix, matchesDomainFilter, orderCookieSites, parseBinaryCookies, parseChromiumProfileNames, parseDomainFilter, parseFirefoxProfilesIni, siteAnswers, siteOf, summarizeCookieSites, toElectronCookie } from '../../common/browserCookies.js';
 
 interface ISafariCookie {
 	readonly domain: string;
@@ -153,5 +153,51 @@ suite('Volt browser: cookie import', () => {
 		assert.ok(!isPreviewPartition('persist:vscode-webview'));
 		assert.ok(!isPreviewPartition('persist:volt-browser-../../x'));
 		assert.strictEqual(siteOf('.mail.google.com'), 'google.com');
+	});
+
+	test('sites group hosts by registrable part; addresses and single labels stand alone', () => {
+		assert.strictEqual(siteOf('github.com'), 'github.com');
+		assert.strictEqual(siteOf('.www.bbc.co.uk'), 'bbc.co.uk');
+		assert.strictEqual(siteOf('shop.example.com.au'), 'example.com.au');
+		assert.strictEqual(siteOf('a.b.example.io'), 'example.io');
+		assert.strictEqual(siteOf('127.0.0.1'), '127.0.0.1');
+		assert.strictEqual(siteOf('[::1]'), '::1');
+		assert.strictEqual(siteOf('localhost'), 'localhost');
+	});
+
+	test('a cookie store summarizes to sites with counts, most first, without expired cookies', () => {
+		const sites = summarizeCookieSites([
+			{ host: '.github.com' },
+			{ host: 'api.github.com', expires: 2_000 },
+			{ host: 'gist.github.com', expires: 500 },
+			{ host: '.vercel.com', expires: 3_000 },
+			{ host: 'localhost' },
+			{ host: '' },
+		], 1_000);
+		assert.deepStrictEqual(sites, [
+			{ site: 'github.com', cookies: 2 },
+			{ site: 'localhost', cookies: 1 },
+			{ site: 'vercel.com', cookies: 1 },
+		]);
+	});
+
+	test('requested sites come first and checked; ones the profile lacks are named', () => {
+		assert.ok(siteAnswers('vercel.com', 'app.vercel.com'));
+		assert.ok(siteAnswers('vercel.com', '.vercel.com'));
+		assert.ok(!siteAnswers('vercel.com', 'notvercel.com'));
+		const listed = [{ site: 'google.com', cookies: 40 }, { site: 'github.com', cookies: 9 }, { site: 'vercel.com', cookies: 3 }];
+		const ordered = orderCookieSites(listed, ['app.vercel.com', 'github.com', 'linear.app', 'GITHUB.com']);
+		assert.deepStrictEqual(ordered.sites.map(entry => entry.site), ['vercel.com', 'github.com', 'google.com']);
+		assert.deepStrictEqual([...ordered.preselected], ['vercel.com', 'github.com']);
+		assert.deepStrictEqual(ordered.missing, ['linear.app']);
+		const none = orderCookieSites(listed, []);
+		assert.deepStrictEqual(none.sites, listed);
+		assert.strictEqual(none.preselected.size, 0);
+	});
+
+	test('a source reads as browser and profile', () => {
+		const source: IVoltCookieSource = { id: 'chrome:Default', browser: 'chrome', browserLabel: 'Google Chrome', profile: 'Default', profileLabel: 'Personal', path: '/x', encrypted: true };
+		assert.strictEqual(cookieSourceLabel(source), 'Google Chrome · Personal');
+		assert.strictEqual(cookieSourceLabel({ ...source, browser: 'safari', browserLabel: 'Safari', profileLabel: 'Default' }), 'Safari');
 	});
 });

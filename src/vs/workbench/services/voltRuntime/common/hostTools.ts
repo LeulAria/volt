@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { IAdminPolicy } from '../../../../platform/voltSandbox/common/authority.js';
-import { WORKSPACE_SNAPSHOT_COMMAND_ID, WORKSPACE_STATUS_TOOL_NAME } from './harness/workspaceContext.js';
+import { WORKSPACE_DETAIL_COMMAND_ID, WORKSPACE_FLEET_COMMAND_ID, WORKSPACE_SNAPSHOT_COMMAND_ID, WORKSPACE_STATUS_TOOL_NAME } from './harness/workspaceContext.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
@@ -47,6 +47,24 @@ export const CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID = 'volt.browser.captureSnapshot
 export const AUTOMATE_BROWSER_COMMAND_ID = 'volt.browser.automate';
 /** `(sessionId) => string | undefined`: the URL of the page in the chat's browser tab, if it has one. */
 export const BROWSER_PAGE_URL_COMMAND_ID = 'volt.browser.pageUrl';
+/**
+ * `(sessionId, { screenshot?, maxSide? }) => IVoltBrowserPeek | undefined`: the page in a chat's
+ * browser tab, read without opening, moving or locking the tab (thread_inspect). Undefined when
+ * the chat has no browser tab in this window.
+ */
+export const PEEK_BROWSER_COMMAND_ID = 'volt.browser.peek';
+
+export interface IVoltBrowserPeek {
+	readonly url: string;
+	readonly title?: string;
+	/** Console errors since the page loaded. */
+	readonly consoleErrors?: number;
+	/** An agent is driving the tab now. */
+	readonly agentLocked?: boolean;
+	/** A screenshot (data URL), when asked for and the tab could be captured. */
+	readonly image?: string;
+	readonly imageSize?: string;
+}
 /** `(sessionId, IVoltBrowserPreflightRequest) => IVoltBrowserPreflightResult`: the browser half of the turn primer. */
 export const PREFLIGHT_BROWSER_COMMAND_ID = 'volt.browser.preflight';
 
@@ -56,6 +74,7 @@ export const PREFLIGHT_BROWSER_COMMAND_ID = 'volt.browser.preflight';
  */
 export const AGENT_SERVER_WINDOW_COMMANDS: ReadonlySet<string> = new Set([
 	AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, PREFLIGHT_BROWSER_COMMAND_ID, WORKSPACE_SNAPSHOT_COMMAND_ID,
+	PEEK_BROWSER_COMMAND_ID, WORKSPACE_DETAIL_COMMAND_ID, WORKSPACE_FLEET_COMMAND_ID,
 ]);
 
 export interface IVoltBrowserPreflightRequest {
@@ -151,6 +170,8 @@ export const BROWSER_STATUS_TOOL_NAME = 'browser_status';
 export const BROWSER_MOCK_TOOL_NAME = 'browser_mock';
 export const BROWSER_EMULATE_TOOL_NAME = 'browser_emulate';
 export const BROWSER_AUDIT_TOOL_NAME = 'browser_audit';
+/** Asks the user to bring their sign-ins (cookies) for some sites from another browser into the in-app browser. */
+export const BROWSER_IMPORT_COOKIES_TOOL_NAME = 'browser_import_cookies';
 export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
 
 /**
@@ -398,7 +419,7 @@ export type VoltBrowserToolName = typeof BROWSER_TOOL_NAMES[number];
  * Browser tools for design, debugging and testing work, added after the activity trail named the
  * ones above: scripted runs with assertions, status, network mocks, emulation and audits.
  */
-export const BROWSER_DESIGN_TOOL_NAMES = [BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_RUN_TOOL_NAME, BROWSER_STATUS_TOOL_NAME, BROWSER_MOCK_TOOL_NAME, BROWSER_EMULATE_TOOL_NAME, BROWSER_AUDIT_TOOL_NAME] as const;
+export const BROWSER_DESIGN_TOOL_NAMES = [BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_RUN_TOOL_NAME, BROWSER_STATUS_TOOL_NAME, BROWSER_MOCK_TOOL_NAME, BROWSER_EMULATE_TOOL_NAME, BROWSER_AUDIT_TOOL_NAME, BROWSER_IMPORT_COOKIES_TOOL_NAME] as const;
 
 /** Every tool the chat's browser tab runs (`AUTOMATE_BROWSER_COMMAND_ID`). */
 export type VoltBrowserAutomationToolName = VoltBrowserToolName | typeof BROWSER_DESIGN_TOOL_NAMES[number];
@@ -775,6 +796,20 @@ If you know the page (you wrote it), skip browser_snapshot. Pass observe: "on_fa
 		inputSchema: { type: 'object', properties: {} },
 	},
 	{
+		name: BROWSER_IMPORT_COOKIES_TOOL_NAME,
+		title: 'Asked to import cookies',
+		group: 'browser',
+		description: 'Ask the user to sign the in-app browser in to some sites by importing their cookies from another browser on this machine (Chrome, Safari, Arc, Firefox, Edge, Brave, …). Use it when a page you need redirects to a sign-in or shows a signed-out state, instead of asking the user for passwords or typing credentials. Volt shows the user a dialog: they pick the browser and profile, and the sites come as checkboxes with the ones in `sites` checked; nothing is imported unless they choose Import (or they allowed agents to import without asking). You never see cookie values, only how many were imported for which sites. Afterwards reload or reopen the page. If the result says the dialog is still open, call it again with the same arguments to keep waiting. Not available in sandboxed chats, whose browser is signed out on purpose.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				sites: { type: 'array', items: { type: 'string' }, description: 'Sites to sign in to, e.g. ["github.com", "vercel.com"]; subdomains are included. Ask only for the sites the task needs.' },
+				reason: { type: 'string', description: 'One sentence the user reads: why you need to be signed in, e.g. "To check the deploy logs on vercel.com".' },
+			},
+			required: ['sites'],
+		},
+	},
+	{
 		name: BROWSER_MOCK_TOOL_NAME,
 		title: 'Mocked network',
 		group: 'browser',
@@ -920,6 +955,10 @@ export const AUTOMATION_TOOL_NAMES = ['manage_automations', 'automation'] as con
  */
 export const THREAD_TOOL_NAMES = [
 	'orchestrator_capabilities',
+	'fleet_status',
+	'fleet_find',
+	'thread_inspect',
+	'thread_group',
 	'thread_list',
 	'thread_search',
 	'thread_read',

@@ -169,7 +169,7 @@ Registry.as<IConfigurationRegistry>(Extensions.Configuration).registerConfigurat
 		},
 		[COMPACT_OLD_THREADS_SETTING]: {
 			type: 'boolean',
-			default: true,
+			default: false,
 			description: localize('voltAgent.compactOldThreads', "Compact a large chat (100K tokens or more) before sending into it after it sat idle for over an hour. The provider's prompt cache has expired by then, so resending the whole history costs the most."),
 		},
 		[COMPACT_CHIP_THRESHOLD_SETTING]: {

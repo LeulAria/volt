@@ -24,7 +24,8 @@ export interface IAgentQuestionTrayAttachmentHost {
 
 export interface IAgentQuestionTrayOptions {
 	/**
-	 * The editor adds the composer text as the response's note and clears it. `media`: the
+	 * The editor adds text typed into the composer after the question showed as the response's
+	 * note and clears it; a draft that was already there stays. `media`: the
 	 * images attached to answers, sent as images if the answers go out as the next prompt.
 	 */
 	onSubmit(requestId: string, response: IAgentQuestionResponse, media: readonly IAgentPreparedAttachment[]): void;

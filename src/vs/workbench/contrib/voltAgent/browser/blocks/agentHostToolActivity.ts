@@ -318,6 +318,7 @@ function describeAgentBrowserTool(tool: string, args: Record<string, unknown>): 
 		}
 		case 'browser_emulate': return { tool, label: args.reset === true ? 'Reset emulation' : 'Emulated', detail: ['color_scheme', 'network', 'timezone', 'locale'].map(key => text(args[key])).filter(Boolean).join(', ') || (args.reduced_motion === true ? 'reduced motion' : undefined) };
 		case 'browser_audit': return { tool, label: 'Audited page', detail: Array.isArray(args.checks) ? args.checks.join(', ') : undefined };
+		case 'browser_import_cookies': return { tool, label: 'Asked to import cookies', detail: Array.isArray(args.sites) ? args.sites.map(site => text(site, 40)).filter(Boolean).join(', ') || undefined : undefined };
 		case 'playground_create': return { tool, label: 'Created playground', detail: text(args.title, 60) };
 		case 'playground_update': return { tool, label: 'Updated playground', detail: text(args.id) };
 		case 'playground_list': return { tool, label: 'Listed playgrounds' };
@@ -338,6 +339,16 @@ function describeThreadActivity(tool: string, args: Record<string, unknown>): IH
 	switch (tool) {
 		case 'orchestrator_capabilities':
 			return { tool, label: 'Read orchestration options' };
+		case 'fleet_status':
+			return { tool, label: 'Checked every project', detail: text(args.project, 60) };
+		case 'fleet_find':
+			return { tool, label: 'Searched Volt for context', detail: text(args.query ?? args.file ?? (args.port !== undefined ? `port ${String(args.port)}` : undefined), 60) };
+		case 'thread_inspect':
+			return { tool, label: chat ? (args.screenshot === true ? 'Captured chat\'s browser' : 'Inspected chat') : 'Inspected this chat', detail: chat };
+		case 'thread_group': {
+			const labels: Record<string, string> = { create: 'Made chat group', add: 'Added chats to group', remove: 'Removed chats from group', rename: 'Renamed chat group', delete: 'Deleted chat group' };
+			return { tool, label: labels[String(args.action)] ?? 'Listed chat groups', detail: text(args.name ?? args.group, 60) };
+		}
 		case 'thread_list':
 			return { tool, label: 'Listed chats', detail: text(args.query, 60) ?? (Array.isArray(args.status) ? args.status.join(', ') : undefined) };
 		case 'thread_search':

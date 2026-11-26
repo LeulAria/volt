@@ -214,9 +214,12 @@
 	min-width: 0;
 }
 
+/* Takes what the tools leave; the name shrinks first, and anything that still does not fit is cut
+ * at the end instead of painting over the name or the tools. */
 .volt-wfb-bar-left {
-	flex: 1;
+	flex: 1 1 0;
 	gap: 8px;
+	overflow: hidden;
 }
 
 .volt-wfb-bar-right {
@@ -233,15 +236,19 @@
 	background: var(--volt-wfb-line);
 }
 
+/* The name's own floor plus the switcher: the title never shrinks under its contents (which would
+ * let the pill and save state after it draw over the name). */
 .volt-wfb-title {
 	display: flex;
 	align-items: center;
-	min-width: 0;
+	flex: 0 1 auto;
+	min-width: 74px;
 }
 
 .volt-wfb-name {
 	field-sizing: content;
-	min-width: 96px;
+	flex: 0 1 auto;
+	min-width: 56px;
 	max-width: 320px;
 	height: 28px;
 	padding: 0 8px;
@@ -512,6 +519,42 @@
 .volt-wfb-builder.narrow .volt-wfb-bar-button:not(.primary):not(.chevron) .label,
 .volt-wfb-builder.narrow .volt-wfb-save-state span:not(.dot),
 .volt-wfb-builder.narrow .volt-wfb-active-label {
+	display: none;
+}
+
+/* A narrow tab (under 720px, workflowBuilderPage.ts layout): tighter gaps and buttons, and a valid
+ * graph is just its dot, so the name keeps room. Save keeps its size. */
+.volt-wfb-builder.tight .volt-wfb-bar {
+	gap: 8px;
+	padding: 0 8px 0 6px;
+}
+
+.volt-wfb-builder.tight .volt-wfb-bar-left,
+.volt-wfb-builder.tight .volt-wfb-bar-right {
+	gap: 4px;
+}
+
+.volt-wfb-builder.tight .volt-wfb-bar-group + .volt-wfb-bar-group::before {
+	margin-right: 2px;
+}
+
+.volt-wfb-builder.tight .volt-wfb-bar .volt-wfb-icon-button:not(.volt-wfb-switcher) {
+	width: 26px;
+}
+
+.volt-wfb-builder.tight .volt-wfb-bar .volt-wfb-bar-button:not(.primary):not(.chevron) {
+	padding: 0 7px;
+}
+
+.volt-wfb-builder.tight .volt-wfb-bar .volt-wfb-split > .volt-wfb-bar-button.chevron {
+	width: 20px;
+}
+
+.volt-wfb-builder.tight .volt-wfb-pill.valid {
+	padding: 0 8px;
+}
+
+.volt-wfb-builder.tight .volt-wfb-pill.valid span:not(.dot) {
 	display: none;
 }
 

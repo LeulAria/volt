@@ -22,8 +22,8 @@ import { AbstractLogger, ILogger, LogLevel } from '../../../platform/log/common/
 import { INotification, INotificationHandle, INotificationService, NoOpNotification } from '../../../platform/notification/common/notification.js';
 import { ISecretStorageService } from '../../../platform/secrets/common/secrets.js';
 import { AbstractStorageService, StorageScope, StorageTarget } from '../../../platform/storage/common/storage.js';
-import { AGENT_SERVER_WINDOW_COMMANDS, BROWSER_PAGE_URL_COMMAND_ID } from '../../../workbench/services/voltRuntime/common/hostTools.js';
-import { WORKSPACE_SNAPSHOT_COMMAND_ID } from '../../../workbench/services/voltRuntime/common/harness/workspaceContext.js';
+import { AGENT_SERVER_WINDOW_COMMANDS, BROWSER_PAGE_URL_COMMAND_ID, PEEK_BROWSER_COMMAND_ID } from '../../../workbench/services/voltRuntime/common/hostTools.js';
+import { WORKSPACE_DETAIL_COMMAND_ID, WORKSPACE_FLEET_COMMAND_ID, WORKSPACE_SNAPSHOT_COMMAND_ID } from '../../../workbench/services/voltRuntime/common/harness/workspaceContext.js';
 import { fromWire, toWire } from '../../../platform/voltAgentServer/common/wire.js';
 import { IAgentServerClients } from './serverClients.js';
 import { IAnyWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, IWorkspace, IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEvent, IWorkspaceFoldersWillChangeEvent, IWorkspaceIdentifier, WorkbenchState } from '../../../platform/workspace/common/workspace.js';
@@ -425,6 +425,9 @@ export const WINDOW_COMMANDS = AGENT_SERVER_WINDOW_COMMANDS;
 const WINDOW_COMMAND_TIMEOUT_MS: ReadonlyMap<string, number> = new Map([
 	[WORKSPACE_SNAPSHOT_COMMAND_ID, 5_000],
 	[BROWSER_PAGE_URL_COMMAND_ID, 10_000],
+	[WORKSPACE_DETAIL_COMMAND_ID, 8_000],
+	[WORKSPACE_FLEET_COMMAND_ID, 8_000],
+	[PEEK_BROWSER_COMMAND_ID, 15_000],
 ]);
 
 /** Window commands any Volt window answers (the browser workbench too); the rest need the in-app browser. */
