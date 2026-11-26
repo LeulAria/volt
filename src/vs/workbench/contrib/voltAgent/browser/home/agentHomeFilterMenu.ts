@@ -6,7 +6,10 @@
 import { $, addDisposableListener, append, clearNode, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { AnchorAlignment } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { VoltSheet } from '../../../../../base/browser/ui/voltMobile/voltSheet.js';
+import { isVoltCompact } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
+import { Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { localize } from '../../../../../nls.js';
@@ -51,6 +54,10 @@ export function showAgentHomeFilterMenu(
 	anchor: HTMLElement,
 	host: IAgentHomeFilterMenuHost,
 ): void {
+	if (isVoltCompact()) {
+		showAgentHomeFilterSheet(anchor, host);
+		return;
+	}
 	contextViewService.showContextView({
 		getAnchor: () => anchor,
 		anchorAlignment: AnchorAlignment.LEFT,
@@ -140,6 +147,84 @@ export function showAgentHomeFilterMenu(
 	});
 }
 
+/**
+ * The same menu on a phone: a bottom sheet whose submenus replace its page behind a Back row, like
+ * the pull request filters (voltMenu.ts). Rows answer taps only; a tap's mouseenter opens nothing.
+ */
+function showAgentHomeFilterSheet(anchor: HTMLElement, host: IAgentHomeFilterMenuHost): void {
+	const container = anchor.closest<HTMLElement>('.monaco-workbench') ?? anchor.ownerDocument.body;
+	const sheet = new VoltSheet({
+		container,
+		ariaLabel: localize('voltAgent.home.filter.sheet', "Filter and Sort"),
+		className: 'volt-agent-home-filter-sheet',
+		detents: ['content', 'large'],
+	});
+	const store = new DisposableStore();
+	const page = append(sheet.body, $('.volt-agent-home-filter-menu.in-sheet'));
+	let current: FlyoutKind | undefined;
+	const close = () => sheet.hide();
+	const setView = (next: IAgentHomeViewState) => {
+		host.setView(next);
+		paint();
+	};
+	const paint = () => {
+		store.clear();
+		clearNode(page);
+		page.classList.toggle('sub-page', !!current);
+		if (current) {
+			const back = append(page, $('button.volt-menu-sheet-back')) as HTMLButtonElement;
+			back.type = 'button';
+			back.appendChild(renderIcon(Codicon.chevronLeft));
+			append(back, $('span.label')).textContent = flyoutTitle(current);
+			back.setAttribute('aria-label', localize('voltAgent.home.filter.back', "Back to Filter and Sort"));
+			store.add(addDisposableListener(back, 'click', () => {
+				current = undefined;
+				paint();
+			}));
+			renderFlyout(append(page, $('.volt-agent-home-filter-page')), current, host, store, setView);
+		} else {
+			buildMainMenu(page, host, store, kind => {
+				if (kind) {
+					current = kind;
+					paint();
+				}
+			}, () => {
+				host.setWorkingSection(!host.workingSection);
+				paint();
+			}, setView, () => setView(defaultAgentHomeViewState()), () => {
+				host.collapseAll();
+				close();
+			}, () => {
+				host.markAllAsRead();
+				close();
+			}, true);
+		}
+		sheet.layout();
+	};
+	paint();
+	Event.once(sheet.onDidHide)(() => {
+		store.dispose();
+		sheet.dispose();
+	});
+	sheet.show();
+}
+
+function flyoutTitle(kind: FlyoutKind): string {
+	switch (kind) {
+		case 'grouping': return localize('voltAgent.home.filter.grouping', "Grouping");
+		case 'ordering': return localize('voltAgent.home.filter.ordering', "Ordering");
+		case 'show': return localize('voltAgent.home.filter.show', "Show");
+		case 'status': return localize('voltAgent.home.filter.status', "Status");
+		case 'pr': return localize('voltAgent.home.filter.pr', "PR");
+		case 'environment': return localize('voltAgent.home.filter.environment', "Environment");
+		case 'source': return localize('voltAgent.home.filter.source', "Source");
+		default: {
+			const unexpected: never = kind;
+			return unexpected;
+		}
+	}
+}
+
 function buildMainMenu(
 	menu: HTMLElement,
 	host: IAgentHomeFilterMenuHost,
@@ -150,6 +235,7 @@ function buildMainMenu(
 	onReset: () => void,
 	onCollapse: () => void,
 	onMarkRead: () => void,
+	touch = false,
 ): void {
 	const view = host.view;
 	appendRow(menu, {
@@ -159,6 +245,7 @@ function buildMainMenu(
 		flyout: 'grouping',
 		onHover: () => openFlyout('grouping'),
 		store,
+		touch,
 	});
 	appendRow(menu, {
 		label: localize('voltAgent.home.filter.ordering', "Ordering"),
@@ -166,6 +253,7 @@ function buildMainMenu(
 		flyout: 'ordering',
 		onHover: () => openFlyout('ordering'),
 		store,
+		touch,
 	});
 	appendRow(menu, {
 		label: localize('voltAgent.home.filter.show', "Show"),
@@ -173,6 +261,7 @@ function buildMainMenu(
 		flyout: 'show',
 		onHover: () => openFlyout('show'),
 		store,
+		touch,
 	});
 	const density = agentHomeDensityHost();
 	if (density) {
@@ -186,6 +275,7 @@ function buildMainMenu(
 			},
 			onHover: () => openFlyout(undefined),
 			store,
+			touch,
 		});
 	}
 	appendToggleRow(menu, {
@@ -194,6 +284,7 @@ function buildMainMenu(
 		onClick: onToggleWorking,
 		onHover: () => openFlyout(undefined),
 		store,
+		touch,
 	});
 	append(menu, $('.volt-agent-home-filter-sep'));
 
@@ -214,6 +305,7 @@ function buildMainMenu(
 		flyout: 'status',
 		onHover: () => openFlyout('status'),
 		store,
+		touch,
 	});
 	appendRow(menu, {
 		label: localize('voltAgent.home.filter.pr', "PR"),
@@ -222,6 +314,7 @@ function buildMainMenu(
 		flyout: 'pr',
 		onHover: () => openFlyout('pr'),
 		store,
+		touch,
 	});
 	appendRow(menu, {
 		label: localize('voltAgent.home.filter.environment', "Environment"),
@@ -230,6 +323,7 @@ function buildMainMenu(
 		flyout: 'environment',
 		onHover: () => openFlyout('environment'),
 		store,
+		touch,
 	});
 	appendRow(menu, {
 		label: localize('voltAgent.home.filter.source', "Source"),
@@ -238,6 +332,7 @@ function buildMainMenu(
 		flyout: 'source',
 		onHover: () => openFlyout('source'),
 		store,
+		touch,
 	});
 	appendToggleRow(menu, {
 		label: localize('voltAgent.home.filter.archived', "Archived"),
@@ -245,6 +340,7 @@ function buildMainMenu(
 		onClick: () => setView({ ...view, archived: view.archived === 'show' ? 'hide' : 'show' }),
 		onHover: () => openFlyout(undefined),
 		store,
+		touch,
 	});
 	append(menu, $('.volt-agent-home-filter-sep'));
 	appendRow(menu, {
@@ -252,12 +348,14 @@ function buildMainMenu(
 		onClick: onCollapse,
 		onHover: () => openFlyout(undefined),
 		store,
+		touch,
 	});
 	appendRow(menu, {
 		label: localize('voltAgent.home.filter.markAllRead', "Mark All as Read"),
 		onClick: onMarkRead,
 		onHover: () => openFlyout(undefined),
 		store,
+		touch,
 	});
 }
 
@@ -422,6 +520,8 @@ function appendRow(parent: HTMLElement, options: {
 	readonly onHover?: () => void;
 	readonly onClick?: () => void;
 	readonly store: DisposableStore;
+	/** In a sheet: hovering opens nothing, a tap does. */
+	readonly touch?: boolean;
 }): void {
 	const row = append(parent, $('button.volt-agent-home-filter-row')) as HTMLButtonElement;
 	if (options.flyout) {
@@ -438,7 +538,7 @@ function appendRow(parent: HTMLElement, options: {
 	if (options.submenu) {
 		trailing.appendChild(renderIcon(Codicon.chevronRight));
 	}
-	if (options.onHover) {
+	if (options.onHover && !options.touch) {
 		options.store.add(addDisposableListener(row, 'mouseenter', () => options.onHover?.()));
 	}
 	if (options.onClick) {
@@ -463,6 +563,7 @@ function appendToggleRow(parent: HTMLElement, options: {
 	readonly onClick: () => void;
 	readonly onHover: () => void;
 	readonly store: DisposableStore;
+	readonly touch?: boolean;
 }): void {
 	const row = append(parent, $('button.volt-agent-home-filter-row.toggle')) as HTMLButtonElement;
 	row.classList.toggle('checked', options.checked);
@@ -473,7 +574,9 @@ function appendToggleRow(parent: HTMLElement, options: {
 	if (options.checked) {
 		trailing.appendChild(renderIcon(Codicon.check));
 	}
-	options.store.add(addDisposableListener(row, 'mouseenter', () => options.onHover()));
+	if (!options.touch) {
+		options.store.add(addDisposableListener(row, 'mouseenter', () => options.onHover()));
+	}
 	options.store.add(addDisposableListener(row, 'click', e => {
 		e.preventDefault();
 		e.stopPropagation();

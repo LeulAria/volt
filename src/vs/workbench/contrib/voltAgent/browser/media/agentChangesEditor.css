@@ -1015,6 +1015,10 @@
 	transform: scaleX(-1);
 }
 
+.volt-agent-files-sidebar-tab.hide > .volt-agent-files-sidebar-close-glyph {
+	display: none;
+}
+
 .volt-agent-files-sidebar-body {
 	position: relative;
 	flex: 1 1 auto;

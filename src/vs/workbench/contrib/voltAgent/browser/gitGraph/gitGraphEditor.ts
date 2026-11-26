@@ -9,6 +9,8 @@ import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent
 import { StandardMouseEvent } from '../../../../../base/browser/mouseEvent.js';
 import { getDefaultHoverDelegate } from '../../../../../base/browser/ui/hover/hoverDelegateFactory.js';
 import { renderIcon, renderLabelWithIcons } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { openVoltSurface } from '../../../../../base/browser/ui/voltMobile/voltSurfaces.js';
+import { isVoltCompact } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { InputBox } from '../../../../../base/browser/ui/inputbox/inputBox.js';
 import { ITableContextMenuEvent } from '../../../../../base/browser/ui/table/table.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
@@ -212,6 +214,8 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 	private dateDropdown: IVoltDropdown<DatePreset> | undefined;
 	private dimension: Dimension | undefined;
 	private inspectorWidth: number;
+	/** A phone's Back while a commit's details cover the list: it closes them. */
+	private readonly phoneInspector = this._register(new MutableDisposable());
 	private selectedIds: string[] = [];
 	private pendingReveal: string | undefined;
 	private readonly storage: IStorageService;
@@ -1099,6 +1103,11 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 			return;
 		}
 		this.body.classList.toggle('no-inspector', !visible);
+		if (visible && isVoltCompact()) {
+			this.phoneInspector.value ??= openVoltSurface({ dismiss: () => this.close(), dismissible: true });
+		} else {
+			this.phoneInspector.clear();
+		}
 		this.layoutBody();
 	}
 
@@ -1238,6 +1247,10 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 
 	/** The inspector's width range at a graph width: it gives way to the table in a narrow tab, but keeps a range to drag in. */
 	private inspectorBounds(width: number): { min: number; max: number } {
+		// A phone shows the commits or one commit: the details cover the whole list (voltMobileWorkbench.css).
+		if (isVoltCompact()) {
+			return { min: width, max: width };
+		}
 		if (width < OVERLAY_INSPECTOR_BELOW) {
 			// Floating, it may cover all but a strip of the table.
 			const max = Math.max(200, width - 48);
@@ -1255,7 +1268,7 @@ export class GitGraphEditor extends EditorPane implements IGitGraphInspectorHost
 		this.root.classList.toggle('narrow', width < 820);
 		const inspector = !this.body.classList.contains('no-inspector');
 		// Too narrow to split (the right panel beside a chat): the inspector floats over the table's right side.
-		const overlay = width < OVERLAY_INSPECTOR_BELOW;
+		const overlay = width < OVERLAY_INSPECTOR_BELOW || isVoltCompact();
 		this.body.classList.toggle('overlay-inspector', overlay);
 		const bounds = this.inspectorBounds(width);
 		const inspectorWidth = inspector ? Math.max(bounds.min, Math.min(bounds.max, this.inspectorWidth)) : 0;

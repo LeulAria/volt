@@ -8,6 +8,8 @@ import '../media/agentPullRequests.css';
 import '../media/agentPullRequestsPage.css';
 import { $, addDisposableListener, append, clearNode, Dimension, EventHelper, EventType } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
+import { openVoltSurface } from '../../../../../base/browser/ui/voltMobile/voltSurfaces.js';
+import { isVoltCompact } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { IListRenderer, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
 import { DomScrollableElement } from '../../../../../base/browser/ui/scrollbar/scrollableElement.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
@@ -317,6 +319,9 @@ export class AgentPullRequestsPage extends EditorPane {
 	/** The pull request open in the overlay. */
 	private openKey: string | undefined;
 	private sideSearch: IPrSearch = compilePrSearch('');
+	private phoneTitle!: HTMLElement;
+	/** A phone's Back while a pull request is open: it shows the list again (the page under it). */
+	private readonly phoneDetail = this._register(new MutableDisposable());
 
 	private readonly pickerStore = this._register(new DisposableStore());
 	private readonly chipsStore = this._register(new DisposableStore());
@@ -798,6 +803,15 @@ export class AgentPullRequestsPage extends EditorPane {
 		}, true));
 
 		const detailMain = append(this.detailEl, $('.volt-prs-detail-main'));
+		// A phone has no room for the list beside the pull request: it shows the pull request alone
+		// under this bar (voltMobileWorkbench.css), and Back is the list. Hidden elsewhere.
+		const phoneBar = append(detailMain, $('.volt-prs-phone-bar'));
+		const phoneBack = append(phoneBar, $('button.volt-prs-phone-back')) as HTMLButtonElement;
+		phoneBack.type = 'button';
+		phoneBack.appendChild(renderIcon(Codicon.arrowLeft));
+		phoneBack.setAttribute('aria-label', localize('voltPrPage.backAria', "Back to Pull Requests"));
+		this._register(addDisposableListener(phoneBack, EventType.CLICK, () => this.closeDetail()));
+		this.phoneTitle = append(phoneBar, $('span.volt-prs-phone-title'));
 		const host = append(detailMain, $('.volt-pr-editor.volt-prs-detail-view'));
 		this.detailView = this._register(this.instantiationService.createInstance(AgentPullRequestView, host));
 	}
@@ -808,6 +822,10 @@ export class AgentPullRequestsPage extends EditorPane {
 		const input = this.instantiationService.createInstance(AgentPullRequestEditorInput, { kind: 'pr', repo: pr.repo, number: pr.number }, chats[0]);
 		this.detailView.setInput(input);
 		this.detailInput.value = input;
+		this.phoneTitle.textContent = localize('voltPrPage.phoneTitle', "Pull Request #{0}", pr.number);
+		if (isVoltCompact()) {
+			this.phoneDetail.value ??= openVoltSurface({ dismiss: () => this.closeDetail(), dismissible: true });
+		}
 		this.syncOverlay();
 		this.paintSidebar();
 		this.detailView.focus();
@@ -818,10 +836,14 @@ export class AgentPullRequestsPage extends EditorPane {
 			return;
 		}
 		this.openKey = undefined;
+		this.phoneDetail.clear();
 		this.detailView.setInput(undefined);
 		this.detailInput.clear();
 		this.syncOverlay();
-		this.searchInput.focus();
+		// A phone would raise its keyboard for the search; it goes back to the list as it was.
+		if (!isVoltCompact()) {
+			this.searchInput.focus();
+		}
 	}
 
 	/** The overlay covers the window while a pull request is open and the page is on screen, as Settings does. */

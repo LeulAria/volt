@@ -30,8 +30,6 @@ const SWIPE_CLOSE_DISTANCE = 56;
 /** Title bar controls a phone moves into the "…" menu (hidden by voltWorkbenchWeb.css), in menu order. */
 const OVERFLOW_CONTROLS: readonly { readonly selector: string; readonly icon: ThemeIcon }[] = [
 	{ selector: '.volt-agent-primary-header-search', icon: Codicon.search },
-	{ selector: '.volt-agent-nav-titlebar .volt-agent-nav-button:first-child', icon: Codicon.arrowLeft },
-	{ selector: '.volt-agent-nav-titlebar .volt-agent-nav-button:last-child', icon: Codicon.arrowRight },
 	{ selector: '.volt-agent-bottom-panel-toggle', icon: Codicon.terminal },
 	{ selector: '.volt-agent-switch-to-ide', icon: Codicon.code },
 ];

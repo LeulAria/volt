@@ -6,6 +6,7 @@
 import { $, addDisposableListener, append, clearNode } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IListRenderer, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
+import { isVoltCompact } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { localize } from '../../../../../nls.js';
@@ -13,6 +14,13 @@ import type { IModelOption } from './agentModelPickerModel.js';
 
 export const MODEL_PICKER_ROW_HEIGHT = 28;
 export const MODEL_PICKER_LIST_MAX_HEIGHT = 280;
+/** On a phone the picker is a sheet: finger-sized rows, and room for more of them. */
+const PHONE_ROW_HEIGHT = 44;
+const PHONE_LIST_MAX_HEIGHT = 440;
+
+function rowHeight(): number {
+	return isVoltCompact() ? PHONE_ROW_HEIGHT : MODEL_PICKER_ROW_HEIGHT;
+}
 
 export type IModelPickerRow =
 	| { readonly id: string; readonly kind: 'model'; readonly model: IModelOption; readonly index: number }
@@ -69,7 +77,7 @@ export function createAutoSparkIcon(): HTMLElement {
 }
 
 export function pickerListHeight(count: number): number {
-	return Math.min(Math.max(count, 1) * MODEL_PICKER_ROW_HEIGHT, MODEL_PICKER_LIST_MAX_HEIGHT);
+	return Math.min(Math.max(count, 1) * rowHeight(), isVoltCompact() ? PHONE_LIST_MAX_HEIGHT : MODEL_PICKER_LIST_MAX_HEIGHT);
 }
 
 export interface IModelPickerListHost {
@@ -104,7 +112,7 @@ interface IModelPickerTemplate {
 
 export class ModelPickerListDelegate implements IListVirtualDelegate<IModelPickerRow> {
 	getHeight(): number {
-		return MODEL_PICKER_ROW_HEIGHT;
+		return rowHeight();
 	}
 
 	getTemplateId(): string {

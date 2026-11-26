@@ -28,6 +28,7 @@ import { INotificationService } from '../../../../../../platform/notification/co
 import { LAYOUT_MODE_CONTEXT_KEY } from '../../../../../browser/parts/titlebar/layoutKeybindingMode.js';
 import { SET_AGENT_LAYOUT_MODE_COMMAND_ID, SET_IDE_LAYOUT_MODE_COMMAND_ID } from '../../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { IWorkbenchLayoutService } from '../../../../../services/layout/browser/layoutService.js';
+import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../../search/agentChatSearchService.js';
 import { VoltMobileDestinations } from './voltMobileNavigation.js';
 
@@ -210,8 +211,10 @@ MenuRegistry.appendMenuItems([
 	{ id: VoltMobileMoreMenu, item: { group: '2_workbench', order: 6, command: { id: 'workbench.actions.view.problems', title: localize2('voltMobile.problems', "Problems"), icon: Codicon.warning } } },
 	{ id: VoltMobileMoreMenu, item: { group: '3_layout', order: 1, when: agentLayout, command: { id: SET_IDE_LAYOUT_MODE_COMMAND_ID, title: localize2('voltMobile.ideLayout', "Switch to IDE Layout"), icon: Codicon.layout } } },
 	{ id: VoltMobileMoreMenu, item: { group: '3_layout', order: 1, when: ideLayout, command: { id: SET_AGENT_LAYOUT_MODE_COMMAND_ID, title: localize2('voltMobile.agentLayout', "Switch to Agent Layout"), icon: Codicon.commentDiscussion } } },
-	{ id: VoltMobileMoreMenu, item: { group: '3_layout', order: 2, command: { id: 'workbench.action.navigateBack', title: localize2('voltMobile.back.nav', "Go Back"), icon: Codicon.arrowLeft } } },
-	{ id: VoltMobileMoreMenu, item: { group: '3_layout', order: 3, command: { id: 'workbench.action.navigateForward', title: localize2('voltMobile.forward', "Go Forward"), icon: Codicon.arrowRight } } },
-	{ id: VoltMobileMoreMenu, item: { group: '4_preferences', order: 1, command: { id: 'workbench.action.openSettings', title: localize2('voltMobile.settings', "Settings"), icon: Codicon.settingsGear } } },
+	// The agent layout's Back and Forward are in the title bar (voltWorkbenchWeb.css); the IDE layout has none there.
+	{ id: VoltMobileMoreMenu, item: { group: '3_layout', order: 2, when: ideLayout, command: { id: 'workbench.action.navigateBack', title: localize2('voltMobile.back.nav', "Go Back"), icon: Codicon.arrowLeft } } },
+	{ id: VoltMobileMoreMenu, item: { group: '3_layout', order: 3, when: ideLayout, command: { id: 'workbench.action.navigateForward', title: localize2('voltMobile.forward', "Go Forward"), icon: Codicon.arrowRight } } },
+	// Volt's own Settings, as ⌘, opens on the desktop; VS Code's settings editor is under its All Settings.
+	{ id: VoltMobileMoreMenu, item: { group: '4_preferences', order: 1, command: { id: OPEN_VOLT_SETTINGS_COMMAND_ID, title: localize2('voltMobile.settings', "Settings"), icon: Codicon.settingsGear } } },
 	{ id: VoltMobileMoreMenu, item: { group: '4_preferences', order: 2, command: { id: 'workbench.action.selectTheme', title: localize2('voltMobile.theme', "Color Theme"), icon: Codicon.colorMode } } },
 ]);

@@ -7,6 +7,9 @@ import { $, addDisposableListener, append, getWindow, isHTMLElement, scheduleAtN
 import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { InputBox } from '../../../../../base/browser/ui/inputbox/inputBox.js';
+import { VoltSheet } from '../../../../../base/browser/ui/voltMobile/voltSheet.js';
+import { openVoltSurface } from '../../../../../base/browser/ui/voltMobile/voltSurfaces.js';
+import { isVoltCompact } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
@@ -473,6 +476,22 @@ export class AgentModelPicker extends Disposable {
 				const view = container.closest('.context-view');
 				view?.classList.add('volt-agent-models-picker-view');
 				store.add(toDisposable(() => view?.classList.remove('volt-agent-models-picker-view')));
+				// A phone: a bottom sheet over a dimmed page; a tap on the page or the system Back closes it.
+				if (view && isVoltCompact()) {
+					view.classList.add('volt-phone-sheet');
+					const backdrop = view.parentElement?.insertBefore($('.volt-phone-sheet-backdrop'), view);
+					store.add(toDisposable(() => {
+						view.classList.remove('volt-phone-sheet');
+						backdrop?.remove();
+					}));
+					if (backdrop) {
+						store.add(addDisposableListener(backdrop, 'pointerdown', e => {
+							e.preventDefault();
+							this.contextViewService.hideContextView();
+						}));
+					}
+					store.add(openVoltSurface({ dismiss: () => this.contextViewService.hideContextView(), dismissible: true }));
+				}
 				menu.setAttribute('role', 'dialog');
 				menu.setAttribute('aria-label', localize('voltAgent.modelPickerAria', "Select a model"));
 				const panel = append(menu, $('.volt-agent-picker-panel'));
@@ -611,6 +630,7 @@ export class AgentModelPicker extends Disposable {
 					}
 				};
 				let previewTimer: ReturnType<typeof setTimeout> | undefined;
+				const optionSheet = store.add(new DisposableStore());
 				const listContext = {
 					selectedRef: this.currentModel,
 					modelAuto: this.modelAuto,
@@ -625,12 +645,21 @@ export class AgentModelPicker extends Disposable {
 						renderList();
 					},
 					onEdit: (model: IModelOption, anchor: HTMLElement) => {
+						// A phone has no room beside the picker: the options rise in a sheet of their own over it.
+						if (isVoltCompact()) {
+							this.showEditSheet(menu, model, optionSheet, () => renderList());
+							return;
+						}
 						this.pickerDetail = { mode: 'edit', ref: model.ref };
 						this.pickerDetailAnchor = anchor;
 						renderDetail();
 						syncFlyout();
 					},
 					onPreview: (model: IModelOption, anchor: HTMLElement) => {
+						// The hover card would open beside the sheet, off the screen.
+						if (isVoltCompact()) {
+							return;
+						}
 						if (previewTimer) {
 							clearTimeout(previewTimer);
 							previewTimer = undefined;
@@ -1204,6 +1233,35 @@ export class AgentModelPicker extends Disposable {
 		}
 	}
 
+	/** A model's options on a phone: their own sheet over the picker, closed by Back, a drag or a tap above it. */
+	private showEditSheet(menu: HTMLElement, model: IModelOption, store: DisposableStore, onChange: () => void): void {
+		store.clear();
+		const container = menu.closest('.monaco-workbench');
+		if (!isHTMLElement(container)) {
+			return;
+		}
+		const sheet = store.add(new VoltSheet({
+			container,
+			ariaLabel: localize('voltAgent.modelOptionsFor', "{0} Options", model.name),
+			title: model.name,
+			className: 'volt-agent-model-options-sheet',
+			detents: ['content', 'large'],
+		}));
+		const panel = append(sheet.body, $('.volt-agent-picker-flyout-panel'));
+		const optionStore = store.add(new DisposableStore());
+		const render = () => {
+			optionStore.clear();
+			panel.replaceChildren();
+			this.renderEditPanel(panel, model, this.runtime.getModelOptions(model.ref), optionStore, () => {
+				onChange();
+				render();
+			});
+		};
+		render();
+		store.add(sheet.onDidHide(() => store.clear()));
+		sheet.show();
+	}
+
 	private selectedContextLabel(model: IModelOption, options: IVoltModelOptions): string | undefined {
 		const context = model.optionDescriptors.find(descriptor => descriptor.id === MODEL_OPTION_CONTEXT);
 		if (context?.options?.length) {
@@ -1266,7 +1324,8 @@ export class AgentModelPicker extends Disposable {
 			if (!(target instanceof Node)) {
 				return;
 			}
-			if (menu.contains(target) || anchor.contains(target)) {
+			// A model's options sheet (showEditSheet) and its dimmed backdrop sit outside the picker but belong to it.
+			if (menu.contains(target) || anchor.contains(target) || (isHTMLElement(target) && target.closest('.volt-sheet-layer')?.querySelector(':scope > .volt-agent-model-options-sheet'))) {
 				return;
 			}
 			this.contextViewService.hideContextView();

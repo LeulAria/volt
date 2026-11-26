@@ -111,6 +111,11 @@
 	display: none;
 }
 
+/* A phone's Editor button (voltMobileWorkbench.css shows it). */
+.volt-agent-mobile-editor-toggle {
+	display: none;
+}
+
 .volt-agent-tools-area .editor-actions .action-item:has(.codicon-split-horizontal, .codicon-split-vertical, .codicon-close, .codicon-close-all, .codicon-close-dirty) {
 	display: none !important;
 }

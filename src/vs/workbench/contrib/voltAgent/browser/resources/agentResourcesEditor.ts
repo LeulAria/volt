@@ -9,11 +9,13 @@ import { $, addDisposableListener, append, clearNode, Dimension, EventType } fro
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { IListRenderer, IListVirtualDelegate } from '../../../../../base/browser/ui/list/list.js';
 import { Orientation, Sash } from '../../../../../base/browser/ui/sash/sash.js';
+import { openVoltSurface } from '../../../../../base/browser/ui/voltMobile/voltSurfaces.js';
+import { isVoltCompact } from '../../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { Emitter } from '../../../../../base/common/event.js';
-import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { DisposableStore, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { basename } from '../../../../../base/common/resources.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -128,9 +130,14 @@ interface INavRow {
 	readonly issues: number;
 }
 
+/** A nav row: a phone's are a finger tall, as Settings' list (settingsNav.ts). */
+function navRowHeight(): number {
+	return isVoltCompact() ? 48 : 30;
+}
+
 class NavDelegate implements IListVirtualDelegate<INavRow> {
 	getHeight(): number {
-		return 30;
+		return navRowHeight();
 	}
 	getTemplateId(): string {
 		return NavRenderer.ID;
@@ -206,6 +213,11 @@ export class AgentResourcesEditor extends EditorPane {
 	private navSash!: Sash;
 	private navHost!: HTMLElement;
 	private titleEl!: HTMLElement;
+	private pageEl!: HTMLElement;
+	/** A phone's Back while a section is open over the list of sections (setPhoneDetail). */
+	private readonly phoneDetail = this._register(new MutableDisposable());
+	/** The row height the nav was last laid out with, to lay it out again when the window crosses to a phone. */
+	private navRowHeight = 0;
 	private leadEl!: HTMLElement;
 	private toolbarEl!: HTMLElement;
 	private searchInput!: HTMLInputElement;
@@ -263,7 +275,7 @@ export class AgentResourcesEditor extends EditorPane {
 		// Customize's root and main classes: the same layout beside the right panel, and the tokens its marketplace view paints with.
 		this.rootEl = append(parent, $('.volt-ares-root.volt-customize-root'));
 		this.mainEl = append(this.rootEl, $('.volt-ares-main.volt-customize-main'));
-		const page = append(this.mainEl, $('.volt-ares'));
+		const page = this.pageEl = append(this.mainEl, $('.volt-ares'));
 
 		const nav = this.navEl = append(page, $('nav.volt-ares-nav'));
 		const brand = append(nav, $('.volt-ares-brand'));
@@ -279,12 +291,30 @@ export class AgentResourcesEditor extends EditorPane {
 				getAriaLabel: (row: INavRow) => row.count === undefined ? row.section.label : localize('agentResources.navRowAria', "{0}, {1}", row.section.label, row.count),
 			},
 		}));
-		this._register(this.navList.onDidOpen(e => e.element && this.setSection(e.element.section.id)));
+		this._register(this.navList.onDidOpen(e => {
+			if (e.element) {
+				this.setSection(e.element.section.id);
+				this.setPhoneDetail(true);
+			}
+		}));
 
 		const content = append(page, $('.volt-ares-content'));
 		this.createNavSash(page);
 		const header = append(content, $('.volt-ares-header'));
 		const headingRow = append(header, $('.volt-ares-heading-row'));
+		// A phone shows the sections or one section: this arrow goes back to the sections (hidden elsewhere).
+		const phoneBack = append(headingRow, $('button.volt-ares-phone-back')) as HTMLButtonElement;
+		phoneBack.type = 'button';
+		phoneBack.appendChild(renderIcon(Codicon.arrowLeft));
+		phoneBack.setAttribute('aria-label', localize('agentResources.phoneBack', "Back to Agent Resources"));
+		this._register(addDisposableListener(phoneBack, EventType.CLICK, () => {
+			// A marketplace item's page goes back to the listing first.
+			if (this.marketplace.hasDetail) {
+				this.marketplace.closeDetail();
+			} else {
+				this.setPhoneDetail(false);
+			}
+		}));
 		const heading = append(headingRow, $('.volt-ares-heading'));
 		this.titleEl = append(heading, $('h2.volt-ares-title'));
 		this.leadEl = append(heading, $('.volt-ares-lead'));
@@ -369,7 +399,8 @@ export class AgentResourcesEditor extends EditorPane {
 		} else {
 			this.load();
 		}
-		if (!options?.preserveFocus) {
+		// A phone would raise its keyboard over the page.
+		if (!options?.preserveFocus && !isVoltCompact()) {
 			this.searchInput.focus();
 		}
 	}
@@ -379,12 +410,26 @@ export class AgentResourcesEditor extends EditorPane {
 		if (visible && this.dirty) {
 			this.render();
 		}
+		// Off screen the page keeps its section but not the phone's Back, which belongs to what is shown now.
+		if (!visible) {
+			this.phoneDetail.clear();
+		} else if (this.pageEl.classList.contains('volt-ares-phone-detail')) {
+			this.setPhoneDetail(true);
+		}
 	}
 
 	override layout(dimension: Dimension): void {
 		this.rootEl.style.height = `${dimension.height}px`;
 		this.surfaceHost?.layout(dimension);
-		this.navList.layout(AGENT_RESOURCES_SECTIONS.length * 30);
+		if (this.navRowHeight && this.navRowHeight !== navRowHeight()) {
+			// The list keeps each row's height from its splice: rows of the other size need a new one.
+			this.navList.splice(0, this.navList.length, [...this.navRows()]);
+		}
+		this.navRowHeight = navRowHeight();
+		this.navList.layout(AGENT_RESOURCES_SECTIONS.length * this.navRowHeight);
+		if (!isVoltCompact()) {
+			this.setPhoneDetail(false);
+		}
 		this.navSash.layout();
 		this.scroll.scanDomNode();
 	}
@@ -409,6 +454,28 @@ export class AgentResourcesEditor extends EditorPane {
 		this.navSash?.layout();
 	}
 
+	/**
+	 * A phone shows the list of sections or one section, never both (voltMobileWorkbench.css): a
+	 * section opens over the list, and Back (the arrow or the system's) returns to it. Elsewhere the
+	 * class does nothing.
+	 */
+	private setPhoneDetail(detail: boolean): void {
+		const phone = detail && isVoltCompact();
+		this.pageEl.classList.toggle('volt-ares-phone-detail', phone);
+		if (phone) {
+			this.phoneDetail.value ??= openVoltSurface({ dismiss: () => this.setPhoneDetail(false), dismissible: true });
+		} else {
+			this.phoneDetail.clear();
+		}
+		this.scroll.scanDomNode();
+	}
+
+	private *navRows(): Iterable<INavRow> {
+		for (let i = 0; i < this.navList.length; i++) {
+			yield this.navList.element(i);
+		}
+	}
+
 	/** Back through the agent window's history (the chat the page was opened from); with none, the page closes. */
 	private async goBack(): Promise<void> {
 		if (canAgentNavGoBack()) {
@@ -419,7 +486,7 @@ export class AgentResourcesEditor extends EditorPane {
 	}
 
 	override focus(): void {
-		if (this.searchInput.ownerDocument.activeElement !== this.searchInput) {
+		if (!isVoltCompact() && this.searchInput.ownerDocument.activeElement !== this.searchInput) {
 			this.searchInput.focus();
 		}
 	}
@@ -456,6 +523,8 @@ export class AgentResourcesEditor extends EditorPane {
 		if (request.section) {
 			this.section = request.section;
 			this.storeState();
+			// A section asked for by name is the screen a phone shows, not the list in front of it.
+			this.setPhoneDetail(true);
 		}
 		this.load();
 	}
