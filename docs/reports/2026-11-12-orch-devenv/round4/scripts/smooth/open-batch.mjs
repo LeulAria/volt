@@ -1,7 +1,9 @@
 // Chat open A/B: interleaved reps (ABBA), each a fresh launch of the arm (covered-window rendering kept on), then for
 // each size one cold copy opened with a plain click and one after the pointer rested 300 ms on its row
-// (open-bench.mjs --copies; a copy neither the window nor the agent server has read). Rep r uses copies 1+3r and
-// 2+3r, the same numbers in both arm profiles (open-seed.mjs seeded both); odd reps open the hovered one first.
+// (open-bench.mjs --copies; a copy neither the window nor the agent server has read). Rep r uses copies 1+3(r%3) and
+// 2+3(r%3), the same numbers in both arm profiles (open-seed.mjs seeded both); odd reps open the hovered one first.
+// Reps 3 and up reuse copies 1-9 (rows past the ninth copy are not reachable in the sidebar): reseed both profiles
+// first (`open-seed.mjs <ud> <repo> --cold 9`); their files carry `-r<rep>`.
 //   node open-batch.mjs [reps=3]     summaries in data/smooth/open/<arm>-<size>-h<hover>-c<copy>.json
 import { execFileSync } from 'child_process';
 import { mkdirSync } from 'fs';
@@ -27,10 +29,10 @@ for (const [rep, arm] of order) {
 	await sleep(15_000);
 	for (const size of ['small', 'medium', 'large']) {
 		// Odd reps open the hovered copy first: the first open of a size in a window pays first-use costs.
-		const pair = [[0, 1 + 3 * rep], [300, 2 + 3 * rep]];
+		const pair = [[0, 1 + 3 * (rep % 3)], [300, 2 + 3 * (rep % 3)]];
 		for (const [hover, copy] of rep % 2 ? pair.reverse() : pair) {
 			const l = await waitQuiet(14);
-			const out = join(dir, `${arm}-${size}-h${hover}-c${copy}.json`);
+			const out = join(dir, `${arm}-${size}-h${hover}-c${copy}${rep >= 3 ? `-r${rep}` : ''}.json`);
 			try {
 				const text = execFileSync('node', [join(here, 'open-bench.mjs'), '--copies', size, '--first', String(copy), '--runs', '1', '--hover', String(hover), '--from', 'From thread', '--out', out], { encoding: 'utf8', timeout: 120_000 });
 				console.log(`${arm} ${size} hover ${hover} copy ${copy} (load ${l}): ${text.trim().split('\n')[0]}`);

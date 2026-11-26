@@ -9156,7 +9156,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				this.focusingForSwitch = false;
 			}
 		}
-		this.schedulePrewarm();
+		// A chat drawn from its first screen is not read yet (its model, mode and folder come with the transcript):
+		// its agent is warmed once the transcript replaces the first screen (drawOverFirstScreen).
+		if (!firstScreen) {
+			this.schedulePrewarm();
+		}
 		this.revealRequestedTurn(input.sessionId);
 		this.logSwitchTiming(input, clickedAt ?? started, clickedAt !== undefined, started, loaded, drawn);
 	}
@@ -9195,6 +9199,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.updateSendButton();
 		this.updateInputPlaceholder();
 		this.refreshContextUsage();
+		this.schedulePrewarm();
 	}
 
 	/**
