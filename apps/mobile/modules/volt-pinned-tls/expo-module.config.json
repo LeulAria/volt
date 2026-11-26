@@ -1,0 +1,9 @@
+{
+	"platforms": ["apple", "android"],
+	"apple": {
+		"modules": ["VoltPinnedTlsModule"]
+	},
+	"android": {
+		"modules": ["com.voltadk.pinnedtls.VoltPinnedTlsModule"]
+	}
+}

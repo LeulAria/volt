@@ -12,6 +12,7 @@ import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { installPinnedTransport } from '../modules/volt-pinned-tls';
 import { ClientProvider, useOptionalClient } from '../src/state/client';
 import { loadEnvironments, useActiveEnvironment, useEnvironments } from '../src/state/environments';
 import { loadFonts, ThemeProvider, useTheme } from '../src/theme/theme';
@@ -21,6 +22,8 @@ import { StackHeader } from '../src/ui/header';
 import { Toasts } from '../src/ui/sheets';
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
+// Volt on the network speaks TLS with its own certificate, pinned at pairing (before any route is used).
+installPinnedTransport();
 
 export default function RootLayout() {
 	return (
