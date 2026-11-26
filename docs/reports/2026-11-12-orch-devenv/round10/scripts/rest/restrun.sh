@@ -32,12 +32,10 @@ echo "== restrun $ARM ($PARTS) $(date -u +%FT%TZ) load $(uptime | sed 's/.*avera
 REST_KEEP_RENDERING=1 ./prep.sh $ARM 5 || { echo "prep failed"; exit 1; }
 node launch.mjs stop >/dev/null
 node launch.mjs
-node rest.mjs $ARM front 90 60
-[[ $PARTS == *a6c* ]] && node rest.mjs $ARM covered 0 60
-if [[ $PARTS == *a10* ]]; then
-	node --input-type=module -e "await (await import('./lib.mjs')).waitCalm()"
-	node seed.mjs 15 >/dev/null || echo "seed 15 failed"
-	node rest.mjs $ARM rest-20 0 60
-fi
+STEPS=(front:90)
+[[ $PARTS == *a6c* ]] && STEPS+=(covered:0)
+[[ $PARTS == *a10* ]] && STEPS+=(seed:15 rest-20:0)
+# One process for all samples: one CDP session, one focus event (see rest.mjs).
+node rest.mjs $ARM $STEPS
 node launch.mjs stop >/dev/null
 echo "== end $ARM $(date -u +%FT%TZ)"
