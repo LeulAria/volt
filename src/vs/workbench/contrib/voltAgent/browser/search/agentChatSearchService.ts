@@ -10,6 +10,7 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { createDecorator } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IAgentHistoryService, IAgentSessionTranscript } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { turnWork, workSearchText } from '../../../../services/voltRuntime/common/orchestration/agentFleet.js';
 import { ChatSearchIndex, IChatContentHit, IChatSearchTurnText, normalizeSearchText } from '../../common/agentChatSearch.js';
 
 export const SEARCH_AGENT_CHATS_COMMAND_ID = 'voltAgent.searchChats';
@@ -54,7 +55,13 @@ const TEXT_CHARS = 20_000;
 const CATCH_UP_MS = 1500;
 
 function sourceTurns(transcript: IAgentSessionTranscript | undefined): IChatSearchTurnText[] {
-	return transcript?.turns.map(turn => ({ id: turn.id, user: turn.user.text ?? '', agent: turn.assistant?.text ?? '' })) ?? [];
+	// With the files a reply changed and the commands it ran: "who touched cart.ts" is a search too.
+	return transcript?.turns.map(turn => ({
+		id: turn.id,
+		// A turn Volt wrote itself (a restart notice, a wake-up) says nothing the user or an agent would look for.
+		user: (turn.user.text ?? '').startsWith('[Volt] ') ? '' : turn.user.text ?? '',
+		agent: [turn.assistant?.text ?? '', workSearchText(turnWork(turn.assistant?.message))].filter(Boolean).join('\n'),
+	})) ?? [];
 }
 
 export class AgentChatSearchService extends Disposable implements IAgentChatSearchService {

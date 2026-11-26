@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import type { IAdminPolicy } from '../../../../platform/voltSandbox/common/authority.js';
-import { WORKSPACE_SNAPSHOT_COMMAND_ID, WORKSPACE_STATUS_TOOL_NAME } from './harness/workspaceContext.js';
+import { WORKSPACE_DETAIL_COMMAND_ID, WORKSPACE_FLEET_COMMAND_ID, WORKSPACE_SNAPSHOT_COMMAND_ID, WORKSPACE_STATUS_TOOL_NAME } from './harness/workspaceContext.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Event } from '../../../../base/common/event.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
@@ -47,6 +47,24 @@ export const CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID = 'volt.browser.captureSnapshot
 export const AUTOMATE_BROWSER_COMMAND_ID = 'volt.browser.automate';
 /** `(sessionId) => string | undefined`: the URL of the page in the chat's browser tab, if it has one. */
 export const BROWSER_PAGE_URL_COMMAND_ID = 'volt.browser.pageUrl';
+/**
+ * `(sessionId, { screenshot?, maxSide? }) => IVoltBrowserPeek | undefined`: the page in a chat's
+ * browser tab, read without opening, moving or locking the tab (thread_inspect). Undefined when
+ * the chat has no browser tab in this window.
+ */
+export const PEEK_BROWSER_COMMAND_ID = 'volt.browser.peek';
+
+export interface IVoltBrowserPeek {
+	readonly url: string;
+	readonly title?: string;
+	/** Console errors since the page loaded. */
+	readonly consoleErrors?: number;
+	/** An agent is driving the tab now. */
+	readonly agentLocked?: boolean;
+	/** A screenshot (data URL), when asked for and the tab could be captured. */
+	readonly image?: string;
+	readonly imageSize?: string;
+}
 /** `(sessionId, IVoltBrowserPreflightRequest) => IVoltBrowserPreflightResult`: the browser half of the turn primer. */
 export const PREFLIGHT_BROWSER_COMMAND_ID = 'volt.browser.preflight';
 
@@ -56,6 +74,7 @@ export const PREFLIGHT_BROWSER_COMMAND_ID = 'volt.browser.preflight';
  */
 export const AGENT_SERVER_WINDOW_COMMANDS: ReadonlySet<string> = new Set([
 	AUTOMATE_BROWSER_COMMAND_ID, BROWSER_PAGE_URL_COMMAND_ID, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, PREFLIGHT_BROWSER_COMMAND_ID, WORKSPACE_SNAPSHOT_COMMAND_ID,
+	PEEK_BROWSER_COMMAND_ID, WORKSPACE_DETAIL_COMMAND_ID, WORKSPACE_FLEET_COMMAND_ID,
 ]);
 
 export interface IVoltBrowserPreflightRequest {
@@ -936,6 +955,10 @@ export const AUTOMATION_TOOL_NAMES = ['manage_automations', 'automation'] as con
  */
 export const THREAD_TOOL_NAMES = [
 	'orchestrator_capabilities',
+	'fleet_status',
+	'fleet_find',
+	'thread_inspect',
+	'thread_group',
 	'thread_list',
 	'thread_search',
 	'thread_read',

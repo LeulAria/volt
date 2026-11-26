@@ -300,6 +300,12 @@ export function derivePromptLine(text: string): string {
 	return truncateAtWord(collapsed, MAX_PROMPT_LINE_LENGTH);
 }
 
+/** A prompt as it was typed and is shown, without what Volt added for the model (a launch's notes on related chats). */
+function typedText(user: IAgentSessionTurn['user']): string {
+	const message = user.message as { text?: unknown } | null | undefined;
+	return message && typeof message === 'object' && typeof message.text === 'string' && message.text.trim() ? message.text : user.text;
+}
+
 /** The latest prompt the user wrote, as they typed it (the stored message's text), for list rows. */
 function lastUserPromptLine(transcript: IAgentSessionTranscript): string | undefined {
 	for (let i = transcript.turns.length - 1; i >= 0; i--) {
@@ -358,7 +364,7 @@ export function deriveMeta(transcript: IAgentSessionTranscript, previous?: Parti
 		updatedAt,
 		...workspaceMetaFields(transcript.header.workspace),
 		turnCount: transcript.turns.length,
-		preview: first ? derivePreview(first.user.text) : '',
+		preview: first ? derivePreview(typedText(first.user)) : '',
 		summary,
 		// A prompt still waiting on its first reply is a live run, not an interrupted one.
 		status: last && !last.assistant && previous?.status === 'running' ? 'running' : deriveStatus(transcript),

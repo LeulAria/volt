@@ -17,8 +17,9 @@ import { localize } from '../../../../../nls.js';
 import { IVoltBrowserService } from '../../../../../platform/voltBrowser/common/voltBrowser.js';
 import { describeMockRoute, IVoltEmulation, IVoltMockRoute, parseEmulation, parseMockRoutes } from '../../../../../platform/voltBrowser/common/browserAgent.js';
 import { decodeDataUrl, encodeImage, IImageLabel, ImageFormat, scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
+import { shortCommand } from '../../../../services/voltRuntime/common/orchestration/agentFleet.js';
 import { importCookiesForAgent } from './browserCookieAgent.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_ACT_TOOL_NAME, BROWSER_AUDIT_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_EMULATE_TOOL_NAME, BROWSER_IMPORT_COOKIES_TOOL_NAME, BROWSER_MOCK_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_STATUS_TOOL_NAME, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, PREFLIGHT_BROWSER_COMMAND_ID, IVoltHostToolResult, IVoltHostToolService, VoltBrowserAutomationToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_ACT_TOOL_NAME, BROWSER_AUDIT_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_EMULATE_TOOL_NAME, BROWSER_IMPORT_COOKIES_TOOL_NAME, BROWSER_MOCK_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_STATUS_TOOL_NAME, IVoltBrowserAutomationOptions, IVoltBrowserPeek, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, PEEK_BROWSER_COMMAND_ID, PREFLIGHT_BROWSER_COMMAND_ID, IVoltHostToolResult, IVoltHostToolService, VoltBrowserAutomationToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 import { BrowserAuditCheck, describeLocator, describeStep, formatRunLog, HOST_EXPECTATIONS, IBrowserAssertion, IBrowserLocator, IBrowserRunStep, IBrowserStepOutcome, parseLocator, parseRunSteps } from '../../../../services/voltRuntime/common/tools/browserRun.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { diffAx, formatAxLine, IAxItem, placeOnImage, readingOrder, strokeBoxes } from '../../../../services/voltRuntime/common/tools/axAnnotations.js';
@@ -1201,7 +1202,7 @@ async function status(ctx: ICallContext): Promise<IVoltHostToolResult> {
 			const dev = servers.filter(server => mine(server.cwd) || looksLikeDevServer(server.command, server.cwd));
 			const sorted = [...dev].sort((a, b) => Number(mine(b.cwd)) - Number(mine(a.cwd)) || a.port - b.port).slice(0, 10);
 			lines.push(sorted.length ? '- Dev servers listening on this machine:' : '- No dev servers are listening on this machine (start the app first).');
-			lines.push(...sorted.map(server => `  - http://localhost:${server.port} - ${server.command.slice(0, 90)}${server.cwd ? ` (in ${mine(server.cwd) ? 'this workspace' : server.cwd})` : ''}`));
+			lines.push(...sorted.map(server => `  - http://localhost:${server.port} - ${shortCommand(server.command, 90)}${server.cwd ? ` (in ${mine(server.cwd) ? 'this workspace' : server.cwd})` : ''}`));
 			if (servers.length > dev.length) {
 				lines.push(`  - and ${servers.length - dev.length} other listener(s) from desktop apps (not shown)`);
 			}
@@ -1659,6 +1660,27 @@ CommandsRegistry.registerCommand(AUTOMATE_BROWSER_COMMAND_ID, (accessor: Service
 
 CommandsRegistry.registerCommand(BROWSER_PAGE_URL_COMMAND_ID, (accessor: ServicesAccessor, sessionId: string): string | undefined => {
 	return sessionBrowser(accessor.get(IAgentRuntimeService).chatFor(sessionId))?.input.url;
+}, 'internal');
+
+CommandsRegistry.registerCommand(PEEK_BROWSER_COMMAND_ID, async (accessor: ServicesAccessor, callerId: string, options?: { readonly screenshot?: boolean; readonly maxSide?: number }): Promise<IVoltBrowserPeek | undefined> => {
+	const found = sessionBrowser(accessor.get(IAgentRuntimeService).chatFor(callerId));
+	if (!found) {
+		return undefined;
+	}
+	// Read only: no lock, no navigation, no tab of its own. The chat's agent and the user keep the page.
+	const view = accessor.get(IVoltBrowserViews).viewFor(found.input);
+	if (!view) {
+		return { url: found.input.url ?? '', title: found.input.getName() };
+	}
+	const page = await raceTimeout(view.runScript<IPageStatus>(STATUS_SCRIPT), 4000).catch(() => undefined);
+	const shot = options?.screenshot ? await screenshot(view, { max_side: options.maxSide ?? 1280 }, CancellationToken.None).catch(() => undefined) : undefined;
+	return {
+		url: page?.url ?? view.pageUrl,
+		...(page?.title ? { title: page.title } : {}),
+		consoleErrors: view.peekConsole().filter(msg => msg.level === 'error').length,
+		...(view.agentLocked ? { agentLocked: true } : {}),
+		...(shot?.image ? { image: shot.image, ...(shot.width ? { imageSize: `${shot.width}x${shot.height}` } : {}) } : {}),
+	};
 }, 'internal');
 
 CommandsRegistry.registerCommand(PREFLIGHT_BROWSER_COMMAND_ID, (accessor: ServicesAccessor, callerId: string, request: IVoltBrowserPreflightRequest, token?: CancellationToken): Promise<IVoltBrowserPreflightResult> => {

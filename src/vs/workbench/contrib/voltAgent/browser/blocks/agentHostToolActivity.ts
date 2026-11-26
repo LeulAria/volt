@@ -339,6 +339,16 @@ function describeThreadActivity(tool: string, args: Record<string, unknown>): IH
 	switch (tool) {
 		case 'orchestrator_capabilities':
 			return { tool, label: 'Read orchestration options' };
+		case 'fleet_status':
+			return { tool, label: 'Checked every project', detail: text(args.project, 60) };
+		case 'fleet_find':
+			return { tool, label: 'Searched Volt for context', detail: text(args.query ?? args.file ?? (args.port !== undefined ? `port ${String(args.port)}` : undefined), 60) };
+		case 'thread_inspect':
+			return { tool, label: chat ? (args.screenshot === true ? 'Captured chat\'s browser' : 'Inspected chat') : 'Inspected this chat', detail: chat };
+		case 'thread_group': {
+			const labels: Record<string, string> = { create: 'Made chat group', add: 'Added chats to group', remove: 'Removed chats from group', rename: 'Renamed chat group', delete: 'Deleted chat group' };
+			return { tool, label: labels[String(args.action)] ?? 'Listed chat groups', detail: text(args.name ?? args.group, 60) };
+		}
 		case 'thread_list':
 			return { tool, label: 'Listed chats', detail: text(args.query, 60) ?? (Array.isArray(args.status) ? args.status.join(', ') : undefined) };
 		case 'thread_search':

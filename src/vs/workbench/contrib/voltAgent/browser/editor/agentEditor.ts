@@ -7779,7 +7779,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		const last = findLast(this.messages, message => message.kind === 'agent');
 		const state = this.compactState();
 		return shouldCompactBeforeSend({
-			enabled: this.configurationService.getValue<boolean>(COMPACT_OLD_THREADS_SETTING) !== false,
+			enabled: this.configurationService.getValue<boolean>(COMPACT_OLD_THREADS_SETTING) === true,
 			lastActivityAt: last?.kind === 'agent' ? last.endedAt ?? last.startedAt : undefined,
 			usedTokens: last?.kind === 'agent' ? last.tokensUsed ?? ((last.tokensIn ?? 0) + (last.tokensCache ?? 0)) : undefined,
 			now: Date.now(),

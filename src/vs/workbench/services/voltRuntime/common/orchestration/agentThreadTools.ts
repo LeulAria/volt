@@ -39,6 +39,9 @@ const THREAD_ID = { type: 'string', description: 'A chat id from thread_list or 
 const REQUIRED_THREAD_ID = { type: 'string', description: 'A chat id from thread_list or thread_search.' };
 const QUEUE_ITEM = { type: 'string', description: 'A queued message id from queue_list.' };
 const MODEL = { type: 'string', description: 'A `model` value from orchestrator_capabilities (exact ref, or a label such as "Claude Opus 5.5"). Omit for the same model.' };
+const PROJECT = { type: 'string', description: '"this" (default), "all", or a project: its name as the sidebar shows it, or its folder path.' };
+const PROJECT_OR_ALL = { type: 'string', description: '"all" (default), "this", or a project: its name as the sidebar shows it, or its folder path.' };
+const GROUP = { type: 'string', description: 'Only the chats of this group (a name or id from thread_group).' };
 const MODE = { type: 'string', enum: ['agent', 'plan', 'ask'], description: 'agent edits files; plan and ask are read-only. Default agent (or this chat\'s mode when it is read-only).' };
 const WORKSPACE = {
 	type: 'object',
@@ -64,6 +67,67 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 		inputSchema: { type: 'object', properties: {} },
 	},
 	{
+		name: 'fleet_status',
+		title: 'Checked every project',
+		group: 'threads',
+		description: 'Everything running in Volt, in one call: each project with its folder, the chats working in it (status, model, branch, what the user last asked, what the agent is doing now), the dev servers listening in each checkout with their ports and commands, each chat\'s browser page and running terminal commands, and the groups chats belong to. Use it for "what is project X doing", "what port is X on", "who is working on what", and before sending work to another project. project: "all" (default), "this", or a project\'s name or folder.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				project: PROJECT_OR_ALL,
+				recent_hours: { type: 'number', description: 'Also show idle chats active within this many hours. Default 24; 0 shows only chats that are running or waiting.' },
+				limit: { type: 'number', description: 'Chats shown per project, 1-30, default 8 (running ones first).' },
+			},
+		},
+	},
+	{
+		name: 'fleet_find',
+		title: 'Searched Volt for context',
+		group: 'threads',
+		description: 'What Volt already holds that bears on a request, in one call, across every project: the chats that changed matching files or discussed it, ranked, each with the files it changed and the turn to read; the projects the request names; who is listening on a port it names; and, for a file, the checkouts where it is changed and uncommitted. Call it before starting work that may have been done, decided or begun elsewhere ("improve the API performance", "who worked on checkout", "has this been tried"), to find the chat to continue or ask, and to tell which project a request belongs to. query: the request or topic in words. file: a path or file name ("who changed src/cart.ts"). port: a port number ("who is on 3000").',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				query: { type: 'string', description: 'The request or topic, in the user\'s words.' },
+				file: { type: 'string', description: 'A file path, its tail, or a file name: the chats that changed it and where it is uncommitted.' },
+				port: { type: 'number', description: 'A port: the server listening on it and the project or chat it belongs to.' },
+				project: PROJECT_OR_ALL,
+				limit: { type: 'number', description: 'Chats shown, 1-20, default 8.' },
+			},
+		},
+	},
+	{
+		name: 'thread_inspect',
+		title: 'Inspected chat',
+		group: 'threads',
+		description: 'A chat\'s whole environment, as its own agent sees it: status, model, project and checkout; its record (the files its agent changed with the turns that changed them, commands still failing, to-do items left open, how its last turn ended); git branch with the changed files; every tab beside it (browser pages and URLs, devices and the app in front, scratch boards and design canvases with the ids scratch_read / canvas_read take, files); its terminals with the running or last command and the last output lines; the dev servers listening in its checkout with their ports; its queue, subagents and groups. screenshot: true also returns a picture of the page in its browser tab (read-only: the tab is not moved or controlled). Use it to answer about another chat\'s app, or to pick up where it is, without interrupting it. Without thread_id, this chat.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				thread_id: THREAD_ID,
+				screenshot: { type: 'boolean', description: 'Also return a screenshot of its browser tab. Default false.' },
+				output_lines: { type: 'number', description: 'Lines of output per terminal, 0-200, default 30.' },
+			},
+		},
+	},
+	{
+		name: 'thread_group',
+		title: 'Grouped chats',
+		group: 'threads',
+		description: 'Named groups of chats that belong to one effort (a feature across several chats, a set of reviewers, a migration\'s workers), kept across restarts. action: list (default; every group with its chats\' status), create (name, thread_ids, note: what the group is for, link: its ticket, issue or pull request), add / remove (group, thread_ids), rename (group, name and/or note, link), delete (group; the chats stay). thread_list, thread_wait and thread_send take `group` to list, wait for or message every chat in one.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				action: { type: 'string', enum: ['list', 'create', 'add', 'remove', 'rename', 'delete'] },
+				group: { type: 'string', description: 'A group\'s name or id.' },
+				name: { type: 'string', description: 'create: the new group\'s name. rename: its new name.' },
+				note: { type: 'string', description: 'What the group is for, in a line.' },
+				link: { type: 'string', description: 'The ticket, issue or pull request the work is for: a URL, or a tracker key such as VOLT-123.' },
+				thread_ids: { type: 'array', items: { type: 'string' }, description: 'Chat ids (or volt://session links).' },
+			},
+		},
+	},
+	{
 		name: 'thread_list',
 		title: 'Listed chats',
 		group: 'threads',
@@ -71,7 +135,8 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 		inputSchema: {
 			type: 'object',
 			properties: {
-				project: { type: 'string', description: '"this" (default), "all", or a project folder path.' },
+				project: PROJECT,
+				group: GROUP,
 				status: { type: 'array', items: { type: 'string', enum: ['working', 'needsInput', 'queued', 'paused', 'blocked', 'idle', 'failed', 'interrupted', 'stopping', 'starting', 'delegating'] }, description: 'Only chats in these states.' },
 				query: { type: 'string', description: 'Only chats whose title contains this.' },
 				include_subagents: { type: 'boolean', description: 'Also list subagent chats (delegate_task children). Default false.' },
@@ -90,7 +155,7 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 			type: 'object',
 			properties: {
 				query: { type: 'string' },
-				project: { type: 'string', description: '"this" (default), "all", or a project folder path.' },
+				project: PROJECT,
 				limit: { type: 'number', description: '1-50, default 20.' },
 			},
 			required: ['query'],
@@ -118,19 +183,20 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 		group: 'threads',
 		approvalInReadOnlyModes: CHANGES_CHATS,
 		description: [
-			'Send a message to another Volt chat. Its agent reads it as a message from this chat (marked as yours in its transcript, not the user\'s). mode: auto (default) starts an idle chat, steers a running agent that takes messages mid-turn, else queues behind its turn; queue always waits for the running turn; steer only delivers into the running turn (fails if it cannot); interrupt stops the running turn and runs this next.',
+			'Send a message to another Volt chat (thread_id), or to every chat of a group (group). Its agent reads it as a message from this chat (marked as yours in its transcript, not the user\'s). mode: auto (default) starts an idle chat, steers a running agent that takes messages mid-turn, else queues behind its turn; queue always waits for the running turn; steer only delivers into the running turn (fails if it cannot); interrupt stops the running turn and runs this next.',
 			'wait=true waits for the chat to finish (up to about 45 s per call) and returns its reply, so asking another chat a question is one call; if it is still working, call thread_wait. Messages between agents count as wake-ups: a chat answers at most 8 in a row before it waits for the user. Do not use it for a delegated task\'s chat: use message_task, or delegate_task for a new review round.',
 		].join(' '),
 		inputSchema: {
 			type: 'object',
 			properties: {
 				thread_id: REQUIRED_THREAD_ID,
+				group: { type: 'string', description: 'Instead of thread_id: send the message to every chat of this group (a name or id from thread_group), each as its own message. wait is ignored: follow with thread_wait {group}.' },
 				message: { type: 'string', description: 'Complete and self-contained: the other agent does not see this conversation.' },
 				mode: { type: 'string', enum: ['auto', 'queue', 'steer', 'interrupt'] },
 				wait: { type: 'boolean', description: 'Return the reply (up to about 45 s). Default false.' },
 				client_request_id: { type: 'string', description: 'Idempotency key: a retry with the same key does not send twice.' },
 			},
-			required: ['thread_id', 'message'],
+			required: ['message'],
 		},
 	},
 	{
@@ -143,6 +209,7 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 			properties: {
 				thread_ids: { type: 'array', items: { type: 'string' }, description: 'Chats to wait for.' },
 				thread_id: { type: 'string', description: 'One chat (same as thread_ids with one id).' },
+				group: { type: 'string', description: 'Every chat of this group (a name or id from thread_group).' },
 				any: { type: 'boolean', description: 'Return as soon as one of them finishes.' },
 				timeout_s: { type: 'number', description: 'At most 45 (the default).' },
 			},
@@ -215,7 +282,9 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 				model: MODEL,
 				models: { type: 'array', items: { type: 'string' }, description: `Compare: 2-${MAX_LAUNCH_MODELS} models, one chat and worktree each.` },
 				mode: MODE,
-				project: { type: 'string', description: 'A project folder path. Default: this chat\'s project.' },
+				project: { type: 'string', description: 'Another project to start it in: its name as the sidebar shows it, or its folder path (fleet_status lists them). Default: this chat\'s project.' },
+				context_threads: { type: 'array', items: { type: 'string' }, description: 'Chats the new one should build on (ids or volt://session links): it is told who they are and how to read their conversation and environment. For a copy of one whole conversation use thread_fork instead.' },
+				group: { type: 'string', description: 'Add the new chat(s) to this group (made if it does not exist).' },
 				workspace: WORKSPACE,
 				open: { type: 'boolean', description: 'Open it in a tab for the user. Default false.' },
 			},
@@ -322,7 +391,7 @@ export const THREAD_TOOLS: readonly IVoltHostToolInfo[] = [
 		title: 'Listed worktrees',
 		group: 'threads',
 		description: 'Every git worktree of this chat\'s project (path, branch, HEAD) and the chat that uses each, for workspace {type:"existing_worktree"} in thread_launch.',
-		inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'A project folder path. Default: this chat\'s project.' } } },
+		inputSchema: { type: 'object', properties: { project: { type: 'string', description: 'A project\'s name or folder path. Default: this chat\'s project.' } } },
 	},
 	{
 		name: 'worktree_handoff',
@@ -707,11 +776,14 @@ export function matchCatalogModel(items: readonly IVoltCatalogItem[], value: str
 		?? enabled.find(item => item.label.toLowerCase().includes(wanted) || item.ref.toLowerCase().includes(wanted));
 }
 
+/** Models named per provider in orchestrator_capabilities; the rest are counted (a gateway lists hundreds). */
+export const MAX_CATALOG_MODELS = 16;
+
 /**
  * The models an agent can pick, one line per provider: `claude-code (agent): claude-opus-5-5 Opus 5.5 · …`.
  * An agent passes `claude-code:claude-opus-5-5` (or the label). A few hundred tokens for dozens of models.
  */
-export function describeModelCatalog(items: readonly IVoltCatalogItem[], current: string | undefined): string[] {
+export function describeModelCatalog(items: readonly IVoltCatalogItem[], current: string | undefined, maxPerProvider = MAX_CATALOG_MODELS): string[] {
 	const groups = new Map<string, IVoltCatalogItem[]>();
 	for (const item of items.filter(candidate => candidate.enabled)) {
 		const key = `${item.providerId}\0${item.kind}`;
@@ -719,8 +791,11 @@ export function describeModelCatalog(items: readonly IVoltCatalogItem[], current
 	}
 	return [...groups.values()].map(group => {
 		const { providerId, kind } = group[0];
-		const models = group.map(item => `${item.id}${item.label && item.label.toLowerCase() !== item.id.toLowerCase() ? ` "${item.label}"` : ''}${item.ref === current ? ' (this chat)' : ''}`);
-		return `- ${providerId} (${kind === 'agent' ? 'agent harness' : 'model API'}): ${models.join(' · ')}`;
+		// A gateway lists hundreds of models: the first ones (its picker order) and this chat's, then how many more.
+		const shown = group.filter((item, index) => index < maxPerProvider || item.ref === current);
+		const models = shown.map(item => `${item.id}${item.label && item.label.toLowerCase() !== item.id.toLowerCase() ? ` "${item.label}"` : ''}${item.ref === current ? ' (this chat)' : ''}`);
+		const more = group.length - shown.length;
+		return `- ${providerId} (${kind === 'agent' ? 'agent harness' : 'model API'}): ${models.join(' · ')}${more > 0 ? ` · and ${more} more (any model the user's picker shows for ${providerId} works: pass ${providerId}:<id>)` : ''}`;
 	});
 }
 

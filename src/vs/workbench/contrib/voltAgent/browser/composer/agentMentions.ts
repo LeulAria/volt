@@ -84,6 +84,7 @@ import { IAgentDevicesService, IDeviceTarget, IHostDevices } from '../devices/ag
 import { OPEN_DEVICE_PREVIEW_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
 import { describeDevice } from '../../common/agentDevices.js';
 import { agentMentionBlock, IOrchestraMachine, LOCAL_MACHINE_ID, localMachine, machineMentionBlock, MENTION_COUNCIL_VALUE, MENTION_TEAM_VALUE, ORCHESTRA_FEATURE_ID, runnerMachine } from '../../../../services/voltRuntime/common/orchestration/orchestra.js';
+import { attachedChatBlock } from '../../../../services/voltRuntime/common/orchestration/agentFleet.js';
 import { ORCH_MACHINE_CAPACITY_SETTING, parseMachineCapacity } from '../../../../services/voltRuntime/common/orchestration/machineCapacity.js';
 import { IAgentCloudTasksService } from '../../../../services/voltRuntime/browser/cloud/agentCloudTasksService.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../voltSettings/browser/voltSettingsEditorInput.js';
@@ -3059,10 +3060,21 @@ export class AgentMentionController extends Disposable {
 			}
 			seen.add(key);
 			if (mention.kind === 'chat' && mention.value) {
+				// Who the chat is and how to reach it go with the transcript: its agent, checkout and tools
+				// (thread_read / thread_inspect / thread_send / thread_fork) are one call away.
 				const transcript = this.chatContexts.get(mention.value);
-				if (transcript) {
-					blocks.push(`<attached_chat title="${mention.label}">\n${transcript}\n</attached_chat>`);
-				}
+				const meta = this.agentHistory.get(mention.value);
+				blocks.push(attachedChatBlock({
+					id: mention.value,
+					title: meta?.title || mention.label,
+					status: meta?.status,
+					model: meta?.model,
+					project: meta?.workspaceLabel,
+					checkout: meta?.worktreePath ?? meta?.workspaceFolder,
+					branch: meta?.worktreeBranch,
+					turns: meta?.turnCount,
+					clipped: transcript?.startsWith('...\n'),
+				}, transcript));
 			} else if (mention.kind === 'terminal' && mention.resource) {
 				const output = this.terminalOutput(mention.resource);
 				if (output) {

@@ -65,20 +65,30 @@ export function dropBoundReasoning(messages: INativeLoopMessage[], from = 0): nu
 export interface ICompactionPolicy {
 	/** Model window in tokens. */
 	readonly window: number;
-	/** Compact when the prompt reaches this fraction of the effective window. */
+	/** Compact when the prompt reaches this fraction of the effective window (less the reply's room). */
 	readonly threshold: number;
-	/** Upper bound on the window Volt lets a conversation use, for cost and focus. */
+	/** Upper bound on the window Volt lets a conversation use. */
 	readonly practicalLimit: number;
 }
 
-export const DEFAULT_COMPACTION: Omit<ICompactionPolicy, 'window'> = { threshold: 0.8, practicalLimit: 400_000 };
+/**
+ * Compaction is lossy, so it happens only when the context is full: the whole model window, and
+ * only once the prompt leaves no room for a reply. The user can always run `/compact` sooner.
+ */
+export const DEFAULT_COMPACTION: Omit<ICompactionPolicy, 'window'> = { threshold: 1, practicalLimit: Number.POSITIVE_INFINITY };
+
+/** Room a full context still has to leave for the model's reply. */
+export function replyReserve(window: number): number {
+	return Math.min(16_384, Math.floor(window * 0.05));
+}
 
 export function effectiveWindow(policy: ICompactionPolicy): number {
 	return Math.max(16_000, Math.min(policy.window, policy.practicalLimit));
 }
 
 export function shouldCompact(promptTokens: number, policy: ICompactionPolicy): boolean {
-	return promptTokens >= effectiveWindow(policy) * policy.threshold;
+	const window = effectiveWindow(policy);
+	return promptTokens >= window * policy.threshold - replyReserve(window);
 }
 
 /** How far below the compaction point the summary starts in the background (pi-durable's `backgroundTokens`). */
@@ -92,7 +102,7 @@ export const BACKGROUND_COMPACTION_TOKENS = 32_768;
  */
 export function shouldCompactEarly(promptTokens: number, policy: ICompactionPolicy): boolean {
 	const window = effectiveWindow(policy);
-	return promptTokens >= window * policy.threshold - Math.min(BACKGROUND_COMPACTION_TOKENS, window * 0.1);
+	return promptTokens >= window * policy.threshold - replyReserve(window) - Math.min(BACKGROUND_COMPACTION_TOKENS, window * 0.1);
 }
 
 /**
