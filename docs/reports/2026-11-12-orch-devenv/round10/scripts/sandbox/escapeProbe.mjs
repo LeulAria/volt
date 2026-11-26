@@ -37,8 +37,10 @@ const { parseSandboxPolicyLayer } = await load('vs/platform/voltSandbox/common/s
 const gitExtensionEnv = await (async () => {
 	const helper = join(OUT, '..', 'extensions', 'git', 'out', 'safeGitEnv.js');
 	if (process.argv.includes('--no-git-extension-env') || !existsSync(helper)) { return undefined; }
-	const { createRequire } = await import('node:module');
-	return createRequire(import.meta.url)(helper).withSafeBareRepository;
+	// CommonJS, whatever package scope the file is mounted under.
+	const module = { exports: {} };
+	new Function('exports', 'module', readFileSync(helper, 'utf8'))(module.exports, module);
+	return module.exports.withSafeBareRepository;
 })();
 const isMac = process.platform === 'darwin';
 const isLinux = process.platform === 'linux';
