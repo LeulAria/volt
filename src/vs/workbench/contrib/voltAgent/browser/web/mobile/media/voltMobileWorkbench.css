@@ -44,7 +44,7 @@
 	right: 0;
 	bottom: 0;
 	z-index: 80;
-	height: var(--volt-mobile-nav-height, 56px);
+	height: var(--volt-mobile-nav-height, 48px);
 	padding: 0 var(--volt-safe-right, 0px) var(--volt-safe-bottom, 0px) var(--volt-safe-left, 0px);
 	box-sizing: content-box;
 	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
@@ -67,8 +67,8 @@
 	padding: 0;
 	border: 0;
 	background: none;
-	/* Grey at rest; the one on screen is bright, and that is the indicator (no pill). */
-	color: color-mix(in srgb, var(--vscode-foreground) 52%, transparent);
+	/* Grey at rest; the one on screen is bright, and that is the indicator (no pill, no label). */
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
 	font: inherit;
 	cursor: pointer;
 	-webkit-tap-highlight-color: transparent;
@@ -79,15 +79,15 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 24px;
-	height: 24px;
+	width: 28px;
+	height: 28px;
 	transition: scale 200ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .volt-mobile-nav-icon {
 	pointer-events: none;
-	width: 20px;
-	height: 20px;
+	width: 22px;
+	height: 22px;
 	fill: none;
 	stroke: currentColor;
 	stroke-width: 1;
@@ -105,27 +105,28 @@
 	font-size: 19px;
 }
 
-.volt-mobile-nav-label {
-	max-width: 100%;
-	font-size: 10.5px;
-	line-height: 13px;
-	letter-spacing: 0.01em;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
 .volt-mobile-nav-item.active {
 	color: var(--vscode-foreground);
 }
 
-.volt-mobile-nav-item.active .volt-mobile-nav-label {
-	font-weight: 600;
+.volt-mobile-nav-item.active .volt-mobile-nav-icon {
+	stroke-width: 1.5;
 }
 
 .monaco-workbench.volt-mobile-reduced-motion .volt-mobile-nav-indicator {
 	transition: none;
 	scale: none;
+}
+
+/* New Chat in the middle: the paper plane, bright like the tab on screen, no fill behind it. */
+.volt-mobile-nav-item.primary {
+	color: var(--vscode-foreground);
+}
+
+.volt-mobile-nav-item.primary .volt-mobile-nav-icon {
+	width: 22px;
+	height: 22px;
+	stroke-width: 1.3;
 }
 
 /* Beats style.css's `.monaco-workbench button:focus` box; the indicator ring below marks keyboard focus. */
@@ -140,14 +141,16 @@
 	outline: none;
 }
 
+/* A list a tap focused (More, Explorer, Source Control) drew its keyboard focus frame down the screen's
+ * edges; a finger has its own feedback. A keyboard brings the frame back (`volt-touch-input` is dropped
+ * on a key press only by a tablet; a phone keeps rows' focused/selected fills). */
+.monaco-workbench.volt-mobile-phone .monaco-list:focus::before {
+	outline: none !important;
+}
+
 .volt-mobile-nav-item:focus-visible .volt-mobile-nav-indicator {
 	outline: 1px solid var(--vscode-focusBorder);
 	border-radius: 50%;
-}
-
-/* On its side a phone keeps the icons and gives the height back to the content. */
-.monaco-workbench.volt-mobile-landscape .volt-mobile-nav-label {
-	display: none;
 }
 
 /* ---- The side bar's views as pages (layout.ts setSideBarPageOpen) ----------------------- */
@@ -215,6 +218,15 @@
 
 .monaco-workbench.volt-layout-agent.volt-sidebar-page-open .part.sidebar:not(.volt-lent-part) {
 	border-right: 0 !important;
+}
+
+/* The view's name is the page's title (Source Control, Search), not the desktop's small-caps label. */
+.monaco-workbench.volt-sidebar-page-open .part.sidebar > .composite.title > .title-label h2 {
+	font-size: 15px;
+	font-weight: 600;
+	text-transform: none;
+	letter-spacing: 0;
+	color: var(--vscode-foreground);
 }
 
 @keyframes volt-mobile-page-in {
@@ -351,7 +363,17 @@
 }
 
 .monaco-workbench .quick-input-widget.volt-compact .quick-input-list .monaco-list-row {
+	display: flex;
+	align-items: center;
 	border-radius: 0;
+}
+
+/* The entry is a line tall inside a finger-tall row: it fills the row so its label sits in the middle. */
+.monaco-workbench .quick-input-widget.volt-compact .quick-input-list .monaco-list-row > .quick-input-list-entry,
+.monaco-workbench .quick-input-widget.volt-compact .quick-input-list .monaco-list-row > * {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 100%;
 }
 
 /* Keybinding hints mean nothing without a keyboard. */
@@ -459,12 +481,72 @@
 	margin-left: 0;
 }
 
+.monaco-workbench.volt-mobile-phone .volt-trust-actions {
+	gap: 8px;
+}
+
 .monaco-workbench.volt-mobile-phone .volt-trust-actions .volt-button.volt-trust-primary,
 .monaco-workbench.volt-mobile-phone .volt-trust-actions .volt-button.volt-trust-secondary {
 	width: 100%;
-	height: 44px;
-	border-radius: 10px;
-	font-size: 15px;
+	height: 36px;
+	min-height: 36px;
+	padding: 0 14px;
+	border-radius: 6px;
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 36px;
+}
+
+/* The dialog focuses Trust for the keyboard; a phone has none, so no ring around it. */
+.monaco-workbench.volt-mobile-phone .volt-trust-actions .volt-button:focus {
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+/* ---- Volt Guard's card (sandboxDenialCard.ts): its answers as an even grid -------------------
+ * Skip, Allow for This Chat, Allow and Run Outside Sandbox wrapped wherever they fell. On a phone the
+ * allows take the first row (Allow, the run's, at the right like a sheet's confirm), Skip and the
+ * critical Run Outside Sandbox the second; each button fills its cell. */
+.monaco-workbench.volt-mobile-phone .volt-sandbox-denial-actions {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	justify-content: stretch;
+	margin-top: 10px;
+}
+
+.monaco-workbench.volt-mobile-phone .volt-sandbox-denial-actions > .monaco-button {
+	width: 100%;
+	min-width: 0;
+	height: 32px;
+	min-height: 32px;
+	margin: 0;
+	padding: 0 10px;
+	border-radius: 6px;
+	font-size: 13px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	order: 3;
+}
+
+.monaco-workbench.volt-mobile-phone .volt-sandbox-denial-actions > .monaco-button.volt-button-secondary {
+	order: 1;
+}
+
+.monaco-workbench.volt-mobile-phone .volt-sandbox-denial-actions > .monaco-button.volt-button-primary {
+	order: 2;
+}
+
+/* Skip and Run Outside Sandbox are quiet text buttons on a faint fill, so the row reads as one set. */
+.monaco-workbench.volt-mobile-phone .volt-sandbox-denial-actions > .monaco-button.volt-button-ghost {
+	background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+}
+
+/* A lone answer (Skip with nothing beside it) spans the row instead of half of it. */
+.monaco-workbench.volt-mobile-phone .volt-sandbox-denial-actions > .monaco-button:only-child,
+.monaco-workbench.volt-mobile-phone .volt-sandbox-denial-actions > .monaco-button.volt-button-ghost:nth-last-child(1):nth-child(odd) {
+	grid-column: 1 / -1;
 }
 
 /* ---- Notifications: above the navigation, across the screen ------------------------------ */
@@ -519,6 +601,34 @@
 
 .monaco-workbench.volt-mobile-phone .volt-agent-landing-chrome::-webkit-scrollbar {
 	display: none;
+}
+
+/*
+ * Rows that scroll sideways fade out at their right edge, so a chip cut there reads as "more this way";
+ * the padding lets the last chip scroll clear of the fade.
+ */
+.monaco-workbench.volt-mobile-phone :is(.volt-agent-landing-chrome, .volt-customize-filters, .part.auxiliarybar .volt-agent-home-footer) {
+	-webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+	mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+	padding-right: 28px;
+}
+
+/* The chips over the follow-up composer (Worked for, Commit, a job's wait) stand on a fade of the chat's
+ * background, so the transcript scrolling under them does not run through the gaps between them. The
+ * fade stops at the gap's middle: past it, it painted over the composer's top edge (the chips stack
+ * above it). */
+.monaco-workbench.web.volt-web-phone .volt-agent-composer-chips.is-visible {
+	isolation: isolate;
+	margin-bottom: 10px;
+}
+
+.monaco-workbench.web.volt-web-phone .volt-agent-composer-chips.is-visible::before {
+	content: '';
+	position: absolute;
+	inset: -14px -14px -4px;
+	z-index: -1;
+	background: linear-gradient(to bottom, transparent, var(--volt-agent-window-bg-base, var(--vscode-editor-background)) 45%);
+	pointer-events: none;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-agent-landing-chrome > * {
@@ -624,23 +734,39 @@
 	padding: 0;
 }
 
+/* Scaled to the phone: a small mark over 40px rows of 14px text and 16px icons, like Settings' list. */
+.monaco-workbench.volt-mobile-phone .part.editor.volt-agent-tools-part .editor-group-watermark > .letterpress {
+	width: 44px;
+	height: 44px;
+	max-width: 44px;
+	margin: 20px auto 12px;
+	background-size: contain;
+}
+
 .monaco-workbench.volt-mobile-phone .volt-agent-tools-open-row {
-	height: 48px;
-	padding: 0 20px;
-	gap: 16px;
+	height: 40px;
+	padding: 0 16px;
+	gap: 12px;
 	border-radius: 0;
-	font-size: 15px;
+	font-size: 14px;
 	opacity: 1;
 	color: var(--vscode-foreground);
 }
 
 .monaco-workbench.volt-mobile-phone .volt-agent-tools-open-row > .leading {
-	width: 20px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
 }
 
-.monaco-workbench.volt-mobile-phone .volt-agent-tools-open-row > .leading .volt-agent-surface-stroke-icon {
-	width: 18px;
-	height: 18px;
+.monaco-workbench.volt-mobile-phone .volt-agent-tools-open-row > .leading :is(.volt-agent-surface-stroke-icon, svg) {
+	width: 16px;
+	height: 16px;
+}
+
+.monaco-workbench.volt-mobile-phone .volt-agent-tools-open-row > .leading .codicon[class*='codicon-'] {
+	font-size: 16px;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-agent-tools-open-row > .keys {
@@ -669,8 +795,9 @@
 
 .monaco-workbench.volt-mobile-phone .part.auxiliarybar .volt-agent-home-nav-bar {
 	height: 44px;
-	gap: 4px;
+	gap: 2px;
 	padding: 0 8px 0 12px;
+	align-items: center;
 }
 
 /* The search reads as VS Code's own input box: square-cornered, the input's colors and border. */
@@ -679,9 +806,10 @@
 	padding: 0 0 0 10px;
 	box-sizing: border-box;
 	border: 1px solid var(--vscode-input-border, color-mix(in srgb, var(--vscode-foreground) 12%, transparent));
-	border-radius: 4px;
+	border-radius: 3px;
 	background: var(--vscode-input-background, color-mix(in srgb, var(--vscode-foreground) 6%, transparent));
 	font-size: 14px;
+	margin-right: 6px;
 }
 
 .monaco-workbench.volt-mobile-phone .part.auxiliarybar .volt-agent-home-nav-row:is(.volt-pressed, :focus-within) {
@@ -692,16 +820,24 @@
 	opacity: 0.6;
 }
 
+/* Filter, New Project and New Agent beside the search: 36px targets centred on its 36px line, 17px
+ * icons, no fill (an open menu or a set filter shows in the icon's brightness, as the tabs do). */
 .monaco-workbench.volt-mobile-phone .part.auxiliarybar .volt-agent-home-nav-action {
-	width: 40px;
-	height: 40px;
-	border-radius: 50%;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 36px;
+	height: 36px;
+	padding: 0;
+	border-radius: 3px;
+	background: transparent !important;
 }
 
 .monaco-workbench.volt-mobile-phone.volt-layout-agent .part.auxiliarybar .volt-agent-home-nav-action :is(.codicon[class*='codicon-'], .volt-agent-svg-icon, svg) {
-	font-size: 20px;
-	width: 20px;
-	height: 20px;
+	font-size: 17px;
+	width: 17px;
+	height: 17px;
 }
 
 /*
@@ -800,24 +936,26 @@
 	border-radius: 16px;
 }
 
+/* The footer's shortcuts (Settings, Usage, Automations, Customize) are rows of More on a phone
+ * (voltMobileMore.ts), and Pull Requests a tab of the navigation: the Projects screen is its list only. */
 .monaco-workbench.volt-mobile-phone .part.auxiliarybar .volt-agent-home-footer {
-	height: 52px;
-	padding: 0 8px;
-	justify-content: space-around;
-	border-top: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border, transparent));
+	display: none;
 }
 
-.monaco-workbench.volt-mobile-phone .part.auxiliarybar .volt-agent-home-footer > .volt-agent-home-settings {
-	width: 44px;
-	height: 44px;
-	border-radius: 50%;
-}
+/* A chat's Snooze, Settle and Pin are in its long-press menu: the row keeps its title, badge and age.
+ * On a touch tablet too, where the tapped row's buttons covered its title in the narrow sidebar. */
+@media (hover: none) {
+	.monaco-workbench.volt-mobile .volt-agent-home-tree .monaco-list-row .volt-agent-home-row.is-session > .actions {
+		display: none !important;
+	}
 
-/* The SVG's wrapper grows with it (agentHomePane.css keeps it at 15px), or the icon spills right and down of the button's center. */
-.monaco-workbench.volt-mobile-phone.volt-layout-agent .part.auxiliarybar .volt-agent-home-footer > .volt-agent-home-settings :is(.codicon[class*='codicon-'], .volt-agent-svg-icon, .volt-usage-icon, svg) {
-	font-size: 20px;
-	width: 20px;
-	height: 20px;
+	.monaco-workbench.volt-mobile .volt-agent-home-tree .monaco-list-row .volt-agent-home-row.is-session > :is(.status-badge, .meta) {
+		visibility: visible !important;
+	}
+
+	.monaco-workbench.volt-mobile .volt-agent-home-tree .monaco-list-row .volt-agent-home-row.is-session > .name {
+		mask-image: none !important;
+	}
 }
 
 /* ---- Volt Settings: a list screen, then a page screen (voltSettingsEditor.ts setPhoneDetail) ---- */
@@ -905,30 +1043,46 @@
 	font-size: 22px;
 }
 
-/* The list screen: a big Back, a filled search pill, and 48px rows. */
+/* The list screen: a compact Back, a filled search field, and 40px rows, all on 3px corners. */
+.monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-sidebar-head {
+	margin: 0 12px 6px;
+}
+
 .monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-back {
-	height: 48px;
-	padding: 0 16px;
+	flex: 0 1 auto;
+	height: 34px;
+	padding: 0 10px;
+	gap: 8px;
+	border-radius: 3px;
+	font-size: 14px;
+}
+
+.monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-back .codicon {
 	font-size: 16px;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-search {
-	margin: 4px 16px 8px;
+	margin: 0 12px 8px;
+	border-top: 0;
+	border-bottom: 0;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-search .volt-settings-search-icon {
-	left: 14px;
+	left: 10px;
 	z-index: 1;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-search .monaco-inputbox {
-	min-height: 40px;
-	border-radius: 20px;
-	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent) !important;
+	height: 36px;
+	min-height: 36px;
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--vscode-foreground) 7%, transparent) !important;
 }
 
-.monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-search .monaco-inputbox .input {
-	font-size: 15px;
+.monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-search .monaco-inputbox > .ibwrapper > .input,
+.monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-search .monaco-inputbox input {
+	padding-left: 36px !important;
+	font-size: 14px;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-settings-content-inner {
@@ -954,48 +1108,49 @@
 
 /* The list screen's rows are a finger tall (settingsNav.ts PHONE_ROW_HEIGHT), edge to edge. */
 .monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-nav-row {
-	gap: 16px;
+	gap: 12px;
 	padding-right: 16px;
-	font-size: 16px;
+	font-size: 14px;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-nav-row.heading {
-	padding-bottom: 8px;
-	font-size: 13px;
+	padding-bottom: 6px;
+	font-size: 12px;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-nav-icon,
 .monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-nav-icon svg {
-	width: 20px;
-	height: 20px;
+	width: 16px;
+	height: 16px;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-settings-sidebar .volt-settings-nav-icon .codicon[class*='codicon-'] {
-	font-size: 20px;
+	font-size: 16px;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-settings-sidebar .monaco-list-row {
 	border-radius: 0;
 }
 
-/* Its footer shortcuts spread evenly across the bottom, each a finger-sized circle. */
+/* Its footer's shortcuts (Settings, Usage, Automations, Customize) are rows of the list right above
+ * them, and Pull Requests a tab of the navigation: on a phone the footer only repeated them as bare icons. */
 .monaco-workbench.volt-mobile-phone .volt-settings-footer {
-	justify-content: space-around;
-	height: 56px;
-	padding: 0 8px;
-	border-top: 1px solid color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+	display: none;
 }
 
-.monaco-workbench.volt-mobile-phone .volt-settings-footer .volt-agent-home-settings {
-	width: 44px;
-	height: 44px;
-	border-radius: 50%;
+/* The list screen is a list to tap through: no row stays lit for the page last opened. */
+.monaco-workbench.volt-mobile-phone > .volt-settings-overlay:not(.volt-settings-detail) .volt-settings-sidebar .monaco-list-row:is(.selected, .focused) {
+	background: transparent !important;
 }
 
-.monaco-workbench.volt-mobile-phone.volt-layout-agent .volt-settings-footer .volt-agent-home-settings :is(.codicon[class*='codicon-'], .volt-agent-svg-icon, .volt-usage-icon, svg) {
-	font-size: 20px;
-	width: 20px;
-	height: 20px;
+/* A page's lead sits clear of the top bar's hairline (its title is hidden just below). */
+.monaco-workbench.volt-mobile-phone > .volt-settings-overlay .volt-settings-lead {
+	margin: 14px 0 18px;
+}
+
+/* A page's name is the top bar's, beside Back: its own title under that said it twice (its lead stays). */
+.monaco-workbench.volt-mobile-phone > .volt-settings-overlay .volt-settings-page-title {
+	display: none;
 }
 
 /* Appearance: the theme is a row of the page on a phone (voltSettingsEditor.ts renderAppearance); no list over half the screen. */
@@ -1005,8 +1160,12 @@
 
 /* ---- Usage (agentUsagePage.ts): one column a phone wide ----------------------------------- */
 
+/* `margin: 0 auto` (agentUsage.css) beats the stretch in a flex column: the page grew to its widest
+ * child (the runway, 500px) and ran off the screen. */
 .monaco-workbench.volt-mobile-phone .volt-usage-content {
 	align-self: stretch;
+	width: 100%;
+	margin: 0;
 	min-width: 0;
 }
 
@@ -1048,6 +1207,11 @@
 }
 
 /* ---- Automations and Workflows (automationListView.ts, workflow library) ------------------ */
+
+/* The desktop's 44px of air over the title is a fifth of a phone's screen above the fold. */
+.monaco-workbench.volt-mobile-phone .volt-auto-page {
+	padding-top: 12px;
+}
 
 /* The title and its text take the width; the actions line up under them. */
 .monaco-workbench.volt-mobile-phone .volt-auto-list-head {
@@ -1482,32 +1646,36 @@
 }
 
 /* The explorer sidebar's row of views (Explorer, Search, Source Control, Chats…) as a phone's tab
- * row: 48px tall (agentSurfaceHost.ts), 40px targets with 20px icons, grey at rest, the view on screen
- * bright on a soft pill. */
+ * row: 36px targets with 18px icons, grey at rest, the view on screen bright white. No fill behind
+ * any of them, like the bottom navigation. */
 .monaco-workbench.volt-mobile-phone .volt-agent-files-sidebar-header {
-	gap: 4px;
+	gap: 2px;
 	padding: 0 8px;
 }
 
 .monaco-workbench.volt-mobile-phone .volt-agent-files-sidebar-header .volt-agent-files-sidebar-tab {
-	width: 40px;
+	width: 36px;
 	height: 36px;
-	border-radius: 8px;
-	color: color-mix(in srgb, var(--vscode-foreground) 55%, transparent);
+	border-radius: 3px;
+	background: transparent !important;
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
 }
 
 .monaco-workbench.volt-mobile-phone .volt-agent-files-sidebar-header .volt-agent-files-sidebar-tab > svg {
-	width: 20px;
-	height: 20px;
+	width: 18px;
+	height: 18px;
 }
 
-.monaco-workbench.volt-mobile-phone .volt-agent-files-sidebar-header .volt-agent-files-sidebar-tab:hover {
-	background: transparent;
+.monaco-workbench.volt-mobile-phone.volt-layout-agent .volt-agent-files-sidebar-header .volt-agent-files-sidebar-tab:is(:hover, :focus-visible):not(.active) {
+	color: color-mix(in srgb, var(--vscode-foreground) 45%, transparent);
 }
 
-.monaco-workbench.volt-mobile-phone .volt-agent-files-sidebar-header .volt-agent-files-sidebar-tab.active {
+.monaco-workbench.volt-mobile-phone.volt-layout-agent .volt-agent-files-sidebar-header .volt-agent-files-sidebar-tab.active {
 	color: var(--vscode-foreground);
-	background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+}
+
+.monaco-workbench.volt-mobile-phone.volt-layout-agent:is(.vs-dark, .hc-black) .volt-agent-files-sidebar-header .volt-agent-files-sidebar-tab.active {
+	color: #fff;
 }
 
 /* The explorer sidebar is a screen of its own on a phone: it closes with an X, and the right panel's
@@ -1535,6 +1703,12 @@
 	margin-left: 12px;
 	font-size: 22px;
 	font-weight: 700;
+}
+
+/* The terminal on a phone always fills the screen and has no room for a second pane beside it: its
+ * bar keeps the terminals, New, Kill, its menu and Close, not Maximize or Split. */
+.monaco-workbench.volt-mobile-phone .part.panel > .composite.title .action-item:has(> .action-label:is(.codicon-panel-maximize, .codicon-panel-restore, .codicon-screen-full, .codicon-screen-normal, .codicon-split-horizontal, .codicon-split-vertical)) {
+	display: none;
 }
 
 /* ---- Key bar above the keyboard (voltMobileKeyBar.ts) ------------------------------------- */
@@ -2102,4 +2276,11 @@
 
 .monaco-workbench.volt-mobile-phone .volt-git-graph .vgg-body > .vgg-resizer {
 	display: none;
+}
+
+/* ---- Pages in the chat's place (Pull Requests, Customize, Automations): the chat's own background --
+ * They painted the editor's color (agentCustomize.css), a shade lighter than the chat, the bars and the
+ * navigation around them: switching tabs flashed between two blacks. */
+.monaco-workbench.volt-mobile-phone.volt-layout-agent .volt-customize-root {
+	background: var(--volt-agent-window-bg-base, var(--vscode-editor-background));
 }

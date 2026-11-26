@@ -13,7 +13,7 @@ import { openVoltSurface } from '../../../../base/browser/ui/voltMobile/voltSurf
 import { isVoltCompact } from '../../../../base/browser/ui/voltMobile/voltViewport.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { Codicon } from '../../../../base/common/codicons.js';
-import { isMacintosh } from '../../../../base/common/platform.js';
+import { isMacintosh, isWeb } from '../../../../base/common/platform.js';
 import { Disposable, DisposableStore, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
 import { AnchorAlignment, AnchorPosition } from '../../../../base/browser/ui/contextview/contextview.js';
 import { ScrollbarVisibility } from '../../../../base/common/scrollable.js';
@@ -1112,7 +1112,10 @@ export class VoltSettingsEditor extends EditorPane {
 			host => this.textGenerationPicker(host, 'git', localize('voltSettings.gitTextModel', "Git text model"), localize('voltSettings.gitTextDefault', "Default"), localize('voltSettings.gitTextDefaultDesc', "Use the text generation model")),
 		);
 		this.renderPower();
-		this.renderUpdates();
+		// The browser runs the server's build: nothing of its own to check for.
+		if (!isWeb) {
+			this.renderUpdates();
+		}
 	}
 
 	/** Lid-Closed Mode, and staying awake while agents work. */

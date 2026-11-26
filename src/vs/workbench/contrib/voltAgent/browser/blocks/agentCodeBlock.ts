@@ -15,6 +15,7 @@ import { localize } from '../../../../../nls.js';
 import { EditorExtensionsRegistry } from '../../../../../editor/browser/editorExtensions.js';
 import { CodeEditorWidget, ICodeEditorWidgetOptions } from '../../../../../editor/browser/widget/codeEditor/codeEditorWidget.js';
 import { EDITOR_FONT_DEFAULTS } from '../../../../../editor/common/config/editorOptions.js';
+import { MINIMUM_LINE_HEIGHT } from '../../../../../editor/common/config/fontInfo.js';
 import { ILanguageService } from '../../../../../editor/common/languages/language.js';
 import { PLAINTEXT_LANGUAGE_ID } from '../../../../../editor/common/languages/modesRegistry.js';
 import { tokenizeToString } from '../../../../../editor/common/languages/textToHtmlTokenizer.js';
@@ -410,13 +411,25 @@ export class LiveCodeCard implements IDisposable {
 	}
 }
 
+/**
+ * `editor.lineHeight` in pixels, read the way the editor reads it (BareFontInfo): 0 is 1.5 times the
+ * font size, and a value under 8 is a multiple of it (the phone's default is 1.55, which as pixels
+ * stacked every line of a card on the first).
+ */
+export function resolveEditorLineHeight(configured: number | undefined, fontSize: number): number {
+	let lineHeight = typeof configured === 'number' && configured > 0 ? configured : 1.5 * fontSize;
+	if (lineHeight < MINIMUM_LINE_HEIGHT) {
+		lineHeight *= fontSize;
+	}
+	return Math.max(MINIMUM_LINE_HEIGHT, Math.round(lineHeight));
+}
+
 /** The workbench editor's font size, line height and tab width on a static card (the family comes from `--volt-code-font`). */
 function applyEditorFont(codeEl: HTMLElement, options: ICodeCardOptions): void {
 	const font = options.instantiationService?.invokeFunction(accessor => {
 		const configurationService = accessor.get(IConfigurationService);
 		const fontSize = configurationService.getValue<number>('editor.fontSize') || EDITOR_FONT_DEFAULTS.fontSize;
-		const configuredLineHeight = configurationService.getValue<number>('editor.lineHeight');
-		const lineHeight = configuredLineHeight > 0 ? configuredLineHeight : Math.round(fontSize * 1.5);
+		const lineHeight = resolveEditorLineHeight(configurationService.getValue<number>('editor.lineHeight'), fontSize);
 		const tabSize = configurationService.getValue<number>('editor.tabSize') || 4;
 		return { fontSize, lineHeight, tabSize };
 	});
@@ -605,8 +618,7 @@ export function mountMonacoCode(scroll: HTMLElement, text: string, alias: string
 			const languageService = options.languageService ?? accessor.get(ILanguageService);
 			const fontFamily = configurationService.getValue<string>('editor.fontFamily');
 			const fontSize = configurationService.getValue<number>('editor.fontSize') || EDITOR_FONT_DEFAULTS.fontSize;
-			const configuredLineHeight = configurationService.getValue<number>('editor.lineHeight');
-			const lineHeight = configuredLineHeight > 0 ? configuredLineHeight : Math.round(fontSize * 1.5);
+			const lineHeight = resolveEditorLineHeight(configurationService.getValue<number>('editor.lineHeight'), fontSize);
 			const lineCount = Math.max(1, text.split('\n').length);
 			const padding = display.padding ?? 6;
 			host.style.height = `${lineCount * lineHeight + padding * 2}px`;

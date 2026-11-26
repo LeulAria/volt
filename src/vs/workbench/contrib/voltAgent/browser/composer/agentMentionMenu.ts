@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { $, addDisposableListener, append, clearNode, EventHelper, getActiveElement, getDomNodePagePosition, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
+import { GestureEvent } from '../../../../../base/browser/touch.js';
 import { StandardKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { AnchorAlignment, AnchorPosition, IAnchor } from '../../../../../base/browser/ui/contextview/contextview.js';
 import { HighlightedLabel } from '../../../../../base/browser/ui/highlightedlabel/highlightedLabel.js';
@@ -371,12 +372,15 @@ class MentionMenuView extends Disposable {
 				this.list.setFocus([e.index]);
 			}
 		}));
-		this._register(this.list.onMouseClick(e => {
-			const row = e.index !== undefined ? this.rows[e.index] : undefined;
+		const runRow = (index: number | undefined) => {
+			const row = index !== undefined ? this.rows[index] : undefined;
 			if (row && (row.kind === 'item' || row.kind === 'file')) {
 				row.run();
 			}
-		}));
+		};
+		this._register(this.list.onMouseClick(e => runRow(e.index)));
+		// A finger's tap: the list's Gesture cancels the click it would send.
+		this._register(this.list.onTap(e => runRow(e.index)));
 
 		this.treeHost = append(menu, $('.volt-agent-mention-tree'));
 		const rowElements = new WeakMap<HTMLElement, TreeElement>();
@@ -416,17 +420,28 @@ class MentionMenuView extends Disposable {
 				this.tree.setFocus([element]);
 			}
 		}));
-		this._register(this.tree.onMouseClick(e => {
-			const element = e.element ?? undefined;
-			// The arrow opens and closes a folder (the tree handles that); the rest of a row picks it.
-			if (e.target === TreeMouseEventTarget.Twistie) {
-				return;
-			}
+		const pickElement = (element: TreeElement | undefined) => {
 			if (element?.kind === 'entry') {
 				this.treeContent?.pick(element);
 			} else if (element && (element.kind === 'item' || element.kind === 'file')) {
 				element.run();
 			}
+		};
+		this._register(this.tree.onMouseClick(e => {
+			// The arrow opens and closes a folder (the tree handles that); the rest of a row picks it.
+			if (e.target === TreeMouseEventTarget.Twistie) {
+				return;
+			}
+			pickElement(e.element ?? undefined);
+		}));
+		// A finger's tap (the tree's Gesture cancels the click). A tap event names the tree as its
+		// target, so the arrow is found from the point the finger first touched.
+		this._register(this.tree.onTap(e => {
+			const initial = (e.browserEvent as GestureEvent).initialTarget;
+			if (isHTMLElement(initial) && initial.closest('.monaco-tl-twistie')) {
+				return;
+			}
+			pickElement(e.element ?? undefined);
 		}));
 		this._register(this.tree.onDidChangeContentHeight(() => {
 			if (this.mode === 'tree') {

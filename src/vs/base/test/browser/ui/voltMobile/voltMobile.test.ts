@@ -8,7 +8,9 @@ import { mainWindow } from '../../../../browser/window.js';
 import { findHorizontalScroller } from '../../../../browser/ui/voltMobile/voltDragScroll.js';
 import { isIconButton } from '../../../../browser/ui/voltMobile/voltTouchFeedback.js';
 import { dismissAllVoltSurfaces, openVoltSurface, openVoltSurfaceCount, resetVoltSurfacesForTesting } from '../../../../browser/ui/voltMobile/voltSurfaces.js';
-import { getVoltLayoutInsets, getVoltViewport, isVoltCompact } from '../../../../browser/ui/voltMobile/voltViewport.js';
+import { getVoltLayoutInsets, getVoltViewport, isVoltCompact, voltTouchRowHeight } from '../../../../browser/ui/voltMobile/voltViewport.js';
+import { installVoltTapClick } from '../../../../browser/ui/voltMobile/voltTapClick.js';
+import { EventType as TouchEventType, GestureEvent } from '../../../../browser/touch.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../common/utils.js';
 
 suite('Volt mobile primitives', () => {
@@ -20,6 +22,7 @@ suite('Volt mobile primitives', () => {
 			assert.strictEqual(getVoltViewport(), undefined);
 			assert.strictEqual(isVoltCompact(), false);
 			assert.deepStrictEqual(getVoltLayoutInsets(), { top: 0, right: 0, bottom: 0, left: 0 });
+			assert.strictEqual(voltTouchRowHeight(22), 22, 'tree rows keep their desktop height off a phone');
 		});
 	});
 
@@ -80,6 +83,76 @@ suite('Volt mobile primitives', () => {
 			const { element } = row('auto');
 			const input = element.appendChild(document.createElement('input'));
 			assert.strictEqual(findHorizontalScroller(input, root), undefined);
+		});
+	});
+
+	suite('tap click', () => {
+		const sleep = () => new Promise(resolve => setTimeout(resolve, 5));
+
+		/** A Tap as Gesture sends it: one event, dispatched to each target that holds the finger. */
+		const tap = (initialTarget: Element, ...targets: Element[]) => {
+			const event = mainWindow.document.createEvent('CustomEvent') as unknown as GestureEvent;
+			event.initEvent(TouchEventType.Tap, false, true);
+			event.initialTarget = initialTarget;
+			event.pageX = 10;
+			event.pageY = 10;
+			for (const target of targets) {
+				target.dispatchEvent(event);
+			}
+			return event;
+		};
+
+		function fixture() {
+			const root = mainWindow.document.body.appendChild(mainWindow.document.createElement('div'));
+			const view = root.appendChild(mainWindow.document.createElement('div'));
+			const button = view.appendChild(mainWindow.document.createElement('button'));
+			const label = button.appendChild(mainWindow.document.createElement('span'));
+			let clicks = 0;
+			button.addEventListener('click', () => clicks++);
+			return { root, view, button, label, clicks: () => clicks };
+		}
+
+		test('a tap a view took sends its click to the plain button under the finger', async () => {
+			const f = fixture();
+			const bridge = installVoltTapClick(f.root, () => true);
+			try {
+				tap(f.label, f.view);
+				await sleep();
+				assert.strictEqual(f.clicks(), 1);
+			} finally {
+				bridge.dispose();
+				f.root.remove();
+			}
+		});
+
+		test('no click when the control answers taps itself, a handler took the tap, or it is off', async () => {
+			const f = fixture();
+			let enabled = true;
+			const bridge = installVoltTapClick(f.root, () => enabled);
+			try {
+				tap(f.label, f.button, f.view);
+				await sleep();
+				assert.strictEqual(f.clicks(), 0, 'the button is a gesture target of its own');
+
+				f.view.addEventListener(TouchEventType.Tap, e => e.preventDefault(), { once: true });
+				tap(f.label, f.view);
+				await sleep();
+				assert.strictEqual(f.clicks(), 0, 'a handler prevented the tap');
+
+				f.button.disabled = true;
+				tap(f.label, f.view);
+				await sleep();
+				assert.strictEqual(f.clicks(), 0, 'disabled');
+				f.button.disabled = false;
+
+				enabled = false;
+				tap(f.label, f.view);
+				await sleep();
+				assert.strictEqual(f.clicks(), 0, 'not a touch-first window');
+			} finally {
+				bridge.dispose();
+				f.root.remove();
+			}
 		});
 	});
 

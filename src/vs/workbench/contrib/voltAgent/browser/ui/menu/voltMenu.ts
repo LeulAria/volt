@@ -566,17 +566,16 @@ class VoltMenuWidget<T> extends Disposable {
 				this.hoverFlyout();
 			}
 		}));
-		this._register(this.list.onMouseClick(e => {
-			if (e.index === undefined) {
+		const activate = (index: number | undefined, target: EventTarget | null | undefined) => {
+			if (index === undefined) {
 				return;
 			}
-			const row = this.rows[e.index];
+			const row = this.rows[index];
 			if (row?.kind === 'header' && row.collapsible) {
 				this.toggleSection(row.id);
 			} else if (row?.kind === 'destination') {
 				void this.changeDestination();
 			} else if (row?.kind === 'item') {
-				const target = e.browserEvent.target;
 				const action = row.item.action;
 				if (action && isHTMLElement(target) && target.closest('.volt-menu-action')) {
 					void this.pick({ ...row.item, submenu: undefined, prompt: undefined, data: action.data, keepOpen: action.keepOpen ?? row.item.keepOpen });
@@ -584,7 +583,10 @@ class VoltMenuWidget<T> extends Disposable {
 				}
 				void this.pick(row.item);
 			}
-		}));
+		};
+		this._register(this.list.onMouseClick(e => activate(e.index, e.browserEvent.target)));
+		// A finger's tap: the list's Gesture cancels the click it would send, so a sheet's rows only lit up.
+		this._register(this.list.onTap(e => activate(e.index, e.browserEvent.initialTarget)));
 		// Clicking a row must not pull focus out of the search field.
 		this._register(addDisposableListener(this.listHost, 'mousedown', e => e.preventDefault()));
 

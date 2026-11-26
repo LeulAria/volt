@@ -912,6 +912,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private followedHandoffAt: number | undefined;
 	/** The follow-up draft (and composer width) whose text last wrapped out of the one-line pill. */
 	private wrappedPillDraft: { value: string; width: number } | undefined;
+	/** The draft is taller than the composer lets it grow: only then does its scrollbar show. */
+	private inputOverflows = false;
 	/** The chat and the stored model last followed by the composer. */
 	private followedThreadModel: string | undefined;
 	private displayCodec: AgentHistoryCodec | undefined;
@@ -2218,7 +2220,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 				? localize('voltAgent.editAria', "Edit message")
 				: localize('voltAgent.inputAria', "Agent input"),
 			scrollbar: {
-				vertical: 'auto',
+				// A draft that fits shows no scrollbar (a line's few pixels of padding made one flash beside it).
+				vertical: forEdit || this.inputOverflows ? 'auto' : 'hidden',
 				horizontal: 'hidden',
 				verticalScrollbarSize: 10,
 				useShadows: false,
@@ -9067,6 +9070,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			const nextPadY = parseFloat(nextStyles.paddingTop) + parseFloat(nextStyles.paddingBottom);
 			const height = Math.max(this.monacoHost.clientHeight - nextPadY, 48);
 			this.inputEditor.layout({ width: Math.max(this.monacoHost.clientWidth - nextPadX, 0), height });
+			// A zoomed or resized composer is a fixed box: its scrollbar shows whenever the text is longer.
+			if (!this.inputOverflows) {
+				this.inputOverflows = true;
+				this.inputEditor.updateOptions({ scrollbar: { vertical: 'auto' } });
+			}
 			return;
 		}
 		const lineHeight = 22;
@@ -9079,11 +9087,20 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.inputEditor!.layout({ width: nextWidth, height: 0 });
 			return { next, nextWidth, rawHeight: this.inputEditor!.getContentHeight() };
 		};
-		const apply = (measured: { next: CSSStyleDeclaration; nextWidth: number; rawHeight: number }, maxHeight: number) => {
+		const apply = (measured: { next: CSSStyleDeclaration; nextWidth: number; rawHeight: number }, maxHeight: number, scrolls = true) => {
 			const contentHeight = Math.min(Math.max(measured.rawHeight, lineHeight), maxHeight);
 			const padBottomTop = parseFloat(measured.next.paddingTop) + parseFloat(measured.next.paddingBottom);
 			this.monacoHost.style.height = `${contentHeight + padBottomTop}px`;
 			this.inputEditor!.layout({ width: measured.nextWidth, height: contentHeight });
+			// The one-line pill clips a line's padding, not text: it never scrolls.
+			const overflows = scrolls && measured.rawHeight > maxHeight + 1;
+			if (overflows !== this.inputOverflows) {
+				this.inputOverflows = overflows;
+				this.inputEditor!.updateOptions({ scrollbar: { vertical: overflows ? 'auto' : 'hidden' } });
+			}
+			if (!overflows && this.inputEditor!.getScrollTop() !== 0) {
+				this.inputEditor!.setScrollTop(0);
+			}
 		};
 		if (!this.isFollowUpComposer()) {
 			this.syncFollowUpComposer(hasNewline);
@@ -9104,7 +9121,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			const compact = measure();
 			if (compact.rawHeight <= lineHeight * 1.5) {
 				this.wrappedPillDraft = undefined;
-				apply(compact, lineHeight);
+				apply(compact, lineHeight, false);
 				return;
 			}
 			this.wrappedPillDraft = { value, width };

@@ -3,8 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// The phone's More page: every workbench surface the bottom navigation has no room for (Search,
-// Source Control, Extensions, Settings, the layouts, the command palette), as a full-screen list.
+// The phone's More page: every workbench surface the bottom navigation has no room for (Settings,
+// Usage, Automations, Customize, the terminal, Search, Source Control, Extensions, the layouts, the
+// command palette), as a full-screen list.
 // It lists the `VoltMobileMoreMenu` menu, so a feature reaches phones by contributing a menu item:
 //
 //   MenuRegistry.appendMenuItem(VoltMobileMoreMenu, { command: { id, title, icon }, group: '2_workbench', order: 7 });
@@ -30,7 +31,10 @@ import { SET_AGENT_LAYOUT_MODE_COMMAND_ID, SET_IDE_LAYOUT_MODE_COMMAND_ID } from
 import { IWorkbenchLayoutService } from '../../../../../services/layout/browser/layoutService.js';
 import { OPEN_VOLT_SETTINGS_COMMAND_ID } from '../../../../voltSettings/browser/voltSettingsEditorInput.js';
 import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../../search/agentChatSearchService.js';
-import { VoltMobileDestinations } from './voltMobileNavigation.js';
+import { OPEN_AGENT_USAGE_COMMAND_ID } from '../../../../voltUsage/common/voltUsage.js';
+import { OPEN_AUTOMATIONS_COMMAND_ID } from '../../automations/automationCommands.js';
+import { OPEN_AGENT_CUSTOMIZE_COMMAND_ID } from '../../editor/agentEditorInput.js';
+import { TOGGLE_MOBILE_TERMINAL_COMMAND_ID, VoltMobileDestinations } from './voltMobileNavigation.js';
 
 /** What the phone's More page lists. Contribute a command here to put it on phones. */
 export const VoltMobileMoreMenu = new MenuId('VoltMobileMore');
@@ -41,10 +45,11 @@ type MoreRow =
 	| { readonly kind: 'header'; readonly id: string; readonly label: string }
 	| { readonly kind: 'action'; readonly id: string; readonly action: MenuItemAction };
 
-const ROW_HEIGHT = 48;
-const HEADER_HEIGHT = 36;
+const ROW_HEIGHT = 44;
+const HEADER_HEIGHT = 32;
 
 const GROUP_TITLES: Record<string, string> = {
+	'0_volt': localize('voltMobile.more.volt', "Volt"),
 	'1_go': localize('voltMobile.more.go', "Go To"),
 	'2_workbench': localize('voltMobile.more.workbench', "Workbench"),
 	'3_layout': localize('voltMobile.more.layout', "Layout"),
@@ -200,6 +205,13 @@ const agentLayout = ContextKeyExpr.equals(LAYOUT_MODE_CONTEXT_KEY, 'agent');
 const ideLayout = ContextKeyExpr.notEquals(LAYOUT_MODE_CONTEXT_KEY, 'agent');
 
 MenuRegistry.appendMenuItems([
+	// What the Projects screen's footer held on the desktop, and the terminal (no longer a tab of the bar).
+	// Volt's own Settings, as ⌘, opens on the desktop; VS Code's settings editor is under its All Settings.
+	{ id: VoltMobileMoreMenu, item: { group: '0_volt', order: 1, command: { id: OPEN_VOLT_SETTINGS_COMMAND_ID, title: localize2('voltMobile.settings', "Settings"), icon: Codicon.settingsGear } } },
+	{ id: VoltMobileMoreMenu, item: { group: '0_volt', order: 2, command: { id: OPEN_AGENT_USAGE_COMMAND_ID, title: localize2('voltMobile.usage', "Usage"), icon: Codicon.graph } } },
+	{ id: VoltMobileMoreMenu, item: { group: '0_volt', order: 3, when: agentLayout, command: { id: OPEN_AUTOMATIONS_COMMAND_ID, title: localize2('voltMobile.automations', "Automations"), icon: Codicon.history } } },
+	{ id: VoltMobileMoreMenu, item: { group: '0_volt', order: 4, when: agentLayout, command: { id: OPEN_AGENT_CUSTOMIZE_COMMAND_ID, title: localize2('voltMobile.customize', "Customize"), icon: Codicon.paintcan } } },
+	{ id: VoltMobileMoreMenu, item: { group: '0_volt', order: 5, command: { id: TOGGLE_MOBILE_TERMINAL_COMMAND_ID, title: localize2('voltMobile.terminal', "Terminal"), icon: Codicon.terminal } } },
 	{ id: VoltMobileMoreMenu, item: { group: '1_go', order: 1, command: { id: 'workbench.action.quickOpen', title: localize2('voltMobile.goToFile', "Go to File"), icon: Codicon.goToFile } } },
 	{ id: VoltMobileMoreMenu, item: { group: '1_go', order: 2, command: { id: COMMAND_PALETTE_ID, title: localize2('voltMobile.commandPalette', "Command Palette"), icon: Codicon.terminalCmd } } },
 	{ id: VoltMobileMoreMenu, item: { group: '1_go', order: 3, when: agentLayout, command: { id: SEARCH_AGENT_CHATS_COMMAND_ID, title: localize2('voltMobile.searchChats', "Search Chats"), icon: Codicon.commentDiscussion } } },
@@ -214,7 +226,5 @@ MenuRegistry.appendMenuItems([
 	// The agent layout's Back and Forward are in the title bar (voltWorkbenchWeb.css); the IDE layout has none there.
 	{ id: VoltMobileMoreMenu, item: { group: '3_layout', order: 2, when: ideLayout, command: { id: 'workbench.action.navigateBack', title: localize2('voltMobile.back.nav', "Go Back"), icon: Codicon.arrowLeft } } },
 	{ id: VoltMobileMoreMenu, item: { group: '3_layout', order: 3, when: ideLayout, command: { id: 'workbench.action.navigateForward', title: localize2('voltMobile.forward', "Go Forward"), icon: Codicon.arrowRight } } },
-	// Volt's own Settings, as ⌘, opens on the desktop; VS Code's settings editor is under its All Settings.
-	{ id: VoltMobileMoreMenu, item: { group: '4_preferences', order: 1, command: { id: OPEN_VOLT_SETTINGS_COMMAND_ID, title: localize2('voltMobile.settings', "Settings"), icon: Codicon.settingsGear } } },
-	{ id: VoltMobileMoreMenu, item: { group: '4_preferences', order: 2, command: { id: 'workbench.action.selectTheme', title: localize2('voltMobile.theme', "Color Theme"), icon: Codicon.colorMode } } },
+	{ id: VoltMobileMoreMenu, item: { group: '4_preferences', order: 1, command: { id: 'workbench.action.selectTheme', title: localize2('voltMobile.theme', "Color Theme"), icon: Codicon.colorMode } } },
 ]);

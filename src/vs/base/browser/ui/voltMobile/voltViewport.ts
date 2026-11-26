@@ -66,6 +66,11 @@ export function isVoltCompact(): boolean {
 	return current?.state.formFactor === VoltFormFactor.Phone;
 }
 
+/** A tree row a finger can hit: the row's desktop height, or 32px on a phone (the Explorer's and Source Control's 22px rows). */
+export function voltTouchRowHeight(desktopHeight: number): number {
+	return isVoltCompact() ? Math.max(desktopHeight, 32) : desktopHeight;
+}
+
 /** Room the workbench grid leaves at its edges: the safe areas, and the bottom navigation below it. */
 export function getVoltLayoutInsets(): IVoltInsets {
 	return current ? layoutInsets(current.state) : ZERO;

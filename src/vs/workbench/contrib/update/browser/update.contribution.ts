@@ -14,7 +14,7 @@ import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js'
 import product from '../../../../platform/product/common/product.js';
 import { IUpdateService, StateType } from '../../../../platform/update/common/update.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
-import { isWindows } from '../../../../base/common/platform.js';
+import { isWeb, isWindows } from '../../../../base/common/platform.js';
 import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { mnemonicButtonLabel } from '../../../../base/common/labels.js';
 import { ShowCurrentReleaseNotesActionId, ShowCurrentReleaseNotesFromCurrentFileActionId } from '../common/update.js';
@@ -30,8 +30,11 @@ const workbench = Registry.as<IWorkbenchContributionsRegistry>(WorkbenchExtensio
 workbench.registerWorkbenchContribution(ProductContribution, LifecyclePhase.Restored);
 workbench.registerWorkbenchContribution(UpdateContribution, LifecyclePhase.Restored);
 workbench.registerWorkbenchContribution(SwitchProductQualityContribution, LifecyclePhase.Restored);
-// Volt: the update button and popover in the agent sidebar footer.
-workbench.registerWorkbenchContribution(AgentUpdateButtonContribution, LifecyclePhase.Restored);
+// Volt: the update button and popover in the agent sidebar footer. The browser (web, phones) runs
+// the server's build and has nothing of its own to update.
+if (!isWeb) {
+	workbench.registerWorkbenchContribution(AgentUpdateButtonContribution, LifecyclePhase.Restored);
+}
 
 // Release notes
 
