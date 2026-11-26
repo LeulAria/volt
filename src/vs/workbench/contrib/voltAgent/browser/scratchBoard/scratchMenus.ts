@@ -160,42 +160,64 @@ export function showScratchContextMenu(accessor: ServicesAccessor, canvas: Scrat
 	const selected = canvas.selectedElements();
 	const sections: IVoltMenuSection<Run>[] = [];
 	if (selected.length) {
+		// Excalidraw's element menu, in its order, with the board's own actions (agent, align, link, export) in one section of their own.
 		const locked = selected.every(el => el.locked);
 		const grouped = selected.some(el => el.groupIds.length);
 		const connectedShapes = selected.filter(el => !isLinear(el)).length > 1;
+		const frames = selected.filter(el => el.type === 'frame');
+		const inFrame = selected.some(el => el.type !== 'frame' && el.frameId);
+		const texts = selected.some(el => el.type === 'text');
 		sections.push({
 			id: 'clipboard', items: [
-				item('cut', localize('voltScratch.cutMenu', "Cut"), () => canvas.copyToClipboard(true), { keybinding: `${MOD}X`, icon: icon('scissors') }),
+				...(!locked ? [item('cut', localize('voltScratch.cutMenu', "Cut"), () => canvas.copyToClipboard(true), { keybinding: `${MOD}X`, icon: icon('scissors') })] : []),
 				item('copy', localize('voltScratch.copyMenu', "Copy"), () => canvas.copyToClipboard(false), { keybinding: `${MOD}C`, icon: icon('copy') }),
 				item('paste', localize('voltScratch.pasteMenu', "Paste"), () => void canvas.pasteFromClipboard(world), { keybinding: `${MOD}V`, icon: icon('clipboard-paste') }),
-				item('png', localize('voltScratch.copyPngMenu', "Copy as PNG"), () => void canvas.copySelectionAsPng(), { keybinding: `${SHIFT}${MOD}C`, icon: icon('image') }),
 			],
 		});
+		if (!locked) {
+			const frameItems = [
+				...(!frames.length ? [item('wrapFrame', localize('voltScratch.wrapInFrameMenu', "Wrap selection in frame"), () => canvas.wrapSelectionInFrame(), { icon: icon('frame') })] : []),
+				...(frames.length === 1 && selected.length === 1 ? [item('frameAll', localize('voltScratch.selectFrameContents', "Select all elements in frame"), () => canvas.selectFrameContents(), { icon: icon('square-dashed') })] : []),
+				...(inFrame ? [item('unframe', localize('voltScratch.removeFromFrameMenu', "Remove from frame"), () => canvas.removeSelectionFromFrame(), { icon: icon('x') })] : []),
+			];
+			if (frameItems.length) {
+				sections.push({ id: 'frame', items: frameItems });
+			}
+		}
 		sections.push({
-			id: 'agent', items: [
-				// allow-any-unicode-next-line
-				item('ask', localize('voltScratch.sendSelection', "Send to Agent"), () => canvas.openComposer(false), { keybinding: `${MOD}↵`, icon: icon('agent-spark') }),
+			id: 'export', items: [
+				item('png', localize('voltScratch.copyPngClipboard', "Copy to clipboard as PNG"), () => void canvas.copySelectionAsPng(), { keybinding: `${SHIFT}${ALT}C`, icon: icon('image') }),
+				item('svg', localize('voltScratch.copySvgClipboard', "Copy to clipboard as SVG"), () => void canvas.copySelectionAsSvg(), { icon: icon('code-xml') }),
+				...(canvas.selectionHasText() ? [item('text', localize('voltScratch.copyTextClipboard', "Copy to clipboard as text"), () => void canvas.copySelectionAsText(), { icon: icon('type') })] : []),
 			],
 		});
 		if (!locked) {
 			sections.push({
-				id: 'edit', items: [
-					item('dup', localize('voltScratch.duplicateMenu', "Duplicate"), () => canvas.duplicateSelection(), { keybinding: `${MOD}D`, icon: icon('copy') }),
-					...(selected.length > 1 ? [item('group', localize('voltScratch.groupMenu', "Group"), () => canvas.groupSelection(), { keybinding: `${MOD}G`, icon: icon('group') })] : []),
-					...(grouped ? [item('ungroup', localize('voltScratch.ungroupMenu', "Ungroup"), () => canvas.ungroupSelection(), { keybinding: `${SHIFT}${MOD}G`, icon: icon('ungroup') })] : []),
-					item('arrange', localize('voltScratch.arrangeMenu', "Arrange"), () => undefined, {
-						icon: icon('layers'), submenu: {
-							width: 230, sections: [{
-								id: 'arrange', items: [
-									item('front', localize('voltScratch.toFront', "Bring to front"), () => canvas.arrange('front'), { keybinding: `${SHIFT}${MOD}]` }),
-									item('forward', localize('voltScratch.forward', "Bring forward"), () => canvas.arrange('forward'), { keybinding: `${MOD}]` }),
-									item('backward', localize('voltScratch.backward', "Send backward"), () => canvas.arrange('backward'), { keybinding: `${MOD}[` }),
-									item('back', localize('voltScratch.toBack', "Send to back"), () => canvas.arrange('back'), { keybinding: `${SHIFT}${MOD}[` }),
-								],
-							}],
-						},
-					}),
-					...(selected.length > 1 ? [item('align', localize('voltScratch.alignMenu', "Align"), () => undefined, {
+				id: 'style', items: [
+					item('copyStyle', localize('voltScratch.copyStyles', "Copy styles"), () => canvas.copyStyles(), { keybinding: `${ALT}${MOD}C`, icon: icon('pipette') }),
+					item('pasteStyle', localize('voltScratch.pasteStyles', "Paste styles"), () => canvas.pasteStyles(), { keybinding: `${ALT}${MOD}V`, icon: icon('palette'), disabled: !canvas.hasCopiedStyle }),
+				],
+			});
+			const groupItems = [
+				...(selected.length > 1 ? [item('group', localize('voltScratch.groupSelection', "Group selection"), () => canvas.groupSelection(), { keybinding: `${MOD}G`, icon: icon('group') })] : []),
+				...(texts ? [item('wrapText', localize('voltScratch.wrapTextMenu', "Wrap text in a container"), () => canvas.wrapTextInContainer(), { icon: icon('square') })] : []),
+				...(grouped ? [item('ungroup', localize('voltScratch.ungroupSelection', "Ungroup selection"), () => canvas.ungroupSelection(), { keybinding: `${SHIFT}${MOD}G`, icon: icon('ungroup') })] : []),
+			];
+			if (groupItems.length) {
+				sections.push({ id: 'group', items: groupItems });
+			}
+		}
+		sections.push({
+			id: 'library', items: [
+				item('library', localize('voltScratch.addToLibrary', "Add to library"), () => void canvas.addSelectionToLibrary(), { icon: icon('library-big') }),
+			],
+		});
+		sections.push({
+			id: 'board', items: [
+				// allow-any-unicode-next-line
+				item('ask', localize('voltScratch.sendSelection', "Send to Agent"), () => canvas.openComposer(false), { keybinding: `${MOD}↵`, icon: icon('agent-spark') }),
+				...(!locked ? [item('link', selected[0].link ? localize('voltScratch.editLink', "Edit Link") : localize('voltScratch.addLinkMenu', "Add Link"), () => void canvas.editLinkOfSelection(), { keybinding: `${MOD}K`, icon: icon('link') })] : []),
+				...(!locked && selected.length > 1 ? [item('align', localize('voltScratch.alignMenu', "Align"), () => undefined, {
 						icon: icon('align-center-vertical'), submenu: {
 							width: 250, sections: [{
 								id: 'align', items: [
@@ -217,7 +239,7 @@ export function showScratchContextMenu(accessor: ServicesAccessor, canvas: Scrat
 							}],
 						},
 					})] : []),
-					...(connectedShapes ? [item('tidy', localize('voltScratch.tidyMenu', "Tidy Up"), () => undefined, {
+					...(!locked && connectedShapes ? [item('tidy', localize('voltScratch.tidyMenu', "Tidy Up"), () => undefined, {
 						icon: icon('workflow'), submenu: {
 							width: 200, sections: [{
 								id: 'tidy', items: [
@@ -227,38 +249,77 @@ export function showScratchContextMenu(accessor: ServicesAccessor, canvas: Scrat
 							}],
 						},
 					})] : []),
-					item('flipH', localize('voltScratch.flipH', "Flip Horizontal"), () => canvas.flipSelection('horizontal'), { keybinding: `${SHIFT}H`, icon: icon('flip-horizontal-2') }),
-					item('flipV', localize('voltScratch.flipV', "Flip Vertical"), () => canvas.flipSelection('vertical'), { keybinding: `${SHIFT}V`, icon: icon('flip-vertical-2') }),
-					item('copyStyle', localize('voltScratch.copyStyle', "Copy Style"), () => canvas.copyStyles(), { keybinding: `${ALT}${MOD}C`, icon: icon('pipette') }),
-					...(canvas.hasCopiedStyle ? [item('pasteStyle', localize('voltScratch.pasteStyle', "Paste Style"), () => canvas.pasteStyles(), { keybinding: `${ALT}${MOD}V` })] : []),
-					item('link', selected[0].link ? localize('voltScratch.editLink', "Edit Link") : localize('voltScratch.addLinkMenu', "Add Link"), () => void canvas.editLinkOfSelection(), { keybinding: `${MOD}K`, icon: icon('link') }),
+					item('export', localize('voltScratch.exportSelection', "Export Selection"), () => undefined, {
+						icon: icon('download'), submenu: {
+							width: 190, sections: [{
+								id: 'export', items: [
+									item('png', 'PNG', () => void canvas.exporter.exportImage(canvas, 'png', true)),
+									item('svg', 'SVG', () => void canvas.exporter.exportImage(canvas, 'svg', true)),
+								],
+							}],
+						},
+					}),
+			],
+		});
+		if (!locked) {
+			sections.push({
+				id: 'arrange', items: [
+					item('backward', localize('voltScratch.backward', "Send backward"), () => canvas.arrange('backward'), { keybinding: `${MOD}[`, icon: icon('arrow-down') }),
+					item('forward', localize('voltScratch.forward', "Bring forward"), () => canvas.arrange('forward'), { keybinding: `${MOD}]`, icon: icon('arrow-up') }),
+					item('back', localize('voltScratch.toBack', "Send to back"), () => canvas.arrange('back'), { keybinding: `${ALT}${MOD}[`, icon: icon('send-to-back') }),
+					item('front', localize('voltScratch.toFront', "Bring to front"), () => canvas.arrange('front'), { keybinding: `${ALT}${MOD}]`, icon: icon('bring-to-front') }),
+				],
+			});
+			sections.push({
+				id: 'flip', items: [
+					item('flipH', localize('voltScratch.flipHorizontal', "Flip horizontal"), () => canvas.flipSelection('horizontal'), { keybinding: `${SHIFT}H`, icon: icon('flip-horizontal-2') }),
+					item('flipV', localize('voltScratch.flipVertical', "Flip vertical"), () => canvas.flipSelection('vertical'), { keybinding: `${SHIFT}V`, icon: icon('flip-vertical-2') }),
 				],
 			});
 		}
 		sections.push({
-			id: 'danger', items: [
+			id: 'lock', items: [
+				...(!locked ? [item('dup', localize('voltScratch.duplicateMenu', "Duplicate"), () => canvas.duplicateSelection(), { keybinding: `${MOD}D`, icon: icon('copy') })] : []),
 				item('lock', locked ? localize('voltScratch.unlockMenu', "Unlock") : localize('voltScratch.lockMenu', "Lock"), () => canvas.toggleLockSelection(), { keybinding: `${SHIFT}${MOD}L`, icon: icon(locked ? 'lock-open' : 'lock') }),
-				item('export', localize('voltScratch.exportSelection', "Export Selection"), () => undefined, {
-					icon: icon('download'), submenu: {
-						width: 190, sections: [{
-							id: 'export', items: [
-								item('png', 'PNG', () => void canvas.exporter.exportImage(canvas, 'png', true)),
-								item('svg', 'SVG', () => void canvas.exporter.exportImage(canvas, 'svg', true)),
-							],
-						}],
-					},
-				}),
-				// allow-any-unicode-next-line
-				...(!locked ? [item('delete', localize('voltScratch.deleteMenu', "Delete"), () => canvas.deleteSelection(), { keybinding: '⌫', icon: icon('trash-2') })] : []),
 			],
 		});
+		if (!locked) {
+			sections.push({
+				id: 'delete', items: [
+					// allow-any-unicode-next-line
+					item('delete', localize('voltScratch.deleteMenu', "Delete"), () => canvas.deleteSelection(), { keybinding: '⌫', icon: icon('trash-2'), className: 'sx-menu-danger' }),
+				],
+			});
+		}
 	} else {
+		// Excalidraw's canvas menu, plus the board's own (agent, background, zoom).
+		const hasElements = !!canvas.scene?.size;
+		const settings = canvas.scene?.settings;
 		sections.push({
-			id: 'board', items: [
+			id: 'clipboard', items: [
 				item('paste', localize('voltScratch.pasteMenu', "Paste"), () => void canvas.pasteFromClipboard(world), { keybinding: `${MOD}V`, icon: icon('clipboard-paste') }),
-				item('all', localize('voltScratch.selectAll', "Select All"), () => canvas.selectAll(), { keybinding: `${MOD}A` }),
 				item('text', localize('voltScratch.addTextHere', "Add Text Here"), () => canvas.createTextAt(world), { icon: icon('type') }),
+			],
+		});
+		if (hasElements) {
+			sections.push({
+				id: 'export', items: [
+					item('png', localize('voltScratch.copyPngClipboard', "Copy to clipboard as PNG"), () => void canvas.copySelectionAsPng(), { keybinding: `${SHIFT}${ALT}C`, icon: icon('image') }),
+					item('svg', localize('voltScratch.copySvgClipboard', "Copy to clipboard as SVG"), () => void canvas.copySelectionAsSvg(), { icon: icon('code-xml') }),
+				],
+			});
+		}
+		sections.push({
+			id: 'select', items: [
+				item('all', localize('voltScratch.selectAll', "Select All"), () => canvas.selectAll(), { keybinding: `${MOD}A`, icon: icon('mouse-pointer-2'), disabled: !hasElements }),
 				...(canvas.hasLockedElements() ? [item('unlock', localize('voltScratch.unlockAll', "Unlock all"), () => canvas.unlockAll(), { icon: icon('lock-open') })] : []),
+			],
+		});
+		sections.push({
+			id: 'toggles', items: [
+				item('grid', localize('voltScratch.toggleGrid', "Toggle grid"), () => canvas.toggleGrid(), { keybinding: `${MOD}'`, icon: icon('grid-3x3'), checked: settings?.grid !== 'none' }),
+				item('snap', localize('voltScratch.snapObjects', "Snap to Objects"), () => canvas.setSnapToObjects(!canvas.scene?.settings.snapToObjects), { keybinding: `${ALT}S`, icon: icon('locate-fixed'), checked: !!settings?.snapToObjects }),
+				item('theme', localize('voltScratch.toggleTheme', "Dark board"), () => canvas.toggleBoardTheme(), { keybinding: `${SHIFT}${ALT}D`, icon: icon('moon'), checked: canvas.isDarkBoard }),
 			],
 		});
 		sections.push({
@@ -266,9 +327,8 @@ export function showScratchContextMenu(accessor: ServicesAccessor, canvas: Scrat
 				item('ask', localize('voltScratch.askBoardMenu', "Send Board to Agent"), () => canvas.openComposer(true), { icon: icon('agent-spark') }),
 				item('fit', localize('voltScratch.zoomFitMenu', "Zoom to Fit"), () => canvas.zoomToFit(), { keybinding: `${SHIFT}1`, icon: icon('scan') }),
 				item('background', localize('voltScratch.backgroundMenu', "Background"), () => undefined, { icon: icon('palette'), submenu: { width: 200, sections: [{ id: 'bg', items: backgroundItems(canvas) }] } }),
-				item('grid', localize('voltScratch.gridMenu', "Grid"), () => undefined, { icon: icon('grid-3x3'), submenu: { width: 180, sections: [{ id: 'grid', items: gridItems(canvas) }] } }),
 			],
 		});
 	}
-	show(accessor, anchor, sections, localize('voltScratch.contextMenu', "Board actions"), () => anchor.remove(), 248);
+	show(accessor, anchor, sections, localize('voltScratch.contextMenu', "Board actions"), () => anchor.remove(), 280);
 }
