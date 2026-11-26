@@ -5,7 +5,7 @@
 
 import assert from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { pcm16Bytes, rmsLevel, transcriptionUrl, wavFromPcm16 } from '../../common/voltSpeech.js';
+import { pcm16Bytes, rmsLevel, SpeechGate, transcriptionUrl, wavFromPcm16 } from '../../common/voltSpeech.js';
 
 suite('Volt speech', () => {
 
@@ -49,5 +49,28 @@ suite('Volt speech', () => {
 		assert.strictEqual(transcriptionUrl('http://localhost:9000'), 'http://localhost:9000/audio/transcriptions');
 		assert.throws(() => transcriptionUrl('file:///etc/passwd'), /http or https/);
 		assert.throws(() => transcriptionUrl('not a url'));
+	});
+
+	test('the speech gate passes voice and a short hangover, never silence', () => {
+		const gate = new SpeechGate();
+		assert.strictEqual(gate.push(0.001, 128), 'silence');
+		assert.strictEqual(gate.heardVoice, false);
+		assert.strictEqual(gate.push(0.05, 128), 'voice');
+		assert.strictEqual(gate.heardVoice, true);
+		assert.strictEqual(gate.push(0.001, 128), 'hangover');
+		const decisions = Array.from({ length: 10 }, () => gate.push(0.001, 128));
+		assert.strictEqual(decisions[decisions.length - 1], 'silence');
+		assert.strictEqual(gate.silentMs, 128 * 11);
+		assert.strictEqual(gate.push(0.05, 128), 'voice');
+		assert.strictEqual(gate.silentMs, 0);
+	});
+
+	test('the speech gate counts two minutes of a silent room', () => {
+		const gate = new SpeechGate();
+		for (let ms = 0; ms < 120_000; ms += 128) {
+			assert.strictEqual(gate.push(0.002 + (ms % 3) * 0.0005, 128), 'silence');
+		}
+		assert.ok(gate.silentMs >= 120_000);
+		assert.strictEqual(gate.heardVoice, false);
 	});
 });

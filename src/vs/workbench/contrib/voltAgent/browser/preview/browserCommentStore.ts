@@ -65,8 +65,9 @@ export interface IBrowserCommentRef {
 }
 
 /**
- * A comment left on a page in a browser tab. It stays on the page (a numbered pin) after it is sent,
- * until the user resolves it; resolved ones can be archived for good.
+ * A comment left on a page in a browser tab: open (in the batch) → sent → resolved → archived. Sent
+ * ones keep a numbered pin only while the tab shows sent pins (the comments drawer's switch); the
+ * drawer lists them all either way.
  */
 export interface IBrowserComment {
 	readonly id: string;
@@ -121,6 +122,8 @@ export interface IVoltBrowserComments {
 	update(id: string, patch: IBrowserCommentPatch): void;
 	remove(id: string): void;
 	archiveResolved(scope: IBrowserCommentScope): void;
+	/** Every sent comment in `scope` is done: resolved, so its pin leaves the page. */
+	resolveSent(scope: IBrowserCommentScope): void;
 	/** The tab now belongs to chat `sessionId` (or none): its comments follow. */
 	setSession(viewId: string, sessionId: string | undefined): void;
 	/** `ids` (or every pending comment) as one message; they leave the batch, marked sent (their pins stay). Undefined when none are open. */
@@ -206,6 +209,19 @@ export class VoltBrowserComments extends Disposable implements IVoltBrowserComme
 		this.comments.forEach((comment, index) => {
 			if (!comment.archived && comment.status === 'resolved' && inScope(comment, scope)) {
 				this.comments[index] = { ...comment, archived: true };
+				changed = true;
+			}
+		});
+		if (changed) {
+			this._onDidChange.fire();
+		}
+	}
+
+	resolveSent(scope: IBrowserCommentScope): void {
+		let changed = false;
+		this.comments.forEach((comment, index) => {
+			if (!comment.archived && comment.status === 'sent' && inScope(comment, scope)) {
+				this.comments[index] = { ...comment, status: 'resolved', picked: false };
 				changed = true;
 			}
 		});

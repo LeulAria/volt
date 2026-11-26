@@ -149,7 +149,8 @@ button.volt-tr-header:hover .volt-tr-chevron,
 .volt-tr-action.shimmer,
 .volt-tr-subagent-status.shimmer,
 .volt-tr-edit-name.shimmer,
-.volt-tr-compaction-label.shimmer {
+.volt-tr-compaction-label.shimmer,
+.volt-tr-pending-label.shimmer {
 	background: linear-gradient(90deg,
 		var(--volt-md-fg-quaternary) 0%,
 		var(--volt-md-fg-quaternary) calc(var(--volt-shimmer, 0%) - 18%),
@@ -170,7 +171,8 @@ button.volt-tr-header:hover .volt-tr-chevron,
 .volt-tr-action.shimmer,
 .volt-tr-subagent-status.shimmer,
 .volt-tr-edit-name.shimmer,
-.volt-tr-compaction-label.shimmer {
+.volt-tr-compaction-label.shimmer,
+.volt-tr-pending-label.shimmer {
 	background-size: 200% 100%;
 }
 
@@ -178,11 +180,42 @@ button.volt-tr-header:hover .volt-tr-chevron,
 	.volt-tr-action.shimmer,
 	.volt-tr-subagent-status.shimmer,
 	.volt-tr-edit-name.shimmer,
-	.volt-tr-compaction-label.shimmer {
+	.volt-tr-compaction-label.shimmer,
+.volt-tr-pending-label.shimmer {
 		animation: none;
 		color: var(--volt-md-fg-tertiary);
 		background: none;
 	}
+}
+
+/* "Waiting for 3 subagents": under the idle agent's last reply while agents it started still work (AgentPendingWorkRow). */
+.volt-tr-pending-work {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	flex-shrink: 0;
+	width: 100%;
+	max-width: 728px;
+	/* The thread puts 20px between exchanges; this belongs to the reply above it. */
+	margin: -6px auto 0;
+	padding: 0 13px;
+	box-sizing: border-box;
+	min-width: 0;
+	font-size: 13px;
+	line-height: 22px;
+}
+
+.volt-tr-pending-label {
+	flex-shrink: 0;
+	white-space: nowrap;
+}
+
+.volt-tr-pending-detail {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: var(--volt-md-fg-quaternary);
 }
 
 .volt-tr-tail {
@@ -1297,6 +1330,17 @@ button.volt-tr-subagent-head:hover .volt-tr-chevron,
 	font-size: 13px;
 }
 
+.volt-agent-run-tray.sandbox {
+	margin-top: 5px;
+}
+
+.volt-agent-run-tray-icon .volt-agent-svg-icon.sandbox-guard,
+.volt-agent-run-tray-icon .volt-agent-svg-icon.sandbox-guard svg {
+	display: block;
+	width: 18px;
+	height: 18px;
+}
+
 .volt-agent-run-tray.failed .volt-agent-run-tray-title {
 	color: var(--vscode-errorForeground);
 }
@@ -1466,4 +1510,23 @@ button.volt-tr-subagent-head:hover .volt-tr-chevron,
 .volt-tr-group.step.card > .volt-tr-body > .volt-tr-terminal {
 	border: 0;
 	border-radius: 0;
+}
+
+/* "3 subagents running" after the chat's title in the title bar (agentTitlebarHeader.ts), quieter than the title. */
+.monaco-workbench.volt-layout-agent .volt-agent-primary-header-agents:not([hidden]) {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	height: 18px;
+	padding: 0 6px;
+	border-radius: 9px;
+	font-size: 11px;
+	line-height: 18px;
+	white-space: nowrap;
+	color: var(--volt-md-fg-secondary);
+	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+.monaco-workbench.volt-layout-agent .titlebar-container.volt-fit-no-project .volt-agent-primary-header-agents {
+	display: none;
 }

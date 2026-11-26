@@ -20,7 +20,7 @@ import { IVoltSandboxSettings, sandboxWorkspaceRoots, strongerSandboxLevel } fro
 import { stripAnsi } from '../../common/ide/testReports.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { ILifecycleService } from '../../../lifecycle/common/lifecycle.js';
-import { IVoltEventEnvelope } from '../../common/events.js';
+import { IVoltEvent, IVoltEventEnvelope } from '../../common/events.js';
 import { IAgentWorktreeService } from '../../common/git/agentWorktree.js';
 import { IWorkspaceMoveSpec, workspaceTargetLabel } from '../../common/git/workspaceMove.js';
 import { IAgentWorktreeSetupService } from '../../common/git/worktreeSetupPlan.js';
@@ -71,6 +71,22 @@ const START_STALL_MS = 180_000;
 const SILENT_RUN_MS = 10 * 60_000;
 /** The same while one of its tool calls is open: builds, test suites and installs may run quietly. */
 const SILENT_TOOL_RUN_MS = 30 * 60_000;
+/**
+ * A harness's own subagent (Claude's Agent) whose own session has sent nothing for this long, with no
+ * tool call of its open, is taken as ended: its end was lost (a background child's end can come
+ * between turns, or the adapter can drop it), and its card must not say "Running" for hours.
+ */
+const HARNESS_QUIET_MS = 15 * 60_000;
+/** The same while one of the subagent's tool calls is open (a long build or test run). */
+const HARNESS_QUIET_TOOL_MS = 90 * 60_000;
+/** The most of a quiet harness subagent's last text kept as its report. */
+const HARNESS_REPORT_MAX = 16_000;
+
+interface IHarnessPulse {
+	at: number;
+	readonly tools: Set<string>;
+	text: string;
+}
 /** A gap this much longer than the watchdog's tick means the machine slept: silence over it is not the agent's. */
 const SLEEP_GAP_MS = WATCHDOG_MS * 3;
 /** A message put into a running agent that is not taken within this long goes back to the queue instead. */
@@ -158,6 +174,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	private readonly delegateCalls = new Map<string, { readonly callId: string; readonly turnId: string | undefined }[]>();
 	/** Harness Task calls that launched asynchronously: their "completed" was the launch, not the end. */
 	private readonly asyncHarness = new Set<string>();
+	/**
+	 * Signs of life of each native harness subagent (one that streams its own session), by task id:
+	 * when it last sent anything, its open tool calls, and the text since its last tool call (its report).
+	 */
+	private readonly harnessPulses = new Map<string, IHarnessPulse>();
 	/** What each Volt subagent spent, folded from its chat's usage events (see taskSpend.ts). */
 	private readonly spendTrackers = new Map<string, ITaskSpendTracker>();
 	private readonly usageTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1484,7 +1505,11 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				this.changedRuns.add(envelope.runId);
 				this.apply({ type: 'file.changed', threadId, path: event.uri.fsPath });
 				return;
+			case 'subagent.event':
+				this.recordHarnessPulse(harnessTaskId(event.childId), event.event);
+				return;
 			case 'subagent.spawned':
+				this.harnessPulses.set(harnessTaskId(event.childId), { at: Date.now(), tools: new Set(), text: '' });
 				this.apply({
 					type: 'harness.started',
 					threadId,
@@ -1496,6 +1521,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				});
 				return;
 			case 'subagent.update':
+				this.recordHarnessPulse(harnessTaskId(event.childId), undefined);
 				if (this.state.tasks[harnessTaskId(event.childId)]) {
 					this.apply({
 						type: 'harness.progress',
@@ -1509,6 +1535,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				return;
 			case 'subagent.completed':
 				this.asyncHarness.delete(harnessTaskId(event.childId));
+				this.harnessPulses.delete(harnessTaskId(event.childId));
 				this.apply({
 					type: 'harness.ended',
 					threadId,
@@ -1522,6 +1549,54 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 	}
 
 	/** Any event is a sign of life of its run; tool calls are tracked so a quiet build is not taken for a hang. */
+	/** A native harness subagent showed a sign of life (`inner`: one of its own events, when it sent one). */
+	private recordHarnessPulse(taskId: string, inner: IVoltEvent | undefined): void {
+		const task = this.state.tasks[taskId];
+		if (!task || isTerminalTaskState(task.state)) {
+			this.harnessPulses.delete(taskId);
+			return;
+		}
+		let pulse = this.harnessPulses.get(taskId);
+		if (!pulse) {
+			this.harnessPulses.set(taskId, pulse = { at: 0, tools: new Set(), text: '' });
+		}
+		pulse.at = Date.now();
+		if (inner?.type === 'tool.start') {
+			pulse.tools.add(inner.callId);
+			pulse.text = '';
+		} else if (inner?.type === 'tool.end') {
+			pulse.tools.delete(inner.callId);
+		} else if (inner?.type === 'text.delta' && inner.delta && pulse.text.length < HARNESS_REPORT_MAX) {
+			pulse.text = (pulse.text + inner.delta).slice(0, HARNESS_REPORT_MAX);
+		}
+	}
+
+	/**
+	 * Native harness subagents that went quiet past `HARNESS_QUIET_MS` (no event of their own, no tool
+	 * call open, nobody asked anything) are settled as done with their last text: the harness's end
+	 * report was lost, and a card that says "Running" for hours is worse than one that says Done.
+	 */
+	private settleQuietHarnessTasks(now: number, strike: (key: string) => boolean): void {
+		for (const [taskId, pulse] of [...this.harnessPulses]) {
+			const task = this.state.tasks[taskId];
+			if (!task || task.source !== 'harness' || isTerminalTaskState(task.state) || !task.toolCallId) {
+				this.harnessPulses.delete(taskId);
+				continue;
+			}
+			const quiet = now - pulse.at;
+			if (quiet < (pulse.tools.size ? HARNESS_QUIET_TOOL_MS : HARNESS_QUIET_MS) || this.state.threads[task.parentId]?.inputs.length) {
+				continue;
+			}
+			if (!strike(`harness\0${taskId}`)) {
+				continue;
+			}
+			this.logService.warn(`[volt orchestrator] ${task.parentId}: harness subagent ${taskId} sent nothing for ${Math.round(quiet / 60_000)} min and its end never came; settling it`);
+			this.harnessPulses.delete(taskId);
+			const report = pulse.text.trim();
+			this.apply({ type: 'harness.ended', threadId: task.parentId, toolCallId: task.toolCallId, ok: true, ...(report ? { result: report } : {}) });
+		}
+	}
+
 	private recordPulse(envelope: IVoltEventEnvelope): void {
 		const event = envelope.event;
 		if (event.type === 'run.end') {
@@ -1729,6 +1804,9 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 			for (const pulse of this.pulses.values()) {
 				pulse.at = now;
 			}
+			for (const pulse of this.harnessPulses.values()) {
+				pulse.at = now;
+			}
 		}
 		this.lastWatchdogTick = now;
 		const previous = this.suspects;
@@ -1783,6 +1861,7 @@ export class AgentOrchestratorService extends Disposable implements IAgentOrches
 				void this.startTurn({ kind: 'startTurn', threadId: thread.id, turn: active });
 			}
 		}
+		this.settleQuietHarnessTasks(now, strike);
 		this.suspects = suspects;
 		// Tell the other Volt windows which chats this one is responsible for (running, or to restart).
 		void this.beacons.beat(Object.values(this.state.threads).filter(thread => thread.active || thread.rescue).map(thread => thread.id), now);

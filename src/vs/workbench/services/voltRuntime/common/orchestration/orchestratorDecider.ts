@@ -10,6 +10,7 @@ import { DEFAULT_ORCH_LIMITS, ORCH_LIMIT_MAX, IOrchEventEnvelope, IOrchLimitAcco
 import { applyOrchEvent, applyOrchEvents } from './orchestratorProjector.js';
 import { MAX_STALE_PLAN_ROUNDS, MAX_STEP_CONTINUATIONS, planContinuationCount, planContinueText, planTurnId, stepLimitContinueText, RESCUE_STAGGER_MS, rescueDueAt, rescueLabel, rescueResumeText, rescueTurnId, rescueWaits } from './rescue.js';
 import { normalizeVoltMode } from '../modes.js';
+import { readableModelLabel } from '../models/modelMeta.js';
 
 /**
  * The decider: command + state -> events, and the scheduler that runs after every command. Both
@@ -371,7 +372,7 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 				role: 'general',
 				origin: 'agent',
 				brief: command.brief ?? '',
-				...(command.modelLabel ? { modelLabel: command.modelLabel } : thread.modelLabel ? { modelLabel: thread.modelLabel } : {}),
+				...(command.modelLabel ? { modelLabel: readableModelLabel(command.modelLabel) } : thread.modelLabel ? { modelLabel: thread.modelLabel } : {}),
 				...(thread.modelRef ? { modelRef: thread.modelRef } : {}),
 				isolation: 'shared',
 				depth: thread.depth + 1,
@@ -393,7 +394,8 @@ export function decideOrch(state: IOrchState, command: OrchCommand, limits: IOrc
 			const activity = command.activity?.trim() && command.activity.trim() !== task.activity ? command.activity.trim() : undefined;
 			const title = command.title && command.title !== task.title ? command.title : undefined;
 			const kind = command.kind && command.kind !== task.kind ? command.kind : undefined;
-			const modelLabel = command.modelLabel && command.modelLabel !== task.modelLabel ? command.modelLabel : undefined;
+			const readable = readableModelLabel(command.modelLabel);
+			const modelLabel = readable && readable !== task.modelLabel ? readable : undefined;
 			if (!activity && !title && !kind && !modelLabel) {
 				return { events: [] };
 			}

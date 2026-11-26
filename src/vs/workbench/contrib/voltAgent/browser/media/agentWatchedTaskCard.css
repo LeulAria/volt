@@ -360,6 +360,14 @@
 	gap: 6px;
 }
 
+/* The card sits above the composer: compact buttons, not a dialog's. */
+.monaco-workbench .volt-watch-actions .volt-button {
+	height: 24px;
+	padding: 0 10px;
+	gap: 5px;
+	font-size: 12px;
+}
+
 .volt-watch-spacer {
 	flex: 1;
 }

@@ -818,6 +818,40 @@ button.volt-agent-work-conflict-agent:hover {
 
 .volt-agent-subagent-bar.hidden { display: none; }
 
+/* Not started yet: what it waits for, shimmering (the transcript's activity shimmer), after the model. */
+.volt-agent-subagent-bar > .state.waiting {
+	display: inline-block;
+	margin-left: 8px;
+	min-width: 0;
+	flex-shrink: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 400;
+}
+
+/* Stop while it runs, Resume once stopped: on the bar itself, after a hairline. */
+.volt-agent-subagent-bar > .volt-agent-subagent-bar-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: 8px;
+	padding-left: 8px;
+	border-left: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+	color: color-mix(in srgb, var(--vscode-foreground) 78%, transparent);
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.volt-agent-subagent-bar > .volt-agent-subagent-bar-action:hover,
+.volt-agent-subagent-bar > .volt-agent-subagent-bar-action:focus-visible {
+	color: var(--vscode-foreground);
+	outline: none;
+}
+
+.volt-agent-subagent-bar > .volt-agent-subagent-bar-action.stop .codicon { color: #e5534b; }
+.volt-agent-subagent-bar > .volt-agent-subagent-bar-action .codicon { font-size: 12px; }
+
 /* A subagent's chat is read only: the parent sends its rounds. `subagent-chat` is set by agentEditor.ts. */
 /* !important: the follow-up composer's own `display: flex` rules load later at the same specificity. */
 .monaco-workbench .volt-agent-editor.subagent-chat .volt-agent-composer .volt-agent-input-box { display: none !important; }
@@ -1203,6 +1237,31 @@ button.volt-agent-work-agent:hover .volt-agent-work-agent-title { color: var(--v
 .volt-agent-queue-model:hover {
 	color: var(--vscode-foreground);
 	background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+/* The composer's model trigger in a queued row: brand icon, name, effort and chevron, in the row's size. */
+.volt-agent-model.volt-agent-queue-model {
+	height: 20px;
+	max-width: 50%;
+	padding: 0 4px 0 6px;
+	gap: 4px;
+	border-radius: 4px;
+	font-size: 12px;
+}
+.volt-agent-model.volt-agent-queue-model .volt-agent-model-label,
+.volt-agent-model.volt-agent-queue-model .volt-agent-model-effort { font-size: 12px; }
+.monaco-workbench .volt-agent-model.volt-agent-queue-model > .codicon.codicon-chevron-down[class*='codicon-'] { font-size: 12px; }
+/* Without Configure, a picked row shows its model only while hovered. */
+.volt-agent-queue-model.on-hover { display: none; }
+.volt-agent-queue-item:hover .volt-agent-queue-model.on-hover,
+.volt-agent-queue-item:focus-within .volt-agent-queue-model.on-hover { display: inline-flex; }
+
+/* The row's gear (model settings), drawn at the size of the icons beside it. */
+.volt-agent-queue-remove .volt-agent-settings-icon,
+.volt-agent-queue-remove .volt-agent-settings-icon svg {
+	display: block;
+	width: 14px;
+	height: 14px;
 }
 
 .volt-agent-notification-list { gap: 2px; margin: 2px 0 0; }

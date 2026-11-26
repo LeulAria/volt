@@ -294,6 +294,8 @@ class AgentViewSidebarsContribution extends Disposable {
 	private readonly chatResize: ResizeObserver;
 	private observedChat: HTMLElement | undefined;
 	private windowNarrow = false;
+	/** The transcript's scrollable the toolbar sits in, observed so the card's height limit follows it. */
+	private observedScroller: HTMLElement | undefined;
 	/** Last {@link usesPopup}; the button's label and the popup follow its changes. */
 	private popupMode = false;
 	/** The user's choice while the space is narrow. Cleared whenever narrow flips. */
@@ -915,6 +917,8 @@ class AgentViewSidebarsContribution extends Disposable {
 		// Floating or beside the transcript changes whether a narrow column collapses them.
 		this.syncDockToWindow();
 		this.syncQuickOpenHost();
+		// Another chat's transcript: the card's height limit is that one's.
+		this.layoutOverlay();
 	}
 
 	/**
@@ -1074,15 +1078,20 @@ class AgentViewSidebarsContribution extends Disposable {
 		if (!open) {
 			this.popup.classList.add('hidden');
 			this.quickOpen.appendChild(this.body);
+			this.layoutOverlay();
 			return;
 		}
 		const container = this.layoutService.mainContainer;
 		container.appendChild(this.popup);
 		this.popup.appendChild(this.body);
+		// The popup scrolls, not the body: it reaches down to 8px above the window's bottom edge.
+		this.body.style.removeProperty('max-height');
 		const anchor = this.quickOpenToggle.getBoundingClientRect();
 		const bounds = container.getBoundingClientRect();
-		this.popup.style.top = `${anchor.bottom - bounds.top + 6}px`;
+		const top = anchor.bottom - bounds.top + 6;
+		this.popup.style.top = `${top}px`;
 		this.popup.style.right = `${Math.max(8, bounds.right - anchor.right)}px`;
+		this.popup.style.maxHeight = `${Math.max(120, bounds.height - top - 8)}px`;
 		this.popup.classList.remove('hidden');
 		const doc = container.ownerDocument;
 		this.popupListeners.add(addDisposableListener(doc, 'mousedown', e => {
@@ -1125,7 +1134,7 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.overlayListeners.clear();
 		if (!this.overlay) {
 			this.body.style.removeProperty('width');
-			this.body.style.removeProperty('max-height');
+			this.layoutOverlay();
 			return;
 		}
 		this.layoutOverlay();
@@ -1157,14 +1166,38 @@ class AgentViewSidebarsContribution extends Disposable {
 		}));
 	}
 
-	/** The card fits the transcript it covers. */
+	/**
+	 * The card fits the transcript beside (or over) it: sized to its rows, up to the room down to the
+	 * transcript's bottom, and scrolling inside past that, so the last section (Usage) stays reachable.
+	 * Measured rather than left to the flex chain's percentages, which let the card run past its room.
+	 */
 	private layoutOverlay(): void {
 		const scroller = this.quickOpen.parentElement;
-		if (!this.overlay || !scroller) {
+		if (scroller !== this.observedScroller) {
+			// The transcript's height changes without the chat's (a taller composer, the queue): follow it too.
+			if (this.observedScroller && this.observedScroller !== this.observedChat) {
+				this.chatResize.unobserve(this.observedScroller);
+			}
+			this.observedScroller = scroller ?? undefined;
+			if (scroller) {
+				this.chatResize.observe(scroller);
+			}
+		}
+		if (this.popupOpen || !scroller) {
 			return;
 		}
-		this.body.style.width = `${Math.max(160, Math.min(228, scroller.clientWidth - 24))}px`;
-		this.body.style.maxHeight = `${Math.max(120, scroller.clientHeight - 24)}px`;
+		if (this.overlay) {
+			this.body.style.width = `${Math.max(160, Math.min(228, scroller.clientWidth - 24))}px`;
+			this.body.style.maxHeight = `${Math.max(120, scroller.clientHeight - 24)}px`;
+			return;
+		}
+		if (this.collapsed) {
+			this.body.style.removeProperty('max-height');
+			return;
+		}
+		// Down to 8px above the transcript's bottom edge, from where the card starts.
+		const top = this.quickOpen.offsetTop + this.body.offsetTop;
+		this.body.style.maxHeight = `${Math.max(120, scroller.clientHeight - top - 8)}px`;
 	}
 
 	private syncRightToggle(): void {

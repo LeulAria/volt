@@ -26,6 +26,9 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IPathService } from '../../../../services/path/common/pathService.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
+import { isLiveTaskState } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
+import { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
+import { isMultitaskTask } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
 import { IVoltSessionContextService, projectIdForRoot, uriFromStoredRoot } from '../../../../services/voltRuntime/common/sessionContext.js';
 import { AGENT_HOME_NEW_CHAT_ICON_PATH } from '../home/agentHomeIcons.js';
 import { scratchProjectLabel } from '../home/agentHomeWorkspace.js';
@@ -40,6 +43,7 @@ import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { getComputerName, onDidChangeComputerName } from '../usage/agentComputerName.js';
 import { AGENT_USAGE_INPUT_ID } from '../../../voltUsage/common/voltUsage.js';
 import { displayComputerName, IUsageEnvironmentSelection, showUsageEnvironmentMenu, usageEnvironmentTriggerLabel, usageMachineName } from '../usage/agentUsageEnvironmentMenu.js';
+import { subagentCountsLabel } from './agentSubagents.js';
 import { setAgentTooltip } from './agentTooltip.js';
 
 const QUICK_OPEN_COMMAND_ID = 'workbench.action.quickOpenWithModes';
@@ -363,6 +367,9 @@ class AgentTitlebarHeaderContribution extends Disposable {
 	private readonly envButton: HTMLButtonElement;
 	private readonly envLabel: HTMLElement;
 	private readonly laptop: HTMLElement;
+	/** "3 subagents running" after the title while the shown chat's agents work. */
+	private readonly agentsBadge: HTMLElement;
+	private agentsBadgeText = '';
 	private readonly hover: HTMLElement;
 	private readonly editorListeners = this._register(new DisposableStore());
 	private readonly scmWatch = this._register(new MutableDisposable());
@@ -393,6 +400,7 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		@ISCMViewService private readonly scmViewService: ISCMViewService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@IContextViewService private readonly contextViewService: IContextViewService,
+		@IAgentOrchestratorService private readonly orchestrator: IAgentOrchestratorService,
 	) {
 		super();
 		this.machineLabel = machineDisplayName(getComputerName()) ?? usageMachineName(headerProcessEnv(), localEnvironmentLabel());
@@ -453,6 +461,8 @@ class AgentTitlebarHeaderContribution extends Disposable {
 		}));
 		this.laptop = append(this.titleCluster, $('span.volt-agent-primary-header-laptop'));
 		createAgentHeaderLaptopIcon(this.laptop);
+		this.agentsBadge = append(this.titleCluster, $('span.volt-agent-primary-header-agents'));
+		this.agentsBadge.hidden = true;
 
 		this.hover = $('.volt-agent-primary-header-hover.hidden');
 		this.hover.setAttribute('role', 'tooltip');
@@ -487,6 +497,12 @@ class AgentTitlebarHeaderContribution extends Disposable {
 			this.scheduleRender();
 		}));
 		this._register(this.history.onDidChange(() => this.scheduleRender()));
+		// Subagents start and settle without a history change: the badge follows the tasks, and only redraws when its words change.
+		this._register(this.orchestrator.onDidChange(change => {
+			if (change.tasks.length && this.agentsLabel() !== this.agentsBadgeText) {
+				this.scheduleRender();
+			}
+		}));
 		this._register(this.sessionContext.onDidChangeActiveProject(() => this.scheduleRender()));
 		this._register(this.sessionContext.onDidChangeProjects(() => this.scheduleRender()));
 		this._register(this.workspaceContextService.onDidChangeWorkspaceFolders(() => this.scheduleRender()));
@@ -730,11 +746,40 @@ class AgentTitlebarHeaderContribution extends Disposable {
 				this.titleCluster.removeAttribute('aria-label');
 			}
 		}
+		this.renderAgentsBadge(usageOpen);
 		// A longer title or another page's crumbs can need room the column does not have.
 		this.fit();
 		if (!this.hover.classList.contains('hidden')) {
 			this.showHover();
 		}
+	}
+
+	/** "3 subagents running" for the chat in the main editor: live Volt and harness agents it started. */
+	private agentsLabel(): string {
+		const editor = this.mainEditor();
+		if (!(editor instanceof AgentEditorInput)) {
+			return '';
+		}
+		let multitask = 0;
+		let subagents = 0;
+		for (const task of this.orchestrator.tasksOf(editor.sessionId)) {
+			if (!isLiveTaskState(task.state)) {
+				continue;
+			}
+			if (isMultitaskTask(task)) {
+				multitask++;
+			} else {
+				subagents++;
+			}
+		}
+		return multitask + subagents ? subagentCountsLabel({ multitask, subagents, waiting: 0, queued: 0 }) : '';
+	}
+
+	private renderAgentsBadge(hide: boolean): void {
+		const text = hide ? '' : this.agentsLabel();
+		this.agentsBadgeText = text;
+		this.agentsBadge.textContent = text;
+		this.agentsBadge.hidden = !text;
 	}
 
 	/**

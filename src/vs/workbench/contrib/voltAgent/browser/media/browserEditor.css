@@ -2202,6 +2202,22 @@ webview.volt-browser-devtools-frame {
 	border-radius: 9999px;
 }
 
+/* Refresh / View Agent Tab stand as tall as the × beside them. */
+.monaco-workbench .volt-browser-agent-notice .volt-button {
+	height: 22px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+
+/* View Agent Tab: the theme's secondary grey at 40%, so it sits quietly on the pill. */
+.monaco-workbench .volt-browser-agent-notice .volt-button.volt-button-secondary {
+	background: color-mix(in srgb, var(--vscode-button-secondaryBackground) 40%, transparent);
+}
+
+.monaco-workbench .volt-browser-agent-notice .volt-button.volt-button-secondary:hover {
+	background: color-mix(in srgb, var(--vscode-button-secondaryHoverBackground) 60%, transparent);
+}
+
 .volt-browser-agent-notice-close {
 	display: inline-flex;
 	align-items: center;
@@ -3770,4 +3786,64 @@ webview.volt-browser-devtools-frame {
 /* The design bar has the way out: the toolbar's Design chip steps aside for the batch's Send. */
 .volt-browser-editor.design-mode .volt-browser-actions .volt-browser-action.design {
 	display: none;
+}
+
+/* The toolbar's Comments button: the drawer of this tab's comments, with how many are not resolved. */
+.volt-browser-action.comments {
+	position: relative;
+}
+
+.volt-browser-action.comments svg {
+	stroke-width: 1.5;
+}
+
+.volt-browser-comments-count:empty {
+	display: none;
+}
+
+.volt-browser-comments-count {
+	position: absolute;
+	top: 1px;
+	right: 0;
+	min-width: 12px;
+	height: 12px;
+	padding: 0 3px;
+	box-sizing: border-box;
+	border-radius: 6px;
+	background: var(--vscode-badge-background, #4d4d4d);
+	color: var(--vscode-badge-foreground, #fff);
+	font: 600 9px/12px var(--volt-font);
+	text-align: center;
+	pointer-events: none;
+}
+
+/* The comments drawer: open, sent and resolved comments of this tab, over the page's right edge. Solid, no blur. */
+.volt-browser-comments-drawer {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 7;
+	width: 300px;
+	max-width: 85%;
+	display: flex;
+	flex-direction: column;
+	border-left: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.12));
+	background: var(--vscode-editor-background);
+	box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+}
+
+.volt-browser-comments-drawer > .volt-comments-pane {
+	flex: 1;
+}
+
+/* Fn held in design mode: everything drawn over the page steps aside (kept, just not shown) so the page can be used. */
+.volt-browser-overlay.page-pointer > * {
+	opacity: 0 !important;
+	pointer-events: none !important;
+}
+
+.volt-browser-editor.design-mode.fn-peek::before,
+.volt-browser-editor.design-mode.fn-peek::after {
+	opacity: 0 !important;
 }

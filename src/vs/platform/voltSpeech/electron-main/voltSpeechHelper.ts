@@ -109,15 +109,26 @@ if onDeviceOnly && !recognizer.supportsOnDeviceRecognition {
 	exit(4)
 }
 
-let request = SFSpeechAudioBufferRecognitionRequest()
-request.shouldReportPartialResults = true
-request.requiresOnDeviceRecognition = onDeviceOnly
-request.taskHint = .dictation
 let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
 
-var lastText = ""
+// All state lives on the main queue: the recognizer calls back there and the reader hops to it.
+// The recognizer ends a task on its own after a pause or its time limit; while audio still comes,
+// a new task takes over and the text heard so far is kept, so a dictation sits through long pauses.
+var committed = ""
 var finished = false
-let finish = { (text: String, message: String?) in
+var audioEnded = false
+var endedAt: Date? = nil
+var segment = 0
+var quickFailures = 0
+var request: SFSpeechAudioBufferRecognitionRequest! = nil
+
+func joined(_ head: String, _ tail: String) -> String {
+	if head.isEmpty { return tail }
+	if tail.isEmpty { return head }
+	return head + " " + tail
+}
+
+func finish(_ text: String, _ message: String?) {
 	if finished { return }
 	finished = true
 	var object: [String: Any] = ["type": "final", "text": text]
@@ -125,26 +136,54 @@ let finish = { (text: String, message: String?) in
 	emit(object)
 }
 
-_ = recognizer.recognitionTask(with: request) { result, error in
-	if let result = result {
-		lastText = result.bestTranscription.formattedString
-		if result.isFinal {
-			finish(lastText, nil)
+func startSegment() {
+	let next = SFSpeechAudioBufferRecognitionRequest()
+	next.shouldReportPartialResults = true
+	next.requiresOnDeviceRecognition = onDeviceOnly
+	next.taskHint = .dictation
+	if #available(macOS 13, *) { next.addsPunctuation = true }
+	request = next
+	segment += 1
+	let mine = segment
+	let startedAt = Date()
+	var heard = ""
+	_ = recognizer.recognitionTask(with: next) { result, error in
+		guard mine == segment, !finished else { return }
+		if let result = result {
+			heard = result.bestTranscription.formattedString
+			if !result.isFinal { emit(["type": "partial", "text": joined(committed, heard)]) }
+		}
+		guard result?.isFinal == true || error != nil else { return }
+		committed = joined(committed, heard)
+		if audioEnded {
+			finish(committed, committed.isEmpty ? error?.localizedDescription : nil)
 			return
 		}
-		if !finished { emit(["type": "partial", "text": lastText]) }
-	}
-	if let error = error {
-		finish(lastText, error.localizedDescription)
+		// A recognizer that fails at once, again and again, would restart forever.
+		if heard.isEmpty && error != nil && Date().timeIntervalSince(startedAt) < 2 {
+			quickFailures += 1
+			if quickFailures >= 3 {
+				finish(committed, error?.localizedDescription)
+				return
+			}
+		} else {
+			quickFailures = 0
+		}
+		startSegment()
 	}
 }
+startSegment()
 
 DispatchQueue.global().async {
 	let input = FileHandle.standardInput
 	while true {
 		let data = input.readData(ofLength: 3200)
 		if data.isEmpty {
-			request.endAudio()
+			DispatchQueue.main.async {
+				audioEnded = true
+				endedAt = Date()
+				request.endAudio()
+			}
 			return
 		}
 		let frames = AVAudioFrameCount(data.count / 2)
@@ -155,16 +194,19 @@ DispatchQueue.global().async {
 				memcpy(destination, base, Int(frames) * 2)
 			}
 		}
-		request.append(buffer)
+		DispatchQueue.main.async { request.append(buffer) }
 	}
 }
 
 // The recognizer needs the main run loop: a task started while it is blocked never leaves "starting".
-let deadline = Date().addingTimeInterval(300)
-while !finished && Date() < deadline {
+// No limit while audio comes (the composer ends silent dictations); the last words get 20 seconds.
+let started = Date()
+while !finished {
+	if let endedAt = endedAt, Date().timeIntervalSince(endedAt) > 20 { break }
+	if Date().timeIntervalSince(started) > 3600 { break }
 	_ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.1))
 }
-if !finished { finish(lastText, "Timed out.") }
+if !finished { finish(committed, "Timed out.") }
 exit(0)
 `;
 

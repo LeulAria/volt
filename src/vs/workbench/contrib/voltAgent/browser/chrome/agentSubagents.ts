@@ -7,15 +7,16 @@ import '../media/agentSubagents.css';
 import { $, addDisposableListener, append, getWindow, isHTMLButtonElement } from '../../../../../base/browser/dom.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { createBrandIcon } from '../../../../services/voltRuntime/browser/providers/providerBrands.js';
+import { readableModelLabel } from '../../../../services/voltRuntime/common/models/modelMeta.js';
 import { buildTaskPrompt, modeForTaskRole, newTaskId } from '../../../../services/voltRuntime/common/orchestration/agentTasks.js';
 import type { IAgentOrchestratorService } from '../../../../services/voltRuntime/common/orchestration/orchestrator.js';
 import { formatElapsed, IOrchAgentRow, OrchAgentRowState } from '../../../../services/voltRuntime/common/orchestration/orchestratorViews.js';
 import { AGENT_HOME_NEW_CHAT_ICON_PATH, createHomeStatusBadgeIcon } from '../home/agentHomeIcons.js';
-import { AgentTooltip, IAgentTooltipRow } from './agentTooltip.js';
+import { AgentTooltip, IAgentTooltipRow, setAgentTooltip } from './agentTooltip.js';
 
 /**
  * Subagents as Volt draws them everywhere (the card above the composer, the transcript, the dock
@@ -201,7 +202,7 @@ export function subagentView(row: IOrchAgentRow, providerFor: (modelRef: string 
 	return {
 		key: row.taskId,
 		title: row.title,
-		...(row.modelLabel ? { modelLabel: row.modelLabel } : {}),
+		...(row.modelLabel ? { modelLabel: readableModelLabel(row.modelLabel) } : {}),
 		...(providerFor(row.modelRef) ? { providerId: providerFor(row.modelRef) } : {}),
 		...(kindLabel ? { kindLabel } : {}),
 		state: row.state,
@@ -688,6 +689,118 @@ export function renderCursorCardRow(parent: HTMLElement, view: ISubagentView, op
 	}
 	bindSubagentHover(row, view, options);
 	return row;
+}
+
+//#endregion
+
+//#region Waiting row
+
+/** What the waiting row says for a chat's live agents, or undefined when none is live. */
+export function pendingSubagentsText(views: readonly Pick<ISubagentView, 'state' | 'multitask' | 'title'>[]): { readonly label: string; readonly detail: string } | undefined {
+	const live = views.filter(view => isLiveSubagentState(view.state));
+	if (!live.length) {
+		return undefined;
+	}
+	const allMultitask = live.every(view => view.multitask);
+	const allQueued = live.every(view => view.state === 'queued');
+	const count = live.length;
+	let label: string;
+	if (count === 1) {
+		label = allQueued
+			? localize('voltAgent.pending.oneQueued', "Waiting for {0} to start", live[0].title)
+			: localize('voltAgent.pending.one', "Waiting for {0}", live[0].title);
+	} else if (allQueued) {
+		label = allMultitask
+			? localize('voltAgent.pending.multitasksQueued', "{0} multitasks waiting to start", count)
+			: localize('voltAgent.pending.subagentsQueued', "{0} subagents waiting to start", count);
+	} else {
+		label = allMultitask
+			? localize('voltAgent.pending.multitasks', "Waiting for {0} multitasks", count)
+			: localize('voltAgent.pending.subagents', "Waiting for {0} subagents", count);
+	}
+	const parts: string[] = [];
+	if (count > 1) {
+		const names = live.slice(0, 2).map(view => view.title);
+		parts.push(count > 2 ? localize('voltAgent.pending.namesMore', "{0} +{1} more", names.join(', '), count - 2) : names.join(', '));
+	}
+	const blocked = live.filter(view => view.state === 'waiting').length;
+	if (blocked) {
+		parts.push(blocked === 1 ? localize('voltAgent.pending.oneBlocked', "1 needs you") : localize('voltAgent.pending.blocked', "{0} need you", blocked));
+	}
+	return { label, detail: parts.join(' \u00b7 ') };
+}
+
+/**
+ * "Waiting for 3 subagents" under the agent's last reply while the agent is idle and agents it
+ * started still work: without it the chat reads as finished. Shimmers like the live tail, names the
+ * agents on hover, and is only in the thread while something is live. Kept after the transcript
+ * (redraws and parks move it back), just before the job wait rows when those are the last child.
+ * Updates land in place, so the shimmer never restarts.
+ */
+export class AgentPendingWorkRow extends Disposable {
+
+	readonly element: HTMLElement;
+	private readonly label: HTMLElement;
+	private readonly detail: HTMLElement;
+	private shown = false;
+	private text = '';
+
+	constructor(
+		private readonly threadInner: HTMLElement,
+		/** The row appeared, went or changed: the thread re-measures (and keeps to its end). */
+		private readonly onDidResize: () => void,
+	) {
+		super();
+		this.element = $('.volt-tr-pending-work');
+		this.element.setAttribute('role', 'status');
+		this.label = append(this.element, $('span.volt-tr-pending-label.shimmer'));
+		this.detail = append(this.element, $('span.volt-tr-pending-detail'));
+		const observer = new MutationObserver(() => this.keepPlace());
+		observer.observe(threadInner, { childList: true });
+		this._register(toDisposable(() => {
+			observer.disconnect();
+			this.element.remove();
+		}));
+	}
+
+	/** This chat's agents; `busy` while the agent's own reply streams (its tail already says it works). */
+	update(views: readonly ISubagentView[], busy: boolean): void {
+		const text = busy ? undefined : pendingSubagentsText(views);
+		const shown = !!text;
+		const key = text ? `${text.label}\n${text.detail}` : '';
+		if (key !== this.text) {
+			this.text = key;
+			this.label.textContent = text?.label ?? '';
+			this.detail.textContent = text?.detail ?? '';
+			this.detail.hidden = !text?.detail;
+			const live = views.filter(view => isLiveSubagentState(view.state));
+			setAgentTooltip(this.element, live.length ? live.map(view => `${view.title} \u00b7 ${view.stateLabel}`).join('\n') : undefined);
+		}
+		if (shown !== this.shown) {
+			this.shown = shown;
+			this.keepPlace();
+			if (!shown) {
+				this.onDidResize();
+			}
+		}
+	}
+
+	/** After the transcript; before the job wait rows when they are the thread's last child. */
+	private keepPlace(): void {
+		if (!this.shown) {
+			if (this.element.parentElement) {
+				this.element.remove();
+			}
+			return;
+		}
+		const last = this.threadInner.lastElementChild;
+		const next = last && last !== this.element && last.classList.contains('volt-agent-job-waits') ? last : null;
+		if (this.element.parentElement === this.threadInner && this.element.nextElementSibling === next) {
+			return;
+		}
+		this.threadInner.insertBefore(this.element, next);
+		this.onDidResize();
+	}
 }
 
 //#endregion

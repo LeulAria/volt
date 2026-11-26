@@ -487,4 +487,40 @@ suite('Agent orchestrator service', () => {
 		await settle();
 		assert.strictEqual(service.getTask(tasks[1].id)?.state, 'completed', 'the async child ended with its turn');
 	});
+
+	test('a native harness subagent whose end never comes settles once it has been quiet, while its parent turn still runs', async () => {
+		const { service, runtime } = await setup();
+		await service.submit('chat', { text: 'run the packages' }, 'auto', 't1');
+		await settle();
+		runtime.emit('chat', 'run1', { type: 'subagent.spawned', childId: 'h7', title: 'Resume H7 backend hardening', source: 'claude' });
+		runtime.emit('chat', 'run1', { type: 'subagent.spawned', childId: 'h8', title: 'H8 tests', source: 'claude' });
+		runtime.emit('chat', 'run1', { type: 'subagent.event', childId: 'h7', event: { type: 'tool.start', callId: 'c1', name: 'Bash' } });
+		runtime.emit('chat', 'run1', { type: 'subagent.event', childId: 'h7', event: { type: 'tool.end', callId: 'c1' } });
+		runtime.emit('chat', 'run1', { type: 'subagent.event', childId: 'h7', event: { type: 'text.delta', id: 'm1', delta: '9 files changed.' } });
+		// H8 sits in a long test run: an open tool call is not silence.
+		runtime.emit('chat', 'run1', { type: 'subagent.event', childId: 'h8', event: { type: 'tool.start', callId: 'c2', name: 'Bash' } });
+		const [h7, h8] = service.tasksOf('chat');
+		const tick = (service as unknown as { checkLiveness(): void });
+		const realNow = Date.now;
+		let now = realNow();
+		Date.now = () => now;
+		try {
+			// The watchdog ticks every 20 s; a bigger jump would read as the machine sleeping.
+			for (let elapsed = 0; elapsed < 14 * 60_000; elapsed += 20_000) {
+				now += 20_000;
+				tick.checkLiveness();
+			}
+			assert.strictEqual(service.getTask(h7.id)?.state, 'running', 'not settled before it was quiet for long');
+			for (let elapsed = 0; elapsed < 3 * 60_000; elapsed += 20_000) {
+				now += 20_000;
+				tick.checkLiveness();
+			}
+		} finally {
+			Date.now = realNow;
+		}
+		await settle();
+		assert.deepStrictEqual([service.getTask(h7.id)?.state, service.getTask(h7.id)?.result], ['completed', '9 files changed.']);
+		assert.strictEqual(service.getTask(h8.id)?.state, 'running', 'a subagent in a long tool call keeps running');
+		assert.ok(service.getThread('chat')?.active, 'the parent turn still runs');
+	});
 });

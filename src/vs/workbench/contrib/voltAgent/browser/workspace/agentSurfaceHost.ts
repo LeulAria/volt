@@ -838,11 +838,11 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	/** Without a scope, Source Control in the files sidebar; with one, that scope's diff as a tab. */
-	openChanges(scope?: AgentChangesScope): void {
+	openChanges(scope?: AgentChangesScope, reveal?: { readonly original: URI | undefined; readonly modified: URI | undefined }): void {
 		const owner = this.target();
 		if (scope) {
 			// A chat nested in another's tools (a subagent in its parent's panel) shows its own changes, not the host's.
-			void owner?.openChangesInTools(false, scope, this.sessionId);
+			void owner?.openChangesInTools(false, scope, this.sessionId, reveal);
 		} else {
 			owner?.showFilesSidebar('scm');
 		}
@@ -1277,6 +1277,7 @@ export class AgentSurfaceHost extends Disposable {
 		const empty = !this.shown?.part.groups.some(group => group.count > 0);
 		// The empty area is see-through like the chat beside it (agentEditor.css); tabs keep the solid fill.
 		this.area.classList.toggle('tools-empty', empty);
+		this.syncSashUnderGrip();
 		if (!hasTools && this.presentation !== 'split') {
 			this.setPresentation('split', false);
 		} else if (empty && this.presentation === 'fullscreen') {
@@ -1485,6 +1486,14 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	/**
+	 * The grip draws the split line. Where the area is see-through (the files sidebar beside the chat,
+	 * or no tab open) the sash's own line shows under it and doubles it, so the sash hides its line.
+	 */
+	private syncSashUnderGrip(): void {
+		this.sash.classList.toggle('under-grip', this.area.classList.contains('with-files-sidebar') || this.area.classList.contains('tools-empty'));
+	}
+
+	/**
 	 * Lays the files sidebar at the right edge of `available` pixels of tools and narrows the tabs
 	 * beside it. Its icon row lines up with the tabs' first row. Returns the width it takes.
 	 */
@@ -1496,8 +1505,7 @@ export class AgentSurfaceHost extends Disposable {
 		this.partsHost.classList.toggle('hidden', fills);
 		// The sidebar is see-through like the chat; only the tabs keep the area's solid fill (agentEditor.css).
 		this.area.classList.toggle('with-files-sidebar', width > 0);
-		// The grip draws the split line; through the see-through area this one would double it.
-		this.sash.classList.toggle('under-grip', width > 0);
+		this.syncSashUnderGrip();
 		if (width <= 0) {
 			this.partsHost.style.removeProperty('right');
 			this.filesSidebar.hide();
@@ -2288,11 +2296,11 @@ export class AgentSurfaceHost extends Disposable {
 	}
 
 	/** One scope of the chat's changes (Review) as a diff tab. Source Control itself is in the files sidebar. */
-	private async openChangesInTools(preserveFocus: boolean, scope: AgentChangesScope, forSession?: string): Promise<void> {
+	private async openChangesInTools(preserveFocus: boolean, scope: AgentChangesScope, forSession?: string, reveal?: { readonly original: URI | undefined; readonly modified: URI | undefined }): Promise<void> {
 		const sessionId = forSession ?? this.sessionId;
 		const group = this.toolsGroup();
 		if (group && sessionId) {
-			await openAgentChangesDiff(this.instantiationService, group, sessionId, scope, preserveFocus);
+			await openAgentChangesDiff(this.instantiationService, group, sessionId, scope, preserveFocus, reveal);
 		}
 	}
 
