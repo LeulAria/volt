@@ -18,7 +18,8 @@ import { IVoltBrowserService } from '../../../../../platform/voltBrowser/common/
 import { describeMockRoute, IVoltEmulation, IVoltMockRoute, parseEmulation, parseMockRoutes } from '../../../../../platform/voltBrowser/common/browserAgent.js';
 import { decodeDataUrl, encodeImage, IImageLabel, ImageFormat, scaleScreenshot } from '../../../../services/voltRuntime/browser/host/imageCodec.js';
 import { shortCommand } from '../../../../services/voltRuntime/common/orchestration/agentFleet.js';
-import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_ACT_TOOL_NAME, BROWSER_AUDIT_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_EMULATE_TOOL_NAME, BROWSER_MOCK_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_STATUS_TOOL_NAME, IVoltBrowserAutomationOptions, IVoltBrowserPeek, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, PEEK_BROWSER_COMMAND_ID, PREFLIGHT_BROWSER_COMMAND_ID, IVoltHostToolResult, IVoltHostToolService, VoltBrowserAutomationToolName } from '../../../../services/voltRuntime/common/hostTools.js';
+import { importCookiesForAgent } from './browserCookieAgent.js';
+import { AUTOMATE_BROWSER_COMMAND_ID, BROWSER_ACT_TOOL_NAME, BROWSER_AUDIT_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_EMULATE_TOOL_NAME, BROWSER_IMPORT_COOKIES_TOOL_NAME, BROWSER_MOCK_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_STATUS_TOOL_NAME, IVoltBrowserAutomationOptions, IVoltBrowserPeek, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, PEEK_BROWSER_COMMAND_ID, PREFLIGHT_BROWSER_COMMAND_ID, IVoltHostToolResult, IVoltHostToolService, VoltBrowserAutomationToolName } from '../../../../services/voltRuntime/common/hostTools.js';
 import { BrowserAuditCheck, describeLocator, describeStep, formatRunLog, HOST_EXPECTATIONS, IBrowserAssertion, IBrowserLocator, IBrowserRunStep, IBrowserStepOutcome, parseLocator, parseRunSteps } from '../../../../services/voltRuntime/common/tools/browserRun.js';
 import { IAgentRuntimeService } from '../../../../services/voltRuntime/common/runtime.js';
 import { diffAx, formatAxLine, IAxItem, placeOnImage, readingOrder, strokeBoxes } from '../../../../services/voltRuntime/common/tools/axAnnotations.js';
@@ -1592,6 +1593,9 @@ async function act(view: VoltBrowserView, tool: VoltBrowserAutomationToolName, a
 			return compare(view, args, ctx);
 		case BROWSER_STATUS_TOOL_NAME:
 			return status(ctx);
+		case BROWSER_IMPORT_COOKIES_TOOL_NAME:
+			// Runs before the queue, in the command (a dialog for the user, not the page).
+			return { error: 'browser_import_cookies does not act on the page.' };
 	}
 }
 
@@ -1630,6 +1634,10 @@ CommandsRegistry.registerCommand(AUTOMATE_BROWSER_COMMAND_ID, (accessor: Service
 	const services: IAutomationServices = { workspace: accessor.get(IAgentWorkspaceService), views: accessor.get(IVoltBrowserViews), files: accessor.get(IFileService), groups: accessor.get(IEditorGroupsService), browser: mainBrowserService(accessor) };
 	// A warm-pool agent calls with its pool id; its browser tab lives under the chat it was given.
 	const sessionId = accessor.get(IAgentRuntimeService).chatFor(callerId);
+	if (tool === BROWSER_IMPORT_COOKIES_TOOL_NAME) {
+		// A dialog for the user, not the page: it neither waits on nor holds the chat's other browser calls.
+		return importCookiesForAgent(accessor, sessionId, args ?? {}, options?.token ?? CancellationToken.None);
+	}
 	const source = new CancellationTokenSource(options?.token);
 	let calls = inflight.get(sessionId);
 	if (!calls) {

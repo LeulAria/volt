@@ -9434,6 +9434,90 @@ pre.volt-agent-searchable {
 }
 
 /*
+ * Moved left of, above or below the chat (the panel's layout menu, agentToolsLayoutMenu.ts): the
+ * grip sits on the edge facing the chat, and the tabs and files sidebar keep clear of its strip.
+ */
+.volt-agent-tools-area.dock-left > .volt-agent-tools-grip {
+	left: auto;
+	right: 0;
+}
+
+.volt-agent-tools-area.dock-left > .volt-agent-tools-parts {
+	left: 0;
+	right: 4px;
+}
+
+.volt-agent-tools-area.dock-left > .volt-agent-files-sidebar {
+	right: 4px;
+}
+
+.volt-agent-tools-area.dock-top > .volt-agent-tools-grip,
+.volt-agent-tools-area.dock-bottom > .volt-agent-tools-grip {
+	left: 0;
+	right: 0;
+	width: auto;
+	height: 7px;
+	cursor: row-resize;
+}
+
+.volt-agent-tools-area.dock-top > .volt-agent-tools-grip {
+	top: auto;
+	bottom: 0;
+}
+
+.volt-agent-tools-area.dock-bottom > .volt-agent-tools-grip {
+	top: 0;
+	bottom: auto;
+}
+
+.volt-agent-tools-area.dock-top > .volt-agent-tools-grip::before,
+.volt-agent-tools-area.dock-bottom > .volt-agent-tools-grip::before {
+	top: 3px;
+	bottom: auto;
+	left: 0;
+	right: 0;
+	width: auto;
+	height: 1px;
+}
+
+.volt-agent-tools-area.dock-top > .volt-agent-tools-grip.hover::before,
+.volt-agent-tools-area.dock-top > .volt-agent-tools-grip.active::before,
+.volt-agent-tools-area.dock-bottom > .volt-agent-tools-grip.hover::before,
+.volt-agent-tools-area.dock-bottom > .volt-agent-tools-grip.active::before {
+	top: 2px;
+	height: 3px;
+}
+
+.volt-agent-tools-area.dock-top > .volt-agent-tools-parts {
+	left: 0;
+	bottom: 4px;
+}
+
+.volt-agent-tools-area.dock-top > .volt-agent-files-sidebar {
+	bottom: 4px;
+}
+
+.volt-agent-tools-area.dock-bottom > .volt-agent-tools-parts {
+	left: 0;
+	top: 4px;
+}
+
+.volt-agent-tools-area.dock-bottom > .volt-agent-files-sidebar {
+	top: 4px;
+}
+
+.volt-agent-surface-sash.vertical {
+	cursor: row-resize;
+}
+
+.volt-agent-surface-sash.vertical::after {
+	top: -3px;
+	bottom: -3px;
+	left: 0;
+	right: 0;
+}
+
+/*
  * With the files sidebar showing beside the chat, the sidebar is see-through like the chat: the
  * title bar and the chat's editor part already paint the window's translucent fill under it. The
  * tabs keep the solid fill their browser webviews need (see the volt-transparent-window skill), and

@@ -10,7 +10,7 @@ import { tmpdir } from 'os';
 import { join } from '../../../../base/common/path.js';
 import type { Database } from '@vscode/sqlite3';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { chromiumPosixKey, decryptChromiumPosix, decryptChromiumWindows, ICookieReaderEnv, listCookieSources, readCookies } from '../../node/browserCookieReader.js';
+import { chromiumPosixKey, decryptChromiumPosix, decryptChromiumWindows, ICookieReaderEnv, listCookieSites, listCookieSources, readCookies } from '../../node/browserCookieReader.js';
 
 function encryptPosix(value: string, host: string, password: string, iterations: number, dbVersion: number): Buffer {
 	const cipher = createCipheriv('aes-128-cbc', chromiumPosixKey(password, iterations), Buffer.alloc(16, 0x20));
@@ -108,6 +108,14 @@ suite('Volt browser: cookie reader', () => {
 		const firefoxCookies = await readCookies(sources[1], env);
 		assert.deepStrictEqual(firefoxCookies.cookies, [{ host: '.mozilla.org', name: 'ff', value: '1', path: '/', secure: true, httpOnly: false, expires: 1_900_000_000, sameSite: 'lax' }]);
 		assert.strictEqual(firefoxCookies.partitioned, 1);
+
+		// Listing sites reads hosts only: partitioned cookies are left out, undecryptable ones still count (the host is plain).
+		assert.deepStrictEqual(await listCookieSites(sources[0]), [
+			{ site: 'broken.example', cookies: 1 },
+			{ site: 'github.com', cookies: 1 },
+			{ site: 'localhost', cookies: 1 },
+		]);
+		assert.deepStrictEqual(await listCookieSites(sources[1]), [{ site: 'mozilla.org', cookies: 1 }]);
 
 		// The source database is untouched: the reader works on a copy.
 		const after = await fs.readdir(join(chrome, 'Default', 'Network'));

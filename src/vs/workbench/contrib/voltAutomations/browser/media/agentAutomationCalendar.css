@@ -115,32 +115,43 @@
 	min-width: 0;
 }
 
+/* Spaced like a template card (.volt-auto-template): icon, then title, description and buttons stacked in one column. */
 .volt-auto-workflow-promo {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	gap: 13px;
 	margin-top: 12px;
-	padding: 14px 16px;
+	padding: 16px 16px 15px;
 	border: 1px dashed color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
 	border-radius: 12px;
+	color: var(--volt-auto-fg);
 }
 
 .volt-auto-workflow-promo .text {
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
+	gap: 3px;
 	flex: 1;
 	min-width: 0;
 }
 
+.volt-auto-workflow-promo .name {
+	font-size: 13.5px;
+	line-height: 20px;
+}
+
 .volt-auto-workflow-promo .description {
 	color: var(--volt-auto-muted);
+	font-size: 13px;
+	line-height: 18px;
 }
 
 .volt-auto-workflow-promo .actions {
 	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-start;
 	gap: 8px;
-	flex-shrink: 0;
+	margin-top: 8px;
 }
 
 /* Schedule rows in the editor: the zone chip, the once fields, the cron preview. */
@@ -192,10 +203,4 @@
 
 .volt-auto-cron-menu .volt-menu-row .volt-menu-detail {
 	font-family: var(--monaco-monospace-font, monospace);
-}
-
-@container (max-width: 760px) {
-	.volt-auto-workflow-promo {
-		flex-wrap: wrap;
-	}
 }

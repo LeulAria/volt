@@ -86,6 +86,10 @@ export const HOST_TOOL_SANDBOX_CLASSES: Readonly<Record<string, HostToolSandboxC
 	browser_mock: 'browser',
 	browser_emulate: 'browser',
 	browser_audit: 'browser',
+	// Asks the user (a dialog) to copy their sign-ins from another browser into the in-app browser's
+	// shared profile; Volt reads the other browser only after they choose Import (or allowed it). The
+	// window refuses sandboxed chats, whose browser profile stays signed out (browserCookieAgent.ts).
+	browser_import_cookies: 'browser',
 	// Reads `reference_path`, then drives the browser (its `url` is judged too).
 	browser_compare_image: 'reads',
 	image_inspect: 'reads',

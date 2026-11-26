@@ -40,6 +40,14 @@
 			"why": "Builds the mobile Monaco bundle at build time."
 		},
 		{
+			"file": "apps/mobile/scripts/pinnedTlsCheck.mjs",
+			"kind": "child_process",
+			"count": 3,
+			"owner": "mobile",
+			"reason": "build-only",
+			"why": "A developer's check of the app's pinned TLS on a simulator or emulator: runs xcrun simctl or adb with fixed arguments and reads the device log; never shipped."
+		},
+		{
 			"file": "apps/mobile/scripts/releaseBuild.mjs",
 			"kind": "child_process",
 			"count": 5,
@@ -126,6 +134,14 @@
 			"owner": "core",
 			"reason": "supervisor",
 			"why": "Lists Volt's own process tree (Process Explorer) with fixed ps/wmic commands."
+		},
+		{
+			"file": "src/vs/base/node/voltQuietHeapReducer.ts",
+			"kind": "vm",
+			"count": 1,
+			"owner": "core",
+			"reason": "supervisor",
+			"why": "Reaches V8's gc for a quiet process: vm.runInNewContext('gc'), a constant string, while --expose-gc is on for that one statement; no other code runs in the context."
 		},
 		{
 			"file": "src/vs/base/node/terminalEncoding.ts",
@@ -558,14 +574,6 @@
 			"owner": "stdio",
 			"reason": "supervisor",
 			"why": "Starts the shared ACP adapter host (acpSharedHostSource.ts) for chats with the same launch. The host runs outside every chat's sandbox and starts no process itself (child_process is replaced there): a chat's CLI and helper commands come back to the stdio service, which starts them through that chat's sandbox launch. Its own file access is checked in JavaScript against the chat's resolved policy, not by the OS (round 10 report 107, residuals)."
-		},
-		{
-			"file": "src/vs/platform/voltStorage/node/voltStorageService.ts",
-			"kind": "child_process",
-			"count": 1,
-			"owner": "storage",
-			"reason": "supervisor",
-			"why": "Settings > Storage sizes: /usr/bin/du over Volt's own folders, with fixed arguments."
 		},
 		{
 			"file": "src/vs/platform/voltStdio/node/childLedger.ts",

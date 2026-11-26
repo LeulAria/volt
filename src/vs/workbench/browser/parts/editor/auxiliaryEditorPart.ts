@@ -32,6 +32,7 @@ import { localize, localize2 } from '../../../../nls.js';
 import { Codicon } from '../../../../base/common/codicons.js';
 import { IsAuxiliaryWindowContext, IsAuxiliaryWindowFocusedContext, IsCompactTitleBarContext } from '../../../common/contextkeys.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
+import { AGENT_STATUS_BAR_VISIBLE_KEY } from '../titlebar/layoutModeStartup.js';
 import { GroupIdentifier } from '../../../common/editor.js';
 
 export interface IAuxiliaryEditorPartOpenOptions extends IAuxiliaryWindowOpenOptions {
@@ -120,6 +121,14 @@ export class AuxiliaryEditorPart {
 	) {
 	}
 
+	/** Agent layout shows a status bar only when its own setting asks for one, in its other windows too. */
+	private statusbarWanted(): boolean {
+		if (this.layoutService.mainContainer.classList.contains('volt-layout-agent')) {
+			return this.configurationService.getValue<boolean>(AGENT_STATUS_BAR_VISIBLE_KEY) === true;
+		}
+		return this.configurationService.getValue<boolean>(AuxiliaryEditorPart.STATUS_BAR_VISIBILITY) !== false;
+	}
+
 	async create(label: string, options?: IAuxiliaryEditorPartOpenOptions): Promise<ICreateAuxiliaryEditorPartResult> {
 		const that = this;
 		const disposables = new DisposableStore();
@@ -179,7 +188,7 @@ export class AuxiliaryEditorPart {
 			editorPart.updateOptions({ compact });
 
 			const oldStatusbarVisible = statusbarVisible;
-			statusbarVisible = !compact && that.configurationService.getValue<boolean>(AuxiliaryEditorPart.STATUS_BAR_VISIBILITY) !== false;
+			statusbarVisible = !compact && that.statusbarWanted();
 			if (oldStatusbarVisible !== statusbarVisible) {
 				updateStatusbarVisibility(true);
 			}
@@ -236,10 +245,10 @@ export class AuxiliaryEditorPart {
 
 		// Statusbar
 		const statusbarPart = disposables.add(this.statusbarService.createAuxiliaryStatusbarPart(auxiliaryWindow.container, scopedEditorPartInstantiationService));
-		let statusbarVisible = !compact && this.configurationService.getValue<boolean>(AuxiliaryEditorPart.STATUS_BAR_VISIBILITY) !== false;
+		let statusbarVisible = !compact && this.statusbarWanted();
 		disposables.add(this.configurationService.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration(AuxiliaryEditorPart.STATUS_BAR_VISIBILITY)) {
-				statusbarVisible = !compact && this.configurationService.getValue<boolean>(AuxiliaryEditorPart.STATUS_BAR_VISIBILITY) !== false;
+			if (e.affectsConfiguration(AuxiliaryEditorPart.STATUS_BAR_VISIBILITY) || e.affectsConfiguration(AGENT_STATUS_BAR_VISIBLE_KEY)) {
+				statusbarVisible = !compact && this.statusbarWanted();
 
 				updateStatusbarVisibility(true);
 			}

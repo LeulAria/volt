@@ -8,6 +8,7 @@ import { DataTransfers } from '../../../../../base/browser/dnd.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
 import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
+import { timeout } from '../../../../../base/common/async.js';
 import { Emitter, Event } from '../../../../../base/common/event.js';
 import { isWeb } from '../../../../../base/common/platform.js';
 import { Disposable, DisposableMap, DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
@@ -15,6 +16,7 @@ import { Schemas } from '../../../../../base/common/network.js';
 import { basename } from '../../../../../base/common/resources.js';
 import { URI, UriComponents } from '../../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../../nls.js';
+import { ILocalizedString } from '../../../../../platform/action/common/action.js';
 import { Action2, MenuId, registerAction2 } from '../../../../../platform/actions/common/actions.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
@@ -27,7 +29,8 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { IOpenerService, OpenExternalOptions, OpenInternalOptions } from '../../../../../platform/opener/common/opener.js';
 import { ServiceCollection } from '../../../../../platform/instantiation/common/serviceCollection.js';
-import { IStorageService } from '../../../../../platform/storage/common/storage.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
+import { IContextViewService } from '../../../../../platform/contextview/browser/contextView.js';
 import { ITerminalProfile, TerminalLocation } from '../../../../../platform/terminal/common/terminal.js';
 import { DraggedEditorIdentifier } from '../../../../browser/dnd.js';
 import { IEditorPartsView } from '../../../../browser/parts/editor/editor.js';
@@ -35,7 +38,7 @@ import { limitTabLabel } from '../../../../browser/parts/editor/editorTabsContro
 import { getLayoutMode, LayoutModeContext, onDidChangeLayoutMode } from '../../../../browser/parts/titlebar/layoutModeSwitch.js';
 import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { createPrimarySidebarToggleIcon } from '../../../../browser/parts/titlebar/sidebarToggleIcon.js';
-import { formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { IEditorPane } from '../../../../common/editor.js';
 import { ResourceContextKey } from '../../../../common/contextkeys.js';
 import { ExplorerFolderContext } from '../../../files/common/files.js';
@@ -65,6 +68,7 @@ import { AgentFilesSidebar, AgentFilesSidebarView, filesSidebarTabs, filesSideba
 import { AgentSurfaceAddMenu, IAgentSurfaceAddMenuHost, renderSurfaceOpenList, visibleSurfaceMenuItems } from './agentSurfaceAddMenu.js';
 import { agentSurfaceMenuItems, OPEN_AUTOMATIONS_IN_TOOLS_COMMAND_ID, OPEN_CANVAS_IN_TOOLS_COMMAND_ID, OPEN_DEVICE_PREVIEW_COMMAND_ID, OPEN_GIT_GRAPH_IN_TOOLS_COMMAND_ID, OPEN_HTTP_IN_TOOLS_COMMAND_ID, OPEN_SCRATCH_IN_TOOLS_COMMAND_ID, OPEN_WORKFLOWS_IN_TOOLS_COMMAND_ID, SURFACE_OPEN_KEYS, surfaceOpenCommandId, type AgentSurfaceMenuActionId } from './agentSurfaceMenu.js';
 import { AgentToolsEditorPart, AgentToolsPartContext, hasSavedAgentTools } from './agentToolsEditorPart.js';
+import { AGENT_TOOLS_DOCKS, AgentToolsDock, AgentToolsLayoutPick, agentToolsLayoutCommandId, isAgentToolsDock, showAgentToolsLayoutMenu } from './agentToolsLayoutMenu.js';
 import { attachSessionToProject } from './agentShell.js';
 import { registerAgentFileEditorRouting } from './agentFileEditorRouting.js';
 import { IAgentChatView, IAgentSurface, IAgentWorkspaceService } from './agentWorkspace.js';
@@ -76,6 +80,8 @@ export { chooseAgentBrowserSurfaceMount, type AgentBrowserSurfaceMount } from '.
 export { shouldHideAgentQuickOpenRail, surfaceKindForMenuAction, agentSurfaceMenuItems } from './agentSurfaceMenu.js';
 
 const MIN_PANE = 240;
+/** The least height the chat or the tools keep when the tools sit above or below the chat. */
+const MIN_PANE_HEIGHT = 160;
 /** While the files sidebar sits beside the tabs, the chat takes this part of its usual share, and the tabs the rest. */
 const SIDEBAR_CHAT_SHARE = 0.8;
 /** Matches `.volt-agent-surface-sash`: a 1px line with an invisible grab area around it. */
@@ -114,6 +120,36 @@ interface IFloatRect {
 	readonly height: number;
 }
 let floatRect: IFloatRect | undefined;
+
+/** Which side of the chat the right panel sits on (its layout menu's Move). One for every chat in the profile. */
+const TOOLS_DOCK_KEY = 'volt.agent.tools.dock';
+let toolsDock: AgentToolsDock | undefined;
+const toolsDockEmitter = new Emitter<void>();
+
+function readToolsDock(storageService: IStorageService): AgentToolsDock {
+	if (!toolsDock) {
+		const saved = storageService.get(TOOLS_DOCK_KEY, StorageScope.PROFILE);
+		toolsDock = isAgentToolsDock(saved) ? saved : 'right';
+	}
+	return toolsDock;
+}
+
+function setToolsDock(storageService: IStorageService, dock: AgentToolsDock): void {
+	if (readToolsDock(storageService) === dock) {
+		return;
+	}
+	toolsDock = dock;
+	storageService.store(TOOLS_DOCK_KEY, dock, StorageScope.PROFILE, StorageTarget.USER);
+	toolsDockEmitter.fire();
+}
+
+/** The chat and the tools share the editor's row (right, left) or its column (top, bottom). */
+const DOCK_FLEX_DIRECTION: Record<AgentToolsDock, string> = {
+	right: '',
+	left: 'row-reverse',
+	top: 'column-reverse',
+	bottom: 'column',
+};
 
 /** What a drag carries that a session surface can take. */
 export interface IAgentSurfaceDragKinds {
@@ -508,6 +544,7 @@ export class AgentSurfaceHost extends Disposable {
 	private readonly partsHost: HTMLElement;
 	private readonly addMenu: AgentSurfaceAddMenu;
 	private readonly titlebarWatch = this._register(new MutableDisposable());
+	private readonly layoutMenu = this._register(new MutableDisposable());
 	private titlebar: HTMLElement | undefined;
 	private sessionId: string | undefined;
 	private shown: IToolsPart | undefined;
@@ -570,6 +607,7 @@ export class AgentSurfaceHost extends Disposable {
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IAgentTerminalsService private readonly agentTerminals: IAgentTerminalsService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+		@IContextViewService private readonly contextViewService: IContextViewService,
 	) {
 		super();
 		hosts.add(this);
@@ -589,7 +627,8 @@ export class AgentSurfaceHost extends Disposable {
 		this._register(addDisposableListener(this.closePanelButton, 'click', () => this.closeTabs()));
 		this.fullscreenButton = $('button.volt-agent-tools-fullscreen') as HTMLButtonElement;
 		this.fullscreenButton.type = 'button';
-		this._register(addDisposableListener(this.fullscreenButton, 'click', () => this.toggleFullscreen()));
+		this.fullscreenButton.setAttribute('aria-haspopup', 'menu');
+		this._register(addDisposableListener(this.fullscreenButton, 'click', () => this.showLayoutMenu()));
 		// An empty group has no editor actions, so its + is ours; agentEditor.css shows it only while the area is empty.
 		this.emptyAddButton = $('button.volt-agent-tools-fullscreen.volt-agent-tools-empty-add') as HTMLButtonElement;
 		this.emptyAddButton.type = 'button';
@@ -658,6 +697,7 @@ export class AgentSurfaceHost extends Disposable {
 		this._register(toDisposable(() => resize.disconnect()));
 		this._register(onDidChangeLayoutMode(() => this.syncOpen()));
 		this._register(this.layoutService.onDidLayoutMainContainer(() => this.place()));
+		this._register(toolsDockEmitter.event(() => this.onDidChangeDock()));
 		this._register(registerAgentFileEditorRouting(this.editorGroupsService, {
 			getSessionId: () => getLayoutMode(this.layoutService) === 'agent' && this.canOpenTools() ? this.sessionId : undefined,
 			openToolsGroup: () => this.toolsGroup(),
@@ -1377,7 +1417,8 @@ export class AgentSurfaceHost extends Disposable {
 
 	private filesSidebarSplit(): IFilesSidebarSplit {
 		const entry = this.shown;
-		if (!this.open || this.presentation !== 'split' || !entry || !this.filesSidebarOpen()) {
+		// Above or below the chat the sidebar sits inside the tools and takes nothing from the chat's row.
+		if (!this.open || this.presentation !== 'split' || !entry || !this.filesSidebarOpen() || this.vertical()) {
 			return { mode: 'none', width: 0 };
 		}
 		const fills = !this.showsTabs(entry);
@@ -1405,6 +1446,11 @@ export class AgentSurfaceHost extends Disposable {
 
 	/** Puts the split line `chat` pixels from the left. */
 	private applySplitAt(chat: number): void {
+		if (this.vertical()) {
+			const height = this.container.clientHeight || this.lastDimension?.height || MIN_PANE_HEIGHT * 2;
+			this.applySplit(chat / Math.max(1, height - SASH_WIDTH));
+			return;
+		}
 		const width = this.container.clientWidth || this.lastDimension?.width || MIN_PANE * 2;
 		const min = Math.min(MIN_PANE, Math.max(120, Math.floor((width - SASH_WIDTH) / 2)));
 		this.applySplit(chat / (this.splitRoom(width, min) * this.chatShare()));
@@ -1415,8 +1461,30 @@ export class AgentSurfaceHost extends Disposable {
 			// Explicit full-size chat: clearing alone can leave a prior `0 0 Npx` gap.
 			this.chat.style.flex = '1 1 auto';
 			this.chat.style.width = '100%';
+			this.chat.style.removeProperty('height');
+			this.container.style.removeProperty('flex-direction');
+			this.sash.classList.remove('vertical');
 			return;
 		}
+		const dock = this.dock;
+		if (DOCK_FLEX_DIRECTION[dock]) {
+			this.container.style.flexDirection = DOCK_FLEX_DIRECTION[dock];
+		} else {
+			this.container.style.removeProperty('flex-direction');
+		}
+		this.sash.classList.toggle('vertical', this.vertical());
+		if (this.vertical()) {
+			const height = this.container.clientHeight || this.lastDimension?.height || MIN_PANE_HEIGHT * 2;
+			const min = Math.min(MIN_PANE_HEIGHT, Math.max(80, Math.floor((height - SASH_WIDTH) / 2)));
+			const available = Math.max(height - SASH_WIDTH, min * 2);
+			const chat = Math.max(min, Math.min(Math.round(available * ratio), available - min));
+			this.chat.style.flex = `0 0 ${chat}px`;
+			this.chat.style.width = '100%';
+			this.chat.style.height = `${chat}px`;
+			this.ratio = chat / available;
+			return;
+		}
+		this.chat.style.removeProperty('height');
 		const width = this.container.clientWidth || this.lastDimension?.width || MIN_PANE * 2;
 		const min = Math.min(MIN_PANE, Math.max(120, Math.floor((width - SASH_WIDTH) / 2)));
 		const split = this.filesSidebarSplit();
@@ -1484,7 +1552,8 @@ export class AgentSurfaceHost extends Disposable {
 				box = this.panel.getBoundingClientRect();
 			}
 			if (box.width <= 0 || box.height <= 0) {
-				if (host.width > 0 && host.height > 0) {
+				if (host.width > 0 && host.height > 0 && this.dock === 'right') {
+					this.setDockClass(undefined);
 					const width = this.container.clientWidth || host.width;
 					const chat = Math.round(width * this.ratio);
 					const left = Math.round(host.left + chat);
@@ -1516,6 +1585,11 @@ export class AgentSurfaceHost extends Disposable {
 			this.announceVisibility();
 			return;
 		}
+		if (this.dock !== 'right') {
+			this.placeDocked(entry, box);
+			return;
+		}
+		this.setDockClass(undefined);
 		const line = this.sash.getBoundingClientRect().left;
 		let top = box.top;
 		const titlebar = this.titlebarAbove();
@@ -1538,6 +1612,64 @@ export class AgentSurfaceHost extends Disposable {
 		if (partWidth > 0 && height > 0) {
 			entry.part.layout(partWidth, height, 0, 0);
 		}
+	}
+
+	/** Left of, above or below the chat: over the tools' share of the editor, plus the grip on the edge facing the chat. */
+	private placeDocked(entry: IToolsPart, box: DOMRect): void {
+		this.releaseTitlebar();
+		this.setDockClass(this.dock);
+		const edge = GRIP_OFFSET + SASH_WIDTH;
+		let { left, top, width, height } = box;
+		switch (this.dock) {
+			case 'left':
+				width += edge;
+				break;
+			case 'top':
+				height += edge;
+				break;
+			case 'bottom':
+				top -= edge;
+				height += edge;
+				break;
+		}
+		this.setAreaBounds(left, top, width, height);
+		this.mountTitleButtons(entry);
+		this.announceVisibility();
+		this.partsHost.style.removeProperty('top');
+		this.partsHost.style.removeProperty('left');
+		// The tabs and the files sidebar fill the tools' share; the grip's strip is outside it.
+		const partWidth = Math.round(box.width) - this.layoutFilesSidebar(entry, Math.round(box.width), Math.round(box.height));
+		if (partWidth > 0 && box.height > 0) {
+			entry.part.layout(partWidth, Math.round(box.height), 0, 0);
+		}
+	}
+
+	private get dock(): AgentToolsDock {
+		return readToolsDock(this.storageService);
+	}
+
+	private vertical(): boolean {
+		const dock = this.dock;
+		return dock === 'top' || dock === 'bottom';
+	}
+
+	/** The area's grip and insets follow the side it sits on; full screen, floating and over the chat have none. */
+	private setDockClass(dock: AgentToolsDock | undefined): void {
+		for (const candidate of AGENT_TOOLS_DOCKS) {
+			this.area.classList.toggle(`dock-${candidate}`, candidate === dock && candidate !== 'right');
+		}
+	}
+
+	private onDidChangeDock(): void {
+		if (this.disposed) {
+			return;
+		}
+		if (this.open && !this.dragging) {
+			this.applySplit(this.ratio);
+		}
+		this.syncOpen();
+		// The agents list weighs again whether it fits: above or below the chat the tools take no width.
+		this.layoutService.mainContainer.dispatchEvent(new CustomEvent(AGENT_TOOLS_VISIBILITY_EVENT));
 	}
 
 	/**
@@ -1566,7 +1698,8 @@ export class AgentSurfaceHost extends Disposable {
 			this.filesSidebar.hide();
 			return 0;
 		}
-		this.partsHost.style.right = `${width}px`;
+		// Docked left, the grip's strip sits at the area's right edge, past the sidebar.
+		this.partsHost.style.right = `${width + (this.area.classList.contains('dock-left') ? GRIP_OFFSET + SASH_WIDTH : 0)}px`;
 		// The tabs' first row only, not the breadcrumbs under it, so the icons center on the editor actions.
 		const title = entry.element.querySelector<HTMLElement>('.editor-group-container > .title');
 		const row = title?.querySelector<HTMLElement>(':scope > .tabs-and-actions-container') ?? title;
@@ -1743,10 +1876,52 @@ export class AgentSurfaceHost extends Disposable {
 
 	private syncFullscreenButton(): void {
 		const on = this.presentation === 'fullscreen';
-		const label = on ? localize('voltAgent.tools.exitFullScreen', "Exit Full Screen") : localize('voltAgent.tools.enterFullScreen', "Enter Full Screen");
+		const label = localize('voltAgent.tools.layout', "Move and Arrange");
 		this.fullscreenButton.setAttribute('aria-label', label);
-		setAgentTooltip(this.fullscreenButton, label, formatAgentTooltipShortcut({ meta: true, shift: true, key: 'M' }));
+		setAgentTooltip(this.fullscreenButton, label);
 		this.fullscreenButton.replaceChildren(createExpandIcon(this.fullscreenButton.ownerDocument, on));
+	}
+
+	/** The expand button's menu: which side of the chat the panel sits on, fill the window or share it, or a window of its own. */
+	private showLayoutMenu(): void {
+		if (this.disposed || this.nested()) {
+			return;
+		}
+		this.layoutMenu.value = showAgentToolsLayoutMenu(this.contextViewService, {
+			anchor: this.fullscreenButton,
+			dock: this.dock,
+			arrange: this.presentation === 'fullscreen' ? 'fill' : 'arrange',
+			canOpenInWindow: !!this.shown?.part.activeGroup.activeEditor,
+			onDock: dock => this.applyLayout({ kind: 'dock', dock }),
+			onArrange: arrange => this.applyLayout({ kind: 'arrange', arrange }),
+			onOpenInWindow: () => this.applyLayout({ kind: 'window' }),
+			keybindingFor: commandId => this.instantiationService.invokeFunction(accessor => accessor.get(IKeybindingService).lookupKeybinding(commandId)?.getLabel() ?? undefined),
+		});
+	}
+
+	/** A layout menu choice, from the menu or its shortcut. False when this chat's panel can't take it (not on screen, nothing open to fill or move out). */
+	applyLayout(pick: AgentToolsLayoutPick): boolean {
+		if (this.disposed || this.nested() || !this.isOnScreen()) {
+			return false;
+		}
+		switch (pick.kind) {
+			case 'dock':
+				setToolsDock(this.storageService, pick.dock);
+				this.setPresentation('split');
+				return true;
+			case 'arrange':
+				if (pick.arrange === 'fill' && !this.hasTools()) {
+					return false;
+				}
+				this.setPresentation(pick.arrange === 'fill' ? 'fullscreen' : 'split');
+				return true;
+			case 'window':
+				if (!this.shown?.part.activeGroup.activeEditor) {
+					return false;
+				}
+				void this.openActiveInNewWindow();
+				return true;
+		}
 	}
 
 	/** Brings a browser tab to the front of the area, for floating (only a preview floats). */
@@ -1770,6 +1945,7 @@ export class AgentSurfaceHost extends Disposable {
 		const titlebar = this.titlebarAbove();
 		const top = titlebar ? titlebar.getBoundingClientRect().top : root.top;
 		this.releaseTitlebar();
+		this.setDockClass(undefined);
 		this.setAreaBounds(root.left, top, root.width, root.bottom - top);
 		this.mountTitleButtons(entry);
 		const chat = this.sessionId ? this.editorService.editors.find(editor => editor instanceof AgentEditorInput && editor.sessionId === this.sessionId) : undefined;
@@ -1800,6 +1976,7 @@ export class AgentSurfaceHost extends Disposable {
 		const root = this.layoutService.mainContainer.getBoundingClientRect();
 		const box = this.container.getBoundingClientRect();
 		this.releaseTitlebar();
+		this.setDockClass(undefined);
 		this.area.classList.add('over-chat');
 		// Clear of the safe areas and the phone's bottom navigation, as the grid is.
 		const insets = getVoltLayoutInsets();
@@ -1831,6 +2008,7 @@ export class AgentSurfaceHost extends Disposable {
 	private placeFloating(entry: IToolsPart): void {
 		const box = this.container.getBoundingClientRect();
 		this.releaseTitlebar();
+		this.setDockClass(undefined);
 		const rect = this.floatBounds(box);
 		this.setAreaBounds(rect.left, rect.top, rect.width, rect.height);
 		// The tab row is slid out of view above the preview's top edge.
@@ -2068,15 +2246,32 @@ export class AgentSurfaceHost extends Disposable {
 
 	/** Moves the preview into a window of its own. The page reloads once there. */
 	private async popOutPreview(): Promise<void> {
-		const part = this.shown?.part;
-		const group = part?.activeGroup;
+		if (this.shown?.part.activeGroup.activeEditor instanceof VoltBrowserEditorInput) {
+			await this.openActiveInNewWindow();
+		}
+	}
+
+	/** Moves the tab in front into a window of its own; the panel closes with its last tab. */
+	private async openActiveInNewWindow(): Promise<void> {
+		const group = this.shown?.part.activeGroup;
 		const editor = group?.activeEditor;
-		if (!group || !(editor instanceof VoltBrowserEditorInput)) {
+		if (!group || !editor) {
 			return;
 		}
 		this.setPresentation('split', false);
 		const target = await this.editorGroupsService.createAuxiliaryEditorPart();
+		const part = this.shown?.part;
+		// Across windows the move lands later (a terminal reattaches first); the panel closes once its last tab has left.
+		const left = group.contains(editor) ? Event.toPromise(Event.filter(group.onDidCloseEditor, e => e.editor === editor)) : Promise.resolve();
 		group.moveEditor(editor, target.activeGroup);
+		await Promise.race([left, timeout(2000)]);
+		if (this.disposed || this.shown?.part !== part) {
+			return;
+		}
+		if (part?.groups.every(candidate => candidate.isEmpty)) {
+			this.closeTabs();
+			return;
+		}
 		this.syncOpen();
 	}
 
@@ -2605,7 +2800,11 @@ export class AgentSurfaceHost extends Disposable {
 		// With no tab open the tools are the files sidebar alone: the line is its edge and sizes it.
 		const sizesSidebar = this.filesSidebarSplit().mode === 'fills';
 		const move = (e: PointerEvent) => {
-			const chat = e.clientX - this.container.getBoundingClientRect().left;
+			const box = this.container.getBoundingClientRect();
+			const chat = this.dock === 'left' ? box.right - e.clientX
+				: this.dock === 'top' ? box.bottom - e.clientY
+					: this.dock === 'bottom' ? e.clientY - box.top
+						: e.clientX - box.left;
 			if (sizesSidebar) {
 				AgentFilesSidebar.setWidth(this.storageService, (this.container.clientWidth || 1) - SASH_WIDTH - chat, false);
 				this.applySplit(this.ratio);
@@ -2775,6 +2974,45 @@ registerAction2(class ToggleAgentToolsFullScreenAction extends Action2 {
 		}
 	}
 });
+
+// The layout menu's choices: Ctrl+Option+Cmd with an arrow for a side, F to fill the window, A to arrange beside the chat, O for a window of its own.
+const LAYOUT_SHORTCUTS: readonly { readonly pick: AgentToolsLayoutPick; readonly key: KeyCode; readonly title: ILocalizedString }[] = [
+	{ pick: { kind: 'dock', dock: 'left' }, key: KeyCode.LeftArrow, title: localize2('voltAgent.tools.moveLeft', "Move Tools to Left") },
+	{ pick: { kind: 'dock', dock: 'right' }, key: KeyCode.RightArrow, title: localize2('voltAgent.tools.moveRight', "Move Tools to Right") },
+	{ pick: { kind: 'dock', dock: 'top' }, key: KeyCode.UpArrow, title: localize2('voltAgent.tools.moveTop', "Move Tools to Top") },
+	{ pick: { kind: 'dock', dock: 'bottom' }, key: KeyCode.DownArrow, title: localize2('voltAgent.tools.moveBottom', "Move Tools to Bottom") },
+	{ pick: { kind: 'arrange', arrange: 'fill' }, key: KeyCode.KeyF, title: localize2('voltAgent.tools.fill', "Fill Window with Tools") },
+	{ pick: { kind: 'arrange', arrange: 'arrange' }, key: KeyCode.KeyA, title: localize2('voltAgent.tools.arrange', "Arrange Tools beside Chat") },
+	{ pick: { kind: 'window' }, key: KeyCode.KeyO, title: localize2('voltAgent.tools.openInNewWindow', "Open Tools Tab in New Window") },
+];
+
+for (const shortcut of LAYOUT_SHORTCUTS) {
+	registerAction2(class extends Action2 {
+		constructor() {
+			super({
+				id: agentToolsLayoutCommandId(shortcut.pick),
+				visibility: 'public',
+				title: shortcut.title,
+				category: localize2('voltAgent.category', "Agent"),
+				f1: true,
+				precondition: LayoutModeContext.isEqualTo('agent'),
+				keybinding: {
+					primary: KeyMod.WinCtrl | KeyMod.Alt | KeyMod.CtrlCmd | shortcut.key,
+					weight: KeybindingWeight.WorkbenchContrib + 50,
+					when: LayoutModeContext.isEqualTo('agent'),
+				},
+			});
+		}
+
+		override run(): void {
+			for (const host of hosts) {
+				if (host.applyLayout(shortcut.pick)) {
+					return;
+				}
+			}
+		}
+	});
+}
 
 // Ctrl+Option + a letter opens each + menu row in the agent layout (Ctrl+Alt+Shift off a Mac, where Ctrl+Alt is AltGr).
 for (const item of agentSurfaceMenuItems()) {

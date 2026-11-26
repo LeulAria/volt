@@ -184,6 +184,60 @@
 	background: var(--volt-changes-bg);
 	font-size: 13px;
 	color: var(--vscode-foreground);
+	/* Nothing spills into the next pane; the fit steps below keep the row inside the tab. */
+	min-width: 0;
+	overflow: hidden;
+}
+
+/* The controls keep their own width: the row gives things up in steps instead of squeezing them. */
+.volt-agent-changes-header > .volt-agent-changes-scope,
+.volt-agent-changes-header > .volt-agent-changes-branch {
+	flex: none;
+}
+
+.volt-agent-changes-branch-label {
+	max-width: 200px;
+}
+
+.volt-agent-changes-find-icon {
+	display: none !important;
+	font-size: 13px !important;
+}
+
+/*
+ * Fit steps, set by AgentChangesHeader.fit() one after the other while the row is too wide:
+ * shorter names, no branch, no scope name, Find Issues as an icon, the git action as an icon,
+ * no line counts, no Find Issues.
+ */
+.volt-agent-changes-header.fit-1 .volt-agent-changes-scope-label {
+	max-width: 120px;
+}
+
+.volt-agent-changes-header.fit-1 .volt-agent-changes-branch-label {
+	max-width: 80px;
+}
+
+.volt-agent-changes-header.fit-2 > .volt-agent-changes-branch,
+.volt-agent-changes-header.fit-3 .volt-agent-changes-scope-label,
+.volt-agent-changes-header.fit-4 .volt-agent-changes-find-label,
+.volt-agent-changes-header.fit-5 .volt-git-control.header .volt-git-control-label,
+.volt-agent-changes-header.fit-5 .volt-git-control.header .volt-git-control-elapsed,
+.volt-agent-changes-header.fit-5 .volt-agent-changes-commit-label,
+.volt-agent-changes-header.fit-6 .volt-agent-changes-scope-stats,
+.volt-agent-changes-header.fit-7 > .volt-agent-changes-find {
+	display: none;
+}
+
+.volt-agent-changes-header.fit-4 .volt-agent-changes-find-icon {
+	display: inline-flex !important;
+}
+
+.volt-agent-changes-header.fit-4 .volt-agent-changes-find-main {
+	padding: 0 6px;
+}
+
+.volt-agent-changes-header.fit-5 .volt-agent-changes-commit {
+	padding: 0 8px;
 }
 
 .volt-agent-changes-scope,

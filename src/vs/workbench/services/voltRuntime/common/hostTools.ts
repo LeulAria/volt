@@ -170,6 +170,8 @@ export const BROWSER_STATUS_TOOL_NAME = 'browser_status';
 export const BROWSER_MOCK_TOOL_NAME = 'browser_mock';
 export const BROWSER_EMULATE_TOOL_NAME = 'browser_emulate';
 export const BROWSER_AUDIT_TOOL_NAME = 'browser_audit';
+/** Asks the user to bring their sign-ins (cookies) for some sites from another browser into the in-app browser. */
+export const BROWSER_IMPORT_COOKIES_TOOL_NAME = 'browser_import_cookies';
 export const IMAGE_INSPECT_TOOL_NAME = 'image_inspect';
 
 /**
@@ -417,7 +419,7 @@ export type VoltBrowserToolName = typeof BROWSER_TOOL_NAMES[number];
  * Browser tools for design, debugging and testing work, added after the activity trail named the
  * ones above: scripted runs with assertions, status, network mocks, emulation and audits.
  */
-export const BROWSER_DESIGN_TOOL_NAMES = [BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_RUN_TOOL_NAME, BROWSER_STATUS_TOOL_NAME, BROWSER_MOCK_TOOL_NAME, BROWSER_EMULATE_TOOL_NAME, BROWSER_AUDIT_TOOL_NAME] as const;
+export const BROWSER_DESIGN_TOOL_NAMES = [BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_NETWORK_TOOL_NAME, BROWSER_DEVTOOLS_TOOL_NAME, BROWSER_RUN_TOOL_NAME, BROWSER_STATUS_TOOL_NAME, BROWSER_MOCK_TOOL_NAME, BROWSER_EMULATE_TOOL_NAME, BROWSER_AUDIT_TOOL_NAME, BROWSER_IMPORT_COOKIES_TOOL_NAME] as const;
 
 /** Every tool the chat's browser tab runs (`AUTOMATE_BROWSER_COMMAND_ID`). */
 export type VoltBrowserAutomationToolName = VoltBrowserToolName | typeof BROWSER_DESIGN_TOOL_NAMES[number];
@@ -792,6 +794,20 @@ If you know the page (you wrote it), skip browser_snapshot. Pass observe: "on_fa
 		group: 'browser',
 		description: 'One cheap look at the in-app browser and what is running: the tab\'s URL, title and load state, viewport, focused element and open dialogs, console errors and failed requests so far, active network mocks and emulation, this chat\'s playgrounds, and the dev servers listening on this machine (port, command, folder). Call it first when you do not know what is open or which port the app uses.',
 		inputSchema: { type: 'object', properties: {} },
+	},
+	{
+		name: BROWSER_IMPORT_COOKIES_TOOL_NAME,
+		title: 'Asked to import cookies',
+		group: 'browser',
+		description: 'Ask the user to sign the in-app browser in to some sites by importing their cookies from another browser on this machine (Chrome, Safari, Arc, Firefox, Edge, Brave, …). Use it when a page you need redirects to a sign-in or shows a signed-out state, instead of asking the user for passwords or typing credentials. Volt shows the user a dialog: they pick the browser and profile, and the sites come as checkboxes with the ones in `sites` checked; nothing is imported unless they choose Import (or they allowed agents to import without asking). You never see cookie values, only how many were imported for which sites. Afterwards reload or reopen the page. If the result says the dialog is still open, call it again with the same arguments to keep waiting. Not available in sandboxed chats, whose browser is signed out on purpose.',
+		inputSchema: {
+			type: 'object',
+			properties: {
+				sites: { type: 'array', items: { type: 'string' }, description: 'Sites to sign in to, e.g. ["github.com", "vercel.com"]; subdomains are included. Ask only for the sites the task needs.' },
+				reason: { type: 'string', description: 'One sentence the user reads: why you need to be signed in, e.g. "To check the deploy logs on vercel.com".' },
+			},
+			required: ['sites'],
+		},
 	},
 	{
 		name: BROWSER_MOCK_TOOL_NAME,

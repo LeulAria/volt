@@ -253,6 +253,10 @@ export const VOLT_FEATURE_MANIFESTS: readonly IVoltPluginManifest[] = [
 					name: 'browser_audit',
 					class: 'browser',
 				},
+				{
+					name: 'browser_import_cookies',
+					class: 'browser',
+				},
 			],
 			voltSurfaces: [
 				{

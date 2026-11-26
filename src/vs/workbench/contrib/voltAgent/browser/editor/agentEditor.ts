@@ -904,6 +904,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	/** The agent's to-dos, above the chips like the Context Usage card. */
 	private tasksCard: AgentTasksCard | undefined;
 	private questionTray!: AgentQuestionTray;
+	/**
+	 * Per open question: the composer already held a draft when it first showed. That draft is the
+	 * user's next message, so answering leaves it in place instead of sending it as the answer's note.
+	 */
+	private readonly questionFoundDraft = new Map<string, boolean>();
 	/** The commits the agent proposed (propose_commits), docked above the composer while the user reviews them. */
 	/** The commit review's card and chip, while its module (volt.commit-review) is loaded. */
 	private commitReviewSlot: AgentComposerTraySlot | undefined;
@@ -2817,6 +2822,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 
 	private composerCanSend(): boolean {
 		return !this.makingScratchFolder;
+	}
+
+	/** The composer holds text or attachments. */
+	private composerHasDraft(): boolean {
+		return !!this.inputModel?.getValue().trim() || !!this.mentionController?.displayMentions().length;
 	}
 
 	private showAgentCommands(): void {
@@ -9100,6 +9110,10 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 		const wasActive = this.questionTray.active;
 		this.questionTray.setRequest(this.runtime.getPendingQuestions(this.sessionKey)[0]);
+		const requestId = this.questionTray.requestId;
+		if (requestId && !this.questionFoundDraft.has(requestId)) {
+			this.questionFoundDraft.set(requestId, this.composerHasDraft());
+		}
 		if (wasActive !== this.questionTray.active) {
 			this.updateInputPlaceholder();
 			if (this.questionTray.active) {
@@ -9111,6 +9125,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private async answerQuestions(requestId: string, response: IAgentQuestionResponse, media: readonly IAgentPreparedAttachment[]): Promise<void> {
 		if (response.outcome === 'cancelled') {
 			// Dismissed: nothing is sent and the composer keeps its draft (T3 dismisses without restarting the agent).
+			this.questionFoundDraft.delete(requestId);
 			this.runtime.respondToQuestions(requestId, response);
 			return;
 		}
@@ -9119,8 +9134,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		if (!this.runtime.getPendingQuestions(this.sessionKey).some(item => item.id === requestId)) {
 			return;
 		}
-		const note = (this.mentionController?.serialize() || this.inputModel?.getValue() || '').trim();
-		const composerImages = cloneDisplayMentions(this.mentionController?.displayMentions() ?? []).filter(mention => mention.kind === 'image' || mention.kind === 'video');
+		// Only text written after the question showed is its note; a draft that was already there stays put.
+		const foundDraft = this.questionFoundDraft.get(requestId) ?? false;
+		this.questionFoundDraft.delete(requestId);
+		const note = foundDraft ? '' : (this.mentionController?.serialize() || this.inputModel?.getValue() || '').trim();
+		const composerImages = note ? cloneDisplayMentions(this.mentionController?.displayMentions() ?? []).filter(mention => mention.kind === 'image' || mention.kind === 'video') : [];
 		if (note) {
 			this.clearComposer();
 		}
@@ -9796,6 +9814,11 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			this.mentionController?.restoreMentions(mentions);
 			input.draft = draft;
 			input.draftMentions = this.mentionController?.displayMentions() ?? mentions;
+			// The question tray synced over the still-empty first screen; this draft predates its question.
+			const requestId = this.questionTray?.requestId;
+			if (requestId) {
+				this.questionFoundDraft.set(requestId, true);
+			}
 		}
 		this.migrateDraftQueue(input);
 		this.syncQueueStack();
