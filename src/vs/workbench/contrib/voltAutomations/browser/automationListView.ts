@@ -500,15 +500,15 @@ export class AutomationListView extends Disposable implements IAutomationsPage {
 		this.templateStore.add(addDisposableListener(card, 'click', () => this.host.navigate({ page: 'detail', tab: 'settings', seed: { templateId: template.id } })));
 	}
 
-	/** Under the templates: for more than one agent step, a workflow. */
+	/** Under the templates: for more than one agent step, a workflow. Laid out like a template card: icon, then title, description and the buttons in one column. */
 	private renderWorkflowsPromo(parent: HTMLElement): void {
 		const promo = append(parent, $('.volt-auto-workflow-promo'));
 		const icon = append(promo, $('span.volt-auto-round-icon'));
 		icon.appendChild(renderIcon(Codicon.typeHierarchy));
-		const text = append(promo, $('span.text'));
+		const text = append(promo, $('.text'));
 		append(text, $('span.name')).textContent = localize('voltAutomations.promoTitle', "Need more than one step?");
 		append(text, $('span.description')).textContent = localize('voltAutomations.promoText', "Workflows chain agents, shell commands, HTTP calls, checks and messages, with branches and loops. Any automation can run one.");
-		const actions = append(promo, $('.actions'));
+		const actions = append(text, $('.actions'));
 		button(actions, 'volt-auto-outline-button.small', localize('voltAutomations.promoTemplates', "Browse Templates"), this.store, () => this.host.navigate({ page: 'workflows', tab: 'templates' }));
 		button(actions, 'volt-auto-outline-button.small.primary', localize('voltAutomations.promoOpen', "Open Workflows"), this.store, () => this.host.navigate({ page: 'workflows' }));
 	}

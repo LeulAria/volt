@@ -1272,20 +1272,8 @@
 	min-width: 560px;
 }
 
-/* "Need more than one step?": the text takes the line beside its icon, the buttons the next. */
 .monaco-workbench.volt-mobile-phone .volt-auto-card.volt-auto-table > .volt-auto-empty {
 	padding: 14px 16px;
-}
-
-.monaco-workbench.volt-mobile-phone .volt-auto-workflow-promo > .text {
-	flex: 1 1 calc(100% - 64px);
-	min-width: 0;
-}
-
-.monaco-workbench.volt-mobile-phone .volt-auto-workflow-promo > .actions {
-	flex: 1 1 100%;
-	justify-content: flex-end;
-	flex-wrap: wrap;
 }
 
 /* ---- Pickers that draw their own popover, as bottom sheets (agentModelPicker.ts `volt-phone-sheet`) */

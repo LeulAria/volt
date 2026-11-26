@@ -71,6 +71,10 @@ const RUN_MIN = 160;
 const DOCK_STRIP = 28;
 /** The canvas keeps at least this much room when the docks grow. */
 const CANVAS_MIN = 240;
+/** Under this much canvas beside it, the right panel starts hidden until the user opens it. */
+const CANVAS_FIT = 420;
+/** Stage widths under this compact the bar (agentWorkflowBuilder.css `.tight`). */
+const BAR_TIGHT = 720;
 const LAYOUT_KEY = 'volt.workflows.builder.layout';
 
 type SideTab = 'inspector' | 'yaml';
@@ -198,6 +202,13 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 	private readonly shownApprovals = new Set<string>();
 	private failNodes = new Set<string>();
 	private layoutState: ILayoutState;
+	/**
+	 * The right panel was opened, closed or resized on this page (toggle, tabs, close, a node picked,
+	 * the sash): from then on its visibility is the user's. Until then a stage too narrow for both
+	 * hides it (`sideFitHidden`) without touching the stored choice.
+	 */
+	private sideExplicit = false;
+	private sideFitHidden = false;
 	/** A phone's Back while the inspector covers the canvas: it closes the panel. */
 	private readonly phoneSide = this._register(new MutableDisposable());
 	private runOpen = false;
@@ -537,7 +548,7 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 		this.pageStore.add(model.onDidChangeDirty(() => this.syncSaveState()));
 		this.pageStore.add(model.onDidChangeSelection(selection => {
 			// A pick opens the closed panel on the node; an open YAML tab stays (the user chose it).
-			if (selection.length && !this.layoutState.sideOpen) {
+			if (selection.length && !this.sideShown) {
 				this.setSideOpen(true, 'inspector', false);
 			}
 			if (selection.length === 1 && this.runOpen) {
@@ -623,6 +634,9 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 					return;
 				}
 				e.preventDefault();
+				if (kind === 'side') {
+					this.sideExplicit = true;
+				}
 				sash.setPointerCapture(e.pointerId);
 				sash.classList.add('active');
 				this.root.classList.add('resizing');
@@ -657,6 +671,7 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 			}));
 			this.pageStore.add(addDisposableListener(sash, 'dblclick', () => {
 				if (kind === 'side') {
+					this.sideExplicit = true;
 					this.layoutState.side = SIDE_DEFAULT;
 					this.storeLayout();
 					this.layout();
@@ -692,10 +707,18 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 		const height = this.host.stage.clientHeight || reported.height;
 		// A phone's bar takes two rows: the name, then the tools (voltMobileWorkbench.css).
 		const bodyHeight = Math.max(0, height - (isVoltCompact() ? BAR_HEIGHT * 2 : BAR_HEIGHT));
-		const sideOpen = this.layoutState.sideOpen;
 		// A phone has no room for both: the panel covers the canvas as a screen of its own (voltMobileWorkbench.css).
 		const phone = isVoltCompact();
-		const sideWidth = !sideOpen ? 0 : phone ? width : clamp(this.layoutState.side, SIDE_MIN, Math.max(SIDE_MIN, Math.min(SIDE_MAX, width - CANVAS_MIN)));
+		const fittedSide = clamp(this.layoutState.side, SIDE_MIN, Math.max(SIDE_MIN, Math.min(SIDE_MAX, width - CANVAS_MIN)));
+		// Until the user opens or closes the panel here, a stage that would leave the canvas squeezed
+		// (a narrow tools tab) starts with it hidden, and shows it again when it widens.
+		const fitHidden = !phone && !this.sideExplicit && width - fittedSide < CANVAS_FIT;
+		if (fitHidden !== this.sideFitHidden) {
+			this.sideFitHidden = fitHidden;
+			this.applySide();
+		}
+		const sideOpen = this.sideShown;
+		const sideWidth = !sideOpen ? 0 : phone ? width : fittedSide;
 		const centerWidth = phone ? width : Math.max(0, width - sideWidth);
 		const dockHeight = this.runOpen ? clamp(this.layoutState.run, RUN_MIN, Math.max(RUN_MIN, bodyHeight - CANVAS_MIN)) : DOCK_STRIP;
 		const canvasHeight = Math.max(0, bodyHeight - dockHeight);
@@ -716,6 +739,7 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 			placeTabIndicator(this.sideTabIndicator, this.sideTabButtons.get(this.layoutState.tab));
 		}
 		this.root.classList.toggle('narrow', width < 900);
+		this.root.classList.toggle('tight', !phone && width < BAR_TIGHT);
 	}
 
 	//#endregion
@@ -820,7 +844,7 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 		const view = append(right, $('.volt-wfb-bar-group'));
 		this.yamlToggle = this.barButton(view, Codicon.code, localize('voltWorkflows.yaml', "YAML"), localize('voltWorkflows.yamlTip', "Show the workflow as YAML"), () => this.toggleYaml(), this.barStore, undefined, 'ghost.toggle');
 		this.runToggle = this.barIcon(view, Codicon.layoutPanel, localize('voltWorkflows.executionsPanel', "Executions panel"), () => this.setRunOpen(!this.runOpen), this.barStore, undefined, 'toggle');
-		this.sideToggle = this.barIcon(view, Codicon.layoutSidebarRight, localize('voltWorkflows.inspectorPanel', "Inspector panel"), () => this.setSideOpen(!this.layoutState.sideOpen), this.barStore, undefined, 'toggle');
+		this.sideToggle = this.barIcon(view, Codicon.layoutSidebarRight, localize('voltWorkflows.inspectorPanel', "Inspector panel"), () => this.setSideOpen(!this.sideShown), this.barStore, undefined, 'toggle');
 		const more = this.barIcon(view, Codicon.ellipsis, localize('voltWorkflows.more', "More actions"), anchor => this.showMoreMenu(anchor), this.barStore);
 		more.setAttribute('aria-haspopup', 'menu');
 
@@ -1044,8 +1068,16 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 
 	//#region Panels
 
+	/** The right panel as drawn: the stored choice, unless a narrow stage hides it for now. */
+	private get sideShown(): boolean {
+		return this.layoutState.sideOpen && !this.sideFitHidden;
+	}
+
+	/** Every caller is the user's doing (toggle, tabs, close, a node picked or added, an issue, an approval to answer): it wins over the fit. */
 	private setSideOpen(open: boolean, tab?: SideTab, focus = true): void {
-		const changed = open !== this.layoutState.sideOpen || (tab !== undefined && tab !== this.layoutState.tab);
+		const changed = open !== this.sideShown || (tab !== undefined && tab !== this.layoutState.tab);
+		this.sideExplicit = true;
+		this.sideFitHidden = false;
 		this.layoutState.sideOpen = open;
 		if (tab) {
 			this.layoutState.tab = tab;
@@ -1066,7 +1098,7 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 	}
 
 	private applySide(): void {
-		const open = this.layoutState.sideOpen;
+		const open = this.sideShown;
 		const yaml = this.layoutState.tab === 'yaml';
 		this.side.classList.toggle('hidden', !open);
 		if (open && isVoltCompact()) {
@@ -1083,7 +1115,7 @@ export class WorkflowBuilderPage extends Disposable implements IAutomationsPage 
 	}
 
 	private toggleYaml(): void {
-		if (this.layoutState.sideOpen && this.layoutState.tab === 'yaml') {
+		if (this.sideShown && this.layoutState.tab === 'yaml') {
 			this.setSideOpen(true, 'inspector');
 		} else {
 			this.setSideOpen(true, 'yaml');
