@@ -1,0 +1,2 @@
+.volt-agent-thread-inner > .volt-agent-exchange:last-child > .volt-agent-turn{will-change:transform}
+.volt-agent-exchange.has-stuck-turn .volt-under-stuck{-webkit-mask-image:none!important;mask-image:none!important}
