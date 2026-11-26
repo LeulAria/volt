@@ -274,6 +274,25 @@
 	background: var(--vscode-foreground);
 }
 
+/* A condensed window leaves little room left of the transcript: each tick is a 3px dot (lit while
+ * its message is on screen), and the one under the pointer stretches back into its line. */
+.volt-agent-turn-nav.compact .tick .line {
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	transition: width 120ms ease, height 120ms ease, border-radius 120ms ease, background-color 120ms ease;
+}
+
+.volt-agent-turn-nav.compact .tick.in-view .line {
+	width: 3px;
+}
+
+.volt-agent-turn-nav.compact .tick.hovered .line {
+	width: 12px;
+	height: 1.5px;
+	border-radius: 1px;
+}
+
 .volt-agent-turn-nav .arrow {
 	height: 16px;
 	border-radius: 4px;
@@ -5027,6 +5046,22 @@ pre.volt-agent-searchable {
 }
 
 .volt-agent-toolbar.compact-model-icon .volt-agent-model.comparing {
+	padding: 0 5px;
+}
+
+/* The follow-up composer's model button is 28px tall with a 10px / 5px text inset, which pushed the
+ * mark right of centre: icon only, it is a 28px circle with the mark dead centre. */
+.volt-agent-input-box.follow-up:not(.multiline) .volt-agent-toolbar.compact-model-icon .volt-agent-model {
+	padding: 0;
+	gap: 0;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline) .volt-agent-toolbar.compact-model-icon .volt-agent-model:not(.comparing) {
+	width: 28px !important;
+	min-width: 28px;
+}
+
+.volt-agent-input-box.follow-up:not(.multiline) .volt-agent-toolbar.compact-model-icon .volt-agent-model.comparing {
 	padding: 0 5px;
 }
 

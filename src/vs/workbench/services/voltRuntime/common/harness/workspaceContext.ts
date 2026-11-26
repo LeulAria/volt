@@ -75,6 +75,8 @@ export interface IWorkspaceSnapshot {
 	readonly panelOpen: boolean;
 	readonly tabs: readonly IWorkspaceTab[];
 	readonly git?: IWorkspaceGit;
+	/** The chat's one Scratch board (the one beside it, else the one it drew on), open or not. */
+	readonly scratchBoard?: { readonly id: string; readonly title: string };
 }
 
 /** At most this many tabs are named in the turn's lines; the rest are counted. */
@@ -159,6 +161,11 @@ export function describeTab(tab: IWorkspaceTab): string {
 	}
 }
 
+/** The chat keeps one board: requests about "the board" or "scratch" mean it, with or without /scratch. */
+function describeChatBoard(board: { readonly id: string; readonly title: string }): string {
+	return `This chat's Scratch board: "${clip(board.title, 60)}" (boardId ${clip(board.id, 60)}). Requests to draw, sketch or write something "on the board" or "in scratch" mean this board: scratch_read / scratch_draw use it without a boardId. Start another board (scratch_draw newBoard) only when the user asks for a new one.`;
+}
+
 function describeGit(git: IWorkspaceGit): string {
 	const sync = [git.ahead ? `${git.ahead} ahead` : '', git.behind ? `${git.behind} behind` : ''].filter(Boolean).join(', ');
 	const changed = git.changed === 0 ? 'clean' : `${git.changed} changed file${git.changed === 1 ? '' : 's'}`;
@@ -173,7 +180,7 @@ function describeGit(git: IWorkspaceGit): string {
  */
 export function formatWorkspaceContext(snapshot: IWorkspaceSnapshot): string | undefined {
 	const tabs = snapshot.tabs;
-	if (!tabs.length && !snapshot.git) {
+	if (!tabs.length && !snapshot.git && !snapshot.scratchBoard) {
 		return undefined;
 	}
 	const lines: string[] = [
@@ -204,6 +211,9 @@ export function formatWorkspaceContext(snapshot: IWorkspaceSnapshot): string | u
 			lines.push('The design canvas is in front: requests about "the design" or screens mean this canvas: canvas_read / canvas_update with its canvasId (canvas_render to see it).');
 		}
 	}
+	if (snapshot.scratchBoard) {
+		lines.push(describeChatBoard(snapshot.scratchBoard));
+	}
 	if (snapshot.git) {
 		lines.push(describeGit(snapshot.git));
 	}
@@ -222,6 +232,7 @@ export function workspaceContextKey(snapshot: IWorkspaceSnapshot): string {
 		open: snapshot.panelOpen,
 		tabs: snapshot.tabs.map(tab => [tab.kind, tab.title, tab.focused, tab.target, tab.surfaceId, tab.device?.name, tab.device?.state, tab.device?.foreground, tab.device?.floating, tab.terminal?.running]),
 		branch: snapshot.git?.branch,
+		board: snapshot.scratchBoard ? [snapshot.scratchBoard.id, snapshot.scratchBoard.title] : undefined,
 	});
 }
 
@@ -254,6 +265,9 @@ export function formatWorkspaceStatus(snapshot: IWorkspaceSnapshot): string {
 				lines.push('  Last output:', ...output.split('\n').map(line => `  | ${line.replace(/</g, '\u2039').replace(/>/g, '\u203a')}`));
 			}
 		}
+	}
+	if (snapshot.scratchBoard) {
+		lines.push('', describeChatBoard(snapshot.scratchBoard));
 	}
 	const git = snapshot.git;
 	if (git) {

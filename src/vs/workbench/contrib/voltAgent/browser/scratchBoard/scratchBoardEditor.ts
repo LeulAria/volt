@@ -7,7 +7,7 @@ import { $, append, Dimension } from '../../../../../base/browser/dom.js';
 import { RunOnceScheduler } from '../../../../../base/common/async.js';
 import { CancellationToken } from '../../../../../base/common/cancellation.js';
 import { fromNow, safeIntl } from '../../../../../base/common/date.js';
-import { Disposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, MutableDisposable } from '../../../../../base/common/lifecycle.js';
 import { language } from '../../../../../base/common/platform.js';
 import { localize } from '../../../../../nls.js';
 import { IEditorOptions } from '../../../../../platform/editor/common/editor.js';
@@ -311,6 +311,7 @@ export class ScratchBoardEditor extends EditorPane {
 
 	private page: ScratchBoardPage | undefined;
 	private container: HTMLElement | undefined;
+	private readonly inputListener = this._register(new MutableDisposable());
 
 	constructor(
 		group: IEditorGroup,
@@ -333,6 +334,12 @@ export class ScratchBoardEditor extends EditorPane {
 
 	override async setInput(input: ScratchBoardEditorInput, options: IEditorOptions | undefined, context: IEditorOpenContext, token: CancellationToken): Promise<void> {
 		await super.setInput(input, options, context, token);
+		// Another board set on the open tab (a .scratch file opened into it) shows at once.
+		this.inputListener.value = input.onDidChangeBoard(() => {
+			if (this.input === input && input.boardId && this.canvas?.model?.id !== input.boardId) {
+				void this.page?.show(input.boardId);
+			}
+		});
 		if (!token.isCancellationRequested) {
 			await this.page?.show(input.boardId);
 			const reveal = input.revealSessionId;

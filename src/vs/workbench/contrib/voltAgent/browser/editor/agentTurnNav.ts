@@ -26,6 +26,8 @@ const REPLY_DELAY_MS = 450;
 const STEP_MAX = 9;
 const STEP_MIN = 3;
 const RAIL_WIDTH = 16;
+/** Narrower than this left of the transcript (a condensed window), the ticks draw as dots. */
+const COMPACT_GUTTER = 44;
 /** A revealed message lands this far below the top edge, as the first one sits at rest. */
 const LANDING_OFFSET = 8;
 
@@ -128,6 +130,8 @@ export class AgentTurnNav extends Disposable {
 		const step = Math.max(STEP_MIN, Math.min(STEP_MAX, Math.floor(threadRect.height * 0.5 / this.turns.length)));
 		this.element.style.setProperty('--volt-turn-nav-step', `${step}px`);
 		this.element.style.left = `${Math.max(2, Math.floor((gutter - RAIL_WIDTH) / 2))}px`;
+		// Lines would crowd the text: dots, and the one under the pointer grows into its line.
+		this.element.classList.toggle('compact', gutter < COMPACT_GUTTER);
 		this.sync();
 	}
 

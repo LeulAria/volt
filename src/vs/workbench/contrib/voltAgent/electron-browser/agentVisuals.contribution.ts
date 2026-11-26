@@ -33,7 +33,7 @@ import { openAgentPanel } from '../browser/workspace/agentPanels.js';
 import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { AgentCanvasToolProvider } from '../browser/visuals/canvas/canvasTools.js';
 import { CANVAS_ENABLED_SETTING } from '../common/canvasScratchSettings.js';
-import { agentToolsSessionOnScreen, isPseudoToolsSession, openInAgentTools } from '../browser/workspace/agentSurfaceHost.js';
+import { agentToolsSessionOnScreen, isPseudoToolsSession, openInAgentTools, openInChatTools } from '../browser/workspace/agentSurfaceHost.js';
 import { OPEN_CANVAS_IN_TOOLS_COMMAND_ID } from '../browser/workspace/agentSurfaceMenu.js';
 
 // Pages are measured and screenshotted offscreen in the main process.
@@ -125,7 +125,8 @@ Registry.as<IEditorPaneRegistry>(EditorExtensions.EditorPane).registerEditorPane
 
 Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).registerEditorSerializer(CanvasEditorInput.TypeID, CanvasEditorInputSerializer);
 
-CommandsRegistry.registerCommand(OPEN_CANVAS_COMMAND_ID, async (accessor, canvasId: unknown, frame?: unknown) => {
+/** `chat`: open it in that chat's right panel (an agent's own canvas), on screen or behind its tabs. */
+CommandsRegistry.registerCommand(OPEN_CANVAS_COMMAND_ID, async (accessor, canvasId: unknown, frame?: unknown, chat?: unknown) => {
 	if (typeof canvasId !== 'string' || !canvasId) {
 		return;
 	}
@@ -139,7 +140,9 @@ CommandsRegistry.registerCommand(OPEN_CANVAS_COMMAND_ID, async (accessor, canvas
 		existing.requestFocus(focus);
 	}
 	// Beside the chat in the agent layout; a normal editor tab in the IDE layout.
-	const opened = openInAgentTools(input, agentToolsSessionOnScreen());
+	const opened = typeof chat === 'string' && chat && !isPseudoToolsSession(chat)
+		? openInChatTools(input, chat, { preserveFocus: true })
+		: openInAgentTools(input, agentToolsSessionOnScreen());
 	if (opened) {
 		await opened;
 	} else {

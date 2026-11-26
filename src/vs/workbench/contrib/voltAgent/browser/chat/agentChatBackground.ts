@@ -290,7 +290,7 @@ export class AgentChatBackgroundContribution extends Disposable implements IWork
 		container.classList.toggle(LIVE_CLASS, live);
 		// A drawn background is not a photo: no pixel grid over it.
 		container.classList.toggle(PIXELS_CLASS, !!shown && !live && this.configurationService.getValue<boolean>(AGENT_CHAT_BACKGROUND_PIXELS_SETTING) !== false);
-		container.classList.toggle(IN_CHATS_CLASS, !!shown && this.configurationService.getValue<boolean>(AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING) === true);
+		container.classList.toggle(IN_CHATS_CLASS, !!shown && this.configurationService.getValue<boolean>(AGENT_CHAT_BACKGROUND_IN_CHATS_SETTING) !== false);
 		if (!shown) {
 			container.style.removeProperty(IMAGE_VARIABLE);
 			container.style.removeProperty(POSITION_VARIABLE);

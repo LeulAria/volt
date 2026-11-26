@@ -207,7 +207,11 @@ export class AgentCanvasToolProvider extends Disposable implements IVoltHostTool
 		if (missing.length) {
 			return { error: `These local images could not be read: ${missing.join(', ')}. Use absolute paths to existing image files, or remove them.` };
 		}
-		const doc = await this.canvas.create({ ...parsed, frames }, this.chatOf(call));
+		const chat = this.chatOf(call);
+		// The chat's canvas still empty (opened from the + menu before asking): the design goes on it, not on a second one.
+		const empty = chat ? await this.canvas.latestFor(chat) : undefined;
+		const doc = (empty && !empty.frames.length ? await this.canvas.fillEmpty(empty.id, { ...parsed, frames }) : undefined)
+			?? await this.canvas.create({ ...parsed, frames }, chat);
 		const page = buildCanvasPage(this.canvas.pageData(doc, 'inline'));
 		if (page.length > MAX_PAGE_BYTES) {
 			return { error: `With its images the canvas is ${formatMib(page.length)}; the limit is ${formatMib(MAX_PAGE_BYTES)}. Use smaller images.` };
@@ -215,7 +219,8 @@ export class AgentCanvasToolProvider extends Disposable implements IVoltHostTool
 		const published = await this.publisher.publish(page, doc.title, { screenshot: args.screenshot === true });
 		const errors = published.errors.filter(error => error.startsWith('[frame ') || !/^Uncaught /.test(error));
 		if (this.configurationService.getValue(CANVAS_OPEN_BESIDE_SETTING) === true) {
-			void this.commandService.executeCommand(OPEN_CANVAS_COMMAND_ID, doc.id).catch(err => this.logService.warn('[volt] could not open the canvas beside the chat', err));
+			// Beside the chat that made it, even when another chat is on screen.
+			void this.commandService.executeCommand(OPEN_CANVAS_COMMAND_ID, doc.id, undefined, doc.chat).catch(err => this.logService.warn('[volt] could not open the canvas beside the chat', err));
 		}
 		const lines = [
 			`Shown to the user above your reply: design canvas ${doc.id} "${doc.title}" v${doc.version} with ${doc.frames.length} frame${doc.frames.length === 1 ? '' : 's'} (${doc.frames.map(frame => `${frame.id} ${frame.kind} ${frame.width}x${frame.height || 'auto'}`).join(', ')}). The user can move, resize, play and comment on it, and open it beside the chat; their comments arrive as a message with comment ids. Change it with ${CANVAS_UPDATE_TOOL_NAME} {"canvas": "${doc.id}", ...}: edits for small changes, never a new canvas. Do not describe the screens; end your turn with at most one short line.`,

@@ -24,8 +24,10 @@ import { IVoltHostToolService } from '../../../../services/voltRuntime/common/ho
 import { SCRATCH_AGENT_TOOLS_SETTING, SCRATCH_ENABLED_SETTING, SCRATCH_HIDE_CHATS_SETTING } from '../../common/canvasScratchSettings.js';
 import { ScratchBoardToolProvider } from './scratchAgentTools.js';
 import { ScratchBoardEditor } from './scratchBoardEditor.js';
+import { ScratchBoardFilesContribution } from './scratchBoardFiles.js';
+import { ScratchBoardTitlesContribution } from './scratchBoardTitles.js';
 import { AgentEditorInput } from '../editor/agentEditorInput.js';
-import { ensureAgentToolsPart, openInAgentTools } from '../workspace/agentSurfaceHost.js';
+import { agentSessionToolTabs, ensureAgentToolsPart, isPseudoToolsSession, openInAgentTools } from '../workspace/agentSurfaceHost.js';
 import { OPEN_SCRATCH_IN_TOOLS_COMMAND_ID } from '../workspace/agentSurfaceMenu.js';
 import { IScratchSessionLinks } from './scratchSessionLinks.js';
 import { NEW_SCRATCH_BOARD_COMMAND_ID, OPEN_FRESH_SCRATCH_BOARD_COMMAND_ID, OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID, SCRATCH_BOARD_EDITOR_ID, ScratchBoardEditorInput, ScratchBoardEditorInputSerializer } from './scratchBoardInput.js';
@@ -110,9 +112,19 @@ export async function openScratchInTools(accessor: ServicesAccessor, sessionId: 
 	const links = accessor.get(IScratchSessionLinks);
 	const instantiationService = accessor.get(IInstantiationService);
 	await boards.whenReady;
-	const linkedId = sessionId ? links.boardFor(sessionId) : undefined;
+	const live = (id: string | undefined) => {
+		const meta = id ? boards.getBoard(id) : undefined;
+		return meta && !meta.deleted ? meta.id : undefined;
+	};
+	// The chat's own board (shown in its Scratch tab, else the one it used before, also before a
+	// restart), else a clean one, which then becomes the chat's board.
+	const shown = sessionId ? agentSessionToolTabs(sessionId)?.tabs.map(tab => tab.input).find((editor): editor is ScratchBoardEditorInput => editor instanceof ScratchBoardEditorInput)?.boardId : undefined;
+	const linkedId = live(shown) ?? live(sessionId ? links.boardFor(sessionId) : undefined);
 	const linked = linkedId ? boards.getBoard(linkedId) : undefined;
-	const boardId = linked && !linked.deleted ? linked.id : await cleanScratchBoard(boards);
+	const boardId = linked ? linked.id : await cleanScratchBoard(boards);
+	if (sessionId && !isPseudoToolsSession(sessionId)) {
+		links.link(sessionId, boardId);
+	}
 	const input = instantiationService.createInstance(ScratchBoardEditorInput);
 	input.boardId = boardId;
 	const pane = await openInAgentTools(input, sessionId);
@@ -152,6 +164,10 @@ registerAction2(class OpenFreshScratchBoardAction extends Action2 {
  * screen can show tabs.
  */
 export async function openScratchBoardBeside(accessor: ServicesAccessor, sessionId: string, boardId: string, frameId?: string): Promise<boolean> {
+	// The board beside a chat is that chat's board, after a restart too.
+	if (!isPseudoToolsSession(sessionId)) {
+		accessor.get(IScratchSessionLinks).link(sessionId, boardId);
+	}
 	const input = accessor.get(IInstantiationService).createInstance(ScratchBoardEditorInput);
 	input.boardId = boardId;
 	const pane = await openInAgentTools(input, sessionId);
@@ -432,3 +448,8 @@ class ScratchBoardToolsContribution extends Disposable implements IWorkbenchCont
 
 // Before any agent connects, like the visual tools.
 registerWorkbenchContribution2(ScratchBoardToolsContribution.ID, ScratchBoardToolsContribution, WorkbenchPhase.BlockRestore);
+
+registerWorkbenchContribution2(ScratchBoardTitlesContribution.ID, ScratchBoardTitlesContribution, WorkbenchPhase.Eventually);
+
+// Before the editors restore, so a .scratch file opens as a board.
+registerWorkbenchContribution2(ScratchBoardFilesContribution.ID, ScratchBoardFilesContribution, WorkbenchPhase.BlockRestore);

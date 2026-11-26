@@ -236,7 +236,7 @@ Answer on the user's Scratch board with **scratch_draw**. When you build on what
 - Longer text: markdown cards.
 - To change a frame you drew before, redraw it with \`replace\` set to its frameId instead of adding a new one.
 
-A board the user attached with @, or the one open in the right panel (the \`<volt_workspace>\` block lists it), is the one to use: pass its \`boardId\`. Keep the chat reply to a line or two; the user sees the board.`,
+Each chat has one board, and scratch_draw without \`boardId\` draws on it: the Scratch tab already open (beside the chat, else on screen), else the one this chat drew on before. If the chat has none yet, the first drawing starts it and opens it beside the chat. Keep using that board for the rest of the chat, including later requests that only say "the board", "scratch" or "the diagram". Pass a \`boardId\` only for a board the user attached with @ or named, and set \`newBoard\` only when the user asks for a new or separate board. Keep the chat reply to a line or two; the user sees the board.`,
 	},
 	{
 		name: 'create-skill',

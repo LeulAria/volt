@@ -12,6 +12,7 @@ import { CommandsRegistry } from '../../../../../platform/commands/common/comman
 import { TerminalCapability } from '../../../../../platform/terminal/common/capabilities/capabilities.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../common/contributions.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
+import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IAgentWorktreeService } from '../../../../services/voltRuntime/common/git/agentWorktree.js';
 import { IWorkspaceDevice, IWorkspaceGit, IWorkspaceSnapshot, IWorkspaceTab, IWorkspaceTerminal, WORKSPACE_SNAPSHOT_COMMAND_ID, WORKSPACE_STATUS_TOOL_NAME, formatWorkspaceStatus } from '../../../../services/voltRuntime/common/harness/workspaceContext.js';
 import { IAgentHistoryService } from '../../../../services/voltRuntime/common/history/agentHistory.js';
@@ -29,6 +30,7 @@ import { VoltBrowserEditorInput } from '../preview/browserEditorInput.js';
 import { AgentChangesEditorInput } from '../review/agentChangesEditor.js';
 import { ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
 import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
+import { IScratchSessionLinks } from '../scratchBoard/scratchSessionLinks.js';
 import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
 import { agentSessionToolTabs } from './agentSurfaceHost.js';
 
@@ -61,6 +63,8 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 		@IVoltSessionContextService private readonly sessionContext: IVoltSessionContextService,
 		@IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
 		@IScratchBoardService private readonly scratchBoards: IScratchBoardService,
+		@IScratchSessionLinks private readonly scratchLinks: IScratchSessionLinks,
+		@IEditorService private readonly editorService: IEditorService,
 		@IVoltHostToolService hostTools: IVoltHostToolService,
 	) {
 		super();
@@ -95,11 +99,28 @@ export class AgentWorkspaceContextContribution extends Disposable implements IWo
 			Promise.all((panel?.tabs ?? []).map(tab => this.describe(tab.input, tab.focused, root, detail))),
 			root ? this.git(root.fsPath, detail) : Promise.resolve(undefined),
 		]);
+		const shown = tabs.filter((tab): tab is IWorkspaceTab => !!tab);
+		const scratchBoard = this.chatBoard(id, shown);
 		return {
 			panelOpen: panel?.open ?? false,
-			tabs: tabs.filter((tab): tab is IWorkspaceTab => !!tab),
+			tabs: shown,
 			...(git ? { git } : {}),
+			...(scratchBoard ? { scratchBoard } : {}),
 		};
+	}
+
+	/** The chat's one board, as scratch_draw picks it: the Scratch tab beside the chat, else one on screen, else the board it drew on. */
+	private chatBoard(sessionId: string, tabs: readonly IWorkspaceTab[]): { id: string; title: string } | undefined {
+		const onScreen = [this.editorService.activeEditor, ...this.editorService.visibleEditors]
+			.find((input): input is ScratchBoardEditorInput => input instanceof ScratchBoardEditorInput && !!input.boardId)?.boardId;
+		const ids = [tabs.find(tab => tab.kind === 'scratch')?.surfaceId, onScreen, this.scratchLinks.boardFor(sessionId)];
+		for (const id of ids) {
+			const board = id ? this.scratchBoards.getBoard(id) : undefined;
+			if (board && !board.deleted && !board.archived) {
+				return { id: board.id, title: boardDisplayTitle(board) };
+			}
+		}
+		return undefined;
 	}
 
 	private folder(sessionId: string): URI | undefined {

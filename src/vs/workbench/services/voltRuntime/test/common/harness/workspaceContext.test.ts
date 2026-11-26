@@ -102,6 +102,16 @@ suite('Volt workspace context', () => {
 		assert.notStrictEqual(workspaceContextKey(canvas), workspaceContextKey({ ...canvas, tabs: [{ ...canvas.tabs[0], surfaceId: 'c-2' }] }));
 	});
 
+	test('the chat\'s own board is named even with no tabs open, and a new board counts as a change', () => {
+		const snapshot: IWorkspaceSnapshot = { panelOpen: false, tabs: [], scratchBoard: { id: 'b-1', title: 'Plugin platform' } };
+		const text = formatWorkspaceContext(snapshot)!;
+		assert.ok(text.includes('This chat\'s Scratch board: "Plugin platform" (boardId b-1)'));
+		assert.ok(text.includes('without a boardId'));
+		assert.ok(formatWorkspaceStatus(snapshot).includes('This chat\'s Scratch board'));
+		assert.notStrictEqual(workspaceContextKey(snapshot), workspaceContextKey({ ...snapshot, scratchBoard: { id: 'b-2', title: 'Plugin platform' } }));
+		assert.notStrictEqual(workspaceContextKey(snapshot), workspaceContextKey({ panelOpen: false, tabs: [] }));
+	});
+
 	test('workspace_status names the board and canvas tools', () => {
 		const text = formatWorkspaceStatus({ panelOpen: true, tabs: [{ kind: 'scratch', title: 'Notes', focused: true, surfaceId: 'b-1' }, { kind: 'canvas', title: 'Home', focused: false, surfaceId: 'c-1' }] });
 		assert.ok(text.includes('[in front] Scratch board "Notes" (boardId b-1)'));

@@ -262,9 +262,10 @@ export class ScratchCanvas extends Disposable {
 		this._register(this.agents.onDidChange(() => this.requestFrame()));
 		this.installInput();
 		this.onToolChange();
-		// Text being typed reaches the board when editing ends: end it before the window goes.
+		// Text being typed, a drag or a stroke reach the board when they end: end them before the window goes.
 		this._register(lifecycleService.onBeforeShutdown(() => {
 			this.textEditor.commit();
+			this.keepOpenGesture();
 			this.finishLinearDraft(true);
 		}));
 		this._register(toDisposable(() => {
@@ -1371,12 +1372,21 @@ export class ScratchCanvas extends Disposable {
 				this.maybeClickContent(e, gesture.hitId);
 				break;
 			}
-			case 'move': this.finishMove(gesture); break;
 			case 'marquee':
 				if (gesture.comment) {
 					this.finishCommentMarquee(gesture);
 				}
 				break;
+			default: this.keepGesture(gesture); break;
+		}
+		this.updateCursor();
+		this.requestFrame();
+	}
+
+	/** What a gesture changed goes on the board, as one step (pointer up, or the window closing mid-gesture). */
+	private keepGesture(gesture: Gesture): void {
+		switch (gesture.kind) {
+			case 'move': this.finishMove(gesture); break;
 			case 'resize': case 'rotate': {
 				gesture.tx.commit({ selectionBefore: [...this.state.selection], selectionAfter: [...this.state.selection] });
 				break;
@@ -1386,11 +1396,23 @@ export class ScratchCanvas extends Disposable {
 			case 'point': gesture.tx.commit({ selectionBefore: [gesture.id], selectionAfter: [gesture.id] }); break;
 			case 'draw': this.finishDraw(gesture); break;
 			case 'erase': this.finishErase(gesture); break;
-			case 'laser': break;
-			case 'pan': break;
+			// pending, marquee, laser and pan change nothing on the board.
+			default: break;
 		}
-		this.updateCursor();
-		this.requestFrame();
+	}
+
+	/** Quitting mid-drag or mid-stroke keeps what is drawn so far, as letting go of the pointer would. */
+	private keepOpenGesture(): void {
+		const gesture = this.gesture;
+		if (!gesture) {
+			return;
+		}
+		this.gesture = undefined;
+		this.guides = [];
+		this.binding = undefined;
+		this.frameTarget = undefined;
+		this.updateBindTargetClass();
+		this.keepGesture(gesture);
 	}
 
 	private onPointerCancel(e: PointerEvent): void {
@@ -3339,7 +3361,12 @@ export class ScratchCanvas extends Disposable {
 		return this.viewportCenterWorld();
 	}
 
-	async insertImageFile(file: Blob, at?: Vec): Promise<void> {
+	/** Quitting waits for the image to be stored and placed. */
+	insertImageFile(file: Blob, at?: Vec): Promise<void> {
+		return this.boards.hold(this.placeImageFile(file, at));
+	}
+
+	private async placeImageFile(file: Blob, at?: Vec): Promise<void> {
 		const scene = this.scene;
 		if (!scene || !file.type.startsWith('image/')) {
 			return;

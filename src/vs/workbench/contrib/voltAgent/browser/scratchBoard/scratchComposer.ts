@@ -13,6 +13,7 @@ import { generateUuid } from '../../../../../base/common/uuid.js';
 import { localize } from '../../../../../nls.js';
 import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { describeComments, describeForAgent } from '../../common/scratchBoard/scratchDescribe.js';
 import { readingOrder } from '../../common/scratchBoard/scratchDiagram.js';
@@ -32,6 +33,9 @@ import { scratchIcon, ScratchIconName } from './scratchIcons.js';
 
 const MOD = isMacintosh ? '⌘' : 'Ctrl+';
 const SENDABLE = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+/** boardId → the Ask Agent text not sent yet. */
+const COMPOSER_DRAFTS_KEY = 'volt.scratch.composerDrafts';
+const MAX_DRAFT_CHARS = 20_000;
 
 /** The small bar above a selection: comment on it, hand it to an agent, copy it as an image. */
 export class ScratchSelectionBar extends Disposable {
@@ -127,6 +131,7 @@ export class ScratchComposer extends Disposable {
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IScratchSessionLinks private readonly links: IScratchSessionLinks,
+		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super();
 		const doc = parent.ownerDocument;
@@ -153,7 +158,10 @@ export class ScratchComposer extends Disposable {
 		this.textarea = append(this.element, $('textarea.sx-composer-input')) as HTMLTextAreaElement;
 		this.textarea.rows = 2;
 		this.textarea.setAttribute('aria-label', localize('voltScratch.composerInput', "Instruction"));
-		this._register(addDisposableListener(this.textarea, 'input', () => this.autosize()));
+		this._register(addDisposableListener(this.textarea, 'input', () => {
+			this.autosize();
+			this.saveDraft();
+		}));
 		this._register(addDisposableListener(this.textarea, 'keydown', e => {
 			e.stopPropagation();
 			if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -232,6 +240,10 @@ export class ScratchComposer extends Disposable {
 		}
 		this.openState = state;
 		this.modelRef ??= this.agents.defaultModelRef(undefined);
+		if (!this.textarea.value) {
+			// What was typed for this board before (also before a restart) is still there.
+			this.textarea.value = this.readDrafts()[this.canvas.model.id] ?? '';
+		}
 		this.element.hidden = false;
 		// Rises from below each time it opens (its position is a transform, so the animation uses `translate`).
 		this.element.classList.remove('sx-composer-in');
@@ -255,6 +267,33 @@ export class ScratchComposer extends Disposable {
 		this.previewUrl.clear();
 		this.canvas.requestFrame();
 		this.canvas.focus();
+	}
+
+	private readDrafts(): Record<string, string> {
+		try {
+			const raw = JSON.parse(this.storageService.get(COMPOSER_DRAFTS_KEY, StorageScope.PROFILE, '{}')) as unknown;
+			return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, string> : {};
+		} catch {
+			return {};
+		}
+	}
+
+	/** Kept as it is typed, per board, so a quit or crash never loses an instruction being written. */
+	private saveDraft(): void {
+		const boardId = this.canvas.model?.id;
+		if (!boardId) {
+			return;
+		}
+		const drafts = this.readDrafts();
+		const text = this.textarea.value;
+		if (text.trim()) {
+			drafts[boardId] = text.slice(0, MAX_DRAFT_CHARS);
+		} else if (drafts[boardId] !== undefined) {
+			delete drafts[boardId];
+		} else {
+			return;
+		}
+		this.storageService.store(COMPOSER_DRAFTS_KEY, JSON.stringify(drafts), StorageScope.PROFILE, StorageTarget.MACHINE);
 	}
 
 	/** A click on the board closes an untouched composer; one with text stays. */
@@ -565,6 +604,7 @@ export class ScratchComposer extends Disposable {
 			// The chat knows its board: its toolbar in Agents leads back here.
 			this.links.link(sessionId, boardId);
 			this.textarea.value = '';
+			this.saveDraft();
 			this.close();
 			if (comments.length) {
 				this.canvas.comments.remove(comments.map(comment => comment.id));

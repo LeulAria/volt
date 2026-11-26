@@ -54,6 +54,7 @@ import { AgentSidePanel } from '../chrome/agentSidePanel.js';
 import { findAgentPanelGroup, openAgentPanel } from '../workspace/agentPanels.js';
 import { agentSideChatParents, liveAgentToolsPart, revealAgentSideChat } from '../workspace/agentSurfaceHost.js';
 import { IAgentWorkspaceService } from '../workspace/agentWorkspace.js';
+import { IVoltWindowScopeService } from '../../../../services/voltWindowScope/common/voltWindowScope.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../preview/browserEditorInput.js';
 import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
 
@@ -237,7 +238,12 @@ registerAction2(class OpenAgentSessionAction extends Action2 {
 		}
 		const history = accessor.get(IAgentHistoryService);
 		const workspace = accessor.get(IAgentWorkspaceService);
+		const windowScope = accessor.get(IVoltWindowScopeService);
 		const open = { preserveFocus: options?.preserveFocus === true };
+		// A chat is open in one window only: one another window owns comes up there instead.
+		if (!windowScope.showsSession(sessionId) && history.get(sessionId) && await windowScope.revealElsewhere(sessionId)) {
+			return;
+		}
 		// A side chat lives in its chat's tools: open that chat and bring the side chat to the front there.
 		const parentId = agentSideChatParents().get(sessionId) ?? history.sessionParent(sessionId);
 		const parentExists = !!parentId && (!!liveAgentToolsPart(parentId) || history.has(parentId) || !!history.get(parentId));

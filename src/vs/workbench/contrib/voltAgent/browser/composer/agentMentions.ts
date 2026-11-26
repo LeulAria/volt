@@ -75,7 +75,8 @@ import { CANVAS_ENABLED_SETTING, SCRATCH_ENABLED_SETTING } from '../../common/ca
 import { describeForAgent } from '../../common/scratchBoard/scratchDescribe.js';
 import { boardDisplayTitle } from '../../common/scratchBoard/scratchIndex.js';
 import { IScratchBoardService } from '../scratchBoard/scratchBoardService.js';
-import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID } from '../scratchBoard/scratchBoardInput.js';
+import { OPEN_SCRATCH_BOARD_BESIDE_COMMAND_ID, OPEN_SCRATCH_BOARD_COMMAND_ID, ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
+import { IScratchSessionLinks } from '../scratchBoard/scratchSessionLinks.js';
 import { OPEN_CANVAS_COMMAND_ID } from '../visuals/canvas/canvasCard.js';
 import { REVEAL_BROWSER_ELEMENT_COMMAND_ID } from '../preview/browserCommentStore.js';
 import { IVoltCanvasService } from '../visuals/canvas/canvasService.js';
@@ -303,6 +304,8 @@ interface IMentionFile {
 const MAX_FILE_ITEMS = 30;
 const MAX_RECENT_ITEMS = 5;
 const MAX_CHAT_ITEMS = 50;
+/** Boards matching what was typed after @, listed above the files. */
+const MAX_ROOT_BOARD_ITEMS = 4;
 /** An agent chat in the @ menu and on its chip: a paper plane drawn by CSS (agentEditor.css), not a codicon glyph. */
 export const AgentChatMentionIcon = ThemeIcon.fromId('volt-agent-chat');
 const MENU_SEARCH_DEBOUNCE_MS = 80;
@@ -2380,8 +2383,10 @@ export class AgentMentionController extends Disposable {
 		const shown = query ? filterRows(categories, query) : categories;
 		// Below the categories: the connected MCP servers, or recent files when there are none.
 		const servers = this.mcpRows(query);
+		// A typed name finds Scratch boards here too, like files, without opening their list.
+		const boards = query && !this.surfaceOff(SCRATCH_ENABLED_SETTING) ? this.boardRows(query, MAX_ROOT_BOARD_ITEMS) : [];
 		const files = servers.length && !query ? [] : this.fileRows(query, searched, query ? MAX_FILE_ITEMS : MAX_RECENT_ITEMS);
-		const rest = [...servers, ...files];
+		const rest = [...servers, ...boards, ...files];
 		const rows: AgentMentionRow[] = [...shown];
 		if (rest.length) {
 			if (rows.length) {
@@ -2510,15 +2515,21 @@ export class AgentMentionController extends Disposable {
 		return this.instantiationService.invokeFunction(accessor => accessor.getIfExists(id));
 	}
 
-	/** Scratch boards, the last edited first. */
-	private boardRows(query: string): AgentMentionRow[] {
+	/** Scratch boards: the ones open in a tab and this chat's own first, then the last edited. */
+	private boardRows(query: string, limit = MAX_CHAT_ITEMS): AgentMentionRow[] {
 		const boards = this.surfaceService(IScratchBoardService);
 		if (!boards) {
 			return [];
 		}
+		const open = new Set([this.editorService.activeEditor, ...this.editorService.visibleEditors]
+			.flatMap(input => input instanceof ScratchBoardEditorInput && input.boardId ? [input.boardId] : []));
+		const sessionId = this.host.sessionId?.();
+		const own = sessionId ? this.surfaceService(IScratchSessionLinks)?.boardFor(sessionId) : undefined;
+		const rank = (id: string) => open.has(id) ? 2 : id === own ? 1 : 0;
 		const now = Date.now();
 		const rows: AgentMentionRow[] = [];
-		const metas = boards.index.boards.filter(meta => !meta.deleted && !meta.archived).sort((a, b) => (b.edited || b.created) - (a.edited || a.created));
+		const metas = boards.index.boards.filter(meta => !meta.deleted && !meta.archived)
+			.sort((a, b) => rank(b.id) - rank(a.id) || (b.edited || b.created) - (a.edited || a.created));
 		for (const meta of metas) {
 			const title = boardDisplayTitle(meta);
 			const labelMatches = query ? matchesFuzzy(query, title, true) : undefined;
@@ -2532,12 +2543,13 @@ export class AgentMentionController extends Disposable {
 				labelMatches: labelMatches ?? undefined,
 				icon: Codicon.notebook,
 				description: compactSessionAge(meta.edited || meta.created, now),
+				trailing: open.has(meta.id) ? localize('voltAgent.mention.boardOpen', "Open") : meta.id === own ? localize('voltAgent.mention.boardThisChat', "This chat") : undefined,
 				run: () => {
 					void this.loadSurfaceContext('scratch', meta.id);
 					this.pickMention({ id: generateUuid(), kind: 'scratch', label: truncateLabel(title, 40), value: meta.id });
 				},
 			});
-			if (rows.length >= MAX_CHAT_ITEMS) {
+			if (rows.length >= limit) {
 				break;
 			}
 		}

@@ -143,7 +143,7 @@ export interface IAgentHomeTreeOptions {
 }
 
 /** Agent tabs shown in a group before a "Show more" row. */
-export const AGENT_HOME_GROUP_LIMIT = 10;
+export const AGENT_HOME_GROUP_LIMIT = 20;
 /** Initial tabs in the Updated "Last 7 Days" bucket before Show more. */
 export const AGENT_HOME_WEEK_LIMIT = 7;
 /** Sentinel limit after Show more: reveal every remaining tab in that group. */

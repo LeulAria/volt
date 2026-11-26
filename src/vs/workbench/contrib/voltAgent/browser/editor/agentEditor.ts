@@ -182,7 +182,7 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { AgentFindWidget, CONTEXT_IN_AGENT_INPUT, IAgentFindHost } from './agentFindWidget.js';
 import { IAgentTurnReveal, onDidRequestAgentTurnReveal, takeAgentTurnReveal } from '../search/agentTurnReveal.js';
 import { AgentThreadView } from './agentThreadView.js';
-import { AgentTooltip, formatAgentTooltipShortcut, setAgentTooltip } from '../chrome/agentTooltip.js';
+import { AgentTooltip, setAgentTooltip } from '../chrome/agentTooltip.js';
 import { renderHandoffDivider } from '../chrome/agentHandoffDivider.js';
 import { OPEN_PULL_REQUEST_COMMAND_ID } from '../pullRequests/agentPullRequestCommands.js';
 import { NEW_AUTOMATION_COMMAND_ID, OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
@@ -1480,18 +1480,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.openNewButton.appendChild(createOpenNewAgentIcon());
 		append(this.openNewButton, $('span.volt-agent-open-new-label')).textContent = localize('voltAgent.openInNewAgentShort', "New agent");
 		setAgentTooltip(this.openNewButton, localize('voltAgent.openInNewAgentHint', "Open this prompt in a new agent tab"));
-		this._register(this.tooltip.bind(this.modelButton, () => [
-			...this.modelPicker.triggerHoverRows(),
-			{ label: localize('voltAgent.selectModel', "Select Model"), shortcut: formatAgentTooltipShortcut({ meta: true, key: '/' }), separator: true },
-			{ label: localize('voltAgent.cycleEffort', "Cycle Effort"), shortcut: formatAgentTooltipShortcut({ meta: true, shift: true, key: '/' }) },
-		], {
-			variant: 'card',
-			delay: 500,
-			fontSource: () => (this.monacoHost.querySelector('.view-lines')
-				?? this.monacoHost.querySelector('textarea')
-				?? this.placeholderEl
-				?? this.monacoHost) as HTMLElement | null,
-		}));
+		// The model button opens its picker on click and shows no card on hover: the label already names the model.
 
 		this.updateModeButton();
 		this.updateModelButton();
@@ -5998,41 +5987,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		}
 	}
 
-	/**
-	 * `/scratch` in a chat that already has turns starts a new chat, so the board answer gets a fresh
-	 * tab: the prompt moves there with its tokens and is sent at once. Docked chats (Scratch, canvas) keep it.
-	 */
-	private startScratchInNewChat(): boolean {
-		if (!this.wantsScratchChat()) {
-			return false;
-		}
-		const text = this.inputModel?.getValue() ?? '';
-		void this.sendInNewChat(text, cloneDisplayMentions(this.mentionController?.displayMentions() ?? []));
-		return true;
-	}
-
-	private wantsScratchChat(): boolean {
-		if (!this.messages.length || this.editingQueueHere || this.editingUserIndex !== undefined || this.isSubagentChat()
-			|| this.container.closest('.volt-agent-toolless') || !this.group) {
-			return false;
-		}
-		const mentions = this.mentionController?.displayMentions() ?? [];
-		return mentions.some(mention => mention.kind === 'skill' && (mention.value ?? mention.label.replace(/^\//, '')).toLowerCase() === 'scratch')
-			|| /^\s*\/scratch(?=\s|$)/i.test(this.inputModel?.getValue() ?? '');
-	}
-
-	private async sendInNewChat(text: string, mentions: IAgentDisplayMention[]): Promise<void> {
-		this.hidePlusMenu();
-		this.clearComposer();
-		this.updateSendButton();
-		const next = this.instantiationService.createInstance(AgentEditorInput, AgentEditorInput.getNewEditorUri());
-		const pane = await this.group.openEditor(next, { pinned: true });
-		if (pane instanceof AgentEditor) {
-			pane.prefillDraft(text, mentions);
-			pane.send();
-		}
-	}
-
 	private async openEditInNewAgent(): Promise<void> {
 		if (this.editingUserIndex === undefined) {
 			return;
@@ -6613,7 +6567,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 			});
 			return;
 		}
-		if (this.startScratchInNewChat() || this.startInScratchFolder()) {
+		if (this.startInScratchFolder()) {
 			return;
 		}
 		this.submitting = true;
@@ -6844,11 +6798,6 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private sendAndStartNewChat(): void {
 		const model = this.inputModel;
 		if (!model || !this.composerCanSend() || this.questionTray?.active || this.editingQueueHere || this.editingUserIndex !== undefined) {
-			return;
-		}
-		if (this.wantsScratchChat()) {
-			// `/scratch` already goes to a new chat.
-			this.send();
 			return;
 		}
 		this.send();
