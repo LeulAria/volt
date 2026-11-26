@@ -18,7 +18,7 @@ import { InstantiationType, registerSingleton } from '../../../../../platform/in
 import { HOST_MCP_TOKEN_RENEW_MS, hostMcpSessionToken, IHostMcpLease, newHostMcpLease } from '../../../../../platform/voltHostMcp/common/voltHostMcpAuth.js';
 import { IVoltSandboxSettings } from '../../../../../platform/voltSandbox/common/sandboxPolicy.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
-import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolOwner, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
+import { ASK_QUESTION_TOOL_NAME, AUTOMATE_BROWSER_COMMAND_ID, AWAIT_ANSWERS_TOOL_NAME, BROWSER_COMPARE_IMAGE_TOOL_NAME, BROWSER_PAGE_URL_COMMAND_ID, BROWSER_RUN_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, browserToolVerdict, browserVerdictNeedsPage, canonicalHostToolName, CAPTURE_BROWSER_SNAPSHOT_COMMAND_ID, IMAGE_INSPECT_TOOL_NAME, isBrowserAutomationTool, IVoltBrowserAutomationOptions, IVoltBrowserPreflightRequest, IVoltBrowserPreflightResult, IVoltFlowGrantStore, IVoltHostFileChange, IVoltHostSandboxResolver, IVoltHostSessionResolver, IVoltHostToolApprover, IVoltHostToolCall, IVoltHostToolInfo, IVoltHostToolInvocation, IVoltHostToolOwner, IVoltHostToolProvider, IVoltHostToolResult, IVoltHostToolService, IVoltMcpServer, IVoltQuestionHandler, PREFLIGHT_BROWSER_COMMAND_ID, VOLT_HOST_TOOLS, VoltHostToolGroup } from '../../common/hostTools.js';
 import { hostToolSandboxUse, isSandboxed, ISandboxPathContext, legacyHostToolRefusal, legacySandboxCovers, sandboxBrowserUrlRefusal, sandboxRefusalMessage } from '../../common/hostToolSandbox.js';
 import { HostToolAuthority, IGateChat, IPolicyShadowDiff, PolicyAuthorityMode } from '../../common/hostToolAuthority.js';
 import { IGrant } from '../../../../../platform/voltSandbox/common/grants.js';
@@ -392,6 +392,9 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 			return { error: `The user did not allow sending this chat's content to ${where} through ${owner.label}, so ${name} was not run. Continue without it.` };
 		}
 		const grant = this.authority.approveFlow(call.sessionId, offer.to, offer.hosts, choice === 'chat' ? 'session' : 'once');
+		if (grant.kind === 'session') {
+			void this.flowStore?.persist(grant).catch(() => undefined);
+		}
 		decision = this.authority.extensionToolDecision(name, owner, chat);
 		this.authority.consume(grant);
 		return decision.allow ? undefined : { error: `${name} was not run: ${decision.reason}.` };
@@ -406,7 +409,21 @@ export class VoltHostToolService extends Disposable implements IVoltHostToolServ
 	}
 
 	revokeFlowApprovals(sessionId: string): number {
+		const stored = this.authority.flowApprovals(sessionId).filter(grant => grant.kind === 'session').map(grant => grant.id);
+		if (stored.length) {
+			void this.flowStore?.revoke(stored).catch(() => undefined);
+		}
 		return this.authority.revokeFlowApprovals(sessionId);
+	}
+
+	private flowStore: IVoltFlowGrantStore | undefined;
+
+	setFlowGrantStore(store: IVoltFlowGrantStore | undefined): void {
+		this.flowStore = store;
+	}
+
+	setStoredFlowGrants(grants: readonly IGrant[]): void {
+		this.authority.setStoredFlowGrants(grants);
 	}
 
 	/** Where the chat may work (its folder as named and resolved through symlinks), and the machine facts the rules need. */

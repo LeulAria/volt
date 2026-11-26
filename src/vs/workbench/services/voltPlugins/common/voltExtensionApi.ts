@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { SubjectKey } from '../../../../platform/voltSandbox/common/principals.js';
 import { Event } from '../../../../base/common/event.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { IExtensionDescription } from '../../../../platform/extensions/common/extensions.js';
@@ -44,4 +45,6 @@ export interface IVoltExtensionApiService {
 	consents(extensionId: string): readonly IVoltExtensionConsent[];
 	/** Takes a consent back: later uses are refused until the user allows it again on the extension's page. */
 	revokeConsent(extensionId: string, capability: string): void;
+	/** The grant store's subject of a third-party extension (`plugin:<id>@<signer>`, P4), for the Access page. */
+	subjectOf?(extensionId: string): SubjectKey;
 }

@@ -4,13 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { randomBytes } from 'crypto';
-import { promises as fs } from 'fs';
+import { FSWatcher, promises as fs, watch as fsWatch } from 'fs';
 import { homedir } from 'os';
-import { dirname, join } from '../../../base/common/path.js';
+import { basename, dirname, join } from '../../../base/common/path.js';
 import { Emitter } from '../../../base/common/event.js';
-import { Disposable } from '../../../base/common/lifecycle.js';
+import { Disposable, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
 import { canonicalJson, emptyGrantStore, grantExpiry, GrantStoreStatus, IGrant, IGrantStoreData, IGrantStoreLoadOptions, IRefusal, loadGrantStore, serializeGrantStore } from '../common/grants.js';
 import { SubjectKey } from '../common/principals.js';
+import { bareCapability } from '../../voltPlugins/common/capabilityCatalog.js';
 
 /**
  * The grant store (spec F.9, F.11, G.4, G.9): `~/.volt/trust/grants.json`, denied to every sandbox
@@ -40,6 +41,10 @@ export interface IGrantStoreChange {
 	/** Grants used: their `lastUsedAt` moves to `at` (G.4's unused expiry counts from it). */
 	readonly touch?: readonly { readonly id: string; readonly at: number }[];
 	readonly refuse?: readonly IRefusal[];
+	/** Refusals to forget (the user allowed it after all, on the Access page). */
+	readonly unrefuse?: readonly { readonly subject: SubjectKey; readonly capability: string }[];
+	/** Every grant and refusal of these subjects goes (a signer change, G.9; an uninstall). */
+	readonly dropSubjects?: readonly SubjectKey[];
 	/** Drop every grant that has expired at this time. */
 	readonly expireAt?: number;
 }
@@ -106,6 +111,40 @@ export class GrantStore extends Disposable {
 	}
 
 	/**
+	 * Re-reads the store when another Volt process writes it (the main process and the agent server
+	 * share it), so a revocation made in one reaches the other's brokers: `onDidChange` fires with
+	 * `narrowed` and their routes re-judge open tunnels (G.5).
+	 */
+	watch(debounceMs = 50): IDisposable {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let watcher: FSWatcher | undefined;
+		const name = basename(this.path);
+		try {
+			watcher = fsWatch(dirname(this.path), (_event, file) => {
+				if (file && file !== name) {
+					return;
+				}
+				if (timer) {
+					clearTimeout(timer);
+				}
+				timer = setTimeout(() => {
+					timer = undefined;
+					void this.reload().catch(() => undefined);
+				}, debounceMs);
+			});
+			watcher.on('error', () => undefined);
+		} catch {
+			// No watcher (a folder that can't be watched): the store is still re-read on every commit.
+		}
+		return toDisposable(() => {
+			if (timer) {
+				clearTimeout(timer);
+			}
+			watcher?.close();
+		});
+	}
+
+	/**
 	 * Compare-and-swap: applies `change` only if the store is still at `expectedEpoch` (re-read from
 	 * disk under the lock). The new epoch is one above the old; a change that changes nothing
 	 * commits without a new epoch.
@@ -140,9 +179,10 @@ export class GrantStore extends Disposable {
 		const subjects = new Set<SubjectKey>();
 		let narrowed = false;
 		const revoke = new Set(change.revoke ?? []);
+		const dropped = new Set<SubjectKey>(change.dropSubjects ?? []);
 		let grants: IGrant[] = [];
 		for (const grant of current.grants) {
-			if (revoke.has(grant.id)) {
+			if (revoke.has(grant.id) || dropped.has(grant.subject)) {
 				subjects.add(grant.subject);
 				narrowed = true;
 				continue;
@@ -166,7 +206,13 @@ export class GrantStore extends Disposable {
 			grants.push({ ...draft, epoch });
 			subjects.add(draft.subject);
 		}
-		let refusals = [...current.refusals];
+		let refusals = current.refusals.filter(refusal => {
+			const forget = dropped.has(refusal.subject) || !!change.unrefuse?.some(entry => entry.subject === refusal.subject && bareCapability(entry.capability) === bareCapability(refusal.capability));
+			if (forget) {
+				subjects.add(refusal.subject);
+			}
+			return !forget;
+		});
 		for (const refusal of change.refuse ?? []) {
 			if (!refusals.some(existing => existing.subject === refusal.subject && existing.capability === refusal.capability)) {
 				refusals.push(refusal);
@@ -206,7 +252,11 @@ export class GrantStore extends Disposable {
 		this._status = loaded.status === 'missing' && floor > 0 ? 'torn' : loaded.status;
 		this._readOnly = loaded.readOnly;
 		this._notes = loaded.notes;
-		if (!initial && before.epoch !== data.epoch) {
+		// Another process's commit writes the epoch file before the store: a read in between sees the
+		// new epoch with the old grants, so a change is also told by the grants themselves.
+		const changed = before.epoch !== data.epoch || before.grants.length !== data.grants.length || before.refusals.length !== data.refusals.length
+			|| before.grants.some((grant, i) => grant.id !== data.grants[i].id || grant.lastUsedAt !== data.grants[i].lastUsedAt);
+		if (!initial && changed) {
 			const subjects = new Set<SubjectKey>([...before.grants, ...data.grants].map(grant => grant.subject));
 			this._onDidChange.fire({ epoch: data.epoch, subjects: [...subjects], narrowed: before.grants.some(grant => !data.grants.some(other => other.id === grant.id)) });
 		}

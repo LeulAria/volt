@@ -196,6 +196,8 @@ import './services/voltRuntime/browser/voltRuntimeService.js';
 import './services/voltRuntime/browser/history/agentHistoryService.js';
 import './services/voltRuntime/browser/git/agentWorktreeService.js';
 import './services/voltRuntime/browser/queryCache.js';
+// The grant store as windows see it: prompts, the Access page, gesture tokens (sandbox P4)
+import './services/voltTrust/browser/voltTrustService.js';
 import './contrib/voltSettings/browser/voltSettings.contribution.js';
 // Security page: sandboxed processes, the sandbox supervisor's flag
 import './contrib/voltSecurity/browser/voltSecurity.contribution.js';
