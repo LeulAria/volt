@@ -19,6 +19,7 @@ import { capabilityClass, VOLT_CAPABILITY_CLASSES, VoltCapabilityClass, voltCapa
 
 export const VOLT_TOOLS_EXTENSION_POINT = 'voltTools';
 export const VOLT_SLOT_ITEMS_EXTENSION_POINT = 'voltSlotItems';
+export const VOLT_VIEWS_EXTENSION_POINT = 'voltViews';
 export const VOLT_SETTINGS_PAGES_EXTENSION_POINT = 'voltSettingsPages';
 export const VOLT_SURFACES_EXTENSION_POINT = 'voltSurfaces';
 export const VOLT_DOCK_EXTENSION_POINT = 'voltDock';
@@ -47,20 +48,72 @@ export interface IVoltToolContribution {
 	readonly approvalInReadOnlyModes?: string;
 }
 
-/** A sidebar or activity bar button (`VOLT_SLOT_ITEMS`). */
+/** The buttons and chips a plugin can put in a slot. */
+export const VOLT_SLOT_ITEM_KINDS = ['button', 'chip', 'menu'] as const;
+export type VoltSlotItemKind = typeof VOLT_SLOT_ITEM_KINDS[number];
+
+/** One entry of a `menu` item's list, or of a chip's dropdown. */
+export interface IVoltSlotMenuEntry {
+	readonly label: string;
+	readonly icon?: string;
+	readonly command?: string;
+	readonly view?: string;
+}
+
+/**
+ * A button, chip or menu in one of the agent window's slots (`VOLT_SLOT_ITEMS` for Volt's own).
+ * A click opens `view` (where the user placed it), runs `command`, or shows `menu`.
+ */
 export interface IVoltSlotItemContribution {
 	readonly id: string;
 	readonly label: string;
 	readonly description?: string;
-	/** Where it goes when no layout names it. */
+	/** Where it goes when the user and the layout don't place it (`VoltSlotId`). */
 	readonly slot?: string;
 	readonly command?: string;
+	/** `aria:<set>:<name>` (Aria Icons), `codicon:<id>`, or an SVG path in the extension. */
+	readonly icon?: string;
+	readonly kind?: VoltSlotItemKind;
+	/** A `voltViews` id this item opens and closes. */
+	readonly view?: string;
+	readonly menu?: readonly IVoltSlotMenuEntry[];
+}
+
+/** Where a plugin view can render. */
+export const VOLT_VIEW_LOCATIONS = ['rightPanel', 'filesSidebar', 'page', 'popover', 'aboveComposer', 'sidebarSection'] as const;
+export type VoltViewLocation = typeof VOLT_VIEW_LOCATIONS[number];
+
+/**
+ * A plugin's own UI: a webview the extension fills with `vscode.window.registerWebviewViewProvider(id, ...)`.
+ * Volt decides where it shows (`location`, then the user's choice among `locations`).
+ */
+export interface IVoltViewContribution {
+	readonly id: string;
+	readonly title: string;
+	readonly description?: string;
+	readonly icon?: string;
+	/** Where it opens unless the user moved it. Default `rightPanel`. */
+	readonly location?: VoltViewLocation;
+	/** Where the user may move it. Default: everywhere. */
+	readonly locations?: readonly VoltViewLocation[];
+	/**
+	 * The size it asks for, in px, where the placement lets a view choose: the height above the
+	 * composer and in the left sidebar, width and height in a popover. Volt keeps it inside the
+	 * placement's bounds (`VOLT_VIEW_SIZE_BOUNDS`); elsewhere the view fills what the user gives it.
+	 */
+	readonly size?: { readonly width?: number; readonly height?: number };
 }
 
 /** A page in Volt Settings. */
 export interface IVoltSettingsPageContribution {
 	readonly id: string;
 	readonly label: string;
+	readonly description?: string;
+	readonly icon?: string;
+	/** The plugin's setting keys (or prefixes ending in `.`) the page shows as Volt's own rows. Default: all of its `contributes.configuration`. */
+	readonly settings?: readonly string[];
+	/** A `voltViews` id drawn under the rows (the plugin's own settings UI). */
+	readonly view?: string;
 }
 
 /** An entry in the right panel's "+" menu. */
@@ -222,6 +275,7 @@ export interface IVoltModuleContribution {
 export interface IVoltContributes {
 	readonly voltTools?: readonly IVoltToolContribution[];
 	readonly voltSlotItems?: readonly IVoltSlotItemContribution[];
+	readonly voltViews?: readonly IVoltViewContribution[];
 	readonly voltSettingsPages?: readonly IVoltSettingsPageContribution[];
 	readonly voltSurfaces?: readonly IVoltSurfaceContribution[];
 	readonly voltDock?: readonly IVoltDockContribution[];
@@ -239,7 +293,7 @@ export interface IVoltPluginManifest {
 }
 
 export const VOLT_CONTRIBUTION_POINTS = [
-	VOLT_TOOLS_EXTENSION_POINT, VOLT_SLOT_ITEMS_EXTENSION_POINT, VOLT_SETTINGS_PAGES_EXTENSION_POINT, VOLT_SURFACES_EXTENSION_POINT,
+	VOLT_TOOLS_EXTENSION_POINT, VOLT_SLOT_ITEMS_EXTENSION_POINT, VOLT_VIEWS_EXTENSION_POINT, VOLT_SETTINGS_PAGES_EXTENSION_POINT, VOLT_SURFACES_EXTENSION_POINT,
 	VOLT_DOCK_EXTENSION_POINT, VOLT_AGENTS_EXTENSION_POINT, VOLT_CAPABILITIES_EXTENSION_POINT, VOLT_MODULE_EXTENSION_POINT,
 ] as const satisfies readonly (keyof IVoltContributes)[];
 
@@ -248,6 +302,7 @@ export const VOLT_CONTRIBUTION_POINTS = [
 const ID = { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$' } satisfies IJSONSchema;
 const TOOL_NAME = { type: 'string', pattern: '^[a-z][a-z0-9_]*$', description: 'The tool name agents call (snake_case).' } satisfies IJSONSchema;
 const STRINGS = { type: 'array', items: { type: 'string', minLength: 1 } } satisfies IJSONSchema;
+const ICON = { type: 'string', pattern: '^(aria:[a-z0-9-]+:[a-z0-9-]+|codicon:[a-z0-9-]+|[A-Za-z0-9._/-]+\\.svg)$', description: 'aria:<set>:<name> (Aria Icons, icons.leularia.com), codicon:<id>, or an SVG file in the extension.' } satisfies IJSONSchema;
 const BINARY = { type: 'string', pattern: '^[A-Za-z0-9._-]+$', description: 'A bare executable name; core resolves and pins it.' } satisfies IJSONSchema;
 const ENV_NAME = { type: 'string', pattern: '^[A-Z][A-Z0-9_]*$' } satisfies IJSONSchema;
 const ENV_RECORD = { type: 'object', additionalProperties: { type: 'string' } } satisfies IJSONSchema;
@@ -302,8 +357,42 @@ export const VOLT_CONTRIBUTION_SCHEMAS: Readonly<Record<keyof IVoltContributes, 
 			},
 		},
 	},
-	voltSlotItems: labelled('Buttons layouts can place in the agent window\'s slots.', { description: { type: 'string' }, slot: { type: 'string' }, command: { type: 'string' } }),
-	voltSettingsPages: labelled('Pages in Volt Settings.'),
+	voltSlotItems: labelled('Buttons, chips and menus in the agent window\'s slots. The user can drag them to other slots.', {
+		description: { type: 'string' },
+		slot: { type: 'string', description: 'Where it starts: sidebar.header, sidebar.footer, activityBar.top, activityBar.bottom, titlebar.left, titlebar.center, titlebar.right, filesSidebar.header, chat.toolbar, chat.dock, composer.chips, rightPanel.launcher.' },
+		command: { type: 'string' },
+		icon: ICON,
+		kind: { type: 'string', enum: [...VOLT_SLOT_ITEM_KINDS] },
+		view: ID,
+		menu: {
+			type: 'array',
+			items: { type: 'object', required: ['label'], additionalProperties: false, properties: { label: { type: 'string', minLength: 1 }, icon: ICON, command: { type: 'string' }, view: ID } },
+		},
+	}),
+	voltViews: {
+		type: 'array',
+		description: 'Webview UIs the extension fills with vscode.window.registerWebviewViewProvider(id, ...). Volt shows each where the user puts it.',
+		items: {
+			type: 'object',
+			required: ['id', 'title'],
+			additionalProperties: false,
+			properties: {
+				id: ID,
+				title: { type: 'string', minLength: 1 },
+				description: { type: 'string' },
+				icon: ICON,
+				location: { type: 'string', enum: [...VOLT_VIEW_LOCATIONS] },
+				locations: { type: 'array', items: { type: 'string', enum: [...VOLT_VIEW_LOCATIONS] } },
+				size: {
+					type: 'object',
+					additionalProperties: false,
+					description: 'The size the view asks for (px). Volt keeps it inside the placement\'s bounds: popover 280-480 wide and 160-560 high, above the composer 72-320 high, left sidebar 96-400 high.',
+					properties: { width: { type: 'number' }, height: { type: 'number' } },
+				},
+			},
+		},
+	},
+	voltSettingsPages: labelled('Pages in Volt Settings.', { description: { type: 'string' }, icon: ICON, settings: STRINGS, view: ID }),
 	voltSurfaces: labelled('Entries in the right panel\'s "+" menu.', { command: { type: 'string' } }),
 	voltDock: labelled('Sections and quick actions in the chat\'s side toolbar.', { command: { type: 'string' } }),
 	voltAgents: {

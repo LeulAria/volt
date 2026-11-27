@@ -112,6 +112,7 @@ export class MainThreadVolt extends Disposable implements MainThreadVoltShape {
 	private readonly entries = new Map<string, IExtensionEntry>();
 	private readonly tools = this._register(new DisposableMap<number>());
 	private readonly turnSubscriptions = this._register(new DisposableMap<string>());
+	private readonly currentChatSubscriptions = this._register(new DisposableMap<string>());
 	/** Visuals Volt published for an extension (`extension\0ref`): only those may come back in its tool results. */
 	private readonly minted = new Map<string, IVoltVisualRef>();
 
@@ -224,6 +225,20 @@ export class MainThreadVolt extends Disposable implements MainThreadVoltShape {
 						...(optionalStr(options.placeHolder, 'placeHolder') ? { placeHolder: options.placeHolder as string } : {}),
 					});
 				}
+				case 'ui.update': {
+					const state = record(arg(1), 'state');
+					const tone = state.tone;
+					volt.ui.update(str(arg(0), 'itemId'), {
+						...(typeof state.label === 'string' ? { label: state.label } : {}),
+						...(typeof state.description === 'string' ? { description: state.description } : {}),
+						...(typeof state.badge === 'string' ? { badge: state.badge } : {}),
+						...(typeof state.icon === 'string' ? { icon: state.icon } : {}),
+						...(typeof state.hidden === 'boolean' ? { hidden: state.hidden } : {}),
+						...(tone === 'error' || tone === 'warning' || tone === 'success' ? { tone } : {}),
+					});
+					return undefined;
+				}
+				case 'ui.showView': return volt.ui.showView(str(arg(0), 'viewId'));
 				case 'tools.invoke': {
 					const chatId = optionalStr(arg(2), 'chatId');
 					return this.result(extensionId, await volt.tools.invoke(str(arg(0), 'name'), record(arg(1), 'input'), chatId ? { chatId } : undefined));
@@ -371,6 +386,22 @@ export class MainThreadVolt extends Disposable implements MainThreadVoltShape {
 	$unsubscribeTurns(extensionId: string): void {
 		if (typeof extensionId === 'string' && this.extHostContext.hostsExtension(extensionId)) {
 			this.turnSubscriptions.deleteAndDispose(ExtensionIdentifier.toKey(extensionId));
+		}
+	}
+
+	async $subscribeCurrentChat(extensionId: string): Promise<void> {
+		await this.run(extensionId, (volt, entry) => {
+			const key = ExtensionIdentifier.toKey(extensionId);
+			if (!this.currentChatSubscriptions.has(key)) {
+				const id = entry.extension.identifier.value;
+				this.currentChatSubscriptions.set(key, volt.agents.onDidChangeCurrent(() => this.proxy.$onDidChangeCurrentChat([id])));
+			}
+		});
+	}
+
+	$unsubscribeCurrentChat(extensionId: string): void {
+		if (typeof extensionId === 'string' && this.extHostContext.hostsExtension(extensionId)) {
+			this.currentChatSubscriptions.deleteAndDispose(ExtensionIdentifier.toKey(extensionId));
 		}
 	}
 

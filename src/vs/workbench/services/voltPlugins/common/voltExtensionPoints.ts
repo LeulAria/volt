@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { ExtensionsRegistry, IExtensionPoint } from '../../extensions/common/extensionsRegistry.js';
-import { IVoltContributes, VOLT_CONTRIBUTION_POINTS, VOLT_CONTRIBUTION_SCHEMAS, VOLT_TOOLS_EXTENSION_POINT } from './voltContributions.js';
+import { IVoltContributes, VOLT_CONTRIBUTION_POINTS, VOLT_CONTRIBUTION_SCHEMAS, VOLT_TOOLS_EXTENSION_POINT, VOLT_VIEWS_EXTENSION_POINT } from './voltContributions.js';
 
 /**
  * Volt's contribution points in the extension point registry: their schemas join the
@@ -16,5 +16,9 @@ export const VOLT_EXTENSION_POINTS: { readonly [K in keyof IVoltContributes]-?: 
 	jsonSchema: VOLT_CONTRIBUTION_SCHEMAS[point],
 	...(point === VOLT_TOOLS_EXTENSION_POINT ? {
 		activationEventsGenerator: (tools: readonly unknown[]) => tools.flatMap(tool => tool && typeof tool === 'object' && typeof (tool as { name?: unknown }).name === 'string' ? [`onTool:${(tool as { name: string }).name}`] : []),
+	} : {}),
+	// A view's extension activates when Volt first shows it, as VS Code's own webview views do.
+	...(point === VOLT_VIEWS_EXTENSION_POINT ? {
+		activationEventsGenerator: (views: readonly unknown[]) => views.flatMap(view => view && typeof view === 'object' && typeof (view as { id?: unknown }).id === 'string' ? [`onView:${(view as { id: string }).id}`] : []),
 	} : {}),
 })])) as never;

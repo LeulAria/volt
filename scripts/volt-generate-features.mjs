@@ -22,7 +22,7 @@ const target = join(root, 'src/vs/workbench/contrib/voltCustomize/common/voltFea
 const agentsTarget = join(root, 'src/vs/workbench/services/voltPlugins/common/voltBuiltinAgents.generated.ts');
 
 /** Keep in sync with `VOLT_CONTRIBUTION_POINTS` (voltContributions.ts); the test compares them. */
-const POINTS = ['voltTools', 'voltSlotItems', 'voltSettingsPages', 'voltSurfaces', 'voltDock', 'voltAgents', 'voltCapabilities', 'voltModule'];
+const POINTS = ['voltTools', 'voltSlotItems', 'voltViews', 'voltSettingsPages', 'voltSurfaces', 'voltDock', 'voltAgents', 'voltCapabilities', 'voltModule'];
 
 function manifests() {
 	const folders = readdirSync(join(root, 'extensions')).filter(name => name.startsWith('volt-')).sort();

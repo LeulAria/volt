@@ -70,6 +70,7 @@ export class ExtHostVolt implements ExtHostVoltShape {
 	private handles = 0;
 	private readonly tools = new Map<number, IToolEntry>();
 	private readonly turns = new Map<string, ITurnListeners>();
+	private readonly currentChat = new Map<string, Emitter<void>>();
 
 	constructor(
 		@IExtHostRpcService rpc: IExtHostRpcService,
@@ -117,6 +118,15 @@ export class ExtHostVolt implements ExtHostVoltShape {
 			pickModel: options => call('chats.pickModel', options),
 			onDidStartTurn: turnEvent('start'),
 			onDidEndTurn: turnEvent('finish'),
+			onDidChangeCurrent: (listener, thisArgs, disposables) => {
+				gate();
+				return this.currentChatEmitter(extension).event(listener, thisArgs, disposables);
+			},
+		};
+
+		const ui: typeof vscode.volt.ui = {
+			update: (itemId, state) => call('ui.update', itemId, state),
+			showView: viewId => call('ui.showView', viewId),
 		};
 
 		const storage: typeof vscode.volt.storage = {
@@ -194,7 +204,28 @@ export class ExtHostVolt implements ExtHostVoltShape {
 			list: () => call('agentResources.list'),
 		};
 
-		return Object.freeze({ version: VOLT_EXTENSION_API_VERSION, tools, chats, storage, settings, memory, browser, visuals, automations, skills, remoteDevices, usage, pullRequests, gitGraph, code, agentResources });
+		return Object.freeze({ version: VOLT_EXTENSION_API_VERSION, tools, chats, ui, storage, settings, memory, browser, visuals, automations, skills, remoteDevices, usage, pullRequests, gitGraph, code, agentResources });
+	}
+
+	/** `chats.onDidChangeCurrent`: the renderer streams while the extension listens. */
+	private currentChatEmitter(extension: IExtensionDescription): Emitter<void> {
+		const key = ExtensionIdentifier.toKey(extension.identifier);
+		let emitter = this.currentChat.get(key);
+		if (!emitter) {
+			const id = extension.identifier.value;
+			emitter = new Emitter<void>({
+				onWillAddFirstListener: () => this.proxy.$subscribeCurrentChat(id).catch(err => this.logService.error(`[volt] ${id} gets no chat changes: ${restoreVoltCapabilityError(err)}`)),
+				onDidRemoveLastListener: () => this.proxy.$unsubscribeCurrentChat(id),
+			});
+			this.currentChat.set(key, emitter);
+		}
+		return emitter;
+	}
+
+	$onDidChangeCurrentChat(extensionIds: string[]): void {
+		for (const id of extensionIds) {
+			this.currentChat.get(ExtensionIdentifier.toKey(id))?.fire();
+		}
 	}
 
 	/** One pair of emitters per extension; the renderer is asked to stream while either has listeners. */
