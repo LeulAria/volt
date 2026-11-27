@@ -3,6 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IExtensionService } from '../../../services/extensions/common/extensions.js';
+import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
+import { IVoltIconService } from '../../voltCustomize/browser/voltIconService.js';
+import { IVoltPluginUiService } from '../../voltCustomize/browser/voltPluginUi.js';
+import { IVoltSlotService } from '../../voltCustomize/common/voltSlots.js';
+import { IPluginSettingsKit, IPluginSettingsServices, renderPluginLayoutPage, renderPluginSettingsPage } from './pluginSettingsPages.js';
 import './media/voltSettings.css';
 import '../../voltAgent/browser/media/agentEditor.css';
 import { $, addDisposableListener, append, Dimension, getWindow, scheduleAtNextAnimationFrame } from '../../../../base/browser/dom.js';
@@ -100,8 +106,14 @@ import { SettingsThemeList } from './settingsThemeList.js';
 type TabToggle = 'enabled' | 'partialAccepts' | 'inComments' | 'whitespaceOnly' | 'autoImport' | 'autoImportPython';
 
 /** Volt's own pages, then every registered setting by category (`cat:`), Extensions included. */
-type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'voice' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'access' | 'connected' | 'devices' | 'orchestration' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | CatalogSection;
+type SettingsSection = 'general' | 'appearance' | 'customizeVolt' | 'usage' | 'providers' | 'modes' | 'composer' | 'tab' | 'voice' | 'codeIntelligence' | 'canvas' | 'beta' | 'security' | 'access' | 'connected' | 'devices' | 'orchestration' | 'projects' | 'git' | 'worktrees' | 'storage' | 'customize' | 'automations' | 'pluginLayout' | CatalogSection | PluginSection;
 type CatalogSection = `cat:${string}`;
+/** A plugin's page (`voltSettingsPages`, or its settings when it has none): `plugin:<extension id>/<page id>`. */
+type PluginSection = `plugin:${string}`;
+
+function isPluginSection(section: string): section is PluginSection {
+	return section.startsWith('plugin:');
+}
 
 function isCatalogSection(section: string): section is CatalogSection {
 	return section.startsWith('cat:');
@@ -403,6 +415,12 @@ export class VoltSettingsEditor extends EditorPane {
 			this.setPhoneDetail(true);
 		}));
 		this.loadCatalog();
+		// Plugins coming and going change the nav's Plugins list and their pages.
+		const pluginUi = this.pluginUi();
+		if (pluginUi) {
+			// Not the page itself: a chip's text changing (vscode.volt.ui.update) would redraw it under the user's typing.
+			this._register(pluginUi.onDidChange(() => this.renderNav()));
+		}
 
 		// The agent list's footer row, so Usage, Automations and Customize are a click away here too.
 		const footer = append(sidebar, $('.volt-settings-footer'));
@@ -644,6 +662,17 @@ export class VoltSettingsEditor extends EditorPane {
 		nodes.push(...[automations, customize].filter(pageShown));
 		// Providers and Appearance sit in the nav, above Volt, not inside its list.
 		nodes.push(...SECTIONS.filter(section => NAV_ABOVE_VOLT.has(section.id)).map(page).filter(pageShown));
+		// Where plugins' buttons and views sit, then each plugin's own page.
+		const pluginUi = this.pluginUi();
+		if (pluginUi) {
+			const pluginLayout: ISettingsNavNode = { id: 'pluginLayout', label: localize('voltSettings.pluginLayout', "Plugin Layout"), icon: Codicon.layoutPanelLeft };
+			nodes.push(...[pluginLayout].filter(pageShown));
+			const icons = this.instantiationService.invokeFunction(accessor => accessor.get(IVoltIconService));
+			const plugins = pluginUi.settingsPages().map((entry): ISettingsNavNode => ({ id: `plugin:${entry.id}`, label: entry.label, icon: () => icons.render(entry.icon, entry.extensionLocation) })).filter(pageShown);
+			if (plugins.length) {
+				nodes.push({ id: 'heading:plugins', label: localize('voltSettings.plugins', "Plugins"), heading: true }, ...plugins);
+			}
+		}
 
 		const all: ISettingsNavNode[] = [];
 		// Volt's pages are listed beside the nav, in Volt's list; a search for one keeps Volt here.
@@ -743,8 +772,8 @@ export class VoltSettingsEditor extends EditorPane {
 			this.setSection(id);
 			return;
 		}
-		if (id === 'customize' || id === 'automations') {
-			this.setSection(id);
+		if (id === 'customize' || id === 'automations' || id === 'pluginLayout' || isPluginSection(id)) {
+			this.setSection(id as SettingsSection);
 			return;
 		}
 		const known = SECTIONS.find(candidate => candidate.id === id);
@@ -761,7 +790,11 @@ export class VoltSettingsEditor extends EditorPane {
 				? localize('voltSettings.automations', "Automations")
 				: isCatalogSection(this.section)
 					? this.catalog.find(entry => entry.id === this.section)?.label ?? ''
-					: SECTIONS.find(entry => entry.id === this.section)?.label ?? '';
+					: this.section === 'pluginLayout'
+						? localize('voltSettings.pluginLayout', "Plugin Layout")
+						: isPluginSection(this.section)
+							? this.pluginUi()?.settingsPages().find(entry => `plugin:${entry.id}` === this.section)?.label ?? ''
+							: SECTIONS.find(entry => entry.id === this.section)?.label ?? '';
 		this.footerActions.settings.classList.toggle('active', this.section !== 'usage' && this.section !== 'customize' && this.section !== 'automations');
 		this.footerActions.usage.classList.toggle('active', this.section === 'usage');
 		this.footerActions.automations.classList.toggle('active', this.section === 'automations');
@@ -842,6 +875,9 @@ export class VoltSettingsEditor extends EditorPane {
 			const group = this.pendingGroup;
 			this.pendingGroup = undefined;
 			this.ensureInspector().show(category, this.search, category.id === 'cat:volt' ? this.voltPages : undefined, voltPage ? this.section : undefined, group);
+		}
+		if (this.section === 'pluginLayout' || isPluginSection(this.section)) {
+			this.renderPluginPage(this.section);
 		}
 		switch (this.section) {
 			case 'customize':
@@ -1317,6 +1353,58 @@ export class VoltSettingsEditor extends EditorPane {
 			},
 		);
 		return themesReady;
+	}
+
+	private pluginUi(): IVoltPluginUiService | undefined {
+		return this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltPluginUiService));
+	}
+
+	/** Plugin Layout, or a plugin's page (pluginSettingsPages.ts). */
+	private renderPluginPage(section: 'pluginLayout' | PluginSection): void {
+		const pluginUi = this.pluginUi();
+		if (!pluginUi) {
+			return;
+		}
+		const services: IPluginSettingsServices = this.instantiationService.invokeFunction(accessor => ({
+			pluginUi,
+			slots: accessor.get(IVoltSlotService),
+			icons: accessor.get(IVoltIconService),
+			configuration: this.configurationService,
+			extensions: accessor.get(IExtensionService),
+			quickInput: accessor.get(IQuickInputService),
+			theme: accessor.get(IThemeService),
+		}));
+		const kit: IPluginSettingsKit = {
+			store: this.renderStore,
+			pageHead: (title, lead) => void this.pageHead(title, lead),
+			sectionLabel: label => this.sectionLabel(label),
+			settingsGroup: () => this.settingsGroup(),
+			settingRow: (parent, title, desc, renderControl) => this.settingRow(parent, title, desc, renderControl),
+			toggle: (parent, on, label, onClick) => void this.switch(parent, on, label, onClick),
+			dropdown: (host, options, value, ariaLabel, onChange, width) => this.dropdown(host, options, value, ariaLabel, onChange, width),
+			input: (parent, value, placeholder, label, onCommit) => {
+				const box = this.renderStore.add(new InputBox(append(parent, $('.volt-settings-input')), this.contextViewService, { placeholder, ariaLabel: label, inputBoxStyles: this.inputBoxStyles() }));
+				box.value = value;
+				this.renderStore.add(addDisposableListener(box.inputElement, 'change', () => onCommit(box.value)));
+			},
+			button: (parent, label, onClick, kind) => {
+				const button = this.renderStore.add(createVoltButton(parent, kind ?? 'secondary'));
+				button.label = label;
+				this.renderStore.add(button.onDidClick(onClick));
+				return button;
+			},
+			rerender: () => this.renderContent(),
+		};
+		if (section === 'pluginLayout') {
+			renderPluginLayoutPage(kit, services);
+			return;
+		}
+		const page = pluginUi.settingsPages().find(entry => `plugin:${entry.id}` === section);
+		if (page) {
+			renderPluginSettingsPage(kit, services, page);
+		} else {
+			this.pageHead(localize('voltSettings.pluginGone', "This plugin is not installed or is turned off."));
+		}
 	}
 
 	/** The row helpers the Appearance page's sections draw with. */
