@@ -1,0 +1,526 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Volt ADK. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Plugin UI: slot buttons, plugin views and where they render (voltPluginUiService.ts). */
+
+/* Icons: an Aria Icons (or extension) SVG as a mask over the text color, so it follows the theme. */
+.volt-plugin-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--volt-slot-icon-size, 16px);
+	height: var(--volt-slot-icon-size, 16px);
+	flex: none;
+	font-size: var(--volt-slot-icon-size, 16px);
+}
+
+/*
+ * A plugin's icon is exactly as big as the icons of the bar it sits in (agentHomePane.css "Chrome
+ * icons" and each bar's own rules), so the row lines up: 15px in the window's chrome, 14px in chips,
+ * menus and the launcher, 16px in the chat's side toolbar, half the activity bar's width there.
+ */
+.volt-slot-drop-target:is([data-volt-slot="sidebar.header"], [data-volt-slot="sidebar.footer"], [data-volt-slot="titlebar.left"], [data-volt-slot="titlebar.center"], [data-volt-slot="titlebar.right"], [data-volt-slot="filesSidebar.header"]) {
+	--volt-slot-icon-size: 15px;
+}
+
+.volt-slot-drop-target:is([data-volt-slot="composer.chips"], [data-volt-slot="chat.dock"], [data-volt-slot="rightPanel.launcher"]) {
+	--volt-slot-icon-size: 14px;
+}
+
+.volt-slot-drop-target[data-volt-slot="chat.toolbar"] {
+	--volt-slot-icon-size: 16px;
+}
+
+.volt-slot-drop-target:is([data-volt-slot="activityBar.top"], [data-volt-slot="activityBar.bottom"]) {
+	--volt-slot-icon-size: calc(var(--volt-activity-width, 48px) / 2);
+}
+
+.volt-plugin-icon.is-svg {
+	background-color: currentColor;
+	-webkit-mask: var(--volt-plugin-icon) center / contain no-repeat;
+	mask: var(--volt-plugin-icon) center / contain no-repeat;
+}
+
+.volt-slot-button-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+}
+
+.volt-slot-button.is-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.volt-slot-button-label {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+
+.volt-slot-button-badge {
+	flex: none;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	border-radius: 8px;
+	font-size: 10px;
+	line-height: 16px;
+	text-align: center;
+	color: var(--vscode-badge-foreground);
+	background: var(--vscode-badge-background);
+}
+
+.volt-slot-button.is-icon .volt-slot-button-badge {
+	position: absolute;
+	top: 0;
+	right: 0;
+	min-width: 12px;
+	height: 12px;
+	line-height: 12px;
+	font-size: 9px;
+	padding: 0 3px;
+}
+
+.volt-slot-button.is-icon {
+	position: relative;
+}
+
+.volt-slot-button-chevron {
+	flex: none;
+	font-size: 12px;
+	opacity: 0.7;
+}
+
+.volt-slot-button.tone-error {
+	color: var(--vscode-errorForeground);
+}
+
+.volt-slot-button.tone-warning {
+	color: var(--vscode-editorWarning-foreground);
+}
+
+.volt-slot-button.tone-success {
+	color: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+}
+
+/* --- Slots in the window ------------------------------------------------------------------ */
+
+.volt-agent-composer-plugin-chips {
+	display: inline-flex;
+	align-items: center;
+	gap: inherit;
+	column-gap: 6px;
+	flex: none;
+}
+
+.volt-agent-titlebar-slot {
+	display: inline-flex;
+	align-items: center;
+	gap: 2px;
+	-webkit-app-region: no-drag;
+}
+
+.volt-agent-titlebar-slot.center {
+	margin-right: 2px;
+}
+
+.volt-agent-rail-slot {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: inherit;
+}
+
+/* Dock and launcher rows use their list's own row layout. */
+.volt-agent-dock-row.volt-slot-button,
+.volt-agent-tools-open-row.volt-slot-button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.volt-agent-dock-row.volt-slot-button .volt-slot-button-label,
+.volt-agent-tools-open-row.volt-slot-button .volt-slot-button-label {
+	flex: 1 1 auto;
+	text-align: left;
+}
+
+.volt-agent-tools-open-row.volt-slot-button .volt-slot-button-icon {
+	width: 20px;
+}
+
+.volt-agent-dock-section.volt-agent-dock-plugins.volt-slot-empty {
+	display: none;
+}
+
+/* An empty slot takes no room, until something is dragged: then every slot shows where it is. */
+.volt-slot-host.volt-slot-empty {
+	display: none;
+}
+
+body.volt-slot-dragging .volt-slot-host.volt-slot-empty,
+body.volt-slot-dragging .volt-agent-dock-section.volt-agent-dock-plugins.volt-slot-empty {
+	display: inline-flex;
+	min-width: 26px;
+	min-height: 22px;
+	border-radius: 6px;
+	outline: 1px dashed var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+body.volt-slot-dragging .volt-slot-drop-target {
+	-webkit-app-region: no-drag;
+}
+
+/* An empty slot lights up under the pointer; a slot with icons shows the gap where it would land. */
+.volt-slot-drop-target.volt-slot-empty.volt-slot-drop-over {
+	border-radius: 6px;
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+	background-color: var(--vscode-list-dropBackground);
+}
+
+/*
+ * Dragging an icon (voltPluginUiService.ts makeDraggable). Picked up: it lifts onto a fill (that is
+ * the drag image), then its place closes. Over a slot: a placeholder opens where it would land and
+ * the icons beside it slide apart. Dropped: the icons glide to their new places (Web Animations).
+ */
+[data-volt-item].volt-slot-drag-source {
+	border-radius: 6px;
+	background-color: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground));
+	color: var(--vscode-foreground);
+	opacity: 1;
+}
+
+[data-volt-item].volt-slot-dragged {
+	overflow: hidden;
+	opacity: 0;
+	pointer-events: none;
+	transition: width 180ms cubic-bezier(0.2, 0.8, 0.2, 1), height 180ms cubic-bezier(0.2, 0.8, 0.2, 1), margin 180ms cubic-bezier(0.2, 0.8, 0.2, 1), padding 180ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 120ms ease;
+}
+
+[data-volt-item].volt-slot-dragged.axis-x {
+	width: 0 !important;
+	min-width: 0 !important;
+	padding-left: 0 !important;
+	padding-right: 0 !important;
+	margin-right: calc(-1 * var(--volt-slot-gap, 0px)) !important;
+}
+
+[data-volt-item].volt-slot-dragged.axis-y {
+	height: 0 !important;
+	min-height: 0 !important;
+	padding-top: 0 !important;
+	padding-bottom: 0 !important;
+	margin-bottom: calc(-1 * var(--volt-slot-gap, 0px)) !important;
+}
+
+.volt-slot-placeholder {
+	flex: none;
+	display: block;
+	box-sizing: border-box;
+	border-radius: 6px;
+	background-color: color-mix(in srgb, var(--vscode-foreground) 9%, transparent);
+	outline: 1px dashed color-mix(in srgb, var(--vscode-focusBorder) 70%, transparent);
+	outline-offset: -1px;
+	pointer-events: none;
+	opacity: 0;
+	transition: width 180ms cubic-bezier(0.2, 0.8, 0.2, 1), height 180ms cubic-bezier(0.2, 0.8, 0.2, 1), margin 180ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 140ms ease;
+}
+
+/* Closed it takes no room: no size, and its own gap taken back. */
+.volt-slot-placeholder.axis-x {
+	width: 0;
+	height: var(--volt-slot-ph-height);
+	margin-right: calc(-1 * var(--volt-slot-gap, 0px));
+}
+
+.volt-slot-placeholder.axis-y {
+	height: 0;
+	width: var(--volt-slot-ph-width);
+	margin-bottom: calc(-1 * var(--volt-slot-gap, 0px));
+}
+
+.volt-slot-placeholder.axis-x.open {
+	width: var(--volt-slot-ph-width);
+	margin-right: 0;
+	opacity: 1;
+}
+
+.volt-slot-placeholder.axis-y.open {
+	height: var(--volt-slot-ph-height);
+	margin-bottom: 0;
+	opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	[data-volt-item].volt-slot-dragged,
+	.volt-slot-placeholder {
+		transition: none;
+	}
+}
+
+/* --- Plugin views --------------------------------------------------------------------------- */
+
+/*
+ * A webview sits on a solid fill in a layer of its own (volt-transparent-window rule 2). The fill is
+ * the surface around it (--volt-plugin-view-bg), so the page, whose body the Volt kit leaves
+ * transparent, reads as part of that surface: no seam between Volt's header and the plugin.
+ */
+.volt-plugin-view-host {
+	position: relative;
+	overflow: hidden;
+	isolation: isolate;
+	contain: paint;
+	background-color: var(--volt-plugin-view-bg, var(--vscode-editor-background));
+}
+
+.volt-plugin-view-host > * {
+	width: 100%;
+	height: 100%;
+}
+
+.volt-plugin-view-host iframe {
+	opacity: 0.999;
+}
+
+.volt-plugin-view-editor {
+	display: flex;
+	flex-direction: column;
+	background-color: var(--vscode-editor-background);
+}
+
+.volt-plugin-view-editor-body {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+/* A popover: the hover cards' and menus' surface, its title line, then the view. */
+.volt-plugin-popover {
+	--volt-plugin-view-bg: var(--vscode-menu-background, var(--vscode-editorWidget-background, #1f1f1f));
+	position: fixed;
+	z-index: 2550;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	border-radius: 10px;
+	border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, rgba(127, 127, 127, 0.3)));
+	background-color: var(--volt-plugin-view-bg);
+	box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+	isolation: isolate;
+	contain: paint;
+}
+
+.volt-plugin-popover-head {
+	flex: none;
+	height: 30px;
+	display: flex;
+	align-items: center;
+	padding: 0 12px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-plugin-popover-title {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.volt-plugin-popover-body {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+/*
+ * Above the composer: one card per view, in the chat's column like the Tasks card and the chips
+ * (728px, or the user's chat width; 560px on a new chat's landing), with its look: 10px corners,
+ * the widget edge, a 30px header line. Its height is the view's (voltPluginDesign.ts).
+ */
+.volt-plugin-tray.empty {
+	display: none;
+}
+
+.volt-plugin-tray {
+	position: relative;
+	z-index: 6;
+	flex: 0 0 auto;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	width: 100%;
+	max-width: var(--volt-chat-max-width, 728px);
+	margin: 0 auto 8px;
+	box-sizing: border-box;
+}
+
+.volt-agent-editor:not(.has-turns):not(.zoomed):not(.resized):not(.browser-hosted) .volt-plugin-tray {
+	max-width: 560px;
+}
+
+/* Under a card the chips stay in flow, as under the question tray (agentEditor.css). */
+.volt-agent-editor.has-turns:not(.zoomed):not(.resized) .volt-agent-composer > .volt-plugin-tray:not(.empty) ~ .volt-agent-composer-chips.is-visible {
+	margin-top: 0;
+}
+
+.volt-plugin-tray-card {
+	--volt-plugin-view-bg: var(--vscode-menu-background, var(--vscode-editorWidget-background, #1f1f1f));
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	border-radius: 10px;
+	border: 1px solid var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+	background-color: var(--volt-plugin-view-bg);
+	isolation: isolate;
+	contain: paint;
+}
+
+.monaco-workbench.vs .volt-plugin-tray-card,
+.monaco-workbench.hc-light .volt-plugin-tray-card {
+	border-color: var(--vscode-widget-border, rgba(0, 0, 0, 0.1));
+}
+
+.volt-plugin-tray-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 30px;
+	padding: 0 4px 0 12px;
+	font-size: 13px;
+	color: var(--vscode-foreground);
+}
+
+.volt-plugin-tray-head > .volt-plugin-icon {
+	color: var(--vscode-descriptionForeground);
+}
+
+.volt-plugin-tray-title {
+	flex: 1 1 auto;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.monaco-workbench .volt-plugin-tray-close.codicon[class*='codicon-'] {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: none;
+	border-radius: 5px;
+	background: none;
+	color: var(--vscode-descriptionForeground);
+	font-size: 16px;
+	cursor: pointer;
+}
+
+.monaco-workbench .volt-plugin-tray-close.codicon[class*='codicon-']:hover {
+	color: var(--vscode-foreground);
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+/* The left sidebar: a section per view, above the footer. */
+.volt-agent-home-plugin-sections.empty {
+	display: none;
+}
+
+.volt-agent-home-plugin-sections {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+	max-height: 50%;
+	overflow: hidden;
+}
+
+.volt-agent-home-plugin-section {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.volt-agent-home-plugin-section-head {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	height: 26px;
+	padding: 0 10px;
+	border: none;
+	background: none;
+	color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-descriptionForeground));
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	cursor: pointer;
+	text-align: left;
+}
+
+.volt-agent-home-plugin-section.collapsed .volt-agent-home-plugin-section-head .twist {
+	transform: rotate(-90deg);
+}
+
+.volt-agent-home-plugin-section-body {
+	/* The view's height is set where it mounts (voltPluginDesign.ts bounds). */
+	flex: none;
+}
+
+.volt-agent-home-plugin-section.collapsed .volt-agent-home-plugin-section-body {
+	display: none;
+}
+
+/* The files sidebar: a plugin view in place of a lent one, like Related Chats. */
+.volt-agent-files-plugin {
+	display: none;
+}
+
+.volt-agent-files-sidebar-body.plugin > :not(.volt-agent-files-plugin) {
+	display: none !important;
+}
+
+.volt-agent-files-sidebar-body.plugin > .volt-agent-files-plugin {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.volt-agent-files-plugin-body {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+/* Settings > Plugin Layout and plugin pages. */
+.volt-settings-plugin-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 28px;
+	height: 28px;
+	margin-right: 8px;
+	border-radius: 6px;
+	border: 1px solid var(--vscode-widget-border, rgba(127, 127, 127, 0.3));
+	background: none;
+	color: var(--vscode-foreground);
+	cursor: pointer;
+}
+
+.volt-settings-plugin-icon:hover {
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.volt-settings-plugin-view {
+	display: block;
+	height: 360px;
+	padding: 0;
+}

@@ -36,6 +36,7 @@ import { SHOW_PULL_REQUESTS_COMMAND_ID } from '../pullRequests/agentPullRequestC
 import { SHOW_MOBILE_EDITOR_COMMAND_ID } from '../web/mobile/voltMobileNavigation.js';
 import { AgentPullRequestDockControl } from '../pullRequests/agentPullRequestDockControl.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
+import { IVoltPluginUiService } from '../../../voltCustomize/browser/voltPluginUi.js';
 import { setAgentTooltip } from './agentTooltip.js';
 import { closeAgentToolEditor, onDidChangeAgentToolEditors, openAgentToolsPanel, revealAgentToolEditor, SHOW_AGENT_FILES_COMMAND_ID, SHOW_AGENT_RELATED_CHATS_COMMAND_ID, shownAgentToolEditors } from '../workspace/agentSurfaceHost.js';
 import { CHANGES_ICON_PATH, createSurfaceStrokeIcon, EXPLORER_ICON_SHAPES, RELATED_CHATS_ICON_SHAPES, SCRATCH_ICON_SHAPES, type SvgIconShapes } from '../workspace/agentSurfaceMenu.js';
@@ -343,6 +344,9 @@ class AgentViewSidebarsContribution extends Disposable {
 		this.titlebarToggles = $('.volt-agent-titlebar-toggles');
 		this._register(toDisposable(() => this.titlebarToggles.remove()));
 
+		// Plugin buttons (and any the user dragged here): the chat title bar, before IDE.
+		const pluginUi = instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltPluginUiService));
+		const titlebarCenter = append(this.titlebarToggles, $('span.volt-agent-titlebar-slot.center'));
 		const ideButton = append(this.titlebarToggles, $('button.volt-agent-switch-to-ide.volt-titlebar-control')) as HTMLButtonElement;
 		ideButton.type = 'button';
 		append(ideButton, $('span')).textContent = localize('voltAgent.ide', "IDE");
@@ -401,6 +405,13 @@ class AgentViewSidebarsContribution extends Disposable {
 		this._register(addDisposableListener(root, AGENT_TOOLS_VISIBILITY_EVENT, () => this.syncRightToggle()));
 		this.syncRightToggle();
 		this._register(addDisposableListener(this.rightToggle, 'click', () => openAgentToolsPanel()));
+		// ... and the top-right corner, after the panel toggles.
+		const titlebarRight = append(this.titlebarToggles, $('span.volt-agent-titlebar-slot.right'));
+		if (pluginUi) {
+			const titlebarButton = { buttonClass: 'volt-agent-titlebar-toggle volt-titlebar-control', look: 'icon' as const };
+			this._register(pluginUi.mountSlot(titlebarCenter, 'titlebar.center', titlebarButton));
+			this._register(pluginUi.mountSlot(titlebarRight, 'titlebar.right', titlebarButton));
+		}
 
 		this.quickOpen = $('.volt-agent-quick-open-actions.expanded');
 		this.quickOpen.setAttribute('aria-label', localize('voltAgent.chatSideToolbar', "Chat Side Toolbar"));
@@ -593,6 +604,19 @@ class AgentViewSidebarsContribution extends Disposable {
 		// Off until picked in the tune menu: the chat's and its project's automations, then every account's usage.
 		this.automations = this._register(instantiationService.createInstance(AgentDockAutomations, body));
 		this.usageAnchor = body.appendChild(body.ownerDocument.createComment('dock usage'));
+		// Plugins: rows plugins (or the user, by dragging) put in this menu.
+		const pluginsSection = append(body, $('.volt-agent-dock-section.volt-agent-dock-plugins'));
+		const pluginsGroup = this._register(new DockGroup(pluginsSection, localize('voltAgent.dock.plugins', "Plugins")));
+		if (pluginUi) {
+			this._register(pluginUi.mountSlot(pluginsGroup.body, 'chat.dock', {
+				buttonClass: 'volt-agent-dock-row', look: 'row', vertical: true,
+				onDidRender: () => {
+					const count = pluginsGroup.body.querySelectorAll(':scope > [data-volt-item]').length;
+					pluginsGroup.setCount(count || undefined);
+					pluginsSection.classList.toggle('volt-slot-empty', count === 0);
+				},
+			}));
+		}
 		this._register(scmService.onDidAddRepository(() => this.watchBranch()));
 		this._register(scmService.onDidRemoveRepository(() => this.watchBranch()));
 		// A worktree's branch is stored on its chat and follows renames and checkouts (agentWorktreeBranch.ts).
@@ -617,6 +641,9 @@ class AgentViewSidebarsContribution extends Disposable {
 			}
 		});
 		usageRail.classList.add('volt-agent-dock-usage-rail');
+		if (pluginUi) {
+			this._register(pluginUi.mountSlot(append(rail, $('.volt-agent-rail-slot')), 'chat.toolbar', { buttonClass: 'volt-agent-rail-btn', look: 'icon', vertical: true }));
+		}
 		this._register(attachFeatureItemHover(instantiationService, usageRail, USAGE_SLOT_ITEM_ID, 'start'));
 		this._register(changesService.onDidChange(sessionId => {
 			if (!sessionId || sessionId === this.changesSessionId) {

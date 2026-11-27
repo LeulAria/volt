@@ -6,6 +6,7 @@
 import { IVoltHostToolService } from '../../../services/voltRuntime/common/hostTools.js';
 import type { IAdminPolicy } from '../../../../platform/voltSandbox/common/authority.js';
 import '../common/voltCustomizeConfiguration.js';
+import './voltPluginUi.contribution.js';
 import { $, addDisposableListener } from '../../../../base/browser/dom.js';
 import { IAction, Separator, toAction } from '../../../../base/common/actions.js';
 import { disposableTimeout } from '../../../../base/common/async.js';

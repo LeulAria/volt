@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IVoltPluginUiService } from '../../../voltCustomize/browser/voltPluginUi.js';
 import { $, addDisposableListener, append, Dimension, getWindow, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { DataTransfers } from '../../../../../base/browser/dnd.js';
 import { renderIcon } from '../../../../../base/browser/ui/iconLabel/iconLabels.js';
@@ -1233,12 +1234,22 @@ export class AgentSurfaceHost extends Disposable {
 			// An empty group lists what can open here in its watermark (agentEditor.css hides the stock shortcuts).
 			const watermark = part.getGroup(group.id)?.element.querySelector<HTMLElement>(':scope > .editor-group-watermark');
 			if (watermark && !openLists.has(group.id)) {
-				openLists.set(group.id, this.instantiationService.invokeFunction(accessor => renderSurfaceOpenList(
-					watermark,
-					visibleSurfaceMenuItems(accessor.get(IConfigurationService), accessor.get(IVoltFeatureService)),
-					accessor.get(IKeybindingService),
-					id => entry.holder?.runMenuAction(id),
-				)));
+				openLists.set(group.id, this.instantiationService.invokeFunction(accessor => {
+					const list = new DisposableStore();
+					list.add(renderSurfaceOpenList(
+						watermark,
+						visibleSurfaceMenuItems(accessor.get(IConfigurationService), accessor.get(IVoltFeatureService)),
+						accessor.get(IKeybindingService),
+						id => entry.holder?.runMenuAction(id),
+					));
+					// Plugin rows (and buttons the user dragged here) after Volt's: the `rightPanel.launcher` slot.
+					const rows = watermark.querySelector<HTMLElement>(':scope > .volt-agent-tools-open-list');
+					const pluginUi = accessor.getIfExists(IVoltPluginUiService);
+					if (rows && pluginUi) {
+						list.add(pluginUi.mountSlot(rows, 'rightPanel.launcher', { buttonClass: 'volt-agent-tools-open-row', look: 'row', vertical: true }));
+					}
+					return list;
+				}));
 			}
 			if (!groupListeners.has(group.id)) {
 				groupListeners.set(group.id, group.onDidModelChange(() => {

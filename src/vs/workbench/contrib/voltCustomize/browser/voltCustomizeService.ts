@@ -39,7 +39,7 @@ import {
 	VOLT_HOME_SOURCE, validateVoltLayout, validateVoltLook, voltCustomizeId, voltCustomizeOverrides, voltLayoutSchema, voltLayoutStateKey,
 	voltLayoutWindowState, voltLookSchema, VoltSettingScopeLookup, voltTokensReference,
 } from '../common/voltCustomizeModel.js';
-import { IVoltSlotService, resolveVoltSlotPlacement, VoltSlotId } from '../common/voltSlots.js';
+import { IVoltSlotService, VoltSlotId } from '../common/voltSlots.js';
 import { IVoltFeatureService } from '../common/voltFeatures.js';
 import { voltLookTargetSetting } from '../common/voltLookTokens.js';
 import { applyEdits, setProperty } from '../../../../base/common/jsonEdit.js';
@@ -665,7 +665,7 @@ export class VoltCustomizeService extends Disposable implements IVoltCustomizeSe
 
 	/** The shown layout's slots, less the buttons of features that are turned off. */
 	private applySlots(): void {
-		this.slotService.setPlacement(resolveVoltSlotPlacement(this.shownSlots, itemId => this.features.isOn('item', itemId)));
+		this.slotService.setLayoutSlots(this.shownSlots, itemId => this.features.isOn('item', itemId));
 	}
 
 	private readStoredOverrides(): Record<string, unknown> {

@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { IVoltPluginUiService } from '../../../voltCustomize/browser/voltPluginUi.js';
 import '../media/agentHomePane.css';
 import { $, addDisposableListener, append, isHTMLElement } from '../../../../../base/browser/dom.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
@@ -166,6 +167,13 @@ class AgentNavContribution extends Disposable {
 		const back = this.button(nav, 'back', localize('voltAgent.goBack', "Go Back"), '[');
 		const forward = this.button(nav, 'forward', localize('voltAgent.goForward', "Go Forward"), ']');
 		this.buttons.push({ back, forward });
+		// Plugin buttons (and any the user dragged here) before the arrows: the `titlebar.left` slot.
+		const pluginUi = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltPluginUiService));
+		if (pluginUi) {
+			const slot = $('span.volt-agent-titlebar-slot.left');
+			nav.prepend(slot);
+			this._register(pluginUi.mountSlot(slot, 'titlebar.left', { buttonClass: 'volt-agent-nav-button volt-titlebar-control', look: 'icon' }));
+		}
 		this._register({ dispose: () => nav.remove() });
 		this.paint();
 		return nav;
