@@ -309,7 +309,9 @@ let changeNotifications: [String] = [
 	kAXTitleChangedNotification, kAXWindowCreatedNotification, kAXMenuOpenedNotification, kAXMenuClosedNotification,
 	kAXLayoutChangedNotification, kAXRowCountChangedNotification, kAXSelectedRowsChangedNotification,
 	kAXFocusedWindowChangedNotification, kAXMainWindowChangedNotification, kAXSheetCreatedNotification,
-	kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification, kAXExpandedChangedNotification,
+	kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification,
+	// By name: the macOS 15 SDK (the release build's) has no kAXExpandedChangedNotification constant.
+	"AXExpandedChanged",
 ]
 
 func observe(_ pid: pid_t) {
