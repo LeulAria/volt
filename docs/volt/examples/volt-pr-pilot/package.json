@@ -1,0 +1,157 @@
+{
+	"name": "pr-pilot",
+	"displayName": "PR Pilot",
+	"description": "Links a chat to its pull request and CI, visually: a chip above the composer, a PR & CI panel, session notes, and a model picked for reviews.",
+	"version": "0.1.0",
+	"publisher": "volt-examples",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.105.0",
+		"volt": "^1.0.0"
+	},
+	"main": "./extension.js",
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"enabledApiProposals": [
+		"volt"
+	],
+	"contributes": {
+		"commands": [
+			{ "command": "prPilot.refresh", "title": "PR Pilot: Refresh" },
+			{ "command": "prPilot.linkPr", "title": "PR Pilot: Link a Pull Request to This Chat" },
+			{ "command": "prPilot.pickReviewModel", "title": "PR Pilot: Pick the Review Model" },
+			{ "command": "prPilot.fixChecks", "title": "PR Pilot: Ask the Agent to Fix Failing Checks" }
+		],
+		"configuration": {
+			"title": "PR Pilot",
+			"properties": {
+				"prPilot.pollSeconds": {
+					"type": "number",
+					"default": 30,
+					"minimum": 5,
+					"description": "How often the pull request and its checks are read again, in seconds."
+				},
+				"prPilot.showChip": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show the PR chip above the composer."
+				},
+				"prPilot.chipText": {
+					"type": "string",
+					"enum": ["number", "checks", "both"],
+					"enumItemLabels": ["PR number", "Checks only", "PR number and checks"],
+					"default": "both",
+					"description": "What the chip above the composer says."
+				},
+				"prPilot.reviewModel": {
+					"type": "string",
+					"default": "",
+					"description": "The model \"Ask to review\" starts its chat on (pick one from the PR & CI panel)."
+				}
+			}
+		},
+		"voltViews": [
+			{
+				"id": "prPilot.panel",
+				"title": "PR & CI",
+				"description": "The chat's pull request, its checks, and what to do next.",
+				"icon": "aria:lucide:git-pull-request",
+				"location": "rightPanel",
+				"size": { "height": 260 }
+			},
+			{
+				"id": "prPilot.checks",
+				"title": "Checks",
+				"description": "The pull request's CI checks.",
+				"icon": "aria:lucide:list-checks",
+				"location": "popover",
+				"size": { "width": 360, "height": 360 }
+			},
+			{
+				"id": "prPilot.notes",
+				"title": "Session Notes",
+				"description": "Notes kept per chat, saved by the plugin.",
+				"icon": "aria:lucide:notebook-pen",
+				"location": "sidebarSection",
+				"size": { "height": 180 }
+			}
+		],
+		"voltSlotItems": [
+			{
+				"id": "prPilot.chip",
+				"label": "PR",
+				"description": "This chat's pull request and its checks",
+				"icon": "aria:lucide:git-pull-request",
+				"kind": "chip",
+				"slot": "composer.chips",
+				"view": "prPilot.checks"
+			},
+			{
+				"id": "prPilot.open",
+				"label": "PR & CI",
+				"description": "Open the PR & CI panel",
+				"icon": "aria:lucide:git-pull-request-arrow",
+				"slot": "titlebar.center",
+				"view": "prPilot.panel"
+			},
+			{
+				"id": "prPilot.filesTab",
+				"label": "PR Checks",
+				"description": "This chat's checks",
+				"icon": "aria:lucide:circle-check",
+				"slot": "filesSidebar.header",
+				"view": "prPilot.checks"
+			},
+			{
+				"id": "prPilot.notesButton",
+				"label": "Session Notes",
+				"description": "Show or hide Session Notes",
+				"icon": "aria:lucide:notebook-pen",
+				"slot": "sidebar.footer",
+				"view": "prPilot.notes"
+			},
+			{
+				"id": "prPilot.launcher",
+				"label": "PR & CI",
+				"icon": "aria:lucide:git-pull-request",
+				"slot": "rightPanel.launcher",
+				"view": "prPilot.panel"
+			},
+			{
+				"id": "prPilot.menu",
+				"label": "PR Pilot",
+				"description": "Pull request actions",
+				"icon": "aria:lucide:rocket",
+				"kind": "menu",
+				"slot": "chat.dock",
+				"menu": [
+					{ "label": "Open PR & CI", "view": "prPilot.panel", "icon": "aria:lucide:git-pull-request" },
+					{ "label": "Link a Pull Request...", "command": "prPilot.linkPr" },
+					{ "label": "Pick the Review Model...", "command": "prPilot.pickReviewModel" },
+					{ "label": "Ask the Agent to Fix Failing Checks", "command": "prPilot.fixChecks", "icon": "aria:lucide:circle-check" },
+					{ "label": "Refresh", "command": "prPilot.refresh" }
+				]
+			}
+		],
+		"voltSettingsPages": [
+			{
+				"id": "prPilot",
+				"label": "PR Pilot",
+				"description": "How PR Pilot reads your pull requests and what its chip shows.",
+				"icon": "aria:lucide:git-pull-request",
+				"settings": ["prPilot."]
+			}
+		],
+		"voltCapabilities": {
+			"required": [
+				{ "id": "agents.read:current", "class": "low" }
+			],
+			"optional": [
+				{ "id": "hosting.read", "class": "medium", "reason": "Reads the pull requests linked to the chat in front." },
+				{ "id": "agents.send", "class": "medium", "reason": "Links a pull request to the chat, and asks its agent to fix failing checks." },
+				{ "id": "agents.create", "class": "high", "reason": "Starts a review chat on the model you picked." }
+			]
+		}
+	}
+}
