@@ -101,6 +101,8 @@ declare module 'vscode' {
 			readonly turnCount: number;
 			/** The project folder. */
 			readonly project?: string;
+			/** The model it runs on, as the composer's picker shows it. */
+			readonly model?: PickedModel;
 		}
 
 		export interface TurnEvent {
@@ -147,6 +149,38 @@ declare module 'vscode' {
 			export const onDidStartTurn: Event<TurnEvent>;
 			/** A chat's turn ended. Capability: `agents.read:any`. */
 			export const onDidEndTurn: Event<TurnEvent>;
+			/**
+			 * The chat in front changed: another chat, or its title or model. Read it with `current()`.
+			 * Capability: `agents.read:current`, checked when the first listener is added.
+			 */
+			export const onDidChangeCurrent: Event<void>;
+		}
+
+		/** What `ui.update` changes on one of your `contributes.voltSlotItems`. */
+		export interface ItemState {
+			/** The chip's text (a button shows it as its tooltip). */
+			readonly label?: string;
+			/** The tooltip. */
+			readonly description?: string;
+			/** A small count or word on the button; empty clears it. */
+			readonly badge?: string;
+			/** `aria:<set>:<name>`, `codicon:<id>` or an SVG in your extension. */
+			readonly icon?: string;
+			readonly hidden?: boolean;
+			/** Tints the item: `error`, `warning` or `success`; anything else clears the tint. */
+			readonly tone?: string;
+		}
+
+		/**
+		 * Your UI in Volt's window: the buttons, chips and menus (`contributes.voltSlotItems`) and the
+		 * webview views (`contributes.voltViews`, filled with `vscode.window.registerWebviewViewProvider`)
+		 * your manifest declares. The user decides where they sit. Capability: `ui.contribute` (none).
+		 */
+		export namespace ui {
+			/** Changes one of your items on screen. */
+			export function update(itemId: string, state: ItemState): Thenable<void>;
+			/** Opens one of your views where the user placed it (a right panel tab, the files sidebar, a page, ...). */
+			export function showView(viewId: string): Thenable<void>;
 		}
 
 		/** The extension's own key-value storage in Volt (per profile). Capability: none. */

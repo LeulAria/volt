@@ -1465,6 +1465,12 @@
 		"--volt-voice-faint",
 		"--volt-voice-hairline",
 		"--volt-voice-muted",
-		"--volt-voice-surface"
+		"--volt-voice-surface",
+		"--volt-plugin-icon",
+		"--volt-plugin-view-bg",
+		"--volt-slot-gap",
+		"--volt-slot-icon-size",
+		"--volt-slot-ph-height",
+		"--volt-slot-ph-width"
 	]
 }

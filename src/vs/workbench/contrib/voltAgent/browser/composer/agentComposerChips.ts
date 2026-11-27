@@ -27,6 +27,7 @@ import { isAgentChangesShown, isAgentScmShown, onDidChangeAgentToolEditors } fro
 import { AgentFilesSidebar } from '../workspace/agentFilesSidebar.js';
 import { AGENT_TOOLS_VISIBILITY_EVENT } from '../../../../browser/parts/titlebar/layoutModeStartup.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
+import { IVoltPluginUiService } from '../../../voltCustomize/browser/voltPluginUi.js';
 import { setAgentTooltip } from '../chrome/agentTooltip.js';
 import { createCompactIcon } from '../context/agentContextUsageView.js';
 import { IAgentPullRequestService } from '../pullRequests/agentPullRequestService.js';
@@ -274,6 +275,8 @@ export class AgentComposerChips extends Disposable {
 	private hostOpen = true;
 	private sessionId: string | undefined;
 	private status: IAgentComposerChipStatus = { label: '', working: false };
+	/** The `composer.chips` slot: plugin chips and buttons the user dragged here. */
+	private readonly pluginChips: HTMLElement;
 	private insertions = 0;
 	private deletions = 0;
 	private changedFiles = 0;
@@ -430,6 +433,18 @@ export class AgentComposerChips extends Disposable {
 		this.prHoverCard = this.pullRequests
 			? this._register(this.instantiationService.createInstance(AgentPullRequestHoverCard, this.prChip, () => this.pr?.link, () => this.sessionId))
 			: undefined;
+
+		// Chips plugins (or the user, by dragging) put in this row: after the pull request's.
+		this.pluginChips = append(this.element, $('.volt-agent-composer-plugin-chips'));
+		const pluginUi = options.dock ? undefined : this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltPluginUiService));
+		if (pluginUi) {
+			this._register(pluginUi.mountSlot(this.pluginChips, 'composer.chips', {
+				buttonClass: 'volt-agent-composer-chip volt-browser-dock-chip',
+				look: 'chip',
+				// Not while the row is still being built (the first draw runs inside mountSlot).
+				onDidRender: () => this.moreChip ? this.render() : undefined,
+			}));
+		}
 
 		this.scrollChip = append(this.element, $('button.volt-agent-composer-chip.scroll-bottom.hidden')) as HTMLButtonElement;
 		this.scrollChip.type = 'button';
@@ -888,7 +903,8 @@ export class AgentComposerChips extends Disposable {
 		const showAgentRun = !!this.options.agentRun?.visible;
 		const showCommitReview = !!this.options.commitReview?.visible;
 		// An annotation queued from the browser shows even before the chat's first message.
-		const visible = this.hostOpen && (this.newChat ? showComments : showLimit || showAgentRun || showCommitReview || showStatus || showComments || showMultitaskChip || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
+		const showPlugins = this.pluginChips.childElementCount > 0;
+		const visible = this.hostOpen && (this.newChat ? showComments || showPlugins : showPlugins || showLimit || showAgentRun || showCommitReview || showStatus || showComments || showMultitaskChip || showAgents || showRuns || showCompact || showChanges || showTerminals || showCommit || showPr || showScroll || !!this.scrollExit.value || !!this.changesExit.value || !!this.commitExit.value || !!this.prExit.value);
 		this.element.classList.toggle('is-visible', visible);
 		// A chat hosted in another chat's tools hides the row but keeps its terminals (agentEditor.css).
 		this.element.classList.toggle('has-terminal-runs', showRuns);
@@ -945,7 +961,7 @@ export class AgentComposerChips extends Disposable {
 		const commitReview = this.options.commitReview?.element;
 		// A multitask token in the input is not the row's: folding it would move it back into the row.
 		const multitask = this.options.multitaskInInput ? [] : [this.multitaskChip];
-		return [...(limit ? [limit] : []), ...(agentRun ? [agentRun] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, ...multitask, this.compactChip, this.changesChip, this.terminalsChip, ...(commitReview ? [commitReview] : []), this.gitControl.element, this.prChip];
+		return [...(limit ? [limit] : []), ...(agentRun ? [agentRun] : []), this.statusChip, this.agentsChip, ...(runs ? [runs] : []), this.commentsChip, ...multitask, this.compactChip, this.changesChip, this.terminalsChip, ...(commitReview ? [commitReview] : []), this.gitControl.element, this.prChip, this.pluginChips];
 	}
 
 	/**

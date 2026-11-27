@@ -6,6 +6,8 @@ Volt's own features are built the same way. The 30 `extensions/volt-*` folders a
 
 The example in [`examples/volt-hello/`](examples/volt-hello/) registers a tool, listens for turn events and uses memory.
 
+To put UI in the window (buttons, chips, menus, panels, popovers, settings pages) that the user can move anywhere, see [plugin-ui.md](plugin-ui.md) and [`examples/volt-pr-pilot/`](examples/volt-pr-pilot/).
+
 ## 1. `package.json`
 
 ```jsonc

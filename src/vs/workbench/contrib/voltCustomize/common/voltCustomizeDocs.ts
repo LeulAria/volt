@@ -252,6 +252,69 @@ Package with \`npx @vscode/vsce package\`, publish with \`npx ovsx publish\` (Op
 
 Prefer files over code: a look or layout before an extension, an extension before anything else.
 
+### Plugin UI: where your extension shows up
+
+Declare UI in \`package.json\`; the user decides where it sits (dragging buttons, Settings > Plugin Layout):
+
+- \`contributes.voltViews\`: \`{ "id", "title", "icon", "location", "locations" }\`. Fill each with
+	\`vscode.window.registerWebviewViewProvider(id, ...)\`. \`location\`: \`rightPanel\` (a tab), \`filesSidebar\`,
+	\`page\` (over the chat), \`popover\` (under its button), \`aboveComposer\` (a card), \`sidebarSection\` (left sidebar).
+- \`contributes.voltSlotItems\`: \`{ "id", "label", "icon", "kind": "button" | "chip" | "menu", "slot", "view" | "command" | "menu": [...] }\`.
+	Slots: \`sidebar.header\`, \`sidebar.footer\`, \`activityBar.top\`, \`activityBar.bottom\`, \`titlebar.left\`,
+	\`titlebar.center\`, \`titlebar.right\`, \`filesSidebar.header\`, \`chat.toolbar\`, \`chat.dock\`, \`composer.chips\`, \`rightPanel.launcher\`.
+- \`contributes.voltSettingsPages\`: \`{ "id", "label", "icon", "settings": ["myExt."], "view"? }\`: your
+	\`contributes.configuration\` as Volt's own rows in Volt Settings > Plugins.
+- Icons: \`aria:<set>:<name>\` from Aria Icons (https://icons.leularia.com, e.g. \`aria:lucide:git-pull-request\`),
+	\`codicon:<id>\`, or an \`.svg\` in the extension.
+- Code: \`enabledApiProposals: ["volt"]\`, then \`vscode.volt.ui.update(itemId, { label, badge, tone, hidden })\`
+	(a live chip), \`vscode.volt.ui.showView(id)\`, \`vscode.volt.chats.current()\` (with its \`model\`),
+	\`vscode.volt.chats.onDidChangeCurrent\`, \`vscode.volt.chats.pickModel()\` (Volt's model picker) and
+	\`vscode.volt.storage\` (per-extension JSON storage). The full example: \`docs/volt/examples/volt-pr-pilot\`
+	in Volt's repository.
+
+### Plugin UI: make it look like Volt
+
+Volt puts its kit into every plugin webview: Volt's type, spacing, buttons and lists as classes, in
+the theme's colours. Build views from it so they look like the rest of Volt. Rules:
+
+- **Size**: don't size the page yourself. Each placement sizes the view: right panel, page and files
+	sidebar fill what the user gives them; above the composer the card is the chat's width (728px);
+	a popover is 360x420. Ask for another size with \`voltViews[].size: { "width", "height" }\`; Volt keeps
+	it inside the placement's bounds (popover 280-480 x 160-560, above the composer 72-320 high, left
+	sidebar 96-400 high).
+- **No title, no frame**: Volt draws the view's title, icon and close button, and the card or panel
+	around it. Don't repeat the title, and don't put boxes inside it (no bordered or rounded cards in the
+	view). Group with \`volt-section\` (a 30px header line, then content); sections are split by one line.
+- **Lists**: \`ul.volt-list > li > .volt-row\` (or \`button.volt-row\` when it is clickable): rows edge to
+	edge, square, 26px (\`two-line\`: 40px), 12px side padding, \`volt-row-label\`, \`volt-row-description\`,
+	\`volt-row-meta\` on the right, \`volt-row-actions\` shown on hover. No gaps, margins or radius on rows.
+- **Buttons**: \`button.volt-button\` (28px, 6px radius) with \`primary\` (one per view at most),
+	\`ghost\`, \`danger\`, \`small\` (24px); labels say what happens, with no "...". Icon-only: \`button.volt-icon-button\` (24px square, a 16px icon,
+	a fill only on hover) in a \`volt-toolbar\`; give it a \`title\`. Group buttons in \`volt-actions\`.
+- **Text**: 13px body, 12px secondary (\`volt-small\`, \`volt-muted\`), 11px captions (\`volt-caption\`),
+	600 for emphasis, no uppercase eyebrows. Code and ids in \`volt-mono\`.
+- **Spacing**: 4/8/12/16px (\`--volt-space-1..4\`); the side gutter is \`--volt-gutter\` (12px, 16px in the
+	right panel and a page). A page view keeps a 728px column (\`volt-content\`).
+- **Status**: \`volt-dot\` and \`volt-badge\` with \`error\` | \`warning\` | \`success\` | \`info\`; never hard-coded
+	colours: use \`var(--vscode-*)\` theme colours.
+- **Fields**: \`volt-input\`, \`volt-textarea\`. No native \`<select>\`: offer the choice as rows or buttons, or
+	Volt's pickers (\`vscode.volt.chats.pickModel\`, \`vscode.window.showQuickPick\`).
+- **Empty and loading**: \`volt-empty\` (a line of muted text and at most one action), not a blank view.
+- **Icons**: outline icons in \`currentColor\` (inline SVG from Aria Icons' lucide set) with **Volt's line and
+	sizes exactly**, so they line up with Volt's own:
+	- Line: **1px** on screen, drawn as Volt draws it: \`stroke-width: 0.9px; vector-effect: non-scaling-stroke\`
+		on every shape. Never the sets' default 2px; no filled icons beside outline ones.
+	- Size: **16px** in list rows (\`volt-icon\`), **15px** in toolbars and icon buttons (\`volt-icon-button\`,
+		\`volt-toolbar\`), **14px** in buttons (\`volt-button\`). Use the tokens \`--volt-icon-size\`,
+		\`--volt-toolbar-icon-size\`, \`--volt-button-icon-size\`; don't set your own px.
+	- Centred in their box, no margins of their own.
+	The kit applies the line and sizes in your page. Your \`aria:\` icons in \`package.json\` are drawn by Volt with
+	its line, at the size of the bar they sit in: 15px in the title bars, sidebar header and footer and the files
+	sidebar tabs, 14px in chips, menus and the launcher, 16px in the chat's side toolbar.
+- Overriding is allowed but on purpose: the kit is a CSS layer, so any rule of yours wins over it, and
+	\`<meta name="volt-kit" content="off">\` turns it off for a page. \`<html data-volt-placement>\` says where
+	the view is, if a view must differ per placement.
+
 ## Features: built-in extensions
 
 Volt's optional features come with it as built-in extensions (publisher \`volt\`). Disabling one in

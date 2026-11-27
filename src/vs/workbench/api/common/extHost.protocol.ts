@@ -2771,6 +2771,7 @@ export interface ExtHostDataChannelsShape {
 /** A `vscode.volt` method the main thread serves through `$call` (one per facade method). */
 export type VoltApiMethod =
 	| 'chats.list' | 'chats.current' | 'chats.read' | 'chats.send' | 'chats.start' | 'chats.pickModel'
+	| 'ui.update' | 'ui.showView'
 	| 'tools.invoke'
 	| 'storage.get' | 'storage.set' | 'storage.delete' | 'storage.keys'
 	| 'settings.get' | 'settings.update'
@@ -2818,12 +2819,16 @@ export interface MainThreadVoltShape extends IDisposable {
 	/** Starts turn events for the extension (`agents.read:any`); the first subscriber of the host starts the stream. */
 	$subscribeTurns(extensionId: string): Promise<void>;
 	$unsubscribeTurns(extensionId: string): void;
+	/** Starts `chats.onDidChangeCurrent` for the extension (`agents.read:current`). */
+	$subscribeCurrentChat(extensionId: string): Promise<void>;
+	$unsubscribeCurrentChat(extensionId: string): void;
 }
 
 export interface ExtHostVoltShape {
 	$invokeTool(handle: number, input: Record<string, unknown>, call: { readonly chatId?: string }, token: CancellationToken): Promise<IVoltToolResultDto>;
 	$onDidStartTurn(extensionIds: string[], event: IVoltTurnEventDto): void;
 	$onDidFinishTurn(extensionIds: string[], event: IVoltTurnEventDto): void;
+	$onDidChangeCurrentChat(extensionIds: string[]): void;
 }
 
 export interface ExtHostLocalizationShape {

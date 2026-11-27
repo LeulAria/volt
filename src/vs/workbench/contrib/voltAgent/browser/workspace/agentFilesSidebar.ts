@@ -54,8 +54,14 @@ import { AgentResourceTree, openAgentResource } from '../resources/agentResource
 import { AgentResourceFilter, IAgentResourcesService } from '../resources/agentResourcesService.js';
 import { agentResourcesSectionFor, OPEN_AGENT_RESOURCES_COMMAND_ID } from '../resources/agentResourcesPage.js';
 import { showVoltMenu } from '../ui/menu/voltMenu.js';
+import { IVoltPluginUiService } from '../../../voltCustomize/browser/voltPluginUi.js';
 
-export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests' | 'chats' | 'debug' | 'extensions';
+/** Volt's views, and `plugin:<view id>` for a plugin view the user put in the files sidebar. */
+export type AgentFilesSidebarView = 'explorer' | 'scm' | 'search' | 'pullRequests' | 'chats' | 'debug' | 'extensions' | `plugin:${string}`;
+
+export function isPluginFilesSidebarView(view: string | undefined): view is `plugin:${string}` {
+	return !!view?.startsWith('plugin:');
+}
 
 /** Related Chats' list: the agent list scoped to one project. */
 export interface IRelatedChatsPane extends IDisposable {
@@ -171,7 +177,7 @@ function readState(storage: IStorageService): ISidebarState {
 		const view = storage.get(VIEW_KEY, StorageScope.PROFILE);
 		sharedState = {
 			open: storage.getBoolean(OPEN_KEY, StorageScope.PROFILE, false),
-			view: VIEWS.some(candidate => candidate.id === view) ? view as AgentFilesSidebarView : 'scm',
+			view: VIEWS.some(candidate => candidate.id === view) || isPluginFilesSidebarView(view) ? view as AgentFilesSidebarView : 'scm',
 			width: storage.getNumber(WIDTH_KEY, StorageScope.PROFILE, DEFAULT_WIDTH),
 		};
 	}
@@ -228,6 +234,13 @@ export class AgentFilesSidebar extends Disposable {
 	/** Related Chats: the agent list, scoped to the chat's project. Made the first time the tab shows. */
 	private readonly chatsHost: HTMLElement;
 	private chats: IRelatedChatsPane | undefined;
+	/** A plugin view the user placed here (`plugin:<id>`), kept mounted while the sidebar shows another view. */
+	private readonly pluginHost: HTMLElement;
+	private readonly pluginView = this._register(new MutableDisposable<IDisposable>());
+	private pluginViewId: string | undefined;
+	/** Whether the plugin view was known when it was drawn (else it waits for plugins to be read). */
+	private pluginViewKnown = false;
+	private readonly pluginUi: IVoltPluginUiService | undefined;
 	private shown = false;
 	/** No tab beside it: it is the whole tools area. */
 	private fills = false;
@@ -297,7 +310,21 @@ export class AgentFilesSidebar extends Disposable {
 		this.labelTabs();
 		this._register(this.keybindingService.onDidUpdateKeybindings(() => this.labelTabs()));
 		// Takes the free space, so the filter and the buttons after it sit at the far end.
-		append(this.header, $('span.volt-agent-files-sidebar-spacer'));
+		const spacer = append(this.header, $('span.volt-agent-files-sidebar-spacer'));
+		// Buttons plugins (or the user, by dragging) put in this header: after Volt's tabs.
+		this.pluginUi = instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltPluginUiService));
+		if (this.pluginUi) {
+			this._register(this.pluginUi.mountSlot(this.header, 'filesSidebar.header', { buttonClass: 'volt-agent-files-sidebar-tab', look: 'icon', before: () => spacer }));
+			// A plugin view restored before plugins were read is drawn again once its plugin is known.
+			const pluginUi = this.pluginUi;
+			this._register(pluginUi.onDidChange(() => {
+				const lent = this.lentView;
+				if (isPluginFilesSidebarView(lent) && this.pluginViewId && !this.pluginViewKnown && pluginUi.view(this.pluginViewId)) {
+					this.pluginViewId = undefined;
+					this.showPluginView(lent);
+				}
+			}));
+		}
 		// The Explorer's filter: every file, or only the agent resources of one group. A dot says it is on.
 		this.filterButton = append(this.header, $('button.volt-agent-files-sidebar-tab.filter')) as HTMLButtonElement;
 		this.filterButton.type = 'button';
@@ -353,6 +380,7 @@ export class AgentFilesSidebar extends Disposable {
 		this.filterTreeHost = append(this.filterPane, $('.volt-agent-files-resources-tree'));
 		this.filterTree = this._register(instantiationService.createInstance(AgentResourceTree, this.filterTreeHost, 'VoltAgentFilesSidebarResources'));
 		this.chatsHost = append(this.body, $('.volt-agent-files-chats'));
+		this.pluginHost = append(this.body, $('.volt-agent-files-plugin'));
 		// A chat learns its project after it opens (history loads, a draft gets bound).
 		this._register(this.history.onDidChange(() => this.syncChatsScope()));
 		this._register(this.sessionContext.onDidChangeProjects(() => this.syncChatsScope()));
@@ -482,7 +510,7 @@ export class AgentFilesSidebar extends Disposable {
 
 	/** On screen with `view` in it. */
 	showsView(view: AgentFilesSidebarView): boolean {
-		return this.shown && this.lentView === view && (view === 'chats' || !!this.lent.value);
+		return this.shown && this.lentView === view && (view === 'chats' || isPluginFilesSidebarView(view) || !!this.lent.value);
 	}
 
 	hasFocus(): boolean {
@@ -532,10 +560,12 @@ export class AgentFilesSidebar extends Disposable {
 		this.syncChrome();
 		const state = readState(this.storageService);
 		const want = this.shown && state.open ? this.viewFor(state) : undefined;
-		if (this.lentView !== want || (want && want !== 'chats' && !this.lent.value)) {
+		if (this.lentView !== want || (want && want !== 'chats' && !isPluginFilesSidebarView(want) && !this.lent.value)) {
 			this.giveBack();
 			if (want === 'chats') {
 				this.showChats();
+			} else if (isPluginFilesSidebarView(want)) {
+				this.showPluginView(want);
 			} else if (want) {
 				this.borrow(want);
 			}
@@ -753,6 +783,23 @@ export class AgentFilesSidebar extends Disposable {
 		this.syncChatsScope();
 	}
 
+	/** A plugin's view (`voltViews`, placed in the files sidebar): its webview under its title. */
+	private showPluginView(view: `plugin:${string}`): void {
+		this.lentView = view;
+		this.body.classList.add('plugin');
+		const id = view.slice('plugin:'.length);
+		if (this.pluginViewId === id || !this.pluginUi) {
+			return;
+		}
+		this.pluginViewId = id;
+		this.pluginHost.replaceChildren();
+		const title = append(this.pluginHost, $('.volt-agent-files-chats-title'));
+		const known = this.pluginUi.view(id);
+		this.pluginViewKnown = !!known;
+		title.textContent = known?.title ?? id;
+		this.pluginView.value = this.pluginUi.mountView(id, append(this.pluginHost, $('.volt-agent-files-plugin-body')), 'filesSidebar');
+	}
+
 	/** Related Chats follows the chat on screen to its project. */
 	private syncChatsScope(): void {
 		if (this.lentView !== 'chats' || !this.chats || !this.sessionId) {
@@ -802,7 +849,7 @@ export class AgentFilesSidebar extends Disposable {
 		this.lentView = undefined;
 		this.lentPanesCollapsed.clear();
 		this.lent.clear();
-		this.body.classList.remove('unavailable', 'chats');
+		this.body.classList.remove('unavailable', 'chats', 'plugin');
 	}
 
 	private layoutLent(): void {

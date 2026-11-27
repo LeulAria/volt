@@ -19,7 +19,7 @@ import { IObjectTreeElement, ITreeDragAndDrop, ITreeDragOverReaction, ITreeNode,
 import { disposableTimeout, RunOnceScheduler } from '../../../../../base/common/async.js';
 import { Action, IAction, Separator, SubmenuAction, toAction } from '../../../../../base/common/actions.js';
 import { Codicon } from '../../../../../base/common/codicons.js';
-import { Disposable, DisposableStore, dispose, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
+import { Disposable, DisposableMap, DisposableStore, dispose, IDisposable, MutableDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { basename } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ThemeIcon } from '../../../../../base/common/themables.js';
@@ -68,7 +68,8 @@ import { onDidChangeSendingAgentChats, sendingAgentChats } from '../editor/agent
 import { OPEN_AUTOMATIONS_COMMAND_ID } from '../automations/automationCommands.js';
 import { AGENT_USAGE_INPUT_ID } from '../../../voltUsage/common/voltUsage.js';
 import { AGENT_FOOTER_ACTIONS, AgentFooterAction, wireAgentFooterAction } from './agentHomeFooterActions.js';
-import { IVoltSlotService, VoltSlotPlacement } from '../../../voltCustomize/common/voltSlots.js';
+import { emptyVoltSlotPlacement, IVoltSlotService, VoltSlotPlacement } from '../../../voltCustomize/common/voltSlots.js';
+import { IVoltPluginUiService } from '../../../voltCustomize/browser/voltPluginUi.js';
 import { SEARCH_AGENT_CHATS_COMMAND_ID } from '../search/agentChatSearchService.js';
 import { createHomeAutomationsIcon, createHomeFilterIcon, createHomeFolderIcon, createHomeFoldersIcon, createHomeNewChatIcon, createHomeOpenWorkspaceIcon, createHomeSearchIcon, createHomeStatusBadgeIcon, createQueueEditIcon } from './agentHomeIcons.js';
 import { OPEN_SCRATCH_BOARD_COMMAND_ID, ScratchBoardEditorInput } from '../scratchBoard/scratchBoardInput.js';
@@ -1326,6 +1327,8 @@ export class AgentHomePane extends Disposable {
 	private readonly activityBar: HTMLElement;
 	private readonly activityTopSlot: Comment;
 	private readonly activityBottomSlot: Comment;
+	/** Plugin buttons, drag and drop between slots, plugin sections (the agent list only). */
+	private readonly pluginUi: IVoltPluginUiService | undefined;
 	private slotButtons: HTMLButtonElement[] = [];
 	private readonly slotStore = this._register(new DisposableStore());
 	private readonly treeContainer: HTMLElement;
@@ -1449,6 +1452,7 @@ export class AgentHomePane extends Disposable {
 	) {
 		super();
 		this.scoped = !!options.scoped;
+		this.pluginUi = this.instantiationService.invokeFunction(accessor => accessor.getIfExists(IVoltPluginUiService));
 		livePanes.add(this);
 		this._register(toDisposable(() => livePanes.delete(this)));
 		this._register(this.attention.onDidChange(() => this.scheduleRefresh()));
@@ -1907,6 +1911,9 @@ export class AgentHomePane extends Disposable {
 	 * turns into a Back button that closes it and returns to the chat underneath.
 	 */
 	private installSettingsButton(keybindingService: IKeybindingService): void {
+		if (this.pluginUi && !this.scoped) {
+			this.installPluginSections(this.pluginUi, append(this.element, $('.volt-agent-home-plugin-sections')));
+		}
 		const footer = this.footer = append(this.element, $('.volt-agent-home-footer'));
 
 		const back = append(footer, $('button.volt-agent-home-back')) as HTMLButtonElement;
@@ -1924,6 +1931,16 @@ export class AgentHomePane extends Disposable {
 		this.footerSlot = footer.appendChild(footer.ownerDocument.createComment('slot sidebar.footer'));
 		this.renderSlots();
 		this._register(this.slotService.onDidChange(() => this.renderSlots()));
+		if (this.pluginUi && !this.scoped) {
+			this._register(this.pluginUi.onDidChange(() => this.renderSlots()));
+			// Volt's buttons can be dragged anywhere (the title bar, the composer's chips): there they draw like this.
+			for (const entry of this.slotService.items) {
+				const item = entry.extensionId ? undefined : this.slotItem(entry.id);
+				if (item) {
+					this._register(this.pluginUi.registerItemRenderer(entry.id, { label: item.label, icon: () => item.icon() as HTMLElement | SVGElement, wire: (button, store) => item.wire(button, store) }));
+				}
+			}
+		}
 
 		let wasOpen = false;
 		const sync = () => {
@@ -1997,6 +2014,54 @@ export class AgentHomePane extends Disposable {
 
 		// Filter, Open Workspace and New Chat go here by slot (renderSlots, once the footer is built).
 		this.headerSlot = bar.appendChild(bar.ownerDocument.createComment('slot sidebar.header'));
+	}
+
+	/**
+	 * Plugin views the user placed in the left sidebar: a section each above the footer, with the
+	 * view's title (a click folds it) and its webview.
+	 */
+	private installPluginSections(pluginUi: IVoltPluginUiService, host: HTMLElement): void {
+		const sections = this._register(new DisposableMap<string, DisposableStore>());
+		const collapsedKey = 'volt.agent.pluginSections.collapsed';
+		const collapsed = new Set<string>(JSON.parse(this.storageService.get(collapsedKey, StorageScope.PROFILE, '[]')) as string[]);
+		const render = () => {
+			const shown = pluginUi.shownViews('sidebarSection');
+			for (const id of [...sections.keys()]) {
+				if (!shown.includes(id)) {
+					sections.deleteAndDispose(id);
+				}
+			}
+			for (const id of shown) {
+				const view = pluginUi.view(id);
+				if (!view || sections.has(id)) {
+					continue;
+				}
+				const store = new DisposableStore();
+				const section = append(host, $('.volt-agent-home-plugin-section'));
+				section.classList.toggle('collapsed', collapsed.has(id));
+				const head = append(section, $('button.volt-agent-home-plugin-section-head')) as HTMLButtonElement;
+				head.type = 'button';
+				append(head, $('span.twist')).appendChild(renderIcon(Codicon.chevronDown));
+				append(head, $('span.title')).textContent = view.title;
+				store.add(addDisposableListener(head, 'click', e => {
+					EventHelper.stop(e, true);
+					const fold = !section.classList.contains('collapsed');
+					section.classList.toggle('collapsed', fold);
+					if (fold) {
+						collapsed.add(id);
+					} else {
+						collapsed.delete(id);
+					}
+					this.storageService.store(collapsedKey, JSON.stringify([...collapsed]), StorageScope.PROFILE, StorageTarget.USER);
+				}));
+				store.add(pluginUi.mountView(id, append(section, $('.volt-agent-home-plugin-section-body')), 'sidebarSection'));
+				store.add(toDisposable(() => section.remove()));
+				sections.set(id, store);
+			}
+			host.classList.toggle('empty', shown.length === 0);
+		};
+		this._register(pluginUi.onDidChangeShownViews(render));
+		render();
 	}
 
 	/** What each slot item is and does here; the slot it sits in decides its look (renderSlots). */
@@ -2102,12 +2167,24 @@ export class AgentHomePane extends Disposable {
 		// Related Chats keeps its own header (Filter, New Chat in this project) and no footer or
 		// activity bar; layouts place only the agent list's buttons.
 		const placement: VoltSlotPlacement = this.scoped
-			? { 'sidebar.header': ['volt.filter', 'volt.newChat'], 'sidebar.footer': [], 'activityBar.top': [], 'activityBar.bottom': [], hidden: [] }
+			? { ...emptyVoltSlotPlacement(), 'sidebar.header': ['volt.filter', 'volt.newChat'] }
 			: this.slotService.placement;
+		const pluginUi = this.scoped ? undefined : this.pluginUi;
 		const place = (slot: 'sidebar.header' | 'sidebar.footer' | 'activityBar.top' | 'activityBar.bottom', marker: Comment) => {
+			const container = marker.parentNode;
+			if (pluginUi && isHTMLElement(container)) {
+				pluginUi.makeDropTarget(container, slot, this.slotStore, slot.startsWith('activityBar'));
+			}
 			for (const id of placement[slot]) {
 				const item = this.slotItem(id);
 				if (!item) {
+					// A plugin's button, drawn the way this slot draws Volt's.
+					const className = slot === 'sidebar.header' ? 'volt-agent-home-nav-action volt-slot-item' : slot === 'sidebar.footer' ? 'volt-agent-home-settings volt-slot-item' : 'volt-agent-activity-item volt-slot-item';
+					const button = pluginUi?.createButton(id, slot, 'icon', className, this.slotStore);
+					if (button) {
+						marker.parentNode?.insertBefore(button, marker);
+						this.slotButtons.push(button);
+					}
 					continue;
 				}
 				const footerAction = item.footerAction;
@@ -2127,6 +2204,14 @@ export class AgentHomePane extends Disposable {
 				}
 				button.appendChild(item.icon());
 				item.wire(button, this.slotStore);
+				if (pluginUi) {
+					pluginUi.makeDraggable(button, id, slot, this.slotStore);
+					this.slotStore.add(addDisposableListener(button, 'contextmenu', e => {
+						e.preventDefault();
+						e.stopPropagation();
+						pluginUi.showItemMenu(id, slot, button);
+					}));
+				}
 				marker.parentNode?.insertBefore(button, marker);
 				this.slotButtons.push(button);
 			}
@@ -2137,6 +2222,7 @@ export class AgentHomePane extends Disposable {
 		}
 		place('activityBar.top', this.activityTopSlot);
 		place('activityBar.bottom', this.activityBottomSlot);
+		pluginUi?.animateSlotRender(this.slotButtons);
 		const activity = placement['activityBar.top'].length + placement['activityBar.bottom'].length > 0;
 		this.activityBar.classList.toggle('hidden', !activity);
 		this.element.classList.toggle('has-activity-bar', activity);

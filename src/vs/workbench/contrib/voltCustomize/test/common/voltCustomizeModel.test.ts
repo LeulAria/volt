@@ -11,7 +11,7 @@ import {
 	VOLT_BUILTIN_LAYOUTS, VOLT_BUILTIN_LOOKS, voltCustomizeOverrides, voltCustomizeSlug, voltLayoutStateKey, voltLayoutWindowState, VoltSettingScopeLookup,
 } from '../../common/voltCustomizeModel.js';
 import { clampVoltLookValue, VOLT_LOOK_TOKENS, voltLookCssVariable, voltLookCssVariables, voltLookTargetSetting, voltLookToken } from '../../common/voltLookTokens.js';
-import { defaultVoltSlotPlacement, resolveVoltSlotPlacement, unplacedVoltSlotItems } from '../../common/voltSlots.js';
+import { defaultVoltSlotPlacement, IVoltSlotItem, moveVoltSlotItem, resolveVoltSlotPlacement, unplacedVoltSlotItems, VoltSlotService } from '../../common/voltSlots.js';
 import { decodeVoltContextDrag, encodeVoltContextDrag, voltPartContext, voltPartIdFromContext } from '../../common/voltCustomizeContext.js';
 import { allVoltCustomizeParts } from '../../common/voltCustomizeParts.js';
 
@@ -228,6 +228,58 @@ suite('Volt customize: slots', () => {
 		assert.deepStrictEqual(placement['activityBar.top'], ['volt.newChat', 'volt.explorer']);
 		assert.deepStrictEqual(placement['sidebar.header'], ['volt.filter', 'volt.openWorkspace']);
 		assert.ok(!placement['sidebar.footer'].includes('volt.usage'));
+	});
+
+	const pluginItems: IVoltSlotItem[] = [
+		{ id: 'acme.chip', label: 'Chip', description: 'A plugin chip', defaultSlot: 'composer.chips', extensionId: 'acme.ext', kind: 'chip' },
+		{ id: 'acme.button', label: 'Button', description: 'A plugin button', defaultSlot: 'titlebar.right', extensionId: 'acme.ext' },
+	];
+
+	test('plugin items start in the slot their manifest names', () => {
+		const placement = resolveVoltSlotPlacement(undefined, () => true, pluginItems);
+		assert.deepStrictEqual(placement['composer.chips'], ['acme.chip']);
+		assert.deepStrictEqual(placement['titlebar.right'], ['acme.button']);
+		assert.deepStrictEqual(placement['sidebar.footer'], ['volt.settings', 'volt.usage', 'volt.pullRequestsPage', 'volt.automations', 'volt.customize']);
+	});
+
+	test('the user\'s moves win over the layout\'s', () => {
+		const layout = { 'sidebar.header': ['volt.settings'] };
+		const user = { 'titlebar.right': ['volt.settings', 'acme.chip'] };
+		const placement = resolveVoltSlotPlacement(layout, () => true, pluginItems, user);
+		assert.deepStrictEqual(placement['titlebar.right'], ['volt.settings', 'acme.chip', 'acme.button']);
+		assert.ok(!placement['sidebar.header'].includes('volt.settings'));
+		assert.deepStrictEqual(placement['composer.chips'], []);
+	});
+
+	test('moving an item writes the full lists of the slots it left and joined', () => {
+		const placement = resolveVoltSlotPlacement(undefined, () => true, pluginItems);
+		const next = moveVoltSlotItem(placement, undefined, 'volt.settings', 'titlebar.right', 'acme.button');
+		assert.deepStrictEqual(next['titlebar.right'], ['volt.settings', 'acme.button']);
+		assert.deepStrictEqual(next['sidebar.footer'], ['volt.usage', 'volt.pullRequestsPage', 'volt.automations', 'volt.customize']);
+		const placed = resolveVoltSlotPlacement(undefined, () => true, pluginItems, next);
+		assert.deepStrictEqual(placed['titlebar.right'], ['volt.settings', 'acme.button']);
+		// Reordering within a slot, and hiding.
+		const reordered = moveVoltSlotItem(placed, next, 'acme.button', 'titlebar.right', 'volt.settings');
+		assert.deepStrictEqual(reordered['titlebar.right'], ['acme.button', 'volt.settings']);
+		const hidden = resolveVoltSlotPlacement(undefined, () => true, pluginItems, moveVoltSlotItem(placed, next, 'acme.chip', 'hidden'));
+		assert.deepStrictEqual(hidden.hidden, ['acme.chip']);
+		assert.deepStrictEqual(hidden['composer.chips'], []);
+	});
+
+	test('the slot service adds plugin items and the user\'s moves to the layout\'s slots', () => {
+		const service = new VoltSlotService();
+		let changes = 0;
+		const listener = service.onDidChange(() => changes++);
+		service.setPluginItems(pluginItems);
+		assert.deepStrictEqual(service.placement['composer.chips'], ['acme.chip']);
+		service.setUserSlots({ 'chat.dock': ['acme.chip'] });
+		assert.deepStrictEqual(service.placement['chat.dock'], ['acme.chip']);
+		// A plugin can't take a built-in item's id.
+		service.setPluginItems([...pluginItems, { id: 'volt.settings', label: 'Fake', description: 'x', defaultSlot: 'titlebar.left' }]);
+		assert.deepStrictEqual(service.placement['titlebar.left'], []);
+		assert.ok(changes >= 2);
+		listener.dispose();
+		service.dispose();
 	});
 
 	test('a child layout replaces a parent\'s list for the slots it names', () => {

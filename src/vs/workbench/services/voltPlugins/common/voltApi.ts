@@ -71,6 +71,8 @@ export interface IVoltChatSummary {
 	readonly turnCount: number;
 	/** The project folder it runs in. */
 	readonly project?: string;
+	/** The model it runs on, as the composer's picker shows it. */
+	readonly model?: IVoltPickedModel;
 }
 
 /** A turn of a chat started or ended. */
@@ -110,6 +112,8 @@ export interface IVoltAgentsApi {
 	/** `agents.read:any`, checked when a listener is added. */
 	readonly onDidStartTurn: Event<IVoltTurnEvent>;
 	readonly onDidFinishTurn: Event<IVoltTurnEvent>;
+	/** `agents.read:current`: the chat in front changed (another chat, or its model or title). */
+	readonly onDidChangeCurrent: Event<void>;
 }
 
 export type VoltMemoryType = 'user' | 'feedback' | 'project' | 'reference';
@@ -379,6 +383,19 @@ export interface IVoltGitGraphApi {
 export interface IVoltUiApi {
 	readonly contributions: Pick<IVoltContributes, 'voltSlotItems' | 'voltSettingsPages' | 'voltSurfaces' | 'voltDock'>;
 	isOn(part: 'item' | 'section' | 'surface' | 'dock', id: string): boolean;
+	/** `ui.contribute`: changes one of its own `voltSlotItems` on screen (a chip's text, a badge, a tint). */
+	update(itemId: string, state: IVoltUiItemState): void;
+	/** `ui.contribute`: opens one of its own `voltViews` where the user placed it. */
+	showView(viewId: string): Promise<void>;
+}
+
+export interface IVoltUiItemState {
+	readonly label?: string;
+	readonly description?: string;
+	readonly badge?: string;
+	readonly icon?: string;
+	readonly hidden?: boolean;
+	readonly tone?: 'error' | 'warning' | 'success';
 }
 
 /** Settings. Its own (`config.own`: keys its `voltModule.settings` name) need nothing; others are reported. */
@@ -493,6 +510,9 @@ export interface IVoltApiBackend {
 	// `VoltApiUnavailableError` (after its capability check, so a refusal is still a refusal).
 	listChats?(options: { readonly query?: string; readonly limit?: number }): Promise<readonly IVoltChatSummary[]>;
 	currentChat?(): IVoltChatSummary | undefined;
+	readonly onDidChangeCurrentChat?: Event<void>;
+	updateItem?(itemId: string, state: IVoltUiItemState, caller: IVoltApiCaller): void;
+	showView?(viewId: string, caller: IVoltApiCaller): Promise<void>;
 	pickModel?(options: { readonly title?: string; readonly placeHolder?: string }, caller: IVoltApiCaller): Promise<IVoltPickedModel | undefined>;
 	readonly onDidStartTurn?: Event<IVoltTurnEvent>;
 	readonly onDidFinishTurn?: Event<IVoltTurnEvent>;
@@ -677,6 +697,7 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		},
 		onDidStartTurn: checkedEvent(() => backend.onDidStartTurn, 'agents.onDidStartTurn', 'agents.read:any'),
 		onDidFinishTurn: checkedEvent(() => backend.onDidFinishTurn, 'agents.onDidFinishTurn', 'agents.read:any'),
+		onDidChangeCurrent: checkedEvent(() => backend.onDidChangeCurrentChat, 'agents.onDidChangeCurrent', 'agents.read:current'),
 	};
 
 	const ui: IVoltUiApi = {
@@ -689,6 +710,20 @@ export function createVoltApi(principal: IVoltPluginPrincipal, manifest: IVoltPl
 		isOn(part, id) {
 			check({ api: 'ui.isOn', capability: 'ui.contribute', target: `${part}:${id}` });
 			return backend.isOn(part, id);
+		},
+		update(itemId, state) {
+			check({ api: 'ui.update', capability: 'ui.contribute', target: itemId });
+			if (!contributes.voltSlotItems?.some(item => item.id === itemId)) {
+				throw new Error(`${principal.extensionId} contributes no item ${itemId} (contributes.voltSlotItems)`);
+			}
+			bound(backend.updateItem, 'ui.update').call(backend, itemId, state, caller());
+		},
+		showView(viewId) {
+			check({ api: 'ui.showView', capability: 'ui.contribute', target: viewId });
+			if (!contributes.voltViews?.some(view => view.id === viewId)) {
+				throw new Error(`${principal.extensionId} contributes no view ${viewId} (contributes.voltViews)`);
+			}
+			return bound(backend.showView, 'ui.showView').call(backend, viewId, caller());
 		},
 	};
 

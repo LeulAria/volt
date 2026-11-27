@@ -916,6 +916,8 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 	private voiceChatSlot: AgentComposerTraySlot | undefined;
 	/** Feature cards in the thread (a voice call's). */
 	private threadCards: AgentThreadCards | undefined;
+	/** Plugin views the user placed above the composer (voltPluginUi.contribution.ts fills it). */
+	private pluginViewsSlot: AgentComposerTraySlot | undefined;
 	private composerChips!: AgentComposerChips;
 	private pendingChanges!: AgentPendingChanges;
 	// The fade's colour steps of every span share the document timeline's clock (see alignedFadeDelay),
@@ -1558,6 +1560,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		// fills this slot while it is loaded; shrunk, it is a chip in the row above the composer.
 		this.commitReviewSlot = this._register(this.instantiationService.createInstance(AgentComposerTraySlot, COMMIT_REVIEW_FEATURE_ID, () => this.layoutInputEditor()));
 		this.voiceChatSlot = this._register(this.instantiationService.createInstance(AgentComposerTraySlot, VOICE_CHAT_FEATURE_ID, () => this.layoutInputEditor()));
+		this.pluginViewsSlot = this._register(this.instantiationService.createInstance(AgentComposerTraySlot, 'volt.pluginViews', () => this.layoutInputEditor()));
 		this.composerChips = this._register(this.instantiationService.createInstance(AgentComposerChips, {
 			commitReview: this.commitReviewSlot.chip,
 			agentRun: { element: subagentChip, get visible() { return !subagentChip.classList.contains('hidden'); }, onDidChange: this.onDidChangeSubagentChip.event },
@@ -1612,6 +1615,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.commitReviewSlot?.mount(this.composerEl, this.questionTray.element);
 		// The voice call's tray: above the chip row, which then stays in flow under it.
 		this.voiceChatSlot?.mount(this.composerEl, this.questionTray.element);
+		this.pluginViewsSlot?.mount(this.composerEl, this.questionTray.element);
 		this._register(this.runtime.onDidChangeQuestions(sessionId => {
 			if (sessionId === this.sessionKey) {
 				this.syncQuestionTray();
@@ -9161,6 +9165,7 @@ export class AgentEditor extends EditorPane implements IAgentFindHost, IAgentQue
 		this.commitReviewSlot?.setSession(this.sessionKey);
 		this.voiceChatSlot?.setSession(this.sessionKey);
 		this.threadCards?.setSession(this.sessionKey);
+		this.pluginViewsSlot?.setSession(this.sessionKey);
 		this.watchedTaskCard?.setChat(this.sessionKey ? this.runtime.chatFor(this.sessionKey) : undefined);
 		this.ideCard?.setChat(this.sessionKey ? this.runtime.chatFor(this.sessionKey) : undefined);
 		if (!this.composerQueue) {

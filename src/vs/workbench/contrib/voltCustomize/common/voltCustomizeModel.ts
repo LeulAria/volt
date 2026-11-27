@@ -608,7 +608,7 @@ export function voltLayoutSchema(): object {
 			slots: {
 				type: 'object',
 				description: 'Moves, reorders or hides Volt\'s buttons: slot id → item ids in order. Items not named stay where Volt puts them.',
-				properties: Object.fromEntries(VOLT_SLOTS.map(slot => [slot.id, { type: 'array', description: slot.description, items: { enum: VOLT_SLOT_ITEMS.map(item => item.id) }, uniqueItems: true }])),
+				properties: Object.fromEntries(VOLT_SLOTS.filter(slot => isVoltSlotId(slot.id)).map(slot => [slot.id, { type: 'array', description: slot.description, items: { enum: VOLT_SLOT_ITEMS.map(item => item.id) }, uniqueItems: true }])),
 				additionalProperties: false,
 			},
 		},

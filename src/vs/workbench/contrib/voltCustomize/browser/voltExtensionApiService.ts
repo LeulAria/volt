@@ -47,7 +47,8 @@ import type { IVoltCatalogItem } from '../../../services/voltRuntime/common/prov
 import { providerFamily, providerFamilyLabel } from '../../../services/voltRuntime/browser/providers/providerBrands.js';
 import { IQuickInputService, IQuickPickItem, IQuickPickSeparator } from '../../../../platform/quickinput/common/quickInput.js';
 import { IVoltSessionContextService } from '../../../services/voltRuntime/common/sessionContext.js';
-import { shownAgentChat } from '../../voltAgent/browser/editor/agentShownChat.js';
+import { onDidChangeShownAgentChat, shownAgentChat } from '../../voltAgent/browser/editor/agentShownChat.js';
+import { IVoltPluginUiService } from './voltPluginUi.js';
 import { OPEN_BROWSER_COMMAND_ID } from '../../voltAgent/browser/preview/browserEditorInput.js';
 import { IAgentPullRequestService } from '../../voltAgent/browser/pullRequests/agentPullRequestService.js';
 import { GIT_GRAPH_ASK_AGENT_COMMAND_ID, GIT_GRAPH_FEATURE_ID, OPEN_GIT_GRAPH_COMMAND_ID } from '../../voltGitGraph/common/voltGitGraph.js';
@@ -325,10 +326,26 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 				});
 				return picked?.model ? { id: picked.model.ref, label: picked.model.label, provider: picked.model.providerId } : undefined;
 			},
-			currentChat: () => {
-				const id = shownAgentChat();
-				const meta = id ? this.get(IAgentHistoryService).get(id) : undefined;
-				return id ? meta ? chatSummary(meta) : { id, title: '', status: 'idle', createdAt: 0, updatedAt: 0, turnCount: 0 } : undefined;
+			currentChat: () => this.currentChatSummary(),
+			onDidChangeCurrentChat: (listener, thisArgs, disposables) => {
+				// Another chat in front, or its title or model changed; not every history write (a stream writes many).
+				let last = currentChatKey(this.currentChatSummary());
+				const changed = Event.filter(Event.any(onDidChangeShownAgentChat, Event.signal(this.get(IAgentHistoryService).onDidChange)), () => {
+					const next = currentChatKey(this.currentChatSummary());
+					const differs = next !== last;
+					last = next;
+					return differs;
+				});
+				return changed(listener, thisArgs, disposables);
+			},
+			updateItem: (itemId, state, caller) => this.get(IVoltPluginUiService).updateItem(caller.extensionId, itemId, state),
+			showView: (viewId, caller) => {
+				const pluginUi = this.get(IVoltPluginUiService);
+				const view = pluginUi.view(viewId);
+				if (!view || !ExtensionIdentifier.equals(view.extensionId, caller.extensionId)) {
+					return Promise.reject(new Error(`${caller.extensionId} has no view ${viewId}`));
+				}
+				return pluginUi.showView(viewId);
 			},
 			onDidStartTurn: turns.onDidStart,
 			onDidFinishTurn: turns.onDidFinish,
@@ -696,6 +713,22 @@ export class VoltExtensionApiService extends Disposable implements IVoltExtensio
 		return { source: 'native', ...(caller?.chatId ? { sessionId: caller.chatId } : {}) };
 	}
 
+	/** The chat in front, with the model it runs on as the composer's picker names it. */
+	private currentChatSummary(): IVoltChatSummary | undefined {
+		const id = shownAgentChat();
+		if (!id) {
+			return undefined;
+		}
+		const meta = this.get(IAgentHistoryService).get(id);
+		if (!meta) {
+			return { id, title: '', status: 'idle', createdAt: 0, updatedAt: 0, turnCount: 0 };
+		}
+		const summary = chatSummary(meta);
+		const ref = meta.model;
+		const item = ref ? this.get(IAgentRuntimeService).listCatalog().find(candidate => candidate.ref === ref) : undefined;
+		return ref ? { ...summary, model: { id: ref, label: item?.label ?? ref, provider: item?.providerId ?? '' } } : summary;
+	}
+
 	/** Feature services resolve on first use: an extension that never asks never wakes them. */
 	private get<T>(id: ServiceIdentifier<T>): T {
 		return this.instantiationService.invokeFunction(accessor => accessor.get(id));
@@ -761,6 +794,10 @@ class TurnEvents implements IDisposable {
 		this._onDidStart.dispose();
 		this._onDidFinish.dispose();
 	}
+}
+
+function currentChatKey(chat: IVoltChatSummary | undefined): string {
+	return chat ? `${chat.id}\u0000${chat.title}\u0000${chat.model?.id ?? ''}\u0000${chat.status}` : '';
 }
 
 function chatSummary(meta: IAgentSessionMeta): IVoltChatSummary {

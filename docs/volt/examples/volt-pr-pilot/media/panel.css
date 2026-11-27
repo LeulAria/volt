@@ -1,0 +1,27 @@
+/*
+ * PR Pilot's own CSS: only what the Volt kit doesn't do. The kit (type, spacing, sections, rows,
+ * buttons, badges) comes with every plugin webview in Volt; see docs/volt/plugin-ui.md §5.
+ */
+
+#root {
+	display: flex;
+	flex-direction: column;
+	min-height: 100%;
+}
+
+/* The notes view is one field that fills its section. */
+body[data-kind="notes"] #root {
+	height: 100%;
+}
+
+.notes {
+	flex: 1 1 auto;
+	display: flex;
+	padding: var(--volt-space-2) var(--volt-gutter) var(--volt-gutter);
+	min-height: 0;
+}
+
+.notes .volt-textarea {
+	flex: 1 1 auto;
+	min-height: 0;
+}
