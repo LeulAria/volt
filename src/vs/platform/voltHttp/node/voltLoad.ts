@@ -365,6 +365,7 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 			const bytesIn = socket ? Math.max(bodyIn, (socket.bytesRead || 0) - read0) : bodyIn;
 			const bytesOut = socket ? Math.max(0, (socket.bytesWritten || 0) - written0) : (body ? body.length : 0);
 			const failed = !!error || status >= 400;
+			roll(end);
 			second.count++;
 			second.bytesIn += bytesIn;
 			second.bytesOut += bytesOut;
@@ -563,6 +564,7 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 		}, timeoutMs);
 		const write = (frame: Buffer): void => {
 			socket.write(frame);
+			roll(now());
 			second.bytesOut += frame.length;
 			totals.bytesOut += frame.length;
 		};
@@ -571,6 +573,7 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 				return;
 			}
 			const at = now();
+			roll(at);
 			while (pending.length && at - pending[0] > timeoutMs) {
 				pending.shift();
 				second.errors++;
@@ -593,6 +596,7 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 		const onMessage = (): void => {
 			const at = now();
 			const measured = measuring(at);
+			roll(at);
 			second.count++;
 			if (measured) {
 				totals.count++;
@@ -682,6 +686,7 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 			write(handshake);
 		});
 		socket.on('data', (chunk: Buffer) => {
+			roll(now());
 			second.bytesIn += chunk.length;
 			totals.bytesIn += chunk.length;
 			buffer = buffer.length ? Buffer.concat([buffer, chunk]) : chunk;
@@ -728,6 +733,7 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 			}
 			if (was === 'connecting') {
 				totals.connectFailures++;
+				roll(now());
 				second.errors++;
 				countKind(kindOf(lastError, timedOut));
 			} else {
@@ -780,6 +786,7 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 			}
 			if (was === 'connecting') {
 				totals.connectFailures++;
+				roll(now());
 				second.errors++;
 				countKind(kindOf(error, timedOut));
 			} else {
@@ -827,6 +834,7 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 			totals.connects++;
 			record(connectHist, now() - begun);
 			response.on('data', (chunk: Buffer) => {
+				roll(now());
 				second.bytesIn += chunk.length;
 				totals.bytesIn += chunk.length;
 				let events = 0;
@@ -898,6 +906,16 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 			hooks.onSample(item);
 		} catch {
 			// A listener's trouble is not the run's.
+		}
+	};
+	// Closes every whole second that has passed by `at`. The clock's tick does it, but a tick can come late on a busy
+	// machine, and an answer counted before it would land in the second that is already over: so everything that
+	// counts into `second` rolls first, and each point holds only what happened in its own second.
+	const roll = (at: number): void => {
+		const whole = Math.floor((at - t0) / 1000);
+		while (secondsOut < whole && !finished) {
+			secondsOut++;
+			sample(secondsOut);
 		}
 	};
 
@@ -1008,12 +1026,9 @@ export function voltLoadEngine(plan: IVoltLoadPlan, hooks: IVoltLoadHooks, nodeR
 		ticker = setTimeout(tick, Math.max(1, Math.ceil(next - elapsed)));
 	};
 	const tick = (): void => {
-		const elapsed = now() - t0;
-		const whole = Math.floor(elapsed / 1000);
-		while (secondsOut < whole && !finished) {
-			secondsOut++;
-			sample(secondsOut);
-		}
+		const at = now();
+		const elapsed = at - t0;
+		roll(at);
 		if (elapsed >= totalMs || !targets.length) {
 			end$('completed');
 			return;
