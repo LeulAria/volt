@@ -435,13 +435,33 @@ const defaultLogQuery: SeatbeltLogQuery = (startLocal, predicate) => new Promise
 	execFile('/usr/bin/log', ['show', '--style', 'ndjson', '--start', startLocal, '--predicate', predicate], { timeout: LOG_SHOW_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) => resolve(err ? undefined : stdout));
 });
 
-const defaultMarkerWriter = (marker: string) => new Promise<void>(resolve => execFile('/usr/bin/logger', [marker], () => resolve()));
+/** A file every Mac has, which the marker's one-line sandbox refuses to read. */
+const MARKER_PROBE_FILE = '/private/etc/hosts';
+
+/**
+ * The marker is a refusal of its own: a throwaway sandbox (about 13 ms) refuses one read and the
+ * kernel logs it with the marker as its message. Sandbox.kext reports refusals asynchronously, so a
+ * `logger` line written after a run exits can reach the datastore before that run's last refusal on
+ * a busy machine (CI: DENIAL-FLUSH-1 and LOG-FORGE-2 read nothing); a refusal queued behind it cannot.
+ * `logger` is the fallback when the throwaway sandbox did not refuse (cat's exit 1 is the refusal).
+ */
+const defaultMarkerWriter = (marker: string) => new Promise<void>(resolve => {
+	const profile = `(version 1)(allow default)(deny file-read-data (literal "${MARKER_PROBE_FILE}") (with message "${marker}"))`;
+	execFile(SANDBOX_EXEC_PATH, ['-p', profile, '/bin/cat', MARKER_PROBE_FILE], { timeout: 5_000 }, err => {
+		if ((err as { code?: unknown } | null)?.code === 1) {
+			resolve();
+			return;
+		}
+		execFile('/usr/bin/logger', [marker], () => resolve());
+	});
+});
 
 /**
  * The kernel's refusals of Volt's sandboxes, read from the unified log when someone asks. One
  * query serves every listening run: it covers the earliest moment any of them has not been
- * checked for. Volt writes a marker (`logger`) first and the query must see it, so every refusal
- * logged before the call is in the answer (the datastore lags the kernel under load).
+ * checked for. Volt writes a marker first (a refusal of a throwaway sandbox, else `logger`) and the
+ * query must see it, so every refusal logged before the call is in the answer (the kernel reports
+ * refusals asynchronously and the datastore lags it under load).
  *
  * Only the kernel's own lines (pid 0, Sandbox.kext) become denials: a sandboxed process knows its
  * tag and may write to the log (`logger`), so a line it forged would otherwise become a "Blocked"
